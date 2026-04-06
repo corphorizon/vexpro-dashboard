@@ -2,7 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
-import { getLiquidityData } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
@@ -14,12 +14,13 @@ const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Se
 
 export default function LiquidezPage() {
   const { t } = useI18n();
+  const { getLiquidityData } = useData();
   const [filter, setFilter] = useState('total');
   const [liquidityData, setLiquidityData] = useState<LiquidityMovement[]>([]);
 
   useEffect(() => {
     setLiquidityData(getLiquidityData());
-  }, []);
+  }, [getLiquidityData]);
 
   const dataByYear = useMemo(() => {
     const map = new Map<number, Set<number>>();

@@ -3,7 +3,7 @@
 import { Card } from '@/components/ui/card';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
-import { getPeriodSummary, getConsolidatedSummary } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
@@ -13,6 +13,7 @@ import { Download } from 'lucide-react';
 export default function MovimientosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
+  const { getPeriodSummary, getConsolidatedSummary } = useData();
 
   const summary = mode === 'consolidated'
     ? getConsolidatedSummary(selectedPeriodIds)

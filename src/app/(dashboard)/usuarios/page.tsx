@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, hasModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
-import { Users, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, X, AlertTriangle } from 'lucide-react';
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
 const ALL_ROLES: Array<User['role']> = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
@@ -117,6 +117,12 @@ export default function UsuariosPage() {
           <Plus className="w-4 h-4" />
           {t('users.create')}
         </button>
+      </div>
+
+      {/* localStorage warning */}
+      <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-sm">
+        <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+        {t('users.localWarning')}
       </div>
 
       {/* Form */}

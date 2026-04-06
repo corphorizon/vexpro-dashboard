@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { usePeriod } from '@/lib/period-context';
-import { DEMO_PERIODS } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { Layers, Lock } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 
@@ -12,30 +12,31 @@ const MONTH_LABELS: Record<number, string> = {
   9: 'Sep', 10: 'Oct', 11: 'Nov', 12: 'Dic',
 };
 
-const PRESETS = [
-  { label: 'Todo', ids: DEMO_PERIODS.map(p => p.id) },
-  { label: 'Q4 2025', ids: DEMO_PERIODS.filter(p => p.year === 2025 && p.month >= 10).map(p => p.id) },
-  { label: 'Q1 2026', ids: DEMO_PERIODS.filter(p => p.year === 2026 && p.month <= 3).map(p => p.id) },
-  { label: 'Q2 2026', ids: DEMO_PERIODS.filter(p => p.year === 2026 && p.month >= 4 && p.month <= 6).map(p => p.id) },
-  { label: 'Oct-Dic 2025', ids: DEMO_PERIODS.filter(p => p.year === 2025).map(p => p.id) },
-];
-
 export function PeriodSelector() {
   const { t } = useI18n();
+  const { periods } = useData();
   const { mode, selectedPeriodId, selectedPeriodIds, consolidationLabel, setSelectedPeriod, setConsolidated, setSingleMode } = usePeriod();
+
+  const PRESETS = [
+    { label: 'Todo', ids: periods.map(p => p.id) },
+    { label: 'Q4 2025', ids: periods.filter(p => p.year === 2025 && p.month >= 10).map(p => p.id) },
+    { label: 'Q1 2026', ids: periods.filter(p => p.year === 2026 && p.month <= 3).map(p => p.id) },
+    { label: 'Q2 2026', ids: periods.filter(p => p.year === 2026 && p.month >= 4 && p.month <= 6).map(p => p.id) },
+    { label: 'Oct-Dic 2025', ids: periods.filter(p => p.year === 2025).map(p => p.id) },
+  ];
   const [showPanel, setShowPanel] = useState(false);
   const [customSelection, setCustomSelection] = useState<string[]>([]);
 
   // Compute available years
-  const years = [...new Set(DEMO_PERIODS.map(p => p.year))].sort();
+  const years = [...new Set(periods.map(p => p.year))].sort();
 
   // Track selected year for month buttons
   const [selectedYear, setSelectedYear] = useState(() => {
-    const current = DEMO_PERIODS.find(p => p.id === selectedPeriodId);
+    const current = periods.find(p => p.id === selectedPeriodId);
     return current?.year || years[years.length - 1];
   });
 
-  const monthsForYear = DEMO_PERIODS.filter(p => p.year === selectedYear);
+  const monthsForYear = periods.filter(p => p.year === selectedYear);
 
   const handleMonthClick = (periodId: string) => {
     setSelectedPeriod(periodId);
@@ -48,10 +49,10 @@ export function PeriodSelector() {
   };
 
   const applyCustom = () => {
-    const sorted = DEMO_PERIODS.filter(p => customSelection.includes(p.id)).map(p => p.id);
+    const sorted = periods.filter(p => customSelection.includes(p.id)).map(p => p.id);
     if (sorted.length > 0) {
-      const first = DEMO_PERIODS.find(p => p.id === sorted[0]);
-      const last = DEMO_PERIODS.find(p => p.id === sorted[sorted.length - 1]);
+      const first = periods.find(p => p.id === sorted[0]);
+      const last = periods.find(p => p.id === sorted[sorted.length - 1]);
       setConsolidated(sorted, `${first?.label} — ${last?.label}`);
     }
     setShowPanel(false);
@@ -156,7 +157,7 @@ export function PeriodSelector() {
           <div className="border-t border-border pt-3 mb-3">
             <p className="text-xs text-muted-foreground mb-2">{t('periods.selectMonths')}</p>
             <div className="grid grid-cols-3 gap-1.5">
-              {DEMO_PERIODS.map((period) => (
+              {periods.map((period) => (
                 <button
                   key={period.id}
                   onClick={() => toggleCustom(period.id)}

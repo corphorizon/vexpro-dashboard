@@ -4,16 +4,17 @@ import React, { useMemo } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
-import { DEMO_PERIODS, getPeriodSummary } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 
 export const MonthlyChart = React.memo(function MonthlyChart() {
   const { mode, selectedPeriodIds } = usePeriod();
+  const { periods, getPeriodSummary } = useData();
 
   const data = useMemo(() => {
     const visiblePeriods = mode === 'consolidated'
-      ? DEMO_PERIODS.filter(p => selectedPeriodIds.includes(p.id))
-      : DEMO_PERIODS;
+      ? periods.filter(p => selectedPeriodIds.includes(p.id))
+      : periods;
 
     return visiblePeriods.map((period) => {
       const summary = getPeriodSummary(period.id);
@@ -24,7 +25,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
         Egresos: summary?.totalExpenses || 0,
       };
     });
-  }, [mode, selectedPeriodIds]);
+  }, [mode, selectedPeriodIds, periods, getPeriodSummary]);
 
   return (
     <ResponsiveContainer width="100%" height={350}>
