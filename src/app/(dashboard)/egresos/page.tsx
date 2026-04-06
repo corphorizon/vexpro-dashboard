@@ -1,20 +1,17 @@
 'use client';
 
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
-import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
-import { getPeriodSummary, getConsolidatedSummary, DEMO_PREOPERATIVE, DEMO_EXPENSES } from '@/lib/demo-data';
+import { useAuth, canEdit, canDelete } from '@/lib/auth-context';
+import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import type { Expense } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
-import { Search, ArrowUpDown, ArrowDown, ArrowUp, Plus, Edit2, Trash2, Check, X, Download } from 'lucide-react';
-
-// Extract all unique concept names across all periods for autocomplete
-const ALL_CONCEPTS = Array.from(new Set(DEMO_EXPENSES.map(e => e.concept)));
+import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download } from 'lucide-react';
 
 type SortState = 'default' | 'desc' | 'asc';
 
@@ -22,7 +19,7 @@ export default function EgresosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { user } = useAuth();
-  const userCanAdd = canAdd(user);
+  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, allExpenses } = useData();
   const userCanEdit = canEdit(user);
   const userCanDelete = canDelete(user);
 
@@ -37,11 +34,7 @@ export default function EgresosPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ concept: '', amount: '', paid: '', pending: '' });
 
-  // Add new expense state
-  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '' });
-  const [showAutocomplete, setShowAutocomplete] = useState(false);
-  const autocompleteRef = useRef<HTMLDivElement>(null);
-  const conceptInputRef = useRef<HTMLInputElement>(null);
+  // Add expense removed — expenses loaded via "Carga de Datos"
 
   // Confirmation dialog
   const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
@@ -99,8 +92,8 @@ export default function EgresosPage() {
   const totalPending = filteredExpenses.reduce((s, e) => s + e.pending, 0);
 
   // Preoperativo totals
-  const preopTotal = DEMO_PREOPERATIVE.reduce((sum, e) => sum + e.amount, 0);
-  const preopPaid = DEMO_PREOPERATIVE.reduce((sum, e) => sum + e.paid, 0);
+  const preopTotal = preoperativeExpenses.reduce((sum, e) => sum + e.amount, 0);
+  const preopPaid = preoperativeExpenses.reduce((sum, e) => sum + e.paid, 0);
 
   // Cycle sort state
   const cycleSortState = () => {
@@ -118,61 +111,12 @@ export default function EgresosPage() {
     return <ArrowUpDown className="w-3.5 h-3.5" />;
   };
 
-  // --- Autocomplete logic ---
-  const autocompleteOptions = useMemo(() => {
-    const typed = newExpense.concept.trim().toLowerCase();
-    if (!typed) return [];
-    return ALL_CONCEPTS.filter(c => c.toLowerCase().includes(typed));
-  }, [newExpense.concept]);
-
-  const isNewConcept = useMemo(() => {
-    const typed = newExpense.concept.trim().toLowerCase();
-    if (!typed) return false;
-    return !ALL_CONCEPTS.some(c => c.toLowerCase() === typed);
-  }, [newExpense.concept]);
-
-  // Close autocomplete on outside click
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (autocompleteRef.current && !autocompleteRef.current.contains(e.target as Node) &&
-          conceptInputRef.current && !conceptInputRef.current.contains(e.target as Node)) {
-        setShowAutocomplete(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
   // --- Helpers to mutate expenses ---
   const updateExpensesList = (updater: (prev: Expense[]) => Expense[]) => {
     setExpensesOverrides(prev => ({
       ...prev,
       [periodKey]: updater(prev[periodKey] || currentExpenses),
     }));
-  };
-
-  // --- Add expense ---
-  const handleAddExpense = () => {
-    if (!userCanAdd || !newExpense.concept.trim() || !newExpense.amount) return;
-    const amt = parseFloat(newExpense.amount) || 0;
-    const pd = parseFloat(newExpense.paid) || 0;
-    const pn = parseFloat(newExpense.pending) || amt - pd;
-    askConfirmation(t('expenses.addConfirm', { concept: newExpense.concept, amount: formatCurrency(amt) }), () => {
-      const newRow: Expense = {
-        id: `exp-${Date.now()}`,
-        period_id: selectedPeriodId,
-        company_id: 'vexpro-001',
-        concept: newExpense.concept.trim(),
-        amount: amt,
-        paid: pd,
-        pending: pn,
-        category: null,
-        sort_order: currentExpenses.length + 1,
-      };
-      updateExpensesList(prev => [...prev, newRow]);
-      setNewExpense({ concept: '', amount: '', paid: '', pending: '' });
-      showSuccess(t('expenses.addedSuccess'));
-    });
   };
 
   // --- Edit expense ---
@@ -240,7 +184,7 @@ export default function EgresosPage() {
           </button>
           <button
             onClick={() => {
-              const exps = showPreoperativo ? DEMO_PREOPERATIVE : filteredExpenses;
+              const exps = showPreoperativo ? preoperativeExpenses : filteredExpenses;
               const headers = ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
               const rows = exps.map((e, i) => [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[]);
               downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
@@ -279,7 +223,7 @@ export default function EgresosPage() {
                 </tr>
               </thead>
               <tbody>
-                {DEMO_PREOPERATIVE.map((expense, i) => (
+                {preoperativeExpenses.map((expense, i) => (
                   <tr key={expense.id} className="border-b border-border/50 hover:bg-muted/50">
                     <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
                     <td className="py-2.5 px-3">{expense.concept}</td>
@@ -483,84 +427,7 @@ export default function EgresosPage() {
               </table>
             </div>
 
-            {/* Add expense form */}
-            {userCanAdd && (
-              <div className="mt-4 pt-4 border-t border-border">
-                <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                  <Plus className="w-4 h-4" /> {t('expenses.addExpense')}
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                  {/* Concept with autocomplete */}
-                  <div className="md:col-span-2 relative">
-                    <input
-                      ref={conceptInputRef}
-                      value={newExpense.concept}
-                      onChange={e => {
-                        setNewExpense(p => ({ ...p, concept: e.target.value }));
-                        setShowAutocomplete(true);
-                      }}
-                      onFocus={() => {
-                        if (newExpense.concept.trim()) setShowAutocomplete(true);
-                      }}
-                      placeholder={t('expenses.concept')}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                    />
-                    {/* Autocomplete dropdown */}
-                    {showAutocomplete && newExpense.concept.trim() && (
-                      <div
-                        ref={autocompleteRef}
-                        className="absolute left-0 right-0 top-full mt-1 bg-card border border-border rounded-lg shadow-lg z-30 max-h-48 overflow-y-auto"
-                      >
-                        {autocompleteOptions.length > 0 ? (
-                          autocompleteOptions.map((option, idx) => (
-                            <button
-                              key={idx}
-                              type="button"
-                              onClick={() => {
-                                setNewExpense(p => ({ ...p, concept: option }));
-                                setShowAutocomplete(false);
-                              }}
-                              className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors"
-                            >
-                              {option}
-                            </button>
-                          ))
-                        ) : null}
-                        {isNewConcept && (
-                          <div className="px-3 py-2 text-sm text-muted-foreground border-t border-border">
-                            <span className="font-medium text-amber-600">{t('expenses.newConcept')}</span>{' '}
-                            {newExpense.concept.trim()}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newExpense.amount}
-                    onChange={e => setNewExpense(p => ({ ...p, amount: e.target.value }))}
-                    placeholder={t('expenses.amount')}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newExpense.paid}
-                    onChange={e => setNewExpense(p => ({ ...p, paid: e.target.value }))}
-                    placeholder={t('expenses.paid')}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                  />
-                  <button
-                    onClick={handleAddExpense}
-                    disabled={!newExpense.concept.trim() || !newExpense.amount}
-                    className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
-                  >
-                    {t('common.add')}
-                  </button>
-                </div>
-              </div>
-            )}
+            {/* Note: expenses are loaded via "Carga de Datos" section */}
           </Card>
         </>
       )}

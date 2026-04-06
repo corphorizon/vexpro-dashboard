@@ -5,7 +5,7 @@ import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
-import { DEMO_COMPANY } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -45,6 +45,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const { company } = useData();
   const { theme, resolvedTheme, setTheme } = useTheme();
   const { locale, setLocale, t } = useI18n();
 
@@ -62,7 +63,7 @@ export function Sidebar() {
         <div className="flex items-center justify-center">
           <Image
             src="/vex-logofull.png"
-            alt={DEMO_COMPANY.name}
+            alt={company?.name || 'Company'}
             width={180}
             height={50}
             className="object-contain block dark:hidden"
@@ -70,7 +71,7 @@ export function Sidebar() {
           />
           <Image
             src="/vex-logofull-white.png"
-            alt={DEMO_COMPANY.name}
+            alt={company?.name || 'Company'}
             width={180}
             height={50}
             className="object-contain hidden dark:block"

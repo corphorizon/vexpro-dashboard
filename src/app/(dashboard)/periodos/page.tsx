@@ -4,7 +4,8 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, canEdit } from '@/lib/auth-context';
-import { DEMO_PERIODS } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
+import type { Period } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
 import { Calendar, Lock, Unlock, Clock, Check } from 'lucide-react';
 
@@ -42,7 +43,7 @@ const STATUS_DESC_KEY: Record<PeriodStatus, string> = {
   in_progress: 'periods.inProgressDesc',
 };
 
-function getInitialStatus(p: typeof DEMO_PERIODS[0]): PeriodStatus {
+function getInitialStatus(p: Period): PeriodStatus {
   // Current month (April 2026)
   const now = new Date();
   const currentYear = now.getFullYear();
@@ -57,10 +58,11 @@ function getInitialStatus(p: typeof DEMO_PERIODS[0]): PeriodStatus {
 export default function PeríodosPage() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const { periods: dataPeriods } = useData();
   const isAdmin = canEdit(user);
 
   const [periods, setPeriods] = useState<ManagedPeriod[]>(
-    DEMO_PERIODS.map(p => ({
+    dataPeriods.map(p => ({
       id: p.id,
       label: p.label || '',
       year: p.year,

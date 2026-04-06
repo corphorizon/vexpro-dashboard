@@ -145,6 +145,13 @@ const translations: Record<Locale, TranslationDict> = {
     'users.delete': 'Delete',
     'users.confirm': 'Confirm',
     'users.registered': 'Registered Users',
+    'users.localWarning': 'Users created here are only stored locally in this browser. They will not be available on other devices until Supabase Auth is configured.',
+
+    // Partners - Respaldo Financiero
+    'partners.reservePercent': 'Financial Reserve (10%)',
+    'partners.reserveThisPeriod': 'Reserve this period',
+    'partners.reserveAccumulated': 'Accumulated Reserve',
+    'partners.distributableAmount': 'Distributable Amount (90%)',
 
     // Perfil
     'profile.title': 'My Profile',
@@ -643,6 +650,13 @@ const translations: Record<Locale, TranslationDict> = {
     'users.delete': 'Eliminar',
     'users.confirm': 'Confirmar',
     'users.registered': 'Usuarios Registrados',
+    'users.localWarning': 'Los usuarios creados aquí solo se guardan localmente en este navegador. No estarán disponibles en otros dispositivos hasta que se configure Supabase Auth.',
+
+    // Socios - Respaldo Financiero
+    'partners.reservePercent': 'Respaldo Financiero (10%)',
+    'partners.reserveThisPeriod': 'Respaldo este período',
+    'partners.reserveAccumulated': 'Respaldo Acumulado',
+    'partners.distributableAmount': 'Monto a Distribuir (90%)',
 
     // Perfil
     'profile.title': 'Mi Perfil',

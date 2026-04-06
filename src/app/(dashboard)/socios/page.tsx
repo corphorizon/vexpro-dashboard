@@ -4,17 +4,19 @@ import { useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
-import { DEMO_PERIODS, DEMO_PARTNERS, DEMO_PARTNER_DISTRIBUTIONS, DEMO_FINANCIAL_STATUS, getPeriodSummary, computeSaldoChain, isPeriodAfterSaldoStart } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { formatCurrency, formatPercent } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
-import { Users, Download, AlertTriangle, TrendingDown, TrendingUp, Wallet } from 'lucide-react';
+import { Users, Download, AlertTriangle, TrendingDown, TrendingUp, Wallet, Shield, PiggyBank } from 'lucide-react';
 
 const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B'];
+const RESERVE_PCT = 0.10; // 10% respaldo financiero
 
 export default function SociosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
+  const { periods, partners, partnerDistributions, allFinancialStatus, getPeriodSummary, computeSaldoChain, isPeriodAfterSaldoStart } = useData();
 
   const saldoChain = useMemo(() => computeSaldoChain(), []);
 
@@ -31,11 +33,39 @@ export default function SociosPage() {
   const netoMes = summary?.financialStatus?.net_total || 0;
 
   // Total to distribute: if saldo logic applies, use computed; otherwise use raw partner distributions
-  const totalToDistribute = appliesSaldo && saldoInfo ? saldoInfo.totalDistribuir : ingresosNetos;
+  const rawTotalToDistribute = appliesSaldo && saldoInfo ? saldoInfo.totalDistribuir : ingresosNetos;
+
+  // Compute accumulated reserve across all periods
+  const reserveData = useMemo(() => {
+    const result = new Map<string, { reserveThisPeriod: number; accumulatedReserve: number }>();
+    let accumulated = 0;
+    for (const period of periods) {
+      const pSummary = getPeriodSummary(period.id);
+      const pIncome = pSummary?.operatingIncome
+        ? pSummary.operatingIncome.prop_firm + pSummary.operatingIncome.broker_pnl + pSummary.operatingIncome.other
+        : 0;
+      const pSaldo = saldoChain.get(period.id);
+      const pApplies = isPeriodAfterSaldoStart(period.id);
+      const pRaw = pApplies && pSaldo ? pSaldo.totalDistribuir : pIncome;
+      const reserveAmount = pRaw > 0 ? pRaw * RESERVE_PCT : 0;
+      accumulated += reserveAmount;
+      result.set(period.id, { reserveThisPeriod: reserveAmount, accumulatedReserve: accumulated });
+    }
+    return result;
+  }, [saldoChain]);
+
+  const currentReserve = currentPeriodId ? reserveData.get(currentPeriodId) : null;
+  const reserveThisPeriod = currentReserve?.reserveThisPeriod || 0;
+  const accumulatedReserve = currentReserve?.accumulatedReserve || 0;
+
+  // After reserve, the distributable amount is the remaining 90%
+  const totalToDistribute = rawTotalToDistribute > 0
+    ? rawTotalToDistribute - reserveThisPeriod
+    : rawTotalToDistribute;
 
   const distributions = mode === 'consolidated'
     ? (() => {
-        const allDists = DEMO_PARTNER_DISTRIBUTIONS.filter(d => selectedPeriodIds.includes(d.period_id));
+        const allDists = partnerDistributions.filter(d => selectedPeriodIds.includes(d.period_id));
         const byPartner = new Map<string, { id: string; period_id: string; partner_id: string; company_id: string; percentage: number; amount: number }>();
         for (const dist of allDists) {
           const existing = byPartner.get(dist.partner_id);
@@ -47,7 +77,7 @@ export default function SociosPage() {
         }
         return Array.from(byPartner.values());
       })()
-    : DEMO_PARTNER_DISTRIBUTIONS.filter(d => d.period_id === selectedPeriodId);
+    : partnerDistributions.filter(d => d.period_id === selectedPeriodId);
 
   // For open periods with saldo logic, recalculate amounts based on totalToDistribute
   const effectiveDistributions = appliesSaldo && mode === 'single'
@@ -73,7 +103,7 @@ export default function SociosPage() {
             onClick={() => {
               const headers = ['Socio', 'Porcentaje', 'Monto'];
               const rows = effectiveDistributions.map(d => {
-                const partner = DEMO_PARTNERS.find(p => p.id === d.partner_id);
+                const partner = partners.find(p => p.id === d.partner_id);
                 return [partner?.name || '', `${(d.percentage * 100).toFixed(1)}%`, d.amount] as (string | number)[];
               });
               rows.push(['Total', '100%', totalDistributed]);
@@ -98,7 +128,7 @@ export default function SociosPage() {
       )}
 
       {/* Summary cards */}
-      <div className={`grid grid-cols-1 ${appliesSaldo ? 'md:grid-cols-4' : 'md:grid-cols-1'} gap-4`}>
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
         <Card>
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
@@ -139,20 +169,46 @@ export default function SociosPage() {
                 </p>
               )}
             </Card>
-
-            <Card>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
-                  <Users className="w-5 h-5 text-emerald-500" />
-                </div>
-                <p className="text-sm text-muted-foreground">{t('partners.totalDistribute')}</p>
-              </div>
-              <p className={`text-2xl font-bold ${totalToDistribute >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                {formatCurrency(totalToDistribute)}
-              </p>
-            </Card>
           </>
         )}
+      </div>
+
+      {/* Respaldo Financiero + Distributable */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Card>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-lg bg-orange-50 dark:bg-orange-950/50">
+              <Shield className="w-5 h-5 text-orange-500" />
+            </div>
+            <p className="text-sm text-muted-foreground">{t('partners.reserveThisPeriod')}</p>
+          </div>
+          <p className="text-2xl font-bold text-orange-600">{formatCurrency(reserveThisPeriod)}</p>
+          <p className="text-xs text-muted-foreground mt-1">10% del total a distribuir</p>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
+              <PiggyBank className="w-5 h-5 text-amber-600" />
+            </div>
+            <p className="text-sm text-muted-foreground">{t('partners.reserveAccumulated')}</p>
+          </div>
+          <p className="text-2xl font-bold text-amber-600">{formatCurrency(accumulatedReserve)}</p>
+          <p className="text-xs text-muted-foreground mt-1">Acumulado histórico</p>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
+              <Users className="w-5 h-5 text-emerald-500" />
+            </div>
+            <p className="text-sm text-muted-foreground">{t('partners.distributableAmount')}</p>
+          </div>
+          <p className={`text-2xl font-bold ${totalToDistribute >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            {formatCurrency(totalToDistribute)}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">90% restante entre socios</p>
+        </Card>
       </div>
 
       {/* Distribution */}
@@ -170,7 +226,7 @@ export default function SociosPage() {
             </thead>
             <tbody>
               {effectiveDistributions.map((dist, i) => {
-                const partner = DEMO_PARTNERS.find(p => p.id === dist.partner_id);
+                const partner = partners.find(p => p.id === dist.partner_id);
                 return (
                   <tr key={dist.id} className="border-b border-border/50 hover:bg-muted/50">
                     <td className="py-3 px-3">
@@ -207,7 +263,7 @@ export default function SociosPage() {
           <h2 className="text-lg font-semibold mb-4">{t('partners.participation')}</h2>
           <div className="space-y-4">
             {effectiveDistributions.map((dist, i) => {
-              const partner = DEMO_PARTNERS.find(p => p.id === dist.partner_id);
+              const partner = partners.find(p => p.id === dist.partner_id);
               return (
                 <div key={dist.id}>
                   <div className="flex justify-between text-sm mb-1">
@@ -238,23 +294,34 @@ export default function SociosPage() {
                     <th className="text-left py-1.5 px-2">{t('partners.period')}</th>
                     <th className="text-right py-1.5 px-2">{t('partners.netoMes')}</th>
                     <th className="text-right py-1.5 px-2">{t('partners.saldoFavor')}</th>
-                    {DEMO_PARTNERS.map(p => (
+                    <th className="text-right py-1.5 px-2 text-orange-600">Respaldo</th>
+                    {partners.map(p => (
                       <th key={p.id} className="text-right py-1.5 px-2">{p.name}</th>
                     ))}
                     <th className="text-right py-1.5 px-2">Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {DEMO_PERIODS.map((period) => {
-                    const dists = DEMO_PARTNER_DISTRIBUTIONS.filter(d => d.period_id === period.id);
+                  {periods.map((period) => {
+                    const dists = partnerDistributions.filter(d => d.period_id === period.id);
                     const sInfo = saldoChain.get(period.id);
                     const hasSaldo = isPeriodAfterSaldoStart(period.id);
-                    const fs = DEMO_FINANCIAL_STATUS.find(f => f.period_id === period.id);
+                    const fs = allFinancialStatus.find(f => f.period_id === period.id);
+
+                    // Apply reserve before distribution
+                    const pReserve = reserveData.get(period.id);
+                    const pReserveAmt = pReserve?.reserveThisPeriod || 0;
+                    const pRawDist = hasSaldo && sInfo ? sInfo.totalDistribuir : ((): number => {
+                      const pSum = getPeriodSummary(period.id);
+                      const pInc = pSum?.operatingIncome ? pSum.operatingIncome.prop_firm + pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other : 0;
+                      return pInc;
+                    })();
+                    const pDistributable = pRawDist > 0 ? pRawDist - pReserveAmt : pRawDist;
 
                     // For periods with saldo logic, recalculate
                     const effectiveDists = hasSaldo && sInfo
-                      ? dists.map(d => ({ ...d, amount: sInfo.totalDistribuir * d.percentage }))
-                      : dists;
+                      ? dists.map(d => ({ ...d, amount: pDistributable * d.percentage }))
+                      : dists.map(d => ({ ...d, amount: pDistributable * d.percentage }));
                     const total = effectiveDists.reduce((s, d) => s + d.amount, 0);
 
                     return (
@@ -266,7 +333,10 @@ export default function SociosPage() {
                         <td className="py-1.5 px-2 text-right">
                           {hasSaldo ? formatCurrency(sInfo?.saldoNuevo || 0) : '-'}
                         </td>
-                        {DEMO_PARTNERS.map(p => {
+                        <td className="py-1.5 px-2 text-right text-orange-600">
+                          {formatCurrency(pReserveAmt)}
+                        </td>
+                        {partners.map(p => {
                           const d = effectiveDists.find(dd => dd.partner_id === p.id);
                           return (
                             <td key={p.id} className={`py-1.5 px-2 text-right ${(d?.amount || 0) < 0 ? 'text-red-600' : ''}`}>
