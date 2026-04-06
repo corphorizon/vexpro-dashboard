@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
 import { DEMO_COMPANY } from '@/lib/demo-data';
 import { useI18n } from '@/lib/i18n';
-import { Building2, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 export default function LoginPage() {
   const { t } = useI18n();
@@ -75,11 +76,23 @@ export default function LoginPage() {
       <div className="min-h-screen flex items-center justify-center bg-background px-4">
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--color-primary)] mb-4">
-              <Building2 className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold">{DEMO_COMPANY.name}</h1>
-            <p className="text-muted-foreground text-sm mt-1">Smart Dashboard</p>
+            <Image
+              src="/vex-logofull.png"
+              alt={DEMO_COMPANY.name}
+              width={220}
+              height={60}
+              className="mx-auto mb-4 block dark:hidden"
+              priority
+            />
+            <Image
+              src="/vex-logofull-white.png"
+              alt={DEMO_COMPANY.name}
+              width={220}
+              height={60}
+              className="mx-auto mb-4 hidden dark:block"
+              priority
+            />
+            <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
           </div>
 
           <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
@@ -110,11 +123,23 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--color-primary)] mb-4">
-            <Building2 className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold">{DEMO_COMPANY.name}</h1>
-          <p className="text-muted-foreground text-sm mt-1">Smart Dashboard</p>
+          <Image
+            src="/vex-logofull.png"
+            alt={DEMO_COMPANY.name}
+            width={220}
+            height={60}
+            className="mx-auto mb-4 block dark:hidden"
+            priority
+          />
+          <Image
+            src="/vex-logofull-white.png"
+            alt={DEMO_COMPANY.name}
+            width={220}
+            height={60}
+            className="mx-auto mb-4 hidden dark:block"
+            priority
+          />
+          <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
         </div>
 
         {/* Form */}
@@ -172,7 +197,7 @@ export default function LoginPage() {
               <div className="mt-4 text-center">
                 <button
                   onClick={() => setShowRecovery(true)}
-                  className="text-sm text-[var(--color-primary)] hover:underline"
+                  className="text-sm text-[var(--color-secondary)] hover:underline font-medium"
                 >
                   {t('login.recovery')}
                 </button>
