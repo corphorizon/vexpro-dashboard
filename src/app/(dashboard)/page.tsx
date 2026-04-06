@@ -65,7 +65,7 @@ export default function ResumenPage() {
 
   const handleExportPDF = () => {
     downloadPDF('Resumen General', exportHeaders, exportRows, {
-      companyName: 'VexPro FX',
+      companyName: 'Vex Pro',
       subtitle: `Período: ${summary.period.label}`,
       date: new Date().toLocaleDateString(),
     });
