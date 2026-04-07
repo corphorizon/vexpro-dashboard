@@ -62,13 +62,13 @@ export function PeriodSelector() {
   const activePeriodId = mode === 'single' ? selectedPeriodId : null;
 
   return (
-    <div className="relative flex items-center gap-2">
+    <div className="relative flex items-center gap-1 sm:gap-2 flex-shrink-0">
       {/* Year selector */}
       <select
         value={selectedYear}
         onChange={(e) => setSelectedYear(Number(e.target.value))}
         aria-label={t('periods.selectPeriod')}
-        className="px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
+        className="px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
       >
         {years.map((year) => (
           <option key={year} value={year}>
@@ -78,7 +78,7 @@ export function PeriodSelector() {
       </select>
 
       {/* Month buttons */}
-      <div className="flex items-center gap-1">
+      <div className="flex items-center gap-0.5 sm:gap-1 overflow-x-auto">
         {monthsForYear.map((period) => {
           const isActive = activePeriodId === period.id;
           return (
@@ -86,7 +86,7 @@ export function PeriodSelector() {
               key={period.id}
               onClick={() => handleMonthClick(period.id)}
               title={period.is_closed ? t('periods.closed') : t('periods.open')}
-              className={`relative px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors ${
+              className={`relative px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium rounded-md border transition-colors flex-shrink-0 ${
                 isActive
                   ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
                   : period.is_closed

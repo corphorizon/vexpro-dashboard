@@ -91,7 +91,12 @@ const NAV_STRUCTURE: NavEntry[] = [
   },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  mobileOpen?: boolean;
+  onClose?: () => void;
+}
+
+export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
@@ -122,6 +127,11 @@ export function Sidebar() {
     router.push('/login');
   };
 
+  const handleNavClick = () => {
+    // Close mobile menu on navigation
+    onClose?.();
+  };
+
   const renderLink = (item: NavLink, indent = false) => {
     if (!hasModuleAccess(user, item.module)) return null;
     const isActive = pathname === item.href;
@@ -130,6 +140,7 @@ export function Sidebar() {
       <Link
         key={item.href}
         href={item.href}
+        onClick={handleNavClick}
         className={cn(
           'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
           indent && 'ml-4',
@@ -145,126 +156,145 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="w-64 border-r border-border bg-card flex flex-col min-h-screen">
-      {/* Logo */}
-      <div className="p-4 border-b border-border">
-        <div className="flex items-center justify-center">
-          <Image
-            src="/vex-logofull.png"
-            alt={company?.name || 'Company'}
-            width={180}
-            height={50}
-            className="object-contain block dark:hidden"
-            priority
-          />
-          <Image
-            src="/vex-logofull-white.png"
-            alt={company?.name || 'Company'}
-            width={180}
-            height={50}
-            className="object-contain hidden dark:block"
-            priority
-          />
-        </div>
-      </div>
+    <>
+      {/* Backdrop for mobile */}
+      {mobileOpen && (
+        <div
+          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          onClick={onClose}
+        />
+      )}
 
-      {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-1">
-        {NAV_STRUCTURE.map((entry) => {
-          if (entry.type === 'link') {
-            return renderLink(entry as NavLink);
-          }
-
-          // Section (collapsible)
-          const section = entry as NavSection;
-          const visibleChildren = section.children.filter(c => hasModuleAccess(user, c.module));
-          if (visibleChildren.length === 0) return null;
-
-          const isOpen = openSections[section.i18nKey] ?? false;
-          const hasActiveChild = visibleChildren.some(c => pathname === c.href || pathname.startsWith(c.href + '/'));
-          const SectionIcon = section.icon;
-
-          return (
-            <div key={section.i18nKey}>
-              <button
-                onClick={() => toggleSection(section.i18nKey)}
-                className={cn(
-                  'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-                  hasActiveChild
-                    ? 'text-[var(--color-primary)]'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-                )}
-              >
-                <span className="flex items-center gap-3">
-                  <SectionIcon className="w-4 h-4" />
-                  {t(section.i18nKey)}
-                </span>
-                <ChevronDown
-                  className={cn(
-                    'w-4 h-4 transition-transform duration-200',
-                    isOpen && 'rotate-180'
-                  )}
-                />
-              </button>
-              {isOpen && (
-                <div className="mt-1 space-y-0.5">
-                  {visibleChildren.map(child => renderLink(child, true))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </nav>
-
-      {/* Footer */}
-      <div className="p-4 border-t border-border space-y-3">
-        {/* Theme & Language toggles */}
-        <div className="flex items-center justify-center gap-1">
-          <button
-            onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-            aria-label={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          >
-            {resolvedTheme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-            {resolvedTheme === 'dark' ? 'Light' : 'Dark'}
-          </button>
-          <span className="text-muted-foreground/30">|</span>
-          <button
-            onClick={() => setLocale(locale === 'es' ? 'en' : 'es')}
-            aria-label="Change language"
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          >
-            <Globe className="w-3.5 h-3.5" />
-            {locale === 'es' ? 'EN' : 'ES'}
-          </button>
-        </div>
-
-        {user && (
-          <div className="text-xs text-muted-foreground text-center">
-            {user.name} ({ROLE_LABELS[user.role] || user.role})
-          </div>
+      <aside
+        className={cn(
+          'w-64 border-r border-border bg-card flex flex-col min-h-screen',
+          // Desktop: always visible, static
+          'hidden lg:flex',
+          // Mobile: fixed overlay drawer
+          mobileOpen && '!flex fixed inset-y-0 left-0 z-50 shadow-2xl'
         )}
-        <Link
-          href="/perfil"
-          className={cn(
-            'flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-            pathname === '/perfil'
-              ? 'bg-[var(--color-primary)] text-white'
-              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+      >
+        {/* Logo */}
+        <div className="p-4 border-b border-border">
+          <div className="flex items-center justify-center">
+            <Image
+              src="/vex-logofull.png"
+              alt={company?.name || 'Company'}
+              width={180}
+              height={50}
+              className="object-contain block dark:hidden"
+              priority
+            />
+            <Image
+              src="/vex-logofull-white.png"
+              alt={company?.name || 'Company'}
+              width={180}
+              height={50}
+              className="object-contain hidden dark:block"
+              priority
+            />
+          </div>
+        </div>
+
+        {/* Navigation */}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+          {NAV_STRUCTURE.map((entry) => {
+            if (entry.type === 'link') {
+              return renderLink(entry as NavLink);
+            }
+
+            // Section (collapsible)
+            const section = entry as NavSection;
+            const visibleChildren = section.children.filter(c => hasModuleAccess(user, c.module));
+            if (visibleChildren.length === 0) return null;
+
+            const isOpen = openSections[section.i18nKey] ?? false;
+            const hasActiveChild = visibleChildren.some(c => pathname === c.href || pathname.startsWith(c.href + '/'));
+            const SectionIcon = section.icon;
+
+            return (
+              <div key={section.i18nKey}>
+                <button
+                  onClick={() => toggleSection(section.i18nKey)}
+                  className={cn(
+                    'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    hasActiveChild
+                      ? 'text-[var(--color-primary)]'
+                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                  )}
+                >
+                  <span className="flex items-center gap-3">
+                    <SectionIcon className="w-4 h-4" />
+                    {t(section.i18nKey)}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      'w-4 h-4 transition-transform duration-200',
+                      isOpen && 'rotate-180'
+                    )}
+                  />
+                </button>
+                {isOpen && (
+                  <div className="mt-1 space-y-0.5">
+                    {visibleChildren.map(child => renderLink(child, true))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </nav>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-border space-y-3">
+          {/* Theme & Language toggles */}
+          <div className="flex items-center justify-center gap-1">
+            <button
+              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
+              aria-label={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              {resolvedTheme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
+              {resolvedTheme === 'dark' ? 'Light' : 'Dark'}
+            </button>
+            <span className="text-muted-foreground/30">|</span>
+            <button
+              onClick={() => setLocale(locale === 'es' ? 'en' : 'es')}
+              aria-label="Change language"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              {locale === 'es' ? 'EN' : 'ES'}
+            </button>
+          </div>
+
+          {user && (
+            <div className="text-xs text-muted-foreground text-center">
+              {user.name} ({ROLE_LABELS[user.role] || user.role})
+            </div>
           )}
-        >
-          <UserCircle className="w-4 h-4" />
-          {t('nav.profile')}
-        </Link>
-        <button
-          onClick={handleLogout}
-          aria-label={t('nav.logout')}
-          className="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-        >
-          <LogOut className="w-4 h-4" />
-          {t('nav.logout')}
-        </button>
-      </div>
-    </aside>
+          <Link
+            href="/perfil"
+            onClick={handleNavClick}
+            className={cn(
+              'flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+              pathname === '/perfil'
+                ? 'bg-[var(--color-primary)] text-white'
+                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            )}
+          >
+            <UserCircle className="w-4 h-4" />
+            {t('nav.profile')}
+          </Link>
+          <button
+            onClick={handleLogout}
+            aria-label={t('nav.logout')}
+            className="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+          >
+            <LogOut className="w-4 h-4" />
+            {t('nav.logout')}
+          </button>
+        </div>
+      </aside>
+    </>
   );
 }
