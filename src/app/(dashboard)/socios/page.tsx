@@ -16,52 +16,44 @@ const RESERVE_PCT = 0.10; // 10% respaldo financiero
 export default function SociosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { periods, partners, partnerDistributions, getPeriodSummary, computeSaldoChain, isPeriodAfterSaldoStart } = useData();
-
-  const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
+  const { periods, partners, partnerDistributions, getPeriodSummary } = useData();
 
   // Get current period info
   const currentPeriodId = mode === 'single' ? selectedPeriodId : null;
-  const saldoInfo = currentPeriodId ? saldoChain.get(currentPeriodId) : null;
-  const appliesSaldo = currentPeriodId ? isPeriodAfterSaldoStart(currentPeriodId) : false;
 
   // Get operating income for current view
   const summary = mode === 'single' ? getPeriodSummary(selectedPeriodId) : null;
   const ingresosNetos = (summary?.operatingIncome
     ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
     : 0) + (summary?.propFirmNetIncome || 0);
-  const egresosNetos = saldoInfo?.egresosNetos || summary?.totalExpenses || 0;
+  const egresosNetos = summary?.totalExpenses || 0;
 
-  // Total to distribute: if saldo logic applies, use computed; otherwise use raw partner distributions
-  const rawTotalToDistribute = appliesSaldo && saldoInfo ? saldoInfo.totalDistribuir : ingresosNetos;
+  // Saldo a Favor = Ingresos Netos - Egresos Netos
+  const saldoAFavor = ingresosNetos - egresosNetos;
+
+  // Respaldo = 10% del saldo a favor (solo si positivo)
+  const reserveThisPeriod = saldoAFavor > 0 ? saldoAFavor * RESERVE_PCT : 0;
 
   // Compute accumulated reserve across all periods
-  const reserveData = useMemo(() => {
-    const result = new Map<string, { reserveThisPeriod: number; accumulatedReserve: number }>();
+  const accumulatedReserve = useMemo(() => {
     let accumulated = 0;
     for (const period of periods) {
       const pSummary = getPeriodSummary(period.id);
       const pIncome = (pSummary?.operatingIncome
         ? pSummary.operatingIncome.broker_pnl + pSummary.operatingIncome.other
         : 0) + (pSummary?.propFirmNetIncome || 0);
-      const pSaldo = saldoChain.get(period.id);
-      const pApplies = isPeriodAfterSaldoStart(period.id);
-      const pRaw = pApplies && pSaldo ? pSaldo.totalDistribuir : pIncome;
-      const reserveAmount = pRaw > 0 ? pRaw * RESERVE_PCT : 0;
-      accumulated += reserveAmount;
-      result.set(period.id, { reserveThisPeriod: reserveAmount, accumulatedReserve: accumulated });
+      const pExpenses = pSummary?.totalExpenses || 0;
+      const pSaldo = pIncome - pExpenses;
+      accumulated += pSaldo > 0 ? pSaldo * RESERVE_PCT : 0;
+      if (period.id === currentPeriodId) break;
     }
-    return result;
-  }, [saldoChain, periods, getPeriodSummary, isPeriodAfterSaldoStart]);
+    return accumulated;
+  }, [periods, getPeriodSummary, currentPeriodId]);
 
-  const currentReserve = currentPeriodId ? reserveData.get(currentPeriodId) : null;
-  const reserveThisPeriod = currentReserve?.reserveThisPeriod || 0;
-  const accumulatedReserve = currentReserve?.accumulatedReserve || 0;
-
-  // After reserve, the distributable amount is the remaining 90%
-  const totalToDistribute = rawTotalToDistribute > 0
-    ? rawTotalToDistribute - reserveThisPeriod
-    : rawTotalToDistribute;
+  // Monto a Distribuir = Saldo a Favor - Respaldo (90%)
+  const totalToDistribute = saldoAFavor > 0
+    ? saldoAFavor - reserveThisPeriod
+    : saldoAFavor;
 
   const distributions = mode === 'consolidated'
     ? (() => {
@@ -79,8 +71,8 @@ export default function SociosPage() {
       })()
     : partnerDistributions.filter(d => d.period_id === selectedPeriodId);
 
-  // For open periods with saldo logic, recalculate amounts based on totalToDistribute
-  const effectiveDistributions = appliesSaldo && mode === 'single'
+  // Recalculate distribution amounts based on totalToDistribute
+  const effectiveDistributions = mode === 'single'
     ? distributions.map(d => ({
         ...d,
         amount: totalToDistribute * d.percentage,
@@ -128,7 +120,8 @@ export default function SociosPage() {
       )}
 
       {/* Summary cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+      {/* Row 1: Ingresos, Egresos, Saldo a Favor */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
@@ -141,39 +134,33 @@ export default function SociosPage() {
           </p>
         </Card>
 
-        {appliesSaldo && (
-          <>
-            <Card>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
-                  <TrendingDown className="w-5 h-5 text-red-500" />
-                </div>
-                <p className="text-sm text-muted-foreground">{t('partners.egresosNetos')}</p>
-              </div>
-              <p className="text-2xl font-bold text-red-600">
-                {formatCurrency(egresosNetos)}
-              </p>
-            </Card>
+        <Card>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
+              <TrendingDown className="w-5 h-5 text-red-500" />
+            </div>
+            <p className="text-sm text-muted-foreground">{t('partners.egresosNetos')}</p>
+          </div>
+          <p className="text-2xl font-bold text-red-600">
+            {formatCurrency(egresosNetos)}
+          </p>
+        </Card>
 
-            <Card>
-              <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
-                  <Wallet className="w-5 h-5 text-amber-500" />
-                </div>
-                <p className="text-sm text-muted-foreground">{t('partners.saldoFavor')}</p>
-              </div>
-              <p className="text-2xl font-bold">{formatCurrency(saldoInfo?.saldoNuevo || 0)}</p>
-              {saldoInfo && saldoInfo.saldoUsado > 0 && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  {t('partners.saldoUsed', { used: formatCurrency(saldoInfo.saldoUsado), total: formatCurrency(saldoInfo.saldoAnterior) })}
-                </p>
-              )}
-            </Card>
-          </>
-        )}
+        <Card>
+          <div className="flex items-center gap-3 mb-2">
+            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
+              <Wallet className="w-5 h-5 text-amber-500" />
+            </div>
+            <p className="text-sm text-muted-foreground">{t('partners.saldoFavor')}</p>
+          </div>
+          <p className={`text-2xl font-bold ${saldoAFavor >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+            {formatCurrency(saldoAFavor)}
+          </p>
+          <p className="text-xs text-muted-foreground mt-1">Ingresos Netos − Egresos Netos</p>
+        </Card>
       </div>
 
-      {/* Respaldo Financiero + Distributable */}
+      {/* Row 2: Respaldo, Respaldo Acumulado, Monto a Distribuir */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <div className="flex items-center gap-3 mb-2">
@@ -183,7 +170,7 @@ export default function SociosPage() {
             <p className="text-sm text-muted-foreground">{t('partners.reserveThisPeriod')}</p>
           </div>
           <p className="text-2xl font-bold text-orange-600">{formatCurrency(reserveThisPeriod)}</p>
-          <p className="text-xs text-muted-foreground mt-1">10% del total a distribuir</p>
+          <p className="text-xs text-muted-foreground mt-1">10% del Saldo a Favor</p>
         </Card>
 
         <Card>
@@ -207,7 +194,7 @@ export default function SociosPage() {
           <p className={`text-2xl font-bold ${totalToDistribute >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
             {formatCurrency(totalToDistribute)}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">90% restante entre socios</p>
+          <p className="text-xs text-muted-foreground mt-1">90% del Saldo a Favor</p>
         </Card>
       </div>
 
@@ -301,25 +288,16 @@ export default function SociosPage() {
                 <tbody>
                   {periods.map((period) => {
                     const dists = partnerDistributions.filter(d => d.period_id === period.id);
-                    const sInfo = saldoChain.get(period.id);
-                    const hasSaldo = isPeriodAfterSaldoStart(period.id);
+                    const pSum = getPeriodSummary(period.id);
+                    const pIncome = (pSum?.operatingIncome
+                      ? pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other
+                      : 0) + (pSum?.propFirmNetIncome || 0);
+                    const pExpenses = pSum?.totalExpenses || 0;
+                    const pSaldo = pIncome - pExpenses;
+                    const pReserve = pSaldo > 0 ? pSaldo * RESERVE_PCT : 0;
+                    const pDistributable = pSaldo > 0 ? pSaldo - pReserve : pSaldo;
 
-                    // Apply reserve before distribution
-                    const pReserve = reserveData.get(period.id);
-                    const pReserveAmt = pReserve?.reserveThisPeriod || 0;
-                    const pRawDist = hasSaldo && sInfo ? sInfo.totalDistribuir : ((): number => {
-                      const pSum = getPeriodSummary(period.id);
-                      const pInc = (pSum?.operatingIncome
-                        ? pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other
-                        : 0) + (pSum?.propFirmNetIncome || 0);
-                      return pInc;
-                    })();
-                    const pDistributable = pRawDist > 0 ? pRawDist - pReserveAmt : pRawDist;
-
-                    // For periods with saldo logic, recalculate
-                    const effectiveDists = hasSaldo && sInfo
-                      ? dists.map(d => ({ ...d, amount: pDistributable * d.percentage }))
-                      : dists.map(d => ({ ...d, amount: pDistributable * d.percentage }));
+                    const effectiveDists = dists.map(d => ({ ...d, amount: pDistributable * d.percentage }));
                     const total = effectiveDists.reduce((s, d) => s + d.amount, 0);
 
                     return (
