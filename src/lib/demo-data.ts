@@ -332,11 +332,11 @@ export const DEMO_PREOPERATIVE: PreoperativeExpense[] = [
 // OPERATING INCOME
 // ============================================================
 export const DEMO_OPERATING_INCOME: OperatingIncome[] = [
-  { id: 'oi1', period_id: 'p-oct-25', company_id: 'vexpro-001', prop_firm: 4295.04, broker_pnl: -3699, other: 0 },
-  { id: 'oi2', period_id: 'p-nov-25', company_id: 'vexpro-001', prop_firm: 11945.7, broker_pnl: 60251, other: 0 },
-  { id: 'oi3', period_id: 'p-dic-25', company_id: 'vexpro-001', prop_firm: 4292.8, broker_pnl: 135424.5, other: 0 },
-  { id: 'oi4', period_id: 'p-jan-26', company_id: 'vexpro-001', prop_firm: 16778, broker_pnl: 0, other: 0 },
-  { id: 'oi5', period_id: 'p-feb-26', company_id: 'vexpro-001', prop_firm: 51409.65, broker_pnl: 0, other: 0 },
+  { id: 'oi1', period_id: 'p-oct-25', company_id: 'vexpro-001', prop_firm: 0, broker_pnl: -3699, other: 0 },
+  { id: 'oi2', period_id: 'p-nov-25', company_id: 'vexpro-001', prop_firm: 0, broker_pnl: 60251, other: 0 },
+  { id: 'oi3', period_id: 'p-dic-25', company_id: 'vexpro-001', prop_firm: 0, broker_pnl: 135424.5, other: 0 },
+  { id: 'oi4', period_id: 'p-jan-26', company_id: 'vexpro-001', prop_firm: 0, broker_pnl: 0, other: 0 },
+  { id: 'oi5', period_id: 'p-feb-26', company_id: 'vexpro-001', prop_firm: 0, broker_pnl: 0, other: 0 },
   { id: 'oi6', period_id: 'p-mar-26', company_id: 'vexpro-001', prop_firm: 0, broker_pnl: 0, other: 0 },
   { id: 'oi7', period_id: 'p-apr-26', company_id: 'vexpro-001', prop_firm: 0, broker_pnl: 0, other: 0 },
 ];
@@ -496,7 +496,11 @@ export function computeSaldoChain(): Map<string, SaldoInfo> {
     const fs = DEMO_FINANCIAL_STATUS.find(f => f.period_id === period.id);
     const oi = DEMO_OPERATING_INCOME.find(o => o.period_id === period.id);
     const netoMes = fs?.net_total || 0;
-    const ingresosNetos = oi ? oi.prop_firm + oi.broker_pnl + oi.other : 0;
+    // Prop Firm net income = sales - withdrawals (same logic as data-context)
+    const pfs = DEMO_PROP_FIRM_SALES.find(p => p.period_id === period.id)?.amount || 0;
+    const pfW = DEMO_WITHDRAWALS.find(w => w.period_id === period.id && w.category === 'prop_firm')?.amount || 0;
+    const propFirmNet = pfs - pfW;
+    const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
 
     const saldoAnterior = saldoAcumulado;
     let saldoUsado = 0;
@@ -589,22 +593,6 @@ function getPersistedExpenses(periodId: string): Expense[] {
 }
 
 function getPersistedOperatingIncome(periodId: string): OperatingIncome | null {
-  if (typeof window === 'undefined') return DEMO_OPERATING_INCOME.find(oi => oi.period_id === periodId) || null;
-  const key = `fd_data_income_${periodId}`;
-  try {
-    const stored = localStorage.getItem(key);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      return {
-        id: `oi-${periodId}`,
-        period_id: periodId,
-        company_id: 'vexpro-001',
-        prop_firm: parsed.prop_firm || 0,
-        broker_pnl: parsed.broker_pnl || 0,
-        other: parsed.other || 0,
-      };
-    }
-  } catch { /* fall through */ }
   return DEMO_OPERATING_INCOME.find(oi => oi.period_id === periodId) || null;
 }
 
