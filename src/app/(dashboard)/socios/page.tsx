@@ -59,30 +59,100 @@ export default function SociosPage() {
   // Saldo a Favor = Ingresos Netos - Egresos Netos
   const saldoAFavor = ingresosNetos - egresosNetos;
 
-  // Respaldo = reserve_pct del saldo a favor (solo si positivo)
-  const reserveThisPeriod = saldoAFavor > 0 ? saldoAFavor * RESERVE_PCT : 0;
+  // ─── Chain calculation: reserve, debt carry, distribution per period ───
+  interface PeriodChain {
+    ingresosNetos: number;
+    egresosNetos: number;
+    saldoAFavor: number;
+    deudaArrastradaEntrada: number; // debt coming IN from previous month
+    reserveThisPeriod: number;
+    reserveAccumulated: number;
+    deudaArrastradaSalida: number;  // debt going OUT to next month
+    montoDistribuir: number;        // actual amount to distribute to partners
+  }
 
-  // Compute accumulated reserve across all periods
-  const accumulatedReserve = useMemo(() => {
-    let accumulated = 0;
+  const periodChain = useMemo(() => {
+    const chain = new Map<string, PeriodChain>();
+    let accReserve = 0;
+    let carryDebt = 0; // positive number representing outstanding debt
+
     for (const period of periods) {
-      const pSummary = getPeriodSummary(period.id);
-      const pIncome = (pSummary?.operatingIncome
-        ? pSummary.operatingIncome.broker_pnl + pSummary.operatingIncome.other
-        : 0) + (pSummary?.propFirmNetIncome || 0);
-      const pExpenses = pSummary?.totalExpenses || 0;
+      const pSum = getPeriodSummary(period.id);
+      const pIncome = (pSum?.operatingIncome
+        ? pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other
+        : 0) + (pSum?.propFirmNetIncome || 0);
+      const pExpenses = pSum?.totalExpenses || 0;
       const pSaldo = pIncome - pExpenses;
       const pReservePct = period.reserve_pct ?? 0.10;
-      accumulated += pSaldo > 0 ? pSaldo * pReservePct : 0;
-      if (period.id === (mode === 'single' ? selectedPeriodId : null)) break;
-    }
-    return accumulated;
-  }, [periods, getPeriodSummary, mode, selectedPeriodId]);
 
-  // Monto a Distribuir = Saldo a Favor - Respaldo
-  const totalToDistribute = saldoAFavor > 0
-    ? saldoAFavor - reserveThisPeriod
-    : saldoAFavor;
+      const debtIn = carryDebt;
+
+      if (pSaldo <= 0) {
+        // Negative month: no reserve, reserve absorbs loss
+        const loss = Math.abs(pSaldo);
+        const totalLoss = loss + carryDebt;
+
+        if (accReserve >= totalLoss) {
+          // Reserve covers everything
+          accReserve -= totalLoss;
+          carryDebt = 0;
+        } else {
+          // Reserve doesn't cover all — remainder becomes carried debt
+          carryDebt = totalLoss - accReserve;
+          accReserve = 0;
+        }
+
+        chain.set(period.id, {
+          ingresosNetos: pIncome,
+          egresosNetos: pExpenses,
+          saldoAFavor: pSaldo,
+          deudaArrastradaEntrada: debtIn,
+          reserveThisPeriod: 0,
+          reserveAccumulated: accReserve,
+          deudaArrastradaSalida: carryDebt,
+          montoDistribuir: 0, // no distribution in negative months
+        });
+      } else {
+        // Positive month: first cover any carried debt
+        let available = pSaldo;
+
+        if (carryDebt > 0) {
+          if (available >= carryDebt) {
+            available -= carryDebt;
+            carryDebt = 0;
+          } else {
+            carryDebt -= available;
+            available = 0;
+          }
+        }
+
+        // From the remaining, calculate reserve and distribution
+        const reserve = available > 0 ? available * pReservePct : 0;
+        accReserve += reserve;
+        const distributable = available > 0 ? available - reserve : 0;
+
+        chain.set(period.id, {
+          ingresosNetos: pIncome,
+          egresosNetos: pExpenses,
+          saldoAFavor: pSaldo,
+          deudaArrastradaEntrada: debtIn,
+          reserveThisPeriod: reserve,
+          reserveAccumulated: accReserve,
+          deudaArrastradaSalida: carryDebt,
+          montoDistribuir: distributable,
+        });
+      }
+    }
+
+    return chain;
+  }, [periods, getPeriodSummary]);
+
+  // Get current period's chain data
+  const currentChain = mode === 'single' ? periodChain.get(selectedPeriodId) : null;
+  const reserveThisPeriod = currentChain?.reserveThisPeriod ?? 0;
+  const accumulatedReserve = currentChain?.reserveAccumulated ?? 0;
+  const carryDebt = currentChain?.deudaArrastradaEntrada ?? 0;
+  const totalToDistribute = currentChain?.montoDistribuir ?? 0;
 
   const distributions = mode === 'consolidated'
     ? (() => {
@@ -100,11 +170,11 @@ export default function SociosPage() {
       })()
     : partnerDistributions.filter(d => d.period_id === selectedPeriodId);
 
-  // Recalculate distribution amounts based on totalToDistribute
+  // Recalculate distribution amounts — no distribution in negative/debt months
   const effectiveDistributions = mode === 'single'
     ? distributions.map(d => ({
         ...d,
-        amount: totalToDistribute * d.percentage,
+        amount: totalToDistribute > 0 ? totalToDistribute * d.percentage : 0,
       }))
     : distributions;
 
@@ -322,8 +392,8 @@ export default function SociosPage() {
         </Card>
       </div>
 
-      {/* Row 2: Respaldo, Respaldo Acumulado, Monto a Distribuir */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* Row 2: Respaldo, Respaldo Acumulado, Deuda Arrastrada (if any) */}
+      <div className={`grid grid-cols-1 gap-4 ${carryDebt > 0 ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
         <Card>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-3">
@@ -343,7 +413,11 @@ export default function SociosPage() {
             )}
           </div>
           <p className="text-2xl font-bold text-orange-600">{formatCurrency(reserveThisPeriod)}</p>
-          <p className="text-xs text-muted-foreground mt-1">{(RESERVE_PCT * 100).toFixed(1)}% del Saldo a Favor</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {reserveThisPeriod > 0
+              ? `${(RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
+              : saldoAFavor <= 0 ? 'Mes negativo — sin respaldo' : 'Cubriendo deuda arrastrada'}
+          </p>
         </Card>
 
         <Card>
@@ -354,8 +428,21 @@ export default function SociosPage() {
             <p className="text-sm text-muted-foreground">{t('partners.reserveAccumulated')}</p>
           </div>
           <p className="text-2xl font-bold text-amber-600">{formatCurrency(accumulatedReserve)}</p>
-          <p className="text-xs text-muted-foreground mt-1">Acumulado historico</p>
+          <p className="text-xs text-muted-foreground mt-1">Fondo acumulado hasta este período</p>
         </Card>
+
+        {carryDebt > 0 && (
+          <Card>
+            <div className="flex items-center gap-3 mb-2">
+              <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
+                <AlertTriangle className="w-5 h-5 text-red-500" />
+              </div>
+              <p className="text-sm text-muted-foreground">Deuda Arrastrada</p>
+            </div>
+            <p className="text-2xl font-bold text-red-600">{formatCurrency(-carryDebt)}</p>
+            <p className="text-xs text-muted-foreground mt-1">Se descuenta antes de distribuir</p>
+          </Card>
+        )}
 
         <Card>
           <div className="flex items-center gap-3 mb-2">
@@ -364,10 +451,14 @@ export default function SociosPage() {
             </div>
             <p className="text-sm text-muted-foreground">{t('partners.distributableAmount')}</p>
           </div>
-          <p className={`text-2xl font-bold ${totalToDistribute >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+          <p className={`text-2xl font-bold ${totalToDistribute > 0 ? 'text-emerald-600' : 'text-muted-foreground'}`}>
             {formatCurrency(totalToDistribute)}
           </p>
-          <p className="text-xs text-muted-foreground mt-1">{(100 - RESERVE_PCT * 100).toFixed(1)}% del Saldo a Favor</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            {totalToDistribute > 0
+              ? `${(100 - RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
+              : 'Sin distribución este período'}
+          </p>
         </Card>
       </div>
 
@@ -542,31 +633,34 @@ export default function SociosPage() {
                 <tbody>
                   {periods.map((period) => {
                     const dists = partnerDistributions.filter(d => d.period_id === period.id);
-                    const pSum = getPeriodSummary(period.id);
-                    const pIncome = (pSum?.operatingIncome
-                      ? pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other
-                      : 0) + (pSum?.propFirmNetIncome || 0);
-                    const pExpenses = pSum?.totalExpenses || 0;
-                    const pSaldo = pIncome - pExpenses;
-                    const pReservePct = period.reserve_pct ?? 0.10;
-                    const pReserve = pSaldo > 0 ? pSaldo * pReservePct : 0;
-                    const pDistributable = pSaldo > 0 ? pSaldo - pReserve : pSaldo;
+                    const pChain = periodChain.get(period.id);
+                    const pDistributable = pChain?.montoDistribuir ?? 0;
 
-                    const effectiveDists = dists.map(d => ({ ...d, amount: pDistributable * d.percentage }));
+                    const effectiveDists = dists.map(d => ({
+                      ...d,
+                      amount: pDistributable > 0 ? pDistributable * d.percentage : 0,
+                    }));
                     const total = effectiveDists.reduce((s, d) => s + d.amount, 0);
 
                     return (
                       <tr key={period.id} className={`border-b border-border/30 ${period.id === selectedPeriodId ? 'bg-blue-50 dark:bg-blue-950/50' : ''}`}>
-                        <td className="py-1.5 px-2 font-medium">{period.label}</td>
+                        <td className="py-1.5 px-2 font-medium">
+                          <div className="flex items-center gap-1">
+                            {period.label}
+                            {(pChain?.deudaArrastradaEntrada ?? 0) > 0 && (
+                              <span className="text-red-500" title={`Deuda: ${formatCurrency(-(pChain?.deudaArrastradaEntrada ?? 0))}`}>*</span>
+                            )}
+                          </div>
+                        </td>
                         {partners.map(p => {
                           const d = effectiveDists.find(dd => dd.partner_id === p.id);
                           return (
-                            <td key={p.id} className={`py-1.5 px-2 text-right ${(d?.amount || 0) < 0 ? 'text-red-600' : ''}`}>
+                            <td key={p.id} className="py-1.5 px-2 text-right">
                               {formatCurrency(d?.amount || 0)}
                             </td>
                           );
                         })}
-                        <td className={`py-1.5 px-2 text-right font-bold ${total < 0 ? 'text-red-600' : ''}`}>
+                        <td className="py-1.5 px-2 text-right font-bold">
                           {formatCurrency(total)}
                         </td>
                       </tr>
