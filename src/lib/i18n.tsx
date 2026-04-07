@@ -10,7 +10,9 @@ type TranslationDict = Record<string, string>;
 const translations: Record<Locale, TranslationDict> = {
   en: {
     // Navigation
+    'nav.dashboard': 'Dashboard',
     'nav.summary': 'Summary',
+    'nav.finance': 'Finance',
     'nav.movements': 'Movements',
     'nav.expenses': 'Expenses',
     'nav.liquidity': 'Liquidity',
@@ -19,6 +21,7 @@ const translations: Record<Locale, TranslationDict> = {
     'nav.hr': 'Human Resources',
     'nav.upload': 'Data Upload',
     'nav.periods': 'Periods',
+    'nav.settings': 'Settings',
     'nav.users': 'Users',
     'nav.audit': 'Audit Log',
     'nav.profile': 'Profile',
@@ -526,7 +529,9 @@ const translations: Record<Locale, TranslationDict> = {
 
   es: {
     // Navigation
+    'nav.dashboard': 'Dashboard',
     'nav.summary': 'Resumen',
+    'nav.finance': 'Finanzas',
     'nav.movements': 'Movimientos',
     'nav.expenses': 'Egresos',
     'nav.liquidity': 'Liquidez',
@@ -535,6 +540,7 @@ const translations: Record<Locale, TranslationDict> = {
     'nav.hr': 'Recursos Humanos',
     'nav.upload': 'Carga de Datos',
     'nav.periods': 'Períodos',
+    'nav.settings': 'Configuraciones',
     'nav.users': 'Usuarios',
     'nav.audit': 'Auditoría',
     'nav.profile': 'Perfil',
