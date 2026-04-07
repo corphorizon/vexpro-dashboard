@@ -292,9 +292,6 @@ export default function SociosPage() {
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left py-1.5 px-2">{t('partners.period')}</th>
-                    <th className="text-right py-1.5 px-2">{t('partners.egresosNetos')}</th>
-                    <th className="text-right py-1.5 px-2">{t('partners.saldoFavor')}</th>
-                    <th className="text-right py-1.5 px-2 text-orange-600">Respaldo</th>
                     {partners.map(p => (
                       <th key={p.id} className="text-right py-1.5 px-2">{p.name}</th>
                     ))}
@@ -328,15 +325,6 @@ export default function SociosPage() {
                     return (
                       <tr key={period.id} className={`border-b border-border/30 ${period.id === selectedPeriodId ? 'bg-blue-50 dark:bg-blue-950/50' : ''}`}>
                         <td className="py-1.5 px-2 font-medium">{period.label}</td>
-                        <td className="py-1.5 px-2 text-right text-red-600">
-                          {hasSaldo ? formatCurrency(sInfo?.egresosNetos || 0) : '-'}
-                        </td>
-                        <td className="py-1.5 px-2 text-right">
-                          {hasSaldo ? formatCurrency(sInfo?.saldoNuevo || 0) : '-'}
-                        </td>
-                        <td className="py-1.5 px-2 text-right text-orange-600">
-                          {formatCurrency(pReserveAmt)}
-                        </td>
                         {partners.map(p => {
                           const d = effectiveDists.find(dd => dd.partner_id === p.id);
                           return (
