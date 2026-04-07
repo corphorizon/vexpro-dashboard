@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import type { Period } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
+import { updatePeriodStatus } from '@/lib/supabase/mutations';
 import { Calendar, Lock, Unlock, Clock, Check } from 'lucide-react';
 
 type PeriodStatus = 'closed' | 'open' | 'in_progress';
@@ -43,36 +44,40 @@ const STATUS_DESC_KEY: Record<PeriodStatus, string> = {
   in_progress: 'periods.inProgressDesc',
 };
 
-function getInitialStatus(p: Period): PeriodStatus {
-  // Current month (April 2026)
+function getStatusFromPeriod(p: Period): PeriodStatus {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
   if (p.year === currentYear && p.month === currentMonth) return 'in_progress';
   if (p.is_closed) return 'closed';
-  // Past months that aren't closed yet
-  if (p.year < currentYear || (p.year === currentYear && p.month < currentMonth)) return 'open';
   return 'open';
 }
 
 export default function PeríodosPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const { periods: dataPeriods } = useData();
+  const { periods: dataPeriods, refresh } = useData();
   const isAdmin = canEdit(user);
 
-  const [periods, setPeriods] = useState<ManagedPeriod[]>(
-    dataPeriods.map(p => ({
-      id: p.id,
-      label: p.label || '',
-      year: p.year,
-      month: p.month,
-      status: getInitialStatus(p),
-    }))
-  );
+  // Derive managed periods from data context (always in sync)
+  const [managedPeriods, setManagedPeriods] = useState<ManagedPeriod[]>([]);
+
+  // Keep local state in sync with data context
+  useEffect(() => {
+    setManagedPeriods(
+      dataPeriods.map(p => ({
+        id: p.id,
+        label: p.label || '',
+        year: p.year,
+        month: p.month,
+        status: getStatusFromPeriod(p),
+      }))
+    );
+  }, [dataPeriods]);
 
   const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
   const [successMsg, setSuccessMsg] = useState('');
+  const [updating, setUpdating] = useState<string | null>(null);
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
@@ -80,22 +85,34 @@ export default function PeríodosPage() {
   };
 
   const changeStatus = (id: string, newStatus: PeriodStatus) => {
-    const period = periods.find(p => p.id === id);
+    const period = managedPeriods.find(p => p.id === id);
     if (!period) return;
 
     const statusLabel = t(STATUS_LABEL_KEY[newStatus]);
     setConfirmAction({
       message: t('periods.changeStatusConfirm', { label: period.label, status: statusLabel }) + (newStatus === 'closed' ? t('periods.closedWarning') : ''),
-      onConfirm: () => {
-        setPeriods(prev => prev.map(p => p.id === id ? { ...p, status: newStatus } : p));
-        showSuccess(t('periods.statusChanged', { label: period.label, status: statusLabel }));
+      onConfirm: async () => {
+        setUpdating(id);
+        try {
+          const isClosed = newStatus === 'closed';
+          // Persist to Supabase
+          await updatePeriodStatus(id, isClosed);
+          // Refresh all data so every page sees the updated is_closed
+          await refresh();
+          showSuccess(t('periods.statusChanged', { label: period.label, status: statusLabel }));
+        } catch (err) {
+          console.error('Error updating period status:', err);
+          showSuccess(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+        } finally {
+          setUpdating(null);
+        }
       },
     });
   };
 
-  const closedCount = periods.filter(p => p.status === 'closed').length;
-  const openCount = periods.filter(p => p.status === 'open').length;
-  const inProgressCount = periods.filter(p => p.status === 'in_progress').length;
+  const closedCount = managedPeriods.filter(p => p.status === 'closed').length;
+  const openCount = managedPeriods.filter(p => p.status === 'open').length;
+  const inProgressCount = managedPeriods.filter(p => p.status === 'in_progress').length;
 
   return (
     <div className="space-y-6">
@@ -172,7 +189,7 @@ export default function PeríodosPage() {
             </tr>
           </thead>
           <tbody>
-            {periods.map(period => {
+            {managedPeriods.map(period => {
               const badge = STATUS_BADGE[period.status];
               const Icon = STATUS_ICON[period.status];
               const now = new Date();
@@ -180,6 +197,7 @@ export default function PeríodosPage() {
               const currentMonth = now.getMonth() + 1;
               const isCurrentMonth = period.year === currentYear && period.month === currentMonth;
               const isPastMonth = period.year < currentYear || (period.year === currentYear && period.month < currentMonth);
+              const isUpdating = updating === period.id;
 
               return (
                 <tr key={period.id} className="border-b border-border/50 hover:bg-muted/50">
@@ -197,32 +215,38 @@ export default function PeríodosPage() {
                   {isAdmin && (
                     <td className="py-3 px-3 text-center">
                       <div className="flex justify-center gap-1">
-                        {period.status === 'open' && (
-                          <button
-                            onClick={() => changeStatus(period.id, 'closed')}
-                            className="px-2.5 py-1 text-xs rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            {t('periods.close')}
-                          </button>
-                        )}
-                        {period.status === 'closed' && (
-                          <button
-                            onClick={() => changeStatus(period.id, 'open')}
-                            className="px-2.5 py-1 text-xs rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:hover:bg-emerald-900/50 transition-colors"
-                          >
-                            {t('periods.reopen')}
-                          </button>
-                        )}
-                        {period.status === 'in_progress' && isPastMonth && (
-                          <button
-                            onClick={() => changeStatus(period.id, 'closed')}
-                            className="px-2.5 py-1 text-xs rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                          >
-                            {t('periods.closeMonth')}
-                          </button>
-                        )}
-                        {period.status === 'in_progress' && isCurrentMonth && (
-                          <span className="text-xs text-muted-foreground">{t('periods.monthInProgress')}</span>
+                        {isUpdating ? (
+                          <span className="text-xs text-muted-foreground">Actualizando...</span>
+                        ) : (
+                          <>
+                            {period.status === 'open' && (
+                              <button
+                                onClick={() => changeStatus(period.id, 'closed')}
+                                className="px-2.5 py-1 text-xs rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                              >
+                                {t('periods.close')}
+                              </button>
+                            )}
+                            {period.status === 'closed' && (
+                              <button
+                                onClick={() => changeStatus(period.id, 'open')}
+                                className="px-2.5 py-1 text-xs rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:hover:bg-emerald-900/50 transition-colors"
+                              >
+                                {t('periods.reopen')}
+                              </button>
+                            )}
+                            {period.status === 'in_progress' && isPastMonth && (
+                              <button
+                                onClick={() => changeStatus(period.id, 'closed')}
+                                className="px-2.5 py-1 text-xs rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                              >
+                                {t('periods.closeMonth')}
+                              </button>
+                            )}
+                            {period.status === 'in_progress' && isCurrentMonth && (
+                              <span className="text-xs text-muted-foreground">{t('periods.monthInProgress')}</span>
+                            )}
+                          </>
                         )}
                       </div>
                     </td>

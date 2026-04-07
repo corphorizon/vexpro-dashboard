@@ -2,6 +2,20 @@ import { createClient } from './client';
 
 const supabase = createClient();
 
+// ─── Period Status ───
+
+export async function updatePeriodStatus(
+  periodId: string,
+  isClosed: boolean
+): Promise<void> {
+  const { error } = await supabase
+    .from('periods')
+    .update({ is_closed: isClosed })
+    .eq('id', periodId);
+
+  if (error) throw new Error(`Error actualizando estado del período: ${error.message}`);
+}
+
 // ─── Deposits (delete + reinsert for the period) ───
 
 export async function upsertDeposits(
