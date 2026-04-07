@@ -24,13 +24,13 @@ export const DEMO_COMPANY: Company = {
 // PERIODS
 // ============================================================
 export const DEMO_PERIODS: Period[] = [
-  { id: 'p-oct-25', company_id: 'vexpro-001', year: 2025, month: 10, label: 'Oct 25', is_closed: true },
-  { id: 'p-nov-25', company_id: 'vexpro-001', year: 2025, month: 11, label: 'Nov 25', is_closed: true },
-  { id: 'p-dic-25', company_id: 'vexpro-001', year: 2025, month: 12, label: 'Dic 25', is_closed: true },
-  { id: 'p-jan-26', company_id: 'vexpro-001', year: 2026, month: 1, label: 'Ene 26', is_closed: true },
-  { id: 'p-feb-26', company_id: 'vexpro-001', year: 2026, month: 2, label: 'Feb 26', is_closed: true },
-  { id: 'p-mar-26', company_id: 'vexpro-001', year: 2026, month: 3, label: 'Mar 26', is_closed: false },
-  { id: 'p-apr-26', company_id: 'vexpro-001', year: 2026, month: 4, label: 'Abr 26', is_closed: false },
+  { id: 'p-oct-25', company_id: 'vexpro-001', year: 2025, month: 10, label: 'Oct 25', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-nov-25', company_id: 'vexpro-001', year: 2025, month: 11, label: 'Nov 25', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-dic-25', company_id: 'vexpro-001', year: 2025, month: 12, label: 'Dic 25', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-jan-26', company_id: 'vexpro-001', year: 2026, month: 1, label: 'Ene 26', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-feb-26', company_id: 'vexpro-001', year: 2026, month: 2, label: 'Feb 26', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-mar-26', company_id: 'vexpro-001', year: 2026, month: 3, label: 'Mar 26', is_closed: false, reserve_pct: 0.10 },
+  { id: 'p-apr-26', company_id: 'vexpro-001', year: 2026, month: 4, label: 'Abr 26', is_closed: false, reserve_pct: 0.10 },
 ];
 
 // ============================================================
@@ -468,12 +468,12 @@ export const DEMO_INVESTMENTS: Investment[] = [
 ];
 
 // ============================================================
-// SALDO A FAVOR: Chain computation from March 2026 onwards
+// SALDO A FAVOR: Chain computation for all periods
 // ============================================================
-const SALDO_START_PERIOD = 'p-mar-26';
+const SALDO_START_PERIOD = 'p-oct-25';
 
 export interface SaldoInfo {
-  netoMes: number;
+  egresosNetos: number;
   saldoAnterior: number;
   saldoUsado: number;
   saldoNuevo: number;
@@ -493,21 +493,22 @@ export function computeSaldoChain(): Map<string, SaldoInfo> {
   for (const period of DEMO_PERIODS) {
     if (!isPeriodAfterSaldoStart(period.id)) continue;
 
-    const fs = DEMO_FINANCIAL_STATUS.find(f => f.period_id === period.id);
     const oi = DEMO_OPERATING_INCOME.find(o => o.period_id === period.id);
-    const netoMes = fs?.net_total || 0;
-    // Prop Firm net income = sales - withdrawals (same logic as data-context)
+    const egresosNetos = DEMO_EXPENSES.filter(e => e.period_id === period.id).reduce((s, e) => s + e.amount, 0);
+    // Prop Firm net income = sales - withdrawals
     const pfs = DEMO_PROP_FIRM_SALES.find(p => p.period_id === period.id)?.amount || 0;
     const pfW = DEMO_WITHDRAWALS.find(w => w.period_id === period.id && w.category === 'prop_firm')?.amount || 0;
     const propFirmNet = pfs - pfW;
     const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
 
+    const netBalance = ingresosNetos - egresosNetos;
+
     const saldoAnterior = saldoAcumulado;
     let saldoUsado = 0;
     let totalDistribuir = ingresosNetos;
 
-    if (netoMes < 0) {
-      const deficit = Math.abs(netoMes);
+    if (netBalance < 0) {
+      const deficit = Math.abs(netBalance);
       if (saldoAnterior >= deficit) {
         saldoUsado = deficit;
       } else {
@@ -516,11 +517,11 @@ export function computeSaldoChain(): Map<string, SaldoInfo> {
         totalDistribuir = ingresosNetos - remaining;
       }
       saldoAcumulado = saldoAnterior - saldoUsado;
-    } else if (netoMes > 0) {
-      saldoAcumulado = saldoAnterior + netoMes;
+    } else if (netBalance > 0) {
+      saldoAcumulado = saldoAnterior + netBalance;
     }
 
-    chain.set(period.id, { netoMes, saldoAnterior, saldoUsado, saldoNuevo: saldoAcumulado, totalDistribuir });
+    chain.set(period.id, { egresosNetos, saldoAnterior, saldoUsado, saldoNuevo: saldoAcumulado, totalDistribuir });
   }
 
   return chain;
@@ -744,6 +745,7 @@ export function getConsolidatedSummary(periodIds: string[]): PeriodSummary | nul
     month: lastPeriod.month,
     label: `${firstPeriod.label} — ${lastPeriod.label}`,
     is_closed: false,
+    reserve_pct: 0.10,
   };
 
   return {

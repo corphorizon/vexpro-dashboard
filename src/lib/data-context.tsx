@@ -54,7 +54,7 @@ import {
 // ─── Saldo Info (replicated from demo-data.ts) ───
 
 export interface SaldoInfo {
-  netoMes: number;
+  egresosNetos: number;
   saldoAnterior: number;
   saldoUsado: number;
   saldoNuevo: number;
@@ -223,8 +223,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // ─── Saldo start period: March 2026 (year=2026, month=3) ───
 
+  // Saldo chain applies from the first period onwards (all periods)
   const saldoStartIndex = useMemo(() => {
-    return periods.findIndex(p => p.year === 2026 && p.month === 3);
+    return periods.length > 0 ? 0 : -1;
   }, [periods]);
 
   const isPeriodAfterSaldoStart = useCallback(
@@ -242,33 +243,39 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const chain = new Map<string, SaldoInfo>();
     let saldoAcumulado = 0;
 
-    // Pre-index for O(1) lookups instead of O(n) find() per period
-    const fsIndex = new Map(financialStatus.map(f => [f.period_id, f]));
+    // Pre-index for O(1) lookups
     const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
     const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p]));
     const pfwIndex = new Map<string, number>();
     for (const w of withdrawals) {
       if (w.category === 'prop_firm') pfwIndex.set(w.period_id, w.amount);
     }
+    // Pre-index expenses totals per period
+    const expIndex = new Map<string, number>();
+    for (const e of expenses) {
+      expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + e.amount);
+    }
 
     for (const period of periods) {
       if (!isPeriodAfterSaldoStart(period.id)) continue;
 
-      const fs = fsIndex.get(period.id);
       const oi = oiIndex.get(period.id);
-      const netoMes = fs?.net_total || 0;
+      const egresosNetos = expIndex.get(period.id) || 0;
       // Prop Firm net income = sales - withdrawals
       const pfs = pfsIndex.get(period.id)?.amount || 0;
       const pfW = pfwIndex.get(period.id) || 0;
       const propFirmNet = pfs - pfW;
       const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
 
+      // Net balance: income minus expenses
+      const netBalance = ingresosNetos - egresosNetos;
+
       const saldoAnterior = saldoAcumulado;
       let saldoUsado = 0;
       let totalDistribuir = ingresosNetos;
 
-      if (netoMes < 0) {
-        const deficit = Math.abs(netoMes);
+      if (netBalance < 0) {
+        const deficit = Math.abs(netBalance);
         if (saldoAnterior >= deficit) {
           saldoUsado = deficit;
         } else {
@@ -277,12 +284,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
           totalDistribuir = ingresosNetos - remaining;
         }
         saldoAcumulado = saldoAnterior - saldoUsado;
-      } else if (netoMes > 0) {
-        saldoAcumulado = saldoAnterior + netoMes;
+      } else if (netBalance > 0) {
+        saldoAcumulado = saldoAnterior + netBalance;
       }
 
       chain.set(period.id, {
-        netoMes,
+        egresosNetos,
         saldoAnterior,
         saldoUsado,
         saldoNuevo: saldoAcumulado,
@@ -291,7 +298,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     return chain;
-  }, [periods, financialStatus, operatingIncome, propFirmSales, withdrawals, isPeriodAfterSaldoStart]);
+  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, isPeriodAfterSaldoStart]);
 
   // ─── Period summary (single) ───
 
@@ -441,6 +448,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         month: lastPeriod.month,
         label: `${firstPeriod.label} — ${lastPeriod.label}`,
         is_closed: false,
+        reserve_pct: 0.10,
       };
 
       return {

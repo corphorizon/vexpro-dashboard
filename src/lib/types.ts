@@ -17,6 +17,7 @@ export interface Period {
   month: number;
   label: string | null;
   is_closed: boolean;
+  reserve_pct: number;
 }
 
 export interface Deposit {
