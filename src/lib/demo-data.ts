@@ -468,9 +468,9 @@ export const DEMO_INVESTMENTS: Investment[] = [
 ];
 
 // ============================================================
-// SALDO A FAVOR: Chain computation from March 2026 onwards
+// SALDO A FAVOR: Chain computation for all periods
 // ============================================================
-const SALDO_START_PERIOD = 'p-mar-26';
+const SALDO_START_PERIOD = 'p-oct-25';
 
 export interface SaldoInfo {
   netoMes: number;

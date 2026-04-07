@@ -223,8 +223,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // ─── Saldo start period: March 2026 (year=2026, month=3) ───
 
+  // Saldo chain applies from the first period onwards (all periods)
   const saldoStartIndex = useMemo(() => {
-    return periods.findIndex(p => p.year === 2026 && p.month === 3);
+    return periods.length > 0 ? 0 : -1;
   }, [periods]);
 
   const isPeriodAfterSaldoStart = useCallback(
