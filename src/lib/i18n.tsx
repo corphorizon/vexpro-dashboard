@@ -267,6 +267,9 @@ const translations: Record<Locale, TranslationDict> = {
     'partners.reserveApplyAll': 'Apply to all periods',
     'partners.reserveUpdated': 'Reserve percentage updated',
     'partners.manage': 'Manage Partners',
+    'partners.carryDebt': 'Carried Debt',
+    'partners.carryDebtDesc': 'Deducted before distributing',
+    'partners.noDistribution': 'No distribution this period',
 
     // Audit extras
     'audit.exportCsv': 'Export CSV',
@@ -803,6 +806,9 @@ const translations: Record<Locale, TranslationDict> = {
     'partners.reserveApplyAll': 'Aplicar a todos los períodos',
     'partners.reserveUpdated': 'Porcentaje de respaldo actualizado',
     'partners.manage': 'Gestionar Socios',
+    'partners.carryDebt': 'Deuda Arrastrada',
+    'partners.carryDebtDesc': 'Se descuenta antes de distribuir',
+    'partners.noDistribution': 'Sin distribución este período',
 
     // Audit extras
     'audit.exportCsv': 'Exportar CSV',
