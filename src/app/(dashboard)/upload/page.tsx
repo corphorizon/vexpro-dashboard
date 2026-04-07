@@ -22,6 +22,8 @@ import {
   insertInvestment,
   updateInvestment,
   deleteInvestment as deleteInvMutation,
+  upsertPropFirmSales,
+  upsertP2PTransfers,
 } from '@/lib/supabase/mutations';
 
 type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones' | 'documentos';
@@ -91,7 +93,7 @@ function saveToStorage<T>(key: string, value: T) {
 export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const { periods, allDeposits, allWithdrawals, allExpenses, allOperatingIncome, getLiquidityData, getInvestmentsData, company, refresh } = useData();
+  const { periods, allDeposits, allWithdrawals, allExpenses, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh } = useData();
   const isAdmin = user?.role === 'admin';
   const userCanAdd = canAdd(user);
   const userCanEdit = canEdit(user);
@@ -141,6 +143,8 @@ export default function UploadPage() {
   const [withdrawals, setWithdrawalsRaw] = useState<WithdrawalRow[]>(() => loadWithdrawalsForPeriod(lastPeriodId));
   const [expenses, setExpensesRaw] = useState<ExpenseRow[]>(() => loadExpensesForPeriod(lastPeriodId));
   const [income, setIncomeRaw] = useState<IncomeRow>(() => loadIncomeForPeriod(lastPeriodId));
+  const [propFirmAmount, setPropFirmAmount] = useState<number>(() => allPropFirmSales.find(p => p.period_id === lastPeriodId)?.amount || 0);
+  const [p2pAmount, setP2PAmount] = useState<number>(() => allP2PTransfers.find(p => p.period_id === lastPeriodId)?.amount || 0);
   const [docs, setDocsRaw] = useState<DocRow[]>(() => loadFromStorage(STORAGE_KEYS.docs, MOCK_DOCS));
 
   // ARCHITECTURE NOTE: We use a ref to track selectedPeriod in setDeposits/setWithdrawals/etc.
@@ -157,7 +161,9 @@ export default function UploadPage() {
     setWithdrawalsRaw(loadWithdrawalsForPeriod(selectedPeriod));
     setExpensesRaw(loadExpensesForPeriod(selectedPeriod));
     setIncomeRaw(loadIncomeForPeriod(selectedPeriod));
-  }, [selectedPeriod, loadDepositsForPeriod, loadWithdrawalsForPeriod, loadExpensesForPeriod, loadIncomeForPeriod]);
+    setPropFirmAmount(allPropFirmSales.find(p => p.period_id === selectedPeriod)?.amount || 0);
+    setP2PAmount(allP2PTransfers.find(p => p.period_id === selectedPeriod)?.amount || 0);
+  }, [selectedPeriod, loadDepositsForPeriod, loadWithdrawalsForPeriod, loadExpensesForPeriod, loadIncomeForPeriod, allPropFirmSales, allP2PTransfers]);
 
   const setDeposits = useCallback((updater: DepositRow[] | ((prev: DepositRow[]) => DepositRow[])) => {
     setDepositsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(getPerPeriodKey('deposits', selectedPeriodRef.current), next); return next; });
@@ -576,12 +582,12 @@ export default function UploadPage() {
   // Income handler
   const saveIncome = () => {
     if (!userCanAdd || !company) return;
-    askConfirmation(`Registrar ingresos operativos: Prop Firm $${income.prop_firm.toLocaleString()}, Broker $${income.broker_pnl.toLocaleString()}?`, async () => {
+    askConfirmation(`Registrar ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}?`, async () => {
       try {
         await upsertOperatingIncome(company.id, selectedPeriodRef.current, income);
         localStorage.removeItem(getPerPeriodKey('income', selectedPeriodRef.current));
         await refresh();
-        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Prop Firm $${income.prop_firm.toLocaleString()}, Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
+        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
         showSuccess(t('upload.incomeSaved'));
       } catch (err) {
         showSuccess(`Error: ${(err as Error).message}`);
@@ -598,20 +604,18 @@ export default function UploadPage() {
     try {
       if (section === 'depositos') {
         await upsertDeposits(companyId, periodId, deposits);
+        await upsertPropFirmSales(companyId, periodId, propFirmAmount);
         localStorage.removeItem(getPerPeriodKey('deposits', periodId));
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
       } else if (section === 'retiros') {
         await upsertWithdrawals(companyId, periodId, withdrawals);
+        await upsertP2PTransfers(companyId, periodId, p2pAmount);
         localStorage.removeItem(getPerPeriodKey('withdrawals', periodId));
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
       } else if (section === 'egresos') {
         await upsertExpenses(companyId, periodId, expenses);
         localStorage.removeItem(getPerPeriodKey('expenses', periodId));
         if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
-      } else if (section === 'ingresos') {
-        await upsertOperatingIncome(companyId, periodId, income);
-        localStorage.removeItem(getPerPeriodKey('income', periodId));
-        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
       }
       await refresh();
       showSuccess('Todos los datos guardados correctamente');
@@ -729,6 +733,30 @@ export default function UploadPage() {
               </tr>
             </tfoot>
           </table>
+
+          {/* Ventas Prop Firm — separate field, not summed into total */}
+          <div className="mt-4 pt-4 border-t border-border">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-sm font-medium">Ventas Prop Firm</label>
+                <p className="text-xs text-muted-foreground">No se suma al total de depósitos</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {userCanAdd ? (
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={propFirmAmount || ''}
+                    onChange={(e) => setPropFirmAmount(parseFloat(e.target.value) || 0)}
+                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                    placeholder="0.00"
+                  />
+                ) : (
+                  <span className="font-medium">{formatCurrency(propFirmAmount)}</span>
+                )}
+              </div>
+            </div>
+          </div>
         </Card>
       )}
 
@@ -784,6 +812,30 @@ export default function UploadPage() {
               </tr>
             </tfoot>
           </table>
+
+          {/* Transferencias P2P — separate field, not summed into total */}
+          <div className="mt-4 pt-4 border-t border-border">
+            <div className="flex items-center justify-between">
+              <div>
+                <label className="text-sm font-medium">Transferencias P2P</label>
+                <p className="text-xs text-muted-foreground">No se suma al total de retiros</p>
+              </div>
+              <div className="flex items-center gap-2">
+                {userCanAdd ? (
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={p2pAmount || ''}
+                    onChange={(e) => setP2PAmount(parseFloat(e.target.value) || 0)}
+                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                    placeholder="0.00"
+                  />
+                ) : (
+                  <span className="font-medium">{formatCurrency(p2pAmount)}</span>
+                )}
+              </div>
+            </div>
+          </div>
         </Card>
       )}
 
@@ -929,21 +981,7 @@ export default function UploadPage() {
         <Card>
           <h2 className="text-lg font-semibold mb-4">Ingresos Operativos — {periodLabel}</h2>
           <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="text-sm text-muted-foreground mb-1 block">Prop Firm</label>
-                {userCanAdd ? (
-                  <input
-                    type="number" step="0.01"
-                    value={income.prop_firm || ''}
-                    onChange={e => setIncome(p => ({ ...p, prop_firm: parseFloat(e.target.value) || 0 }))}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                    placeholder="0.00"
-                  />
-                ) : (
-                  <p className="text-lg font-bold">{formatCurrency(income.prop_firm)}</p>
-                )}
-              </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="text-sm text-muted-foreground mb-1 block">Broker P&L (Libro B)</label>
                 {userCanAdd ? (
@@ -976,7 +1014,7 @@ export default function UploadPage() {
             <div className="flex items-center justify-between pt-4 border-t border-border">
               <div>
                 <p className="text-sm text-muted-foreground">Total Ingresos</p>
-                <p className="text-xl font-bold">{formatCurrency(income.prop_firm + income.broker_pnl + income.other)}</p>
+                <p className="text-xl font-bold">{formatCurrency(income.broker_pnl + income.other)}</p>
               </div>
               {userCanAdd && (
                 <button
@@ -1448,7 +1486,7 @@ export default function UploadPage() {
             ))}
           </select>
         </div>
-        {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && (
+        {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && section !== 'ingresos' && (
           <button
             onClick={saveAll}
             disabled={savingAll}
