@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
@@ -14,7 +15,7 @@ import {
   Receipt,
   Droplets,
   TrendingUp,
-  Users,
+  Users as UsersIcon,
   Upload,
   Settings,
   LogOut,
@@ -25,20 +26,69 @@ import {
   Moon,
   UserCircle,
   Globe,
+  ChevronDown,
+  DollarSign,
 } from 'lucide-react';
 
-const NAV_ITEMS = [
-  { href: '/', i18nKey: 'nav.summary', icon: LayoutDashboard, module: 'summary' },
-  { href: '/movimientos', i18nKey: 'nav.movements', icon: ArrowLeftRight, module: 'movements' },
-  { href: '/egresos', i18nKey: 'nav.expenses', icon: Receipt, module: 'expenses' },
-  { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
-  { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
-  { href: '/socios', i18nKey: 'nav.partners', icon: Users, module: 'partners' },
-  { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
-  { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },
-  { href: '/rrhh', i18nKey: 'nav.hr', icon: UserCog, module: 'hr' },
-  { href: '/usuarios', i18nKey: 'nav.users', icon: Settings, module: 'users' },
-  { href: '/auditoria', i18nKey: 'nav.audit', icon: ClipboardList, module: 'audit' },
+// ─── Types ───
+
+interface NavLink {
+  href: string;
+  i18nKey: string;
+  icon: React.ComponentType<{ className?: string }>;
+  module: string;
+}
+
+interface NavSection {
+  type: 'section';
+  i18nKey: string;
+  icon: React.ComponentType<{ className?: string }>;
+  children: NavLink[];
+}
+
+interface NavItem {
+  type: 'link';
+  href: string;
+  i18nKey: string;
+  icon: React.ComponentType<{ className?: string }>;
+  module: string;
+}
+
+type NavEntry = NavItem | NavSection;
+
+const NAV_STRUCTURE: NavEntry[] = [
+  // Dashboard (standalone)
+  { type: 'link', href: '/', i18nKey: 'nav.dashboard', icon: LayoutDashboard, module: 'summary' },
+
+  // Finanzas (collapsible)
+  {
+    type: 'section',
+    i18nKey: 'nav.finance',
+    icon: DollarSign,
+    children: [
+      { href: '/movimientos', i18nKey: 'nav.movements', icon: ArrowLeftRight, module: 'movements' },
+      { href: '/egresos', i18nKey: 'nav.expenses', icon: Receipt, module: 'expenses' },
+      { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
+      { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
+      { href: '/socios', i18nKey: 'nav.partners', icon: UsersIcon, module: 'partners' },
+      { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
+      { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },
+    ],
+  },
+
+  // Recursos Humanos (standalone)
+  { type: 'link', href: '/rrhh', i18nKey: 'nav.hr', icon: UserCog, module: 'hr' },
+
+  // Configuraciones (collapsible)
+  {
+    type: 'section',
+    i18nKey: 'nav.settings',
+    icon: Settings,
+    children: [
+      { href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
+      { href: '/auditoria', i18nKey: 'nav.audit', icon: ClipboardList, module: 'audit' },
+    ],
+  },
 ];
 
 export function Sidebar() {
@@ -46,14 +96,52 @@ export function Sidebar() {
   const router = useRouter();
   const { user, logout } = useAuth();
   const { company } = useData();
-  const { theme, resolvedTheme, setTheme } = useTheme();
+  const { resolvedTheme, setTheme } = useTheme();
   const { locale, setLocale, t } = useI18n();
 
-  const visibleItems = NAV_ITEMS.filter(item => hasModuleAccess(user, item.module));
+  // Auto-open sections that contain the active page
+  const getInitialOpen = () => {
+    const open: Record<string, boolean> = {};
+    for (const entry of NAV_STRUCTURE) {
+      if (entry.type === 'section') {
+        const hasActive = entry.children.some(c => pathname === c.href || pathname.startsWith(c.href + '/'));
+        open[entry.i18nKey] = hasActive;
+      }
+    }
+    return open;
+  };
+
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>(getInitialOpen);
+
+  const toggleSection = (key: string) => {
+    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
+  };
 
   const handleLogout = () => {
     logout();
     router.push('/login');
+  };
+
+  const renderLink = (item: NavLink, indent = false) => {
+    if (!hasModuleAccess(user, item.module)) return null;
+    const isActive = pathname === item.href;
+    const Icon = item.icon;
+    return (
+      <Link
+        key={item.href}
+        href={item.href}
+        className={cn(
+          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+          indent && 'ml-4',
+          isActive
+            ? 'bg-[var(--color-primary)] text-white'
+            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+        )}
+      >
+        <Icon className="w-4 h-4" />
+        {t(item.i18nKey)}
+      </Link>
+    );
   };
 
   return (
@@ -82,23 +170,48 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1">
-        {visibleItems.map((item) => {
-          const isActive = pathname === item.href;
-          const Icon = item.icon;
+        {NAV_STRUCTURE.map((entry) => {
+          if (entry.type === 'link') {
+            return renderLink(entry as NavLink);
+          }
+
+          // Section (collapsible)
+          const section = entry as NavSection;
+          const visibleChildren = section.children.filter(c => hasModuleAccess(user, c.module));
+          if (visibleChildren.length === 0) return null;
+
+          const isOpen = openSections[section.i18nKey] ?? false;
+          const hasActiveChild = visibleChildren.some(c => pathname === c.href || pathname.startsWith(c.href + '/'));
+          const SectionIcon = section.icon;
+
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={cn(
-                'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors',
-                isActive
-                  ? 'bg-[var(--color-primary)] text-white'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            <div key={section.i18nKey}>
+              <button
+                onClick={() => toggleSection(section.i18nKey)}
+                className={cn(
+                  'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                  hasActiveChild
+                    ? 'text-[var(--color-primary)]'
+                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                )}
+              >
+                <span className="flex items-center gap-3">
+                  <SectionIcon className="w-4 h-4" />
+                  {t(section.i18nKey)}
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'w-4 h-4 transition-transform duration-200',
+                    isOpen && 'rotate-180'
+                  )}
+                />
+              </button>
+              {isOpen && (
+                <div className="mt-1 space-y-0.5">
+                  {visibleChildren.map(child => renderLink(child, true))}
+                </div>
               )}
-            >
-              <Icon className="w-4 h-4" />
-              {t(item.i18nKey)}
-            </Link>
+            </div>
           );
         })}
       </nav>
