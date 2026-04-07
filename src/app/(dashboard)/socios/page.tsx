@@ -18,7 +18,7 @@ import {
 } from '@/lib/supabase/mutations';
 import {
   Users, Download, AlertTriangle, TrendingDown, Wallet, Shield,
-  PiggyBank, Plus, Pencil, Trash2, X, Check, Settings,
+  PiggyBank, Plus, Pencil, Trash2, X, Check, Settings, ChevronDown,
 } from 'lucide-react';
 
 const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
@@ -43,6 +43,7 @@ export default function SociosPage() {
 
   // ─── Reserve edit state ───
   const [showReserveEdit, setShowReserveEdit] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [reserveInput, setReserveInput] = useState('');
 
   // Get current period info
@@ -616,10 +617,17 @@ export default function SociosPage() {
             })}
           </div>
 
-          {/* Historical summary */}
+          {/* Historical summary — collapsible */}
           <div className="mt-8">
-            <h3 className="text-sm font-semibold text-muted-foreground mb-3">{t('partners.history')}</h3>
-            <div className="overflow-x-auto">
+            <button
+              onClick={() => setShowHistory(!showHistory)}
+              className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+            >
+              <ChevronDown className={`w-4 h-4 transition-transform ${showHistory ? 'rotate-0' : '-rotate-90'}`} />
+              {t('partners.history')}
+            </button>
+            {showHistory && (
+            <div className="overflow-x-auto mt-3">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border">
@@ -667,8 +675,34 @@ export default function SociosPage() {
                     );
                   })}
                 </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-border font-bold bg-muted/50">
+                    <td className="py-2 px-2">Total</td>
+                    {partners.map(p => {
+                      const partnerTotal = periods.reduce((sum, period) => {
+                        const pChain = periodChain.get(period.id);
+                        const pDist = pChain?.montoDistribuir ?? 0;
+                        if (pDist <= 0) return sum;
+                        const dist = partnerDistributions.find(d => d.period_id === period.id && d.partner_id === p.id);
+                        return sum + (dist ? pDist * dist.percentage : 0);
+                      }, 0);
+                      return (
+                        <td key={p.id} className="py-2 px-2 text-right">
+                          {formatCurrency(partnerTotal)}
+                        </td>
+                      );
+                    })}
+                    <td className="py-2 px-2 text-right">
+                      {formatCurrency(periods.reduce((sum, period) => {
+                        const pChain = periodChain.get(period.id);
+                        return sum + (pChain?.montoDistribuir ?? 0 > 0 ? pChain?.montoDistribuir ?? 0 : 0);
+                      }, 0))}
+                    </td>
+                  </tr>
+                </tfoot>
               </table>
             </div>
+            )}
           </div>
         </Card>
       </div>
