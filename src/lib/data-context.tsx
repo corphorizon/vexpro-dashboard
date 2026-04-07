@@ -248,7 +248,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const fs = financialStatus.find(f => f.period_id === period.id);
       const oi = operatingIncome.find(o => o.period_id === period.id);
       const netoMes = fs?.net_total || 0;
-      const ingresosNetos = oi ? oi.prop_firm + oi.broker_pnl + oi.other : 0;
+      // Prop Firm net income = sales - withdrawals
+      const pfs = propFirmSales.find(p => p.period_id === period.id)?.amount || 0;
+      const pfW = withdrawals.find(w => w.period_id === period.id && w.category === 'prop_firm')?.amount || 0;
+      const propFirmNet = pfs - pfW;
+      const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
 
       const saldoAnterior = saldoAcumulado;
       let saldoUsado = 0;
@@ -278,7 +282,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     return chain;
-  }, [periods, financialStatus, operatingIncome, isPeriodAfterSaldoStart]);
+  }, [periods, financialStatus, operatingIncome, propFirmSales, withdrawals, isPeriodAfterSaldoStart]);
 
   // ─── Period summary (single) ───
 
@@ -300,6 +304,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const totalWithdrawals = periodWithdrawals.reduce((sum, w) => sum + w.amount, 0);
       const pfs = propFirmSale?.amount || 0;
       const p2p = p2pTransfer?.amount || 0;
+      const propFirmWithdrawal = periodWithdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+      const propFirmNetIncome = pfs - propFirmWithdrawal;
 
       return {
         period,
@@ -307,6 +313,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         totalWithdrawals,
         netDeposit: totalDeposits - totalWithdrawals,
         propFirmSales: pfs,
+        propFirmNetIncome,
         brokerDeposits: totalDeposits - pfs,
         p2pTransfer: p2p,
         totalExpenses: periodExpenses.reduce((sum, e) => sum + e.amount, 0),
@@ -376,6 +383,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const pfs = propFirmSales
         .filter(p => periodIds.includes(p.period_id))
         .reduce((s, p) => s + p.amount, 0);
+      const propFirmWithdrawal = consolidatedWithdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+      const propFirmNetIncome = pfs - propFirmWithdrawal;
       const p2p = p2pTransfers
         .filter(p => periodIds.includes(p.period_id))
         .reduce((s, p) => s + p.amount, 0);
@@ -431,6 +440,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         totalWithdrawals,
         netDeposit: totalDeposits - totalWithdrawals,
         propFirmSales: pfs,
+        propFirmNetIncome,
         brokerDeposits: totalDeposits - pfs,
         p2pTransfer: p2p,
         totalExpenses: allExps.reduce((s, e) => s + e.amount, 0),

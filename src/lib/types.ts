@@ -149,6 +149,7 @@ export interface PeriodSummary {
   totalWithdrawals: number;
   netDeposit: number;
   propFirmSales: number;
+  propFirmNetIncome: number;
   brokerDeposits: number;
   p2pTransfer: number;
   totalExpenses: number;
