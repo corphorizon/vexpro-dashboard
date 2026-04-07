@@ -16,6 +16,79 @@ export async function updatePeriodStatus(
   if (error) throw new Error(`Error actualizando estado del período: ${error.message}`);
 }
 
+// ─── Period Reserve Percentage ───
+
+export async function updatePeriodReservePct(
+  periodId: string,
+  reservePct: number
+): Promise<void> {
+  const { error } = await supabase
+    .from('periods')
+    .update({ reserve_pct: reservePct })
+    .eq('id', periodId);
+
+  if (error) throw new Error(`Error actualizando respaldo del período: ${error.message}`);
+}
+
+export async function updateAllPeriodsReservePct(
+  companyId: string,
+  reservePct: number
+): Promise<void> {
+  const { error } = await supabase
+    .from('periods')
+    .update({ reserve_pct: reservePct })
+    .eq('company_id', companyId);
+
+  if (error) throw new Error(`Error actualizando respaldo de todos los períodos: ${error.message}`);
+}
+
+// ─── Partners CRUD ───
+
+export async function createPartner(
+  companyId: string,
+  name: string,
+  email: string | null,
+  percentage: number
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('partners')
+    .insert({ company_id: companyId, name, email, percentage })
+    .select('id')
+    .single();
+
+  if (error) throw new Error(`Error creando socio: ${error.message}`);
+  return data.id;
+}
+
+export async function updatePartner(
+  id: string,
+  updates: { name: string; email: string | null; percentage: number }
+): Promise<void> {
+  const { error } = await supabase
+    .from('partners')
+    .update(updates)
+    .eq('id', id);
+
+  if (error) throw new Error(`Error actualizando socio: ${error.message}`);
+}
+
+export async function deletePartner(id: string): Promise<void> {
+  // Delete related distributions first
+  const { error: distError } = await supabase
+    .from('partner_distributions')
+    .delete()
+    .eq('partner_id', id);
+
+  if (distError) throw new Error(`Error eliminando distribuciones del socio: ${distError.message}`);
+
+  const { error } = await supabase
+    .from('partners')
+    .delete()
+    .eq('id', id);
+
+  if (error) throw new Error(`Error eliminando socio: ${error.message}`);
+}
+
 // ─── Deposits (delete + reinsert for the period) ───
 
 export async function upsertDeposits(

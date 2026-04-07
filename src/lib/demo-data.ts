@@ -24,13 +24,13 @@ export const DEMO_COMPANY: Company = {
 // PERIODS
 // ============================================================
 export const DEMO_PERIODS: Period[] = [
-  { id: 'p-oct-25', company_id: 'vexpro-001', year: 2025, month: 10, label: 'Oct 25', is_closed: true },
-  { id: 'p-nov-25', company_id: 'vexpro-001', year: 2025, month: 11, label: 'Nov 25', is_closed: true },
-  { id: 'p-dic-25', company_id: 'vexpro-001', year: 2025, month: 12, label: 'Dic 25', is_closed: true },
-  { id: 'p-jan-26', company_id: 'vexpro-001', year: 2026, month: 1, label: 'Ene 26', is_closed: true },
-  { id: 'p-feb-26', company_id: 'vexpro-001', year: 2026, month: 2, label: 'Feb 26', is_closed: true },
-  { id: 'p-mar-26', company_id: 'vexpro-001', year: 2026, month: 3, label: 'Mar 26', is_closed: false },
-  { id: 'p-apr-26', company_id: 'vexpro-001', year: 2026, month: 4, label: 'Abr 26', is_closed: false },
+  { id: 'p-oct-25', company_id: 'vexpro-001', year: 2025, month: 10, label: 'Oct 25', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-nov-25', company_id: 'vexpro-001', year: 2025, month: 11, label: 'Nov 25', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-dic-25', company_id: 'vexpro-001', year: 2025, month: 12, label: 'Dic 25', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-jan-26', company_id: 'vexpro-001', year: 2026, month: 1, label: 'Ene 26', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-feb-26', company_id: 'vexpro-001', year: 2026, month: 2, label: 'Feb 26', is_closed: true, reserve_pct: 0.10 },
+  { id: 'p-mar-26', company_id: 'vexpro-001', year: 2026, month: 3, label: 'Mar 26', is_closed: false, reserve_pct: 0.10 },
+  { id: 'p-apr-26', company_id: 'vexpro-001', year: 2026, month: 4, label: 'Abr 26', is_closed: false, reserve_pct: 0.10 },
 ];
 
 // ============================================================
@@ -745,6 +745,7 @@ export function getConsolidatedSummary(periodIds: string[]): PeriodSummary | nul
     month: lastPeriod.month,
     label: `${firstPeriod.label} — ${lastPeriod.label}`,
     is_closed: false,
+    reserve_pct: 0.10,
   };
 
   return {

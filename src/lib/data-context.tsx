@@ -448,6 +448,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         month: lastPeriod.month,
         label: `${firstPeriod.label} — ${lastPeriod.label}`,
         is_closed: false,
+        reserve_pct: 0.10,
       };
 
       return {
