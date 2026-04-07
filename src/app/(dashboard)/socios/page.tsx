@@ -8,7 +8,7 @@ import { useData } from '@/lib/data-context';
 import { formatCurrency, formatPercent } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
-import { Users, Download, AlertTriangle, TrendingDown, TrendingUp, Wallet, Shield, PiggyBank } from 'lucide-react';
+import { Users, Download, AlertTriangle, TrendingDown, Wallet, Shield, PiggyBank } from 'lucide-react';
 
 const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B'];
 const RESERVE_PCT = 0.10; // 10% respaldo financiero
@@ -16,7 +16,7 @@ const RESERVE_PCT = 0.10; // 10% respaldo financiero
 export default function SociosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { periods, partners, partnerDistributions, allFinancialStatus, getPeriodSummary, computeSaldoChain, isPeriodAfterSaldoStart } = useData();
+  const { periods, partners, partnerDistributions, getPeriodSummary, computeSaldoChain, isPeriodAfterSaldoStart } = useData();
 
   const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
 
@@ -30,7 +30,7 @@ export default function SociosPage() {
   const ingresosNetos = (summary?.operatingIncome
     ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
     : 0) + (summary?.propFirmNetIncome || 0);
-  const netoMes = summary?.financialStatus?.net_total || 0;
+  const egresosNetos = saldoInfo?.egresosNetos || summary?.totalExpenses || 0;
 
   // Total to distribute: if saldo logic applies, use computed; otherwise use raw partner distributions
   const rawTotalToDistribute = appliesSaldo && saldoInfo ? saldoInfo.totalDistribuir : ingresosNetos;
@@ -145,13 +145,13 @@ export default function SociosPage() {
           <>
             <Card>
               <div className="flex items-center gap-3 mb-2">
-                <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
-                  {netoMes >= 0 ? <TrendingUp className="w-5 h-5 text-blue-500" /> : <TrendingDown className="w-5 h-5 text-red-500" />}
+                <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
+                  <TrendingDown className="w-5 h-5 text-red-500" />
                 </div>
-                <p className="text-sm text-muted-foreground">{t('partners.netoMes')}</p>
+                <p className="text-sm text-muted-foreground">{t('partners.egresosNetos')}</p>
               </div>
-              <p className={`text-2xl font-bold ${netoMes >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                {formatCurrency(netoMes)}
+              <p className="text-2xl font-bold text-red-600">
+                {formatCurrency(egresosNetos)}
               </p>
             </Card>
 
@@ -292,7 +292,7 @@ export default function SociosPage() {
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left py-1.5 px-2">{t('partners.period')}</th>
-                    <th className="text-right py-1.5 px-2">{t('partners.netoMes')}</th>
+                    <th className="text-right py-1.5 px-2">{t('partners.egresosNetos')}</th>
                     <th className="text-right py-1.5 px-2">{t('partners.saldoFavor')}</th>
                     <th className="text-right py-1.5 px-2 text-orange-600">Respaldo</th>
                     {partners.map(p => (
@@ -306,7 +306,6 @@ export default function SociosPage() {
                     const dists = partnerDistributions.filter(d => d.period_id === period.id);
                     const sInfo = saldoChain.get(period.id);
                     const hasSaldo = isPeriodAfterSaldoStart(period.id);
-                    const fs = allFinancialStatus.find(f => f.period_id === period.id);
 
                     // Apply reserve before distribution
                     const pReserve = reserveData.get(period.id);
@@ -329,8 +328,8 @@ export default function SociosPage() {
                     return (
                       <tr key={period.id} className={`border-b border-border/30 ${period.id === selectedPeriodId ? 'bg-blue-50 dark:bg-blue-950/50' : ''}`}>
                         <td className="py-1.5 px-2 font-medium">{period.label}</td>
-                        <td className={`py-1.5 px-2 text-right ${(fs?.net_total || 0) < 0 ? 'text-red-600' : ''}`}>
-                          {hasSaldo ? formatCurrency(fs?.net_total || 0) : '-'}
+                        <td className="py-1.5 px-2 text-right text-red-600">
+                          {hasSaldo ? formatCurrency(sInfo?.egresosNetos || 0) : '-'}
                         </td>
                         <td className="py-1.5 px-2 text-right">
                           {hasSaldo ? formatCurrency(sInfo?.saldoNuevo || 0) : '-'}

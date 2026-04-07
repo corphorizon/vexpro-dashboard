@@ -473,7 +473,7 @@ export const DEMO_INVESTMENTS: Investment[] = [
 const SALDO_START_PERIOD = 'p-oct-25';
 
 export interface SaldoInfo {
-  netoMes: number;
+  egresosNetos: number;
   saldoAnterior: number;
   saldoUsado: number;
   saldoNuevo: number;
@@ -493,21 +493,22 @@ export function computeSaldoChain(): Map<string, SaldoInfo> {
   for (const period of DEMO_PERIODS) {
     if (!isPeriodAfterSaldoStart(period.id)) continue;
 
-    const fs = DEMO_FINANCIAL_STATUS.find(f => f.period_id === period.id);
     const oi = DEMO_OPERATING_INCOME.find(o => o.period_id === period.id);
-    const netoMes = fs?.net_total || 0;
-    // Prop Firm net income = sales - withdrawals (same logic as data-context)
+    const egresosNetos = DEMO_EXPENSES.filter(e => e.period_id === period.id).reduce((s, e) => s + e.amount, 0);
+    // Prop Firm net income = sales - withdrawals
     const pfs = DEMO_PROP_FIRM_SALES.find(p => p.period_id === period.id)?.amount || 0;
     const pfW = DEMO_WITHDRAWALS.find(w => w.period_id === period.id && w.category === 'prop_firm')?.amount || 0;
     const propFirmNet = pfs - pfW;
     const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
 
+    const netBalance = ingresosNetos - egresosNetos;
+
     const saldoAnterior = saldoAcumulado;
     let saldoUsado = 0;
     let totalDistribuir = ingresosNetos;
 
-    if (netoMes < 0) {
-      const deficit = Math.abs(netoMes);
+    if (netBalance < 0) {
+      const deficit = Math.abs(netBalance);
       if (saldoAnterior >= deficit) {
         saldoUsado = deficit;
       } else {
@@ -516,11 +517,11 @@ export function computeSaldoChain(): Map<string, SaldoInfo> {
         totalDistribuir = ingresosNetos - remaining;
       }
       saldoAcumulado = saldoAnterior - saldoUsado;
-    } else if (netoMes > 0) {
-      saldoAcumulado = saldoAnterior + netoMes;
+    } else if (netBalance > 0) {
+      saldoAcumulado = saldoAnterior + netBalance;
     }
 
-    chain.set(period.id, { netoMes, saldoAnterior, saldoUsado, saldoNuevo: saldoAcumulado, totalDistribuir });
+    chain.set(period.id, { egresosNetos, saldoAnterior, saldoUsado, saldoNuevo: saldoAcumulado, totalDistribuir });
   }
 
   return chain;
