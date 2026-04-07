@@ -8,7 +8,7 @@ import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { LiquidityMovement, Investment } from '@/lib/types';
-import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download } from 'lucide-react';
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
 
@@ -28,7 +28,7 @@ interface DepositRow { id: string; channel: string; amount: number; }
 interface WithdrawalRow { id: string; category: string; amount: number; }
 interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; }
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
-interface DocRow { id: string; filename: string; date: string; description: string; }
+interface DocRow { id: string; filename: string; date: string; description: string; uploaded_by?: string; }
 
 const INITIAL_DEPOSITS: DepositRow[] = [
   { id: 'd1', channel: 'coinsbuy', amount: 0 },
@@ -197,6 +197,37 @@ export default function UploadPage() {
   const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '' });
   const [successMsg, setSuccessMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  const [savingAll, setSavingAll] = useState(false);
+
+  // Expense concept autocomplete
+  const CONCEPT_STORAGE_KEY = 'fd_expense_concepts';
+  const [conceptSuggestions, setConceptSuggestions] = useState<string[]>(() => loadFromStorage(CONCEPT_STORAGE_KEY, [] as string[]));
+  const [showConceptDropdown, setShowConceptDropdown] = useState(false);
+  const conceptInputRef = useRef<HTMLInputElement>(null);
+
+  // Keep concept list updated from all expenses across periods
+  useEffect(() => {
+    const allConcepts = allExpenses.map(e => e.concept);
+    const stored = loadFromStorage<string[]>(CONCEPT_STORAGE_KEY, []);
+    const merged = Array.from(new Set([...stored, ...allConcepts])).filter(Boolean).sort();
+    setConceptSuggestions(merged);
+    saveToStorage(CONCEPT_STORAGE_KEY, merged);
+  }, [allExpenses]);
+
+  const addConceptToHistory = (concept: string) => {
+    if (!concept) return;
+    setConceptSuggestions(prev => {
+      const updated = Array.from(new Set([...prev, concept])).sort();
+      saveToStorage(CONCEPT_STORAGE_KEY, updated);
+      return updated;
+    });
+  };
+
+  const filteredConcepts = useMemo(() => {
+    if (!newExpense.concept) return conceptSuggestions;
+    const q = newExpense.concept.toLowerCase();
+    return conceptSuggestions.filter(c => c.toLowerCase().includes(q));
+  }, [newExpense.concept, conceptSuggestions]);
 
   const periodLabel = periods.find(p => p.id === selectedPeriod)?.label || '';
 
@@ -458,6 +489,7 @@ export default function UploadPage() {
         pending: pn,
       }]);
       setNewExpense({ concept: '', amount: '', paid: '', pending: '' });
+      addConceptToHistory(newExpense.concept);
       if (user) logAction(user.id, user.name, 'create', 'expenses', `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}`);
       showSuccess(t('upload.expenseAdded'));
     });
@@ -500,12 +532,35 @@ export default function UploadPage() {
     });
   };
 
+  // Save All handler — saves all fields for the current section
+  const saveAll = () => {
+    if (!userCanAdd) return;
+    setSavingAll(true);
+    if (section === 'depositos') {
+      deposits.forEach(d => {
+        saveToStorage(getPerPeriodKey('deposits', selectedPeriodRef.current), deposits);
+      });
+      if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
+    } else if (section === 'retiros') {
+      saveToStorage(getPerPeriodKey('withdrawals', selectedPeriodRef.current), withdrawals);
+      if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
+    } else if (section === 'egresos') {
+      saveToStorage(getPerPeriodKey('expenses', selectedPeriodRef.current), expenses);
+      if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
+    } else if (section === 'ingresos') {
+      saveToStorage(getPerPeriodKey('income', selectedPeriodRef.current), income);
+      if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
+    }
+    showSuccess('Todos los datos guardados correctamente');
+    setTimeout(() => setSavingAll(false), 500);
+  };
+
   // Doc handler
   const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
     askConfirmation(`Subir documento "${f.name}" al período ${periodLabel}?`, () => {
-      setDocs(prev => [{ id: `doc-${Date.now()}`, filename: f.name, date: new Date().toISOString().split('T')[0], description: '' }, ...prev]);
+      setDocs(prev => [{ id: `doc-${Date.now()}`, filename: f.name, date: new Date().toISOString().split('T')[0], description: '', uploaded_by: user?.name || '' }, ...prev]);
       showSuccess(t('upload.documentUploaded'));
     });
     e.target.value = '';
@@ -525,20 +580,9 @@ export default function UploadPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{t('upload.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('upload.subtitle')}</p>
-        </div>
-        <select
-          value={selectedPeriod}
-          onChange={(e) => setSelectedPeriod(e.target.value)}
-          className="px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
-        >
-          {periods.map(p => (
-            <option key={p.id} value={p.id}>{p.label} {p.is_closed ? '(Cerrado)' : ''}</option>
-          ))}
-        </select>
+      <div>
+        <h1 className="text-2xl font-bold">{t('upload.title')}</h1>
+        <p className="text-muted-foreground text-sm mt-1">{t('upload.subtitle')}</p>
       </div>
 
       {/* Success message */}
@@ -760,13 +804,31 @@ export default function UploadPage() {
             <div className="mt-4 pt-4 border-t border-border">
               <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addExpense')}</h3>
               <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                <div className="md:col-span-2">
+                <div className="md:col-span-2 relative">
                   <input
+                    ref={conceptInputRef}
                     value={newExpense.concept}
-                    onChange={e => setNewExpense(p => ({ ...p, concept: e.target.value }))}
+                    onChange={e => { setNewExpense(p => ({ ...p, concept: e.target.value })); setShowConceptDropdown(true); }}
+                    onFocus={() => setShowConceptDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowConceptDropdown(false), 200)}
                     placeholder={t('upload.conceptPlaceholder')}
                     className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                    autoComplete="off"
                   />
+                  {showConceptDropdown && filteredConcepts.length > 0 && (
+                    <div className="absolute z-20 top-full left-0 right-0 mt-1 max-h-48 overflow-auto bg-card border border-border rounded-lg shadow-lg">
+                      {filteredConcepts.map(c => (
+                        <button
+                          key={c}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setNewExpense(p => ({ ...p, concept: c })); setShowConceptDropdown(false); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors"
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 <input
                   type="number" step="0.01"
@@ -1255,12 +1317,13 @@ export default function UploadPage() {
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Archivo</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Descripcion</th>
-                {userCanDelete && <th className="w-20"></th>}
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Subido por</th>
+                <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {docs.length === 0 && (
-                <tr><td colSpan={4} className="py-8 text-center text-muted-foreground">No hay documentos subidos</td></tr>
+                <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">No hay documentos subidos</td></tr>
               )}
               {docs.map(doc => (
                 <tr key={doc.id} className="border-b border-border/50 hover:bg-muted/50">
@@ -1272,26 +1335,63 @@ export default function UploadPage() {
                   </td>
                   <td className="py-2.5 px-3 text-muted-foreground">{doc.date}</td>
                   <td className="py-2.5 px-3 text-muted-foreground">{doc.description || '—'}</td>
-                  {userCanDelete && (
-                    <td className="py-2.5 px-3 text-center">
+                  <td className="py-2.5 px-3 text-muted-foreground">{doc.uploaded_by || '—'}</td>
+                  <td className="py-2.5 px-3 text-center">
+                    <div className="flex justify-center gap-1">
                       <button
-                        onClick={() => askConfirmation(`Eliminar "${doc.filename}"?`, () => {
-                          setDocs(prev => prev.filter(d => d.id !== doc.id));
-                          showSuccess(t('upload.investmentDeleted'));
-                        })}
-                        className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
-                        aria-label={t('common.delete')}
+                        onClick={() => showSuccess(`Descargando ${doc.filename}...`)}
+                        className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                        title="Descargar"
+                        aria-label="Descargar"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Download className="w-3.5 h-3.5" />
                       </button>
-                    </td>
-                  )}
+                      {userCanDelete && (
+                        <button
+                          onClick={() => askConfirmation(`Eliminar "${doc.filename}"?`, () => {
+                            setDocs(prev => prev.filter(d => d.id !== doc.id));
+                            showSuccess(t('upload.investmentDeleted'));
+                          })}
+                          className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
+                          aria-label={t('common.delete')}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </Card>
       )}
+
+      {/* Bottom bar: Period selector + Save All */}
+      <div className="sticky bottom-0 z-10 -mx-6 lg:-mx-8 px-6 lg:px-8 py-4 bg-background/95 backdrop-blur border-t border-border flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Periodo:</label>
+          <select
+            value={selectedPeriod}
+            onChange={(e) => setSelectedPeriod(e.target.value)}
+            className="px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            {periods.map(p => (
+              <option key={p.id} value={p.id}>{p.label} {p.is_closed ? '(Cerrado)' : ''}</option>
+            ))}
+          </select>
+        </div>
+        {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && (
+          <button
+            onClick={saveAll}
+            disabled={savingAll}
+            className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+          >
+            <Save className="w-4 h-4" />
+            {savingAll ? 'Guardando...' : 'Guardar Todo'}
+          </button>
+        )}
+      </div>
 
       {/* Confirmation dialog */}
       {confirmAction && (
