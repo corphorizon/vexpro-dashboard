@@ -176,7 +176,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
       >
         {/* Logo */}
         <div className="p-4 border-b border-border">
-          <div className="flex items-center justify-center">
+          <Link href="/" onClick={handleNavClick} className="flex items-center justify-center">
             <Image
               src="/vex-logofull.png"
               alt={company?.name || 'Company'}
@@ -193,7 +193,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
               className="object-contain hidden dark:block"
               priority
             />
-          </div>
+          </Link>
         </div>
 
         {/* Navigation */}

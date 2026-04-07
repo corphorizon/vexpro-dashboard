@@ -32,20 +32,22 @@ function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <Image
-            src="/vex-logofull.png"
-            alt={company?.name || 'Company'}
-            width={100}
-            height={28}
-            className="object-contain block dark:hidden"
-          />
-          <Image
-            src="/vex-logofull-white.png"
-            alt={company?.name || 'Company'}
-            width={100}
-            height={28}
-            className="object-contain hidden dark:block"
-          />
+          <Link href="/">
+            <Image
+              src="/vex-logofull.png"
+              alt={company?.name || 'Company'}
+              width={100}
+              height={28}
+              className="object-contain block dark:hidden"
+            />
+            <Image
+              src="/vex-logofull-white.png"
+              alt={company?.name || 'Company'}
+              width={100}
+              height={28}
+              className="object-contain hidden dark:block"
+            />
+          </Link>
         </div>
 
         {/* Right: utilities */}
