@@ -380,11 +380,11 @@ ON CONFLICT DO NOTHING;
 -- 9. OPERATING INCOME (7 entries)
 -- ============================================================
 INSERT INTO operating_income (id, period_id, company_id, prop_firm, broker_pnl, other) VALUES
-  (_seed_id('oi1'), _seed_id('p-oct-25'), _seed_id('vexpro-001'), 4295.04, -3699, 0),
-  (_seed_id('oi2'), _seed_id('p-nov-25'), _seed_id('vexpro-001'), 11945.7, 60251, 0),
-  (_seed_id('oi3'), _seed_id('p-dic-25'), _seed_id('vexpro-001'), 4292.8, 135424.5, 0),
-  (_seed_id('oi4'), _seed_id('p-jan-26'), _seed_id('vexpro-001'), 16778, 0, 0),
-  (_seed_id('oi5'), _seed_id('p-feb-26'), _seed_id('vexpro-001'), 51409.65, 0, 0),
+  (_seed_id('oi1'), _seed_id('p-oct-25'), _seed_id('vexpro-001'), 0, -3699, 0),
+  (_seed_id('oi2'), _seed_id('p-nov-25'), _seed_id('vexpro-001'), 0, 60251, 0),
+  (_seed_id('oi3'), _seed_id('p-dic-25'), _seed_id('vexpro-001'), 0, 135424.5, 0),
+  (_seed_id('oi4'), _seed_id('p-jan-26'), _seed_id('vexpro-001'), 0, 0, 0),
+  (_seed_id('oi5'), _seed_id('p-feb-26'), _seed_id('vexpro-001'), 0, 0, 0),
   (_seed_id('oi6'), _seed_id('p-mar-26'), _seed_id('vexpro-001'), 0, 0, 0),
   (_seed_id('oi7'), _seed_id('p-apr-26'), _seed_id('vexpro-001'), 0, 0, 0)
 ON CONFLICT DO NOTHING;
