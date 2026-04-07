@@ -1,14 +1,19 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
+import type { Deposit, Withdrawal } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { Download } from 'lucide-react';
+
+const ALL_CHANNELS: Array<'coinsbuy' | 'fairpay' | 'unipayment' | 'other'> = ['coinsbuy', 'fairpay', 'unipayment', 'other'];
+const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'> = ['ib_commissions', 'broker', 'prop_firm', 'other'];
 
 export default function MovimientosPage() {
   const { t } = useI18n();
@@ -29,6 +34,23 @@ export default function MovimientosPage() {
     ];
     downloadCSV(`movimientos_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
   };
+
+  // Ensure all channels/categories always appear, even with $0
+  const fullDeposits: Deposit[] = useMemo(() => {
+    if (!summary) return [];
+    return ALL_CHANNELS.map(ch => {
+      const existing = summary.deposits.find(d => d.channel === ch);
+      return existing || { id: `empty-d-${ch}`, period_id: '', company_id: '', channel: ch, amount: 0, notes: null };
+    });
+  }, [summary]);
+
+  const fullWithdrawals: Withdrawal[] = useMemo(() => {
+    if (!summary) return [];
+    return ALL_CATEGORIES.map(cat => {
+      const existing = summary.withdrawals.find(w => w.category === cat);
+      return existing || { id: `empty-w-${cat}`, period_id: '', company_id: '', category: cat, amount: 0, notes: null };
+    });
+  }, [summary]);
 
   if (!summary) return null;
 
@@ -64,7 +86,7 @@ export default function MovimientosPage() {
               </tr>
             </thead>
             <tbody>
-              {summary.deposits.map((d) => (
+              {fullDeposits.map((d) => (
                 <tr key={d.id} className="border-b border-border/50">
                   <td className="py-2.5">{CHANNEL_LABELS[d.channel]}</td>
                   <td className="py-2.5 text-right font-medium">{formatCurrency(d.amount)}</td>
@@ -99,7 +121,7 @@ export default function MovimientosPage() {
               </tr>
             </thead>
             <tbody>
-              {summary.withdrawals.map((w) => (
+              {fullWithdrawals.map((w) => (
                 <tr key={w.id} className="border-b border-border/50">
                   <td className="py-2.5">{WITHDRAWAL_LABELS[w.category]}</td>
                   <td className="py-2.5 text-right font-medium">{formatCurrency(w.amount)}</td>
@@ -143,9 +165,7 @@ export default function MovimientosPage() {
               <tr className="font-bold">
                 <td className="py-3">{t('movements.netIncome')}</td>
                 <td className="py-3 text-right">
-                  {formatCurrency(
-                    summary.propFirmSales - (summary.withdrawals.find(w => w.category === 'prop_firm')?.amount || 0)
-                  )}
+                  {formatCurrency(summary.propFirmNetIncome)}
                 </td>
               </tr>
             </tbody>

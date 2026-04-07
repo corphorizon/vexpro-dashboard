@@ -27,9 +27,9 @@ export default function SociosPage() {
 
   // Get operating income for current view
   const summary = mode === 'single' ? getPeriodSummary(selectedPeriodId) : null;
-  const ingresosNetos = summary?.operatingIncome
-    ? summary.operatingIncome.prop_firm + summary.operatingIncome.broker_pnl + summary.operatingIncome.other
-    : 0;
+  const ingresosNetos = (summary?.operatingIncome
+    ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
+    : 0) + (summary?.propFirmNetIncome || 0);
   const netoMes = summary?.financialStatus?.net_total || 0;
 
   // Total to distribute: if saldo logic applies, use computed; otherwise use raw partner distributions
@@ -41,9 +41,9 @@ export default function SociosPage() {
     let accumulated = 0;
     for (const period of periods) {
       const pSummary = getPeriodSummary(period.id);
-      const pIncome = pSummary?.operatingIncome
-        ? pSummary.operatingIncome.prop_firm + pSummary.operatingIncome.broker_pnl + pSummary.operatingIncome.other
-        : 0;
+      const pIncome = (pSummary?.operatingIncome
+        ? pSummary.operatingIncome.broker_pnl + pSummary.operatingIncome.other
+        : 0) + (pSummary?.propFirmNetIncome || 0);
       const pSaldo = saldoChain.get(period.id);
       const pApplies = isPeriodAfterSaldoStart(period.id);
       const pRaw = pApplies && pSaldo ? pSaldo.totalDistribuir : pIncome;

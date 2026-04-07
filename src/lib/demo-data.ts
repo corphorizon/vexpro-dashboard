@@ -645,6 +645,8 @@ export function getPeriodSummary(periodId: string): PeriodSummary | null {
   const totalDeposits = deposits.reduce((sum, d) => sum + d.amount, 0);
   const totalWithdrawals = withdrawals.reduce((sum, w) => sum + w.amount, 0);
   const propFirmSales = propFirmSale?.amount || 0;
+  const propFirmWithdrawal = withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+  const propFirmNetIncome = propFirmSales - propFirmWithdrawal;
   const p2p = p2pTransfer?.amount || 0;
 
   return {
@@ -653,6 +655,7 @@ export function getPeriodSummary(periodId: string): PeriodSummary | null {
     totalWithdrawals,
     netDeposit: totalDeposits - totalWithdrawals,
     propFirmSales,
+    propFirmNetIncome,
     brokerDeposits: totalDeposits - propFirmSales,
     p2pTransfer: p2p,
     totalExpenses: expenses.reduce((sum, e) => sum + e.amount, 0),
@@ -705,6 +708,8 @@ export function getConsolidatedSummary(periodIds: string[]): PeriodSummary | nul
   const totalDeposits = consolidatedDeposits.reduce((s, d) => s + d.amount, 0);
   const totalWithdrawals = consolidatedWithdrawals.reduce((s, w) => s + w.amount, 0);
   const propFirmSales = DEMO_PROP_FIRM_SALES.filter(p => periodIds.includes(p.period_id)).reduce((s, p) => s + p.amount, 0);
+  const propFirmWithdrawal = consolidatedWithdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+  const propFirmNetIncome = propFirmSales - propFirmWithdrawal;
   const p2p = DEMO_P2P_TRANSFERS.filter(p => periodIds.includes(p.period_id)).reduce((s, p) => s + p.amount, 0);
 
   const incomes = periodIds.map(pid => getPersistedOperatingIncome(pid)).filter((oi): oi is OperatingIncome => oi !== null);
@@ -759,6 +764,7 @@ export function getConsolidatedSummary(periodIds: string[]): PeriodSummary | nul
     totalWithdrawals,
     netDeposit: totalDeposits - totalWithdrawals,
     propFirmSales,
+    propFirmNetIncome,
     brokerDeposits: totalDeposits - propFirmSales,
     p2pTransfer: p2p,
     totalExpenses: allExpenses.reduce((s, e) => s + e.amount, 0),

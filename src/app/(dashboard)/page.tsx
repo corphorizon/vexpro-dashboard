@@ -69,9 +69,9 @@ export default function ResumenPage() {
   };
 
   const income = summary.operatingIncome;
-  const totalIncome = income
+  const totalIncome = (income
     ? income.broker_pnl + income.other
-    : 0;
+    : 0) + summary.propFirmNetIncome;
   const fs = summary.financialStatus;
 
   // Dynamic balance: Operating Income - Operating Expenses
@@ -181,14 +181,20 @@ export default function ResumenPage() {
           <CardValue positive={totalIncome > 0} negative={totalIncome < 0}>
             {formatCurrency(totalIncome)}
           </CardValue>
-          {income && (
-            <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+          <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+            {summary.propFirmNetIncome !== 0 && (
+              <div className="flex justify-between">
+                <span>Balance Prop Firm</span>
+                <span>{formatCurrency(summary.propFirmNetIncome)}</span>
+              </div>
+            )}
+            {income && (
               <div className="flex justify-between">
                 <span>{t('summary.brokerPnl')}</span>
                 <span>{formatCurrency(income.broker_pnl)}</span>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </Card>
 
         <Card>
