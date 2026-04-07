@@ -160,7 +160,7 @@ export async function fetchOperatingIncome(companyId: string, periodIds?: string
 
 export async function fetchBrokerBalance(companyId: string, periodIds?: string[]): Promise<BrokerBalance[]> {
   let query = supabase
-    .from('broker_balances')
+    .from('broker_balance')
     .select('*')
     .eq('company_id', companyId);
 
