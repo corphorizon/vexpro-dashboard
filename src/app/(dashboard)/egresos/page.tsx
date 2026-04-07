@@ -15,6 +15,12 @@ import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Downl
 
 type SortState = 'default' | 'desc' | 'asc';
 
+const SortIcon = ({ state }: { state: SortState }) => {
+  if (state === 'desc') return <ArrowDown className="w-3.5 h-3.5" />;
+  if (state === 'asc') return <ArrowUp className="w-3.5 h-3.5" />;
+  return <ArrowUpDown className="w-3.5 h-3.5" />;
+};
+
 export default function EgresosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
@@ -104,12 +110,7 @@ export default function EgresosPage() {
     });
   };
 
-  // Sort icon helper
-  const SortIcon = () => {
-    if (sortState === 'desc') return <ArrowDown className="w-3.5 h-3.5" />;
-    if (sortState === 'asc') return <ArrowUp className="w-3.5 h-3.5" />;
-    return <ArrowUpDown className="w-3.5 h-3.5" />;
-  };
+  // Sort icon now extracted as top-level component
 
   // --- Helpers to mutate expenses ---
   const updateExpensesList = (updater: (prev: Expense[]) => Expense[]) => {
@@ -296,7 +297,7 @@ export default function EgresosPage() {
                   sortState === 'desc' ? t('expenses.sortDesc') : t('expenses.sortAsc')
                 }
               >
-                <SortIcon />
+                <SortIcon state={sortState} />
                 {t('expenses.sortAmount')} {sortState === 'desc' ? t('expenses.sortHighest') : sortState === 'asc' ? t('expenses.sortLowest') : ''}
               </button>
             </div>

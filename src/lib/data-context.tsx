@@ -242,15 +242,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const chain = new Map<string, SaldoInfo>();
     let saldoAcumulado = 0;
 
+    // Pre-index for O(1) lookups instead of O(n) find() per period
+    const fsIndex = new Map(financialStatus.map(f => [f.period_id, f]));
+    const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
+    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p]));
+    const pfwIndex = new Map<string, number>();
+    for (const w of withdrawals) {
+      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, w.amount);
+    }
+
     for (const period of periods) {
       if (!isPeriodAfterSaldoStart(period.id)) continue;
 
-      const fs = financialStatus.find(f => f.period_id === period.id);
-      const oi = operatingIncome.find(o => o.period_id === period.id);
+      const fs = fsIndex.get(period.id);
+      const oi = oiIndex.get(period.id);
       const netoMes = fs?.net_total || 0;
       // Prop Firm net income = sales - withdrawals
-      const pfs = propFirmSales.find(p => p.period_id === period.id)?.amount || 0;
-      const pfW = withdrawals.find(w => w.period_id === period.id && w.category === 'prop_firm')?.amount || 0;
+      const pfs = pfsIndex.get(period.id)?.amount || 0;
+      const pfW = pfwIndex.get(period.id) || 0;
       const propFirmNet = pfs - pfW;
       const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
 

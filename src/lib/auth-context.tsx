@@ -243,11 +243,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (!res.ok) {
-        const err = await res.json();
-        console.error('Error syncing auth user:', err.error);
+        let errorMsg = 'Error desconocido';
+        try {
+          const err = await res.json();
+          errorMsg = err.error || errorMsg;
+        } catch { /* non-JSON response */ }
+        console.error('Error syncing auth user:', errorMsg);
+        throw new Error(`Error sincronizando usuario: ${errorMsg}`);
       }
     } catch (err) {
       console.error('Failed to sync auth user:', err);
+      throw err;
     }
   };
 

@@ -33,18 +33,11 @@ export default function ResumenPage() {
 
   if (!summary) return null;
 
-  const handleExport = () => {
-    const headers = ['Metrica', 'Valor'];
-    const rows: (string | number)[][] = [
-      ['Depósitos Totales', summary.totalDeposits],
-      ['Retiros Totales', summary.totalWithdrawals],
-      ['Net Deposit', summary.netDeposit],
-      ['Egresos Operativos', summary.totalExpenses],
-      ['Broker P&L', summary.operatingIncome?.broker_pnl || 0],
-      ['Balance Total', totalIncome - summary.totalExpenses],
-    ];
-    downloadCSV(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
-  };
+  const income = summary.operatingIncome;
+  const totalIncome = (income
+    ? income.broker_pnl + income.other
+    : 0) + summary.propFirmNetIncome;
+  const balanceDisponible = totalIncome - summary.totalExpenses;
 
   const exportHeaders = ['Metrica', 'Valor'];
   const exportRows: (string | number)[][] = [
@@ -52,9 +45,13 @@ export default function ResumenPage() {
     ['Retiros Totales', summary.totalWithdrawals],
     ['Net Deposit', summary.netDeposit],
     ['Egresos Operativos', summary.totalExpenses],
-    ['Broker P&L', summary.operatingIncome?.broker_pnl || 0],
-    ['Balance Total', summary.financialStatus?.current_month_balance || 0],
+    ['Ingresos Operativos', totalIncome],
+    ['Balance Total', balanceDisponible],
   ];
+
+  const handleExport = () => {
+    downloadCSV(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, exportHeaders, exportRows);
+  };
 
   const handleExportExcel = () => {
     downloadExcel(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}`, exportHeaders, exportRows);
@@ -68,16 +65,7 @@ export default function ResumenPage() {
     });
   };
 
-  const income = summary.operatingIncome;
-  const totalIncome = (income
-    ? income.broker_pnl + income.other
-    : 0) + summary.propFirmNetIncome;
   const fs = summary.financialStatus;
-
-  // Dynamic balance: Operating Income - Operating Expenses
-  const balanceDisponible = totalIncome - summary.totalExpenses;
-
-  // saldoChain is used in socios page, not needed here anymore
 
   return (
     <div className="space-y-6">
