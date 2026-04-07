@@ -143,7 +143,9 @@ export default function MovimientosPage() {
               <tr className="font-bold">
                 <td className="py-3">{t('movements.netIncome')}</td>
                 <td className="py-3 text-right">
-                  {formatCurrency(summary.operatingIncome?.prop_firm || 0)}
+                  {formatCurrency(
+                    summary.propFirmSales - (summary.withdrawals.find(w => w.category === 'prop_firm')?.amount || 0)
+                  )}
                 </td>
               </tr>
             </tbody>

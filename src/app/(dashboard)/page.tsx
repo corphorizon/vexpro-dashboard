@@ -40,9 +40,8 @@ export default function ResumenPage() {
       ['Retiros Totales', summary.totalWithdrawals],
       ['Net Deposit', summary.netDeposit],
       ['Egresos Operativos', summary.totalExpenses],
-      ['Prop Firm', summary.operatingIncome?.prop_firm || 0],
       ['Broker P&L', summary.operatingIncome?.broker_pnl || 0],
-      ['Balance Disponible', totalIncome - summary.totalExpenses],
+      ['Balance Total', totalIncome - summary.totalExpenses],
     ];
     downloadCSV(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
   };
@@ -53,9 +52,8 @@ export default function ResumenPage() {
     ['Retiros Totales', summary.totalWithdrawals],
     ['Net Deposit', summary.netDeposit],
     ['Egresos Operativos', summary.totalExpenses],
-    ['Prop Firm', summary.operatingIncome?.prop_firm || 0],
     ['Broker P&L', summary.operatingIncome?.broker_pnl || 0],
-    ['Balance Disponible', summary.financialStatus?.current_month_balance || 0],
+    ['Balance Total', summary.financialStatus?.current_month_balance || 0],
   ];
 
   const handleExportExcel = () => {
@@ -72,7 +70,7 @@ export default function ResumenPage() {
 
   const income = summary.operatingIncome;
   const totalIncome = income
-    ? income.prop_firm + income.broker_pnl + income.other
+    ? income.broker_pnl + income.other
     : 0;
   const fs = summary.financialStatus;
 
@@ -185,10 +183,6 @@ export default function ResumenPage() {
           </CardValue>
           {income && (
             <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-              <div className="flex justify-between">
-                <span>{t('summary.propFirm')}</span>
-                <span>{formatCurrency(income.prop_firm)}</span>
-              </div>
               <div className="flex justify-between">
                 <span>{t('summary.brokerPnl')}</span>
                 <span>{formatCurrency(income.broker_pnl)}</span>

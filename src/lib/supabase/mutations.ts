@@ -214,3 +214,59 @@ export async function deleteInvestment(id: string): Promise<void> {
 
   if (error) throw new Error(`Error eliminando inversión: ${error.message}`);
 }
+
+// ─── Prop Firm Sales (upsert single row per period) ───
+
+export async function upsertPropFirmSales(
+  companyId: string,
+  periodId: string,
+  amount: number
+): Promise<void> {
+  const { data: existing } = await supabase
+    .from('prop_firm_sales')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('period_id', periodId)
+    .single();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('prop_firm_sales')
+      .update({ amount })
+      .eq('id', existing.id);
+    if (error) throw new Error(`Error actualizando ventas prop firm: ${error.message}`);
+  } else {
+    const { error } = await supabase
+      .from('prop_firm_sales')
+      .insert({ company_id: companyId, period_id: periodId, amount });
+    if (error) throw new Error(`Error guardando ventas prop firm: ${error.message}`);
+  }
+}
+
+// ─── P2P Transfers (upsert single row per period) ───
+
+export async function upsertP2PTransfers(
+  companyId: string,
+  periodId: string,
+  amount: number
+): Promise<void> {
+  const { data: existing } = await supabase
+    .from('p2p_transfers')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('period_id', periodId)
+    .single();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('p2p_transfers')
+      .update({ amount })
+      .eq('id', existing.id);
+    if (error) throw new Error(`Error actualizando P2P: ${error.message}`);
+  } else {
+    const { error } = await supabase
+      .from('p2p_transfers')
+      .insert({ company_id: companyId, period_id: periodId, amount });
+    if (error) throw new Error(`Error guardando P2P: ${error.message}`);
+  }
+}
