@@ -34,6 +34,7 @@ interface AuthState {
   updateUser: (id: string, updates: Partial<User>) => void;
   deleteUser: (id: string) => void;
   changePassword: (userId: string, currentPassword: string, newPassword: string) => Promise<boolean>;
+  resetPassword: (userEmail: string, newPassword: string) => Promise<boolean>;
   updateUserDirect: (id: string, updates: Partial<User & { password?: string }>) => void;
 }
 
@@ -185,34 +186,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createUser = useCallback(async (newUser: Omit<User, 'id'>, password: string) => {
-    // Create auth user via Supabase signup
-    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
-      email: newUser.email,
-      password,
-      options: { data: { name: newUser.name } },
+    // Use server-side RPC to create user without losing current admin session
+    const { error: rpcError } = await supabase.rpc('admin_create_user', {
+      p_email: newUser.email,
+      p_password: password,
+      p_name: newUser.name,
+      p_role: newUser.role,
+      p_company_id: newUser.company_id,
+      p_allowed_modules: newUser.allowed_modules,
     });
 
-    if (signUpError || !signUpData.user) {
-      console.error('Error creating auth user:', signUpError?.message);
-      return;
-    }
-
-    // Create company_users record
-    const { error: insertError } = await supabase
-      .from('company_users')
-      .insert({
-        company_id: newUser.company_id,
-        user_id: signUpData.user.id,
-        role: newUser.role,
-        name: newUser.name,
-        email: newUser.email,
-        allowed_modules: newUser.allowed_modules,
-        twofa_enabled: newUser.twofa_enabled ?? false,
-        twofa_secret: newUser.twofa_secret ?? null,
-      });
-
-    if (insertError) {
-      console.error('Error creating company_user:', insertError.message);
+    if (rpcError) {
+      console.error('Error creating user via RPC:', rpcError.message);
       return;
     }
 
@@ -360,8 +345,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const resetPassword = useCallback(async (userEmail: string, newPassword: string): Promise<boolean> => {
+    const { error } = await supabase.rpc('admin_reset_password', {
+      p_user_email: userEmail,
+      p_new_password: newPassword,
+    });
+    if (error) {
+      console.error('Error resetting password:', error.message);
+      return false;
+    }
+    const current = userRef.current;
+    if (current) {
+      logAction(current.id, current.name, 'update', 'users', `Contraseña reseteada para: ${userEmail}`);
+    }
+    return true;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, users, isLoading, login, loginWith2fa, logout, createUser, updateUser, deleteUser, changePassword, updateUserDirect }}>
+    <AuthContext.Provider value={{ user, users, isLoading, login, loginWith2fa, logout, createUser, updateUser, deleteUser, changePassword, resetPassword, updateUserDirect }}>
       {children}
     </AuthContext.Provider>
   );

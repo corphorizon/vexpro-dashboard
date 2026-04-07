@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, hasModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
-import { Users, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, X, KeyRound } from 'lucide-react';
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
 const ALL_ROLES: Array<User['role']> = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
@@ -28,11 +28,14 @@ const emptyForm: UserForm = {
 
 export default function UsuariosPage() {
   const { t } = useI18n();
-  const { user, users, createUser, updateUser, deleteUser } = useAuth();
+  const { user, users, createUser, updateUser, deleteUser, resetPassword } = useAuth();
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [resetPwUser, setResetPwUser] = useState<User | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetSuccess, setResetSuccess] = useState(false);
 
   if (!hasModuleAccess(user, 'users')) {
     return (
@@ -60,17 +63,17 @@ export default function UsuariosPage() {
     setShowForm(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (editingId) {
-      updateUser(editingId, {
+      await updateUser(editingId, {
         name: form.name,
         email: form.email,
         role: form.role,
         allowed_modules: form.allowed_modules,
       });
     } else {
-      createUser(
+      await createUser(
         {
           name: form.name,
           email: form.email,
@@ -86,6 +89,20 @@ export default function UsuariosPage() {
     setShowForm(false);
     setEditingId(null);
     setForm(emptyForm);
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!resetPwUser || !newPassword) return;
+    const ok = await resetPassword(resetPwUser.email, newPassword);
+    if (ok) {
+      setResetSuccess(true);
+      setTimeout(() => {
+        setResetPwUser(null);
+        setNewPassword('');
+        setResetSuccess(false);
+      }, 2000);
+    }
   };
 
   const handleDelete = (id: string) => {
@@ -274,6 +291,14 @@ export default function UsuariosPage() {
                       >
                         <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                       </button>
+                      <button
+                        onClick={() => { setResetPwUser(u); setNewPassword(''); setResetSuccess(false); }}
+                        className="p-1.5 rounded hover:bg-amber-50 dark:hover:bg-amber-950/50 transition-colors"
+                        title="Resetear contraseña"
+                        aria-label="Resetear contraseña"
+                      >
+                        <KeyRound className="w-3.5 h-3.5 text-amber-500" />
+                      </button>
                       {u.id !== user?.id && (
                         deleteConfirm === u.id ? (
                           <div className="flex items-center gap-1">
@@ -309,6 +334,59 @@ export default function UsuariosPage() {
           </table>
         </div>
       </Card>
+
+      {/* Reset Password Modal */}
+      {resetPwUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-card border border-border rounded-xl p-6 shadow-lg w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Resetear Contraseña</h2>
+              <button onClick={() => setResetPwUser(null)} className="p-1 hover:bg-muted rounded">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            {resetSuccess ? (
+              <div className="px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-sm">
+                Contraseña actualizada correctamente para {resetPwUser.name}.
+              </div>
+            ) : (
+              <form onSubmit={handleResetPassword} className="space-y-4">
+                <p className="text-sm text-muted-foreground">
+                  Nueva contraseña para <span className="font-medium text-foreground">{resetPwUser.name}</span> ({resetPwUser.email})
+                </p>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Nueva contraseña</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    minLength={6}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                    placeholder="Mínimo 6 caracteres"
+                    autoFocus
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    className="flex-1 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+                  >
+                    Guardar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setResetPwUser(null)}
+                    className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+                  >
+                    Cancelar
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
