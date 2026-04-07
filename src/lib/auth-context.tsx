@@ -191,19 +191,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createUser = useCallback(async (newUser: Omit<User, 'id'>, password: string) => {
-    // Use server-side RPC to create user without losing current admin session
-    const { error: rpcError } = await supabase.rpc('admin_create_user', {
-      p_email: newUser.email,
-      p_password: password,
-      p_name: newUser.name,
-      p_role: newUser.role,
-      p_company_id: newUser.company_id,
-      p_allowed_modules: newUser.allowed_modules,
-    });
+    // Use server-side API route to create user without losing current admin session
+    try {
+      const res = await fetch('/api/admin/create-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: newUser.email,
+          password,
+          name: newUser.name,
+          role: newUser.role,
+          company_id: newUser.company_id,
+          allowed_modules: newUser.allowed_modules,
+        }),
+      });
 
-    if (rpcError) {
-      console.error('Error creating user via RPC:', rpcError.message);
-      return;
+      if (!res.ok) {
+        let errorMsg = 'Error desconocido';
+        try {
+          const err = await res.json();
+          errorMsg = err.error || errorMsg;
+        } catch { /* non-JSON response */ }
+        console.error('Error creating user:', errorMsg);
+        throw new Error(`Error creando usuario: ${errorMsg}`);
+      }
+    } catch (err) {
+      console.error('Failed to create user:', err);
+      throw err;
     }
 
     // Refresh users list
@@ -357,14 +371,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const resetPassword = useCallback(async (userEmail: string, newPassword: string): Promise<boolean> => {
-    const { error } = await supabase.rpc('admin_reset_password', {
-      p_user_email: userEmail,
-      p_new_password: newPassword,
-    });
-    if (error) {
-      console.error('Error resetting password:', error.message);
+    try {
+      const res = await fetch('/api/admin/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: userEmail, newPassword }),
+      });
+
+      if (!res.ok) {
+        let errorMsg = 'Error desconocido';
+        try {
+          const err = await res.json();
+          errorMsg = err.error || errorMsg;
+        } catch { /* non-JSON response */ }
+        console.error('Error resetting password:', errorMsg);
+        return false;
+      }
+    } catch (err) {
+      console.error('Failed to reset password:', err);
       return false;
     }
+
     const current = userRef.current;
     if (current) {
       logAction(current.id, current.name, 'update', 'users', `Contraseña reseteada para: ${userEmail}`);

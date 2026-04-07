@@ -36,6 +36,8 @@ export default function UsuariosPage() {
   const [resetPwUser, setResetPwUser] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
 
   if (!hasModuleAccess(user, 'users')) {
     return (
@@ -65,30 +67,38 @@ export default function UsuariosPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (editingId) {
-      await updateUser(editingId, {
-        name: form.name,
-        email: form.email,
-        role: form.role,
-        allowed_modules: form.allowed_modules,
-      });
-    } else {
-      await createUser(
-        {
+    setFormError(null);
+    setSaving(true);
+    try {
+      if (editingId) {
+        await updateUser(editingId, {
           name: form.name,
           email: form.email,
           role: form.role,
-          company_id: user?.company_id || '',
           allowed_modules: form.allowed_modules,
-          twofa_enabled: false,
-          twofa_secret: null,
-        },
-        form.password
-      );
+        });
+      } else {
+        await createUser(
+          {
+            name: form.name,
+            email: form.email,
+            role: form.role,
+            company_id: user?.company_id || '',
+            allowed_modules: form.allowed_modules,
+            twofa_enabled: false,
+            twofa_secret: null,
+          },
+          form.password
+        );
+      }
+      setShowForm(false);
+      setEditingId(null);
+      setForm(emptyForm);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Error al guardar usuario');
+    } finally {
+      setSaving(false);
     }
-    setShowForm(false);
-    setEditingId(null);
-    setForm(emptyForm);
   };
 
   const handleResetPassword = async (e: React.FormEvent) => {
@@ -219,16 +229,23 @@ export default function UsuariosPage() {
               </div>
             </div>
 
+            {formError && (
+              <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm">
+                {formError}
+              </div>
+            )}
+
             <div className="flex gap-2">
               <button
                 type="submit"
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+                disabled={saving}
+                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
               >
-                {editingId ? t('users.save') : t('users.create')}
+                {saving ? 'Guardando...' : (editingId ? t('users.save') : t('users.create'))}
               </button>
               <button
                 type="button"
-                onClick={() => { setShowForm(false); setEditingId(null); }}
+                onClick={() => { setShowForm(false); setEditingId(null); setFormError(null); }}
                 className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
               >
                 {t('common.cancel')}
