@@ -29,7 +29,7 @@ export default function LoginPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userName: name, userEmail }),
-    }).catch(() => {});
+    }).catch(err => console.error('Login notification failed:', err));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {

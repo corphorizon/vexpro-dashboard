@@ -142,5 +142,7 @@ export function downloadPDF(
   if (printWindow) {
     printWindow.document.write(html);
     printWindow.document.close();
+  } else {
+    alert('No se pudo abrir la ventana de impresión. Por favor permite las ventanas emergentes (pop-ups) para este sitio e intenta de nuevo.');
   }
 }

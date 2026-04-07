@@ -65,8 +65,6 @@ const MOCK_DOCS: DocRow[] = [
 ];
 
 const STORAGE_KEYS = {
-  liquidity: 'fd_upload_liquidity',
-  investments: 'fd_upload_investments',
   docs: 'fd_upload_docs',
 };
 
@@ -102,10 +100,8 @@ export default function UploadPage() {
   const [selectedPeriod, setSelectedPeriod] = useState(periods[periods.length - 1]?.id || '');
   const [section, setSection] = useState<DataSection>('depositos');
 
-  // --- Per-period data helpers ---
+  // --- Per-period data helpers (Supabase is source of truth) ---
   const loadDepositsForPeriod = useCallback((periodId: string): DepositRow[] => {
-    const stored = loadFromStorage<DepositRow[] | null>(getPerPeriodKey('deposits', periodId), null);
-    if (stored) return stored;
     const periodDeposits = allDeposits.filter(d => d.period_id === periodId);
     return INITIAL_DEPOSITS.map(init => {
       const match = periodDeposits.find(d => d.channel === init.channel);
@@ -114,8 +110,6 @@ export default function UploadPage() {
   }, [allDeposits]);
 
   const loadWithdrawalsForPeriod = useCallback((periodId: string): WithdrawalRow[] => {
-    const stored = loadFromStorage<WithdrawalRow[] | null>(getPerPeriodKey('withdrawals', periodId), null);
-    if (stored) return stored;
     const periodWithdrawals = allWithdrawals.filter(w => w.period_id === periodId);
     return INITIAL_WITHDRAWALS.map(init => {
       const match = periodWithdrawals.find(w => w.category === init.category);
@@ -124,15 +118,11 @@ export default function UploadPage() {
   }, [allWithdrawals]);
 
   const loadExpensesForPeriod = useCallback((periodId: string): ExpenseRow[] => {
-    const stored = loadFromStorage<ExpenseRow[] | null>(getPerPeriodKey('expenses', periodId), null);
-    if (stored) return stored;
     const periodExpenses = allExpenses.filter(e => e.period_id === periodId);
     return periodExpenses.map(e => ({ id: e.id, concept: e.concept, amount: e.amount, paid: e.paid, pending: e.pending }));
   }, [allExpenses]);
 
   const loadIncomeForPeriod = useCallback((periodId: string): IncomeRow => {
-    const stored = loadFromStorage<IncomeRow | null>(getPerPeriodKey('income', periodId), null);
-    if (stored) return stored;
     const periodIncome = allOperatingIncome.find(oi => oi.period_id === periodId);
     return { prop_firm: periodIncome?.prop_firm || 0, broker_pnl: periodIncome?.broker_pnl || 0, other: periodIncome?.other || 0 };
   }, [allOperatingIncome]);
@@ -166,25 +156,25 @@ export default function UploadPage() {
   }, [selectedPeriod, loadDepositsForPeriod, loadWithdrawalsForPeriod, loadExpensesForPeriod, loadIncomeForPeriod, allPropFirmSales, allP2PTransfers]);
 
   const setDeposits = useCallback((updater: DepositRow[] | ((prev: DepositRow[]) => DepositRow[])) => {
-    setDepositsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(getPerPeriodKey('deposits', selectedPeriodRef.current), next); return next; });
+    setDepositsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const setWithdrawals = useCallback((updater: WithdrawalRow[] | ((prev: WithdrawalRow[]) => WithdrawalRow[])) => {
-    setWithdrawalsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(getPerPeriodKey('withdrawals', selectedPeriodRef.current), next); return next; });
+    setWithdrawalsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const setExpenses = useCallback((updater: ExpenseRow[] | ((prev: ExpenseRow[]) => ExpenseRow[])) => {
-    setExpensesRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(getPerPeriodKey('expenses', selectedPeriodRef.current), next); return next; });
+    setExpensesRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const setIncome = useCallback((updater: IncomeRow | ((prev: IncomeRow) => IncomeRow)) => {
-    setIncomeRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(getPerPeriodKey('income', selectedPeriodRef.current), next); return next; });
+    setIncomeRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const setDocs = useCallback((updater: DocRow[] | ((prev: DocRow[]) => DocRow[])) => {
-    setDocsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(STORAGE_KEYS.docs, next); return next; });
+    setDocsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
 
-  // Liquidez state (persisted)
-  const [liquidityRows, setLiquidityRowsRaw] = useState<LiquidityMovement[]>(() => loadFromStorage(STORAGE_KEYS.liquidity, [...getLiquidityData()]));
+  // Liquidez state (from Supabase)
+  const [liquidityRows, setLiquidityRowsRaw] = useState<LiquidityMovement[]>(() => [...getLiquidityData()]);
   const setLiquidityRows = useCallback((updater: LiquidityMovement[] | ((prev: LiquidityMovement[]) => LiquidityMovement[])) => {
-    setLiquidityRowsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(STORAGE_KEYS.liquidity, next); return next; });
+    setLiquidityRowsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
 
   const [liqDateFrom, setLiqDateFrom] = useState('');
@@ -195,10 +185,10 @@ export default function UploadPage() {
   const [editLiq, setEditLiq] = useState({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
   const [newLiq, setNewLiq] = useState({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
 
-  // Inversiones state (persisted)
-  const [investmentRows, setInvestmentRowsRaw] = useState<Investment[]>(() => loadFromStorage(STORAGE_KEYS.investments, [...getInvestmentsData()]));
+  // Inversiones state (from Supabase)
+  const [investmentRows, setInvestmentRowsRaw] = useState<Investment[]>(() => [...getInvestmentsData()]);
   const setInvestmentRows = useCallback((updater: Investment[] | ((prev: Investment[]) => Investment[])) => {
-    setInvestmentRowsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(STORAGE_KEYS.investments, next); return next; });
+    setInvestmentRowsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
   const [invDateFrom, setInvDateFrom] = useState('');
   const [invDateTo, setInvDateTo] = useState('');
@@ -503,7 +493,7 @@ export default function UploadPage() {
         const updated = deposits.map(d => d.id === id ? { ...d, amount } : d);
         setDepositsRaw(updated);
         await upsertDeposits(company.id, selectedPeriodRef.current, updated);
-        localStorage.removeItem(getPerPeriodKey('deposits', selectedPeriodRef.current));
+
         await refresh();
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.depositRegistered'));
@@ -521,7 +511,7 @@ export default function UploadPage() {
         const updated = withdrawals.map(w => w.id === id ? { ...w, amount } : w);
         setWithdrawalsRaw(updated);
         await upsertWithdrawals(company.id, selectedPeriodRef.current, updated);
-        localStorage.removeItem(getPerPeriodKey('withdrawals', selectedPeriodRef.current));
+
         await refresh();
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.withdrawalRegistered'));
@@ -585,7 +575,7 @@ export default function UploadPage() {
     askConfirmation(`Registrar ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}?`, async () => {
       try {
         await upsertOperatingIncome(company.id, selectedPeriodRef.current, income);
-        localStorage.removeItem(getPerPeriodKey('income', selectedPeriodRef.current));
+
         await refresh();
         if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
         showSuccess(t('upload.incomeSaved'));
@@ -605,16 +595,13 @@ export default function UploadPage() {
       if (section === 'depositos') {
         await upsertDeposits(companyId, periodId, deposits);
         await upsertPropFirmSales(companyId, periodId, propFirmAmount);
-        localStorage.removeItem(getPerPeriodKey('deposits', periodId));
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
       } else if (section === 'retiros') {
         await upsertWithdrawals(companyId, periodId, withdrawals);
         await upsertP2PTransfers(companyId, periodId, p2pAmount);
-        localStorage.removeItem(getPerPeriodKey('withdrawals', periodId));
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
       } else if (section === 'egresos') {
         await upsertExpenses(companyId, periodId, expenses);
-        localStorage.removeItem(getPerPeriodKey('expenses', periodId));
         if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
       }
       await refresh();

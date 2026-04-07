@@ -18,7 +18,7 @@ export default function SociosPage() {
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { periods, partners, partnerDistributions, allFinancialStatus, getPeriodSummary, computeSaldoChain, isPeriodAfterSaldoStart } = useData();
 
-  const saldoChain = useMemo(() => computeSaldoChain(), []);
+  const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
 
   // Get current period info
   const currentPeriodId = mode === 'single' ? selectedPeriodId : null;
@@ -52,7 +52,7 @@ export default function SociosPage() {
       result.set(period.id, { reserveThisPeriod: reserveAmount, accumulatedReserve: accumulated });
     }
     return result;
-  }, [saldoChain]);
+  }, [saldoChain, periods, getPeriodSummary, isPeriodAfterSaldoStart]);
 
   const currentReserve = currentPeriodId ? reserveData.get(currentPeriodId) : null;
   const reserveThisPeriod = currentReserve?.reserveThisPeriod || 0;
@@ -313,7 +313,9 @@ export default function SociosPage() {
                     const pReserveAmt = pReserve?.reserveThisPeriod || 0;
                     const pRawDist = hasSaldo && sInfo ? sInfo.totalDistribuir : ((): number => {
                       const pSum = getPeriodSummary(period.id);
-                      const pInc = pSum?.operatingIncome ? pSum.operatingIncome.prop_firm + pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other : 0;
+                      const pInc = (pSum?.operatingIncome
+                        ? pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other
+                        : 0) + (pSum?.propFirmNetIncome || 0);
                       return pInc;
                     })();
                     const pDistributable = pRawDist > 0 ? pRawDist - pReserveAmt : pRawDist;

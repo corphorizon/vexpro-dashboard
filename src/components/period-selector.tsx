@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { Layers, Lock } from 'lucide-react';
@@ -17,18 +17,18 @@ export function PeriodSelector() {
   const { periods } = useData();
   const { mode, selectedPeriodId, selectedPeriodIds, consolidationLabel, setSelectedPeriod, setConsolidated, setSingleMode } = usePeriod();
 
-  const PRESETS = [
+  const PRESETS = useMemo(() => [
     { label: 'Todo', ids: periods.map(p => p.id) },
     { label: 'Q4 2025', ids: periods.filter(p => p.year === 2025 && p.month >= 10).map(p => p.id) },
     { label: 'Q1 2026', ids: periods.filter(p => p.year === 2026 && p.month <= 3).map(p => p.id) },
     { label: 'Q2 2026', ids: periods.filter(p => p.year === 2026 && p.month >= 4 && p.month <= 6).map(p => p.id) },
     { label: 'Oct-Dic 2025', ids: periods.filter(p => p.year === 2025).map(p => p.id) },
-  ];
+  ], [periods]);
   const [showPanel, setShowPanel] = useState(false);
   const [customSelection, setCustomSelection] = useState<string[]>([]);
 
   // Compute available years
-  const years = [...new Set(periods.map(p => p.year))].sort();
+  const years = useMemo(() => [...new Set(periods.map(p => p.year))].sort(), [periods]);
 
   // Track selected year for month buttons
   const [selectedYear, setSelectedYear] = useState(() => {
