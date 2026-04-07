@@ -6,7 +6,7 @@
 
 ## Contexto del proyecto
 
-Soy desarrollador y me dieron acceso al repositorio **Smart Dashboard** de **Horizon Consulting**. Es un dashboard financiero multi-tenant para brokers, prop firms y hedge funds. El primer cliente es VexPro FX.
+Soy desarrollador y me dieron acceso al repositorio **Smart Dashboard** de **Horizon Consulting**. Es un dashboard financiero multi-tenant para brokers, prop firms y hedge funds. El primer cliente activo es Vex Pro.
 
 ### Stack tecnológico
 - **Framework:** Next.js 16 (App Router, TypeScript)

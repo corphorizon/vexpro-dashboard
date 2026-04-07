@@ -1,11 +1,10 @@
 'use client';
 
-import { useMemo } from 'react';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
 import { PeriodSelector } from '@/components/period-selector';
 import { MonthlyChart } from '@/components/charts/monthly-chart';
 import { usePeriod } from '@/lib/period-context';
-import { getPeriodSummary, getConsolidatedSummary, computeSaldoChain, isPeriodAfterSaldoStart } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { downloadExcel, downloadPDF } from '@/lib/export-utils';
@@ -19,7 +18,6 @@ import {
   Wallet,
   AlertTriangle,
   Download,
-  Star,
   FileSpreadsheet,
   FileText,
 } from 'lucide-react';
@@ -27,6 +25,7 @@ import {
 export default function ResumenPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
+  const { getPeriodSummary, getConsolidatedSummary } = useData();
 
   const summary = mode === 'consolidated'
     ? getConsolidatedSummary(selectedPeriodIds)
@@ -43,7 +42,7 @@ export default function ResumenPage() {
       ['Egresos Operativos', summary.totalExpenses],
       ['Prop Firm', summary.operatingIncome?.prop_firm || 0],
       ['Broker P&L', summary.operatingIncome?.broker_pnl || 0],
-      ['Balance Disponible', summary.financialStatus?.current_month_balance || 0],
+      ['Balance Disponible', totalIncome - summary.totalExpenses],
     ];
     downloadCSV(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
   };
@@ -65,7 +64,7 @@ export default function ResumenPage() {
 
   const handleExportPDF = () => {
     downloadPDF('Resumen General', exportHeaders, exportRows, {
-      companyName: 'VexPro FX',
+      companyName: 'Vex Pro',
       subtitle: `Período: ${summary.period.label}`,
       date: new Date().toLocaleDateString(),
     });
@@ -77,10 +76,10 @@ export default function ResumenPage() {
     : 0;
   const fs = summary.financialStatus;
 
-  const saldoChain = useMemo(() => computeSaldoChain(), []);
-  const currentPeriodId = mode === 'single' ? selectedPeriodId : null;
-  const saldoInfo = currentPeriodId ? saldoChain.get(currentPeriodId) : null;
-  const showSaldo = currentPeriodId ? isPeriodAfterSaldoStart(currentPeriodId) : false;
+  // Dynamic balance: Operating Income - Operating Expenses
+  const balanceDisponible = totalIncome - summary.totalExpenses;
+
+  // saldoChain is used in socios page, not needed here anymore
 
   return (
     <div className="space-y-6">
@@ -120,10 +119,10 @@ export default function ResumenPage() {
       </div>
 
       {/* Negative balance warning */}
-      {fs && fs.current_month_balance < 0 && (
+      {balanceDisponible < 0 && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm font-medium">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          {t('summary.negativeBalance', { amount: formatCurrency(fs.current_month_balance) })}
+          {t('summary.negativeBalance', { amount: formatCurrency(balanceDisponible) })}
         </div>
       )}
 
@@ -205,32 +204,23 @@ export default function ResumenPage() {
             </div>
             <CardTitle>{t('summary.balance')}</CardTitle>
           </div>
-          {fs && (
-            <>
-              <CardValue positive={fs.current_month_balance > 0} negative={fs.current_month_balance < 0}>
-                {formatCurrency(fs.current_month_balance)}
-              </CardValue>
-              <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-                <div className="flex justify-between">
-                  <span>{t('summary.netoMes')}</span>
-                  <span className={fs.net_total >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                    {formatCurrency(fs.net_total)}
-                  </span>
-                </div>
-                {showSaldo && (
-                  <div className="flex justify-between">
-                    <span className="flex items-center gap-1">
-                      <Star className="w-3 h-3 text-amber-500" />
-                      {t('summary.saldoFavor')}
-                    </span>
-                    <span className="font-medium text-amber-600">
-                      {formatCurrency(saldoInfo?.saldoNuevo || 0)}
-                    </span>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+          <CardValue positive={balanceDisponible > 0} negative={balanceDisponible < 0}>
+            {formatCurrency(balanceDisponible)}
+          </CardValue>
+          <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+            <div className="flex justify-between">
+              <span>{t('summary.operatingIncome')}</span>
+              <span className={totalIncome >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                {formatCurrency(totalIncome)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>{t('summary.expenses')}</span>
+              <span className="text-red-600">
+                -{formatCurrency(summary.totalExpenses)}
+              </span>
+            </div>
+          </div>
         </Card>
       </div>
 

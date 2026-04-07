@@ -4,8 +4,8 @@ import { useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
-import { getProfileById, getMonthlyResults, getProfilesByHead, ROLE_LABELS_HR, getTotalCommissions, DEMO_COMMERCIAL_PROFILES } from '@/lib/hr-data';
-import { DEMO_PERIODS } from '@/lib/demo-data';
+import { ROLE_LABELS_HR } from '@/lib/hr-data';
+import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
@@ -21,6 +21,7 @@ function formatDateDMY(dateStr: string | null): string | null {
 
 export default function PerfilPage() {
   const { t } = useI18n();
+  const { getProfileById, getMonthlyResults, getProfilesByHead, getTotalCommissions, commercialProfiles, periods } = useData();
   const searchParams = useSearchParams();
   const profileId = searchParams.get('id');
 
@@ -63,7 +64,7 @@ export default function PerfilPage() {
   const [editBirthday, setEditBirthday] = useState(profile.birthday || '');
   const [editStatus, setEditStatus] = useState(profile.status);
 
-  const possibleHeads = DEMO_COMMERCIAL_PROFILES.filter(p => p.role === 'sales_manager' || p.role === 'head');
+  const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
 
   const handleSaveProfile = () => {
     const updated: CommercialProfile = {
@@ -104,7 +105,7 @@ export default function PerfilPage() {
   };
 
   // Add form state
-  const [formPeriod, setFormPeriod] = useState(DEMO_PERIODS[DEMO_PERIODS.length - 1]?.id || '');
+  const [formPeriod, setFormPeriod] = useState(periods[periods.length - 1]?.id || '');
   const [formNetDepCurrent, setFormNetDepCurrent] = useState(0);
   const [formNetDepAccum, setFormNetDepAccum] = useState(0);
   const [formNetDepTotal, setFormNetDepTotal] = useState(0);
@@ -126,7 +127,7 @@ export default function PerfilPage() {
   const totalNetDeposit = results.reduce((s, r) => s + r.net_deposit_current, 0);
 
   const getPeriodLabel = (periodId: string) => {
-    const p = DEMO_PERIODS.find(pp => pp.id === periodId);
+    const p = periods.find(pp => pp.id === periodId);
     return p?.label || periodId;
   };
 
@@ -474,7 +475,7 @@ export default function PerfilPage() {
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.selectPeriod')}</label>
                 <select value={formPeriod} onChange={e => setFormPeriod(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-                  {DEMO_PERIODS.map(p => (
+                  {periods.map(p => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
                 </select>

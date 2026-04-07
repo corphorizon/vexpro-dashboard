@@ -219,6 +219,49 @@ export interface CommercialMonthlyResult {
 
 export type UserRole = 'admin' | 'socio' | 'auditor' | 'soporte' | 'hr' | 'invitado';
 
+// Email Types
+export type EmailType = 'welcome' | 'password_reset' | 'report' | 'notification' | 'login_notification';
+
+export interface SendEmailRequest {
+  to: string;
+  type: EmailType;
+  data: WelcomeEmailData | PasswordResetEmailData | ReportEmailData | NotificationEmailData | LoginNotificationData;
+}
+
+export interface WelcomeEmailData {
+  userName: string;
+}
+
+export interface PasswordResetEmailData {
+  resetLink: string;
+}
+
+export interface ReportEmailData {
+  reportName: string;
+  reportPeriod: string;
+  reportSummary: string;
+}
+
+export interface NotificationEmailData {
+  title: string;
+  message: string;
+}
+
+export interface LoginNotificationData {
+  userName: string;
+  loginDate: string;
+  loginTime: string;
+  browser: string;
+  ipAddress: string;
+  dashboardUrl: string;
+}
+
+export interface SendEmailResponse {
+  success: boolean;
+  messageId?: string;
+  error?: string;
+}
+
 export const CHANNEL_LABELS: Record<string, string> = {
   coinsbuy: 'Coinsbuy (Crypto)',
   fairpay: 'FairPay (Medio Local)',

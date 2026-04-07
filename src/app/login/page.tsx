@@ -2,10 +2,11 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
 import { DEMO_COMPANY } from '@/lib/demo-data';
 import { useI18n } from '@/lib/i18n';
-import { Building2, ArrowLeft } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 
 export default function LoginPage() {
   const { t } = useI18n();
@@ -20,8 +21,17 @@ export default function LoginPage() {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [pin, setPin] = useState('');
 
-  const { login, loginWith2fa } = useAuth();
+  const { login, loginWith2fa, users } = useAuth();
   const router = useRouter();
+
+  // Fire-and-forget: send login notification email (never blocks navigation)
+  const notifyLogin = (name: string, userEmail: string) => {
+    fetch('/api/auth/login-notification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userName: name, userEmail }),
+    }).catch(() => {});
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,7 +46,8 @@ export default function LoginPage() {
           setStep('2fa');
           setPin('');
         } else {
-          // Check if user needs to set up 2FA
+          const loggedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+          notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
           router.push('/');
         }
       } else {
@@ -56,6 +67,8 @@ export default function LoginPage() {
 
     const success = loginWith2fa(pendingUserId, pin);
     if (success) {
+      const loggedUser = users.find(u => u.id === pendingUserId);
+      if (loggedUser) notifyLogin(loggedUser.name, loggedUser.email);
       router.push('/');
     } else {
       setError(t('login.pinError'));
@@ -75,11 +88,23 @@ export default function LoginPage() {
       <div className="min-h-screen flex items-center justify-center bg-background px-4">
         <div className="w-full max-w-md">
           <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--color-primary)] mb-4">
-              <Building2 className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold">{DEMO_COMPANY.name}</h1>
-            <p className="text-muted-foreground text-sm mt-1">Smart Dashboard</p>
+            <Image
+              src="/vex-logofull.png"
+              alt={DEMO_COMPANY.name}
+              width={220}
+              height={60}
+              className="mx-auto mb-4 block dark:hidden"
+              priority
+            />
+            <Image
+              src="/vex-logofull-white.png"
+              alt={DEMO_COMPANY.name}
+              width={220}
+              height={60}
+              className="mx-auto mb-4 hidden dark:block"
+              priority
+            />
+            <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
           </div>
 
           <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
@@ -110,11 +135,23 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--color-primary)] mb-4">
-            <Building2 className="w-8 h-8 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold">{DEMO_COMPANY.name}</h1>
-          <p className="text-muted-foreground text-sm mt-1">Smart Dashboard</p>
+          <Image
+            src="/vex-logofull.png"
+            alt={DEMO_COMPANY.name}
+            width={220}
+            height={60}
+            className="mx-auto mb-4 block dark:hidden"
+            priority
+          />
+          <Image
+            src="/vex-logofull-white.png"
+            alt={DEMO_COMPANY.name}
+            width={220}
+            height={60}
+            className="mx-auto mb-4 hidden dark:block"
+            priority
+          />
+          <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
         </div>
 
         {/* Form */}
@@ -172,7 +209,7 @@ export default function LoginPage() {
               <div className="mt-4 text-center">
                 <button
                   onClick={() => setShowRecovery(true)}
-                  className="text-sm text-[var(--color-primary)] hover:underline"
+                  className="text-sm text-[var(--color-secondary)] hover:underline font-medium"
                 >
                   {t('login.recovery')}
                 </button>

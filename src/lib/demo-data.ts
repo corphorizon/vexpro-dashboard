@@ -10,7 +10,7 @@ import type {
 // ============================================================
 export const DEMO_COMPANY: Company = {
   id: 'vexpro-001',
-  name: 'VexPro FX',
+  name: 'Vex Pro',
   slug: 'vexprofx',
   subdomain: 'dashboard.vexprofx.com',
   logo_url: null,

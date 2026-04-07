@@ -3,7 +3,7 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { DEMO_PERIODS, DEMO_LIQUIDITY, DEMO_INVESTMENTS, DEMO_DEPOSITS, DEMO_WITHDRAWALS, DEMO_EXPENSES, DEMO_OPERATING_INCOME } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
@@ -79,54 +79,56 @@ function saveToStorage<T>(key: string, value: T) {
 export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const { periods, allDeposits, allWithdrawals, allExpenses, allOperatingIncome, getLiquidityData, getInvestmentsData } = useData();
   const isAdmin = user?.role === 'admin';
   const userCanAdd = canAdd(user);
   const userCanEdit = canEdit(user);
   const userCanDelete = canDelete(user);
 
-  const [selectedPeriod, setSelectedPeriod] = useState(DEMO_PERIODS[DEMO_PERIODS.length - 1].id);
+  const [selectedPeriod, setSelectedPeriod] = useState(periods[periods.length - 1]?.id || '');
   const [section, setSection] = useState<DataSection>('depositos');
 
   // --- Per-period data helpers ---
   const loadDepositsForPeriod = useCallback((periodId: string): DepositRow[] => {
     const stored = loadFromStorage<DepositRow[] | null>(getPerPeriodKey('deposits', periodId), null);
     if (stored) return stored;
-    const demoDeposits = DEMO_DEPOSITS.filter(d => d.period_id === periodId);
+    const periodDeposits = allDeposits.filter(d => d.period_id === periodId);
     return INITIAL_DEPOSITS.map(init => {
-      const demo = demoDeposits.find(d => d.channel === init.channel);
-      return { ...init, amount: demo?.amount || 0 };
+      const match = periodDeposits.find(d => d.channel === init.channel);
+      return { ...init, amount: match?.amount || 0 };
     });
-  }, []);
+  }, [allDeposits]);
 
   const loadWithdrawalsForPeriod = useCallback((periodId: string): WithdrawalRow[] => {
     const stored = loadFromStorage<WithdrawalRow[] | null>(getPerPeriodKey('withdrawals', periodId), null);
     if (stored) return stored;
-    const demoWithdrawals = DEMO_WITHDRAWALS.filter(w => w.period_id === periodId);
+    const periodWithdrawals = allWithdrawals.filter(w => w.period_id === periodId);
     return INITIAL_WITHDRAWALS.map(init => {
-      const demo = demoWithdrawals.find(w => w.category === init.category);
-      return { ...init, amount: demo?.amount || 0 };
+      const match = periodWithdrawals.find(w => w.category === init.category);
+      return { ...init, amount: match?.amount || 0 };
     });
-  }, []);
+  }, [allWithdrawals]);
 
   const loadExpensesForPeriod = useCallback((periodId: string): ExpenseRow[] => {
     const stored = loadFromStorage<ExpenseRow[] | null>(getPerPeriodKey('expenses', periodId), null);
     if (stored) return stored;
-    const demoExpenses = DEMO_EXPENSES.filter(e => e.period_id === periodId);
-    return demoExpenses.map(e => ({ id: e.id, concept: e.concept, amount: e.amount, paid: e.paid, pending: e.pending }));
-  }, []);
+    const periodExpenses = allExpenses.filter(e => e.period_id === periodId);
+    return periodExpenses.map(e => ({ id: e.id, concept: e.concept, amount: e.amount, paid: e.paid, pending: e.pending }));
+  }, [allExpenses]);
 
   const loadIncomeForPeriod = useCallback((periodId: string): IncomeRow => {
     const stored = loadFromStorage<IncomeRow | null>(getPerPeriodKey('income', periodId), null);
     if (stored) return stored;
-    const demoIncome = DEMO_OPERATING_INCOME.find(oi => oi.period_id === periodId);
-    return { prop_firm: demoIncome?.prop_firm || 0, broker_pnl: demoIncome?.broker_pnl || 0, other: demoIncome?.other || 0 };
-  }, []);
+    const periodIncome = allOperatingIncome.find(oi => oi.period_id === periodId);
+    return { prop_firm: periodIncome?.prop_firm || 0, broker_pnl: periodIncome?.broker_pnl || 0, other: periodIncome?.other || 0 };
+  }, [allOperatingIncome]);
 
   // Data state (persisted to localStorage per period)
-  const [deposits, setDepositsRaw] = useState<DepositRow[]>(() => loadDepositsForPeriod(DEMO_PERIODS[DEMO_PERIODS.length - 1].id));
-  const [withdrawals, setWithdrawalsRaw] = useState<WithdrawalRow[]>(() => loadWithdrawalsForPeriod(DEMO_PERIODS[DEMO_PERIODS.length - 1].id));
-  const [expenses, setExpensesRaw] = useState<ExpenseRow[]>(() => loadExpensesForPeriod(DEMO_PERIODS[DEMO_PERIODS.length - 1].id));
-  const [income, setIncomeRaw] = useState<IncomeRow>(() => loadIncomeForPeriod(DEMO_PERIODS[DEMO_PERIODS.length - 1].id));
+  const lastPeriodId = periods[periods.length - 1]?.id || '';
+  const [deposits, setDepositsRaw] = useState<DepositRow[]>(() => loadDepositsForPeriod(lastPeriodId));
+  const [withdrawals, setWithdrawalsRaw] = useState<WithdrawalRow[]>(() => loadWithdrawalsForPeriod(lastPeriodId));
+  const [expenses, setExpensesRaw] = useState<ExpenseRow[]>(() => loadExpensesForPeriod(lastPeriodId));
+  const [income, setIncomeRaw] = useState<IncomeRow>(() => loadIncomeForPeriod(lastPeriodId));
   const [docs, setDocsRaw] = useState<DocRow[]>(() => loadFromStorage(STORAGE_KEYS.docs, MOCK_DOCS));
 
   // ARCHITECTURE NOTE: We use a ref to track selectedPeriod in setDeposits/setWithdrawals/etc.
@@ -162,7 +164,7 @@ export default function UploadPage() {
   }, []);
 
   // Liquidez state (persisted)
-  const [liquidityRows, setLiquidityRowsRaw] = useState<LiquidityMovement[]>(() => loadFromStorage(STORAGE_KEYS.liquidity, [...DEMO_LIQUIDITY]));
+  const [liquidityRows, setLiquidityRowsRaw] = useState<LiquidityMovement[]>(() => loadFromStorage(STORAGE_KEYS.liquidity, [...getLiquidityData()]));
   const setLiquidityRows = useCallback((updater: LiquidityMovement[] | ((prev: LiquidityMovement[]) => LiquidityMovement[])) => {
     setLiquidityRowsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(STORAGE_KEYS.liquidity, next); return next; });
   }, []);
@@ -176,7 +178,7 @@ export default function UploadPage() {
   const [newLiq, setNewLiq] = useState({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
 
   // Inversiones state (persisted)
-  const [investmentRows, setInvestmentRowsRaw] = useState<Investment[]>(() => loadFromStorage(STORAGE_KEYS.investments, [...DEMO_INVESTMENTS]));
+  const [investmentRows, setInvestmentRowsRaw] = useState<Investment[]>(() => loadFromStorage(STORAGE_KEYS.investments, [...getInvestmentsData()]));
   const setInvestmentRows = useCallback((updater: Investment[] | ((prev: Investment[]) => Investment[])) => {
     setInvestmentRowsRaw(prev => { const next = typeof updater === 'function' ? updater(prev) : updater; saveToStorage(STORAGE_KEYS.investments, next); return next; });
   }, []);
@@ -196,7 +198,7 @@ export default function UploadPage() {
   const [successMsg, setSuccessMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
-  const periodLabel = DEMO_PERIODS.find(p => p.id === selectedPeriod)?.label || '';
+  const periodLabel = periods.find(p => p.id === selectedPeriod)?.label || '';
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
@@ -209,7 +211,7 @@ export default function UploadPage() {
 
   // --- Period date range helper ---
   const getPeriodDateRange = (periodId: string): { from: string; to: string } | null => {
-    const period = DEMO_PERIODS.find(p => p.id === periodId);
+    const period = periods.find(p => p.id === periodId);
     if (!period) return null;
     const y = period.year;
     const m = period.month;
@@ -533,7 +535,7 @@ export default function UploadPage() {
           onChange={(e) => setSelectedPeriod(e.target.value)}
           className="px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
         >
-          {DEMO_PERIODS.map(p => (
+          {periods.map(p => (
             <option key={p.id} value={p.id}>{p.label} {p.is_closed ? '(Cerrado)' : ''}</option>
           ))}
         </select>
@@ -894,7 +896,7 @@ export default function UploadPage() {
                 className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 <option value="todos">Todos</option>
-                {DEMO_PERIODS.map(p => (
+                {periods.map(p => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>
@@ -1073,7 +1075,7 @@ export default function UploadPage() {
                 className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 <option value="todos">Todos</option>
-                {DEMO_PERIODS.map(p => (
+                {periods.map(p => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
               </select>

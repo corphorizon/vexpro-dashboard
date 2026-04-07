@@ -1,10 +1,11 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
-import { DEMO_COMPANY } from '@/lib/demo-data';
+import { useData } from '@/lib/data-context';
 import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -14,7 +15,6 @@ import {
   Droplets,
   TrendingUp,
   Users,
-  Building2,
   Upload,
   Settings,
   LogOut,
@@ -45,6 +45,7 @@ export function Sidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
+  const { company } = useData();
   const { theme, resolvedTheme, setTheme } = useTheme();
   const { locale, setLocale, t } = useI18n();
 
@@ -58,15 +59,24 @@ export function Sidebar() {
   return (
     <aside className="w-64 border-r border-border bg-card flex flex-col min-h-screen">
       {/* Logo */}
-      <div className="p-6 border-b border-border">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-[var(--color-primary)] flex items-center justify-center">
-            <Building2 className="w-5 h-5 text-white" />
-          </div>
-          <div>
-            <h1 className="font-bold text-lg leading-tight">{DEMO_COMPANY.name}</h1>
-            <p className="text-xs text-muted-foreground">Smart Dashboard</p>
-          </div>
+      <div className="p-4 border-b border-border">
+        <div className="flex items-center justify-center">
+          <Image
+            src="/vex-logofull.png"
+            alt={company?.name || 'Company'}
+            width={180}
+            height={50}
+            className="object-contain block dark:hidden"
+            priority
+          />
+          <Image
+            src="/vex-logofull-white.png"
+            alt={company?.name || 'Company'}
+            width={180}
+            height={50}
+            className="object-contain hidden dark:block"
+            priority
+          />
         </div>
       </div>
 

@@ -1,7 +1,7 @@
 'use client';
 
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react';
-import { DEMO_PERIODS } from './demo-data';
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import { useData } from './data-context';
 
 type ViewMode = 'single' | 'consolidated';
 
@@ -18,11 +18,21 @@ interface PeriodState {
 const PeriodContext = createContext<PeriodState | null>(null);
 
 export function PeriodProvider({ children }: { children: ReactNode }) {
-  const defaultPeriod = DEMO_PERIODS[DEMO_PERIODS.length - 1].id;
+  const { periods, loading } = useData();
+  const defaultPeriod = periods.length > 0 ? periods[periods.length - 1].id : '';
   const [mode, setMode] = useState<ViewMode>('single');
   const [selectedPeriodId, setSelectedPeriodIdState] = useState(defaultPeriod);
   const [selectedPeriodIds, setSelectedPeriodIds] = useState<string[]>([defaultPeriod]);
   const [consolidationLabel, setConsolidationLabel] = useState<string | null>(null);
+
+  // Update default period when periods load from Supabase
+  useEffect(() => {
+    if (!loading && periods.length > 0 && !selectedPeriodId) {
+      const lastPeriod = periods[periods.length - 1].id;
+      setSelectedPeriodIdState(lastPeriod);
+      setSelectedPeriodIds([lastPeriod]);
+    }
+  }, [loading, periods, selectedPeriodId]);
 
   const setSelectedPeriod = useCallback((id: string) => {
     setMode('single');

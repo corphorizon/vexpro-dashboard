@@ -3,8 +3,8 @@
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
-import { DEMO_EMPLOYEES, DEMO_COMMERCIAL_PROFILES, DEMO_MONTHLY_RESULTS, ROLE_LABELS_HR, getProfilesByHead, getTotalCommissions, getResultsByPeriod } from '@/lib/hr-data';
-import { DEMO_PERIODS } from '@/lib/demo-data';
+import { ROLE_LABELS_HR } from '@/lib/hr-data';
+import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
@@ -35,29 +35,29 @@ const ROLE_BADGE_COLORS: Record<string, string> = {
 // ─── Period filter logic ───
 type FilterPreset = 'total' | 'month' | 'quarter' | 'semester' | 'annual' | 'custom';
 
-function getFilteredPeriodIds(preset: FilterPreset, selectedMonth: string, customIds: string[]): string[] {
+function getFilteredPeriodIds(periods: { id: string; year: number; month: number }[], preset: FilterPreset, selectedMonth: string, customIds: string[]): string[] {
   switch (preset) {
     case 'total':
-      return DEMO_PERIODS.map(p => p.id);
+      return periods.map(p => p.id);
     case 'month':
       return selectedMonth ? [selectedMonth] : [];
     case 'quarter': {
-      const ref = DEMO_PERIODS.find(p => p.id === selectedMonth);
+      const ref = periods.find(p => p.id === selectedMonth);
       if (!ref) return [];
       const q = Math.ceil(ref.month / 3);
       const startM = (q - 1) * 3 + 1;
-      return DEMO_PERIODS.filter(p => p.year === ref.year && p.month >= startM && p.month <= startM + 2).map(p => p.id);
+      return periods.filter(p => p.year === ref.year && p.month >= startM && p.month <= startM + 2).map(p => p.id);
     }
     case 'semester': {
-      const ref2 = DEMO_PERIODS.find(p => p.id === selectedMonth);
+      const ref2 = periods.find(p => p.id === selectedMonth);
       if (!ref2) return [];
       const half = ref2.month <= 6 ? [1, 6] : [7, 12];
-      return DEMO_PERIODS.filter(p => p.year === ref2.year && p.month >= half[0] && p.month <= half[1]).map(p => p.id);
+      return periods.filter(p => p.year === ref2.year && p.month >= half[0] && p.month <= half[1]).map(p => p.id);
     }
     case 'annual': {
-      const ref3 = DEMO_PERIODS.find(p => p.id === selectedMonth);
+      const ref3 = periods.find(p => p.id === selectedMonth);
       if (!ref3) return [];
-      return DEMO_PERIODS.filter(p => p.year === ref3.year).map(p => p.id);
+      return periods.filter(p => p.year === ref3.year).map(p => p.id);
     }
     case 'custom':
       return customIds;
@@ -130,6 +130,7 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
 // ─── Commercial Profile Form ───
 function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (p: CommercialProfile) => void; editing?: CommercialProfile }) {
   const { t } = useI18n();
+  const { commercialProfiles } = useData();
   const [name, setName] = useState(editing?.name || '');
   const [email, setEmail] = useState(editing?.email || '');
   const [role, setRole] = useState<'sales_manager' | 'head' | 'bdm'>(editing?.role || 'bdm');
@@ -144,7 +145,7 @@ function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave
   const [birthday, setBirthday] = useState(editing?.birthday || '');
   const [status, setStatus] = useState<'active' | 'inactive'>(editing?.status || 'active');
 
-  const possibleHeads = DEMO_COMMERCIAL_PROFILES.filter(p => p.role === 'sales_manager' || p.role === 'head');
+  const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
 
   const handleSubmit = () => {
     if (!name || !email) return;
@@ -223,6 +224,7 @@ function PeriodFilter({ preset, setPreset, selectedMonth, setSelectedMonth, cust
   customIds: string[]; setCustomIds: (ids: string[]) => void;
 }) {
   const { t } = useI18n();
+  const { periods } = useData();
   const [showCustom, setShowCustom] = useState(false);
 
   const filterLabels: Record<FilterPreset, string> = {
@@ -258,14 +260,14 @@ function PeriodFilter({ preset, setPreset, selectedMonth, setSelectedMonth, cust
           onChange={e => setSelectedMonth(e.target.value)}
           className="px-3 py-1.5 text-xs rounded-md border border-border bg-card"
         >
-          {DEMO_PERIODS.map(p => (
+          {periods.map(p => (
             <option key={p.id} value={p.id}>{p.label}</option>
           ))}
         </select>
       )}
       {showCustom && preset === 'custom' && (
         <div className="flex flex-wrap gap-1">
-          {DEMO_PERIODS.map(p => (
+          {periods.map(p => (
             <button
               key={p.id}
               onClick={() => setCustomIds(customIds.includes(p.id) ? customIds.filter(x => x !== p.id) : [...customIds, p.id])}
@@ -285,10 +287,11 @@ function PeriodFilter({ preset, setPreset, selectedMonth, setSelectedMonth, cust
 
 export default function RRHHPage() {
   const { t } = useI18n();
+  const { employees: dataEmployees, commercialProfiles, monthlyResults: dataMonthlyResults, periods } = useData();
   const [tab, setTab] = useState<Tab>('commercial');
-  const [employees, setEmployees] = useState<Employee[]>(DEMO_EMPLOYEES);
-  const [profiles, setProfiles] = useState<CommercialProfile[]>(DEMO_COMMERCIAL_PROFILES);
-  const [monthlyResults, setMonthlyResults] = useState<CommercialMonthlyResult[]>(DEMO_MONTHLY_RESULTS);
+  const [employees, setEmployees] = useState<Employee[]>(dataEmployees);
+  const [profiles, setProfiles] = useState<CommercialProfile[]>(commercialProfiles);
+  const [monthlyResults, setMonthlyResults] = useState<CommercialMonthlyResult[]>(dataMonthlyResults);
   const [showEmpForm, setShowEmpForm] = useState(false);
   const [editingEmp, setEditingEmp] = useState<Employee | undefined>();
   const [showProfileForm, setShowProfileForm] = useState(false);
@@ -296,10 +299,10 @@ export default function RRHHPage() {
 
   // Period filter state
   const [filterPreset, setFilterPreset] = useState<FilterPreset>('total');
-  const [filterMonth, setFilterMonth] = useState(DEMO_PERIODS[DEMO_PERIODS.length - 1].id);
+  const [filterMonth, setFilterMonth] = useState(periods[periods.length - 1]?.id || '');
   const [filterCustomIds, setFilterCustomIds] = useState<string[]>([]);
 
-  const filteredPeriodIds = getFilteredPeriodIds(filterPreset, filterMonth, filterCustomIds);
+  const filteredPeriodIds = getFilteredPeriodIds(periods, filterPreset, filterMonth, filterCustomIds);
 
   // Computed values for filtered periods
   const filteredResults = monthlyResults.filter(r => filteredPeriodIds.includes(r.period_id));

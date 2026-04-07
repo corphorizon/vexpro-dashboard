@@ -1,7 +1,9 @@
 'use client';
 
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
+import { createClient } from '@/lib/supabase/client';
 import { logAction } from '@/lib/audit-log';
+import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole = 'admin' | 'socio' | 'auditor' | 'soporte' | 'hr' | 'invitado';
 
@@ -37,262 +39,324 @@ interface AuthState {
 
 const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners', 'hr', 'upload', 'periods', 'users', 'audit'];
 
-const STORAGE_KEY = 'fd_users';
-const SESSION_KEY = 'fd_session';
-const HASHED_FLAG_KEY = 'fd_users_hashed_v1';
-
-// SHA-256 hash using Web Crypto API (browser-only demo)
-async function hashPassword(password: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-// Default users with plaintext passwords (only used to seed hashed versions on first load)
-const DEFAULT_USERS_RAW: Array<User & { password: string }> = [
-  { id: 'u1', email: 'kevin@vexprofx.com', name: 'Kevin', role: 'admin', company_id: 'vexpro-001', allowed_modules: ALL_MODULES, password: 'admin123', twofa_enabled: false, twofa_secret: null },
-  { id: 'u2', email: 'sergio@vexprofx.com', name: 'Sergio', role: 'socio', company_id: 'vexpro-001', allowed_modules: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners'], password: 'socio123', twofa_enabled: false, twofa_secret: null },
-  { id: 'u3', email: 'hugo@vexprofx.com', name: 'Hugo', role: 'socio', company_id: 'vexpro-001', allowed_modules: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners'], password: 'socio123', twofa_enabled: false, twofa_secret: null },
-  { id: 'u4', email: 'stiven@vexprofx.com', name: 'Stiven', role: 'socio', company_id: 'vexpro-001', allowed_modules: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners'], password: 'socio123', twofa_enabled: false, twofa_secret: null },
-  { id: 'u5', email: 'daniela@vexprofx.com', name: 'Daniela', role: 'auditor', company_id: 'vexpro-001', allowed_modules: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners', 'upload'], password: 'contador123', twofa_enabled: false, twofa_secret: null },
-];
-
-// Hash all default user passwords and store them; only runs once on first visit
-async function initHashedDefaults(): Promise<Array<User & { password: string }>> {
-  const hashed = await Promise.all(
-    DEFAULT_USERS_RAW.map(async (u) => ({
-      ...u,
-      password: await hashPassword(u.password),
-    }))
-  );
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(hashed));
-  localStorage.setItem(HASHED_FLAG_KEY, '1');
-  return hashed;
-}
-
-function isValidUserArray(data: unknown): data is Array<User & { password: string }> {
-  if (!Array.isArray(data)) return false;
-  return data.every(
-    (item) =>
-      item &&
-      typeof item === 'object' &&
-      typeof item.id === 'string' &&
-      typeof item.email === 'string' &&
-      typeof item.name === 'string' &&
-      typeof item.role === 'string'
-  );
-}
-
-// Ensure 2FA fields exist on users loaded from storage (migration for existing data)
-function migrateUser(u: User & { password: string }): User & { password: string } {
-  return {
-    ...u,
-    twofa_enabled: typeof u.twofa_enabled === 'boolean' ? u.twofa_enabled : false,
-    twofa_secret: typeof u.twofa_secret === 'string' ? u.twofa_secret : null,
-  } as User & { password: string };
-}
-
-function getStoredUsers(): Array<User & { password: string }> {
-  if (typeof window === 'undefined') return DEFAULT_USERS_RAW;
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) {
-    return DEFAULT_USERS_RAW;
-  }
-  try {
-    const parsed = JSON.parse(stored);
-    if (!isValidUserArray(parsed)) {
-      console.warn('Invalid user data in localStorage, resetting to defaults');
-      return DEFAULT_USERS_RAW;
-    }
-    return parsed.map(migrateUser);
-  } catch {
-    console.warn('Corrupted user data in localStorage, resetting to defaults');
-    return DEFAULT_USERS_RAW;
-  }
-}
-
-// Async version that ensures passwords are hashed before returning
-async function getStoredUsersAsync(): Promise<Array<User & { password: string }>> {
-  if (typeof window === 'undefined') return DEFAULT_USERS_RAW;
-  const isHashed = localStorage.getItem(HASHED_FLAG_KEY);
-  if (!isHashed) {
-    return initHashedDefaults();
-  }
-  const stored = localStorage.getItem(STORAGE_KEY);
-  if (!stored) {
-    return initHashedDefaults();
-  }
-  try {
-    const parsed = JSON.parse(stored);
-    if (!isValidUserArray(parsed)) {
-      console.warn('Invalid user data in localStorage, resetting to defaults');
-      return initHashedDefaults();
-    }
-    return parsed.map(migrateUser);
-  } catch {
-    console.warn('Corrupted user data in localStorage, resetting to defaults');
-    return initHashedDefaults();
-  }
-}
-
-function saveUsers(users: Array<User & { password: string }>) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(users));
-}
-
-function stripPassword(u: User & { password: string }): User {
-  const { password: _, ...userData } = u;
-  return userData;
-}
-
 const AuthContext = createContext<AuthState | null>(null);
+
+const supabase = createClient();
+
+// Fetch the company_user profile for a given auth user
+async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
+  const { data, error } = await supabase
+    .from('company_users')
+    .select('*')
+    .eq('user_id', authUser.id)
+    .single();
+
+  if (error || !data) {
+    console.error('Error fetching user profile:', error?.message);
+    return null;
+  }
+
+  return {
+    id: data.id,
+    email: data.email,
+    name: data.name,
+    role: data.role as UserRole,
+    company_id: data.company_id,
+    allowed_modules: data.allowed_modules || [],
+    twofa_enabled: data.twofa_enabled || false,
+    twofa_secret: data.twofa_secret || null,
+  };
+}
+
+// Fetch all company_users for the same company
+async function fetchAllUsers(companyId: string): Promise<User[]> {
+  const { data, error } = await supabase
+    .from('company_users')
+    .select('*')
+    .eq('company_id', companyId);
+
+  if (error || !data) {
+    console.error('Error fetching users:', error?.message);
+    return [];
+  }
+
+  return data.map((u: any) => ({
+    id: u.id,
+    email: u.email,
+    name: u.name,
+    role: u.role as UserRole,
+    company_id: u.company_id,
+    allowed_modules: u.allowed_modules || [],
+    twofa_enabled: u.twofa_enabled || false,
+    twofa_secret: u.twofa_secret || null,
+  }));
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [users, setUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // Ref to access current user in callbacks without stale closures
   const userRef = useRef<User | null>(null);
   useEffect(() => { userRef.current = user; }, [user]);
 
+  // Initialize: check for existing Supabase session
   useEffect(() => {
     async function init() {
-      const allUsers = await getStoredUsersAsync();
-      setUsers(allUsers.map(stripPassword));
-      const sessionId = localStorage.getItem(SESSION_KEY);
-      if (sessionId) {
-        const found = allUsers.find(u => u.id === sessionId);
-        if (found) {
-          setUser(stripPassword(found));
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session?.user) {
+        const profile = await fetchUserProfile(session.user);
+        if (profile) {
+          setUser(profile);
+          const allUsers = await fetchAllUsers(profile.company_id);
+          setUsers(allUsers);
         }
       }
       setIsLoading(false);
     }
     init();
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (event === 'SIGNED_OUT') {
+        setUser(null);
+        setUsers([]);
+      }
+      if (event === 'SIGNED_IN' && session?.user) {
+        const profile = await fetchUserProfile(session.user);
+        if (profile) {
+          setUser(profile);
+          const allUsers = await fetchAllUsers(profile.company_id);
+          setUsers(allUsers);
+        }
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    const allUsers = await getStoredUsersAsync();
-    const hashedInput = await hashPassword(password);
-    const found = allUsers.find(u => u.email.toLowerCase() === email.toLowerCase() && u.password === hashedInput);
-    if (!found) {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password,
+    });
+
+    if (error || !data.user) {
       return { success: false, needs2fa: false };
     }
-    if (found.twofa_enabled && found.twofa_secret) {
-      // Don't set session yet - need 2FA verification first
-      return { success: true, needs2fa: true, userId: found.id };
+
+    const profile = await fetchUserProfile(data.user);
+    if (!profile) {
+      return { success: false, needs2fa: false };
     }
-    setUser(stripPassword(found));
-    localStorage.setItem(SESSION_KEY, found.id);
-    logAction(found.id, found.name, 'login', 'auth', `Inicio de sesión: ${found.email}`);
+
+    // Check 2FA
+    if (profile.twofa_enabled && profile.twofa_secret) {
+      // Sign out temporarily — need 2FA verification first
+      await supabase.auth.signOut();
+      return { success: true, needs2fa: true, userId: profile.id };
+    }
+
+    setUser(profile);
+    const allUsers = await fetchAllUsers(profile.company_id);
+    setUsers(allUsers);
+    logAction(profile.id, profile.name, 'login', 'auth', `Inicio de sesión: ${profile.email}`);
     return { success: true, needs2fa: false };
   }, []);
 
   const loginWith2fa = useCallback((userId: string, pin: string): boolean => {
-    if (typeof window === 'undefined') return false;
-    const allUsers = getStoredUsers();
-    const found = allUsers.find(u => u.id === userId);
-    if (!found) return false;
-    if (found.twofa_secret === pin) {
-      setUser(stripPassword(found));
-      localStorage.setItem(SESSION_KEY, found.id);
-      logAction(found.id, found.name, 'login', 'auth', `Inicio de sesión con 2FA: ${found.email}`);
+    // For now, 2FA verification against stored secret
+    const targetUser = users.find(u => u.id === userId);
+    if (!targetUser) return false;
+    if (targetUser.twofa_secret === pin) {
+      setUser(targetUser);
+      logAction(targetUser.id, targetUser.name, 'login', 'auth', `Inicio de sesión con 2FA: ${targetUser.email}`);
       return true;
     }
     return false;
-  }, []);
+  }, [users]);
 
-  const logout = useCallback(() => {
-    setUser((prev) => {
-      if (prev) {
-        logAction(prev.id, prev.name, 'logout', 'auth', `Cierre de sesión: ${prev.email}`);
-      }
-      return null;
-    });
-    localStorage.removeItem(SESSION_KEY);
+  const logout = useCallback(async () => {
+    const prev = userRef.current;
+    if (prev) {
+      logAction(prev.id, prev.name, 'logout', 'auth', `Cierre de sesión: ${prev.email}`);
+    }
+    await supabase.auth.signOut();
+    setUser(null);
   }, []);
 
   const createUser = useCallback(async (newUser: Omit<User, 'id'>, password: string) => {
-    const allUsers = await getStoredUsersAsync();
-    const id = `u${Date.now()}`;
-    const hashedPw = await hashPassword(password);
-    const userWithPw = {
-      ...newUser,
-      id,
-      password: hashedPw,
-      twofa_enabled: newUser.twofa_enabled ?? false,
-      twofa_secret: newUser.twofa_secret ?? null,
-    };
-    allUsers.push(userWithPw);
-    saveUsers(allUsers);
-    setUsers(allUsers.map(stripPassword));
-    // Audit log: use current user from state ref (avoids localStorage race condition)
+    // Create auth user via Supabase signup
+    const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+      email: newUser.email,
+      password,
+      options: { data: { name: newUser.name } },
+    });
+
+    if (signUpError || !signUpData.user) {
+      console.error('Error creating auth user:', signUpError?.message);
+      return;
+    }
+
+    // Create company_users record
+    const { error: insertError } = await supabase
+      .from('company_users')
+      .insert({
+        company_id: newUser.company_id,
+        user_id: signUpData.user.id,
+        role: newUser.role,
+        name: newUser.name,
+        email: newUser.email,
+        allowed_modules: newUser.allowed_modules,
+        twofa_enabled: newUser.twofa_enabled ?? false,
+        twofa_secret: newUser.twofa_secret ?? null,
+      });
+
+    if (insertError) {
+      console.error('Error creating company_user:', insertError.message);
+      return;
+    }
+
+    // Refresh users list
     const current = userRef.current;
     if (current) {
+      const allUsers = await fetchAllUsers(current.company_id);
+      setUsers(allUsers);
       logAction(current.id, current.name, 'create', 'users', `Usuario creado: ${newUser.name} (${newUser.email}), rol: ${newUser.role}`);
     }
   }, []);
 
-  const updateUser = useCallback((id: string, updates: Partial<User>) => {
-    const allUsers = getStoredUsers();
-    const idx = allUsers.findIndex(u => u.id === id);
-    if (idx >= 0) {
-      const targetName = allUsers[idx].name;
-      allUsers[idx] = { ...allUsers[idx], ...updates };
-      saveUsers(allUsers);
-      setUsers(allUsers.map(stripPassword));
-      // If updating the current user, refresh their state
-      const current = userRef.current;
-      if (current && current.id === id) {
-        setUser(stripPassword(allUsers[idx]));
-      }
-      // Audit log: use state ref instead of localStorage (avoids race condition)
-      if (current) {
-        const fields = Object.keys(updates).join(', ');
-        logAction(current.id, current.name, 'update', 'users', `Usuario actualizado: ${targetName} - campos: ${fields}`);
-      }
-    }
-  }, []);
+  // Sync email/password changes to Supabase Auth via server API
+  const syncAuthUser = async (companyUserId: string, updates: { email?: string; password?: string }) => {
+    if (!updates.email && !updates.password) return;
 
-  const updateUserDirect = useCallback((id: string, updates: Partial<User & { password?: string }>) => {
-    const allUsers = getStoredUsers();
-    const idx = allUsers.findIndex(u => u.id === id);
-    if (idx >= 0) {
-      allUsers[idx] = { ...allUsers[idx], ...updates };
-      saveUsers(allUsers);
-      setUsers(allUsers.map(stripPassword));
-      const current = userRef.current;
-      if (current && current.id === id) {
-        setUser(stripPassword(allUsers[idx]));
-      }
-    }
-  }, []);
+    // Get the auth user_id from company_users
+    const { data } = await supabase
+      .from('company_users')
+      .select('user_id')
+      .eq('id', companyUserId)
+      .single();
 
-  const deleteUser = useCallback((id: string) => {
-    const allUsersOrig = getStoredUsers();
-    const deletedUser = allUsersOrig.find(u => u.id === id);
-    const allUsers = allUsersOrig.filter(u => u.id !== id);
-    saveUsers(allUsers);
-    setUsers(allUsers.map(stripPassword));
-    // Audit log: use state ref instead of localStorage (avoids race condition)
+    if (!data?.user_id) {
+      console.error('Could not find auth user_id for company_user:', companyUserId);
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/update-auth-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          authUserId: data.user_id,
+          ...(updates.email && { email: updates.email }),
+          ...(updates.password && { password: updates.password }),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        console.error('Error syncing auth user:', err.error);
+      }
+    } catch (err) {
+      console.error('Failed to sync auth user:', err);
+    }
+  };
+
+  const updateUser = useCallback(async (id: string, updates: Partial<User>) => {
+    const { error } = await supabase
+      .from('company_users')
+      .update({
+        ...(updates.name !== undefined && { name: updates.name }),
+        ...(updates.email !== undefined && { email: updates.email }),
+        ...(updates.role !== undefined && { role: updates.role }),
+        ...(updates.allowed_modules !== undefined && { allowed_modules: updates.allowed_modules }),
+        ...(updates.twofa_enabled !== undefined && { twofa_enabled: updates.twofa_enabled }),
+        ...(updates.twofa_secret !== undefined && { twofa_secret: updates.twofa_secret }),
+      })
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error updating user:', error.message);
+      return;
+    }
+
+    // Sync email change to Supabase Auth
+    if (updates.email) {
+      await syncAuthUser(id, { email: updates.email });
+    }
+
+    // Refresh users list
     const current = userRef.current;
-    if (current && deletedUser) {
-      logAction(current.id, current.name, 'delete', 'users', `Usuario eliminado: ${deletedUser.name} (${deletedUser.email})`);
+    if (current) {
+      const allUsers = await fetchAllUsers(current.company_id);
+      setUsers(allUsers);
+      // If updating current user, refresh their state
+      if (current.id === id) {
+        const updated = allUsers.find(u => u.id === id);
+        if (updated) setUser(updated);
+      }
+      const fields = Object.keys(updates).join(', ');
+      const targetUser = allUsers.find(u => u.id === id);
+      logAction(current.id, current.name, 'update', 'users', `Usuario actualizado: ${targetUser?.name || id} - campos: ${fields}`);
     }
   }, []);
 
-  const changePassword = useCallback(async (userId: string, currentPassword: string, newPassword: string): Promise<boolean> => {
-    const allUsers = await getStoredUsersAsync();
-    const idx = allUsers.findIndex(u => u.id === userId);
-    if (idx < 0) return false;
-    const hashedCurrent = await hashPassword(currentPassword);
-    if (allUsers[idx].password !== hashedCurrent) {
+  const updateUserDirect = useCallback(async (id: string, updates: Partial<User & { password?: string }>) => {
+    const { password, ...profileUpdates } = updates;
+    if (Object.keys(profileUpdates).length > 0) {
+      await supabase
+        .from('company_users')
+        .update(profileUpdates)
+        .eq('id', id);
+    }
+
+    // Sync email and/or password changes to Supabase Auth
+    if (updates.email || password) {
+      await syncAuthUser(id, {
+        ...(updates.email && { email: updates.email }),
+        ...(password && { password }),
+      });
+    }
+
+    const current = userRef.current;
+    if (current) {
+      const allUsers = await fetchAllUsers(current.company_id);
+      setUsers(allUsers);
+      if (current.id === id) {
+        const updated = allUsers.find(u => u.id === id);
+        if (updated) setUser(updated);
+      }
+    }
+  }, []);
+
+  const deleteUser = useCallback(async (id: string) => {
+    const targetUser = users.find(u => u.id === id);
+
+    const { error } = await supabase
+      .from('company_users')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('Error deleting user:', error.message);
+      return;
+    }
+
+    const current = userRef.current;
+    if (current) {
+      const allUsers = await fetchAllUsers(current.company_id);
+      setUsers(allUsers);
+      if (targetUser) {
+        logAction(current.id, current.name, 'delete', 'users', `Usuario eliminado: ${targetUser.name} (${targetUser.email})`);
+      }
+    }
+  }, [users]);
+
+  const changePassword = useCallback(async (_userId: string, _currentPassword: string, newPassword: string): Promise<boolean> => {
+    const { error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) {
+      console.error('Error changing password:', error.message);
       return false;
     }
-    const hashedNew = await hashPassword(newPassword);
-    allUsers[idx].password = hashedNew;
-    saveUsers(allUsers);
     return true;
   }, []);
 
@@ -315,7 +379,6 @@ export function hasModuleAccess(user: User | null, module: string): boolean {
   return user.allowed_modules.includes(module);
 }
 
-// Permission helpers — based on allowed_modules, customizable per user
 export function canAdd(user: User | null): boolean {
   if (!user) return false;
   return user.role === 'admin' || user.role === 'auditor';
@@ -349,7 +412,6 @@ export const ROLE_DESCRIPTIONS: Record<string, string> = {
   invitado: 'Acceso limitado de solo lectura',
 };
 
-// Default modules for each role (used when creating new users)
 export const ROLE_DEFAULT_MODULES: Record<string, string[]> = {
   admin: ALL_MODULES,
   socio: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners'],
