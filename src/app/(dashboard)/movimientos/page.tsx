@@ -178,27 +178,23 @@ export default function MovimientosPage() {
           <table className="w-full text-sm">
             <tbody>
               <tr className="border-b border-border/50">
-                <td className="py-2.5">{t('movements.pnlBookB')}</td>
+                <td className="py-2.5">Broker P&L (Libro B)</td>
                 <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(summary.brokerBalance?.pnl_book_b || 0)}
+                  {formatCurrency(summary.operatingIncome?.broker_pnl || 0)}
                 </td>
               </tr>
               <tr className="border-b border-border/50">
-                <td className="py-2.5">{t('movements.brokerDeposits')}</td>
-                <td className="py-2.5 text-right font-medium">{formatCurrency(summary.brokerDeposits)}</td>
-              </tr>
-              <tr className="border-b border-border/50">
-                <td className="py-2.5">{t('movements.brokerWithdrawals')}</td>
+                <td className="py-2.5">Otros</td>
                 <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(summary.withdrawals.find(w => w.category === 'broker')?.amount || 0)}
+                  {formatCurrency(summary.operatingIncome?.other || 0)}
                 </td>
               </tr>
               <tr className="font-bold">
                 <td className="py-3">{t('movements.totalBroker')}</td>
                 <td className="py-3 text-right">
                   {formatCurrency(
-                    summary.brokerDeposits -
-                    (summary.withdrawals.find(w => w.category === 'broker')?.amount || 0)
+                    (summary.operatingIncome?.broker_pnl || 0) +
+                    (summary.operatingIncome?.other || 0)
                   )}
                 </td>
               </tr>
