@@ -11,6 +11,18 @@ import type { LiquidityMovement, Investment } from '@/lib/types';
 import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download } from 'lucide-react';
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
+import {
+  upsertDeposits,
+  upsertWithdrawals,
+  upsertExpenses,
+  upsertOperatingIncome,
+  insertLiquidityMovement,
+  updateLiquidityMovement,
+  deleteLiquidityMovement as deleteLiqMutation,
+  insertInvestment,
+  updateInvestment,
+  deleteInvestment as deleteInvMutation,
+} from '@/lib/supabase/mutations';
 
 type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones' | 'documentos';
 
@@ -79,7 +91,7 @@ function saveToStorage<T>(key: string, value: T) {
 export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const { periods, allDeposits, allWithdrawals, allExpenses, allOperatingIncome, getLiquidityData, getInvestmentsData } = useData();
+  const { periods, allDeposits, allWithdrawals, allExpenses, allOperatingIncome, getLiquidityData, getInvestmentsData, company, refresh } = useData();
   const isAdmin = user?.role === 'admin';
   const userCanAdd = canAdd(user);
   const userCanEdit = canEdit(user);
@@ -315,24 +327,26 @@ export default function UploadPage() {
   };
 
   const addLiquidityRow = () => {
-    if (!userCanAdd || !newLiq.date || !newLiq.user_email) return;
+    if (!userCanAdd || !company || !newLiq.date || !newLiq.user_email) return;
     const dep = parseFloat(newLiq.deposit) || 0;
     const wth = parseFloat(newLiq.withdrawal) || 0;
-    askConfirmation(`Agregar movimiento de liquidez: Deposito ${formatCurrency(dep)}, Retiro ${formatCurrency(wth)}?`, () => {
-      const newRow: LiquidityMovement = {
-        id: `liq-${Date.now()}`,
-        company_id: 'vexpro-001',
-        date: newLiq.date,
-        user_email: newLiq.user_email,
-        mt_account: newLiq.mt_account || null,
-        deposit: dep,
-        withdrawal: wth,
-        balance: 0,
-        notes: null,
-      };
-      setLiquidityRows(prev => recalcLiquidityBalances([...prev, newRow]));
-      setNewLiq({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
-      showSuccess(t('upload.liquidityAdded'));
+    askConfirmation(`Agregar movimiento de liquidez: Deposito ${formatCurrency(dep)}, Retiro ${formatCurrency(wth)}?`, async () => {
+      try {
+        await insertLiquidityMovement(company.id, {
+          date: newLiq.date,
+          user_email: newLiq.user_email || null,
+          mt_account: newLiq.mt_account || null,
+          deposit: dep,
+          withdrawal: wth,
+          balance: 0,
+        });
+        setNewLiq({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
+        await refresh();
+        setLiquidityRowsRaw([...getLiquidityData()]);
+        showSuccess(t('upload.liquidityAdded'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
@@ -352,28 +366,37 @@ export default function UploadPage() {
     if (!editingLiqId) return;
     const dep = parseFloat(editLiq.deposit) || 0;
     const wth = parseFloat(editLiq.withdrawal) || 0;
-    askConfirmation('Actualizar movimiento de liquidez?', () => {
-      setLiquidityRows(prev => {
-        const updated = prev.map(r => r.id === editingLiqId ? {
-          ...r,
+    askConfirmation('Actualizar movimiento de liquidez?', async () => {
+      try {
+        await updateLiquidityMovement(editingLiqId, {
           date: editLiq.date,
           user_email: editLiq.user_email || null,
           mt_account: editLiq.mt_account || null,
           deposit: dep,
           withdrawal: wth,
-        } : r);
-        return recalcLiquidityBalances(updated);
-      });
-      setEditingLiqId(null);
-      showSuccess(t('upload.liquidityUpdated'));
+          balance: 0,
+        });
+        setEditingLiqId(null);
+        await refresh();
+        setLiquidityRowsRaw([...getLiquidityData()]);
+        showSuccess(t('upload.liquidityUpdated'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
   const deleteLiqRow = (id: string) => {
     if (!userCanDelete) return;
-    askConfirmation('Eliminar este movimiento de liquidez?', () => {
-      setLiquidityRows(prev => recalcLiquidityBalances(prev.filter(r => r.id !== id)));
-      showSuccess(t('upload.liquidityDeleted'));
+    askConfirmation('Eliminar este movimiento de liquidez?', async () => {
+      try {
+        await deleteLiqMutation(id);
+        await refresh();
+        setLiquidityRowsRaw([...getLiquidityData()]);
+        showSuccess(t('upload.liquidityDeleted'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
@@ -388,25 +411,28 @@ export default function UploadPage() {
   };
 
   const addInvestmentRow = () => {
-    if (!userCanAdd || !newInv.date) return;
+    if (!userCanAdd || !company || !newInv.date) return;
     const dep = parseFloat(newInv.deposit) || 0;
     const wth = parseFloat(newInv.withdrawal) || 0;
     const prf = parseFloat(newInv.profit) || 0;
-    askConfirmation(`Agregar movimiento de inversion: Deposito ${formatCurrency(dep)}, Retiro ${formatCurrency(wth)}, Profit ${formatCurrency(prf)}?`, () => {
-      const newRow: Investment = {
-        id: `inv-${Date.now()}`,
-        company_id: 'vexpro-001',
-        date: newInv.date,
-        concept: newInv.concept || null,
-        responsible: newInv.responsible || null,
-        deposit: dep,
-        withdrawal: wth,
-        profit: prf,
-        balance: 0,
-      };
-      setInvestmentRows(prev => recalcInvestmentBalances([...prev, newRow]));
-      setNewInv({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
-      showSuccess(t('upload.investmentAdded'));
+    askConfirmation(`Agregar movimiento de inversion: Deposito ${formatCurrency(dep)}, Retiro ${formatCurrency(wth)}, Profit ${formatCurrency(prf)}?`, async () => {
+      try {
+        await insertInvestment(company.id, {
+          date: newInv.date,
+          concept: newInv.concept || null,
+          responsible: newInv.responsible || null,
+          deposit: dep,
+          withdrawal: wth,
+          profit: prf,
+          balance: 0,
+        });
+        setNewInv({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
+        await refresh();
+        setInvestmentRowsRaw([...getInvestmentsData()]);
+        showSuccess(t('upload.investmentAdded'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
@@ -428,49 +454,74 @@ export default function UploadPage() {
     const dep = parseFloat(editInv.deposit) || 0;
     const wth = parseFloat(editInv.withdrawal) || 0;
     const prf = parseFloat(editInv.profit) || 0;
-    askConfirmation('Actualizar movimiento de inversion?', () => {
-      setInvestmentRows(prev => {
-        const updated = prev.map(r => r.id === editingInvId ? {
-          ...r,
+    askConfirmation('Actualizar movimiento de inversion?', async () => {
+      try {
+        await updateInvestment(editingInvId, {
           date: editInv.date,
           concept: editInv.concept || null,
           responsible: editInv.responsible || null,
           deposit: dep,
           withdrawal: wth,
           profit: prf,
-        } : r);
-        return recalcInvestmentBalances(updated);
-      });
-      setEditingInvId(null);
-      showSuccess(t('upload.investmentUpdated'));
+          balance: 0,
+        });
+        setEditingInvId(null);
+        await refresh();
+        setInvestmentRowsRaw([...getInvestmentsData()]);
+        showSuccess(t('upload.investmentUpdated'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
   const deleteInvRow = (id: string) => {
     if (!userCanDelete) return;
-    askConfirmation('Eliminar este movimiento de inversion?', () => {
-      setInvestmentRows(prev => recalcInvestmentBalances(prev.filter(r => r.id !== id)));
-      showSuccess(t('upload.investmentDeleted'));
+    askConfirmation('Eliminar este movimiento de inversion?', async () => {
+      try {
+        await deleteInvMutation(id);
+        await refresh();
+        setInvestmentRowsRaw([...getInvestmentsData()]);
+        showSuccess(t('upload.investmentDeleted'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
   // Deposit handlers
   const updateDeposit = (id: string, amount: number) => {
-    if (!userCanAdd) return;
-    askConfirmation(`Registrar ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}?`, () => {
-      setDeposits(prev => prev.map(d => d.id === id ? { ...d, amount } : d));
-      if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
-      showSuccess(t('upload.depositRegistered'));
+    if (!userCanAdd || !company) return;
+    askConfirmation(`Registrar ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}?`, async () => {
+      try {
+        const updated = deposits.map(d => d.id === id ? { ...d, amount } : d);
+        setDepositsRaw(updated);
+        await upsertDeposits(company.id, selectedPeriodRef.current, updated);
+        localStorage.removeItem(getPerPeriodKey('deposits', selectedPeriodRef.current));
+        await refresh();
+        if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
+        showSuccess(t('upload.depositRegistered'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
   // Withdrawal handlers
   const updateWithdrawal = (id: string, amount: number) => {
-    if (!userCanAdd) return;
-    askConfirmation(`Registrar ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}?`, () => {
-      setWithdrawals(prev => prev.map(w => w.id === id ? { ...w, amount } : w));
-      if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
-      showSuccess(t('upload.withdrawalRegistered'));
+    if (!userCanAdd || !company) return;
+    askConfirmation(`Registrar ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}?`, async () => {
+      try {
+        const updated = withdrawals.map(w => w.id === id ? { ...w, amount } : w);
+        setWithdrawalsRaw(updated);
+        await upsertWithdrawals(company.id, selectedPeriodRef.current, updated);
+        localStorage.removeItem(getPerPeriodKey('withdrawals', selectedPeriodRef.current));
+        await refresh();
+        if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
+        showSuccess(t('upload.withdrawalRegistered'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
@@ -524,35 +575,51 @@ export default function UploadPage() {
 
   // Income handler
   const saveIncome = () => {
-    if (!userCanAdd) return;
-    askConfirmation(`Registrar ingresos operativos: Prop Firm $${income.prop_firm.toLocaleString()}, Broker $${income.broker_pnl.toLocaleString()}?`, () => {
-      saveToStorage(getPerPeriodKey('income', selectedPeriodRef.current), income);
-      if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Prop Firm $${income.prop_firm.toLocaleString()}, Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
-      showSuccess(t('upload.incomeSaved'));
+    if (!userCanAdd || !company) return;
+    askConfirmation(`Registrar ingresos operativos: Prop Firm $${income.prop_firm.toLocaleString()}, Broker $${income.broker_pnl.toLocaleString()}?`, async () => {
+      try {
+        await upsertOperatingIncome(company.id, selectedPeriodRef.current, income);
+        localStorage.removeItem(getPerPeriodKey('income', selectedPeriodRef.current));
+        await refresh();
+        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Prop Firm $${income.prop_firm.toLocaleString()}, Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
+        showSuccess(t('upload.incomeSaved'));
+      } catch (err) {
+        showSuccess(`Error: ${(err as Error).message}`);
+      }
     });
   };
 
-  // Save All handler — saves all fields for the current section
-  const saveAll = () => {
-    if (!userCanAdd) return;
+  // Save All handler — saves all fields to Supabase
+  const saveAll = async () => {
+    if (!userCanAdd || !company) return;
     setSavingAll(true);
-    if (section === 'depositos') {
-      deposits.forEach(d => {
-        saveToStorage(getPerPeriodKey('deposits', selectedPeriodRef.current), deposits);
-      });
-      if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
-    } else if (section === 'retiros') {
-      saveToStorage(getPerPeriodKey('withdrawals', selectedPeriodRef.current), withdrawals);
-      if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
-    } else if (section === 'egresos') {
-      saveToStorage(getPerPeriodKey('expenses', selectedPeriodRef.current), expenses);
-      if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
-    } else if (section === 'ingresos') {
-      saveToStorage(getPerPeriodKey('income', selectedPeriodRef.current), income);
-      if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
+    const companyId = company.id;
+    const periodId = selectedPeriodRef.current;
+    try {
+      if (section === 'depositos') {
+        await upsertDeposits(companyId, periodId, deposits);
+        localStorage.removeItem(getPerPeriodKey('deposits', periodId));
+        if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
+      } else if (section === 'retiros') {
+        await upsertWithdrawals(companyId, periodId, withdrawals);
+        localStorage.removeItem(getPerPeriodKey('withdrawals', periodId));
+        if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
+      } else if (section === 'egresos') {
+        await upsertExpenses(companyId, periodId, expenses);
+        localStorage.removeItem(getPerPeriodKey('expenses', periodId));
+        if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
+      } else if (section === 'ingresos') {
+        await upsertOperatingIncome(companyId, periodId, income);
+        localStorage.removeItem(getPerPeriodKey('income', periodId));
+        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
+      }
+      await refresh();
+      showSuccess('Todos los datos guardados correctamente');
+    } catch (err) {
+      showSuccess(`Error al guardar: ${(err as Error).message}`);
+    } finally {
+      setSavingAll(false);
     }
-    showSuccess('Todos los datos guardados correctamente');
-    setTimeout(() => setSavingAll(false), 500);
   };
 
   // Doc handler
