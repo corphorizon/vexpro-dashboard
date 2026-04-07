@@ -21,8 +21,17 @@ export default function LoginPage() {
   const [pendingUserId, setPendingUserId] = useState<string | null>(null);
   const [pin, setPin] = useState('');
 
-  const { login, loginWith2fa } = useAuth();
+  const { login, loginWith2fa, users } = useAuth();
   const router = useRouter();
+
+  // Fire-and-forget: send login notification email (never blocks navigation)
+  const notifyLogin = (name: string, userEmail: string) => {
+    fetch('/api/auth/login-notification', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userName: name, userEmail }),
+    }).catch(() => {});
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -37,7 +46,8 @@ export default function LoginPage() {
           setStep('2fa');
           setPin('');
         } else {
-          // Check if user needs to set up 2FA
+          const loggedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
+          notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
           router.push('/');
         }
       } else {
@@ -57,6 +67,8 @@ export default function LoginPage() {
 
     const success = loginWith2fa(pendingUserId, pin);
     if (success) {
+      const loggedUser = users.find(u => u.id === pendingUserId);
+      if (loggedUser) notifyLogin(loggedUser.name, loggedUser.email);
       router.push('/');
     } else {
       setError(t('login.pinError'));

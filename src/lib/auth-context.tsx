@@ -225,6 +225,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // Sync email/password changes to Supabase Auth via server API
+  const syncAuthUser = async (companyUserId: string, updates: { email?: string; password?: string }) => {
+    if (!updates.email && !updates.password) return;
+
+    // Get the auth user_id from company_users
+    const { data } = await supabase
+      .from('company_users')
+      .select('user_id')
+      .eq('id', companyUserId)
+      .single();
+
+    if (!data?.user_id) {
+      console.error('Could not find auth user_id for company_user:', companyUserId);
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/admin/update-auth-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          authUserId: data.user_id,
+          ...(updates.email && { email: updates.email }),
+          ...(updates.password && { password: updates.password }),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        console.error('Error syncing auth user:', err.error);
+      }
+    } catch (err) {
+      console.error('Failed to sync auth user:', err);
+    }
+  };
+
   const updateUser = useCallback(async (id: string, updates: Partial<User>) => {
     const { error } = await supabase
       .from('company_users')
@@ -241,6 +277,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (error) {
       console.error('Error updating user:', error.message);
       return;
+    }
+
+    // Sync email change to Supabase Auth
+    if (updates.email) {
+      await syncAuthUser(id, { email: updates.email });
     }
 
     // Refresh users list
@@ -266,6 +307,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .from('company_users')
         .update(profileUpdates)
         .eq('id', id);
+    }
+
+    // Sync email and/or password changes to Supabase Auth
+    if (updates.email || password) {
+      await syncAuthUser(id, {
+        ...(updates.email && { email: updates.email }),
+        ...(password && { password }),
+      });
     }
 
     const current = userRef.current;

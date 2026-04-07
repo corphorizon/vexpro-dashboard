@@ -511,6 +511,17 @@ const translations: Record<Locale, TranslationDict> = {
     'theme.light': 'Light',
     'theme.dark': 'Dark',
     'theme.system': 'System',
+
+    // Email
+    'email.welcome.subject': 'Welcome to Smart Dashboard',
+    'email.reset.subject': 'Reset your password',
+    'email.report.subject': 'Financial Report',
+    'email.notification.subject': 'System Alert',
+    'email.send.success': 'Email sent successfully',
+    'email.send.error': 'Failed to send email',
+    'email.login.subject': 'New sign-in to your account',
+    'email.login.greeting': 'We detected a new sign-in to your Smart Dashboard account',
+    'email.login.security_warning': 'If this was not you, please reset your password immediately',
   },
 
   es: {
@@ -1016,6 +1027,17 @@ const translations: Record<Locale, TranslationDict> = {
     'theme.light': 'Claro',
     'theme.dark': 'Oscuro',
     'theme.system': 'Sistema',
+
+    // Email
+    'email.welcome.subject': 'Bienvenido a Smart Dashboard',
+    'email.reset.subject': 'Restablecer contraseña',
+    'email.report.subject': 'Reporte Financiero',
+    'email.notification.subject': 'Alerta del Sistema',
+    'email.send.success': 'Email enviado exitosamente',
+    'email.send.error': 'Error al enviar email',
+    'email.login.subject': 'Nuevo inicio de sesión en tu cuenta',
+    'email.login.greeting': 'Detectamos un nuevo inicio de sesión en tu cuenta de Smart Dashboard',
+    'email.login.security_warning': 'Si no fuiste tú, restablece tu contraseña de inmediato',
   },
 };
 
