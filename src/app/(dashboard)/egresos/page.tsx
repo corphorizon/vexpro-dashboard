@@ -167,15 +167,15 @@ export default function EgresosPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('expenses.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('expenses.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 overflow-x-auto">
           <button
             onClick={() => setShowPreoperativo(!showPreoperativo)}
-            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
+            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors flex-shrink-0 ${
               showPreoperativo
                 ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
                 : 'border-border bg-card hover:bg-muted'
@@ -190,11 +190,11 @@ export default function EgresosPage() {
               const rows = exps.map((e, i) => [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[]);
               downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
             }}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
             title={t('common.csv')}
           >
             <Download className="w-4 h-4" />
-            {t('common.csv')}
+            <span className="hidden sm:inline">{t('common.csv')}</span>
           </button>
           <PeriodSelector />
         </div>

@@ -376,14 +376,14 @@ export default function RRHHPage() {
 
     return (
       <Card key={leader.id}>
-        <div className="flex items-center justify-between mb-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center shrink-0">
               <UserCircle className="w-6 h-6 text-violet-600" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <Link href={`/rrhh/perfil?id=${leader.id}`} className="text-lg font-semibold hover:text-[var(--color-primary)] transition-colors">
+                <Link href={`/rrhh/perfil?id=${leader.id}`} className="text-base sm:text-lg font-semibold hover:text-[var(--color-primary)] transition-colors">
                   {leader.name}
                 </Link>
                 <button onClick={() => { setEditingProfile(leader); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
@@ -394,11 +394,11 @@ export default function RRHHPage() {
                 <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', roleBadge)}>
                   {ROLE_LABELS_HR[leader.role]}
                 </span>
-                <span>{leader.email}</span>
+                <span className="hidden sm:inline">{leader.email}</span>
               </div>
             </div>
           </div>
-          <div className="text-right">
+          <div className="text-left sm:text-right ml-13 sm:ml-0">
             <p className="text-sm text-muted-foreground">Net Deposit: {leader.net_deposit_pct != null ? `${leader.net_deposit_pct}%` : 'N/A'}</p>
             <p className="font-semibold">{formatCurrency(leaderTotal)}</p>
           </div>
@@ -406,16 +406,16 @@ export default function RRHHPage() {
 
         {bdms.length > 0 && (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm min-w-[500px]">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-2 text-muted-foreground font-medium">BDM</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('common.email')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.netDepPct')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.salaryCol')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.pnl')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
+                  <th className="text-right py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.netDepPct')}</th>
+                  <th className="text-right py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.salaryCol')}</th>
+                  <th className="text-right py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.pnl')}</th>
                   <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.commissions')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.bonus')}</th>
+                  <th className="text-right py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.bonus')}</th>
                   <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.total')}</th>
                   <th className="text-right py-2 text-muted-foreground font-medium"></th>
                 </tr>
@@ -427,12 +427,12 @@ export default function RRHHPage() {
                   return (
                   <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     <td className="py-2.5 font-medium">{bdm.name}</td>
-                    <td className="py-2.5 text-muted-foreground text-xs">{bdm.email}</td>
-                    <td className="py-2.5 text-right">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
-                    <td className="py-2.5 text-right">{bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
-                    <td className="py-2.5 text-right">{bdmPnl > 0 ? formatCurrency(bdmPnl) : '-'}</td>
+                    <td className="py-2.5 text-muted-foreground text-xs hidden sm:table-cell">{bdm.email}</td>
+                    <td className="py-2.5 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
+                    <td className="py-2.5 text-right hidden sm:table-cell">{bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
+                    <td className="py-2.5 text-right hidden sm:table-cell">{bdmPnl > 0 ? formatCurrency(bdmPnl) : '-'}</td>
                     <td className="py-2.5 text-right">{formatCurrency(getFilteredCommissions(bdm.id))}</td>
-                    <td className="py-2.5 text-right">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>
+                    <td className="py-2.5 text-right hidden sm:table-cell">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>
                     <td className="py-2.5 text-right font-medium">{formatCurrency(getFilteredTotal(bdm.id))}</td>
                     <td className="py-2.5 text-right flex items-center justify-end gap-1">
                       <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
@@ -456,18 +456,18 @@ export default function RRHHPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('hr.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('hr.subtitle')}</p>
         </div>
         <button
           onClick={tab === 'employees' ? handleExportEmployees : handleExportCommercial}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors self-start sm:self-auto"
           title={t('common.csv')}
         >
           <Download className="w-4 h-4" />
-          {t('common.csv')}
+          <span className="hidden sm:inline">{t('common.csv')}</span>
         </button>
       </div>
 
@@ -501,21 +501,21 @@ export default function RRHHPage() {
         <button
           onClick={() => setTab('employees')}
           className={cn(
-            'px-4 py-2 rounded-md text-sm font-medium transition-colors',
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
             tab === 'employees' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
           )}
         >
-          <Users className="w-4 h-4 inline mr-2" />
+          <Users className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.employees')}
         </button>
         <button
           onClick={() => setTab('commercial')}
           className={cn(
-            'px-4 py-2 rounded-md text-sm font-medium transition-colors',
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
             tab === 'commercial' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
           )}
         >
-          <Briefcase className="w-4 h-4 inline mr-2" />
+          <Briefcase className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.commercialForce')}
         </button>
       </div>
@@ -539,18 +539,18 @@ export default function RRHHPage() {
               onSave={handleSaveEmployee}
             />
           )}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+            <table className="w-full text-sm min-w-[600px]">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-2 text-muted-foreground font-medium">{t('common.name')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('common.email')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
                   <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.position')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.department')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.startDate')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.department')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.startDate')}</th>
                   <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.salary')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.birthday')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.supervisor')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden md:table-cell">{t('hr.birthday')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden md:table-cell">{t('hr.supervisor')}</th>
                   <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.status')}</th>
                   <th className="text-right py-2 text-muted-foreground font-medium"></th>
                 </tr>
@@ -560,13 +560,13 @@ export default function RRHHPage() {
                   return (
                     <tr key={emp.id} className="border-b border-border/50">
                       <td className="py-2.5 font-medium">{emp.name}</td>
-                      <td className="py-2.5 text-muted-foreground">{emp.email}</td>
+                      <td className="py-2.5 text-muted-foreground hidden sm:table-cell">{emp.email}</td>
                       <td className="py-2.5">{emp.position}</td>
-                      <td className="py-2.5">{emp.department}</td>
-                      <td className="py-2.5">{emp.start_date}</td>
+                      <td className="py-2.5 hidden sm:table-cell">{emp.department}</td>
+                      <td className="py-2.5 hidden sm:table-cell">{emp.start_date}</td>
                       <td className="py-2.5 text-right">{emp.salary != null ? formatCurrency(emp.salary) : 'N/A'}</td>
-                      <td className="py-2.5 text-muted-foreground text-xs">{emp.birthday || '-'}</td>
-                      <td className="py-2.5 text-muted-foreground text-xs">{emp.supervisor || '-'}</td>
+                      <td className="py-2.5 text-muted-foreground text-xs hidden md:table-cell">{emp.birthday || '-'}</td>
+                      <td className="py-2.5 text-muted-foreground text-xs hidden md:table-cell">{emp.supervisor || '-'}</td>
                       <td className="py-2.5">
                         <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', STATUS_BADGE_CLASSES[emp.status])}>
                           {t(STATUS_LABEL_KEYS[emp.status])}

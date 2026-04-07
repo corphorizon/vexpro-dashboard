@@ -58,7 +58,7 @@ export default function InversionesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('investments.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('investments.subtitle')}</p>
@@ -69,11 +69,11 @@ export default function InversionesPage() {
             const rows = filtered.map(i => [i.date, i.concept || '', i.responsible || '', i.deposit, i.withdrawal, i.profit, i.balance] as (string | number)[]);
             downloadCSV('inversiones.csv', headers, rows);
           }}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
           title={t('common.csv')}
         >
           <Download className="w-4 h-4" />
-          {t('common.csv')}
+          <span className="hidden sm:inline">{t('common.csv')}</span>
         </button>
       </div>
 

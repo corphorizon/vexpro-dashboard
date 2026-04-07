@@ -56,19 +56,19 @@ export default function MovimientosPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('movements.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('movements.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto">
           <button
             onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
             title={t('common.csv')}
           >
             <Download className="w-4 h-4" />
-            {t('common.csv')}
+            <span className="hidden sm:inline">{t('common.csv')}</span>
           </button>
           <PeriodSelector />
         </div>

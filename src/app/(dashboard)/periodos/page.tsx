@@ -178,14 +178,15 @@ export default function PeríodosPage() {
           <Calendar className="w-5 h-5 text-muted-foreground" />
           <h2 className="text-lg font-semibold">{t('periods.title')}</h2>
         </div>
-        <table className="w-full text-sm">
+        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <table className="w-full text-sm min-w-[480px]">
           <thead>
             <tr className="border-b border-border">
-              <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('periods.title')}</th>
-              <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('periods.year')}</th>
-              <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('periods.month')}</th>
-              <th className="text-center py-2 px-3 text-muted-foreground font-medium">{t('common.status')}</th>
-              {isAdmin && <th className="text-center py-2 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
+              <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('periods.title')}</th>
+              <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('periods.year')}</th>
+              <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('periods.month')}</th>
+              <th className="text-center py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('common.status')}</th>
+              {isAdmin && <th className="text-center py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
             </tr>
           </thead>
           <tbody>
@@ -201,15 +202,15 @@ export default function PeríodosPage() {
 
               return (
                 <tr key={period.id} className="border-b border-border/50 hover:bg-muted/50">
-                  <td className="py-3 px-3 font-medium">
+                  <td className="py-3 px-2 sm:px-3 font-medium">
                     <div className="flex items-center gap-2">
                       <Icon className="w-4 h-4 text-muted-foreground" />
                       {period.label}
                     </div>
                   </td>
-                  <td className="py-3 px-3">{period.year}</td>
-                  <td className="py-3 px-3">{period.month}</td>
-                  <td className="py-3 px-3 text-center">
+                  <td className="py-3 px-2 sm:px-3 hidden sm:table-cell">{period.year}</td>
+                  <td className="py-3 px-2 sm:px-3 hidden sm:table-cell">{period.month}</td>
+                  <td className="py-3 px-2 sm:px-3 text-center">
                     <Badge variant={badge}>{t(STATUS_LABEL_KEY[period.status])}</Badge>
                   </td>
                   {isAdmin && (
@@ -256,6 +257,7 @@ export default function PeríodosPage() {
             })}
           </tbody>
         </table>
+        </div>
       </Card>
 
       {/* Confirmation dialog */}

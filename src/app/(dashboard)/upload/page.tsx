@@ -829,8 +829,9 @@ export default function UploadPage() {
       {/* EGRESOS */}
       {section === 'egresos' && (
         <Card>
-          <h2 className="text-lg font-semibold mb-4">Egresos Operativos — {periodLabel}</h2>
-          <table className="w-full text-sm">
+          <h2 className="text-base sm:text-lg font-semibold mb-4">Egresos Operativos — {periodLabel}</h2>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          <table className="w-full text-sm min-w-[500px]">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">#</th>
@@ -904,6 +905,7 @@ export default function UploadPage() {
               </tfoot>
             )}
           </table>
+          </div>
 
           {/* Add expense form */}
           {userCanAdd && (
@@ -1403,13 +1405,14 @@ export default function UploadPage() {
             <input ref={fileRef} type="file" onChange={handleDocUpload} className="hidden" />
           </div>
 
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Archivo</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Descripcion</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Subido por</th>
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium hidden sm:table-cell">Descripcion</th>
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium hidden sm:table-cell">Subido por</th>
                 <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">Acciones</th>
               </tr>
             </thead>
@@ -1426,8 +1429,8 @@ export default function UploadPage() {
                     </div>
                   </td>
                   <td className="py-2.5 px-3 text-muted-foreground">{doc.date}</td>
-                  <td className="py-2.5 px-3 text-muted-foreground">{doc.description || '—'}</td>
-                  <td className="py-2.5 px-3 text-muted-foreground">{doc.uploaded_by || '—'}</td>
+                  <td className="py-2.5 px-3 text-muted-foreground hidden sm:table-cell">{doc.description || '—'}</td>
+                  <td className="py-2.5 px-3 text-muted-foreground hidden sm:table-cell">{doc.uploaded_by || '—'}</td>
                   <td className="py-2.5 px-3 text-center">
                     <div className="flex justify-center gap-1">
                       <button
@@ -1456,17 +1459,18 @@ export default function UploadPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </Card>
       )}
 
       {/* Bottom bar: Period selector + Save All */}
-      <div className="sticky bottom-0 z-10 -mx-6 lg:-mx-8 px-6 lg:px-8 py-4 bg-background/95 backdrop-blur border-t border-border flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <label className="text-sm font-medium text-muted-foreground whitespace-nowrap">Periodo:</label>
+      <div className="sticky bottom-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 bg-background/95 backdrop-blur border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <label className="text-xs sm:text-sm font-medium text-muted-foreground whitespace-nowrap">Periodo:</label>
           <select
             value={selectedPeriod}
             onChange={(e) => setSelectedPeriod(e.target.value)}
-            className="px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
+            className="flex-1 sm:flex-none px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
           >
             {periods.map(p => (
               <option key={p.id} value={p.id}>{p.label} {p.is_closed ? '(Cerrado)' : ''}</option>
@@ -1477,7 +1481,7 @@ export default function UploadPage() {
           <button
             onClick={saveAll}
             disabled={savingAll}
-            className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+            className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
           >
             <Save className="w-4 h-4" />
             {savingAll ? 'Guardando...' : 'Guardar Todo'}
