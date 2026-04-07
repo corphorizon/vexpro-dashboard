@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
-import { DEMO_COMPANY } from '@/lib/demo-data';
 import { useI18n } from '@/lib/i18n';
 import { ArrowLeft } from 'lucide-react';
 
@@ -90,7 +89,7 @@ export default function LoginPage() {
           <div className="text-center mb-8">
             <Image
               src="/vex-logofull.png"
-              alt={DEMO_COMPANY.name}
+              alt="VexPro FX"
               width={220}
               height={60}
               className="mx-auto mb-4 block dark:hidden"
@@ -98,7 +97,7 @@ export default function LoginPage() {
             />
             <Image
               src="/vex-logofull-white.png"
-              alt={DEMO_COMPANY.name}
+              alt="VexPro FX"
               width={220}
               height={60}
               className="mx-auto mb-4 hidden dark:block"
@@ -137,7 +136,7 @@ export default function LoginPage() {
         <div className="text-center mb-8">
           <Image
             src="/vex-logofull.png"
-            alt={DEMO_COMPANY.name}
+            alt="VexPro FX"
             width={220}
             height={60}
             className="mx-auto mb-4 block dark:hidden"
@@ -145,7 +144,7 @@ export default function LoginPage() {
           />
           <Image
             src="/vex-logofull-white.png"
-            alt={DEMO_COMPANY.name}
+            alt="VexPro FX"
             width={220}
             height={60}
             className="mx-auto mb-4 hidden dark:block"

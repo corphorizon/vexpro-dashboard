@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { DEMO_COMPANY } from '@/lib/demo-data';
 import { useI18n } from '@/lib/i18n';
 import { Building2, ShieldCheck, ArrowRight } from 'lucide-react';
 
@@ -105,7 +104,7 @@ export default function Setup2FAPage() {
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-[var(--color-primary)] mb-4">
             <Building2 className="w-8 h-8 text-white" />
           </div>
-          <h1 className="text-2xl font-bold">{DEMO_COMPANY.name}</h1>
+          <h1 className="text-2xl font-bold">VexPro FX</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('setup2fa.securitySetup')}</p>
         </div>
 
