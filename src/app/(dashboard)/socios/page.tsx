@@ -304,12 +304,12 @@ export default function SociosPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('partners.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('partners.subtitle')}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 overflow-x-auto">
           <button
             onClick={() => {
               const headers = ['Socio', 'Porcentaje', 'Monto'];
@@ -320,11 +320,11 @@ export default function SociosPage() {
               rows.push(['Total', '100%', totalDistributed]);
               downloadCSV('socios.csv', headers, rows);
             }}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
             title={t('common.csv')}
           >
             <Download className="w-4 h-4" />
-            {t('common.csv')}
+            <span className="hidden sm:inline">{t('common.csv')}</span>
           </button>
           <PeriodSelector />
         </div>
@@ -354,7 +354,7 @@ export default function SociosPage() {
 
       {/* Summary cards */}
       {/* Row 1: Ingresos, Egresos, Saldo a Favor */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <Card>
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
@@ -394,7 +394,7 @@ export default function SociosPage() {
       </div>
 
       {/* Row 2: Respaldo, Respaldo Acumulado, Deuda Arrastrada (if any) */}
-      <div className={`grid grid-cols-1 gap-4 ${carryDebt > 0 ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
+      <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${carryDebt > 0 ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
         <Card>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-3">
@@ -467,25 +467,26 @@ export default function SociosPage() {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Table */}
         <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">{t('partners.distribution')}</h2>
+          <div className="flex items-center justify-between mb-4 gap-2">
+            <h2 className="text-base sm:text-lg font-semibold">{t('partners.distribution')}</h2>
             {isAdmin && (
               <button
                 onClick={handleAddPartner}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-md bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity flex-shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" />
                 {t('partners.addPartner')}
               </button>
             )}
           </div>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          <table className="w-full text-sm min-w-[360px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('partners.name')}</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">%</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('partners.amount')}</th>
-                {isAdmin && <th className="text-center py-2 px-3 text-muted-foreground font-medium w-20"></th>}
+                <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('partners.name')}</th>
+                <th className="text-right py-2 px-2 sm:px-3 text-muted-foreground font-medium">%</th>
+                <th className="text-right py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('partners.amount')}</th>
+                {isAdmin && <th className="text-center py-2 px-1 sm:px-3 text-muted-foreground font-medium w-16 sm:w-20"></th>}
               </tr>
             </thead>
             <tbody>
@@ -493,27 +494,27 @@ export default function SociosPage() {
                 const partner = partners.find(p => p.id === dist.partner_id);
                 return (
                   <tr key={dist.id} className="border-b border-border/50 hover:bg-muted/50">
-                    <td className="py-3 px-3">
+                    <td className="py-3 px-2 sm:px-3">
                       <div className="flex items-center gap-2">
                         <div
                           className="w-3 h-3 rounded-full flex-shrink-0"
                           style={{ backgroundColor: COLORS[i % COLORS.length] }}
                         />
-                        <div>
-                          <span className="font-medium">{partner?.name || '—'}</span>
+                        <div className="min-w-0">
+                          <span className="font-medium truncate block">{partner?.name || '—'}</span>
                           {partner?.email && (
-                            <span className="text-xs text-muted-foreground ml-2">{partner.email}</span>
+                            <span className="text-xs text-muted-foreground hidden sm:block truncate">{partner.email}</span>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-3 text-right font-medium">{formatPercent(dist.percentage)}</td>
-                    <td className={`py-3 px-3 text-right font-bold ${dist.amount < 0 ? 'text-red-600' : ''}`}>
+                    <td className="py-3 px-2 sm:px-3 text-right font-medium whitespace-nowrap">{formatPercent(dist.percentage)}</td>
+                    <td className={`py-3 px-2 sm:px-3 text-right font-bold whitespace-nowrap ${dist.amount < 0 ? 'text-red-600' : ''}`}>
                       {formatCurrency(dist.amount)}
                     </td>
                     {isAdmin && (
-                      <td className="py-3 px-3 text-center">
-                        <div className="flex justify-center gap-1">
+                      <td className="py-3 px-1 sm:px-3 text-center">
+                        <div className="flex justify-center gap-0.5 sm:gap-1">
                           <button
                             onClick={() => handleEditPartner(dist.partner_id)}
                             className="p-1 rounded hover:bg-muted transition-colors"
@@ -539,25 +540,25 @@ export default function SociosPage() {
                 .filter(p => !effectiveDistributions.some(d => d.partner_id === p.id))
                 .map((partner, i) => (
                   <tr key={partner.id} className="border-b border-border/50 hover:bg-muted/50 opacity-60">
-                    <td className="py-3 px-3">
+                    <td className="py-3 px-2 sm:px-3">
                       <div className="flex items-center gap-2">
                         <div
                           className="w-3 h-3 rounded-full flex-shrink-0"
                           style={{ backgroundColor: COLORS[(effectiveDistributions.length + i) % COLORS.length] }}
                         />
-                        <div>
-                          <span className="font-medium">{partner.name}</span>
+                        <div className="min-w-0">
+                          <span className="font-medium truncate block">{partner.name}</span>
                           {partner.email && (
-                            <span className="text-xs text-muted-foreground ml-2">{partner.email}</span>
+                            <span className="text-xs text-muted-foreground hidden sm:block truncate">{partner.email}</span>
                           )}
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-3 text-right font-medium">{formatPercent(partner.percentage)}</td>
-                    <td className="py-3 px-3 text-right font-bold">—</td>
+                    <td className="py-3 px-2 sm:px-3 text-right font-medium whitespace-nowrap">{formatPercent(partner.percentage)}</td>
+                    <td className="py-3 px-2 sm:px-3 text-right font-bold">—</td>
                     {isAdmin && (
-                      <td className="py-3 px-3 text-center">
-                        <div className="flex justify-center gap-1">
+                      <td className="py-3 px-1 sm:px-3 text-center">
+                        <div className="flex justify-center gap-0.5 sm:gap-1">
                           <button
                             onClick={() => handleEditPartner(partner.id)}
                             className="p-1 rounded hover:bg-muted transition-colors"
@@ -580,15 +581,16 @@ export default function SociosPage() {
             </tbody>
             <tfoot>
               <tr className="font-bold bg-muted/50">
-                <td className="py-3 px-3">Total</td>
-                <td className="py-3 px-3 text-right">100%</td>
-                <td className={`py-3 px-3 text-right ${totalDistributed < 0 ? 'text-red-600' : ''}`}>
+                <td className="py-3 px-2 sm:px-3">Total</td>
+                <td className="py-3 px-2 sm:px-3 text-right">100%</td>
+                <td className={`py-3 px-2 sm:px-3 text-right whitespace-nowrap ${totalDistributed < 0 ? 'text-red-600' : ''}`}>
                   {formatCurrency(totalDistributed)}
                 </td>
                 {isAdmin && <td />}
               </tr>
             </tfoot>
           </table>
+          </div>
         </Card>
 
         {/* Visual bar chart */}
