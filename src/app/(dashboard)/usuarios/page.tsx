@@ -115,9 +115,14 @@ export default function UsuariosPage() {
     }
   };
 
-  const handleDelete = (id: string) => {
-    deleteUser(id);
-    setDeleteConfirm(null);
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteUser(id);
+      setDeleteConfirm(null);
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Error eliminando usuario');
+      setDeleteConfirm(null);
+    }
   };
 
   const toggleModule = (mod: string) => {

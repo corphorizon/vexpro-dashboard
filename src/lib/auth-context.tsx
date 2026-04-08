@@ -341,14 +341,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const deleteUser = useCallback(async (id: string) => {
     const targetUser = users.find(u => u.id === id);
 
-    const { error } = await supabase
-      .from('company_users')
-      .delete()
-      .eq('id', id);
+    // Use server-side API to delete BOTH company_users AND auth.users.
+    // Otherwise the email stays reserved in Supabase Auth and can't be reused.
+    try {
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companyUserId: id }),
+      });
 
-    if (error) {
-      console.error('Error deleting user:', error.message);
-      return;
+      if (!res.ok) {
+        let errorMsg = 'Error desconocido';
+        try {
+          const err = await res.json();
+          errorMsg = err.error || errorMsg;
+        } catch { /* non-JSON response */ }
+        console.error('Error deleting user:', errorMsg);
+        throw new Error(`Error eliminando usuario: ${errorMsg}`);
+      }
+    } catch (err) {
+      console.error('Failed to delete user:', err);
+      throw err;
     }
 
     const current = userRef.current;

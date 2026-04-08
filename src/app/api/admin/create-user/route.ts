@@ -30,6 +30,33 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
+    // 0. Check if there's an orphaned auth user with this email (deleted profile but auth still exists).
+    // This happens when a user was deleted before delete-user route also cleaned up auth.users.
+    // We clean up the orphan so the email can be reused.
+    try {
+      const { data: existingUsers } = await adminClient.auth.admin.listUsers();
+      const orphan = existingUsers?.users.find(u => u.email === email);
+      if (orphan) {
+        const { data: existingProfile } = await adminClient
+          .from('company_users')
+          .select('id')
+          .eq('user_id', orphan.id)
+          .maybeSingle();
+        if (!existingProfile) {
+          // Orphan auth user — safe to remove
+          console.log(`[AdminAPI] Cleaning up orphaned auth user for ${email}`);
+          await adminClient.auth.admin.deleteUser(orphan.id);
+        } else {
+          return NextResponse.json(
+            { success: false, error: `Ya existe un usuario activo con el email ${email}` },
+            { status: 409 },
+          );
+        }
+      }
+    } catch (cleanupErr) {
+      console.warn('[AdminAPI] Orphan check failed, proceeding anyway:', cleanupErr);
+    }
+
     // 1. Create the auth user in Supabase Auth
     const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
       email,
