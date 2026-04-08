@@ -8,9 +8,19 @@ import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
-import type { Employee, CommercialProfile, CommercialMonthlyResult } from '@/lib/types';
+import type { Employee, CommercialProfile } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
-import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil } from 'lucide-react';
+import {
+  createEmployee,
+  updateEmployee,
+  deleteEmployee,
+  createCommercialProfile,
+  updateCommercialProfile,
+  deleteCommercialProfile,
+  type EmployeePayload,
+  type CommercialProfilePayload,
+} from '@/lib/supabase/mutations';
+import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2 } from 'lucide-react';
 
 type Tab = 'employees' | 'commercial';
 
@@ -65,7 +75,7 @@ function getFilteredPeriodIds(periods: { id: string; year: number; month: number
 }
 
 // ─── Employee Form ───
-function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (e: Employee) => void; editing?: Employee }) {
+function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (payload: EmployeePayload) => Promise<void>; editing?: Employee }) {
   const { t } = useI18n();
   const [name, setName] = useState(editing?.name || '');
   const [email, setEmail] = useState(editing?.email || '');
@@ -77,20 +87,38 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
   const [birthday, setBirthday] = useState(editing?.birthday || '');
   const [supervisor, setSupervisor] = useState(editing?.supervisor || '');
   const [comments, setComments] = useState(editing?.comments || '');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = () => {
-    if (!name || !email) return;
-    onSave({
-      id: editing?.id || `emp-${Date.now()}`,
-      company_id: 'vexpro-001',
-      name, email, position, department, start_date: startDate,
-      salary: salary ? parseFloat(salary) : null,
-      status, phone: null, country: null, notes: null,
-      birthday: birthday || null,
-      supervisor: supervisor || null,
-      comments: comments || null,
-    });
-    onClose();
+  const handleSubmit = async () => {
+    if (!name || !email) {
+      setError('Nombre y email son requeridos');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave({
+        name,
+        email,
+        position: position || null,
+        department: department || null,
+        start_date: startDate || null,
+        salary: salary ? parseFloat(salary) : null,
+        status,
+        phone: null,
+        country: null,
+        notes: null,
+        birthday: birthday || null,
+        supervisor: supervisor || null,
+        comments: comments || null,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -118,9 +146,18 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
         <input placeholder={t('hr.supervisorPlaceholder')} value={supervisor} onChange={e => setSupervisor(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
         <input placeholder={t('hr.commentsPlaceholder')} value={comments} onChange={e => setComments(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
       </div>
+      {error && (
+        <div className="mt-3 p-2 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+          {error}
+        </div>
+      )}
       <div className="mt-3 flex justify-end">
-        <button onClick={handleSubmit} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90">
-          {editing ? t('common.save') : t('common.add')}
+        <button
+          onClick={handleSubmit}
+          disabled={saving}
+          className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? 'Guardando...' : (editing ? t('common.save') : t('common.add'))}
         </button>
       </div>
     </div>
@@ -128,7 +165,7 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
 }
 
 // ─── Commercial Profile Form ───
-function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (p: CommercialProfile) => void; editing?: CommercialProfile }) {
+function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (payload: CommercialProfilePayload) => Promise<void>; editing?: CommercialProfile }) {
   const { t } = useI18n();
   const { commercialProfiles } = useData();
   const [name, setName] = useState(editing?.name || '');
@@ -146,25 +183,38 @@ function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave
   const [status, setStatus] = useState<'active' | 'inactive'>(editing?.status || 'active');
 
   const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = () => {
-    if (!name || !email) return;
-    onSave({
-      id: editing?.id || `cp-${Date.now()}`,
-      company_id: 'vexpro-001',
-      name, email, role,
-      head_id: headId || null,
-      net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
-      pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
-      commission_per_lot: commLot ? parseFloat(commLot) : null,
-      salary: salary ? parseFloat(salary) : null,
-      benefits: benefits || null,
-      comments: comments || null,
-      hire_date: hireDate || null,
-      birthday: birthday || null,
-      status,
-    });
-    onClose();
+  const handleSubmit = async () => {
+    if (!name || !email) {
+      setError('Nombre y email son requeridos');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave({
+        name,
+        email,
+        role,
+        head_id: headId || null,
+        net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
+        pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
+        commission_per_lot: commLot ? parseFloat(commLot) : null,
+        salary: salary ? parseFloat(salary) : null,
+        benefits: benefits || null,
+        comments: comments || null,
+        hire_date: hireDate || null,
+        birthday: birthday || null,
+        status,
+      });
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -208,9 +258,18 @@ function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave
           <option value="inactive">{t('hr.statusInactive')}</option>
         </select>
       </div>
+      {error && (
+        <div className="mt-3 p-2 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+          {error}
+        </div>
+      )}
       <div className="mt-3 flex justify-end">
-        <button onClick={handleSubmit} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90">
-          {editing ? t('common.save') : t('common.add')}
+        <button
+          onClick={handleSubmit}
+          disabled={saving}
+          className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+        >
+          {saving ? 'Guardando...' : (editing ? t('common.save') : t('common.add'))}
         </button>
       </div>
     </div>
@@ -287,15 +346,20 @@ function PeriodFilter({ preset, setPreset, selectedMonth, setSelectedMonth, cust
 
 export default function RRHHPage() {
   const { t } = useI18n();
-  const { employees: dataEmployees, commercialProfiles, monthlyResults: dataMonthlyResults, periods } = useData();
+  const {
+    employees,
+    commercialProfiles: profiles,
+    monthlyResults,
+    periods,
+    company,
+    refresh,
+  } = useData();
   const [tab, setTab] = useState<Tab>('commercial');
-  const [employees, setEmployees] = useState<Employee[]>(dataEmployees);
-  const [profiles, setProfiles] = useState<CommercialProfile[]>(commercialProfiles);
-  const [monthlyResults, setMonthlyResults] = useState<CommercialMonthlyResult[]>(dataMonthlyResults);
   const [showEmpForm, setShowEmpForm] = useState(false);
   const [editingEmp, setEditingEmp] = useState<Employee | undefined>();
   const [showProfileForm, setShowProfileForm] = useState(false);
   const [editingProfile, setEditingProfile] = useState<CommercialProfile | undefined>();
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   // Period filter state
   const [filterPreset, setFilterPreset] = useState<FilterPreset>('total');
@@ -330,23 +394,49 @@ export default function RRHHPage() {
   const totalCommissionsFiltered = filteredResults.reduce((sum, r) => sum + r.total_earned, 0);
   const activeProfiles = profiles.filter(p => p.status === 'active').length;
 
-  // CRUD handlers
-  const handleSaveEmployee = (emp: Employee) => {
-    setEmployees(prev => {
-      const idx = prev.findIndex(e => e.id === emp.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = emp; return next; }
-      return [...prev, emp];
-    });
+  // CRUD handlers — persist to Supabase, then refresh the data context
+  const handleSaveEmployee = async (payload: EmployeePayload) => {
+    if (!company?.id) throw new Error('No hay compañía activa');
+    if (editingEmp) {
+      await updateEmployee(editingEmp.id, payload);
+    } else {
+      await createEmployee(company.id, payload);
+    }
+    await refresh();
     setEditingEmp(undefined);
   };
 
-  const handleSaveProfile = (profile: CommercialProfile) => {
-    setProfiles(prev => {
-      const idx = prev.findIndex(p => p.id === profile.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = profile; return next; }
-      return [...prev, profile];
-    });
+  const handleSaveProfile = async (payload: CommercialProfilePayload) => {
+    if (!company?.id) throw new Error('No hay compañía activa');
+    if (editingProfile) {
+      await updateCommercialProfile(editingProfile.id, payload);
+    } else {
+      await createCommercialProfile(company.id, payload);
+    }
+    await refresh();
     setEditingProfile(undefined);
+  };
+
+  const handleDeleteEmployee = async (id: string, name: string) => {
+    if (!confirm(`¿Eliminar empleado "${name}"? Esta acción no se puede deshacer.`)) return;
+    setDeleteError(null);
+    try {
+      await deleteEmployee(id);
+      await refresh();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Error eliminando empleado');
+    }
+  };
+
+  const handleDeleteProfile = async (id: string, name: string) => {
+    if (!confirm(`¿Eliminar perfil comercial "${name}"? Esta acción no se puede deshacer.`)) return;
+    setDeleteError(null);
+    try {
+      await deleteCommercialProfile(id);
+      await refresh();
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Error eliminando perfil');
+    }
   };
 
   const handleExportEmployees = () => {
@@ -435,8 +525,11 @@ export default function RRHHPage() {
                     <td className="py-2.5 text-right hidden sm:table-cell">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>
                     <td className="py-2.5 text-right font-medium">{formatCurrency(getFilteredTotal(bdm.id))}</td>
                     <td className="py-2.5 text-right flex items-center justify-end gap-1">
-                      <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
+                      <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground p-1" aria-label={t('common.edit')}>
                         <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button onClick={() => handleDeleteProfile(bdm.id, bdm.name)} className="text-red-600 hover:text-red-700 p-1" aria-label={t('common.delete')}>
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                       <Link href={`/rrhh/perfil?id=${bdm.id}`} className="text-muted-foreground hover:text-foreground">
                         <ChevronRight className="w-4 h-4" />
@@ -573,9 +666,14 @@ export default function RRHHPage() {
                         </span>
                       </td>
                       <td className="py-2.5 text-right">
-                        <button onClick={() => { setEditingEmp(emp); setShowEmpForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => { setEditingEmp(emp); setShowEmpForm(true); }} className="text-muted-foreground hover:text-foreground p-1" aria-label={t('common.edit')}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => handleDeleteEmployee(emp.id, emp.name)} className="text-red-600 hover:text-red-700 p-1" aria-label={t('common.delete')}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   );
@@ -585,6 +683,11 @@ export default function RRHHPage() {
           </div>
           {employees.length === 0 && (
             <p className="text-center text-muted-foreground py-8">{t('hr.noEmployees')}</p>
+          )}
+          {deleteError && (
+            <div className="mt-3 p-2 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+              {deleteError}
+            </div>
           )}
         </Card>
       )}
@@ -660,8 +763,11 @@ export default function RRHHPage() {
                         <td className="py-2.5 text-right">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>
                         <td className="py-2.5 text-right font-medium">{formatCurrency(getFilteredTotal(bdm.id))}</td>
                         <td className="py-2.5 text-right flex items-center justify-end gap-1">
-                          <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
+                          <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground p-1" aria-label={t('common.edit')}>
                             <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => handleDeleteProfile(bdm.id, bdm.name)} className="text-red-600 hover:text-red-700 p-1" aria-label={t('common.delete')}>
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                           <Link href={`/rrhh/perfil?id=${bdm.id}`} className="text-muted-foreground hover:text-foreground">
                             <ChevronRight className="w-4 h-4" />

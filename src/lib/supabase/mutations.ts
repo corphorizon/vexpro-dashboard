@@ -448,3 +448,101 @@ export async function upsertP2PTransfers(
     if (error) throw new Error(`Error guardando P2P: ${error.message}`);
   }
 }
+
+// ─── HR: Employees ───
+
+export interface EmployeePayload {
+  name: string;
+  email: string;
+  position: string | null;
+  department: string | null;
+  start_date: string | null;
+  salary: number | null;
+  status: 'active' | 'inactive' | 'probation';
+  phone: string | null;
+  country: string | null;
+  notes: string | null;
+  birthday: string | null;
+  supervisor: string | null;
+  comments: string | null;
+}
+
+export async function createEmployee(
+  companyId: string,
+  payload: EmployeePayload,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('employees')
+    .insert({ company_id: companyId, ...payload })
+    .select('id')
+    .single();
+  if (error) throw new Error(`Error creando empleado: ${error.message}`);
+  return data.id;
+}
+
+export async function updateEmployee(
+  id: string,
+  payload: EmployeePayload,
+): Promise<void> {
+  const { error } = await supabase
+    .from('employees')
+    .update(payload)
+    .eq('id', id);
+  if (error) throw new Error(`Error actualizando empleado: ${error.message}`);
+}
+
+export async function deleteEmployee(id: string): Promise<void> {
+  const { error } = await supabase.from('employees').delete().eq('id', id);
+  if (error) throw new Error(`Error eliminando empleado: ${error.message}`);
+}
+
+// ─── HR: Commercial Profiles ───
+
+export interface CommercialProfilePayload {
+  name: string;
+  email: string;
+  role: 'sales_manager' | 'head' | 'bdm';
+  head_id: string | null;
+  net_deposit_pct: number | null;
+  pnl_pct: number | null;
+  commission_per_lot: number | null;
+  salary: number | null;
+  benefits: string | null;
+  comments: string | null;
+  hire_date: string | null;
+  birthday: string | null;
+  status: 'active' | 'inactive';
+}
+
+export async function createCommercialProfile(
+  companyId: string,
+  payload: CommercialProfilePayload,
+): Promise<string> {
+  const { data, error } = await supabase
+    .from('commercial_profiles')
+    .insert({ company_id: companyId, ...payload })
+    .select('id')
+    .single();
+  if (error) throw new Error(`Error creando perfil comercial: ${error.message}`);
+  return data.id;
+}
+
+export async function updateCommercialProfile(
+  id: string,
+  payload: CommercialProfilePayload,
+): Promise<void> {
+  const { error } = await supabase
+    .from('commercial_profiles')
+    .update(payload)
+    .eq('id', id);
+  if (error) throw new Error(`Error actualizando perfil comercial: ${error.message}`);
+}
+
+export async function deleteCommercialProfile(id: string): Promise<void> {
+  // Monthly results will cascade-delete via FK ON DELETE CASCADE
+  const { error } = await supabase
+    .from('commercial_profiles')
+    .delete()
+    .eq('id', id);
+  if (error) throw new Error(`Error eliminando perfil comercial: ${error.message}`);
+}
