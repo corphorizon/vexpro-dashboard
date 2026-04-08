@@ -22,21 +22,30 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
-    // 1. Look up the auth user_id from company_users
+    // 1. Look up the auth user_id + email from company_users (use maybeSingle so
+    //    a missing row doesn't throw)
     const { data: profile, error: lookupError } = await adminClient
       .from('company_users')
       .select('user_id, email')
       .eq('id', companyUserId)
-      .single();
+      .maybeSingle();
 
-    if (lookupError || !profile) {
+    if (lookupError) {
+      console.error('[AdminAPI] Error looking up company_user:', lookupError.message);
       return NextResponse.json(
-        { success: false, error: lookupError?.message || 'company_user not found' },
-        { status: 404 },
+        { success: false, error: lookupError.message },
+        { status: 500 },
       );
     }
 
-    // 2. Delete from company_users first
+    // If the profile doesn't exist anymore (already deleted in another tab/refresh),
+    // treat as success — there's nothing to do.
+    if (!profile) {
+      console.log(`[AdminAPI] company_user ${companyUserId} not found, nothing to delete`);
+      return NextResponse.json({ success: true, alreadyDeleted: true });
+    }
+
+    // 2. Delete from company_users
     const { error: deleteProfileError } = await adminClient
       .from('company_users')
       .delete()
@@ -50,15 +59,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. Delete the auth user so the email can be reused
+    // 3. Delete the auth user so the email can be reused.
+    //    Tolerate "user not found" — the auth side may already be gone.
     if (profile.user_id) {
       const { error: deleteAuthError } = await adminClient.auth.admin.deleteUser(profile.user_id);
       if (deleteAuthError) {
-        console.error('[AdminAPI] Error deleting auth user:', deleteAuthError.message);
-        // Profile already deleted — return warning but don't fail hard
-        return NextResponse.json(
-          { success: true, warning: `Profile deleted but auth user removal failed: ${deleteAuthError.message}` },
-        );
+        const msg = (deleteAuthError.message || '').toLowerCase();
+        const notFound = msg.includes('not found') || msg.includes('user_not_found');
+        if (!notFound) {
+          console.error('[AdminAPI] Error deleting auth user:', deleteAuthError.message);
+          // Profile is already deleted — return success with warning
+          return NextResponse.json({
+            success: true,
+            warning: `Perfil eliminado pero no se pudo borrar el auth user: ${deleteAuthError.message}`,
+          });
+        }
+        console.log(`[AdminAPI] Auth user ${profile.user_id} already gone, ignoring`);
       }
     }
 

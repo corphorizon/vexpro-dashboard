@@ -33,16 +33,59 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
-    const updates: Record<string, string> = {};
-    if (email) updates.email = email;
+    // Build update payload. For email updates we set email_confirm: true so the
+    // change applies immediately without triggering Supabase's confirmation flow.
+    const updates: Record<string, unknown> = {};
+    if (email) {
+      updates.email = email;
+      updates.email_confirm = true;
+    }
     if (password) updates.password = password;
+
+    // If updating email, first check there's no other auth user already using it.
+    // If there is and it's an orphan (no company_users profile), clean it up.
+    if (email) {
+      try {
+        const target = email.toLowerCase().trim();
+        for (let page = 1; page <= 20; page++) {
+          const { data } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+          const conflict = data?.users?.find(
+            u => (u.email || '').toLowerCase().trim() === target && u.id !== authUserId,
+          );
+          if (conflict) {
+            const { data: profile } = await adminClient
+              .from('company_users')
+              .select('id')
+              .eq('user_id', conflict.id)
+              .maybeSingle();
+            if (profile) {
+              return NextResponse.json(
+                { success: false, error: `Ya existe un usuario activo con el email ${email}` },
+                { status: 409 },
+              );
+            }
+            // Orphan — clean it up so we can reuse the email
+            console.log(`[AdminAPI] Cleaning orphan ${conflict.id} blocking email update to ${email}`);
+            await adminClient.auth.admin.deleteUser(conflict.id);
+            break;
+          }
+          if (!data?.users || data.users.length < 200) break;
+        }
+      } catch (scanErr) {
+        console.warn('[AdminAPI] Email conflict scan failed, proceeding anyway:', scanErr);
+      }
+    }
 
     const { error } = await adminClient.auth.admin.updateUserById(authUserId, updates);
 
     if (error) {
-      console.error('[AdminAPI] Error updating auth user:', error.message);
+      // Surface the most informative message available
+      const detail = (error as { message?: string; status?: number; code?: string }).message
+        || (error as unknown as { error_description?: string }).error_description
+        || JSON.stringify(error);
+      console.error('[AdminAPI] Error updating auth user:', detail, 'fields:', Object.keys(updates).join(','));
       return NextResponse.json(
-        { success: false, error: error.message },
+        { success: false, error: detail },
         { status: 500 },
       );
     }
