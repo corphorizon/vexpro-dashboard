@@ -1,12 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/create-user
 //
 // Creates a new Supabase Auth user + matching company_users record.
 // Uses service_role key so the calling admin's session is not disrupted.
+//
+// Robustness:
+//   - Tries createUser directly. If it fails with "already registered",
+//     paginates through auth.users to locate the orphan, verifies it has
+//     no profile in company_users, removes it, and retries the creation.
 // ---------------------------------------------------------------------------
+
+// Look up an auth user by email by paginating through admin.listUsers().
+// listUsers() returns at most ~50 entries per page, so we must paginate.
+async function findAuthUserByEmail(adminClient: SupabaseClient, email: string) {
+  const target = email.toLowerCase().trim();
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+    if (error) throw error;
+    const found = data?.users?.find(u => (u.email || '').toLowerCase().trim() === target);
+    if (found) return found;
+    if (!data?.users || data.users.length < 200) return null; // last page
+  }
+  return null;
+}
+
+async function insertProfile(
+  adminClient: SupabaseClient,
+  authUserId: string,
+  email: string,
+  name: string,
+  role: string,
+  company_id: string,
+  allowed_modules: string[] | undefined,
+) {
+  return adminClient.from('company_users').insert({
+    user_id: authUserId,
+    company_id,
+    name,
+    email,
+    role,
+    allowed_modules: allowed_modules || ['summary'],
+  });
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -20,7 +59,6 @@ export async function POST(request: NextRequest) {
       allowed_modules?: string[];
     };
 
-    // Validate required fields
     if (!email || !password || !name || !role || !company_id) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields: email, password, name, role, company_id' },
@@ -30,65 +68,99 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
-    // 0. Check if there's an orphaned auth user with this email (deleted profile but auth still exists).
-    // This happens when a user was deleted before delete-user route also cleaned up auth.users.
-    // We clean up the orphan so the email can be reused.
-    try {
-      const { data: existingUsers } = await adminClient.auth.admin.listUsers();
-      const orphan = existingUsers?.users.find(u => u.email === email);
-      if (orphan) {
-        const { data: existingProfile } = await adminClient
-          .from('company_users')
-          .select('id')
-          .eq('user_id', orphan.id)
-          .maybeSingle();
-        if (!existingProfile) {
-          // Orphan auth user — safe to remove
-          console.log(`[AdminAPI] Cleaning up orphaned auth user for ${email}`);
-          await adminClient.auth.admin.deleteUser(orphan.id);
-        } else {
-          return NextResponse.json(
-            { success: false, error: `Ya existe un usuario activo con el email ${email}` },
-            { status: 409 },
-          );
-        }
-      }
-    } catch (cleanupErr) {
-      console.warn('[AdminAPI] Orphan check failed, proceeding anyway:', cleanupErr);
-    }
-
-    // 1. Create the auth user in Supabase Auth
+    // 1. Try to create the auth user directly
+    let authUserId: string | null = null;
     const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
       email,
       password,
-      email_confirm: true, // Auto-confirm so user can login immediately
+      email_confirm: true,
     });
 
     if (authError) {
-      console.error('[AdminAPI] Error creating auth user:', authError.message);
-      return NextResponse.json(
-        { success: false, error: authError.message },
-        { status: 500 },
-      );
+      // Detect "already registered" — message varies between Supabase versions
+      const msg = (authError.message || '').toLowerCase();
+      const isAlreadyRegistered =
+        msg.includes('already registered') ||
+        msg.includes('already been registered') ||
+        msg.includes('already exists') ||
+        msg.includes('duplicate');
+
+      if (!isAlreadyRegistered) {
+        console.error('[AdminAPI] Error creating auth user:', authError.message);
+        return NextResponse.json({ success: false, error: authError.message }, { status: 500 });
+      }
+
+      // Email is reserved. Try to locate the orphan and clean it up.
+      console.log(`[AdminAPI] Email ${email} already registered — checking for orphan`);
+      const existing = await findAuthUserByEmail(adminClient, email);
+      if (!existing) {
+        return NextResponse.json(
+          { success: false, error: `El email ${email} está reservado pero no se pudo localizar el usuario huérfano. Contacta soporte.` },
+          { status: 409 },
+        );
+      }
+
+      // Check if there's an active profile for this auth user
+      const { data: existingProfile } = await adminClient
+        .from('company_users')
+        .select('id')
+        .eq('user_id', existing.id)
+        .maybeSingle();
+
+      if (existingProfile) {
+        return NextResponse.json(
+          { success: false, error: `Ya existe un usuario activo con el email ${email}` },
+          { status: 409 },
+        );
+      }
+
+      // Orphan — remove it and retry
+      console.log(`[AdminAPI] Cleaning up orphaned auth user ${existing.id} for ${email}`);
+      const { error: deleteOrphanError } = await adminClient.auth.admin.deleteUser(existing.id);
+      if (deleteOrphanError) {
+        console.error('[AdminAPI] Failed to delete orphan:', deleteOrphanError.message);
+        return NextResponse.json(
+          { success: false, error: `No se pudo limpiar el usuario huérfano: ${deleteOrphanError.message}` },
+          { status: 500 },
+        );
+      }
+
+      // Retry creation
+      const retry = await adminClient.auth.admin.createUser({
+        email,
+        password,
+        email_confirm: true,
+      });
+      if (retry.error || !retry.data?.user) {
+        console.error('[AdminAPI] Retry create failed:', retry.error?.message);
+        return NextResponse.json(
+          { success: false, error: retry.error?.message || 'Retry create failed' },
+          { status: 500 },
+        );
+      }
+      authUserId = retry.data.user.id;
+    } else {
+      authUserId = authData.user.id;
     }
 
-    const authUserId = authData.user.id;
+    if (!authUserId) {
+      return NextResponse.json({ success: false, error: 'No auth user id returned' }, { status: 500 });
+    }
 
-    // 2. Create the company_users record
-    const { error: profileError } = await adminClient
-      .from('company_users')
-      .insert({
-        user_id: authUserId,
-        company_id,
-        name,
-        email,
-        role,
-        allowed_modules: allowed_modules || ['dashboard'],
-      });
+    // 2. Insert the company_users profile
+    const { error: profileError } = await insertProfile(
+      adminClient,
+      authUserId,
+      email,
+      name,
+      role,
+      company_id,
+      allowed_modules,
+    );
 
     if (profileError) {
       console.error('[AdminAPI] Error creating company_users record:', profileError.message);
-      // Try to clean up the auth user since profile creation failed
+      // Roll back the auth user since profile creation failed
       await adminClient.auth.admin.deleteUser(authUserId);
       return NextResponse.json(
         { success: false, error: `Profile creation failed: ${profileError.message}` },

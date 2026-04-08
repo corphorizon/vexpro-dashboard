@@ -191,11 +191,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createUser = useCallback(async (newUser: Omit<User, 'id'>, password: string) => {
-    // Use server-side API route to create user without losing current admin session
+    // Use server-side API route to create user without losing current admin session.
+    // Add a 45s timeout so a hanging fetch never freezes the UI.
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 45000);
+
     try {
       const res = await fetch('/api/admin/create-user', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({
           email: newUser.email,
           password,
@@ -213,18 +218,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           errorMsg = err.error || errorMsg;
         } catch { /* non-JSON response */ }
         console.error('Error creating user:', errorMsg);
-        throw new Error(`Error creando usuario: ${errorMsg}`);
+        throw new Error(errorMsg);
       }
     } catch (err) {
+      if (err instanceof Error && err.name === 'AbortError') {
+        throw new Error('La creación del usuario tardó demasiado. Verifica si fue creado y recarga la página.');
+      }
       console.error('Failed to create user:', err);
       throw err;
+    } finally {
+      clearTimeout(timeoutId);
     }
 
-    // Refresh users list
+    // Refresh users list — wrap in try/catch so UI never hangs even if this fails.
+    // The user was already created successfully on the backend at this point.
     const current = userRef.current;
     if (current) {
-      const allUsers = await fetchAllUsers(current.company_id);
-      setUsers(allUsers);
+      try {
+        const allUsers = await fetchAllUsers(current.company_id);
+        setUsers(allUsers);
+      } catch (refreshErr) {
+        console.error('User created but list refresh failed:', refreshErr);
+      }
       logAction(current.id, current.name, 'create', 'users', `Usuario creado: ${newUser.name} (${newUser.email}), rol: ${newUser.role}`);
     }
   }, []);
