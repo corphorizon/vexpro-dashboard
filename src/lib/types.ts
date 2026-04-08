@@ -62,6 +62,26 @@ export interface Expense {
   pending: number;
   category: string | null;
   sort_order: number;
+  is_fixed?: boolean;
+}
+
+export interface ExpenseTemplate {
+  id: string;
+  company_id: string;
+  concept: string;
+  amount: number;
+  active: boolean;
+  sort_order: number;
+}
+
+export interface ChannelBalance {
+  id: string;
+  company_id: string;
+  snapshot_date: string; // YYYY-MM-DD
+  channel_key: string;   // 'coinsbuy' | 'fairpay' | 'wallet_externa' | 'otros' | ...
+  amount: number;
+  source: 'manual' | 'api' | 'derived';
+  notes: string | null;
 }
 
 export interface PreoperativeExpense {

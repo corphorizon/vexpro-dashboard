@@ -116,6 +116,48 @@ export async function fetchExpenses(companyId: string, periodIds?: string[]): Pr
     console.error('Error fetching expenses:', error.message);
     return [];
   }
+  // Defensive default: ensure is_fixed is always boolean even if column missing in older rows
+  return (data ?? []).map((e) => ({ ...e, is_fixed: !!e.is_fixed }));
+}
+
+// ─── Expense Templates (Egresos Fijos plantillas) ───
+
+export async function fetchExpenseTemplates(companyId: string): Promise<import('../types').ExpenseTemplate[]> {
+  const { data, error } = await supabase
+    .from('expense_templates')
+    .select('*')
+    .eq('company_id', companyId)
+    .order('sort_order', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching expense templates:', error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
+// ─── Channel Balances (snapshots por dia) ───
+
+export async function fetchChannelBalances(
+  companyId: string,
+  date?: string
+): Promise<import('../types').ChannelBalance[]> {
+  let query = supabase
+    .from('channel_balances')
+    .select('*')
+    .eq('company_id', companyId)
+    .order('snapshot_date', { ascending: false });
+
+  if (date) {
+    query = query.eq('snapshot_date', date);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    console.error('Error fetching channel balances:', error.message);
+    return [];
+  }
   return data ?? [];
 }
 

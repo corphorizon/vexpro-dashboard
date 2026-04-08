@@ -156,7 +156,7 @@ export async function upsertWithdrawals(
 export async function upsertExpenses(
   companyId: string,
   periodId: string,
-  expenses: { concept: string; amount: number; paid: number; pending: number }[]
+  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean }[]
 ): Promise<void> {
   const { error: delError } = await supabase
     .from('expenses')
@@ -174,11 +174,102 @@ export async function upsertExpenses(
       amount: e.amount,
       paid: e.paid,
       pending: e.pending,
+      is_fixed: !!e.is_fixed,
       sort_order: i + 1,
     }));
 
     const { error: insError } = await supabase.from('expenses').insert(rows);
     if (insError) throw new Error(`Error guardando egresos: ${insError.message}`);
+  }
+
+  // Sync expense_templates: any expense marked is_fixed becomes (or updates) a template
+  const fixedExpenses = expenses.filter(e => e.is_fixed && e.concept.trim());
+  for (const fx of fixedExpenses) {
+    const { data: existing } = await supabase
+      .from('expense_templates')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('concept', fx.concept)
+      .maybeSingle();
+
+    if (existing) {
+      await supabase
+        .from('expense_templates')
+        .update({ amount: fx.amount, active: true })
+        .eq('id', existing.id);
+    } else {
+      await supabase
+        .from('expense_templates')
+        .insert({
+          company_id: companyId,
+          concept: fx.concept,
+          amount: fx.amount,
+          active: true,
+        });
+    }
+  }
+}
+
+// ─── Expense Templates (CRUD) ───
+
+export async function deactivateExpenseTemplate(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('expense_templates')
+    .update({ active: false })
+    .eq('id', id);
+  if (error) throw new Error(`Error desactivando plantilla: ${error.message}`);
+}
+
+export async function activateExpenseTemplate(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('expense_templates')
+    .update({ active: true })
+    .eq('id', id);
+  if (error) throw new Error(`Error activando plantilla: ${error.message}`);
+}
+
+export async function deleteExpenseTemplate(id: string): Promise<void> {
+  const { error } = await supabase
+    .from('expense_templates')
+    .delete()
+    .eq('id', id);
+  if (error) throw new Error(`Error eliminando plantilla: ${error.message}`);
+}
+
+// ─── Channel Balances (snapshots por dia) ───
+
+export async function upsertChannelBalance(
+  companyId: string,
+  snapshotDate: string,
+  channelKey: string,
+  amount: number,
+  source: 'manual' | 'api' | 'derived' = 'manual'
+): Promise<void> {
+  const { data: existing } = await supabase
+    .from('channel_balances')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('snapshot_date', snapshotDate)
+    .eq('channel_key', channelKey)
+    .maybeSingle();
+
+  if (existing) {
+    const { error } = await supabase
+      .from('channel_balances')
+      .update({ amount, source })
+      .eq('id', existing.id);
+    if (error) throw new Error(`Error actualizando balance del canal: ${error.message}`);
+  } else {
+    const { error } = await supabase
+      .from('channel_balances')
+      .insert({
+        company_id: companyId,
+        snapshot_date: snapshotDate,
+        channel_key: channelKey,
+        amount,
+        source,
+      });
+    if (error) throw new Error(`Error guardando balance del canal: ${error.message}`);
   }
 }
 

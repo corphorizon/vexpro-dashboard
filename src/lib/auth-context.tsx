@@ -38,7 +38,7 @@ interface AuthState {
   updateUserDirect: (id: string, updates: Partial<User & { password?: string }>) => void;
 }
 
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners', 'hr', 'upload', 'periods', 'users', 'audit'];
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'hr', 'upload', 'periods', 'users', 'audit'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -453,9 +453,9 @@ export const ROLE_DESCRIPTIONS: Record<string, string> = {
 
 export const ROLE_DEFAULT_MODULES: Record<string, string[]> = {
   admin: ALL_MODULES,
-  socio: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners'],
-  auditor: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners', 'upload'],
-  soporte: ['summary', 'movements', 'expenses', 'liquidity'],
+  socio: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners'],
+  auditor: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'upload'],
+  soporte: ['summary', 'movements', 'expenses', 'liquidity', 'balances'],
   hr: ['summary', 'hr'],
   invitado: ['summary'],
 };
@@ -466,6 +466,7 @@ export const MODULE_LABELS: Record<string, string> = {
   expenses: 'Egresos',
   liquidity: 'Liquidez',
   investments: 'Inversiones',
+  balances: 'Balances',
   partners: 'Socios',
   hr: 'Recursos Humanos',
   upload: 'Carga de Datos',

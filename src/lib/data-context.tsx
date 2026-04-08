@@ -17,6 +17,7 @@ import type {
   PropFirmSale,
   P2PTransfer,
   Expense,
+  ExpenseTemplate,
   PreoperativeExpense,
   OperatingIncome,
   BrokerBalance,
@@ -36,6 +37,7 @@ import {
   fetchDeposits,
   fetchWithdrawals,
   fetchExpenses,
+  fetchExpenseTemplates,
   fetchPreoperativeExpenses,
   fetchOperatingIncome,
   fetchBrokerBalance,
@@ -81,6 +83,7 @@ export interface DataContextValue {
   partners: Partner[];
   partnerDistributions: PartnerDistribution[];
   preoperativeExpenses: PreoperativeExpense[];
+  expenseTemplates: ExpenseTemplate[];
   allExpenses: Expense[];
   allDeposits: Deposit[];
   allWithdrawals: Withdrawal[];
@@ -120,6 +123,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [deposits, setDeposits] = useState<Deposit[]>([]);
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [expenseTemplates, setExpenseTemplates] = useState<ExpenseTemplate[]>([]);
   const [preoperativeExpenses, setPreoperativeExpenses] = useState<PreoperativeExpense[]>([]);
   const [operatingIncome, setOperatingIncome] = useState<OperatingIncome[]>([]);
   const [brokerBalance, setBrokerBalance] = useState<BrokerBalance[]>([]);
@@ -161,6 +165,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         deps,
         wdrs,
         exps,
+        expTpls,
         preExps,
         opInc,
         brkBal,
@@ -178,6 +183,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         fetchDeposits(comp.id),
         fetchWithdrawals(comp.id),
         fetchExpenses(comp.id),
+        fetchExpenseTemplates(comp.id),
         fetchPreoperativeExpenses(comp.id),
         fetchOperatingIncome(comp.id),
         fetchBrokerBalance(comp.id),
@@ -196,6 +202,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setDeposits(deps);
       setWithdrawals(wdrs);
       setExpenses(exps);
+      setExpenseTemplates(expTpls);
       setPreoperativeExpenses(preExps);
       setOperatingIncome(opInc);
       setBrokerBalance(brkBal);
@@ -545,6 +552,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       partners,
       partnerDistributions,
       preoperativeExpenses,
+      expenseTemplates,
       allExpenses: expenses,
       allDeposits: deposits,
       allWithdrawals: withdrawals,
@@ -580,6 +588,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       partners,
       partnerDistributions,
       preoperativeExpenses,
+      expenseTemplates,
       expenses,
       deposits,
       withdrawals,

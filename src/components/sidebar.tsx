@@ -28,6 +28,7 @@ import {
   Globe,
   ChevronDown,
   DollarSign,
+  Wallet,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -70,6 +71,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/egresos', i18nKey: 'nav.expenses', icon: Receipt, module: 'expenses' },
       { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
       { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
+      { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
       { href: '/socios', i18nKey: 'nav.partners', icon: UsersIcon, module: 'partners' },
       { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
       { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },

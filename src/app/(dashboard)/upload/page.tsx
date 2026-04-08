@@ -11,6 +11,7 @@ import type { LiquidityMovement, Investment } from '@/lib/types';
 import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download } from 'lucide-react';
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
+import { FixedExpenseTemplatesPanel } from '@/components/fixed-expense-templates-panel';
 import {
   upsertDeposits,
   upsertWithdrawals,
@@ -40,7 +41,7 @@ const SECTION_KEYS: Record<DataSection, string> = {
 
 interface DepositRow { id: string; channel: string; amount: number; }
 interface WithdrawalRow { id: string; category: string; amount: number; }
-interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; }
+interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; }
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
 interface DocRow { id: string; filename: string; date: string; description: string; uploaded_by?: string; }
 
@@ -91,7 +92,7 @@ function saveToStorage<T>(key: string, value: T) {
 export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const { periods, allDeposits, allWithdrawals, allExpenses, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh } = useData();
+  const { periods, allDeposits, allWithdrawals, allExpenses, expenseTemplates, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh } = useData();
   const isAdmin = user?.role === 'admin';
   const userCanAdd = canAdd(user);
   const userCanEdit = canEdit(user);
@@ -119,8 +120,30 @@ export default function UploadPage() {
 
   const loadExpensesForPeriod = useCallback((periodId: string): ExpenseRow[] => {
     const periodExpenses = allExpenses.filter(e => e.period_id === periodId);
-    return periodExpenses.map(e => ({ id: e.id, concept: e.concept, amount: e.amount, paid: e.paid, pending: e.pending }));
-  }, [allExpenses]);
+
+    // If the period already has expenses saved, return them as-is
+    if (periodExpenses.length > 0) {
+      return periodExpenses.map(e => ({
+        id: e.id,
+        concept: e.concept,
+        amount: e.amount,
+        paid: e.paid,
+        pending: e.pending,
+        is_fixed: !!e.is_fixed,
+      }));
+    }
+
+    // Otherwise, pre-load active fixed expense templates as starting rows
+    const activeTemplates = expenseTemplates.filter(tpl => tpl.active);
+    return activeTemplates.map((tpl, i) => ({
+      id: `tpl-${tpl.id}-${i}`,
+      concept: tpl.concept,
+      amount: tpl.amount,
+      paid: 0,
+      pending: tpl.amount,
+      is_fixed: true,
+    }));
+  }, [allExpenses, expenseTemplates]);
 
   const loadIncomeForPeriod = useCallback((periodId: string): IncomeRow => {
     const periodIncome = allOperatingIncome.find(oi => oi.period_id === periodId);
@@ -200,9 +223,9 @@ export default function UploadPage() {
 
   // UI state
   const [confirmAction, setConfirmAction] = useState<{ type: string; message: string; onConfirm: () => void } | null>(null);
-  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '' });
+  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false });
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
-  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '' });
+  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false });
   const [successMsg, setSuccessMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const [savingAll, setSavingAll] = useState(false);
@@ -534,8 +557,9 @@ export default function UploadPage() {
         amount: amt,
         paid: pd,
         pending: pn,
+        is_fixed: newExpense.is_fixed,
       }]);
-      setNewExpense({ concept: '', amount: '', paid: '', pending: '' });
+      setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false });
       addConceptToHistory(newExpense.concept);
       if (user) logAction(user.id, user.name, 'create', 'expenses', `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}`);
       showSuccess(t('upload.expenseAdded'));
@@ -545,7 +569,7 @@ export default function UploadPage() {
   const startEditExpense = (exp: ExpenseRow) => {
     if (!userCanEdit) return;
     setEditingExpenseId(exp.id);
-    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending) });
+    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed });
   };
 
   const saveEditExpense = () => {
@@ -554,10 +578,15 @@ export default function UploadPage() {
     const pd = parseFloat(editExpense.paid) || 0;
     const pn = parseFloat(editExpense.pending) || amt - pd;
     askConfirmation(`Actualizar egreso "${editExpense.concept}"?`, () => {
-      setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn } : e));
+      setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed } : e));
       setEditingExpenseId(null);
       showSuccess(t('upload.expenseUpdated'));
     });
+  };
+
+  const toggleExpenseFixed = (id: string) => {
+    if (!userCanEdit) return;
+    setExpenses(prev => prev.map(e => e.id === id ? { ...e, is_fixed: !e.is_fixed } : e));
   };
 
   const deleteExpense = (id: string) => {
@@ -852,7 +881,13 @@ export default function UploadPage() {
                   {editingExpenseId === exp.id ? (
                     <>
                       <td className="py-2 px-3 text-muted-foreground">{i + 1}</td>
-                      <td className="py-2 px-3"><input value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2 px-3">
+                        <input value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
+                        <label className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground cursor-pointer">
+                          <input type="checkbox" checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
+                          {t('expenses.fixed')} ({t('expenses.fixedHint')})
+                        </label>
+                      </td>
                       <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                       <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                       <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
@@ -867,7 +902,16 @@ export default function UploadPage() {
                   ) : (
                     <>
                       <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
-                      <td className="py-2.5 px-3">{exp.concept}</td>
+                      <td className="py-2.5 px-3">
+                        <span className="inline-flex items-center gap-1.5">
+                          {exp.concept}
+                          {exp.is_fixed && (
+                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 uppercase">
+                              {t('expenses.fixedBadge')}
+                            </span>
+                          )}
+                        </span>
+                      </td>
                       <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(exp.amount)}</td>
                       <td className="py-2.5 px-3 text-right">{formatCurrency(exp.paid)}</td>
                       <td className="py-2.5 px-3 text-right">{formatCurrency(exp.pending)}</td>
@@ -960,8 +1004,23 @@ export default function UploadPage() {
                   {t('common.add')}
                 </button>
               </div>
+              <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={newExpense.is_fixed}
+                  onChange={e => setNewExpense(p => ({ ...p, is_fixed: e.target.checked }))}
+                  className="w-4 h-4"
+                />
+                <span>
+                  <strong>{t('expenses.fixed')}</strong>
+                  <span className="text-muted-foreground"> — {t('expenses.fixedHint')}</span>
+                </span>
+              </label>
             </div>
           )}
+
+          {/* Plantillas de Egresos Fijos */}
+          <FixedExpenseTemplatesPanel />
         </Card>
       )}
 

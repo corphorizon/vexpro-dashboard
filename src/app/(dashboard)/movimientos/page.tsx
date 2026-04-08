@@ -3,6 +3,7 @@
 import { useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { PeriodSelector } from '@/components/period-selector';
+import { RealTimeMovementsBanner } from '@/components/realtime-movements-banner';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -73,6 +74,9 @@ export default function MovimientosPage() {
           <PeriodSelector />
         </div>
       </div>
+
+      {/* Real-time API status (Coinsbuy / FairPay / Unipayment) */}
+      <RealTimeMovementsBanner />
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Depósitos */}
