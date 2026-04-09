@@ -590,23 +590,23 @@ CREATE POLICY "investments_insert" ON investments FOR INSERT WITH CHECK (company
 CREATE POLICY "investments_update" ON investments FOR UPDATE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor')));
 CREATE POLICY "investments_delete" ON investments FOR DELETE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role = 'admin'));
 
--- employees
+-- employees (admin/auditor/hr can write; admin/hr can delete)
 CREATE POLICY "employees_select" ON employees FOR SELECT USING (company_id IN (SELECT auth_company_ids()));
-CREATE POLICY "employees_insert" ON employees FOR INSERT WITH CHECK (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor')));
-CREATE POLICY "employees_update" ON employees FOR UPDATE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor')));
-CREATE POLICY "employees_delete" ON employees FOR DELETE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role = 'admin'));
+CREATE POLICY "employees_insert" ON employees FOR INSERT WITH CHECK (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor','hr')));
+CREATE POLICY "employees_update" ON employees FOR UPDATE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor','hr')));
+CREATE POLICY "employees_delete" ON employees FOR DELETE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','hr')));
 
--- commercial_profiles
+-- commercial_profiles (admin/auditor/hr can write; admin/hr can delete)
 CREATE POLICY "commercial_profiles_select" ON commercial_profiles FOR SELECT USING (company_id IN (SELECT auth_company_ids()));
-CREATE POLICY "commercial_profiles_insert" ON commercial_profiles FOR INSERT WITH CHECK (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor')));
-CREATE POLICY "commercial_profiles_update" ON commercial_profiles FOR UPDATE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor')));
-CREATE POLICY "commercial_profiles_delete" ON commercial_profiles FOR DELETE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role = 'admin'));
+CREATE POLICY "commercial_profiles_insert" ON commercial_profiles FOR INSERT WITH CHECK (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor','hr')));
+CREATE POLICY "commercial_profiles_update" ON commercial_profiles FOR UPDATE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor','hr')));
+CREATE POLICY "commercial_profiles_delete" ON commercial_profiles FOR DELETE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','hr')));
 
--- commercial_monthly_results
+-- commercial_monthly_results (admin/auditor/hr can write; admin/hr can delete)
 CREATE POLICY "commercial_monthly_results_select" ON commercial_monthly_results FOR SELECT USING (company_id IN (SELECT auth_company_ids()));
-CREATE POLICY "commercial_monthly_results_insert" ON commercial_monthly_results FOR INSERT WITH CHECK (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor')));
-CREATE POLICY "commercial_monthly_results_update" ON commercial_monthly_results FOR UPDATE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor')));
-CREATE POLICY "commercial_monthly_results_delete" ON commercial_monthly_results FOR DELETE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role = 'admin'));
+CREATE POLICY "commercial_monthly_results_insert" ON commercial_monthly_results FOR INSERT WITH CHECK (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor','hr')));
+CREATE POLICY "commercial_monthly_results_update" ON commercial_monthly_results FOR UPDATE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','auditor','hr')));
+CREATE POLICY "commercial_monthly_results_delete" ON commercial_monthly_results FOR DELETE USING (company_id IN (SELECT company_id FROM company_users WHERE user_id = auth.uid() AND role IN ('admin','hr')));
 
 -- ----------------------------------------
 -- partners: all members can see partners list
