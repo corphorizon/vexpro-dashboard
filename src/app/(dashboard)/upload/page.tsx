@@ -12,6 +12,11 @@ import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDo
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
 import { FixedExpenseTemplatesPanel } from '@/components/fixed-expense-templates-panel';
+import { useApiTotals } from '@/components/realtime-movements-banner';
+import {
+  isDerivedBrokerPeriod,
+  computeDerivedBroker,
+} from '@/lib/broker-logic';
 import {
   upsertDeposits,
   upsertWithdrawals,
@@ -193,6 +198,52 @@ export default function UploadPage() {
   const setDocs = useCallback((updater: DocRow[] | ((prev: DocRow[]) => DocRow[])) => {
     setDocsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
+
+  // ── Broker derived-logic helpers ──
+  // For April 2026+ the broker amount is no longer entered by hand: it's
+  // computed from the Coinsbuy API withdrawals minus the other manual
+  // categories, and the input is rendered read-only. Historical periods
+  // keep their stored broker value exactly as it was — we NEVER write back
+  // over it from this page.
+  const currentPeriodObj = useMemo(
+    () => periods.find((p) => p.id === selectedPeriod),
+    [periods, selectedPeriod]
+  );
+  const brokerIsDerived = currentPeriodObj
+    ? isDerivedBrokerPeriod(currentPeriodObj)
+    : false;
+
+  // Date bounds of the current period → feed the API totals hook.
+  const { brokerApiFrom, brokerApiTo } = useMemo(() => {
+    if (!brokerIsDerived || !currentPeriodObj) {
+      return { brokerApiFrom: '', brokerApiTo: '' };
+    }
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const y = currentPeriodObj.year;
+    const m = currentPeriodObj.month;
+    const lastDay = new Date(y, m, 0).getDate();
+    return {
+      brokerApiFrom: `${y}-${pad(m)}-01`,
+      brokerApiTo: `${y}-${pad(m)}-${pad(lastDay)}`,
+    };
+  }, [brokerIsDerived, currentPeriodObj]);
+
+  const brokerApiTotals = useApiTotals(brokerApiFrom, brokerApiTo);
+
+  // Live-computed broker. Re-runs as the user edits IB / Prop Firm / Otros.
+  const derivedBrokerAmount = useMemo(() => {
+    if (!brokerIsDerived) return 0;
+    const ib =
+      withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
+    const pf = withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
+    const other = withdrawals.find((w) => w.category === 'other')?.amount || 0;
+    return computeDerivedBroker({
+      apiWithdrawalsTotal: brokerApiTotals.withdrawalsTotal,
+      ibCommissions: ib,
+      propFirm: pf,
+      other,
+    });
+  }, [brokerIsDerived, withdrawals, brokerApiTotals.withdrawalsTotal]);
 
   // Liquidez state (from Supabase)
   const [liquidityRows, setLiquidityRowsRaw] = useState<LiquidityMovement[]>(() => [...getLiquidityData()]);
@@ -789,43 +840,98 @@ export default function UploadPage() {
               </tr>
             </thead>
             <tbody>
-              {withdrawals.map(w => (
-                <tr key={w.id} className="border-b border-border/50">
-                  <td className="py-3 px-3 font-medium">{WITHDRAWAL_LABELS[w.category]}</td>
-                  <td className="py-3 px-3 text-right">
-                    {userCanAdd ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={w.amount || ''}
-                        onChange={(e) => setWithdrawals(prev => prev.map(ww => ww.id === w.id ? { ...ww, amount: parseFloat(e.target.value) || 0 } : ww))}
-                        className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-                        placeholder="0.00"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(w.amount)}</span>
-                    )}
-                  </td>
-                  {userCanAdd && (
-                    <td className="py-3 px-3 text-center">
-                      <button
-                        onClick={() => updateWithdrawal(w.id, w.amount)}
-                        className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                        title={t('common.save')}
-                      >
-                        <Save className="w-4 h-4" />
-                      </button>
+              {withdrawals.map(w => {
+                const isBrokerAutoRow =
+                  w.category === 'broker' && brokerIsDerived;
+                const displayAmount = isBrokerAutoRow
+                  ? derivedBrokerAmount
+                  : w.amount;
+                return (
+                  <tr key={w.id} className="border-b border-border/50">
+                    <td className="py-3 px-3 font-medium">
+                      {WITHDRAWAL_LABELS[w.category]}
+                      {isBrokerAutoRow && (
+                        <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                          auto
+                        </span>
+                      )}
                     </td>
-                  )}
-                </tr>
-              ))}
+                    <td className="py-3 px-3 text-right">
+                      {isBrokerAutoRow ? (
+                        <div className="flex flex-col items-end">
+                          <span className="font-medium">
+                            {formatCurrency(derivedBrokerAmount)}
+                          </span>
+                          <span className="text-[10px] text-muted-foreground">
+                            API − IB − Prop Firm − Otros
+                          </span>
+                        </div>
+                      ) : userCanAdd ? (
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={w.amount || ''}
+                          onChange={(e) => setWithdrawals(prev => prev.map(ww => ww.id === w.id ? { ...ww, amount: parseFloat(e.target.value) || 0 } : ww))}
+                          className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                          placeholder="0.00"
+                        />
+                      ) : (
+                        <span className="font-medium">{formatCurrency(w.amount)}</span>
+                      )}
+                    </td>
+                    {userCanAdd && (
+                      <td className="py-3 px-3 text-center">
+                        {isBrokerAutoRow ? (
+                          <span
+                            className="text-[10px] text-muted-foreground"
+                            title="Broker se calcula automáticamente en este período"
+                          >
+                            —
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => updateWithdrawal(w.id, w.amount)}
+                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
+                            title={t('common.save')}
+                          >
+                            <Save className="w-4 h-4" />
+                          </button>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr className="font-bold bg-muted/50">
                 <td className="py-3 px-3">Total</td>
-                <td className="py-3 px-3 text-right text-red-600">{formatCurrency(withdrawals.reduce((s, w) => s + w.amount, 0))}</td>
+                <td className="py-3 px-3 text-right text-red-600">
+                  {formatCurrency(
+                    withdrawals.reduce(
+                      (s, w) =>
+                        s +
+                        (w.category === 'broker' && brokerIsDerived
+                          ? derivedBrokerAmount
+                          : w.amount),
+                      0
+                    )
+                  )}
+                </td>
                 {userCanAdd && <td></td>}
               </tr>
+              {brokerIsDerived && (
+                <tr>
+                  <td
+                    colSpan={userCanAdd ? 3 : 2}
+                    className="py-2 px-3 text-[11px] text-muted-foreground italic"
+                  >
+                    Desde abril 2026 el campo Broker se calcula automáticamente
+                    a partir de los retiros reales de la API de Coinsbuy. Los
+                    datos históricos permanecen sin cambios.
+                  </td>
+                </tr>
+              )}
             </tfoot>
           </table>
 

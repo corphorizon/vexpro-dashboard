@@ -3,7 +3,14 @@
 import { useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { MovimientosPeriodSelector } from '@/components/movimientos-period-selector';
-import { RealTimeMovementsBanner } from '@/components/realtime-movements-banner';
+import {
+  RealTimeMovementsBanner,
+  useApiTotals,
+} from '@/components/realtime-movements-banner';
+import {
+  allPeriodsUseDerivedBroker,
+  computeDerivedBroker,
+} from '@/lib/broker-logic';
 import { ArrowDownCircle, ArrowUpCircle, Wallet } from 'lucide-react';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
@@ -32,12 +39,48 @@ const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'>
 export default function MovimientosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, periods } = useData();
 
   const summary =
     mode === 'consolidated'
       ? getConsolidatedSummary(selectedPeriodIds)
       : getPeriodSummary(selectedPeriodId);
+
+  // ── Broker logic cutoff (April 2026+) ──
+  // Only when EVERY active period is on the new rule do we switch to the
+  // derived broker computation. Any consolidation that includes historical
+  // months falls back to the stored values so history stays untouched.
+  const activePeriods = useMemo(() => {
+    const ids =
+      mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
+    return periods.filter((p) => ids.includes(p.id));
+  }, [mode, selectedPeriodId, selectedPeriodIds, periods]);
+
+  const useDerivedBroker = useMemo(
+    () => allPeriodsUseDerivedBroker(activePeriods),
+    [activePeriods]
+  );
+
+  // Date range to ask the API for Coinsbuy withdrawals. Spans from the first
+  // day of the earliest active period to the last day of the latest.
+  const { apiFrom, apiTo } = useMemo(() => {
+    if (!useDerivedBroker || activePeriods.length === 0) {
+      return { apiFrom: '', apiTo: '' };
+    }
+    const sorted = [...activePeriods].sort(
+      (a, b) => a.year - b.year || a.month - b.month
+    );
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const lastDay = new Date(last.year, last.month, 0).getDate();
+    return {
+      apiFrom: `${first.year}-${pad(first.month)}-01`,
+      apiTo: `${last.year}-${pad(last.month)}-${pad(lastDay)}`,
+    };
+  }, [useDerivedBroker, activePeriods]);
+
+  const apiTotals = useApiTotals(apiFrom, apiTo);
 
   const handleExport = () => {
     if (!summary) return;
@@ -54,7 +97,7 @@ export default function MovimientosPage() {
             | number
           )[]
       ),
-      ['', 'Net Deposit', summary.netDeposit],
+      ['', 'Net Deposit', displayNetDeposit],
     ];
     downloadCSV(
       `movimientos_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`,
@@ -103,15 +146,48 @@ export default function MovimientosPage() {
   // ── Totales "solo API" ──
   // Depósitos Totales API = Coinsbuy (confirmed) + FairPay (completed) + Unipayment (completed)
   // (manual "otros" no entra)
-  // Retiros Totales API = Coinsbuy (approved)
-  // (IB commissions, broker, prop firm, otros no entran)
   const apiDepositsTotal =
     (summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0) +
     (summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0) +
     (summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0);
 
-  const apiWithdrawalsTotal =
+  // Stored manual amounts per category (what's in Supabase right now).
+  const storedBroker =
     summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
+  const ibCommissions =
+    summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount ||
+    0;
+  const propFirmWithdrawal =
+    summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
+  const otherWithdrawal =
+    summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
+
+  // "Retiros Totales (API)" is the actual Coinsbuy withdrawal total for
+  // new-logic periods, or the legacy stored broker value for history.
+  const apiWithdrawalsTotal = useDerivedBroker
+    ? apiTotals.withdrawalsTotal
+    : storedBroker;
+
+  // Derived broker only replaces display for April 2026+; otherwise we keep
+  // the historical manually-entered value exactly as stored.
+  const brokerDisplay = useDerivedBroker
+    ? computeDerivedBroker({
+        apiWithdrawalsTotal,
+        ibCommissions,
+        propFirm: propFirmWithdrawal,
+        other: otherWithdrawal,
+      })
+    : storedBroker;
+
+  // Re-derive total withdrawals and net deposit for the summary cards so
+  // they reflect the new logic. Historical periods pass through unchanged.
+  const displayTotalWithdrawals = useDerivedBroker
+    ? ibCommissions + brokerDisplay + propFirmWithdrawal + otherWithdrawal
+    : summary.totalWithdrawals;
+
+  const displayNetDeposit = useDerivedBroker
+    ? summary.totalDeposits - displayTotalWithdrawals
+    : summary.netDeposit;
 
   return (
     <div className="space-y-6">
@@ -160,6 +236,8 @@ export default function MovimientosPage() {
               <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1 truncate">
                 {formatCurrency(summary.totalDeposits)}
               </p>
+              {/* Deposits are unchanged by broker logic — they are always the
+                  stored/summary value for both historical and new periods. */}
               <p className="text-[11px] text-muted-foreground mt-1">
                 Período seleccionado
               </p>
@@ -178,7 +256,7 @@ export default function MovimientosPage() {
                 Retiros Totales
               </p>
               <p className="text-2xl font-bold text-red-600 dark:text-red-400 mt-1 truncate">
-                {formatCurrency(summary.totalWithdrawals)}
+                {formatCurrency(displayTotalWithdrawals)}
               </p>
               <p className="text-[11px] text-muted-foreground mt-1">
                 Período seleccionado
@@ -193,7 +271,7 @@ export default function MovimientosPage() {
         {/* Net Deposit */}
         <Card
           className={`bg-gradient-to-br to-transparent ${
-            summary.netDeposit >= 0
+            displayNetDeposit >= 0
               ? 'border-emerald-200/60 dark:border-emerald-900/60 from-emerald-50/60 dark:from-emerald-950/20'
               : 'border-red-200/60 dark:border-red-900/60 from-red-50/60 dark:from-red-950/20'
           }`}
@@ -205,12 +283,12 @@ export default function MovimientosPage() {
               </p>
               <p
                 className={`text-2xl font-bold mt-1 truncate ${
-                  summary.netDeposit >= 0
+                  displayNetDeposit >= 0
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-red-600 dark:text-red-400'
                 }`}
               >
-                {formatCurrency(summary.netDeposit)}
+                {formatCurrency(displayNetDeposit)}
               </p>
               <p className="text-[11px] text-muted-foreground mt-1">
                 Depósitos − Retiros
@@ -218,14 +296,14 @@ export default function MovimientosPage() {
             </div>
             <div
               className={`p-2 rounded-lg flex-shrink-0 ${
-                summary.netDeposit >= 0
+                displayNetDeposit >= 0
                   ? 'bg-emerald-100 dark:bg-emerald-950/40'
                   : 'bg-red-100 dark:bg-red-950/40'
               }`}
             >
               <Wallet
                 className={`w-5 h-5 ${
-                  summary.netDeposit >= 0
+                  displayNetDeposit >= 0
                     ? 'text-emerald-600 dark:text-emerald-400'
                     : 'text-red-600 dark:text-red-400'
                 }`}
@@ -274,10 +352,6 @@ export default function MovimientosPage() {
                   {formatCurrency(apiDepositsTotal)}
                 </td>
               </tr>
-              <tr className="text-xs text-muted-foreground">
-                <td className="py-1 pl-3">Coinsbuy + FairPay + Unipayment</td>
-                <td className="py-1 text-right"></td>
-              </tr>
               <tr className="text-muted-foreground">
                 <td className="py-1">{t('movements.propFirmSales')}</td>
                 <td className="py-1 text-right">{formatCurrency(summary.propFirmSales)}</td>
@@ -307,19 +381,39 @@ export default function MovimientosPage() {
               </tr>
             </thead>
             <tbody>
-              {fullWithdrawals.map((w) => (
-                <tr key={w.id} className="border-b border-border/50">
-                  <td className="py-2.5">
-                    {WITHDRAWAL_LABELS[w.category]}
-                    {w.category !== 'broker' && (
-                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                        manual
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2.5 text-right font-medium">{formatCurrency(w.amount)}</td>
-                </tr>
-              ))}
+              {fullWithdrawals.map((w) => {
+                // Display override: for new-logic periods, broker is no
+                // longer a manual input — it's derived from API withdrawals
+                // minus the other manual categories. Historical periods
+                // still read the stored manual value untouched.
+                const displayAmount =
+                  w.category === 'broker' ? brokerDisplay : w.amount;
+                const isAutoBroker =
+                  w.category === 'broker' && useDerivedBroker;
+                const isManualRow =
+                  w.category !== 'broker' ||
+                  (w.category === 'broker' && !useDerivedBroker);
+                return (
+                  <tr key={w.id} className="border-b border-border/50">
+                    <td className="py-2.5">
+                      {WITHDRAWAL_LABELS[w.category]}
+                      {isAutoBroker && (
+                        <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                          auto
+                        </span>
+                      )}
+                      {isManualRow && (
+                        <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                          manual
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 text-right font-medium">
+                      {formatCurrency(displayAmount)}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr className="font-bold">
@@ -327,10 +421,6 @@ export default function MovimientosPage() {
                 <td className="py-3 text-right text-red-600">
                   {formatCurrency(apiWithdrawalsTotal)}
                 </td>
-              </tr>
-              <tr className="text-xs text-muted-foreground">
-                <td className="py-1 pl-3">Coinsbuy Retiros</td>
-                <td className="py-1 text-right"></td>
               </tr>
               <tr className="text-muted-foreground">
                 <td className="py-1">{t('movements.p2pTransfer')}</td>
@@ -340,10 +430,10 @@ export default function MovimientosPage() {
                 <td className="py-3">{t('movements.netDeposit')}</td>
                 <td
                   className={`py-3 text-right ${
-                    summary.netDeposit >= 0 ? 'text-emerald-600' : 'text-red-600'
+                    displayNetDeposit >= 0 ? 'text-emerald-600' : 'text-red-600'
                   }`}
                 >
-                  {formatCurrency(summary.netDeposit)}
+                  {formatCurrency(displayNetDeposit)}
                 </td>
               </tr>
             </tfoot>
