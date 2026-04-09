@@ -484,16 +484,35 @@ export async function updateEmployee(
   id: string,
   payload: EmployeePayload,
 ): Promise<void> {
-  const { error } = await supabase
+  // .select() forces PostgREST to return the affected rows. Without it, RLS
+  // policy mismatches silently no-op the update and we'd never notice.
+  const { data, error } = await supabase
     .from('employees')
     .update(payload)
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
   if (error) throw new Error(`Error actualizando empleado: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error(
+      'No se pudo actualizar el empleado: no tienes permiso o el registro ya no existe.'
+    );
+  }
 }
 
 export async function deleteEmployee(id: string): Promise<void> {
-  const { error } = await supabase.from('employees').delete().eq('id', id);
+  // Same .select() trick — RLS DELETE policies fail silently without it, so
+  // we'd return successfully even when zero rows were deleted.
+  const { data, error } = await supabase
+    .from('employees')
+    .delete()
+    .eq('id', id)
+    .select('id');
   if (error) throw new Error(`Error eliminando empleado: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error(
+      'No se pudo eliminar el empleado: no tienes permiso (solo administradores) o el registro ya no existe.'
+    );
+  }
 }
 
 // ─── HR: Commercial Profiles ───
@@ -531,18 +550,30 @@ export async function updateCommercialProfile(
   id: string,
   payload: CommercialProfilePayload,
 ): Promise<void> {
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('commercial_profiles')
     .update(payload)
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
   if (error) throw new Error(`Error actualizando perfil comercial: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error(
+      'No se pudo actualizar el perfil comercial: no tienes permiso o el registro ya no existe.'
+    );
+  }
 }
 
 export async function deleteCommercialProfile(id: string): Promise<void> {
   // Monthly results will cascade-delete via FK ON DELETE CASCADE
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from('commercial_profiles')
     .delete()
-    .eq('id', id);
+    .eq('id', id)
+    .select('id');
   if (error) throw new Error(`Error eliminando perfil comercial: ${error.message}`);
+  if (!data || data.length === 0) {
+    throw new Error(
+      'No se pudo eliminar el perfil comercial: no tienes permiso (solo administradores) o el registro ya no existe.'
+    );
+  }
 }

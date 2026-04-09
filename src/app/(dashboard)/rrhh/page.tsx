@@ -21,6 +21,12 @@ import {
   type EmployeePayload,
   type CommercialProfilePayload,
 } from '@/lib/supabase/mutations';
+import { withTimeout } from '@/lib/with-timeout';
+
+// Hard ceiling for any HR save/delete round-trip. If we haven't heard back
+// in 10s we assume the network is hung and bail with a clear error so the
+// "Guardando..." button always resets.
+const HR_MUTATION_TIMEOUT_MS = 10_000;
 import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2 } from 'lucide-react';
 
 type Tab = 'employees' | 'commercial';
@@ -99,21 +105,25 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
     setSaving(true);
     setError(null);
     try {
-      await onSave({
-        name,
-        email,
-        position: position || null,
-        department: department || null,
-        start_date: startDate || null,
-        salary: salary ? parseFloat(salary) : null,
-        status,
-        phone: null,
-        country: null,
-        notes: null,
-        birthday: birthday || null,
-        supervisor: supervisor || null,
-        comments: comments || null,
-      });
+      await withTimeout(
+        onSave({
+          name,
+          email,
+          position: position || null,
+          department: department || null,
+          start_date: startDate || null,
+          salary: salary ? parseFloat(salary) : null,
+          status,
+          phone: null,
+          country: null,
+          notes: null,
+          birthday: birthday || null,
+          supervisor: supervisor || null,
+          comments: comments || null,
+        }),
+        HR_MUTATION_TIMEOUT_MS,
+        'Guardar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
+      );
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al guardar');
@@ -195,21 +205,25 @@ function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave
     setSaving(true);
     setError(null);
     try {
-      await onSave({
-        name,
-        email,
-        role,
-        head_id: headId || null,
-        net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
-        pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
-        commission_per_lot: commLot ? parseFloat(commLot) : null,
-        salary: salary ? parseFloat(salary) : null,
-        benefits: benefits || null,
-        comments: comments || null,
-        hire_date: hireDate || null,
-        birthday: birthday || null,
-        status,
-      });
+      await withTimeout(
+        onSave({
+          name,
+          email,
+          role,
+          head_id: headId || null,
+          net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
+          pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
+          commission_per_lot: commLot ? parseFloat(commLot) : null,
+          salary: salary ? parseFloat(salary) : null,
+          benefits: benefits || null,
+          comments: comments || null,
+          hire_date: hireDate || null,
+          birthday: birthday || null,
+          status,
+        }),
+        HR_MUTATION_TIMEOUT_MS,
+        'Guardar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
+      );
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al guardar');
@@ -426,7 +440,11 @@ export default function RRHHPage() {
     if (!confirm(`¿Eliminar empleado "${name}"? Esta acción no se puede deshacer.`)) return;
     setDeleteError(null);
     try {
-      await deleteEmployee(id);
+      await withTimeout(
+        deleteEmployee(id),
+        HR_MUTATION_TIMEOUT_MS,
+        'Eliminar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
+      );
       await refresh();
       toast.success(`Empleado "${name}" eliminado`);
     } catch (err) {
@@ -440,7 +458,11 @@ export default function RRHHPage() {
     if (!confirm(`¿Eliminar perfil comercial "${name}"? Esta acción no se puede deshacer.`)) return;
     setDeleteError(null);
     try {
-      await deleteCommercialProfile(id);
+      await withTimeout(
+        deleteCommercialProfile(id),
+        HR_MUTATION_TIMEOUT_MS,
+        'Eliminar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
+      );
       await refresh();
       toast.success(`Perfil "${name}" eliminado`);
     } catch (err) {
