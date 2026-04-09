@@ -150,15 +150,19 @@ export function RealTimeMovementsBanner() {
 
       {/* Filter controls */}
       <div className="flex flex-wrap items-center gap-2 mb-4 p-2 rounded-lg bg-muted/30 border border-border">
-        <Calendar className="w-3.5 h-3.5 text-muted-foreground ml-1" />
-        <div className="flex rounded-md overflow-hidden border border-border">
+        <div className="flex items-center gap-1.5 pl-1 pr-0.5">
+          <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium text-muted-foreground">Período</span>
+        </div>
+        {/* Segmented toggle — single pill with evenly sized buttons and no seams */}
+        <div className="inline-flex h-8 items-center rounded-md border border-border bg-card p-0.5">
           <button
             type="button"
             onClick={() => setMode('month')}
-            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`h-7 px-3 text-xs font-medium rounded-[5px] transition-colors ${
               mode === 'month'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-card hover:bg-muted'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             Mes
@@ -166,10 +170,10 @@ export function RealTimeMovementsBanner() {
           <button
             type="button"
             onClick={() => setMode('range')}
-            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`h-7 px-3 text-xs font-medium rounded-[5px] transition-colors ${
               mode === 'range'
-                ? 'bg-primary text-primary-foreground'
-                : 'bg-card hover:bg-muted'
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             Rango
@@ -180,15 +184,15 @@ export function RealTimeMovementsBanner() {
             type="month"
             value={month}
             onChange={(e) => setMonth(e.target.value)}
-            className="px-2 py-1 text-xs rounded-md border border-border bg-card"
+            className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30"
           />
         ) : (
-          <>
+          <div className="flex items-center gap-1.5">
             <input
               type="date"
               value={rangeFrom}
               onChange={(e) => setRangeFrom(e.target.value)}
-              className="px-2 py-1 text-xs rounded-md border border-border bg-card"
+              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30"
               aria-label="Desde"
             />
             <span className="text-xs text-muted-foreground">—</span>
@@ -196,10 +200,10 @@ export function RealTimeMovementsBanner() {
               type="date"
               value={rangeTo}
               onChange={(e) => setRangeTo(e.target.value)}
-              className="px-2 py-1 text-xs rounded-md border border-border bg-card"
+              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30"
               aria-label="Hasta"
             />
-          </>
+          </div>
         )}
       </div>
 

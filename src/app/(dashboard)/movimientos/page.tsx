@@ -2,8 +2,9 @@
 
 import { useMemo } from 'react';
 import { Card } from '@/components/ui/card';
-import { PeriodSelector } from '@/components/period-selector';
+import { MovimientosPeriodSelector } from '@/components/movimientos-period-selector';
 import { RealTimeMovementsBanner } from '@/components/realtime-movements-banner';
+import { ArrowDownCircle, ArrowUpCircle, Wallet } from 'lucide-react';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -136,14 +137,102 @@ export default function MovimientosPage() {
       <RealTimeMovementsBanner />
 
       {/* ─── Lower section: Datos del período (mes) ─── */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border">
+      <div className="flex flex-col gap-3 pt-2 border-t border-border">
         <div>
           <h2 className="text-lg font-semibold">Datos del período</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Depósitos, retiros, Prop Firm y Broker del mes seleccionado.
+            Depósitos, retiros, Prop Firm y Broker del mes seleccionado. Puedes
+            elegir varios meses para consolidar los totales.
           </p>
         </div>
-        <PeriodSelector />
+        <MovimientosPeriodSelector />
+      </div>
+
+      {/* ─── Summary cards: Depósitos / Retiros / Net Deposit ─── */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Depósitos Totales */}
+        <Card className="border-blue-200/60 dark:border-blue-900/60 bg-gradient-to-br from-blue-50/60 to-transparent dark:from-blue-950/20">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Depósitos Totales
+              </p>
+              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1 truncate">
+                {formatCurrency(summary.totalDeposits)}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Período seleccionado
+              </p>
+            </div>
+            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-950/40 flex-shrink-0">
+              <ArrowDownCircle className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+            </div>
+          </div>
+        </Card>
+
+        {/* Retiros Totales */}
+        <Card className="border-red-200/60 dark:border-red-900/60 bg-gradient-to-br from-red-50/60 to-transparent dark:from-red-950/20">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Retiros Totales
+              </p>
+              <p className="text-2xl font-bold text-red-600 dark:text-red-400 mt-1 truncate">
+                {formatCurrency(summary.totalWithdrawals)}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Período seleccionado
+              </p>
+            </div>
+            <div className="p-2 rounded-lg bg-red-100 dark:bg-red-950/40 flex-shrink-0">
+              <ArrowUpCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+            </div>
+          </div>
+        </Card>
+
+        {/* Net Deposit */}
+        <Card
+          className={`bg-gradient-to-br to-transparent ${
+            summary.netDeposit >= 0
+              ? 'border-emerald-200/60 dark:border-emerald-900/60 from-emerald-50/60 dark:from-emerald-950/20'
+              : 'border-red-200/60 dark:border-red-900/60 from-red-50/60 dark:from-red-950/20'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                Net Deposit
+              </p>
+              <p
+                className={`text-2xl font-bold mt-1 truncate ${
+                  summary.netDeposit >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-red-600 dark:text-red-400'
+                }`}
+              >
+                {formatCurrency(summary.netDeposit)}
+              </p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                Depósitos − Retiros
+              </p>
+            </div>
+            <div
+              className={`p-2 rounded-lg flex-shrink-0 ${
+                summary.netDeposit >= 0
+                  ? 'bg-emerald-100 dark:bg-emerald-950/40'
+                  : 'bg-red-100 dark:bg-red-950/40'
+              }`}
+            >
+              <Wallet
+                className={`w-5 h-5 ${
+                  summary.netDeposit >= 0
+                    ? 'text-emerald-600 dark:text-emerald-400'
+                    : 'text-red-600 dark:text-red-400'
+                }`}
+              />
+            </div>
+          </div>
+        </Card>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
