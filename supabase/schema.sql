@@ -395,9 +395,10 @@ CREATE INDEX idx_withdrawals_company_period ON withdrawals(company_id, period_id
 CREATE INDEX idx_prop_firm_sales_company_period ON prop_firm_sales(company_id, period_id);
 CREATE INDEX idx_p2p_transfers_company_period ON p2p_transfers(company_id, period_id);
 CREATE INDEX idx_expenses_company_period ON expenses(company_id, period_id);
-CREATE INDEX idx_operating_income_company_period ON operating_income(company_id, period_id);
-CREATE INDEX idx_broker_balance_company_period ON broker_balance(company_id, period_id);
-CREATE INDEX idx_financial_status_company_period ON financial_status(company_id, period_id);
+-- operating_income, broker_balance, financial_status already have an
+-- implicit index from the UNIQUE (company_id, period_id) constraint.
+-- No explicit idx_* here (was removed in migration-005 after audit
+-- flagged the duplicate).
 CREATE INDEX idx_partner_distributions_company_period ON partner_distributions(company_id, period_id);
 CREATE INDEX idx_commercial_monthly_results_company_period ON commercial_monthly_results(company_id, period_id);
 
@@ -408,10 +409,16 @@ CREATE INDEX idx_audit_logs_company_module ON audit_logs(company_id, module);
 
 -- Commercial indexes
 CREATE INDEX idx_commercial_profiles_head_id ON commercial_profiles(head_id);
-CREATE INDEX idx_commercial_monthly_results_profile_period ON commercial_monthly_results(profile_id, period_id);
+-- commercial_monthly_results(profile_id, period_id) is already served by
+-- the UNIQUE constraint index — see migration-005.
 
 -- company_users user_id for auth lookups
 CREATE INDEX idx_company_users_user_id ON company_users(user_id);
+
+-- FK indexes on partners / partner_distributions (added in migration-005
+-- so reverse lookups and cascading deletes don't seq-scan).
+CREATE INDEX idx_partners_user_id ON partners(user_id);
+CREATE INDEX idx_partner_distributions_partner_id ON partner_distributions(partner_id);
 
 
 -- ================================================
@@ -461,8 +468,17 @@ ALTER TABLE audit_logs ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "companies_select" ON companies
   FOR SELECT USING (id IN (SELECT auth_company_ids()));
 
+-- Only existing admins can create new tenants (B2B internal tool — Kevin
+-- provisions companies manually). Locked down in migration-004.sql after
+-- audit found the original "WITH CHECK (TRUE)" let any authenticated user
+-- create arbitrary company rows.
 CREATE POLICY "companies_insert" ON companies
-  FOR INSERT WITH CHECK (TRUE); -- new company creation allowed (user joins via company_users)
+  FOR INSERT WITH CHECK (
+    EXISTS (
+      SELECT 1 FROM company_users
+      WHERE user_id = auth.uid() AND role = 'admin'
+    )
+  );
 
 CREATE POLICY "companies_update" ON companies
   FOR UPDATE USING (
