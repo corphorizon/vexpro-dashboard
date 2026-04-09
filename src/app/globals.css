@@ -59,3 +59,42 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
 .dark ::-webkit-scrollbar-thumb { background: #475569; }
+
+/* ─── Loading screen animations ─── */
+@keyframes vex-fade-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes vex-logo-pulse {
+  0%, 100% { opacity: 0.85; transform: scale(1); }
+  50%      { opacity: 1;    transform: scale(1.02); }
+}
+@keyframes vex-bar-slide {
+  0%   { transform: translateX(-100%); }
+  50%  { transform: translateX(20%); }
+  100% { transform: translateX(120%); }
+}
+.vex-fade-in    { animation: vex-fade-in 400ms ease-out both; }
+.vex-logo-pulse { animation: vex-logo-pulse 2.2s ease-in-out infinite; }
+.vex-bar-track  {
+  position: relative;
+  overflow: hidden;
+  width: 140px;
+  height: 3px;
+  border-radius: 9999px;
+  background: color-mix(in srgb, var(--color-secondary) 15%, transparent);
+}
+.vex-bar-fill {
+  position: absolute;
+  inset: 0;
+  width: 50%;
+  border-radius: 9999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--color-secondary),
+    var(--color-primary),
+    transparent
+  );
+  animation: vex-bar-slide 1.4s ease-in-out infinite;
+}

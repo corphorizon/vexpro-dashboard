@@ -52,6 +52,11 @@ import {
   fetchCommercialProfiles,
   fetchCommercialMonthlyResults,
 } from './supabase/queries';
+import { LoadingScreen, LoadingError } from '@/components/loading-screen';
+
+// Max time we'll wait for the initial data load before showing an error
+// with a retry button. Prevents the UI from getting stuck "loading..." forever.
+const LOAD_TIMEOUT_MS = 8000;
 
 // ─── Saldo Info (replicated from demo-data.ts) ───
 
@@ -142,18 +147,35 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // ─── Fetch all data ───
 
-  const loadAllData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
+  // Fetches everything. If `silent` is true, the UI stays mounted and we
+  // only update state in place — used for post-mutation refreshes so the
+  // user doesn't lose scroll position, tab selection, or any local state.
+  const loadAllData = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent ?? false;
+    if (!silent) {
+      setLoading(true);
+      setError(null);
+    }
 
-    try {
+    // Hard timeout so we never get stuck on a pending promise that never
+    // resolves (dead socket, hung RLS call, etc.).
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(
+        () =>
+          reject(
+            new Error(
+              'La carga tardó demasiado (más de 8 segundos). Verifica tu conexión e intenta de nuevo.'
+            )
+          ),
+        LOAD_TIMEOUT_MS
+      );
+    });
+
+    const fetchAll = async () => {
       // Step 1: fetch company
       const comp = await fetchCompany('vexprofx');
-      if (!comp) {
-        setError('No se encontró la empresa');
-        setLoading(false);
-        return;
-      }
+      if (!comp) throw new Error('No se encontró la empresa');
       setCompany(comp);
 
       // Step 2: fetch periods first (needed for periodIds)
@@ -216,11 +238,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setEmployees(emps);
       setCommercialProfiles(cProfiles);
       setMonthlyResults(mResults);
+    };
+
+    try {
+      await Promise.race([fetchAll(), timeoutPromise]);
     } catch (err) {
       console.error('Error loading data:', err);
-      setError(err instanceof Error ? err.message : 'Error desconocido al cargar datos');
+      const msg =
+        err instanceof Error ? err.message : 'Error desconocido al cargar datos';
+      if (!silent) {
+        // Initial load / manual retry: surface the error UI.
+        setError(msg);
+      } else {
+        // Silent refresh after a mutation: keep showing the last-known
+        // state so the user doesn't lose their place. Log for debugging.
+        console.warn('Silent refresh failed, keeping existing data:', msg);
+      }
     } finally {
-      setLoading(false);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (!silent) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -572,7 +610,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getProfileById,
       getTotalCommissions,
 
-      refresh: loadAllData,
+      // `refresh` is silent by default: it re-fetches in the background
+      // without unmounting children, so callers keep their scroll position,
+      // active tab, open modals, etc.
+      refresh: () => loadAllData({ silent: true }),
     }),
     [
       loading,
@@ -609,15 +650,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
     ]
   );
 
+  // Only block the UI on the INITIAL load. Silent refreshes (triggered by
+  // mutations via `refresh()`) keep children mounted so the user never
+  // loses scroll position or any local state.
   if (loading) {
     return (
       <DataContext.Provider value={value}>
-        <div className="flex h-full items-center justify-center">
-          <div className="flex flex-col items-center gap-3">
-            <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-            <p className="text-sm text-muted-foreground">Cargando datos...</p>
-          </div>
-        </div>
+        <LoadingScreen />
       </DataContext.Provider>
     );
   }
@@ -625,18 +664,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   if (error) {
     return (
       <DataContext.Provider value={value}>
-        <div className="flex h-full items-center justify-center">
-          <div className="flex flex-col items-center gap-3 text-center max-w-md">
-            <p className="text-sm text-destructive font-medium">Error al cargar datos</p>
-            <p className="text-xs text-muted-foreground">{error}</p>
-            <button
-              onClick={loadAllData}
-              className="mt-2 rounded-md bg-primary px-4 py-2 text-sm text-primary-foreground hover:bg-primary/90"
-            >
-              Reintentar
-            </button>
-          </div>
-        </div>
+        <LoadingError message={error} onRetry={() => loadAllData()} />
       </DataContext.Provider>
     );
   }
