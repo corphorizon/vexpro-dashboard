@@ -1,16 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // API Integrations — Public surface
-//
-// Single import path for the rest of the app:
-//   import { fetchAggregatedMovements, REFRESH_INTERVAL_MS } from '@/lib/api-integrations';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type {
   ProviderId,
+  ProviderSlug,
   FetchStatus,
-  ExternalDeposit,
-  ExternalWithdrawal,
-  ProviderResult,
+  CoinsbuyDepositTx,
+  CoinsbuyWithdrawalTx,
+  FairpayDepositTx,
+  UnipaymentDepositTx,
+  ProviderTransaction,
+  ProviderDataset,
+  ProviderTotals,
 } from './types';
 
 export {
@@ -20,11 +22,18 @@ export {
 } from './config';
 
 export {
-  fetchAllExternalDeposits,
-  fetchAllExternalWithdrawals,
   fetchAggregatedMovements,
+  fetchProviderBySlug,
 } from './aggregator';
 
-export type { AggregatedMovements } from './aggregator';
+export type { AggregatedMovements, FetchOptions } from './aggregator';
+
+export {
+  ACCEPTED_STATUS,
+  acceptedTransactions,
+  computeProviderTotals,
+  filterByDateRange,
+  monthRange,
+} from './totals';
 
 export { fetchCoinsbuyBalance } from './coinsbuy';

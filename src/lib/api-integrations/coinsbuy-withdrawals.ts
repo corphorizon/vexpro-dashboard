@@ -1,54 +1,55 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// FairPay — Deposits service
+// Coinsbuy — Withdrawals (payouts) service
 //
-// Real API docs: see FairPay merchant portal.
-// Required env vars: FAIRPAY_API_KEY, FAIRPAY_API_SECRET, FAIRPAY_BASE_URL
+// Real API docs: https://docs.coinsbuy.com/#payouts
+// Required env vars: COINSBUY_API_KEY, COINSBUY_API_SECRET, COINSBUY_BASE_URL
 //
-// Accepted status for totals: "Completed". The canonical amount is `net`
-// (billed - mdr). Fee shown in the breakdown = mdr.
+// Accepted status for totals: "Approved".
+// The commission shown in the breakdown table is computed as:
+//   commission = chargedAmount - amount
+// (the real API already returns both fields, we preserve that convention).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { PROVIDER_CONFIG, isProviderEnabled } from './config';
-import { generateFairpayDeposits } from './mocks';
+import { generateCoinsbuyWithdrawals } from './mocks';
 import { withRetry } from './retry';
 import { filterByDateRange } from './totals';
-import type { FairpayDepositTx, ProviderDataset } from './types';
+import type { CoinsbuyWithdrawalTx, ProviderDataset } from './types';
 
-const PROVIDER = 'fairpay' as const;
+const PROVIDER = 'coinsbuy' as const;
 
 interface FetchOptions {
   from?: string;
   to?: string;
 }
 
-async function callFairpay(path: string): Promise<unknown> {
+async function callCoinsbuy(path: string): Promise<unknown> {
   const cfg = PROVIDER_CONFIG[PROVIDER];
-  const url = `${cfg.credentials.baseUrl ?? 'https://api.fairpay.com/v1'}${path}`;
+  const url = `${cfg.credentials.baseUrl ?? 'https://api.coinsbuy.com/v2'}${path}`;
   const res = await fetch(url, {
     headers: {
-      'X-API-Key': cfg.credentials.apiKey ?? '',
-      'X-API-Secret': cfg.credentials.apiSecret ?? '',
+      Authorization: `Bearer ${cfg.credentials.apiKey ?? ''}`,
       'Content-Type': 'application/json',
     },
     signal: AbortSignal.timeout(30_000),
   });
   if (!res.ok) {
-    throw new Error(`FairPay ${res.status}: ${await res.text()}`);
+    throw new Error(`Coinsbuy withdrawals ${res.status}: ${await res.text()}`);
   }
   return res.json();
 }
 
-export async function fetchFairpayDeposits(
+export async function fetchCoinsbuyWithdrawals(
   options: FetchOptions = {}
-): Promise<ProviderDataset<FairpayDepositTx>> {
+): Promise<ProviderDataset<CoinsbuyWithdrawalTx>> {
   const now = new Date().toISOString();
 
   if (!isProviderEnabled(PROVIDER)) {
-    const all = generateFairpayDeposits();
+    const all = generateCoinsbuyWithdrawals();
     return {
-      slug: 'fairpay',
+      slug: 'coinsbuy-withdrawals',
       provider: PROVIDER,
-      kind: 'deposits',
+      kind: 'withdrawals',
       transactions: filterByDateRange(all, options.from, options.to),
       fetchedAt: now,
       status: 'fresh',
@@ -61,31 +62,31 @@ export async function fetchFairpayDeposits(
       const qs = new URLSearchParams();
       if (options.from) qs.set('from', options.from);
       if (options.to) qs.set('to', options.to);
-      const json = (await callFairpay(
-        `/transactions?type=incoming${qs.toString() ? '&' + qs.toString() : ''}`
-      )) as { transactions?: Array<Record<string, unknown>> };
-      return (json.transactions ?? []).map((item, i): FairpayDepositTx => {
-        const billed = Number(item.billed ?? 0);
-        const mdr = Number(item.mdr ?? 0);
-        const net = Number(item.net ?? billed - mdr);
+      const json = (await callCoinsbuy(
+        `/payouts${qs.toString() ? '?' + qs.toString() : ''}`
+      )) as { data?: Array<Record<string, unknown>> };
+      return (json.data ?? []).map((item, i): CoinsbuyWithdrawalTx => {
+        const amount = Number(item.amount ?? 0);
+        const chargedAmount = Number(item.charged_amount ?? amount);
         return {
-          id: String(item.id ?? `fp-${i}`),
+          id: String(item.id ?? `cb-w-${i}`),
           provider: PROVIDER,
-          kind: 'deposit',
+          kind: 'withdrawal',
           createdAt: String(item.created_at ?? now),
-          customerEmail: String(item.customer_email ?? ''),
-          billed,
-          mdr,
-          net,
+          label: String(item.label ?? ''),
+          trackingId: String(item.tracking_id ?? ''),
+          amount,
+          chargedAmount,
+          commission: Math.max(0, chargedAmount - amount),
           currency: String(item.currency ?? 'USD'),
-          status: (item.status as FairpayDepositTx['status']) ?? 'Pending',
+          status: (item.status as CoinsbuyWithdrawalTx['status']) ?? 'Pending',
         };
       });
     });
     return {
-      slug: 'fairpay',
+      slug: 'coinsbuy-withdrawals',
       provider: PROVIDER,
-      kind: 'deposits',
+      kind: 'withdrawals',
       transactions: rows,
       fetchedAt: now,
       status: 'fresh',
@@ -93,9 +94,9 @@ export async function fetchFairpayDeposits(
     };
   } catch (err) {
     return {
-      slug: 'fairpay',
+      slug: 'coinsbuy-withdrawals',
       provider: PROVIDER,
-      kind: 'deposits',
+      kind: 'withdrawals',
       transactions: [],
       fetchedAt: now,
       status: 'error',

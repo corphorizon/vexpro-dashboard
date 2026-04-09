@@ -1,19 +1,31 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useMemo } from 'react';
+import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/utils';
-import { RefreshCw, CheckCircle2, AlertTriangle, Plug } from 'lucide-react';
+import {
+  RefreshCw,
+  CheckCircle2,
+  AlertTriangle,
+  Plug,
+  ChevronRight,
+  Calendar,
+} from 'lucide-react';
 import { REFRESH_INTERVAL_MS } from '@/lib/api-integrations/config';
-import type { AggregatedMovements } from '@/lib/api-integrations';
+import { computeProviderTotals } from '@/lib/api-integrations/totals';
+import type {
+  ProviderDataset,
+  ProviderSlug,
+} from '@/lib/api-integrations/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // RealTimeMovementsBanner
 //
-// Polls /api/integrations/movements every 5 minutes and renders a compact
-// status panel for each provider (Coinsbuy, FairPay, Unipayment).
-// While real API credentials are not configured, the backend returns mock
-// data and we surface an "API pendiente — usando mock" indicator.
+// Upper-filter section of the Movimientos page. Owns its own date-range
+// filter (month or custom range) and polls /api/integrations/movements with
+// those params. Renders four cards (Coinsbuy Deposits/Withdrawals, FairPay,
+// Unipayment), each linking to a breakdown page.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function timeAgo(iso: string): string {
@@ -25,48 +37,104 @@ function timeAgo(iso: string): string {
   return `hace ${diffH} h`;
 }
 
-const PROVIDER_LABEL: Record<string, string> = {
-  coinsbuy: 'Coinsbuy',
-  fairpay: 'FairPay',
-  unipayment: 'Unipayment',
+const SLUG_LABEL: Record<ProviderSlug, string> = {
+  'coinsbuy-deposits': 'Coinsbuy · Depósitos',
+  'coinsbuy-withdrawals': 'Coinsbuy · Retiros',
+  fairpay: 'FairPay · Depósitos',
+  unipayment: 'Unipayment · Depósitos',
 };
 
+const SLUG_ACCENT: Record<ProviderSlug, string> = {
+  'coinsbuy-deposits': 'text-blue-600 dark:text-blue-400',
+  'coinsbuy-withdrawals': 'text-red-600 dark:text-red-400',
+  fairpay: 'text-emerald-600 dark:text-emerald-400',
+  unipayment: 'text-violet-600 dark:text-violet-400',
+};
+
+// ── Current month helpers ──
+
+function pad(n: number): string {
+  return String(n).padStart(2, '0');
+}
+
+function currentMonthStr(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+}
+
+function monthBounds(yearMonth: string): { from: string; to: string } {
+  const [y, m] = yearMonth.split('-').map(Number);
+  const last = new Date(y, m, 0).getDate();
+  return {
+    from: `${y}-${pad(m)}-01`,
+    to: `${y}-${pad(m)}-${pad(last)}`,
+  };
+}
+
+type FilterMode = 'month' | 'range';
+
 export function RealTimeMovementsBanner() {
-  const [data, setData] = useState<AggregatedMovements | null>(null);
+  const [mode, setMode] = useState<FilterMode>('month');
+  const [month, setMonth] = useState<string>(currentMonthStr());
+  const [rangeFrom, setRangeFrom] = useState<string>('');
+  const [rangeTo, setRangeTo] = useState<string>('');
+
+  const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Resolve the effective {from, to} from the filter state.
+  const { from, to } = useMemo(() => {
+    if (mode === 'month') return monthBounds(month);
+    return { from: rangeFrom, to: rangeTo };
+  }, [mode, month, rangeFrom, rangeTo]);
 
   const load = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await fetch('/api/integrations/movements');
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      const res = await fetch(`/api/integrations/movements?${qs.toString()}`);
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error desconocido');
-      setData({ deposits: json.deposits, withdrawals: json.withdrawals, fetchedAt: json.fetchedAt });
+      setDatasets(json.datasets ?? []);
+      setFetchedAt(json.fetchedAt);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Error de red');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [from, to]);
 
-  // Initial load + interval polling
+  // Refetch on filter change + poll every REFRESH_INTERVAL_MS.
   useEffect(() => {
     load();
     const id = setInterval(load, REFRESH_INTERVAL_MS);
     return () => clearInterval(id);
   }, [load]);
 
+  // Query-string carried over into the breakdown page link so the breakdown
+  // starts on the same range (it has its own filter afterwards).
+  const linkQs = useMemo(() => {
+    const p = new URLSearchParams();
+    if (from) p.set('from', from);
+    if (to) p.set('to', to);
+    return p.toString();
+  }, [from, to]);
+
   return (
     <Card>
+      {/* Header row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           <Plug className="w-4 h-4 text-violet-500" />
           <h3 className="text-sm font-semibold">APIs en tiempo real</h3>
-          {data && (
+          {fetchedAt && (
             <span className="text-xs text-muted-foreground">
-              · Actualizado {timeAgo(data.fetchedAt)}
+              · Actualizado {timeAgo(fetchedAt)}
             </span>
           )}
         </div>
@@ -80,48 +148,153 @@ export function RealTimeMovementsBanner() {
         </button>
       </div>
 
+      {/* Filter controls */}
+      <div className="flex flex-wrap items-center gap-2 mb-4 p-2 rounded-lg bg-muted/30 border border-border">
+        <Calendar className="w-3.5 h-3.5 text-muted-foreground ml-1" />
+        <div className="flex rounded-md overflow-hidden border border-border">
+          <button
+            type="button"
+            onClick={() => setMode('month')}
+            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+              mode === 'month'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-card hover:bg-muted'
+            }`}
+          >
+            Mes
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('range')}
+            className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+              mode === 'range'
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-card hover:bg-muted'
+            }`}
+          >
+            Rango
+          </button>
+        </div>
+        {mode === 'month' ? (
+          <input
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="px-2 py-1 text-xs rounded-md border border-border bg-card"
+          />
+        ) : (
+          <>
+            <input
+              type="date"
+              value={rangeFrom}
+              onChange={(e) => setRangeFrom(e.target.value)}
+              className="px-2 py-1 text-xs rounded-md border border-border bg-card"
+              aria-label="Desde"
+            />
+            <span className="text-xs text-muted-foreground">—</span>
+            <input
+              type="date"
+              value={rangeTo}
+              onChange={(e) => setRangeTo(e.target.value)}
+              className="px-2 py-1 text-xs rounded-md border border-border bg-card"
+              aria-label="Hasta"
+            />
+          </>
+        )}
+      </div>
+
       {errorMsg && (
         <div className="p-2 mb-2 rounded bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
           {errorMsg}
         </div>
       )}
 
-      {data && (
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {data.deposits.map((p) => {
-            const total = p.data.reduce((s, d) => s + d.amount, 0);
-            return (
-              <div
-                key={p.provider}
-                className="p-3 rounded-lg border border-border bg-muted/20"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold">{PROVIDER_LABEL[p.provider]}</span>
-                  {p.status === 'fresh' ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                  ) : (
-                    <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
-                  )}
-                </div>
-                <p className="text-base font-bold">{formatCurrency(total)}</p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {p.data.length} {p.data.length === 1 ? 'depósito' : 'depósitos'}
-                  {p.isMock && ' · mock'}
-                </p>
-                {p.status === 'error' && p.errorMessage && (
-                  <p className="text-[10px] text-red-500 mt-0.5 truncate" title={p.errorMessage}>
-                    {p.errorMessage}
-                  </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        {datasets.map((ds) => {
+          const totals = computeProviderTotals(ds);
+          return (
+            <Link
+              key={ds.slug}
+              href={`/movimientos/desglose/${ds.slug}${linkQs ? `?${linkQs}` : ''}`}
+              className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs font-semibold truncate">
+                  {SLUG_LABEL[ds.slug]}
+                </span>
+                {ds.status === 'fresh' ? (
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
                 )}
               </div>
-            );
-          })}
-        </div>
-      )}
-
-      {!data && !errorMsg && (
-        <p className="text-xs text-muted-foreground">Cargando datos de APIs...</p>
-      )}
+              <p className={`text-base font-bold ${SLUG_ACCENT[ds.slug]}`}>
+                {formatCurrency(totals.total)}
+              </p>
+              <div className="flex items-center justify-between mt-0.5">
+                <p className="text-[10px] text-muted-foreground">
+                  {totals.count} {totals.count === 1 ? 'tx' : 'tx'} ·{' '}
+                  {totals.acceptedStatus}
+                  {ds.isMock && ' · mock'}
+                </p>
+                <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+              </div>
+              {ds.status === 'error' && ds.errorMessage && (
+                <p className="text-[10px] text-red-500 mt-0.5 truncate" title={ds.errorMessage}>
+                  {ds.errorMessage}
+                </p>
+              )}
+            </Link>
+          );
+        })}
+        {datasets.length === 0 && !errorMsg && (
+          <p className="text-xs text-muted-foreground col-span-full">
+            Cargando datos de APIs...
+          </p>
+        )}
+      </div>
     </Card>
   );
+}
+
+// Exported so the main Movimientos page can read API totals for the
+// "Depósitos Totales" / "Retiros Totales" lines in the period tables.
+export function useApiTotals(from: string, to: string) {
+  const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        if (from) qs.set('from', from);
+        if (to) qs.set('to', to);
+        const res = await fetch(`/api/integrations/movements?${qs.toString()}`);
+        const json = await res.json();
+        if (!cancelled && json.success) {
+          setDatasets(json.datasets ?? []);
+        }
+      } catch {
+        // Silent — API card already shows errors.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [from, to]);
+
+  return useMemo(() => {
+    const by: Record<ProviderSlug, number> = {
+      'coinsbuy-deposits': 0,
+      'coinsbuy-withdrawals': 0,
+      fairpay: 0,
+      unipayment: 0,
+    };
+    for (const ds of datasets) {
+      by[ds.slug] = computeProviderTotals(ds).total;
+    }
+    const depositsTotal = by['coinsbuy-deposits'] + by.fairpay + by.unipayment;
+    const withdrawalsTotal = by['coinsbuy-withdrawals'];
+    return { by, depositsTotal, withdrawalsTotal };
+  }, [datasets]);
 }

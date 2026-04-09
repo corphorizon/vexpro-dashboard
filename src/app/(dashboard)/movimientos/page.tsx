@@ -13,50 +13,108 @@ import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { Download } from 'lucide-react';
 
-const ALL_CHANNELS: Array<'coinsbuy' | 'fairpay' | 'unipayment' | 'other'> = ['coinsbuy', 'fairpay', 'unipayment', 'other'];
-const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'> = ['ib_commissions', 'broker', 'prop_firm', 'other'];
+// Channels shown in the "Depósitos del período" card. "Otros" is included
+// because it's a manual-entry field that still gets stored in Supabase.
+const ALL_CHANNELS: Array<'coinsbuy' | 'fairpay' | 'unipayment' | 'other'> = [
+  'coinsbuy',
+  'fairpay',
+  'unipayment',
+  'other',
+];
+const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'> = [
+  'ib_commissions',
+  'broker',
+  'prop_firm',
+  'other',
+];
 
 export default function MovimientosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { getPeriodSummary, getConsolidatedSummary } = useData();
 
-  const summary = mode === 'consolidated'
-    ? getConsolidatedSummary(selectedPeriodIds)
-    : getPeriodSummary(selectedPeriodId);
+  const summary =
+    mode === 'consolidated'
+      ? getConsolidatedSummary(selectedPeriodIds)
+      : getPeriodSummary(selectedPeriodId);
 
   const handleExport = () => {
     if (!summary) return;
     const headers = [t('movements.type'), t('movements.category'), t('movements.amount')];
     const rows: (string | number)[][] = [
-      ...summary.deposits.map(d => [t('movements.deposit'), CHANNEL_LABELS[d.channel], d.amount] as (string | number)[]),
-      ...summary.withdrawals.map(w => [t('movements.withdrawal'), WITHDRAWAL_LABELS[w.category], w.amount] as (string | number)[]),
+      ...summary.deposits.map(
+        (d) =>
+          [t('movements.deposit'), CHANNEL_LABELS[d.channel], d.amount] as (string | number)[]
+      ),
+      ...summary.withdrawals.map(
+        (w) =>
+          [t('movements.withdrawal'), WITHDRAWAL_LABELS[w.category], w.amount] as (
+            | string
+            | number
+          )[]
+      ),
       ['', 'Net Deposit', summary.netDeposit],
     ];
-    downloadCSV(`movimientos_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
+    downloadCSV(
+      `movimientos_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`,
+      headers,
+      rows
+    );
   };
 
   // Ensure all channels/categories always appear, even with $0
   const fullDeposits: Deposit[] = useMemo(() => {
     if (!summary) return [];
-    return ALL_CHANNELS.map(ch => {
-      const existing = summary.deposits.find(d => d.channel === ch);
-      return existing || { id: `empty-d-${ch}`, period_id: '', company_id: '', channel: ch, amount: 0, notes: null };
+    return ALL_CHANNELS.map((ch) => {
+      const existing = summary.deposits.find((d) => d.channel === ch);
+      return (
+        existing || {
+          id: `empty-d-${ch}`,
+          period_id: '',
+          company_id: '',
+          channel: ch,
+          amount: 0,
+          notes: null,
+        }
+      );
     });
   }, [summary]);
 
   const fullWithdrawals: Withdrawal[] = useMemo(() => {
     if (!summary) return [];
-    return ALL_CATEGORIES.map(cat => {
-      const existing = summary.withdrawals.find(w => w.category === cat);
-      return existing || { id: `empty-w-${cat}`, period_id: '', company_id: '', category: cat, amount: 0, notes: null };
+    return ALL_CATEGORIES.map((cat) => {
+      const existing = summary.withdrawals.find((w) => w.category === cat);
+      return (
+        existing || {
+          id: `empty-w-${cat}`,
+          period_id: '',
+          company_id: '',
+          category: cat,
+          amount: 0,
+          notes: null,
+        }
+      );
     });
   }, [summary]);
 
   if (!summary) return null;
 
+  // ── Totales "solo API" ──
+  // Depósitos Totales API = Coinsbuy (confirmed) + FairPay (completed) + Unipayment (completed)
+  // (manual "otros" no entra)
+  // Retiros Totales API = Coinsbuy (approved)
+  // (IB commissions, broker, prop firm, otros no entran)
+  const apiDepositsTotal =
+    (summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0) +
+    (summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0) +
+    (summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0);
+
+  const apiWithdrawalsTotal =
+    summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
+
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('movements.title')}</h1>
@@ -71,36 +129,65 @@ export default function MovimientosPage() {
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">{t('common.csv')}</span>
           </button>
-          <PeriodSelector />
         </div>
       </div>
 
-      {/* Real-time API status (Coinsbuy / FairPay / Unipayment) */}
+      {/* ─── Upper section: APIs en tiempo real (owns its own filter) ─── */}
       <RealTimeMovementsBanner />
+
+      {/* ─── Lower section: Datos del período (mes) ─── */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2 border-t border-border">
+        <div>
+          <h2 className="text-lg font-semibold">Datos del período</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Depósitos, retiros, Prop Firm y Broker del mes seleccionado.
+          </p>
+        </div>
+        <PeriodSelector />
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Depósitos */}
         <Card>
-          <h2 className="text-lg font-semibold mb-4 text-blue-600">{t('movements.depositsTab')}</h2>
+          <h2 className="text-lg font-semibold mb-4 text-blue-600">
+            {t('movements.depositsTab')}
+          </h2>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 text-muted-foreground font-medium">{t('movements.channel')}</th>
-                <th className="text-right py-2 text-muted-foreground font-medium">{t('movements.amount')}</th>
+                <th className="text-left py-2 text-muted-foreground font-medium">
+                  {t('movements.channel')}
+                </th>
+                <th className="text-right py-2 text-muted-foreground font-medium">
+                  {t('movements.amount')}
+                </th>
               </tr>
             </thead>
             <tbody>
               {fullDeposits.map((d) => (
                 <tr key={d.id} className="border-b border-border/50">
-                  <td className="py-2.5">{CHANNEL_LABELS[d.channel]}</td>
+                  <td className="py-2.5">
+                    {CHANNEL_LABELS[d.channel]}
+                    {d.channel === 'other' && (
+                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                        manual
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2.5 text-right font-medium">{formatCurrency(d.amount)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="font-bold">
-                <td className="py-3">{t('summary.deposits')}</td>
-                <td className="py-3 text-right text-blue-600">{formatCurrency(summary.totalDeposits)}</td>
+                <td className="py-3">Depósitos Totales (API)</td>
+                <td className="py-3 text-right text-blue-600">
+                  {formatCurrency(apiDepositsTotal)}
+                </td>
+              </tr>
+              <tr className="text-xs text-muted-foreground">
+                <td className="py-1 pl-3">Coinsbuy + FairPay + Unipayment</td>
+                <td className="py-1 text-right"></td>
               </tr>
               <tr className="text-muted-foreground">
                 <td className="py-1">{t('movements.propFirmSales')}</td>
@@ -116,26 +203,45 @@ export default function MovimientosPage() {
 
         {/* Retiros */}
         <Card>
-          <h2 className="text-lg font-semibold mb-4 text-red-600">{t('movements.withdrawalsTab')}</h2>
+          <h2 className="text-lg font-semibold mb-4 text-red-600">
+            {t('movements.withdrawalsTab')}
+          </h2>
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 text-muted-foreground font-medium">{t('movements.category')}</th>
-                <th className="text-right py-2 text-muted-foreground font-medium">{t('movements.amount')}</th>
+                <th className="text-left py-2 text-muted-foreground font-medium">
+                  {t('movements.category')}
+                </th>
+                <th className="text-right py-2 text-muted-foreground font-medium">
+                  {t('movements.amount')}
+                </th>
               </tr>
             </thead>
             <tbody>
               {fullWithdrawals.map((w) => (
                 <tr key={w.id} className="border-b border-border/50">
-                  <td className="py-2.5">{WITHDRAWAL_LABELS[w.category]}</td>
+                  <td className="py-2.5">
+                    {WITHDRAWAL_LABELS[w.category]}
+                    {w.category !== 'broker' && (
+                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                        manual
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2.5 text-right font-medium">{formatCurrency(w.amount)}</td>
                 </tr>
               ))}
             </tbody>
             <tfoot>
               <tr className="font-bold">
-                <td className="py-3">{t('summary.withdrawals')}</td>
-                <td className="py-3 text-right text-red-600">{formatCurrency(summary.totalWithdrawals)}</td>
+                <td className="py-3">Retiros Totales (API)</td>
+                <td className="py-3 text-right text-red-600">
+                  {formatCurrency(apiWithdrawalsTotal)}
+                </td>
+              </tr>
+              <tr className="text-xs text-muted-foreground">
+                <td className="py-1 pl-3">Coinsbuy Retiros</td>
+                <td className="py-1 text-right"></td>
               </tr>
               <tr className="text-muted-foreground">
                 <td className="py-1">{t('movements.p2pTransfer')}</td>
@@ -143,7 +249,11 @@ export default function MovimientosPage() {
               </tr>
               <tr className="font-bold border-t border-border">
                 <td className="py-3">{t('movements.netDeposit')}</td>
-                <td className={`py-3 text-right ${summary.netDeposit >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                <td
+                  className={`py-3 text-right ${
+                    summary.netDeposit >= 0 ? 'text-emerald-600' : 'text-red-600'
+                  }`}
+                >
                   {formatCurrency(summary.netDeposit)}
                 </td>
               </tr>
@@ -158,19 +268,21 @@ export default function MovimientosPage() {
             <tbody>
               <tr className="border-b border-border/50">
                 <td className="py-2.5">{t('movements.propFirmSales')}</td>
-                <td className="py-2.5 text-right font-medium">{formatCurrency(summary.propFirmSales)}</td>
+                <td className="py-2.5 text-right font-medium">
+                  {formatCurrency(summary.propFirmSales)}
+                </td>
               </tr>
               <tr className="border-b border-border/50">
                 <td className="py-2.5">{t('movements.propFirmWithdrawals')}</td>
                 <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(summary.withdrawals.find(w => w.category === 'prop_firm')?.amount || 0)}
+                  {formatCurrency(
+                    summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0
+                  )}
                 </td>
               </tr>
               <tr className="font-bold">
                 <td className="py-3">{t('movements.netIncome')}</td>
-                <td className="py-3 text-right">
-                  {formatCurrency(summary.propFirmNetIncome)}
-                </td>
+                <td className="py-3 text-right">{formatCurrency(summary.propFirmNetIncome)}</td>
               </tr>
             </tbody>
           </table>
@@ -198,7 +310,7 @@ export default function MovimientosPage() {
                 <td className="py-3 text-right">
                   {formatCurrency(
                     (summary.operatingIncome?.broker_pnl || 0) +
-                    (summary.operatingIncome?.other || 0)
+                      (summary.operatingIncome?.other || 0)
                   )}
                 </td>
               </tr>

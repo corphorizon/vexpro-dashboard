@@ -1,88 +1,57 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // API Integrations — Aggregator
 //
-// Calls all enabled providers in parallel and returns a unified
-// ProviderResult per source. Failures in one provider DO NOT break others;
-// the failing provider returns status: 'error' with the last known data
-// (empty if first call).
+// Fans out to all provider services in parallel. Each provider already
+// returns its own ProviderDataset with inline error handling, so one
+// provider failing never breaks the others.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { fetchCoinsbuyDeposits, fetchCoinsbuyWithdrawals } from './coinsbuy';
+import { fetchCoinsbuyDeposits } from './coinsbuy-deposits';
+import { fetchCoinsbuyWithdrawals } from './coinsbuy-withdrawals';
 import { fetchFairpayDeposits } from './fairpay';
 import { fetchUnipaymentDeposits } from './unipayment';
-import { isProviderEnabled } from './config';
-import type {
-  ExternalDeposit,
-  ExternalWithdrawal,
-  ProviderId,
-  ProviderResult,
-} from './types';
+import type { ProviderDataset, ProviderSlug } from './types';
 
-function makeOk<T>(provider: ProviderId, data: T[]): ProviderResult<T> {
-  return {
-    provider,
-    status: 'fresh',
-    data,
-    fetchedAt: new Date().toISOString(),
-    isMock: !isProviderEnabled(provider),
-  };
+export interface FetchOptions {
+  from?: string;
+  to?: string;
 }
-
-function makeError<T>(provider: ProviderId, err: unknown, fallback: T[] = []): ProviderResult<T> {
-  return {
-    provider,
-    status: 'error',
-    data: fallback,
-    fetchedAt: new Date().toISOString(),
-    errorMessage: err instanceof Error ? err.message : 'Unknown error',
-    isMock: !isProviderEnabled(provider),
-  };
-}
-
-// ── Aggregate deposits from ALL providers ──
-export async function fetchAllExternalDeposits(): Promise<ProviderResult<ExternalDeposit>[]> {
-  const settlements = await Promise.allSettled([
-    fetchCoinsbuyDeposits(),
-    fetchFairpayDeposits(),
-    fetchUnipaymentDeposits(),
-  ]);
-
-  const providers: ProviderId[] = ['coinsbuy', 'fairpay', 'unipayment'];
-
-  return settlements.map((s, i) =>
-    s.status === 'fulfilled' ? makeOk(providers[i], s.value) : makeError(providers[i], s.reason)
-  );
-}
-
-// ── Aggregate withdrawals (only Coinsbuy for now) ──
-export async function fetchAllExternalWithdrawals(): Promise<ProviderResult<ExternalWithdrawal>[]> {
-  const settlements = await Promise.allSettled([
-    fetchCoinsbuyWithdrawals(),
-  ]);
-
-  const providers: ProviderId[] = ['coinsbuy'];
-
-  return settlements.map((s, i) =>
-    s.status === 'fulfilled' ? makeOk(providers[i], s.value) : makeError(providers[i], s.reason)
-  );
-}
-
-// ── Convenience helpers for the UI ──
 
 export interface AggregatedMovements {
-  deposits: ProviderResult<ExternalDeposit>[];
-  withdrawals: ProviderResult<ExternalWithdrawal>[];
+  datasets: ProviderDataset[];
   fetchedAt: string;
 }
 
-export async function fetchAggregatedMovements(): Promise<AggregatedMovements> {
-  const [deposits, withdrawals] = await Promise.all([
-    fetchAllExternalDeposits(),
-    fetchAllExternalWithdrawals(),
+export async function fetchAggregatedMovements(
+  options: FetchOptions = {}
+): Promise<AggregatedMovements> {
+  const [coinsbuyDeposits, coinsbuyWithdrawals, fairpay, unipayment] = await Promise.all([
+    fetchCoinsbuyDeposits(options),
+    fetchCoinsbuyWithdrawals(options),
+    fetchFairpayDeposits(options),
+    fetchUnipaymentDeposits(options),
   ]);
   return {
-    deposits,
-    withdrawals,
+    datasets: [coinsbuyDeposits, coinsbuyWithdrawals, fairpay, unipayment],
     fetchedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Fetch a single dataset by slug. Used by the breakdown page.
+ */
+export async function fetchProviderBySlug(
+  slug: ProviderSlug,
+  options: FetchOptions = {}
+): Promise<ProviderDataset> {
+  switch (slug) {
+    case 'coinsbuy-deposits':
+      return fetchCoinsbuyDeposits(options);
+    case 'coinsbuy-withdrawals':
+      return fetchCoinsbuyWithdrawals(options);
+    case 'fairpay':
+      return fetchFairpayDeposits(options);
+    case 'unipayment':
+      return fetchUnipaymentDeposits(options);
+  }
 }

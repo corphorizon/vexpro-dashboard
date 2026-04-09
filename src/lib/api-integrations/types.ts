@@ -1,45 +1,114 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // API Integrations — Shared types
 //
-// Common shapes used by all external API providers (Coinsbuy, FairPay,
-// Unipayment, etc.). The Movimientos page consumes ExternalDeposit /
-// ExternalWithdrawal regardless of the source provider.
+// Per-provider transaction shapes that match the columns each provider
+// returns in its real API response. The breakdown page (/movimientos/desglose)
+// renders these directly; the main Movimientos page uses `computeProviderTotals`
+// to get the filtered sum that corresponds to each provider's "accepted" status.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type ProviderId = 'coinsbuy' | 'fairpay' | 'unipayment';
-
 export type FetchStatus = 'fresh' | 'stale' | 'error';
 
-export interface ExternalDeposit {
-  id: string;            // provider-prefixed id, e.g. "coinsbuy-tx-1"
-  provider: ProviderId;
-  date: string;          // ISO date YYYY-MM-DD
-  amount: number;
-  currency: string;      // 'USD', 'EUR', etc
-  customer?: string;     // optional payer / wallet identifier
-  status?: string;       // provider-specific status
-  raw?: unknown;         // original payload (for debugging)
-}
+/**
+ * Stable slug used in the URL for the breakdown page and in API query params.
+ * One slug per card shown on the Movimientos page.
+ */
+export type ProviderSlug =
+  | 'coinsbuy-deposits'
+  | 'coinsbuy-withdrawals'
+  | 'fairpay'
+  | 'unipayment';
 
-export interface ExternalWithdrawal {
+// ── Coinsbuy ──
+
+export interface CoinsbuyDepositTx {
   id: string;
-  provider: ProviderId;
-  date: string;
-  amount: number;
+  provider: 'coinsbuy';
+  kind: 'deposit';
+  createdAt: string;       // ISO datetime
+  label: string;
+  trackingId: string;
+  commission: number;      // fee charged by Coinsbuy
+  amountTarget: number;    // net amount credited (what we sum for totals)
   currency: string;
-  destination?: string;
-  status?: string;
-  raw?: unknown;
+  status: 'Confirmed' | 'Pending' | 'Failed';
 }
 
-export interface ProviderResult<T> {
-  provider: ProviderId;
-  status: FetchStatus;
-  data: T[];
-  fetchedAt: string;     // ISO timestamp
-  errorMessage?: string;
-  isMock: boolean;       // true while mocks are in use
+export interface CoinsbuyWithdrawalTx {
+  id: string;
+  provider: 'coinsbuy';
+  kind: 'withdrawal';
+  createdAt: string;
+  label: string;
+  trackingId: string;
+  amount: number;          // requested amount
+  chargedAmount: number;   // amount actually deducted (what we sum for totals)
+  commission: number;      // chargedAmount - amount (precomputed)
+  currency: string;
+  status: 'Approved' | 'Pending' | 'Rejected';
 }
+
+// ── FairPay ──
+
+export interface FairpayDepositTx {
+  id: string;
+  provider: 'fairpay';
+  kind: 'deposit';
+  createdAt: string;
+  customerEmail: string;
+  billed: number;          // gross amount
+  mdr: number;             // merchant discount rate (fee)
+  net: number;             // billed - mdr (what we sum for totals)
+  currency: string;
+  status: 'Completed' | 'Pending' | 'Failed';
+}
+
+// ── Unipayment ──
+
+export interface UnipaymentDepositTx {
+  id: string;
+  provider: 'unipayment';
+  kind: 'deposit';
+  createdAt: string;
+  email: string;
+  orderId: string;
+  grossAmount: number;
+  fee: number;
+  netAmount: number;       // what we sum for totals
+  currency: string;
+  status: 'Completed' | 'Pending' | 'Expired';
+}
+
+// ── Union + dataset ──
+
+export type ProviderTransaction =
+  | CoinsbuyDepositTx
+  | CoinsbuyWithdrawalTx
+  | FairpayDepositTx
+  | UnipaymentDepositTx;
+
+export interface ProviderDataset<T extends ProviderTransaction = ProviderTransaction> {
+  slug: ProviderSlug;
+  provider: ProviderId;
+  kind: 'deposits' | 'withdrawals';
+  transactions: T[];       // ALL rows (unfiltered) — filter happens in totals helper
+  fetchedAt: string;       // ISO timestamp
+  status: FetchStatus;
+  isMock: boolean;
+  errorMessage?: string;
+}
+
+// ── Totals (filtered by accepted status) ──
+
+export interface ProviderTotals {
+  total: number;           // sum of the canonical amount field
+  count: number;           // count of accepted transactions
+  feeTotal: number;        // sum of fees / commissions
+  acceptedStatus: string;  // label of the status we count
+}
+
+// ── Config ──
 
 export interface ApiCredentials {
   apiKey?: string;
