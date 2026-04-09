@@ -7,6 +7,7 @@ import {
   useEffect,
   useCallback,
   useMemo,
+  useRef,
   type ReactNode,
 } from 'react';
 import type {
@@ -145,6 +146,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [commercialProfiles, setCommercialProfiles] = useState<CommercialProfile[]>([]);
   const [monthlyResults, setMonthlyResults] = useState<CommercialMonthlyResult[]>([]);
 
+  // Monotonic counter used to ignore results from stale loadAllData() calls.
+  // If the user triggers a new load while a previous one is still in-flight,
+  // only the newest call's results get committed — prevents "flash of old data".
+  const loadGenerationRef = useRef(0);
+
   // ─── Fetch all data ───
 
   // Fetches everything. If `silent` is true, the UI stays mounted and we
@@ -152,6 +158,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // user doesn't lose scroll position, tab selection, or any local state.
   const loadAllData = useCallback(async (options?: { silent?: boolean }) => {
     const silent = options?.silent ?? false;
+    // Bump the generation so any still-in-flight previous call's results
+    // get discarded when they eventually resolve.
+    const generation = ++loadGenerationRef.current;
+    const isStale = () => loadGenerationRef.current !== generation;
+
     if (!silent) {
       setLoading(true);
       setError(null);
@@ -176,10 +187,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // Step 1: fetch company
       const comp = await fetchCompany('vexprofx');
       if (!comp) throw new Error('No se encontró la empresa');
+      if (isStale()) return;
       setCompany(comp);
 
       // Step 2: fetch periods first (needed for periodIds)
       const pds = await fetchPeriods(comp.id);
+      if (isStale()) return;
       setPeriods(pds);
 
       // Step 3: fetch all other data in parallel
@@ -221,6 +234,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         fetchCommercialMonthlyResults(comp.id),
       ]);
 
+      if (isStale()) return;
       setDeposits(deps);
       setWithdrawals(wdrs);
       setExpenses(exps);
@@ -243,6 +257,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     try {
       await Promise.race([fetchAll(), timeoutPromise]);
     } catch (err) {
+      // A newer load superseded this one — drop the error silently.
+      if (isStale()) {
+        return;
+      }
       console.error('Error loading data:', err);
       const msg =
         err instanceof Error ? err.message : 'Error desconocido al cargar datos';
@@ -256,7 +274,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
-      if (!silent) {
+      // Only the newest call touches the loading flag.
+      if (!silent && !isStale()) {
         setLoading(false);
       }
     }

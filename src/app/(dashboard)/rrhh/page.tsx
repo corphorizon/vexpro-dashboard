@@ -2,6 +2,7 @@
 
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
+import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import { useData } from '@/lib/data-context';
@@ -397,6 +398,7 @@ export default function RRHHPage() {
   // CRUD handlers — persist to Supabase, then refresh the data context
   const handleSaveEmployee = async (payload: EmployeePayload) => {
     if (!company?.id) throw new Error('No hay compañía activa');
+    const isEdit = !!editingEmp;
     if (editingEmp) {
       await updateEmployee(editingEmp.id, payload);
     } else {
@@ -404,10 +406,12 @@ export default function RRHHPage() {
     }
     await refresh();
     setEditingEmp(undefined);
+    toast.success(isEdit ? 'Empleado actualizado' : 'Empleado agregado');
   };
 
   const handleSaveProfile = async (payload: CommercialProfilePayload) => {
     if (!company?.id) throw new Error('No hay compañía activa');
+    const isEdit = !!editingProfile;
     if (editingProfile) {
       await updateCommercialProfile(editingProfile.id, payload);
     } else {
@@ -415,6 +419,7 @@ export default function RRHHPage() {
     }
     await refresh();
     setEditingProfile(undefined);
+    toast.success(isEdit ? 'Perfil comercial actualizado' : 'Perfil comercial agregado');
   };
 
   const handleDeleteEmployee = async (id: string, name: string) => {
@@ -423,8 +428,11 @@ export default function RRHHPage() {
     try {
       await deleteEmployee(id);
       await refresh();
+      toast.success(`Empleado "${name}" eliminado`);
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Error eliminando empleado');
+      const msg = err instanceof Error ? err.message : 'Error eliminando empleado';
+      setDeleteError(msg);
+      toast.error(msg);
     }
   };
 
@@ -434,8 +442,11 @@ export default function RRHHPage() {
     try {
       await deleteCommercialProfile(id);
       await refresh();
+      toast.success(`Perfil "${name}" eliminado`);
     } catch (err) {
-      setDeleteError(err instanceof Error ? err.message : 'Error eliminando perfil');
+      const msg = err instanceof Error ? err.message : 'Error eliminando perfil';
+      setDeleteError(msg);
+      toast.error(msg);
     }
   };
 

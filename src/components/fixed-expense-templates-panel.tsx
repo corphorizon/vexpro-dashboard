@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { useData } from '@/lib/data-context';
 import { useAuth, canEdit, canDelete } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
@@ -41,8 +42,11 @@ export function FixedExpenseTemplatesPanel() {
         await activateExpenseTemplate(id);
       }
       await refresh();
+      toast.success(currentlyActive ? 'Plantilla desactivada' : 'Plantilla activada');
     } catch (err) {
-      setErrMsg(err instanceof Error ? err.message : 'Error');
+      const msg = err instanceof Error ? err.message : 'Error';
+      setErrMsg(msg);
+      toast.error(msg);
     } finally {
       setBusy(null);
     }
@@ -55,8 +59,11 @@ export function FixedExpenseTemplatesPanel() {
     try {
       await deleteExpenseTemplate(id);
       await refresh();
+      toast.success('Plantilla eliminada');
     } catch (err) {
-      setErrMsg(err instanceof Error ? err.message : 'Error');
+      const msg = err instanceof Error ? err.message : 'Error';
+      setErrMsg(msg);
+      toast.error(msg);
     } finally {
       setBusy(null);
     }
