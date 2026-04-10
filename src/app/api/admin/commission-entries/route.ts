@@ -1,16 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { verifyAdminAuth } from '@/lib/api-auth';
 
-// POST — upsert commission entries { company_id, period_id, entries[] }
+// POST — upsert commission entries { period_id, head_id, entries[] }
 // Uses individual upserts to avoid accidentally deleting entries not in the batch
 
 export async function POST(request: NextRequest) {
   try {
-    const { company_id, period_id, head_id, entries } = await request.json();
-    if (!company_id || !period_id || !head_id || !entries?.length) {
+    const auth = await verifyAdminAuth();
+    if (auth instanceof NextResponse) return auth;
+
+    const { period_id, head_id, entries } = await request.json();
+    if (!period_id || !head_id || !entries?.length) {
       return NextResponse.json({ error: 'Missing fields' }, { status: 400 });
     }
 
+    // Always use the caller's verified company — never trust body.company_id
+    const company_id = auth.companyId;
     const admin = createAdminClient();
 
     for (const entry of entries) {

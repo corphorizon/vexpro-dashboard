@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { verifyAdminAuth } from '@/lib/api-auth';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/update-auth-user
@@ -10,6 +11,9 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await verifyAdminAuth();
+    if (auth instanceof NextResponse) return auth;
+
     const body = await request.json();
     const { authUserId, email, password } = body as {
       authUserId?: string;

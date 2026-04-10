@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { verifyAdminAuth } from '@/lib/api-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 // ---------------------------------------------------------------------------
@@ -49,19 +50,24 @@ async function insertProfile(
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await verifyAdminAuth();
+    if (auth instanceof NextResponse) return auth;
+
     const body = await request.json();
-    const { email, password, name, role, company_id, allowed_modules } = body as {
+    const { email, password, name, role, allowed_modules } = body as {
       email?: string;
       password?: string;
       name?: string;
       role?: string;
-      company_id?: string;
       allowed_modules?: string[];
     };
 
-    if (!email || !password || !name || !role || !company_id) {
+    // Always use the caller's verified company
+    const company_id = auth.companyId;
+
+    if (!email || !password || !name || !role) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields: email, password, name, role, company_id' },
+        { success: false, error: 'Missing required fields: email, password, name, role' },
         { status: 400 },
       );
     }
