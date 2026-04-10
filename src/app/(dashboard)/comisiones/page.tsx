@@ -382,8 +382,10 @@ export default function ComisionesPage() {
       }
       await upsertCommissionEntries(company.id, selectedPeriod.id, selectedHeadId, entries);
       console.log('[SAVE] success');
-      // Reload page to get fresh data — preserve current position
-      window.location.href = `/comisiones?period=${selectedPeriod.id}&head=${selectedHeadId}&tab=${tab}`;
+      await refresh();
+      setSaving(false);
+      setToast({ type: 'success', msg: 'Guardado correctamente' });
+      setTimeout(() => setToast(null), 4000);
     } catch (err) {
       setSaving(false);
       setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al guardar' });
