@@ -9,6 +9,7 @@ import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
+import { updateCommercialProfile } from '@/lib/supabase/mutations';
 import type { CommercialProfile, CommercialMonthlyResult } from '@/lib/types';
 import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X } from 'lucide-react';
 
@@ -21,7 +22,7 @@ function formatDateDMY(dateStr: string | null): string | null {
 
 export default function PerfilPage() {
   const { t } = useI18n();
-  const { getProfileById, getMonthlyResults, getProfilesByHead, getTotalCommissions, commercialProfiles, periods } = useData();
+  const { getProfileById, getMonthlyResults, getProfilesByHead, getTotalCommissions, commercialProfiles, periods, refresh } = useData();
   const searchParams = useSearchParams();
   const profileId = searchParams.get('id');
 
@@ -66,25 +67,36 @@ export default function PerfilPage() {
 
   const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
 
-  const handleSaveProfile = () => {
-    const updated: CommercialProfile = {
-      ...profileData,
-      name: editName,
-      email: editEmail,
-      role: editRole,
-      head_id: editHeadId || null,
-      net_deposit_pct: editNdPct ? parseFloat(editNdPct) : null,
-      pnl_pct: editPnlPct ? parseFloat(editPnlPct) : null,
-      commission_per_lot: editCommLot ? parseFloat(editCommLot) : null,
-      salary: editSalary ? parseFloat(editSalary) : null,
-      benefits: editBenefits || null,
-      comments: editComments || null,
-      hire_date: editHireDate || null,
-      birthday: editBirthday || null,
-      status: editStatus,
-    };
-    setProfileData(updated);
-    setIsEditingProfile(false);
+  const [saving, setSaving] = useState(false);
+
+  const handleSaveProfile = async () => {
+    setSaving(true);
+    try {
+      const updates = {
+        name: editName,
+        email: editEmail,
+        role: editRole,
+        head_id: editHeadId || null,
+        net_deposit_pct: editNdPct ? parseFloat(editNdPct) : null,
+        pnl_pct: editPnlPct ? parseFloat(editPnlPct) : null,
+        commission_per_lot: editCommLot ? parseFloat(editCommLot) : null,
+        salary: editSalary ? parseFloat(editSalary) : null,
+        benefits: editBenefits || null,
+        comments: editComments || null,
+        hire_date: editHireDate || null,
+        birthday: editBirthday || null,
+        status: editStatus,
+      };
+      await updateCommercialProfile(profileData.id, updates);
+      await refresh();
+      setProfileData({ ...profileData, ...updates });
+      setIsEditingProfile(false);
+    } catch (err) {
+      console.error('Error updating profile:', err);
+      alert(err instanceof Error ? err.message : 'Error al guardar');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleCancelEdit = () => {
@@ -157,6 +169,10 @@ export default function PerfilPage() {
       bonus: formBonus,
       salary_paid: formSalary,
       total_earned: formTotalEarned,
+      division: 0,
+      base_amount: 0,
+      real_payment: 0,
+      accumulated_out: 0,
     };
     setResults(prev => [...prev, newResult]);
     setShowAddForm(false);

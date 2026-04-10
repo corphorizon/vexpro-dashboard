@@ -216,6 +216,7 @@ export interface CommercialProfile {
   pnl_pct: number | null; // null = N/A
   commission_per_lot: number | null; // USD per lot, null = N/A
   salary: number | null; // monthly USD, null = N/A
+  extra_pct: number | null; // extra differential % for HEAD when head_pct == bdm_pct
   benefits: string | null;
   comments: string | null;
   hire_date: string | null;
@@ -237,6 +238,11 @@ export interface CommercialMonthlyResult {
   bonus: number;
   salary_paid: number;
   total_earned: number;
+  // Commission calculator fields
+  division: number;
+  base_amount: number;
+  real_payment: number;
+  accumulated_out: number;
 }
 
 export type UserRole = 'admin' | 'socio' | 'auditor' | 'soporte' | 'hr' | 'invitado';

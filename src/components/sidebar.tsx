@@ -29,6 +29,7 @@ import {
   ChevronDown,
   DollarSign,
   Wallet,
+  Calculator,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -78,8 +79,16 @@ const NAV_STRUCTURE: NavEntry[] = [
     ],
   },
 
-  // Recursos Humanos (standalone)
-  { type: 'link', href: '/rrhh', i18nKey: 'nav.hr', icon: UserCog, module: 'hr' },
+  // Recursos Humanos (collapsible)
+  {
+    type: 'section',
+    i18nKey: 'nav.hr',
+    icon: UserCog,
+    children: [
+      { href: '/rrhh', i18nKey: 'nav.hrManagement', icon: UsersIcon, module: 'hr' },
+      { href: '/comisiones', i18nKey: 'nav.commissions', icon: Calculator, module: 'commissions' },
+    ],
+  },
 
   // Configuraciones (collapsible)
   {
