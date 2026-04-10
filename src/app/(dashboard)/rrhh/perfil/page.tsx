@@ -26,6 +26,45 @@ export default function PerfilPage() {
   const searchParams = useSearchParams();
   const profileId = searchParams.get('id');
 
+  // Resolve profile + results before hooks so initial values are available.
+  // May be null if profileId is missing or invalid — handled after hooks.
+  const profile = profileId ? getProfileById(profileId) : null;
+  const initialResults = profileId ? getMonthlyResults(profileId) : [];
+
+  // ALL hooks must be called unconditionally (React rules of hooks).
+  const [results, setResults] = useState<CommercialMonthlyResult[]>(initialResults);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
+  const [profileData, setProfileData] = useState<CommercialProfile | null>(profile ?? null);
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
+  const [editName, setEditName] = useState(profile?.name ?? '');
+  const [editEmail, setEditEmail] = useState(profile?.email ?? '');
+  const [editRole, setEditRole] = useState(profile?.role ?? '');
+  const [editHeadId, setEditHeadId] = useState(profile?.head_id ?? '');
+  const [editNdPct, setEditNdPct] = useState(profile?.net_deposit_pct?.toString() ?? '');
+  const [editPnlPct, setEditPnlPct] = useState(profile?.pnl_pct?.toString() ?? '');
+  const [editCommLot, setEditCommLot] = useState(profile?.commission_per_lot?.toString() ?? '');
+  const [editSalary, setEditSalary] = useState(profile?.salary?.toString() ?? '');
+  const [editBenefits, setEditBenefits] = useState(profile?.benefits ?? '');
+  const [editComments, setEditComments] = useState(profile?.comments ?? '');
+  const [editHireDate, setEditHireDate] = useState(profile?.hire_date ?? '');
+  const [editBirthday, setEditBirthday] = useState(profile?.birthday ?? '');
+  const [editStatus, setEditStatus] = useState(profile?.status ?? 'active');
+  const [saving, setSaving] = useState(false);
+  const [formPeriod, setFormPeriod] = useState(periods[periods.length - 1]?.id || '');
+  const [formNetDepCurrent, setFormNetDepCurrent] = useState(0);
+  const [formNetDepAccum, setFormNetDepAccum] = useState(0);
+  const [formNetDepTotal, setFormNetDepTotal] = useState(0);
+  const [formPnlCurrent, setFormPnlCurrent] = useState(0);
+  const [formPnlAccum, setFormPnlAccum] = useState(0);
+  const [formPnlTotal, setFormPnlTotal] = useState(0);
+  const [formCommissions, setFormCommissions] = useState(0);
+  const [formBonus, setFormBonus] = useState(0);
+  const [formSalary, setFormSalary] = useState(0);
+
+  const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
+
+  // Early returns AFTER all hooks
   if (!profileId) {
     return (
       <div className="text-center py-12 text-muted-foreground">
@@ -35,8 +74,7 @@ export default function PerfilPage() {
     );
   }
 
-  const profile = getProfileById(profileId);
-  if (!profile) {
+  if (!profile || !profileData) {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p>{t('hr.profileNotFound')}</p>
@@ -44,30 +82,6 @@ export default function PerfilPage() {
       </div>
     );
   }
-
-  const initialResults = getMonthlyResults(profileId);
-  const [results, setResults] = useState<CommercialMonthlyResult[]>(initialResults);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [successMsg, setSuccessMsg] = useState('');
-  const [profileData, setProfileData] = useState<CommercialProfile>(profile);
-  const [isEditingProfile, setIsEditingProfile] = useState(false);
-  const [editName, setEditName] = useState(profile.name);
-  const [editEmail, setEditEmail] = useState(profile.email);
-  const [editRole, setEditRole] = useState(profile.role);
-  const [editHeadId, setEditHeadId] = useState(profile.head_id || '');
-  const [editNdPct, setEditNdPct] = useState(profile.net_deposit_pct?.toString() || '');
-  const [editPnlPct, setEditPnlPct] = useState(profile.pnl_pct?.toString() || '');
-  const [editCommLot, setEditCommLot] = useState(profile.commission_per_lot?.toString() || '');
-  const [editSalary, setEditSalary] = useState(profile.salary?.toString() || '');
-  const [editBenefits, setEditBenefits] = useState(profile.benefits || '');
-  const [editComments, setEditComments] = useState(profile.comments || '');
-  const [editHireDate, setEditHireDate] = useState(profile.hire_date || '');
-  const [editBirthday, setEditBirthday] = useState(profile.birthday || '');
-  const [editStatus, setEditStatus] = useState(profile.status);
-
-  const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
-
-  const [saving, setSaving] = useState(false);
 
   const handleSaveProfile = async () => {
     setSaving(true);
@@ -89,7 +103,7 @@ export default function PerfilPage() {
       };
       await updateCommercialProfile(profileData.id, updates);
       await refresh();
-      setProfileData({ ...profileData, ...updates });
+      setProfileData({ ...profileData, ...updates, role: editRole as CommercialProfile['role'] });
       setIsEditingProfile(false);
     } catch (err) {
       console.error('Error updating profile:', err);
@@ -115,18 +129,6 @@ export default function PerfilPage() {
     setEditStatus(profileData.status);
     setIsEditingProfile(false);
   };
-
-  // Add form state
-  const [formPeriod, setFormPeriod] = useState(periods[periods.length - 1]?.id || '');
-  const [formNetDepCurrent, setFormNetDepCurrent] = useState(0);
-  const [formNetDepAccum, setFormNetDepAccum] = useState(0);
-  const [formNetDepTotal, setFormNetDepTotal] = useState(0);
-  const [formPnlCurrent, setFormPnlCurrent] = useState(0);
-  const [formPnlAccum, setFormPnlAccum] = useState(0);
-  const [formPnlTotal, setFormPnlTotal] = useState(0);
-  const [formCommissions, setFormCommissions] = useState(0);
-  const [formBonus, setFormBonus] = useState(0);
-  const [formSalary, setFormSalary] = useState(0);
 
   const formTotalEarned = formCommissions + formBonus + formSalary;
 
