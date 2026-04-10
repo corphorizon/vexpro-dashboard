@@ -239,6 +239,7 @@ export interface CommercialMonthlyResult {
   salary_paid: number;
   total_earned: number;
   // Commission calculator fields
+  head_id?: string | null;
   division: number;
   base_amount: number;
   real_payment: number;

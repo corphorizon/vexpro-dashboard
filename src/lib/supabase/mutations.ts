@@ -453,8 +453,8 @@ export async function upsertP2PTransfers(
 
 export interface CommissionEntryRow {
   profile_id: string;
-  net_deposit_current: number;
-  net_deposit_accumulated: number;
+  net_deposit_current: number | null;
+  net_deposit_accumulated: number | null;
   division: number;
   base_amount: number;
   commissions_earned: number;

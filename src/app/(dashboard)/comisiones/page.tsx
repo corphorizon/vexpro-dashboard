@@ -12,11 +12,9 @@ import {
   calculateCommission,
   calculateGroupSummary,
   calculateSalaryFromND,
-  calculateHeadDifferential,
   getAccumulatedIn,
   SALARY_TIERS,
   type CommissionCalcResult,
-  type HeadDifferentialResult,
 } from '@/lib/commission-calculator';
 import { upsertCommissionEntries, type CommissionEntryRow } from '@/lib/supabase/mutations';
 import {
@@ -101,6 +99,8 @@ export default function ComisionesPage() {
 
   // SHARED ND inputs — one Map for all profiles, synced between tabs
   const [ndInputs, setNdInputs] = useState<Map<string, number>>(new Map());
+  // Store raw string for display (allows empty field + typing negatives)
+  const [ndRawInputs, setNdRawInputs] = useState<Map<string, string>>(new Map());
 
   // Seed ND inputs from saved data when period changes
   useEffect(() => {
@@ -111,9 +111,9 @@ export default function ComisionesPage() {
       // Buscar el registro que corresponde al grupo actual (head_id = selectedHeadId)
       // Así no se confunde con registros del mismo usuario en otros grupos
       const ex = tab === 'individual'
-        ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== 0 && r.net_deposit_current !== -1)
+        ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== 0 && r.net_deposit_current !== null)
           ?? results.find((r) => r.profile_id === p.id)
-        : results.find((r) => r.profile_id === p.id && (r as any).head_id === selectedHeadId);
+        : results.find((r) => r.profile_id === p.id && r.head_id === selectedHeadId);
       // Fallback al primer registro si no hay uno con head_id (datos anteriores al fix)
       // If this profile is the currently selected HEAD and has own team + parent,
       // load their PERSONAL ND from net_deposit_accumulated (not net_deposit_current)
@@ -126,7 +126,7 @@ export default function ComisionesPage() {
         const ownGroupResult = monthlyResults.find(
           (r) => r.profile_id === p.id
             && r.period_id === selectedPeriod.id
-            && (r as any).head_id === selectedHeadId
+            && r.head_id === selectedHeadId
         );
         m.set(p.id, ownGroupResult?.net_deposit_accumulated ?? 0);
       } else {
@@ -135,10 +135,7 @@ export default function ComisionesPage() {
     }
     setNdInputs(m);
     setNdRawInputs(new Map());
-  }, [commercialProfiles, selectedPeriod?.id, monthlyResults, selectedHeadId, tab]);
-
-  // Store raw string for display (allows empty field + typing negatives)
-  const [ndRawInputs, setNdRawInputs] = useState<Map<string, string>>(new Map());
+  }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab]);
 
   const handleNdChange = useCallback((id: string, v: string) => {
     setNdRawInputs((prev) => { const n = new Map(prev); n.set(id, v); return n; });
@@ -173,7 +170,7 @@ export default function ComisionesPage() {
     if (!selectedPeriod || !selectedHeadId) return [];
     const allPrevious = getPreviousPeriodResults(selectedPeriod.id);
     return allPrevious.filter(
-      (r) => (r as any).head_id === selectedHeadId
+      (r) => r.head_id === selectedHeadId
     );
   }, [selectedPeriod, selectedHeadId, getPreviousPeriodResults]);
 
@@ -332,7 +329,7 @@ export default function ComisionesPage() {
             // but accumulated_out is their OWN from their own group's calculation
             entries.push({
               profile_id: profile.id,
-              net_deposit_current: -1, // flag: don't overwrite (parent manages this)
+              net_deposit_current: null, // flag: don't overwrite (parent manages this)
               net_deposit_accumulated: nd, // store personal ND here
               division: calc.division,
               base_amount: calc.base,
@@ -349,7 +346,7 @@ export default function ComisionesPage() {
             entries.push({
               profile_id: profile.id,
               net_deposit_current: nd,
-              net_deposit_accumulated: isSubWithTeam ? -1 : accIn,
+              net_deposit_accumulated: isSubWithTeam ? null : accIn,
               division: calc.division,
               base_amount: calc.base,
               commissions_earned: calc.commission,
@@ -691,15 +688,13 @@ export default function ComisionesPage() {
         const bdmProfiles = activeProfiles.filter((p) => p.role === 'bdm');
         const allProfiles = [...smProfiles, ...headProfiles, ...bdmProfiles];
 
-        const filteredPeriodIds = new Set(historyPeriods.map((p) => p.id));
-
         const getTotal = (profileId: string, periodId: string) => {
           // El total correcto está en el registro donde head_id = profileId
           // (cuando el usuario guarda su propio grupo)
           const ownRecord = monthlyResults.find(
             (mr) => mr.profile_id === profileId
               && mr.period_id === periodId
-              && (mr as any).head_id === profileId
+              && mr.head_id === profileId
           );
           if (ownRecord) return ownRecord.total_earned;
           // Fallback: cualquier registro del período
