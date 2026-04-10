@@ -2,32 +2,16 @@
 
 import { useState, useCallback } from 'react';
 import Link from 'next/link';
-import { toast } from 'sonner';
 import { Card } from '@/components/ui/card';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
-import type { Employee, CommercialProfile } from '@/lib/types';
+import type { Employee, CommercialProfile, CommercialMonthlyResult } from '@/lib/types';
+import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile } from '@/lib/supabase/mutations';
 import { useI18n } from '@/lib/i18n';
-import {
-  createEmployee,
-  updateEmployee,
-  deleteEmployee,
-  createCommercialProfile,
-  updateCommercialProfile,
-  deleteCommercialProfile,
-  type EmployeePayload,
-  type CommercialProfilePayload,
-} from '@/lib/supabase/mutations';
-import { withTimeout } from '@/lib/with-timeout';
-
-// Hard ceiling for any HR save/delete round-trip. If we haven't heard back
-// in 10s we assume the network is hung and bail with a clear error so the
-// "Guardando..." button always resets.
-const HR_MUTATION_TIMEOUT_MS = 10_000;
-import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2 } from 'lucide-react';
+import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle } from 'lucide-react';
 
 type Tab = 'employees' | 'commercial';
 
@@ -82,7 +66,7 @@ function getFilteredPeriodIds(periods: { id: string; year: number; month: number
 }
 
 // ─── Employee Form ───
-function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (payload: EmployeePayload) => Promise<void>; editing?: Employee }) {
+function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (e: Employee) => void; editing?: Employee }) {
   const { t } = useI18n();
   const [name, setName] = useState(editing?.name || '');
   const [email, setEmail] = useState(editing?.email || '');
@@ -94,42 +78,20 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
   const [birthday, setBirthday] = useState(editing?.birthday || '');
   const [supervisor, setSupervisor] = useState(editing?.supervisor || '');
   const [comments, setComments] = useState(editing?.comments || '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
-  const handleSubmit = async () => {
-    if (!name || !email) {
-      setError('Nombre y email son requeridos');
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      await withTimeout(
-        onSave({
-          name,
-          email,
-          position: position || null,
-          department: department || null,
-          start_date: startDate || null,
-          salary: salary ? parseFloat(salary) : null,
-          status,
-          phone: null,
-          country: null,
-          notes: null,
-          birthday: birthday || null,
-          supervisor: supervisor || null,
-          comments: comments || null,
-        }),
-        HR_MUTATION_TIMEOUT_MS,
-        'Guardar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
-      );
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al guardar');
-    } finally {
-      setSaving(false);
-    }
+  const handleSubmit = () => {
+    if (!name || !email) return;
+    onSave({
+      id: editing?.id || `emp-${Date.now()}`,
+      company_id: 'vexpro-001',
+      name, email, position, department, start_date: startDate,
+      salary: salary ? parseFloat(salary) : null,
+      status, phone: null, country: null, notes: null,
+      birthday: birthday || null,
+      supervisor: supervisor || null,
+      comments: comments || null,
+    });
+    onClose();
   };
 
   return (
@@ -157,18 +119,9 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
         <input placeholder={t('hr.supervisorPlaceholder')} value={supervisor} onChange={e => setSupervisor(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
         <input placeholder={t('hr.commentsPlaceholder')} value={comments} onChange={e => setComments(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
       </div>
-      {error && (
-        <div className="mt-3 p-2 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
-          {error}
-        </div>
-      )}
       <div className="mt-3 flex justify-end">
-        <button
-          onClick={handleSubmit}
-          disabled={saving}
-          className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-        >
-          {saving ? 'Guardando...' : (editing ? t('common.save') : t('common.add'))}
+        <button onClick={handleSubmit} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90">
+          {editing ? t('common.save') : t('common.add')}
         </button>
       </div>
     </div>
@@ -176,9 +129,9 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
 }
 
 // ─── Commercial Profile Form ───
-function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (payload: CommercialProfilePayload) => Promise<void>; editing?: CommercialProfile }) {
+function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; editing?: CommercialProfile; companyId: string }) {
   const { t } = useI18n();
-  const { commercialProfiles } = useData();
+  const { commercialProfiles, refresh } = useData();
   const [name, setName] = useState(editing?.name || '');
   const [email, setEmail] = useState(editing?.email || '');
   const [role, setRole] = useState<'sales_manager' | 'head' | 'bdm'>(editing?.role || 'bdm');
@@ -187,105 +140,141 @@ function ProfileForm({ onClose, onSave, editing }: { onClose: () => void; onSave
   const [pnlPct, setPnlPct] = useState(editing?.pnl_pct?.toString() || '');
   const [commLot, setCommLot] = useState(editing?.commission_per_lot?.toString() || '');
   const [salary, setSalary] = useState(editing?.salary?.toString() || '');
+  const [extraPct, setExtraPct] = useState(editing?.extra_pct?.toString() || '');
   const [benefits, setBenefits] = useState(editing?.benefits || '');
   const [comments, setComments] = useState(editing?.comments || '');
   const [hireDate, setHireDate] = useState(editing?.hire_date || '');
   const [birthday, setBirthday] = useState(editing?.birthday || '');
   const [status, setStatus] = useState<'active' | 'inactive'>(editing?.status || 'active');
+  const [localSaving, setLocalSaving] = useState(false);
+  const [error, setError] = useState('');
 
   const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
+  // The form handles save directly — no parent dependency
   const handleSubmit = async () => {
-    if (!name || !email) {
-      setError('Nombre y email son requeridos');
-      return;
-    }
-    setSaving(true);
-    setError(null);
+    if (!name || !email || localSaving) return;
+    setLocalSaving(true);
+    setError('');
     try {
-      await withTimeout(
-        onSave({
-          name,
-          email,
-          role,
-          head_id: headId || null,
-          net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
-          pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
+      const payload = {
+        name, email, role,
+        head_id: headId || null,
+        net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
+        pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
+        salary: salary ? parseFloat(salary) : null,
+        extra_pct: extraPct ? parseFloat(extraPct) : null,
+        status,
+      };
+      if (editing?.id) {
+        await updateCommercialProfile(editing.id, payload);
+      } else {
+        await createCommercialProfile(companyId, {
+          ...payload,
           commission_per_lot: commLot ? parseFloat(commLot) : null,
-          salary: salary ? parseFloat(salary) : null,
           benefits: benefits || null,
           comments: comments || null,
           hire_date: hireDate || null,
           birthday: birthday || null,
-          status,
-        }),
-        HR_MUTATION_TIMEOUT_MS,
-        'Guardar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
-      );
+        });
+      }
       onClose();
+      // Reload page to show updated data
+      window.location.reload();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al guardar');
-    } finally {
-      setSaving(false);
+      setLocalSaving(false);
     }
   };
 
   return (
-    <div className="border border-border rounded-lg p-4 mb-4 bg-muted/30">
-      <div className="flex justify-between items-center mb-3">
-        <h3 className="font-semibold text-sm">{editing ? t('hr.editProfile') : t('hr.newProfile')}</h3>
-        <button onClick={onClose} aria-label="Close"><X className="w-4 h-4" /></button>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <input placeholder={t('hr.namePlaceholder')} value={name} onChange={e => setName(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input placeholder={t('hr.emailPlaceholder')} value={email} onChange={e => setEmail(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <select value={role} onChange={e => setRole(e.target.value as 'sales_manager' | 'head' | 'bdm')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-          <option value="sales_manager">Sales Manager</option>
-          <option value="head">HEAD</option>
-          <option value="bdm">BDM</option>
-        </select>
-        {role === 'bdm' && (
-          <select value={headId} onChange={e => setHeadId(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-            <option value="">{t('hr.noSupervisor')}</option>
-            {possibleHeads.map(h => (
-              <option key={h.id} value={h.id}>{h.name} ({ROLE_LABELS_HR[h.role]})</option>
-            ))}
-          </select>
-        )}
-        <input type="number" placeholder={t('hr.ndPctPlaceholder')} value={ndPct} onChange={e => setNdPct(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input type="number" placeholder={t('hr.pnlPctPlaceholder')} value={pnlPct} onChange={e => setPnlPct(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input type="number" placeholder={t('hr.commLotPlaceholder')} value={commLot} onChange={e => setCommLot(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input type="number" placeholder={t('hr.salaryUsdPlaceholder')} value={salary} onChange={e => setSalary(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input placeholder={t('hr.benefitsPlaceholder')} value={benefits} onChange={e => setBenefits(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input placeholder={t('hr.commentsPlaceholder')} value={comments} onChange={e => setComments(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted-foreground">{t('hr.hireDatePlaceholder')}</label>
-          <input type="date" value={hireDate} onChange={e => setHireDate(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+      <div className="bg-card rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto p-6">
+        <div className="flex justify-between items-center mb-4">
+          <h3 className="font-semibold text-lg">{editing ? t('hr.editProfile') : t('hr.newProfile')}</h3>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-xs text-muted-foreground">{t('hr.birthdayPlaceholder')}</label>
-          <input type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.namePlaceholder')}</label>
+            <input value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.emailPlaceholder')}</label>
+            <input value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.role')}</label>
+            <select value={role} onChange={e => setRole(e.target.value as 'sales_manager' | 'head' | 'bdm')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+              <option value="sales_manager">Sales Manager</option>
+              <option value="head">HEAD</option>
+              <option value="bdm">BDM</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.supervisor')}</label>
+            <select value={headId} onChange={e => setHeadId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+              <option value="">{t('hr.noSupervisor')}</option>
+              {possibleHeads.filter(h => h.id !== editing?.id).map(h => (
+                <option key={h.id} value={h.id}>{h.name} ({ROLE_LABELS_HR[h.role]})</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.ndPctPlaceholder')}</label>
+            <input type="number" value={ndPct} onChange={e => setNdPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pnlPctPlaceholder')}</label>
+            <input type="number" value={pnlPct} onChange={e => setPnlPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.commLotPlaceholder')}</label>
+            <input type="number" value={commLot} onChange={e => setCommLot(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.salaryUsdPlaceholder')}</label>
+            <input type="number" value={salary} onChange={e => setSalary(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          {(role === 'head' || role === 'sales_manager') && (
+            <div>
+              <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.extraPct')}</label>
+              <input type="number" step="0.01" value={extraPct} onChange={e => setExtraPct(e.target.value)} placeholder="0" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            </div>
+          )}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.benefitsPlaceholder')}</label>
+            <input value={benefits} onChange={e => setBenefits(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.commentsPlaceholder')}</label>
+            <input value={comments} onChange={e => setComments(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.hireDatePlaceholder')}</label>
+            <input type="date" value={hireDate} onChange={e => setHireDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.birthdayPlaceholder')}</label>
+            <input type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.status')}</label>
+            <select value={status} onChange={e => setStatus(e.target.value as 'active' | 'inactive')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+              <option value="active">{t('hr.statusActive')}</option>
+              <option value="inactive">{t('hr.statusInactive')}</option>
+            </select>
+          </div>
         </div>
-        <select value={status} onChange={e => setStatus(e.target.value as 'active' | 'inactive')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-          <option value="active">{t('hr.statusActive')}</option>
-          <option value="inactive">{t('hr.statusInactive')}</option>
-        </select>
-      </div>
-      {error && (
-        <div className="mt-3 p-2 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
-          {error}
+        {error && <p className="mt-4 text-sm text-red-600 bg-red-50 dark:bg-red-950/30 px-3 py-2 rounded-lg">{error}</p>}
+        <div className="mt-4 flex justify-end gap-3">
+          <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors">
+            {t('common.cancel')}
+          </button>
+          <button onClick={handleSubmit} disabled={localSaving} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50">
+            {localSaving ? t('hr.saving') : (editing ? t('common.save') : t('common.add'))}
+          </button>
         </div>
-      )}
-      <div className="mt-3 flex justify-end">
-        <button
-          onClick={handleSubmit}
-          disabled={saving}
-          className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-        >
-          {saving ? 'Guardando...' : (editing ? t('common.save') : t('common.add'))}
-        </button>
       </div>
     </div>
   );
@@ -361,20 +350,16 @@ function PeriodFilter({ preset, setPreset, selectedMonth, setSelectedMonth, cust
 
 export default function RRHHPage() {
   const { t } = useI18n();
-  const {
-    employees,
-    commercialProfiles: profiles,
-    monthlyResults,
-    periods,
-    company,
-    refresh,
-  } = useData();
+  const { company, employees: dataEmployees, commercialProfiles, monthlyResults: dataMonthlyResults, periods, refresh } = useData();
   const [tab, setTab] = useState<Tab>('commercial');
+  const [employees, setEmployees] = useState<Employee[]>(dataEmployees);
+  const profiles = commercialProfiles; // always use fresh data from context
+  const monthlyResults = dataMonthlyResults;
   const [showEmpForm, setShowEmpForm] = useState(false);
   const [editingEmp, setEditingEmp] = useState<Employee | undefined>();
   const [showProfileForm, setShowProfileForm] = useState(false);
   const [editingProfile, setEditingProfile] = useState<CommercialProfile | undefined>();
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
   // Period filter state
   const [filterPreset, setFilterPreset] = useState<FilterPreset>('total');
@@ -409,66 +394,32 @@ export default function RRHHPage() {
   const totalCommissionsFiltered = filteredResults.reduce((sum, r) => sum + r.total_earned, 0);
   const activeProfiles = profiles.filter(p => p.status === 'active').length;
 
-  // CRUD handlers — persist to Supabase, then refresh the data context
-  const handleSaveEmployee = async (payload: EmployeePayload) => {
-    if (!company?.id) throw new Error('No hay compañía activa');
-    const isEdit = !!editingEmp;
-    if (editingEmp) {
-      await updateEmployee(editingEmp.id, payload);
-    } else {
-      await createEmployee(company.id, payload);
-    }
-    await refresh();
+  // CRUD handlers
+  const handleSaveEmployee = (emp: Employee) => {
+    setEmployees(prev => {
+      const idx = prev.findIndex(e => e.id === emp.id);
+      if (idx >= 0) { const next = [...prev]; next[idx] = emp; return next; }
+      return [...prev, emp];
+    });
     setEditingEmp(undefined);
-    toast.success(isEdit ? 'Empleado actualizado' : 'Empleado agregado');
   };
 
-  const handleSaveProfile = async (payload: CommercialProfilePayload) => {
-    if (!company?.id) throw new Error('No hay compañía activa');
-    const isEdit = !!editingProfile;
-    if (editingProfile) {
-      await updateCommercialProfile(editingProfile.id, payload);
-    } else {
-      await createCommercialProfile(company.id, payload);
-    }
-    await refresh();
+  const closeProfileForm = () => {
     setEditingProfile(undefined);
-    toast.success(isEdit ? 'Perfil comercial actualizado' : 'Perfil comercial agregado');
+    setShowProfileForm(false);
   };
 
-  const handleDeleteEmployee = async (id: string, name: string) => {
-    if (!confirm(`¿Eliminar empleado "${name}"? Esta acción no se puede deshacer.`)) return;
-    setDeleteError(null);
-    try {
-      await withTimeout(
-        deleteEmployee(id),
-        HR_MUTATION_TIMEOUT_MS,
-        'Eliminar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
-      );
-      await refresh();
-      toast.success(`Empleado "${name}" eliminado`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Error eliminando empleado';
-      setDeleteError(msg);
-      toast.error(msg);
-    }
-  };
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
-  const handleDeleteProfile = async (id: string, name: string) => {
-    if (!confirm(`¿Eliminar perfil comercial "${name}"? Esta acción no se puede deshacer.`)) return;
-    setDeleteError(null);
+  const handleDeleteProfile = async (id: string) => {
     try {
-      await withTimeout(
-        deleteCommercialProfile(id),
-        HR_MUTATION_TIMEOUT_MS,
-        'Eliminar tardó más de 10 segundos. Revisa tu conexión e intenta de nuevo.'
-      );
-      await refresh();
-      toast.success(`Perfil "${name}" eliminado`);
+      await deleteCommercialProfile(id);
+      setDeletingId(null);
+      window.location.reload();
     } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Error eliminando perfil';
-      setDeleteError(msg);
-      toast.error(msg);
+      setDeletingId(null);
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al eliminar' });
+      setTimeout(() => setToast(null), 4000);
     }
   };
 
@@ -512,6 +463,16 @@ export default function RRHHPage() {
                 <button onClick={() => { setEditingProfile(leader); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
+                {deletingId === leader.id ? (
+                  <div className="flex items-center gap-1">
+                    <button onClick={() => handleDeleteProfile(leader.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
+                    <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
+                  </div>
+                ) : (
+                  <button onClick={() => setDeletingId(leader.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                )}
               </div>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', roleBadge)}>
@@ -557,16 +518,25 @@ export default function RRHHPage() {
                     <td className="py-2.5 text-right">{formatCurrency(getFilteredCommissions(bdm.id))}</td>
                     <td className="py-2.5 text-right hidden sm:table-cell">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>
                     <td className="py-2.5 text-right font-medium">{formatCurrency(getFilteredTotal(bdm.id))}</td>
-                    <td className="py-2.5 text-right flex items-center justify-end gap-1">
-                      <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground p-1" aria-label={t('common.edit')}>
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <button onClick={() => handleDeleteProfile(bdm.id, bdm.name)} className="text-red-600 hover:text-red-700 p-1" aria-label={t('common.delete')}>
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                      <Link href={`/rrhh/perfil?id=${bdm.id}`} className="text-muted-foreground hover:text-foreground">
-                        <ChevronRight className="w-4 h-4" />
-                      </Link>
+                    <td className="py-2.5 text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
+                        {deletingId === bdm.id ? (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => handleDeleteProfile(bdm.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
+                            <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
+                          </div>
+                        ) : (
+                          <button onClick={() => setDeletingId(bdm.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <Link href={`/rrhh/perfil?id=${bdm.id}`} className="text-muted-foreground hover:text-foreground">
+                          <ChevronRight className="w-4 h-4" />
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                   );
@@ -581,6 +551,14 @@ export default function RRHHPage() {
 
   return (
     <div className="space-y-6">
+      {/* Toast notification */}
+      {toast && (
+        <div className={cn('flex items-center gap-2 px-4 py-3 rounded-lg text-sm', toast.type === 'success' ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800')}>
+          {toast.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
+          {toast.msg}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -699,14 +677,9 @@ export default function RRHHPage() {
                         </span>
                       </td>
                       <td className="py-2.5 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => { setEditingEmp(emp); setShowEmpForm(true); }} className="text-muted-foreground hover:text-foreground p-1" aria-label={t('common.edit')}>
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleDeleteEmployee(emp.id, emp.name)} className="text-red-600 hover:text-red-700 p-1" aria-label={t('common.delete')}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        <button onClick={() => { setEditingEmp(emp); setShowEmpForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
+                          <Pencil className="w-3.5 h-3.5" />
+                        </button>
                       </td>
                     </tr>
                   );
@@ -716,11 +689,6 @@ export default function RRHHPage() {
           </div>
           {employees.length === 0 && (
             <p className="text-center text-muted-foreground py-8">{t('hr.noEmployees')}</p>
-          )}
-          {deleteError && (
-            <div className="mt-3 p-2 rounded-md bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
-              {deleteError}
-            </div>
           )}
         </Card>
       )}
@@ -749,8 +717,8 @@ export default function RRHHPage() {
           {showProfileForm && (
             <ProfileForm
               editing={editingProfile}
-              onClose={() => { setShowProfileForm(false); setEditingProfile(undefined); }}
-              onSave={handleSaveProfile}
+              onClose={closeProfileForm}
+              companyId={company?.id || ''}
             />
           )}
 
@@ -796,11 +764,8 @@ export default function RRHHPage() {
                         <td className="py-2.5 text-right">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>
                         <td className="py-2.5 text-right font-medium">{formatCurrency(getFilteredTotal(bdm.id))}</td>
                         <td className="py-2.5 text-right flex items-center justify-end gap-1">
-                          <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground p-1" aria-label={t('common.edit')}>
+                          <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
                             <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleDeleteProfile(bdm.id, bdm.name)} className="text-red-600 hover:text-red-700 p-1" aria-label={t('common.delete')}>
-                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                           <Link href={`/rrhh/perfil?id=${bdm.id}`} className="text-muted-foreground hover:text-foreground">
                             <ChevronRight className="w-4 h-4" />

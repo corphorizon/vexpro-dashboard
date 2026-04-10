@@ -38,7 +38,7 @@ interface AuthState {
   updateUserDirect: (id: string, updates: Partial<User & { password?: string }>) => void;
 }
 
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'hr', 'upload', 'periods', 'users', 'audit'];
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'upload', 'periods', 'users', 'audit'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -496,6 +496,7 @@ export const MODULE_LABELS: Record<string, string> = {
   investments: 'Inversiones',
   balances: 'Balances',
   partners: 'Socios',
+  commissions: 'Comisiones',
   hr: 'Recursos Humanos',
   upload: 'Carga de Datos',
   periods: 'Períodos',

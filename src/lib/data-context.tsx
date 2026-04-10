@@ -110,6 +110,7 @@ export interface DataContextValue {
   getResultsByPeriod: (periodId: string) => CommercialMonthlyResult[];
   getProfileById: (id: string) => CommercialProfile | undefined;
   getTotalCommissions: (profileId: string) => number;
+  getPreviousPeriodResults: (periodId: string) => CommercialMonthlyResult[];
 
   // Refresh function
   refresh: () => Promise<void>;
@@ -590,6 +591,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [monthlyResults]
   );
 
+  const getPreviousPeriodResults = useCallback(
+    (periodId: string): CommercialMonthlyResult[] => {
+      const sorted = [...periods].sort((a, b) => a.year !== b.year ? a.year - b.year : a.month - b.month);
+      const idx = sorted.findIndex(p => p.id === periodId);
+      if (idx <= 0) return [];
+      const prevPeriod = sorted[idx - 1];
+      return monthlyResults.filter(r => r.period_id === prevPeriod.id);
+    },
+    [periods, monthlyResults]
+  );
+
   // ─── Context value (memoized) ───
 
   const value = useMemo<DataContextValue>(
@@ -628,6 +640,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getResultsByPeriod,
       getProfileById,
       getTotalCommissions,
+      getPreviousPeriodResults,
 
       // `refresh` is silent by default: it re-fetches in the background
       // without unmounting children, so callers keep their scroll position,
@@ -665,6 +678,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getResultsByPeriod,
       getProfileById,
       getTotalCommissions,
+      getPreviousPeriodResults,
       loadAllData,
     ]
   );

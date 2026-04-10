@@ -449,131 +449,88 @@ export async function upsertP2PTransfers(
   }
 }
 
-// ─── HR: Employees ───
+// ─── Commission Entries ───
 
-export interface EmployeePayload {
-  name: string;
-  email: string;
-  position: string | null;
-  department: string | null;
-  start_date: string | null;
-  salary: number | null;
-  status: 'active' | 'inactive' | 'probation';
-  phone: string | null;
-  country: string | null;
-  notes: string | null;
-  birthday: string | null;
-  supervisor: string | null;
-  comments: string | null;
+export interface CommissionEntryRow {
+  profile_id: string;
+  net_deposit_current: number;
+  net_deposit_accumulated: number;
+  division: number;
+  base_amount: number;
+  commissions_earned: number;
+  real_payment: number;
+  accumulated_out: number;
+  salary_paid: number;
+  total_earned: number;
 }
 
-export async function createEmployee(
+export async function upsertCommissionEntries(
   companyId: string,
-  payload: EmployeePayload,
-): Promise<string> {
-  const { data, error } = await supabase
-    .from('employees')
-    .insert({ company_id: companyId, ...payload })
-    .select('id')
-    .single();
-  if (error) throw new Error(`Error creando empleado: ${error.message}`);
-  return data.id;
-}
-
-export async function updateEmployee(
-  id: string,
-  payload: EmployeePayload,
+  periodId: string,
+  headId: string,
+  entries: CommissionEntryRow[],
 ): Promise<void> {
-  // .select() forces PostgREST to return the affected rows. Without it, RLS
-  // policy mismatches silently no-op the update and we'd never notice.
-  const { data, error } = await supabase
-    .from('employees')
-    .update(payload)
-    .eq('id', id)
-    .select('id');
-  if (error) throw new Error(`Error actualizando empleado: ${error.message}`);
-  if (!data || data.length === 0) {
-    throw new Error(
-      'No se pudo actualizar el empleado: no tienes permiso o el registro ya no existe.'
-    );
-  }
+  const res = await fetch('/api/admin/commission-entries', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      company_id: companyId,
+      period_id: periodId,
+      head_id: headId,
+      entries,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'Error guardando comisiones');
 }
 
-export async function deleteEmployee(id: string): Promise<void> {
-  // Same .select() trick — RLS DELETE policies fail silently without it, so
-  // we'd return successfully even when zero rows were deleted.
-  const { data, error } = await supabase
-    .from('employees')
-    .delete()
-    .eq('id', id)
-    .select('id');
-  if (error) throw new Error(`Error eliminando empleado: ${error.message}`);
-  if (!data || data.length === 0) {
-    throw new Error(
-      'No se pudo eliminar el empleado: no tienes permiso (solo administradores) o el registro ya no existe.'
-    );
-  }
-}
+// ─── Commercial Profiles CRUD ───
 
-// ─── HR: Commercial Profiles ───
-
-export interface CommercialProfilePayload {
+export interface CommercialProfileInput {
   name: string;
   email: string;
-  role: 'sales_manager' | 'head' | 'bdm';
+  role: string;
   head_id: string | null;
   net_deposit_pct: number | null;
   pnl_pct: number | null;
   commission_per_lot: number | null;
   salary: number | null;
+  extra_pct: number | null;
   benefits: string | null;
   comments: string | null;
   hire_date: string | null;
   birthday: string | null;
-  status: 'active' | 'inactive';
+  status: string;
+}
+
+// ─── Commercial Profiles via API route (bypasses RLS with service role) ───
+
+async function profileApi(body: Record<string, unknown>) {
+  const res = await fetch('/api/admin/commercial-profiles', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || 'Error en operación');
+  return data;
 }
 
 export async function createCommercialProfile(
   companyId: string,
-  payload: CommercialProfilePayload,
+  profile: Omit<CommercialProfileInput, 'status'>,
 ): Promise<string> {
-  const { data, error } = await supabase
-    .from('commercial_profiles')
-    .insert({ company_id: companyId, ...payload })
-    .select('id')
-    .single();
-  if (error) throw new Error(`Error creando perfil comercial: ${error.message}`);
-  return data.id;
+  const data = await profileApi({ action: 'create', company_id: companyId, ...profile });
+  return data.id || '';
 }
 
 export async function updateCommercialProfile(
   id: string,
-  payload: CommercialProfilePayload,
+  updates: Partial<CommercialProfileInput>,
 ): Promise<void> {
-  const { data, error } = await supabase
-    .from('commercial_profiles')
-    .update(payload)
-    .eq('id', id)
-    .select('id');
-  if (error) throw new Error(`Error actualizando perfil comercial: ${error.message}`);
-  if (!data || data.length === 0) {
-    throw new Error(
-      'No se pudo actualizar el perfil comercial: no tienes permiso o el registro ya no existe.'
-    );
-  }
+  await profileApi({ action: 'update', id, ...updates });
 }
 
 export async function deleteCommercialProfile(id: string): Promise<void> {
-  // Monthly results will cascade-delete via FK ON DELETE CASCADE
-  const { data, error } = await supabase
-    .from('commercial_profiles')
-    .delete()
-    .eq('id', id)
-    .select('id');
-  if (error) throw new Error(`Error eliminando perfil comercial: ${error.message}`);
-  if (!data || data.length === 0) {
-    throw new Error(
-      'No se pudo eliminar el perfil comercial: no tienes permiso (solo administradores) o el registro ya no existe.'
-    );
-  }
+  await profileApi({ action: 'delete', id });
 }
