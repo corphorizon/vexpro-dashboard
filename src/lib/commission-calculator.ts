@@ -1,6 +1,14 @@
 import type { CommercialProfile, CommercialMonthlyResult, Period } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
+// Rounding helper — avoid float precision issues in monetary calculations
+// ---------------------------------------------------------------------------
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
+
+// ---------------------------------------------------------------------------
 // Commission calculation result for a single user in a single period
 // ---------------------------------------------------------------------------
 
@@ -40,13 +48,13 @@ export function calculateCommission(
   }
   // Negative ND is allowed — represents net withdrawals
 
-  const division = netDepositCurrent / 2;
-  const base = division + accumulatedIn;
-  const commission = base * (commissionPct / 100);
-  const realPayment = commission; // Real payment includes negatives — they affect the total
+  const division = round2(netDepositCurrent / 2);
+  const base = round2(division + accumulatedIn);
+  const commission = round2(base * (commissionPct / 100));
+  const realPayment = round2(commission); // Real payment includes negatives — they affect the total
   // If commission >= 0: debt is settled, only carry forward the division (half of new ND)
   // If commission < 0: debt persists, carry forward the full base (negative accumulates until compensated)
-  const accumulatedOut = commission >= 0 ? division : base;
+  const accumulatedOut = round2(commission >= 0 ? division : base);
 
   return {
     netDepositCurrent,
@@ -181,10 +189,10 @@ export function calculateHeadDifferential(
 ): HeadDifferentialResult {
   const details: DifferentialDetail[] = bdmResults.map((bdm) => {
     const diffPct = (headPct - bdm.commissionPct) + extraPct;
-    const division = bdm.netDepositCurrent / 2;
-    const base = division + bdm.accumulatedIn;
-    const commission = base * (diffPct / 100);
-    const realPayment = Math.max(0, commission);
+    const division = round2(bdm.netDepositCurrent / 2);
+    const base = round2(division + bdm.accumulatedIn);
+    const commission = round2(base * (diffPct / 100));
+    const realPayment = round2(Math.max(0, commission));
 
     return {
       bdmProfileId: bdm.profileId,
@@ -199,8 +207,8 @@ export function calculateHeadDifferential(
     };
   });
 
-  const totalDifferential = details.reduce((sum, d) => sum + d.commission, 0);
-  const totalRealPayment = details.reduce((sum, d) => sum + d.realPayment, 0);
+  const totalDifferential = round2(details.reduce((sum, d) => sum + d.commission, 0));
+  const totalRealPayment = round2(details.reduce((sum, d) => sum + d.realPayment, 0));
 
   return { totalDifferential, totalRealPayment, details };
 }
@@ -219,14 +227,14 @@ export interface GroupSummary {
 export function calculateGroupSummary(
   results: CommissionCalcResult[],
 ): GroupSummary {
-  const totalRealPayment = results.reduce((sum, r) => sum + r.realPayment, 0);
-  const totalSalary = results.reduce((sum, r) => sum + r.salary, 0);
-  const totalCommission = results.reduce((sum, r) => sum + r.commission, 0);
+  const totalRealPayment = round2(results.reduce((sum, r) => sum + r.realPayment, 0));
+  const totalSalary = round2(results.reduce((sum, r) => sum + r.salary, 0));
+  const totalCommission = round2(results.reduce((sum, r) => sum + r.commission, 0));
 
   return {
     totalRealPayment,
     totalSalary,
-    totalWithSalary: totalRealPayment + totalSalary,
+    totalWithSalary: round2(totalRealPayment + totalSalary),
     totalCommission,
   };
 }
