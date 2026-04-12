@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
@@ -10,8 +10,8 @@ import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { updateCommercialProfile } from '@/lib/supabase/mutations';
-import type { CommercialProfile, CommercialMonthlyResult } from '@/lib/types';
-import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X } from 'lucide-react';
+import type { CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus } from '@/lib/types';
+import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X, FileText, Upload, ExternalLink, Handshake, Trash2 } from 'lucide-react';
 
 function formatDateDMY(dateStr: string | null): string | null {
   if (!dateStr) return null;
@@ -62,6 +62,25 @@ export default function PerfilPage() {
   const [formBonus, setFormBonus] = useState(0);
   const [formSalary, setFormSalary] = useState(0);
 
+  const [contractFile, setContractFile] = useState<File | null>(null);
+  const [uploadingContract, setUploadingContract] = useState(false);
+
+  // Negotiations state
+  const [negotiations, setNegotiations] = useState<Negotiation[]>([]);
+  const [negLoading, setNegLoading] = useState(false);
+
+  const fetchNegotiations = useCallback(async () => {
+    if (!profile) return;
+    setNegLoading(true);
+    try {
+      const res = await fetch(`/api/admin/negotiations?company_id=${profile.company_id}&profile_id=${profileId}`);
+      if (res.ok) setNegotiations(await res.json());
+    } catch { /* ignore */ }
+    setNegLoading(false);
+  }, [profile, profileId]);
+
+  useEffect(() => { fetchNegotiations(); }, [fetchNegotiations]);
+
   const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
 
   // Early returns AFTER all hooks
@@ -82,6 +101,38 @@ export default function PerfilPage() {
       </div>
     );
   }
+
+  const handleDeleteNegotiation = async (id: string) => {
+    if (!confirm('Eliminar esta negociacion?')) return;
+    try {
+      await fetch('/api/admin/negotiations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', id }),
+      });
+      fetchNegotiations();
+    } catch { /* ignore */ }
+  };
+
+  const handleContractUpload = async () => {
+    if (!contractFile) return;
+    setUploadingContract(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', contractFile);
+      formData.append('profile_id', profileData!.id);
+      const res = await fetch('/api/admin/upload-contract', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error);
+      setProfileData({ ...profileData!, contract_url: data.url });
+      setContractFile(null);
+      setSuccessMsg('Contrato subido correctamente');
+      setTimeout(() => setSuccessMsg(''), 3000);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error subiendo contrato');
+    }
+    setUploadingContract(false);
+  };
 
   const handleSaveProfile = async () => {
     setSaving(true);
@@ -431,6 +482,48 @@ export default function PerfilPage() {
         )}
       </Card>
 
+      {/* Contract */}
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-2">
+            <FileText className="w-5 h-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold">Contrato</h2>
+          </div>
+        </div>
+        {profileData.contract_url ? (
+          <div className="flex items-center gap-3 p-3 bg-emerald-50 dark:bg-emerald-950/30 rounded-lg">
+            <FileText className="w-5 h-5 text-emerald-600" />
+            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 flex-1">Contrato cargado</span>
+            <a href={profileData.contract_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">
+              <ExternalLink className="w-3.5 h-3.5" /> Ver contrato
+            </a>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground mb-3">No se ha subido contrato aún.</p>
+        )}
+        <div className="mt-3 flex items-center gap-2">
+          <label className="flex-1 cursor-pointer">
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border hover:border-[var(--color-secondary)] hover:bg-muted/50 transition-colors">
+              <Upload className="w-4 h-4 text-muted-foreground" />
+              <span className="text-sm text-muted-foreground">
+                {contractFile ? contractFile.name : (profileData.contract_url ? 'Cambiar contrato...' : 'Subir contrato (PDF, máx 10 MB)')}
+              </span>
+            </div>
+            <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
+          </label>
+          {contractFile && (
+            <>
+              <button onClick={() => setContractFile(null)} className="p-2 rounded-lg border border-border hover:bg-muted">
+                <X className="w-4 h-4" />
+              </button>
+              <button onClick={handleContractUpload} disabled={uploadingContract} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50">
+                {uploadingContract ? 'Subiendo...' : 'Subir'}
+              </button>
+            </>
+          )}
+        </div>
+      </Card>
+
       {/* Subordinates */}
       {subordinates.length > 0 && (
         <Card>
@@ -609,6 +702,49 @@ export default function PerfilPage() {
           </div>
         ) : (
           <p className="text-center text-muted-foreground py-8">{t('hr.noResults')}</p>
+        )}
+      </Card>
+
+      {/* Negotiations */}
+      <Card>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-2">
+            <Handshake className="w-5 h-5 text-muted-foreground" />
+            <h2 className="text-lg font-semibold">{t('hr.negotiations')}</h2>
+          </div>
+        </div>
+        {negLoading ? (
+          <div className="flex items-center justify-center py-8">
+            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[var(--color-primary)]" />
+          </div>
+        ) : negotiations.length === 0 ? (
+          <p className="text-center text-muted-foreground py-6 text-sm">{t('hr.noNegotiations')}</p>
+        ) : (
+          <div className="space-y-3">
+            {negotiations.map(neg => (
+              <div key={neg.id} className="border border-border rounded-lg p-3 hover:bg-muted/30 transition-colors">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-medium text-sm">{neg.title}</span>
+                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                        neg.status === 'active' ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400' :
+                        neg.status === 'pending' ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400' :
+                        'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400'
+                      }`}>
+                        {neg.status === 'active' ? t('hr.negStatusActive') : neg.status === 'pending' ? t('hr.negStatusPending') : t('hr.negStatusClosed')}
+                      </span>
+                    </div>
+                    {neg.description && <p className="text-xs text-muted-foreground">{neg.description}</p>}
+                    <p className="text-[10px] text-muted-foreground mt-1">{new Date(neg.updated_at).toLocaleDateString()}</p>
+                  </div>
+                  <button onClick={() => handleDeleteNegotiation(neg.id)} className="text-muted-foreground hover:text-red-500 shrink-0">
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </Card>
     </div>
