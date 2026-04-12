@@ -20,10 +20,11 @@ export async function POST(request: NextRequest) {
     const admin = createAdminClient();
 
     for (const entry of entries) {
+      const entryHeadId = entry.head_id || head_id;
       const row = {
         company_id,
         period_id,
-        head_id,
+        head_id: entryHeadId,
         profile_id: entry.profile_id,
         net_deposit_current: entry.net_deposit_current ?? 0,
         net_deposit_accumulated: entry.net_deposit_accumulated ?? 0,
@@ -47,7 +48,7 @@ export async function POST(request: NextRequest) {
         .select('id')
         .eq('profile_id', entry.profile_id)
         .eq('period_id', period_id)
-        .eq('head_id', head_id)
+        .eq('head_id', entryHeadId)
         .maybeSingle();
 
       if (existing) {

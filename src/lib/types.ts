@@ -185,7 +185,7 @@ export interface PeriodSummary {
 }
 
 // HR Types
-export type CommercialRole = 'sales_manager' | 'head' | 'bdm';
+export type CommercialRole = 'sales_manager' | 'head' | 'bdm' | (string & {});
 
 export interface Employee {
   id: string;
@@ -216,6 +216,8 @@ export interface CommercialProfile {
   pnl_pct: number | null; // null = N/A
   commission_per_lot: number | null; // USD per lot, null = N/A
   salary: number | null; // monthly USD, null = N/A
+  fixed_salary?: boolean; // true = salary fijo (no depende de ND), false = auto por tiers
+  contract_url?: string | null; // URL del contrato firmado en Supabase Storage
   extra_pct: number | null; // extra differential % for HEAD when head_pct == bdm_pct
   benefits: string | null;
   comments: string | null;
@@ -244,6 +246,19 @@ export interface CommercialMonthlyResult {
   base_amount: number;
   real_payment: number;
   accumulated_out: number;
+}
+
+export type NegotiationStatus = 'active' | 'closed' | 'pending';
+
+export interface Negotiation {
+  id: string;
+  company_id: string;
+  profile_id: string;
+  title: string;
+  description: string | null;
+  status: NegotiationStatus;
+  created_at: string;
+  updated_at: string;
 }
 
 export type UserRole = 'admin' | 'socio' | 'auditor' | 'soporte' | 'hr' | 'invitado';

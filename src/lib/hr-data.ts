@@ -231,11 +231,18 @@ export const DEMO_MONTHLY_RESULTS: CommercialMonthlyResult[] = [
 ];
 
 // ─── Role labels ───
-export const ROLE_LABELS_HR: Record<string, string> = {
+const ROLE_LABELS_MAP: Record<string, string> = {
   sales_manager: 'Sales Manager',
   head: 'HEAD',
   bdm: 'BDM',
 };
+
+// Returns the label for known roles, or the role string capitalized as fallback
+export const ROLE_LABELS_HR = new Proxy(ROLE_LABELS_MAP, {
+  get(target, prop: string) {
+    return target[prop] || prop.charAt(0).toUpperCase() + prop.slice(1);
+  },
+});
 
 // ─── Helpers ───
 export function getProfilesByHead(headId: string): CommercialProfile[] {

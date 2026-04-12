@@ -8,6 +8,7 @@ import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
+import { generateCommissionPDF, generateIndividualPDF } from '@/lib/pdf-export';
 import {
   calculateCommission,
   calculateGroupSummary,
@@ -29,6 +30,9 @@ import {
   UserCircle,
   Users,
   BarChart3,
+  FileText,
+  FileSpreadsheet,
+  ChevronDown,
 } from 'lucide-react';
 
 const ROLE_BADGE: Record<string, string> = {
@@ -209,7 +213,8 @@ export default function ComisionesPage() {
       // Extra % only applies when natural differential is 0 (same percentage)
       const diffPct = naturalDiff === 0 ? extraPct : naturalDiff;
       const calc = calculateCommission(nd, accIn, diffPct);
-      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: 0, ...calc };
+      const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
+      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: bdmSalary, ...calc };
     });
   }, [teamProfiles, ndInputs, previousResults, headPct, extraPct]);
 
@@ -227,7 +232,10 @@ export default function ComisionesPage() {
     return total;
   }, [teamProfiles, ndInputs]);
 
-  const autoSalary = useMemo(() => calculateSalaryFromND(teamTotalND), [teamTotalND]);
+  const autoSalary = useMemo(() => {
+    if (headProfile?.fixed_salary) return headProfile.salary ?? 0;
+    return calculateSalaryFromND(teamTotalND);
+  }, [teamTotalND, headProfile]);
 
   // Validation: if this HEAD belongs to a parent group, check that team total matches
   // what was entered for them in the parent's group
@@ -277,7 +285,8 @@ export default function ComisionesPage() {
       const accIn = getAccumulatedIn(previousResultsAll, profile.id);
       const pct = profile.net_deposit_pct ?? 0;
       const calc = calculateCommission(nd, accIn, pct);
-      return { profileId: profile.id, commissionPct: pct, salary: 0, ...calc };
+      const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
+      return { profileId: profile.id, commissionPct: pct, salary: bdmSalary, ...calc };
     });
   }, [allBdms, ndInputs, previousResultsAll]);
 
@@ -352,26 +361,30 @@ export default function ComisionesPage() {
               commissions_earned: calc.commission,
               real_payment: calc.realPayment,
               accumulated_out: calc.accumulatedOut,
-              salary_paid: isHead ? autoSalary : (profile.salary ?? 0),
+              salary_paid: isHead ? autoSalary : (profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd)),
               total_earned: (isHead && !headHasParent)
                 ? calc.realPayment + headDiff.totalRealPayment + autoSalary
-                : calc.realPayment + (profile.salary ?? 0),
+                : calc.realPayment + (profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd)),
             });
           }
         }
       } else {
-        entries = indCalcs.map((c) => ({
-          profile_id: c.profileId,
-          net_deposit_current: c.netDepositCurrent,
-          net_deposit_accumulated: c.accumulatedIn,
-          division: c.division,
-          base_amount: c.base,
-          commissions_earned: c.commission,
-          real_payment: c.realPayment,
-          accumulated_out: c.accumulatedOut,
-          salary_paid: 0,
-          total_earned: c.realPayment,
-        }));
+        entries = indCalcs.map((c) => {
+          const profile = commercialProfiles.find((p) => p.id === c.profileId);
+          return {
+            profile_id: c.profileId,
+            head_id: profile?.head_id ?? selectedHeadId,
+            net_deposit_current: c.netDepositCurrent,
+            net_deposit_accumulated: c.accumulatedIn,
+            division: c.division,
+            base_amount: c.base,
+            commissions_earned: c.commission,
+            real_payment: c.realPayment,
+            accumulated_out: c.accumulatedOut,
+            salary_paid: c.salary,
+            total_earned: c.realPayment + c.salary,
+          };
+        });
       }
       console.log('[SAVE] entries:', entries.length, entries.map(e => ({ id: e.profile_id, nd: e.net_deposit_current })));
       if (entries.length === 0) {
@@ -416,6 +429,55 @@ export default function ComisionesPage() {
     }
   };
 
+  const handleExportPDF = () => {
+    if (!selectedPeriod || !headProfile) return;
+    const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
+
+    // Build salary tier label
+    const tierLabels = SALARY_TIERS.map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
+
+    generateCommissionPDF({
+      companyName: company?.name ?? 'VexPro',
+      headName: headProfile.name,
+      headRole: ROLE_LABEL[headProfile.role] || headProfile.role,
+      headEmail: headProfile.email,
+      periodLabel,
+      teamTotalND: teamTotalND,
+      autoSalary,
+      salaryTierLabel: tierLabels,
+      headOwnCalc: headOwnCalc ? {
+        netDepositCurrent: headOwnCalc.netDepositCurrent,
+        accumulatedIn: headOwnCalc.accumulatedIn,
+        division: headOwnCalc.division,
+        base: headOwnCalc.base,
+        commissionPct: headOwnCalc.commissionPct,
+        commission: headOwnCalc.commission,
+        realPayment: headOwnCalc.realPayment,
+        accumulatedOut: headOwnCalc.accumulatedOut,
+      } : null,
+      headDiff,
+      teamSummary,
+      bdms: bdmCalcs.map(c => {
+        const p = commercialProfiles.find(pr => pr.id === c.profileId);
+        return {
+          name: p?.name ?? '',
+          email: p?.email ?? '',
+          pct: c.bdmOwnPct,
+          diffPct: c.diffPct,
+          nd: c.netDepositCurrent,
+          division: c.division,
+          base: c.base,
+          commission: c.commission,
+          realPayment: c.realPayment,
+          accOut: c.accumulatedOut,
+          salary: c.salary,
+        };
+      }),
+    });
+  };
+
+  const [showExportMenu, setShowExportMenu] = useState(false);
+
   // ═══════════════════════════════════════════════════════════
   // RENDER
   // ═══════════════════════════════════════════════════════════
@@ -432,9 +494,38 @@ export default function ComisionesPage() {
           <h1 className="text-2xl font-bold flex items-center gap-2"><Calculator className="w-6 h-6" />{t('comm.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('comm.subtitle')}</p>
         </div>
-        <button onClick={handleExport} className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors">
-          <Download className="w-4 h-4" />{t('comm.export')}
-        </button>
+        <div className="relative">
+          <button
+            onClick={() => setShowExportMenu(!showExportMenu)}
+            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+          >
+            <Download className="w-4 h-4" />{t('comm.export')}
+            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+          </button>
+          {showExportMenu && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+              <div className="absolute right-0 top-full mt-1 z-50 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[180px]">
+                <button
+                  onClick={() => { handleExport(); setShowExportMenu(false); }}
+                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
+                >
+                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
+                  Exportar CSV
+                </button>
+                {tab === 'teams' && (
+                  <button
+                    onClick={() => { handleExportPDF(); setShowExportMenu(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
+                  >
+                    <FileText className="w-4 h-4 text-red-500" />
+                    Informe PDF detallado
+                  </button>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
 
@@ -638,7 +729,10 @@ export default function ComisionesPage() {
                       <th className="text-center px-3 py-3 font-medium">%</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
+                      <th className="text-right px-3 py-3 font-medium">{t('comm.salary')}</th>
+                      <th className="text-right px-3 py-3 font-medium">Total</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.accNext')}</th>
+                      <th className="px-2 py-3"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -659,7 +753,39 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
                           <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
                           <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
+                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.salary)}</td>
+                          <td className="px-3 py-3 text-right font-semibold">{formatCurrency(calc.realPayment + calc.salary)}</td>
                           <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
+                          <td className="px-2 py-3 text-center">
+                            <button
+                              onClick={() => {
+                                if (!selectedPeriod) return;
+                                const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
+                                generateIndividualPDF({
+                                  companyName: company?.name ?? 'VexPro',
+                                  periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+                                  name: profile.name,
+                                  email: profile.email,
+                                  role: ROLE_LABEL[profile.role] || profile.role,
+                                  headName: headP?.name ?? '—',
+                                  pct: calc.commissionPct,
+                                  nd: calc.netDepositCurrent,
+                                  accumulatedIn: calc.accumulatedIn,
+                                  division: calc.division,
+                                  base: calc.base,
+                                  commission: calc.commission,
+                                  realPayment: calc.realPayment,
+                                  accumulatedOut: calc.accumulatedOut,
+                                  salary: calc.salary,
+                                  total: calc.realPayment + calc.salary,
+                                });
+                              }}
+                              className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                              title="Descargar PDF"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          </td>
                         </tr>
                       );
                     })}
@@ -671,7 +797,10 @@ export default function ComisionesPage() {
                       <td className="px-3 py-3" colSpan={4}></td>
                       <td className={cn('px-3 py-3 text-right', indSummary.totalCommission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(indSummary.totalCommission)}</td>
                       <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(indSummary.totalRealPayment)}</td>
+                      <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(indSummary.totalSalary)}</td>
+                      <td className="px-3 py-3 text-right font-semibold">{formatCurrency(indSummary.totalWithSalary)}</td>
                       <td className="px-3 py-3"></td>
+                      <td className="px-2 py-3"></td>
                     </tr>
                   </tfoot>
                 </table>
@@ -691,19 +820,23 @@ export default function ComisionesPage() {
         const allProfiles = [...smProfiles, ...headProfiles, ...bdmProfiles];
 
         const getTotal = (profileId: string, periodId: string) => {
-          // El total correcto está en el registro donde head_id = profileId
-          // (cuando el usuario guarda su propio grupo)
-          const ownRecord = monthlyResults.find(
-            (mr) => mr.profile_id === profileId
-              && mr.period_id === periodId
-              && mr.head_id === profileId
-          );
-          if (ownRecord) return ownRecord.total_earned;
-          // Fallback: cualquier registro del período
-          const anyRecord = monthlyResults.find(
+          const profile = allProfiles.find(p => p.id === profileId);
+          const records = monthlyResults.filter(
             (mr) => mr.profile_id === profileId && mr.period_id === periodId
           );
-          return anyRecord?.total_earned ?? null;
+          if (records.length === 0) return null;
+          // Para HEADs/SM: buscar registro donde head_id = su propio ID (su grupo)
+          const ownGroupRecord = records.find(r => r.head_id === profileId);
+          if (ownGroupRecord) return ownGroupRecord.total_earned;
+          // Para BDMs: buscar registro donde head_id = su HEAD real
+          if (profile?.head_id) {
+            const headRecord = records.find(r => r.head_id === profile.head_id);
+            if (headRecord) return headRecord.total_earned;
+          }
+          // Fallback: el registro con mayor total_earned (valor absoluto)
+          return records.reduce((best, r) =>
+            Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
+          ).total_earned;
         };
 
         const getProfileTotal = (profileId: string) => {
@@ -764,7 +897,7 @@ export default function ComisionesPage() {
                       const total = getProfileTotal(profile.id);
                       return (
                         <tr key={profile.id} className={cn('border-b border-border/50 hover:bg-muted/30', showSeparator && 'border-t-2 border-t-border')}>
-                          <td className="px-4 py-2.5 font-medium sticky left-0 bg-card z-10">{profile.name}</td>
+                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className="font-medium block">{profile.name}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-2 py-2.5">
                             <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', ROLE_BADGE[profile.role])}>
                               {ROLE_LABEL[profile.role]}
