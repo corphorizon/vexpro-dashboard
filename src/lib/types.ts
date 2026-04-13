@@ -261,7 +261,8 @@ export interface Negotiation {
   updated_at: string;
 }
 
-export type UserRole = 'admin' | 'socio' | 'auditor' | 'soporte' | 'hr' | 'invitado';
+// UserRole is defined in auth-context.tsx — re-export for convenience
+export type { UserRole } from './auth-context';
 
 // Email Types
 export type EmailType = 'welcome' | 'password_reset' | 'report' | 'notification' | 'login_notification';

@@ -118,7 +118,7 @@ export default function PerfilPage() {
     setShowSetupNewPin(false);
   };
 
-  const handleConfirmDeactivate = (e: React.FormEvent) => {
+  const handleConfirmDeactivate = async (e: React.FormEvent) => {
     e.preventDefault();
     setDeactivateError('');
 
@@ -127,7 +127,19 @@ export default function PerfilPage() {
       return;
     }
 
-    if (deactivatePin !== user.twofa_secret) {
+    // Verify PIN server-side before deactivating
+    try {
+      const res = await fetch('/api/auth/verify-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin: deactivatePin }),
+      });
+      const data = await res.json();
+      if (!data.success) {
+        setDeactivateError(data.error || t('profile.pinIncorrect'));
+        return;
+      }
+    } catch {
       setDeactivateError(t('profile.pinIncorrect'));
       return;
     }

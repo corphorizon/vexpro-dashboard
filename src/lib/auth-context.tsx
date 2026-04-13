@@ -15,23 +15,25 @@ export interface User {
   company_id: string;
   allowed_modules: string[];
   twofa_enabled: boolean;
-  twofa_secret: string | null;
 }
 
 export type LoginResult =
   | { success: true; needs2fa: false }
-  | { success: true; needs2fa: true; userId: string }
+  | { success: true; needs2fa: true; userId: string; email: string }
   | { success: false; needs2fa: false };
+
+// twofa_secret is excluded from User but needed for DB writes (setup/deactivation)
+type UserUpdate = Partial<User> & { twofa_secret?: string | null };
 
 interface AuthState {
   user: User | null;
   users: User[];
   isLoading: boolean;
   login: (email: string, password: string) => Promise<LoginResult>;
-  loginWith2fa: (userId: string, pin: string) => boolean;
+  loginWith2fa: (email: string, password: string, pin: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   createUser: (user: Omit<User, 'id'>, password: string) => void;
-  updateUser: (id: string, updates: Partial<User>) => void;
+  updateUser: (id: string, updates: UserUpdate) => void;
   deleteUser: (id: string) => void;
   changePassword: (userId: string, currentPassword: string, newPassword: string) => Promise<boolean>;
   resetPassword: (userEmail: string, newPassword: string) => Promise<boolean>;
@@ -65,15 +67,14 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
     company_id: data.company_id,
     allowed_modules: data.allowed_modules || [],
     twofa_enabled: data.twofa_enabled || false,
-    twofa_secret: data.twofa_secret || null,
   };
 }
 
-// Fetch all company_users for the same company
+// Fetch all company_users for the same company — never include twofa_secret
 async function fetchAllUsers(companyId: string): Promise<User[]> {
   const { data, error } = await supabase
     .from('company_users')
-    .select('*')
+    .select('id, email, name, role, company_id, allowed_modules, twofa_enabled')
     .eq('company_id', companyId);
 
   if (error || !data) {
@@ -81,15 +82,14 @@ async function fetchAllUsers(companyId: string): Promise<User[]> {
     return [];
   }
 
-  return data.map((u: any) => ({
-    id: u.id,
-    email: u.email,
-    name: u.name,
+  return data.map((u: Record<string, unknown>) => ({
+    id: u.id as string,
+    email: u.email as string,
+    name: u.name as string,
     role: u.role as UserRole,
-    company_id: u.company_id,
-    allowed_modules: u.allowed_modules || [],
-    twofa_enabled: u.twofa_enabled || false,
-    twofa_secret: u.twofa_secret || null,
+    company_id: u.company_id as string,
+    allowed_modules: (u.allowed_modules as string[]) || [],
+    twofa_enabled: (u.twofa_enabled as boolean) || false,
   }));
 }
 
@@ -156,10 +156,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     // Check 2FA
-    if (profile.twofa_enabled && profile.twofa_secret) {
+    if (profile.twofa_enabled) {
       // Sign out temporarily — need 2FA verification first
       await supabase.auth.signOut();
-      return { success: true, needs2fa: true, userId: profile.id };
+      return { success: true, needs2fa: true, userId: profile.id, email };
     }
 
     setUser(profile);
@@ -169,17 +169,49 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return { success: true, needs2fa: false };
   }, []);
 
-  const loginWith2fa = useCallback((userId: string, pin: string): boolean => {
-    // For now, 2FA verification against stored secret
-    const targetUser = users.find(u => u.id === userId);
-    if (!targetUser) return false;
-    if (targetUser.twofa_secret === pin) {
-      setUser(targetUser);
-      logAction(targetUser.id, targetUser.name, 'login', 'auth', `Inicio de sesión con 2FA: ${targetUser.email}`);
-      return true;
+  const loginWith2fa = useCallback(async (
+    email: string,
+    password: string,
+    pin: string,
+  ): Promise<{ success: boolean; error?: string }> => {
+    try {
+      // 1. Verify PIN server-side (never compare on client)
+      const res = await fetch('/api/auth/verify-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, pin }),
+      });
+      const data = await res.json();
+
+      if (!data.success) {
+        return { success: false, error: data.error || 'PIN incorrecto' };
+      }
+
+      // 2. PIN verified — re-authenticate to establish proper Supabase session
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (signInError || !signInData.user) {
+        return { success: false, error: 'Error al restablecer sesión' };
+      }
+
+      // 3. Load profile and set state
+      const profile = await fetchUserProfile(signInData.user);
+      if (!profile) {
+        return { success: false, error: 'Perfil no encontrado' };
+      }
+
+      setUser(profile);
+      const allUsers = await fetchAllUsers(profile.company_id);
+      setUsers(allUsers);
+      logAction(profile.id, profile.name, 'login', 'auth', `Inicio de sesión con 2FA: ${profile.email}`);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Error de conexión' };
     }
-    return false;
-  }, [users]);
+  }, []);
 
   const logout = useCallback(async () => {
     const prev = userRef.current;
@@ -286,7 +318,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateUser = useCallback(async (id: string, updates: Partial<User>) => {
+  const updateUser = useCallback(async (id: string, updates: UserUpdate) => {
     const { error } = await supabase
       .from('company_users')
       .update({
@@ -389,7 +421,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [users]);
 
-  const changePassword = useCallback(async (_userId: string, _currentPassword: string, newPassword: string): Promise<boolean> => {
+  const changePassword = useCallback(async (_userId: string, currentPassword: string, newPassword: string): Promise<boolean> => {
+    // Verify current password by re-authenticating before allowing change
+    const currentUser = userRef.current;
+    if (!currentUser) return false;
+
+    const { error: verifyError } = await supabase.auth.signInWithPassword({
+      email: currentUser.email,
+      password: currentPassword,
+    });
+
+    if (verifyError) {
+      console.error('Current password verification failed');
+      return false;
+    }
+
     const { error } = await supabase.auth.updateUser({ password: newPassword });
     if (error) {
       console.error('Error changing password:', error.message);
@@ -453,7 +499,7 @@ export function canAdd(user: User | null): boolean {
 
 export function canEdit(user: User | null): boolean {
   if (!user) return false;
-  return user.role === 'admin';
+  return user.role === 'admin' || user.role === 'auditor';
 }
 
 export function canDelete(user: User | null): boolean {

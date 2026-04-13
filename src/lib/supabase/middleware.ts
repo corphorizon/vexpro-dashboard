@@ -30,27 +30,25 @@ export async function updateSession(request: NextRequest) {
   );
 
   // IMPORTANT: Do not add logic between createServerClient and supabase.auth.getUser().
-  // A simple mistake could make it very hard to debug issues with users being randomly logged out.
   const {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // For now, we don't enforce auth at the middleware level
-  // since the app uses client-side auth context.
-  // When we migrate to Supabase Auth, uncomment this:
-  //
-  // if (
-  //   !user &&
-  //   !request.nextUrl.pathname.startsWith('/login') &&
-  //   !request.nextUrl.pathname.startsWith('/auth')
-  // ) {
-  //   const url = request.nextUrl.clone();
-  //   url.pathname = '/login';
-  //   return NextResponse.redirect(url);
-  // }
+  // Protect all dashboard routes — redirect to login if no session
+  const { pathname } = request.nextUrl;
+  const isPublicRoute =
+    pathname.startsWith('/login') ||
+    pathname.startsWith('/auth') ||
+    pathname.startsWith('/api') ||
+    pathname.startsWith('/_next') ||
+    pathname === '/favicon.ico' ||
+    pathname === '/icon.png';
 
-  // Suppress unused variable warning (user will be used when auth migration is complete)
-  void user;
+  if (!user && !isPublicRoute) {
+    const url = request.nextUrl.clone();
+    url.pathname = '/login';
+    return NextResponse.redirect(url);
+  }
 
   return supabaseResponse;
 }

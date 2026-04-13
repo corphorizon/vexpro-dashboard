@@ -38,6 +38,20 @@ export async function fetchCompany(slug: string = 'vexprofx'): Promise<Company |
   return data;
 }
 
+export async function fetchCompanyById(companyId: string): Promise<Company | null> {
+  const { data, error } = await supabase
+    .from('companies')
+    .select('*')
+    .eq('id', companyId)
+    .single();
+
+  if (error) {
+    console.error('Error fetching company by id:', error.message);
+    return null;
+  }
+  return data;
+}
+
 // ─── Periods ───
 
 export async function fetchPeriods(companyId: string): Promise<Period[]> {

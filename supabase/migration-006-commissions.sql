@@ -1,4 +1,4 @@
--- Migration 002: Add commission calculator columns to commercial_monthly_results
+-- Migration 006: Add commission calculator columns to commercial_monthly_results
 -- These columns support the Net Deposit Commission Calculator module
 
 ALTER TABLE commercial_monthly_results

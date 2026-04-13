@@ -26,12 +26,13 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
-    // 1. Look up the auth user_id + email from company_users (use maybeSingle so
-    //    a missing row doesn't throw)
+    // 1. Look up the auth user_id + email from company_users — scoped to
+    //    the caller's company to prevent cross-tenant deletion.
     const { data: profile, error: lookupError } = await adminClient
       .from('company_users')
       .select('user_id, email')
       .eq('id', companyUserId)
+      .eq('company_id', auth.companyId)
       .maybeSingle();
 
     if (lookupError) {
@@ -49,11 +50,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: true, alreadyDeleted: true });
     }
 
-    // 2. Delete from company_users
+    // 2. Delete from company_users (scoped to caller's company)
     const { error: deleteProfileError } = await adminClient
       .from('company_users')
       .delete()
-      .eq('id', companyUserId);
+      .eq('id', companyUserId)
+      .eq('company_id', auth.companyId);
 
     if (deleteProfileError) {
       console.error('[AdminAPI] Error deleting company_users record:', deleteProfileError.message);

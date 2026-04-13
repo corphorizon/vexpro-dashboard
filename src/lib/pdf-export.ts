@@ -1,5 +1,6 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import { formatNumber } from '@/lib/utils';
 
 /** jspdf-autotable adds `lastAutoTable` to the doc but doesn't ship types for it. */
 interface AutoTableDoc extends jsPDF {
@@ -12,6 +13,9 @@ function getLastTableY(doc: jsPDF, fallback: number, gap = 8): number {
     ? (doc as AutoTableDoc).lastAutoTable!.finalY! + gap
     : fallback;
 }
+
+/** Format number for PDF — uses shared formatNumber from utils */
+const fmt = formatNumber;
 
 interface PdfCommissionData {
   companyName: string;
@@ -47,10 +51,6 @@ interface PdfCommissionData {
     accOut: number;
     salary: number;
   }[];
-}
-
-function fmt(n: number): string {
-  return n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 export function generateCommissionPDF(data: PdfCommissionData) {

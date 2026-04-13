@@ -86,7 +86,6 @@ export default function UsuariosPage() {
             company_id: user?.company_id || '',
             allowed_modules: form.allowed_modules,
             twofa_enabled: false,
-            twofa_secret: null,
           },
           form.password
         );

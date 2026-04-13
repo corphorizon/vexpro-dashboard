@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { createClient } from '@/lib/supabase/server';
 import { sendLoginNotificationEmail } from '@/services/emailService';
 
 // ---------------------------------------------------------------------------
@@ -54,16 +55,32 @@ function getDeviceLabel(ua: string): string {
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/login-notification
+//
+// Requires an active Supabase session. Only sends notification for the
+// authenticated user — ignores userName/userEmail from the body to prevent
+// spoofing.
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
-    const { userName, userEmail } = body as { userName?: string; userEmail?: string };
+    // Verify the caller has an active session
+    const supabase = await createClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
 
-    if (!userName || !userEmail) {
+    if (authError || !user) {
       return NextResponse.json(
-        { success: false, error: '"userName" and "userEmail" are required' },
+        { success: false, error: 'No autenticado' },
+        { status: 401 },
+      );
+    }
+
+    // Use the authenticated user's data — never trust body for identity
+    const userName = user.user_metadata?.name || user.email?.split('@')[0] || 'Usuario';
+    const userEmail = user.email;
+
+    if (!userEmail) {
+      return NextResponse.json(
+        { success: false, error: 'Usuario sin email' },
         { status: 400 },
       );
     }
@@ -94,7 +111,7 @@ export async function POST(request: NextRequest) {
       process.env.NEXT_PUBLIC_DASHBOARD_URL ||
       request.nextUrl.origin;
 
-    // Send email (awaited but the caller uses fire-and-forget)
+    // Send email
     const result = await sendLoginNotificationEmail(userEmail, userName, {
       loginDate,
       loginTime,
@@ -104,7 +121,7 @@ export async function POST(request: NextRequest) {
     });
 
     if (!result.success) {
-      console.error('[LoginNotification] Failed to send:', result.error);
+      console.error('[LoginNotification] Failed to send');
     }
 
     return NextResponse.json(result, { status: result.success ? 200 : 500 });

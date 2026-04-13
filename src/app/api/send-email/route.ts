@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyAdminAuth } from '@/lib/api-auth';
 import type {
   SendEmailRequest,
   EmailType,
@@ -96,6 +97,9 @@ function validateBody(body: unknown): { valid: true; data: SendEmailRequest } | 
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await verifyAdminAuth();
+    if (auth instanceof NextResponse) return auth;
+
     const body = await request.json();
     const validation = validateBody(body);
 

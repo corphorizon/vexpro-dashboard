@@ -7,9 +7,11 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 // DELETE — delete profile   { action: 'delete', id }
 
 // Fields a client is allowed to set on commercial_profiles.
+// Must match actual DB columns — no 'phone' (doesn't exist in table).
 const ALLOWED_FIELDS = [
-  'name', 'role', 'head_id', 'net_deposit_pct', 'extra_pct',
-  'status', 'email', 'phone',
+  'name', 'role', 'head_id', 'net_deposit_pct', 'extra_pct', 'pnl_pct',
+  'commission_per_lot', 'salary', 'fixed_salary', 'benefits', 'comments',
+  'status', 'email', 'hire_date', 'birthday', 'contract_url',
 ] as const;
 
 function pickAllowed(obj: Record<string, unknown>) {
@@ -58,7 +60,8 @@ export async function POST(request: NextRequest) {
     if (action === 'delete') {
       if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
       await admin.from('commercial_monthly_results').delete()
-        .eq('profile_id', id);
+        .eq('profile_id', id)
+        .eq('company_id', company_id);
       const { error } = await admin.from('commercial_profiles').delete()
         .eq('id', id)
         .eq('company_id', company_id); // scope to caller's company

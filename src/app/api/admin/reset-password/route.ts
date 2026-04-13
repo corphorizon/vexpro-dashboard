@@ -7,6 +7,7 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 //
 // Resets a user's password by email. Uses service_role key so the admin
 // can reset any user's password without knowing the current one.
+// Scoped to the caller's company — cannot reset passwords cross-tenant.
 // ---------------------------------------------------------------------------
 
 export async function POST(request: NextRequest) {
@@ -29,30 +30,33 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
-    // Find the auth user by email
-    const { data: users, error: listError } = await adminClient.auth.admin.listUsers();
+    // Verify the email belongs to a user in the caller's company
+    const { data: companyUser } = await adminClient
+      .from('company_users')
+      .select('user_id')
+      .eq('email', email)
+      .eq('company_id', auth.companyId)
+      .maybeSingle();
 
-    if (listError) {
-      console.error('[AdminAPI] Error listing users:', listError.message);
+    if (!companyUser) {
       return NextResponse.json(
-        { success: false, error: listError.message },
-        { status: 500 },
+        { success: false, error: 'Usuario no encontrado en tu empresa' },
+        { status: 403 },
       );
     }
 
-    const authUser = users.users.find(u => u.email === email);
-
-    if (!authUser) {
+    if (!companyUser.user_id) {
       return NextResponse.json(
-        { success: false, error: `No auth user found with email: ${email}` },
+        { success: false, error: 'Usuario no tiene cuenta de autenticación asociada' },
         { status: 404 },
       );
     }
 
-    // Update the password
-    const { error: updateError } = await adminClient.auth.admin.updateUserById(authUser.id, {
-      password: newPassword,
-    });
+    // Update the password using the verified user_id
+    const { error: updateError } = await adminClient.auth.admin.updateUserById(
+      companyUser.user_id,
+      { password: newPassword },
+    );
 
     if (updateError) {
       console.error('[AdminAPI] Error resetting password:', updateError.message);
@@ -62,7 +66,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[AdminAPI] Password reset for: ${email}`);
+    console.log(`[AdminAPI] Password reset for user_id: ${companyUser.user_id}`);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

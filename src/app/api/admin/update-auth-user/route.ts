@@ -37,6 +37,21 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
+    // Verify the target auth user belongs to the caller's company
+    const { data: companyUser } = await adminClient
+      .from('company_users')
+      .select('id')
+      .eq('user_id', authUserId)
+      .eq('company_id', auth.companyId)
+      .maybeSingle();
+
+    if (!companyUser) {
+      return NextResponse.json(
+        { success: false, error: 'Usuario no pertenece a tu empresa' },
+        { status: 403 },
+      );
+    }
+
     // Build update payload. For email updates we set email_confirm: true so the
     // change applies immediately without triggering Supabase's confirmation flow.
     const updates: Record<string, unknown> = {};

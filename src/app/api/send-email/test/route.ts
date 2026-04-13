@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { verifyAdminAuth } from '@/lib/api-auth';
 import { sendNotificationEmail } from '@/services/emailService';
 
 // ---------------------------------------------------------------------------
@@ -9,6 +10,9 @@ import { sendNotificationEmail } from '@/services/emailService';
 // ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
+  const auth = await verifyAdminAuth();
+  if (auth instanceof NextResponse) return auth;
+
   if (process.env.NODE_ENV === 'production') {
     return NextResponse.json(
       { success: false, error: 'Test endpoint is disabled in production' },

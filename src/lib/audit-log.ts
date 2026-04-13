@@ -44,6 +44,20 @@ function saveEntries(entries: AuditEntry[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
 }
 
+/**
+ * Persist audit entry to the server-side audit_logs table.
+ * Fire-and-forget — never blocks the UI.
+ */
+function persistToServer(entry: AuditEntry): void {
+  fetch('/api/admin/audit-log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(entry),
+  }).catch(() => {
+    // Silent fail — localStorage is the fallback
+  });
+}
+
 export function logAction(
   userId: string,
   userName: string,
@@ -61,13 +75,17 @@ export function logAction(
     module,
     details,
   };
+
+  // Write to localStorage for immediate UI access
   const entries = getEntries();
   entries.unshift(entry);
-  // FIFO: keep only last MAX_ENTRIES
   if (entries.length > MAX_ENTRIES) {
     entries.length = MAX_ENTRIES;
   }
   saveEntries(entries);
+
+  // Also persist to database (fire-and-forget)
+  persistToServer(entry);
 }
 
 export interface AuditFilters {
@@ -95,7 +113,6 @@ export function getAuditLog(filters?: AuditFilters): AuditEntry[] {
     entries = entries.filter((e) => e.timestamp >= filters.dateFrom!);
   }
   if (filters.dateTo) {
-    // Include the full day by comparing up to end of day
     const endOfDay = filters.dateTo + 'T23:59:59.999Z';
     entries = entries.filter((e) => e.timestamp <= endOfDay);
   }

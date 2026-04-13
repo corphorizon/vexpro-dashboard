@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { verifyAdminAuth } from '@/lib/api-auth';
 import {
   fetchAggregatedMovements,
   fetchProviderBySlug,
@@ -29,6 +30,9 @@ const VALID_SLUGS: ProviderSlug[] = [
 
 export async function GET(request: Request) {
   try {
+    const auth = await verifyAdminAuth();
+    if (auth instanceof NextResponse) return auth;
+
     const url = new URL(request.url);
     const from = url.searchParams.get('from') ?? undefined;
     const to = url.searchParams.get('to') ?? undefined;

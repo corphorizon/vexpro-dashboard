@@ -59,19 +59,27 @@ export default function LoginPage() {
     }
   };
 
-  const handle2faSubmit = (e: React.FormEvent) => {
+  const handle2faSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     if (!pendingUserId) return;
+    setLoading(true);
 
-    const success = loginWith2fa(pendingUserId, pin);
-    if (success) {
-      const loggedUser = users.find(u => u.id === pendingUserId);
-      if (loggedUser) notifyLogin(loggedUser.name, loggedUser.email);
-      router.push('/');
-    } else {
+    try {
+      const result = await loginWith2fa(email, password, pin);
+      if (result.success) {
+        const loggedUser = users.find(u => u.id === pendingUserId);
+        notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
+        router.push('/');
+      } else {
+        setError(result.error || t('login.pinError'));
+        setPin('');
+      }
+    } catch {
       setError(t('login.pinError'));
       setPin('');
+    } finally {
+      setLoading(false);
     }
   };
 

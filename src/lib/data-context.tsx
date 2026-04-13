@@ -10,6 +10,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
+import { useAuth } from '@/lib/auth-context';
 import type {
   Company,
   Period,
@@ -34,6 +35,7 @@ import type {
 } from './types';
 import {
   fetchCompany,
+  fetchCompanyById,
   fetchPeriods,
   fetchDeposits,
   fetchWithdrawals,
@@ -121,6 +123,7 @@ const DataContext = createContext<DataContextValue | null>(null);
 // ─── Provider ───
 
 export function DataProvider({ children }: { children: ReactNode }) {
+  const { user: authUser } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -185,8 +188,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     });
 
     const fetchAll = async () => {
-      // Step 1: fetch company
-      const comp = await fetchCompany('vexprofx');
+      // Step 1: fetch company from authenticated user's company_id
+      const comp = authUser?.company_id
+        ? await fetchCompanyById(authUser.company_id)
+        : await fetchCompany('vexprofx'); // fallback for legacy/demo
       if (!comp) throw new Error('No se encontró la empresa');
       if (isStale()) return;
       setCompany(comp);
@@ -280,7 +285,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setLoading(false);
       }
     }
-  }, []);
+  }, [authUser?.company_id]);
 
   useEffect(() => {
     loadAllData();

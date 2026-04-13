@@ -2,6 +2,19 @@ import sgMail from '@sendgrid/mail';
 import type { SendEmailResponse, LoginNotificationData } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
+// HTML escaping to prevent XSS in email templates
+// ---------------------------------------------------------------------------
+
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ---------------------------------------------------------------------------
 // SendGrid initialization
 // ---------------------------------------------------------------------------
 
@@ -81,7 +94,7 @@ export async function sendWelcomeEmail(
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #1a1a2e;">Welcome to Smart Dashboard</h2>
-      <p>Hi <strong>${userName}</strong>,</p>
+      <p>Hi <strong>${escapeHtml(userName)}</strong>,</p>
       <p>Your account has been created successfully. You can now access the Smart Dashboard to view financial reports, manage operations, and collaborate with your team.</p>
       <p>If you have any questions, please contact your administrator.</p>
       <br/>
@@ -103,7 +116,7 @@ export async function sendPasswordResetEmail(
       <h2 style="color: #1a1a2e;">Password Reset Request</h2>
       <p>We received a request to reset your password. Click the button below to set a new password:</p>
       <p style="text-align: center; margin: 30px 0;">
-        <a href="${resetLink}" style="background-color: #1a1a2e; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
+        <a href="${escapeHtml(resetLink)}" style="background-color: #1a1a2e; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
           Reset Password
         </a>
       </p>
@@ -127,10 +140,10 @@ export async function sendDashboardReportEmail(
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #1a1a2e;">Financial Report</h2>
-      <p><strong>Report:</strong> ${reportName}</p>
-      <p><strong>Period:</strong> ${reportPeriod}</p>
+      <p><strong>Report:</strong> ${escapeHtml(reportName)}</p>
+      <p><strong>Period:</strong> ${escapeHtml(reportPeriod)}</p>
       <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-      <div>${reportSummary}</div>
+      <div>${escapeHtml(reportSummary)}</div>
       <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
       <p style="color: #666; font-size: 13px;">Log in to Smart Dashboard for the full report and interactive charts.</p>
       <br/>
@@ -150,8 +163,8 @@ export async function sendNotificationEmail(
   const subject = `Smart Dashboard Alert: ${title}`;
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1a1a2e;">${title}</h2>
-      <p>${message}</p>
+      <h2 style="color: #1a1a2e;">${escapeHtml(title)}</h2>
+      <p>${escapeHtml(message)}</p>
       <br/>
       <p style="color: #666; font-size: 12px;">— Horizon Consulting</p>
     </div>
@@ -179,7 +192,7 @@ export async function sendLoginNotificationEmail(
 
       <!-- Body -->
       <div style="background-color: #ffffff; padding: 32px 24px; border-radius: 0 0 8px 8px;">
-        <p style="font-size: 16px; color: #1a1a2e;">Hi <strong>${userName}</strong>,</p>
+        <p style="font-size: 16px; color: #1a1a2e;">Hi <strong>${escapeHtml(userName)}</strong>,</p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6;">
           We detected a new sign-in to your Smart Dashboard account. Here are the details:
         </p>
