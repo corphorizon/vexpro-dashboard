@@ -1,6 +1,18 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
+/** jspdf-autotable adds `lastAutoTable` to the doc but doesn't ship types for it. */
+interface AutoTableDoc extends jsPDF {
+  lastAutoTable?: { finalY?: number };
+}
+
+/** Get the Y position after the last autoTable, with a fallback. */
+function getLastTableY(doc: jsPDF, fallback: number, gap = 8): number {
+  return (doc as AutoTableDoc).lastAutoTable?.finalY
+    ? (doc as AutoTableDoc).lastAutoTable!.finalY! + gap
+    : fallback;
+}
+
 interface PdfCommissionData {
   companyName: string;
   headName: string;
@@ -127,8 +139,7 @@ export function generateCommissionPDF(data: PdfCommissionData) {
   }
 
   // ─── BDM Table ───
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  y = (doc as any).lastAutoTable?.finalY + 8 || y + 20;
+  y = getLastTableY(doc, y + 20);
   doc.setFontSize(11);
   doc.setTextColor(30, 41, 59);
   doc.setFont('helvetica', 'bold');
@@ -159,8 +170,7 @@ export function generateCommissionPDF(data: PdfCommissionData) {
   });
 
   // ─── Totals Summary ───
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  y = (doc as any).lastAutoTable?.finalY + 8 || y + 20;
+  y = getLastTableY(doc, y + 20);
   doc.setFontSize(11);
   doc.setFont('helvetica', 'bold');
   doc.setTextColor(30, 41, 59);
@@ -315,8 +325,7 @@ export function generateIndividualPDF(data: PdfIndividualData) {
   });
 
   // ─── Total box ───
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  y = (doc as any).lastAutoTable?.finalY + 10 || y + 60;
+  y = getLastTableY(doc, y + 60, 10);
   doc.setFontSize(12);
   doc.setFont('helvetica', 'bold');
   doc.text('Resumen de Pago', 14, y);
