@@ -18,6 +18,8 @@ import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { Deposit, Withdrawal } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { Download } from 'lucide-react';
 
@@ -38,6 +40,8 @@ const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'>
 
 export default function MovimientosPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { getPeriodSummary, getConsolidatedSummary, periods } = useData();
 
@@ -82,7 +86,7 @@ export default function MovimientosPage() {
 
   const apiTotals = useApiTotals(apiFrom, apiTo);
 
-  const handleExport = () => {
+  const handleExport = () => verify2FA(() => {
     if (!summary) return;
     const headers = [t('movements.type'), t('movements.category'), t('movements.amount')];
     const rows: (string | number)[][] = [
@@ -104,7 +108,7 @@ export default function MovimientosPage() {
       headers,
       rows
     );
-  };
+  });
 
   // Ensure all channels/categories always appear, even with $0
   const fullDeposits: Deposit[] = useMemo(() => {
@@ -191,6 +195,7 @@ export default function MovimientosPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import speakeasy from 'speakeasy';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/verify-pin
@@ -48,9 +49,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (companyUser.twofa_secret !== pin) {
+    const isValid = speakeasy.totp.verify({
+      secret: companyUser.twofa_secret,
+      encoding: 'base32',
+      token: pin,
+      window: 1,
+    });
+    if (!isValid) {
       return NextResponse.json(
-        { success: false, error: 'PIN incorrecto' },
+        { success: false, error: 'Código incorrecto' },
         { status: 401 },
       );
     }

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import speakeasy from 'speakeasy';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/verify-2fa
@@ -97,8 +98,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Verify PIN server-side
-    if (companyUser.twofa_secret !== pin) {
+    // Verify TOTP code server-side using speakeasy
+    const isValid = speakeasy.totp.verify({
+      secret: companyUser.twofa_secret,
+      encoding: 'base32',
+      token: pin,
+      window: 1, // Accept 1 step before/after (30s tolerance)
+    });
+    if (!isValid) {
       recordFailedAttempt(companyUser.id);
       const entry = attempts.get(companyUser.id);
       const remaining = MAX_ATTEMPTS - (entry?.count || 0);

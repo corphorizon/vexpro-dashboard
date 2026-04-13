@@ -9,6 +9,7 @@ import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { generateCommissionPDF, generateIndividualPDF } from '@/lib/pdf-export';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import {
   calculateCommission,
   calculateGroupSummary,
@@ -51,6 +52,7 @@ type Tab = 'teams' | 'individual' | 'history';
 export default function ComisionesPage() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const {
     company,
     periods,
@@ -406,7 +408,7 @@ export default function ComisionesPage() {
     }
   };
 
-  const handleExport = () => {
+  const doExport = () => {
     if (!selectedPeriod) return;
     if (tab === 'teams') {
       const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.base'), t('comm.commission'), t('comm.realPayment')];
@@ -428,8 +430,9 @@ export default function ComisionesPage() {
       downloadCSV(`comisiones_individual_${selectedPeriod.year}-${selectedPeriod.month}.csv`, headers, rows);
     }
   };
+  const handleExport = () => verify2FA(doExport);
 
-  const handleExportPDF = () => {
+  const doExportPDF = () => {
     if (!selectedPeriod || !headProfile) return;
     const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
 
@@ -475,6 +478,7 @@ export default function ComisionesPage() {
       }),
     });
   };
+  const handleExportPDF = () => verify2FA(doExportPDF);
 
   const [showExportMenu, setShowExportMenu] = useState(false);
 
@@ -488,6 +492,7 @@ export default function ComisionesPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
@@ -758,7 +763,7 @@ export default function ComisionesPage() {
                           <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
                           <td className="px-2 py-3 text-center">
                             <button
-                              onClick={() => {
+                              onClick={() => verify2FA(() => {
                                 if (!selectedPeriod) return;
                                 const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
                                 generateIndividualPDF({
@@ -779,7 +784,7 @@ export default function ComisionesPage() {
                                   salary: calc.salary,
                                   total: calc.realPayment + calc.salary,
                                 });
-                              }}
+                              })}
                               className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
                               title="Descargar PDF"
                             >

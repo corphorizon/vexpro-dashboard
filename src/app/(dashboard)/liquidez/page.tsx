@@ -6,6 +6,8 @@ import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import type { LiquidityMovement } from '@/lib/types';
 import { Droplets, Download } from 'lucide-react';
@@ -14,6 +16,8 @@ const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Se
 
 export default function LiquidezPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { getLiquidityData } = useData();
   const [filter, setFilter] = useState('total');
   const [liquidityData, setLiquidityData] = useState<LiquidityMovement[]>([]);
@@ -57,17 +61,18 @@ export default function LiquidezPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold">{t('liquidity.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('liquidity.subtitle')}</p>
         </div>
         <button
-          onClick={() => {
+          onClick={() => verify2FA(() => {
             const headers = ['Fecha', 'Usuario', 'Cuenta MT', 'Deposito', 'Retiro', 'Balance'];
             const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, m.balance] as (string | number)[]);
             downloadCSV('liquidez.csv', headers, rows);
-          }}
+          })}
           className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
           title={t('common.csv')}
         >

@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useAuth, canEdit, canDelete } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import type { Expense } from '@/lib/types';
@@ -25,6 +26,7 @@ export default function EgresosPage() {
   const { t } = useI18n();
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, allExpenses } = useData();
   const userCanEdit = canEdit(user);
   const userCanDelete = canDelete(user);
@@ -166,6 +168,7 @@ export default function EgresosPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
@@ -184,12 +187,12 @@ export default function EgresosPage() {
             Preoperativo
           </button>
           <button
-            onClick={() => {
+            onClick={() => verify2FA(() => {
               const exps = showPreoperativo ? preoperativeExpenses : filteredExpenses;
               const headers = ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
               const rows = exps.map((e, i) => [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[]);
               downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
-            }}
+            })}
             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
             title={t('common.csv')}
           >
