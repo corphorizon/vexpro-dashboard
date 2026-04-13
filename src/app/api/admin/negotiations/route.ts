@@ -1,26 +1,25 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { verifyAdminAuth } from '@/lib/api-auth';
 
-// GET    — list negotiations  ?company_id=...&profile_id=... (optional)
-// POST   — create             { action: 'create', company_id, profile_id, title, description?, status? }
+// GET    — list negotiations  ?profile_id=... (optional)
+// POST   — create             { action: 'create', profile_id, title, description?, status? }
 // PATCH  — update             { action: 'update', id, ...fields }
 // DELETE — delete             { action: 'delete', id }
 
 export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const companyId = searchParams.get('company_id');
-    const profileId = searchParams.get('profile_id');
+    const auth = await verifyAdminAuth();
+    if (auth instanceof NextResponse) return auth;
 
-    if (!companyId) {
-      return NextResponse.json({ error: 'company_id required' }, { status: 400 });
-    }
+    const { searchParams } = new URL(request.url);
+    const profileId = searchParams.get('profile_id');
 
     const admin = createAdminClient();
     let query = admin
       .from('commercial_negotiations')
       .select('*')
-      .eq('company_id', companyId)
+      .eq('company_id', auth.companyId)
       .order('updated_at', { ascending: false });
 
     if (profileId) {
@@ -38,13 +37,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    const auth = await verifyAdminAuth();
+    if (auth instanceof NextResponse) return auth;
+
     const body = await request.json();
-    const { action, id, company_id, profile_id, ...fields } = body;
+    const { action, id, profile_id, ...fields } = body;
     const admin = createAdminClient();
 
+    // Always use verified company_id from auth
+    const company_id = auth.companyId;
+
     if (action === 'create') {
-      if (!company_id || !profile_id || !fields.title) {
-        return NextResponse.json({ error: 'company_id, profile_id, and title are required' }, { status: 400 });
+      if (!profile_id || !fields.title) {
+        return NextResponse.json({ error: 'profile_id and title are required' }, { status: 400 });
       }
       const { data, error } = await admin
         .from('commercial_negotiations')
@@ -72,6 +77,7 @@ export async function POST(request: NextRequest) {
         .from('commercial_negotiations')
         .update(updateFields)
         .eq('id', id)
+        .eq('company_id', company_id) // scope to caller's company
         .select('*')
         .single();
       if (error) return NextResponse.json({ error: error.message }, { status: 400 });
@@ -83,7 +89,8 @@ export async function POST(request: NextRequest) {
       const { error } = await admin
         .from('commercial_negotiations')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('company_id', company_id); // scope to caller's company
       if (error) return NextResponse.json({ error: error.message }, { status: 400 });
       return NextResponse.json({ success: true });
     }
