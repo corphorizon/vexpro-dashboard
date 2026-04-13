@@ -6,6 +6,8 @@ import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import type { Investment } from '@/lib/types';
 import { TrendingUp, Download } from 'lucide-react';
@@ -14,6 +16,8 @@ const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Se
 
 export default function InversionesPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { getInvestmentsData } = useData();
   const [filter, setFilter] = useState('total');
   const [investmentsData, setInvestmentsData] = useState<Investment[]>([]);
@@ -58,17 +62,18 @@ export default function InversionesPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('investments.title')}</h1>
           <p className="text-muted-foreground text-sm mt-1">{t('investments.subtitle')}</p>
         </div>
         <button
-          onClick={() => {
+          onClick={() => verify2FA(() => {
             const headers = ['Fecha', 'Concepto', 'Responsable', 'Deposito', 'Retiro', 'Profit', 'Balance'];
             const rows = filtered.map(i => [i.date, i.concept || '', i.responsible || '', i.deposit, i.withdrawal, i.profit, i.balance] as (string | number)[]);
             downloadCSV('inversiones.csv', headers, rows);
-          }}
+          })}
           className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
           title={t('common.csv')}
         >

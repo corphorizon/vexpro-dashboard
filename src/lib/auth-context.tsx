@@ -38,6 +38,7 @@ interface AuthState {
   changePassword: (userId: string, currentPassword: string, newPassword: string) => Promise<boolean>;
   resetPassword: (userEmail: string, newPassword: string) => Promise<boolean>;
   updateUserDirect: (id: string, updates: Partial<User & { password?: string }>) => void;
+  refreshUser: () => Promise<void>;
 }
 
 const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'upload', 'periods', 'users', 'audit'];
@@ -138,6 +139,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     return () => subscription.unsubscribe();
+  }, []);
+
+  // Refresh user profile from DB (e.g., after enabling 2FA)
+  const refreshUser = useCallback(async () => {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      const profile = await fetchUserProfile(session.user);
+      if (profile) {
+        setUser(profile);
+        const allUsers = await fetchAllUsers(profile.company_id);
+        setUsers(allUsers);
+      }
+    }
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
@@ -474,7 +488,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, users, isLoading, login, loginWith2fa, logout, createUser, updateUser, deleteUser, changePassword, resetPassword, updateUserDirect }}>
+    <AuthContext.Provider value={{ user, users, isLoading, login, loginWith2fa, logout, createUser, updateUser, deleteUser, changePassword, resetPassword, updateUserDirect, refreshUser }}>
       {children}
     </AuthContext.Provider>
   );

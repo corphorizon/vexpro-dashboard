@@ -6,6 +6,7 @@ import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { useAuth, canEdit } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { formatCurrency, formatPercent } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
@@ -26,6 +27,7 @@ const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'
 export default function SociosPage() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const isAdmin = canEdit(user);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { periods, partners, partnerDistributions, getPeriodSummary, company, refresh } = useData();
@@ -304,6 +306,7 @@ export default function SociosPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold">{t('partners.title')}</h1>
@@ -311,7 +314,7 @@ export default function SociosPage() {
         </div>
         <div className="flex items-center gap-2 overflow-x-auto">
           <button
-            onClick={() => {
+            onClick={() => verify2FA(() => {
               const headers = ['Socio', 'Porcentaje', 'Monto'];
               const rows = effectiveDistributions.map(d => {
                 const partner = partners.find(p => p.id === d.partner_id);
@@ -319,7 +322,7 @@ export default function SociosPage() {
               });
               rows.push(['Total', '100%', totalDistributed]);
               downloadCSV('socios.csv', headers, rows);
-            }}
+            })}
             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
             title={t('common.csv')}
           >

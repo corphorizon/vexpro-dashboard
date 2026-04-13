@@ -8,6 +8,8 @@ import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { downloadExcel, downloadPDF } from '@/lib/export-utils';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import {
   ArrowDownCircle,
@@ -24,6 +26,8 @@ import {
 
 export default function ResumenPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { getPeriodSummary, getConsolidatedSummary } = useData();
 
@@ -49,26 +53,27 @@ export default function ResumenPage() {
     ['Balance Total', balanceDisponible],
   ];
 
-  const handleExport = () => {
+  const handleExport = () => verify2FA(() => {
     downloadCSV(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, exportHeaders, exportRows);
-  };
+  });
 
-  const handleExportExcel = () => {
+  const handleExportExcel = () => verify2FA(() => {
     downloadExcel(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}`, exportHeaders, exportRows);
-  };
+  });
 
-  const handleExportPDF = () => {
+  const handleExportPDF = () => verify2FA(() => {
     downloadPDF('Resumen General', exportHeaders, exportRows, {
       companyName: 'Vex Pro',
       subtitle: `Período: ${summary.period.label}`,
       date: new Date().toLocaleDateString(),
     });
-  };
+  });
 
   const fs = summary.financialStatus;
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>

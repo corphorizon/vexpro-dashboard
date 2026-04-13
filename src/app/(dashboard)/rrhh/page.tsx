@@ -11,6 +11,8 @@ import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
 import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile } from '@/lib/supabase/mutations';
 import { useI18n } from '@/lib/i18n';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search } from 'lucide-react';
 
 type Tab = 'employees' | 'commercial' | 'negotiations';
@@ -589,6 +591,8 @@ const NEG_STATUS_LABELS: Record<string, string> = {
 export default function RRHHPage() {
   const { t } = useI18n();
   const { company, employees: dataEmployees, commercialProfiles, monthlyResults: dataMonthlyResults, periods, refresh } = useData();
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const [tab, setTab] = useState<Tab>('commercial');
   const [employees, setEmployees] = useState<Employee[]>(dataEmployees);
   const profiles = commercialProfiles; // always use fresh data from context
@@ -688,13 +692,13 @@ export default function RRHHPage() {
     }
   };
 
-  const handleExportEmployees = () => {
+  const handleExportEmployees = () => verify2FA(() => {
     const headers = [t('common.name'), t('common.email'), t('hr.position'), t('hr.department'), t('hr.startDate'), t('hr.salary'), t('hr.status')];
     const rows = employees.map(e => [e.name, e.email, e.position, e.department, e.start_date, e.salary ?? 'N/A', t(STATUS_LABEL_KEYS[e.status])] as (string | number)[]);
     downloadCSV('empleados.csv', headers, rows);
-  };
+  });
 
-  const handleExportCommercial = () => {
+  const handleExportCommercial = () => verify2FA(() => {
     const headers = [t('common.name'), t('common.email'), t('hr.role'), 'Net Deposit %', 'PNL %', t('hr.commLotPlaceholder'), t('hr.salary'), t('hr.total')];
     const rows = profiles.map(p => [
       p.name, p.email, ROLE_LABELS_HR[p.role],
@@ -705,7 +709,7 @@ export default function RRHHPage() {
       getFilteredTotal(p.id),
     ] as (string | number)[]);
     downloadCSV('fuerza_comercial.csv', headers, rows);
-  };
+  });
 
   // ─── Negotiation CRUD handlers ───
   const [savingNeg, setSavingNeg] = useState(false);
@@ -931,6 +935,7 @@ export default function RRHHPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       {/* Toast notification */}
       {toast && (
         <div className={cn('flex items-center gap-2 px-4 py-3 rounded-lg text-sm', toast.type === 'success' ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800')}>

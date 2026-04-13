@@ -4,11 +4,11 @@ import { useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { useAuth, ROLE_LABELS } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
-import { UserCircle, Lock, ShieldCheck, Eye, EyeOff, Check, X } from 'lucide-react';
+import { UserCircle, Lock, ShieldCheck, Eye, EyeOff, Check, X, Copy, Loader2 } from 'lucide-react';
 
 export default function PerfilPage() {
   const { t } = useI18n();
-  const { user, updateUser, changePassword } = useAuth();
+  const { user, updateUser, changePassword, refreshUser } = useAuth();
 
   // Name editing
   const [editingName, setEditingName] = useState(false);
@@ -26,9 +26,14 @@ export default function PerfilPage() {
   const [passwordSuccess, setPasswordSuccess] = useState(false);
   const [passwordLoading, setPasswordLoading] = useState(false);
 
-  // 2FA
-  const [showPinSetup, setShowPinSetup] = useState(false);
-  const [newPin, setNewPin] = useState('');
+  // 2FA TOTP
+  const [showTotpSetup, setShowTotpSetup] = useState(false);
+  const [totpSecret, setTotpSecret] = useState('');
+  const [totpQrCode, setTotpQrCode] = useState('');
+  const [totpToken, setTotpToken] = useState('');
+  const [totpStep, setTotpStep] = useState<'scan' | 'verify'>('scan');
+  const [totpLoading, setTotpLoading] = useState(false);
+  const [totpCopied, setTotpCopied] = useState(false);
   const [pinError, setPinError] = useState('');
   const [pinSuccess, setPinSuccess] = useState(false);
 
@@ -36,9 +41,7 @@ export default function PerfilPage() {
   const [showDeactivateForm, setShowDeactivateForm] = useState(false);
   const [deactivatePin, setDeactivatePin] = useState('');
   const [deactivateError, setDeactivateError] = useState('');
-  const [showForgotPin, setShowForgotPin] = useState(false);
-  const [forgotPinEmailSent, setForgotPinEmailSent] = useState(false);
-  const [showSetupNewPin, setShowSetupNewPin] = useState(false);
+  const [deactivateLoading, setDeactivateLoading] = useState(false);
 
   if (!user) return null;
 
@@ -89,33 +92,81 @@ export default function PerfilPage() {
     }
   };
 
-  const handleEnable2FA = (e: React.FormEvent) => {
+  // Generate TOTP secret and QR code for setup
+  const handleStartTotpSetup = async () => {
+    setShowTotpSetup(true);
+    setTotpStep('scan');
+    setTotpToken('');
+    setPinError('');
+    setTotpLoading(true);
+
+    try {
+      const res = await fetch('/api/auth/setup-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'generate' }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setTotpSecret(data.secret);
+        setTotpQrCode(data.qrCode);
+      } else {
+        setPinError(data.error || 'Error generando QR');
+      }
+    } catch {
+      setPinError('Error de conexión');
+    } finally {
+      setTotpLoading(false);
+    }
+  };
+
+  const handleVerifyTotp = async (e: React.FormEvent) => {
     e.preventDefault();
     setPinError('');
-    setPinSuccess(false);
 
-    if (newPin.length !== 6) {
-      setPinError(t('profile.pinMustBe6'));
+    if (totpToken.length !== 6) {
+      setPinError('El código debe tener 6 dígitos');
       return;
     }
 
-    updateUser(user.id, {
-      twofa_enabled: true,
-      twofa_secret: newPin,
-    });
-    setPinSuccess(true);
-    setNewPin('');
-    setShowPinSetup(false);
-    setTimeout(() => setPinSuccess(false), 3000);
+    setTotpLoading(true);
+    try {
+      const res = await fetch('/api/auth/setup-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'verify', secret: totpSecret, token: totpToken }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        await refreshUser();
+        setPinSuccess(true);
+        setShowTotpSetup(false);
+        setTotpToken('');
+        setTimeout(() => setPinSuccess(false), 3000);
+      } else {
+        setPinError(data.error || 'Código incorrecto');
+        setTotpToken('');
+      }
+    } catch {
+      setPinError('Error de conexión');
+    } finally {
+      setTotpLoading(false);
+    }
+  };
+
+  const handleCopyTotpSecret = async () => {
+    try {
+      await navigator.clipboard.writeText(totpSecret);
+      setTotpCopied(true);
+      setTimeout(() => setTotpCopied(false), 2000);
+    } catch { /* ignore */ }
   };
 
   const handleDisable2FA = () => {
     setShowDeactivateForm(true);
     setDeactivatePin('');
     setDeactivateError('');
-    setShowForgotPin(false);
-    setForgotPinEmailSent(false);
-    setShowSetupNewPin(false);
   };
 
   const handleConfirmDeactivate = async (e: React.FormEvent) => {
@@ -123,59 +174,39 @@ export default function PerfilPage() {
     setDeactivateError('');
 
     if (deactivatePin.length !== 6) {
-      setDeactivateError(t('profile.pinMustBe6'));
+      setDeactivateError('El código debe tener 6 dígitos');
       return;
     }
 
-    // Verify PIN server-side before deactivating
+    setDeactivateLoading(true);
     try {
-      const res = await fetch('/api/auth/verify-pin', {
+      const res = await fetch('/api/auth/setup-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ pin: deactivatePin }),
+        body: JSON.stringify({ action: 'disable', token: deactivatePin }),
       });
       const data = await res.json();
       if (!data.success) {
-        setDeactivateError(data.error || t('profile.pinIncorrect'));
+        setDeactivateError(data.error || 'Código incorrecto');
+        setDeactivatePin('');
         return;
       }
+      await refreshUser();
+      setShowDeactivateForm(false);
+      setDeactivatePin('');
+      setPinSuccess(true);
+      setTimeout(() => setPinSuccess(false), 3000);
     } catch {
-      setDeactivateError(t('profile.pinIncorrect'));
-      return;
+      setDeactivateError('Error de conexión');
+    } finally {
+      setDeactivateLoading(false);
     }
-
-    updateUser(user.id, {
-      twofa_enabled: false,
-      twofa_secret: null,
-    });
-    setShowDeactivateForm(false);
-    setDeactivatePin('');
   };
 
   const handleCancelDeactivate = () => {
     setShowDeactivateForm(false);
     setDeactivatePin('');
     setDeactivateError('');
-    setShowForgotPin(false);
-    setForgotPinEmailSent(false);
-    setShowSetupNewPin(false);
-  };
-
-  const handleForgotPinSendEmail = () => {
-    if (forgotPinEmailSent) return; // Prevent multiple clicks
-    setForgotPinEmailSent(true);
-    setTimeout(() => {
-      updateUser(user.id, {
-        twofa_enabled: false,
-        twofa_secret: null,
-      });
-      setShowDeactivateForm(false);
-      setShowForgotPin(false);
-      setForgotPinEmailSent(false);
-      setShowSetupNewPin(true);
-      setPinSuccess(true);
-      setTimeout(() => setPinSuccess(false), 3000);
-    }, 3000);
   };
 
   return (
@@ -413,29 +444,21 @@ export default function PerfilPage() {
         {user.twofa_enabled ? (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              {t('profile.twofaProtectedMsg')}
+              Tu cuenta está protegida con autenticación de dos factores mediante tu app de autenticación.
             </p>
 
-            <div className="flex gap-2">
-              <button
-                onClick={() => { setShowPinSetup(true); setNewPin(''); setPinError(''); }}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('profile.changePin')}
-              </button>
-              <button
-                onClick={handleDisable2FA}
-                className="px-4 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm font-medium hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
-              >
-                {t('profile.deactivate2fa')}
-              </button>
-            </div>
+            <button
+              onClick={handleDisable2FA}
+              className="px-4 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm font-medium hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
+            >
+              Desactivar 2FA
+            </button>
 
-            {/* Deactivation PIN confirmation form */}
+            {/* Deactivation form */}
             {showDeactivateForm && (
               <form onSubmit={handleConfirmDeactivate} className="mt-2 p-4 rounded-lg border border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/20 space-y-4">
                 <p className="text-sm font-medium text-red-700 dark:text-red-400">
-                  {t('profile.deactivateConfirm')}
+                  Ingresa el código de tu app de autenticación para confirmar:
                 </p>
                 <div>
                   <input
@@ -452,7 +475,7 @@ export default function PerfilPage() {
                 </div>
 
                 {deactivateError && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert" aria-live="assertive">
+                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert">
                     {deactivateError}
                   </div>
                 )}
@@ -460,10 +483,11 @@ export default function PerfilPage() {
                 <div className="flex gap-2">
                   <button
                     type="submit"
-                    disabled={deactivatePin.length !== 6}
-                    className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-50"
+                    disabled={deactivatePin.length !== 6 || deactivateLoading}
+                    className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
                   >
-                    {t('profile.confirmDeactivation')}
+                    {deactivateLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                    Confirmar desactivación
                   </button>
                   <button
                     type="button"
@@ -473,127 +497,121 @@ export default function PerfilPage() {
                     {t('common.cancel')}
                   </button>
                 </div>
-
-                {/* Forgot PIN link */}
-                {!showForgotPin && !forgotPinEmailSent && (
-                  <button
-                    type="button"
-                    onClick={() => setShowForgotPin(true)}
-                    className="text-xs text-[var(--color-primary)] hover:underline"
-                  >
-                    {t('profile.forgotPin')}
-                  </button>
-                )}
-
-                {/* Forgot PIN recovery flow */}
-                {showForgotPin && !forgotPinEmailSent && (
-                  <div className="p-3 rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50/50 dark:bg-amber-950/20 space-y-3">
-                    <p className="text-sm text-muted-foreground">
-                      {t('profile.forgotPinMsg')}<span className="font-medium text-foreground">{user.email}</span>
-                    </p>
-                    <button
-                      type="button"
-                      onClick={handleForgotPinSendEmail}
-                      disabled={forgotPinEmailSent}
-                      className="px-4 py-2 rounded-lg bg-amber-500 text-white text-sm font-medium hover:bg-amber-600 transition-colors disabled:opacity-50"
-                    >
-                      {t('profile.sendLink')}
-                    </button>
-                  </div>
-                )}
-
-                {/* Email sent confirmation */}
-                {forgotPinEmailSent && (
-                  <div className="p-3 rounded-lg border border-emerald-200 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 space-y-2">
-                    <p className="text-sm text-emerald-700 dark:text-emerald-400">
-                      {t('profile.emailSent', { email: user.email })}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {t('profile.deactivatingAuto')}
-                    </p>
-                  </div>
-                )}
               </form>
             )}
           </div>
         ) : (
           <div className="space-y-4">
             <p className="text-sm text-muted-foreground">
-              {t('profile.activate2faMsg')}
+              Protege tu cuenta activando la autenticación de dos factores con Google Authenticator, Authy u otra app compatible.
             </p>
 
-            {/* Option to set up new PIN after recovery */}
-            {showSetupNewPin && !showPinSetup && (
-              <div className="p-3 rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20 space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  {t('profile.recoveryMsg')}
-                </p>
-                <button
-                  onClick={() => { setShowPinSetup(true); setNewPin(''); setPinError(''); setShowSetupNewPin(false); }}
-                  className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-                >
-                  {t('profile.setupNewPin')}
-                </button>
-              </div>
-            )}
-
-            {!showPinSetup && !showSetupNewPin ? (
+            {!showTotpSetup && (
               <button
-                onClick={() => { setShowPinSetup(true); setNewPin(''); setPinError(''); }}
+                onClick={handleStartTotpSetup}
                 className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
               >
-                {t('profile.activate2fa')}
+                Activar 2FA
               </button>
-            ) : null}
+            )}
           </div>
         )}
 
-        {/* PIN Setup Form */}
-        {showPinSetup && (
-          <form onSubmit={handleEnable2FA} className="mt-4 p-4 rounded-lg border border-border bg-muted/30 space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">
-                {user.twofa_enabled ? t('profile.newPinLabel') : t('profile.setPinLabel')}
-              </label>
-              <input
-                type="text"
-                inputMode="numeric"
-                maxLength={6}
-                value={newPin}
-                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                placeholder="000000"
-                required
-                autoFocus
-                className="w-full max-w-xs px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                {t('profile.pinLoginMsg')}
-              </p>
-            </div>
-
-            {pinError && (
-              <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert" aria-live="assertive">
-                {pinError}
+        {/* TOTP Setup Flow */}
+        {showTotpSetup && (
+          <div className="mt-4 p-4 rounded-lg border border-border bg-muted/30 space-y-4">
+            {totpLoading && !totpQrCode ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
               </div>
-            )}
+            ) : totpStep === 'scan' ? (
+              <>
+                <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-400 text-sm">
+                  <strong>Paso 1:</strong> Escanea este código QR con tu app de autenticación.
+                </div>
 
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={newPin.length !== 6}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {user.twofa_enabled ? t('profile.updatePin') : t('profile.activate2fa')}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowPinSetup(false); setPinError(''); setNewPin(''); }}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-            </div>
-          </form>
+                {totpQrCode && (
+                  <div className="flex justify-center">
+                    <div className="p-3 bg-white rounded-xl border border-border shadow-sm">
+                      <img src={totpQrCode} alt="QR Code" width={180} height={180} className="block" />
+                    </div>
+                  </div>
+                )}
+
+                <div className="space-y-1.5">
+                  <p className="text-xs text-muted-foreground text-center">Código manual:</p>
+                  <div className="flex items-center gap-2 justify-center">
+                    <code className="px-2.5 py-1.5 rounded-lg bg-muted border border-border text-xs font-mono tracking-wider select-all">
+                      {totpSecret}
+                    </code>
+                    <button onClick={handleCopyTotpSecret} className="p-1.5 rounded border border-border hover:bg-muted transition-colors" title="Copiar">
+                      {totpCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => { setTotpStep('verify'); setTotpToken(''); setPinError(''); }}
+                    className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+                  >
+                    Ya lo escaneé
+                  </button>
+                  <button
+                    onClick={() => { setShowTotpSetup(false); setPinError(''); }}
+                    className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+                  >
+                    {t('common.cancel')}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <form onSubmit={handleVerifyTotp} className="space-y-4">
+                <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-400 text-sm">
+                  <strong>Paso 2:</strong> Ingresa el código de 6 dígitos de tu app.
+                </div>
+
+                <div>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={6}
+                    value={totpToken}
+                    onChange={(e) => setTotpToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="000000"
+                    required
+                    autoFocus
+                    className="w-full max-w-xs px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">El código cambia cada 30 segundos</p>
+                </div>
+
+                {pinError && (
+                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert">
+                    {pinError}
+                  </div>
+                )}
+
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={totpToken.length !== 6 || totpLoading}
+                    className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-2"
+                  >
+                    {totpLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+                    Verificar y activar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setTotpStep('scan'); setPinError(''); }}
+                    className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+                  >
+                    Volver al QR
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         )}
       </Card>
     </div>

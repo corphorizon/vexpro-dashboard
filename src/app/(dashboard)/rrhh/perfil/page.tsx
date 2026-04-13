@@ -8,6 +8,8 @@ import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { updateCommercialProfile } from '@/lib/supabase/mutations';
 import type { CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus } from '@/lib/types';
@@ -22,6 +24,8 @@ function formatDateDMY(dateStr: string | null): string | null {
 
 export default function PerfilPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { getProfileById, getMonthlyResults, getProfilesByHead, getTotalCommissions, commercialProfiles, periods, refresh } = useData();
   const searchParams = useSearchParams();
   const profileId = searchParams.get('id');
@@ -196,7 +200,7 @@ export default function PerfilPage() {
     return p?.label || periodId;
   };
 
-  const handleExport = () => {
+  const handleExport = () => verify2FA(() => {
     const headers = [t('hr.period'), t('hr.netDepCurrent'), t('hr.accumulated'), t('hr.total'), t('hr.pnlCurrent'), t('hr.pnlAccumulated'), t('hr.pnlTotal'), t('hr.commissions'), t('hr.bonus'), t('hr.salary'), t('hr.totalEarned')];
     const rows = results.map(r => [
       getPeriodLabel(r.period_id),
@@ -205,7 +209,7 @@ export default function PerfilPage() {
     ] as (string | number)[]);
     rows.push(['TOTAL', totalNetDeposit, '', '', totalPnlCurrent, '', '', totalCommissions, totalBonus, totalSalary, totalEarned]);
     downloadCSV(`resultados_${profileData.name.replace(/\s/g, '_')}.csv`, headers, rows);
-  };
+  });
 
   const handleSaveResult = () => {
     const newResult: CommercialMonthlyResult = {
@@ -245,6 +249,7 @@ export default function PerfilPage() {
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       {/* Header */}
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-4">

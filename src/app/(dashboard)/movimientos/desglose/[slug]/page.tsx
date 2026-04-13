@@ -16,6 +16,8 @@ import {
   CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
 import { computeProviderTotals, acceptedTransactions } from '@/lib/api-integrations/totals';
 import type {
   ProviderDataset,
@@ -76,6 +78,8 @@ export default function BreakdownPage({
   // Next.js 16: params and searchParams are Promises — unwrap with React.use()
   const { slug: rawSlug } = useUnwrap(params);
   const initialQuery = useUnwrap(searchParams);
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
 
   if (!VALID_SLUGS.includes(rawSlug as ProviderSlug)) {
     notFound();
@@ -129,7 +133,7 @@ export default function BreakdownPage({
   const totalPages = Math.max(1, Math.ceil(accepted.length / PAGE_SIZE));
   const pageRows = accepted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-  const handleExport = () => {
+  const handleExport = () => verify2FA(() => {
     if (!dataset) return;
     const { headers, rows } = buildCsv(slug, accepted);
     downloadCSV(
@@ -137,10 +141,11 @@ export default function BreakdownPage({
       headers,
       rows
     );
-  };
+  });
 
   return (
     <div className="space-y-6">
+      {Modal2FA}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
