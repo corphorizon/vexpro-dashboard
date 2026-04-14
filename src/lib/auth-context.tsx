@@ -487,9 +487,103 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  // ─── Inactivity auto-logout ───────────────────────────────────
+  // Change INACTIVITY_MS to adjust (2 min for testing, 2h for prod).
+  const INACTIVITY_MS = 2 * 60 * 60 * 1000; // 2 hours
+  const WARNING_MS = 60 * 1000; // Show warning 60s before logout
+
+  const [showInactivityWarning, setShowInactivityWarning] = useState(false);
+
+  // Store timer IDs in a plain object ref so nothing can interfere
+  const timers = useRef({ warn: 0, logout: 0, locked: false });
+
+  const scheduleInactivityTimers = useCallback(() => {
+    // Clear any existing timers
+    window.clearTimeout(timers.current.warn);
+    window.clearTimeout(timers.current.logout);
+    timers.current.locked = false;
+    setShowInactivityWarning(false);
+
+    // Schedule warning
+    timers.current.warn = window.setTimeout(() => {
+      timers.current.locked = true;
+      setShowInactivityWarning(true);
+    }, INACTIVITY_MS - WARNING_MS);
+
+    // Schedule hard logout — this WILL fire no matter what
+    timers.current.logout = window.setTimeout(() => {
+      const prev = userRef.current;
+      if (prev) {
+        logAction(prev.id, prev.name, 'logout', 'auth', `Cierre por inactividad: ${prev.email}`);
+      }
+      supabase.auth.signOut();
+      setUser(null);
+      setShowInactivityWarning(false);
+      timers.current.locked = false;
+    }, INACTIVITY_MS);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // "Continuar sesion" button handler
+  const handleContinueSession = useCallback(() => {
+    scheduleInactivityTimers();
+  }, [scheduleInactivityTimers]);
+
+  // Set up activity listeners + initial timers when user logs in
+  useEffect(() => {
+    if (!user) {
+      window.clearTimeout(timers.current.warn);
+      window.clearTimeout(timers.current.logout);
+      timers.current.locked = false;
+      setShowInactivityWarning(false);
+      return;
+    }
+
+    // Activity resets timers — but NOT when warning is showing
+    const onActivity = () => {
+      if (timers.current.locked) return;
+      scheduleInactivityTimers();
+    };
+
+    const events: (keyof WindowEventMap)[] = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+    events.forEach(evt => window.addEventListener(evt, onActivity, { passive: true }));
+
+    // Start initial timers
+    scheduleInactivityTimers();
+
+    return () => {
+      events.forEach(evt => window.removeEventListener(evt, onActivity));
+      window.clearTimeout(timers.current.warn);
+      window.clearTimeout(timers.current.logout);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
+
   return (
     <AuthContext.Provider value={{ user, users, isLoading, login, loginWith2fa, logout, createUser, updateUser, deleteUser, changePassword, resetPassword, updateUserDirect, refreshUser }}>
       {children}
+      {/* Inactivity warning modal */}
+      {showInactivityWarning && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-xl p-6 shadow-xl w-full max-w-sm mx-4 text-center">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-amber-100 dark:bg-amber-900/50 mb-4">
+              <svg className="w-7 h-7 text-amber-600 dark:text-amber-400" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+            </div>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Sesion a punto de expirar</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mb-5">
+              Tu sesion se cerrara en 1 minuto por inactividad. Mueve el mouse o presiona una tecla para continuar.
+            </p>
+            <button
+              onClick={handleContinueSession}
+              className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
+            >
+              Continuar sesion
+            </button>
+          </div>
+        </div>
+      )}
     </AuthContext.Provider>
   );
 }
