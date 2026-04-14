@@ -14,8 +14,12 @@ import {
   calculateCommission,
   calculateGroupSummary,
   calculateSalaryFromND,
+  calculateHeadSalaryFromND,
+  calculateBdmPctFromND,
   getAccumulatedIn,
   SALARY_TIERS,
+  HEAD_SALARY_TIERS,
+  BDM_PCT_TIERS,
   type CommissionCalcResult,
 } from '@/lib/commission-calculator';
 import { upsertCommissionEntries, type CommissionEntryRow } from '@/lib/supabase/mutations';
@@ -61,6 +65,7 @@ export default function ComisionesPage() {
     getProfilesByHead,
     getPreviousPeriodResults,
     refresh,
+    refreshCommissions,
   } = useData();
 
   const searchParams = useSearchParams();
@@ -140,8 +145,14 @@ export default function ComisionesPage() {
       }
     }
     setNdInputs(m);
-    setNdRawInputs(new Map());
+    // NO limpiar ndRawInputs aquí — se limpia en un effect separado
+    // para preservar lo que el usuario está editando después de un refresh
   }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab]);
+
+  // Limpiar raw inputs solo cuando cambia el período o el head seleccionado
+  useEffect(() => {
+    setNdRawInputs(new Map());
+  }, [selectedPeriod?.id, selectedHeadId]);
 
   const handleNdChange = useCallback((id: string, v: string) => {
     setNdRawInputs((prev) => { const n = new Map(prev); n.set(id, v); return n; });
@@ -210,7 +221,12 @@ export default function ComisionesPage() {
     return bdms.map((profile) => {
       const nd = ndInputs.get(profile.id) ?? 0;
       const accIn = getAccumulatedIn(previousResults, profile.id);
-      const bdmOwnPct = profile.net_deposit_pct ?? 0;
+      // Dynamic BDM pct tiers only apply to actual BDMs, not sub-HEADs
+      const isSubHead = profile.role === 'head' || profile.role === 'sales_manager'
+        || commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active');
+      const bdmOwnPct = isSubHead
+        ? (profile.net_deposit_pct ?? 0)
+        : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
       const naturalDiff = headPct - bdmOwnPct;
       // Extra % only applies when natural differential is 0 (same percentage)
       const diffPct = naturalDiff === 0 ? extraPct : naturalDiff;
@@ -236,7 +252,7 @@ export default function ComisionesPage() {
 
   const autoSalary = useMemo(() => {
     if (headProfile?.fixed_salary) return headProfile.salary ?? 0;
-    return calculateSalaryFromND(teamTotalND);
+    return calculateHeadSalaryFromND(teamTotalND);
   }, [teamTotalND, headProfile]);
 
   // Validation: if this HEAD belongs to a parent group, check that team total matches
@@ -285,7 +301,8 @@ export default function ComisionesPage() {
     return allBdms.map((profile) => {
       const nd = ndInputs.get(profile.id) ?? 0;
       const accIn = getAccumulatedIn(previousResultsAll, profile.id);
-      const pct = profile.net_deposit_pct ?? 0;
+      // BDM percentage is dynamic based on their individual ND (falls back to profile pct if < $50k)
+      const pct = calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
       const calc = calculateCommission(nd, accIn, pct);
       const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: pct, salary: bdmSalary, ...calc };
@@ -331,7 +348,10 @@ export default function ComisionesPage() {
 
           const nd = ndInputs.get(profile.id) ?? 0;
           const accIn = getAccumulatedIn(previousResults, profile.id);
-          const pct = profile.net_deposit_pct ?? 0;
+          // HEAD/sub-HEADs keep profile pct; only actual BDMs use dynamic pct based on ND
+          const isSubHead = !isHead && (profile.role === 'head' || profile.role === 'sales_manager'
+            || commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active'));
+          const pct = (isHead || isSubHead) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
           const calc = calculateCommission(nd, accIn, pct);
 
           if (isHead && headHasParent) {
@@ -397,10 +417,16 @@ export default function ComisionesPage() {
       }
       await upsertCommissionEntries(company.id, selectedPeriod.id, selectedHeadId, entries);
       console.log('[SAVE] success');
-      await refresh();
+      // Limpiar raw inputs para que el display muestre los valores guardados
+      setNdRawInputs(new Map());
+      // Liberar el botón y mostrar éxito INMEDIATAMENTE
       setSaving(false);
-      setToast({ type: 'success', msg: 'Guardado correctamente' });
+      setToast({ type: 'success', msg: 'Comisiones guardadas' });
       setTimeout(() => setToast(null), 4000);
+      // Refrescar datos en background sin bloquear la UI
+      refreshCommissions().catch((err) => {
+        console.warn('Background refresh failed:', err);
+      });
     } catch (err) {
       setSaving(false);
       setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al guardar' });
@@ -437,7 +463,7 @@ export default function ComisionesPage() {
     const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
 
     // Build salary tier label
-    const tierLabels = SALARY_TIERS.map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
+    const tierLabels = HEAD_SALARY_TIERS.map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
 
     generateCommissionPDF({
       companyName: company?.name ?? 'VexPro',
@@ -595,7 +621,7 @@ export default function ComisionesPage() {
             <Card>
               <p className="text-sm text-muted-foreground">{t('comm.autoSalary')}</p>
               <p className="text-2xl font-bold text-blue-600">{formatCurrency(autoSalary)}</p>
-              <p className="text-xs text-muted-foreground mt-1">{SALARY_TIERS.map((tier) => `≥${formatCurrency(tier.minND)} → ${formatCurrency(tier.salary)}`).join(' | ')}</p>
+              <p className="text-xs text-muted-foreground mt-1">{HEAD_SALARY_TIERS.map((tier) => `≥${formatCurrency(tier.minND)} → ${formatCurrency(tier.salary)}`).join(' | ')}</p>
             </Card>
             <Card>
               <p className="text-sm text-muted-foreground">{t('comm.totalWithSalary')}</p>

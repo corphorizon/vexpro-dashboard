@@ -124,11 +124,19 @@ export function getPreviousPeriod(
 // ---------------------------------------------------------------------------
 // Automatic salary calculation based on team total Net Deposit
 //
-// Rules (applied to the HEAD / Sales Manager based on their full team ND):
+// BDM salary tiers (based on individual ND):
+//   ND >= $200,000 → $2,000 USD
+//   ND >= $100,000 → $1,000 USD
+//   ND >=  $50,000 →   $500 USD
+//   ND <   $50,000 →     $0 USD
+//
+// HEAD / Sales Manager salary tiers (based on full team ND):
+//   ND total >= $500,000 → $5,000 USD
+//   ND total >= $400,000 → $4,000 USD
+//   ND total >= $300,000 → $3,000 USD
 //   ND total >= $200,000 → $2,000 USD
 //   ND total >= $100,000 → $1,000 USD
-//   ND total >=  $50,000 →   $500 USD
-//   ND total <   $50,000 →     $0 USD
+//   ND total <  $100,000 →     $0 USD
 // ---------------------------------------------------------------------------
 
 export interface SalaryTier {
@@ -136,20 +144,72 @@ export interface SalaryTier {
   salary: number;
 }
 
+// BDM tiers — individual ND
 export const SALARY_TIERS: SalaryTier[] = [
   { minND: 200_000, salary: 2_000 },
   { minND: 100_000, salary: 1_000 },
   { minND: 50_000, salary: 500 },
 ];
 
-export function calculateSalaryFromND(teamTotalND: number): number {
-  // No salary if team total ND is negative
-  if (teamTotalND < 0) return 0;
-  const absND = Math.abs(teamTotalND);
+// HEAD / Sales Manager tiers — team total ND
+export const HEAD_SALARY_TIERS: SalaryTier[] = [
+  { minND: 500_000, salary: 5_000 },
+  { minND: 400_000, salary: 4_000 },
+  { minND: 300_000, salary: 3_000 },
+  { minND: 200_000, salary: 2_000 },
+  { minND: 100_000, salary: 1_000 },
+];
+
+/** BDM salary based on individual ND */
+export function calculateSalaryFromND(individualND: number): number {
+  if (individualND < 0) return 0;
+  const absND = Math.abs(individualND);
   for (const tier of SALARY_TIERS) {
     if (absND >= tier.minND) return tier.salary;
   }
   return 0;
+}
+
+/** HEAD / Sales Manager salary based on team total ND */
+export function calculateHeadSalaryFromND(teamTotalND: number): number {
+  if (teamTotalND < 0) return 0;
+  const absND = Math.abs(teamTotalND);
+  for (const tier of HEAD_SALARY_TIERS) {
+    if (absND >= tier.minND) return tier.salary;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// BDM commission percentage tiers — based on individual ND
+//
+//   ND >= $200,000 → 6%
+//   ND >= $100,000 → 5%
+//   ND >=  $50,000 → 4%
+//   ND <   $50,000 → 0% (profile default)
+// ---------------------------------------------------------------------------
+
+export interface PctTier {
+  minND: number;
+  pct: number;
+}
+
+export const BDM_PCT_TIERS: PctTier[] = [
+  { minND: 200_000, pct: 6 },
+  { minND: 100_000, pct: 5 },
+  { minND: 50_000, pct: 4 },
+];
+
+/** BDM commission percentage based on individual ND.
+ *  If ND < $50,000, returns null so the caller can fall back to the profile default. */
+export function calculateBdmPctFromND(individualND: number, profilePct?: number): number {
+  if (individualND >= 0) {
+    for (const tier of BDM_PCT_TIERS) {
+      if (individualND >= tier.minND) return tier.pct;
+    }
+  }
+  // Below all tiers or negative ND — use the profile's configured percentage
+  return profilePct ?? 0;
 }
 
 // ---------------------------------------------------------------------------

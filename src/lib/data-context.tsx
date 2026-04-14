@@ -59,7 +59,8 @@ import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 
 // Max time we'll wait for the initial data load before showing an error
 // with a retry button. Prevents the UI from getting stuck "loading..." forever.
-const LOAD_TIMEOUT_MS = 8000;
+const LOAD_TIMEOUT_MS = 60000;
+const MAX_RETRIES = 2; // total attempts (1 initial + 1 retry)
 
 // ─── Saldo Info (replicated from demo-data.ts) ───
 
@@ -114,8 +115,9 @@ export interface DataContextValue {
   getTotalCommissions: (profileId: string) => number;
   getPreviousPeriodResults: (periodId: string) => CommercialMonthlyResult[];
 
-  // Refresh function
+  // Refresh functions
   refresh: () => Promise<void>;
+  refreshCommissions: () => Promise<void>;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -172,118 +174,127 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setError(null);
     }
 
-    // Hard timeout so we never get stuck on a pending promise that never
-    // resolves (dead socket, hung RLS call, etc.).
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const timeoutPromise = new Promise<never>((_, reject) => {
-      timeoutId = setTimeout(
-        () =>
-          reject(
-            new Error(
-              'La carga tardó demasiado (más de 8 segundos). Verifica tu conexión e intenta de nuevo.'
-            )
-          ),
-        LOAD_TIMEOUT_MS
-      );
-    });
-
-    const fetchAll = async () => {
-      // Step 1: fetch company from authenticated user's company_id
+    // ── Stage 1: critical data (with timeout) ──
+    // These are the tables needed for the UI to render immediately.
+    const fetchCritical = async () => {
       const comp = authUser?.company_id
         ? await fetchCompanyById(authUser.company_id)
-        : await fetchCompany('vexprofx'); // fallback for legacy/demo
+        : await fetchCompany('vexprofx');
       if (!comp) throw new Error('No se encontró la empresa');
-      if (isStale()) return;
+      if (isStale()) return null;
       setCompany(comp);
 
-      // Step 2: fetch periods first (needed for periodIds)
-      const pds = await fetchPeriods(comp.id);
-      if (isStale()) return;
-      setPeriods(pds);
-
-      // Step 3: fetch all other data in parallel
-      const [
-        deps,
-        wdrs,
-        exps,
-        expTpls,
-        preExps,
-        opInc,
-        brkBal,
-        finSts,
-        ptns,
-        ptnDist,
-        pfs,
-        p2p,
-        liq,
-        inv,
-        emps,
-        cProfiles,
-        mResults,
-      ] = await Promise.all([
-        fetchDeposits(comp.id),
-        fetchWithdrawals(comp.id),
-        fetchExpenses(comp.id),
-        fetchExpenseTemplates(comp.id),
-        fetchPreoperativeExpenses(comp.id),
-        fetchOperatingIncome(comp.id),
-        fetchBrokerBalance(comp.id),
-        fetchFinancialStatus(comp.id),
-        fetchPartners(comp.id),
-        fetchPartnerDistributions(comp.id),
-        fetchPropFirmSales(comp.id),
-        fetchP2PTransfers(comp.id),
-        fetchLiquidityMovements(comp.id),
-        fetchInvestments(comp.id),
+      const [pds, emps, cProfiles, mResults] = await Promise.all([
+        fetchPeriods(comp.id),
         fetchEmployees(comp.id),
         fetchCommercialProfiles(comp.id),
         fetchCommercialMonthlyResults(comp.id),
       ]);
 
-      if (isStale()) return;
-      setDeposits(deps);
-      setWithdrawals(wdrs);
-      setExpenses(exps);
-      setExpenseTemplates(expTpls);
-      setPreoperativeExpenses(preExps);
-      setOperatingIncome(opInc);
-      setBrokerBalance(brkBal);
-      setFinancialStatus(finSts);
-      setPartners(ptns);
-      setPartnerDistributions(ptnDist);
-      setPropFirmSales(pfs);
-      setP2PTransfers(p2p);
-      setLiquidityMovements(liq);
-      setInvestments(inv);
+      if (isStale()) return null;
+      setPeriods(pds);
       setEmployees(emps);
       setCommercialProfiles(cProfiles);
       setMonthlyResults(mResults);
+
+      return comp;
     };
 
-    try {
-      await Promise.race([fetchAll(), timeoutPromise]);
-    } catch (err) {
-      // A newer load superseded this one — drop the error silently.
-      if (isStale()) {
-        return;
+    // ── Stage 2: remaining data (background, no timeout) ──
+    const fetchRest = async (comp: { id: string }) => {
+      try {
+        const [
+          deps, wdrs, exps, expTpls, preExps, opInc,
+          brkBal, finSts, ptns, ptnDist, pfs, p2p, liq, inv,
+        ] = await Promise.all([
+          fetchDeposits(comp.id),
+          fetchWithdrawals(comp.id),
+          fetchExpenses(comp.id),
+          fetchExpenseTemplates(comp.id),
+          fetchPreoperativeExpenses(comp.id),
+          fetchOperatingIncome(comp.id),
+          fetchBrokerBalance(comp.id),
+          fetchFinancialStatus(comp.id),
+          fetchPartners(comp.id),
+          fetchPartnerDistributions(comp.id),
+          fetchPropFirmSales(comp.id),
+          fetchP2PTransfers(comp.id),
+          fetchLiquidityMovements(comp.id),
+          fetchInvestments(comp.id),
+        ]);
+
+        if (isStale()) return;
+        setDeposits(deps);
+        setWithdrawals(wdrs);
+        setExpenses(exps);
+        setExpenseTemplates(expTpls);
+        setPreoperativeExpenses(preExps);
+        setOperatingIncome(opInc);
+        setBrokerBalance(brkBal);
+        setFinancialStatus(finSts);
+        setPartners(ptns);
+        setPartnerDistributions(ptnDist);
+        setPropFirmSales(pfs);
+        setP2PTransfers(p2p);
+        setLiquidityMovements(liq);
+        setInvestments(inv);
+      } catch (err) {
+        // Background stage — don't break the UI, just log
+        console.warn('Background data load failed (non-critical):', err);
       }
-      console.error('Error loading data:', err);
+    };
+
+    // Retry loop with timeout — only for critical stage
+    let lastError: unknown = null;
+    let comp: { id: string } | null = null;
+    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+      if (isStale()) return;
+
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error('La carga tardó demasiado. Verifica tu conexión e intenta de nuevo.')),
+          LOAD_TIMEOUT_MS
+        );
+      });
+
+      try {
+        comp = await Promise.race([fetchCritical(), timeoutPromise]);
+        lastError = null;
+        break;
+      } catch (err) {
+        lastError = err;
+        if (isStale()) return;
+        console.warn(`Data load attempt ${attempt}/${MAX_RETRIES} failed:`, err);
+        if (attempt < MAX_RETRIES) {
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      } finally {
+        if (timeoutId) clearTimeout(timeoutId);
+      }
+    }
+
+    // Critical stage done — show UI immediately
+    if (!silent && !isStale()) {
+      setLoading(false);
+    }
+
+    if (lastError) {
+      if (isStale()) return;
+      console.error('Error loading data after retries:', lastError);
       const msg =
-        err instanceof Error ? err.message : 'Error desconocido al cargar datos';
+        lastError instanceof Error ? lastError.message : 'Error desconocido al cargar datos';
       if (!silent) {
-        // Initial load / manual retry: surface the error UI.
         setError(msg);
       } else {
-        // Silent refresh after a mutation: keep showing the last-known
-        // state so the user doesn't lose their place. Log for debugging.
         console.warn('Silent refresh failed, keeping existing data:', msg);
       }
-    } finally {
-      if (timeoutId) clearTimeout(timeoutId);
-      // Only the newest call touches the loading flag.
-      if (!silent && !isStale()) {
-        setLoading(false);
-      }
+      return;
+    }
+
+    // Load remaining data in background (no timeout)
+    if (comp) {
+      fetchRest(comp);
     }
   }, [authUser?.company_id]);
 
@@ -651,6 +662,22 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // without unmounting children, so callers keep their scroll position,
       // active tab, open modals, etc.
       refresh: () => loadAllData({ silent: true }),
+
+      // Lightweight refresh — only reloads commission-related tables (no timeout)
+      refreshCommissions: async () => {
+        try {
+          const comp = company;
+          if (!comp) return;
+          const [cProfiles, mResults] = await Promise.all([
+            fetchCommercialProfiles(comp.id),
+            fetchCommercialMonthlyResults(comp.id),
+          ]);
+          setCommercialProfiles(cProfiles);
+          setMonthlyResults(mResults);
+        } catch (err) {
+          console.warn('Error refreshing commissions:', err);
+        }
+      },
     }),
     [
       loading,
