@@ -435,6 +435,57 @@ export default function ComisionesPage() {
   };
 
   const doExport = () => {
+    if (tab === 'history') {
+      // Export the full history table from saved DB data
+      const activeProfiles = commercialProfiles.filter((p) => p.status === 'active');
+      const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
+      const headProfilesList = activeProfiles.filter((p) => p.role === 'head');
+      const bdmProfilesList = activeProfiles.filter((p) => p.role === 'bdm');
+      const allHistoryProfiles = [...smProfiles, ...headProfilesList, ...bdmProfilesList];
+
+      const periodLabels = historyPeriods.map((p) => p.label || `${p.year}-${String(p.month).padStart(2, '0')}`);
+      const headers = ['Nombre', 'Correo', 'Rol', ...periodLabels, 'Total'];
+
+      const rows: (string | number)[][] = allHistoryProfiles.map((profile) => {
+        const periodValues = historyPeriods.map((p) => {
+          const records = monthlyResults.filter(
+            (mr) => mr.profile_id === profile.id && mr.period_id === p.id
+          );
+          if (records.length === 0) return 0;
+          let val: number;
+          const ownGroupRecord = records.find((r) => r.head_id === profile.id);
+          if (ownGroupRecord) {
+            val = ownGroupRecord.total_earned;
+          } else if (profile.head_id) {
+            const headRecord = records.find((r) => r.head_id === profile.head_id);
+            val = headRecord ? headRecord.total_earned : records.reduce((best, r) =>
+              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
+            ).total_earned;
+          } else {
+            val = records.reduce((best, r) =>
+              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
+            ).total_earned;
+          }
+          // Negativos se muestran como 0 en historial
+          return val < 0 ? 0 : val;
+        });
+        const total = periodValues.reduce((s, v) => s + v, 0);
+        return [profile.name, profile.email, ROLE_LABEL[profile.role] || profile.role, ...periodValues, total];
+      });
+
+      // Add totals row
+      const totalRow: (string | number)[] = ['TOTAL', '', ''];
+      for (let i = 0; i < historyPeriods.length; i++) {
+        totalRow.push(rows.reduce((sum, row) => sum + (Number(row[i + 3]) || 0), 0));
+      }
+      totalRow.push(rows.reduce((sum, row) => sum + (Number(row[row.length - 1]) || 0), 0));
+      rows.push(totalRow);
+
+      const fromLabel = historyPeriods[0]?.label || '';
+      const toLabel = historyPeriods[historyPeriods.length - 1]?.label || '';
+      downloadCSV(`historial_comisiones_${fromLabel}_a_${toLabel}.csv`.replace(/\s/g, '_'), headers, rows);
+      return;
+    }
     if (!selectedPeriod) return;
     if (tab === 'teams') {
       const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.base'), t('comm.commission'), t('comm.realPayment')];
@@ -448,11 +499,34 @@ export default function ComisionesPage() {
       const headName = headProfile?.name ?? 'team';
       downloadCSV(`comisiones_${headName}_${selectedPeriod.year}-${selectedPeriod.month}.csv`, headers, rows);
     } else {
-      const headers = ['Name', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.base'), t('comm.commission'), t('comm.realPayment')];
-      const rows = indCalcs.map((c) => {
-        const p = commercialProfiles.find((pr) => pr.id === c.profileId);
-        return [p?.name ?? '', c.commissionPct, c.netDepositCurrent, c.division, c.base, c.commission, c.realPayment] as (string | number)[];
-      });
+      // Export from saved DB data — not from real-time calculations (which may show 0 if ndInputs didn't load)
+      const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.base'), t('comm.commission'), t('comm.realPayment'), 'Salario', 'Total'];
+      const periodData = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
+      const bdmProfilesSorted = [...commercialProfiles]
+        .filter((p) => p.status === 'active')
+        .sort((a, b) => a.name.localeCompare(b.name));
+      const rows: (string | number)[][] = [];
+      for (const profile of bdmProfilesSorted) {
+        // Find the best record for this profile
+        const records = periodData.filter((r) => r.profile_id === profile.id);
+        if (records.length === 0) continue;
+        // For HEADs: use own-group record; for BDMs: use head's group record
+        const rec = records.find((r) => r.head_id === profile.id)
+          ?? records.find((r) => r.head_id === profile.head_id)
+          ?? records[0];
+        rows.push([
+          profile.name,
+          ROLE_LABEL[profile.role] || profile.role,
+          profile.net_deposit_pct ?? 0,
+          rec.net_deposit_current,
+          rec.division,
+          rec.base_amount,
+          rec.commissions_earned,
+          rec.real_payment,
+          rec.salary_paid,
+          rec.total_earned,
+        ]);
+      }
       downloadCSV(`comisiones_individual_${selectedPeriod.year}-${selectedPeriod.month}.csv`, headers, rows);
     }
   };
@@ -856,18 +930,24 @@ export default function ComisionesPage() {
             (mr) => mr.profile_id === profileId && mr.period_id === periodId
           );
           if (records.length === 0) return null;
+          let val: number;
           // Para HEADs/SM: buscar registro donde head_id = su propio ID (su grupo)
           const ownGroupRecord = records.find(r => r.head_id === profileId);
-          if (ownGroupRecord) return ownGroupRecord.total_earned;
-          // Para BDMs: buscar registro donde head_id = su HEAD real
-          if (profile?.head_id) {
+          if (ownGroupRecord) {
+            val = ownGroupRecord.total_earned;
+          } else if (profile?.head_id) {
+            // Para BDMs: buscar registro donde head_id = su HEAD real
             const headRecord = records.find(r => r.head_id === profile.head_id);
-            if (headRecord) return headRecord.total_earned;
+            val = headRecord ? headRecord.total_earned : records.reduce((best, r) =>
+              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
+            ).total_earned;
+          } else {
+            val = records.reduce((best, r) =>
+              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
+            ).total_earned;
           }
-          // Fallback: el registro con mayor total_earned (valor absoluto)
-          return records.reduce((best, r) =>
-            Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
-          ).total_earned;
+          // Negativos se muestran como 0 en historial (solo visualización)
+          return val < 0 ? 0 : val;
         };
 
         const getProfileTotal = (profileId: string) => {
@@ -949,6 +1029,26 @@ export default function ComisionesPage() {
                       );
                     })}
                   </tbody>
+                  <tfoot>
+                    <tr className="border-t-2 border-border bg-muted/50 font-semibold">
+                      <td className="px-4 py-3 sticky left-0 bg-muted/50 z-10">Total</td>
+                      <td className="px-2 py-3"></td>
+                      {historyPeriods.map((p) => {
+                        const monthTotal = allProfiles.reduce((sum, profile) => {
+                          const val = getTotal(profile.id, p.id);
+                          return sum + (val ?? 0);
+                        }, 0);
+                        return (
+                          <td key={p.id} className={cn('px-3 py-3 text-right text-xs', monthTotal >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                            {formatCurrency(monthTotal)}
+                          </td>
+                        );
+                      })}
+                      <td className={cn('px-4 py-3 text-right bg-muted/80', (() => { const gt = allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0); return gt >= 0 ? 'text-emerald-600' : 'text-red-600'; })())}>
+                        {formatCurrency(allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0))}
+                      </td>
+                    </tr>
+                  </tfoot>
                 </table>
               </div>
             </Card>
