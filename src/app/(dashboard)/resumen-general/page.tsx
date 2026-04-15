@@ -1,0 +1,227 @@
+'use client';
+
+import { Card, CardTitle, CardValue } from '@/components/ui/card';
+import { PeriodSelector } from '@/components/period-selector';
+import { MonthlyChart } from '@/components/charts/monthly-chart';
+import { usePeriod } from '@/lib/period-context';
+import { useData } from '@/lib/data-context';
+import { formatCurrency } from '@/lib/utils';
+import { downloadCSV } from '@/lib/csv-export';
+import { downloadExcel, downloadPDF } from '@/lib/export-utils';
+import { useAuth } from '@/lib/auth-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
+import { useI18n } from '@/lib/i18n';
+import {
+  ArrowDownCircle,
+  ArrowUpCircle,
+  TrendingUp,
+  Receipt,
+  DollarSign,
+  Wallet,
+  AlertTriangle,
+  Download,
+  FileSpreadsheet,
+  FileText,
+} from 'lucide-react';
+
+export default function ResumenPage() {
+  const { t } = useI18n();
+  const { user } = useAuth();
+  const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
+  const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
+  const { getPeriodSummary, getConsolidatedSummary } = useData();
+
+  const summary = mode === 'consolidated'
+    ? getConsolidatedSummary(selectedPeriodIds)
+    : getPeriodSummary(selectedPeriodId);
+
+  if (!summary) return null;
+
+  const income = summary.operatingIncome;
+  const totalIncome = (income
+    ? income.broker_pnl + income.other
+    : 0) + summary.propFirmNetIncome;
+  const balanceDisponible = totalIncome - summary.totalExpenses;
+
+  const exportHeaders = ['Metrica', 'Valor'];
+  const exportRows: (string | number)[][] = [
+    ['Depósitos Totales', summary.totalDeposits],
+    ['Retiros Totales', summary.totalWithdrawals],
+    ['Net Deposit', summary.netDeposit],
+    ['Egresos Operativos', summary.totalExpenses],
+    ['Ingresos Operativos', totalIncome],
+    ['Balance Total', balanceDisponible],
+  ];
+
+  const handleExport = () => verify2FA(() => {
+    downloadCSV(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, exportHeaders, exportRows);
+  });
+
+  const handleExportExcel = () => verify2FA(() => {
+    downloadExcel(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}`, exportHeaders, exportRows);
+  });
+
+  const handleExportPDF = () => verify2FA(() => {
+    downloadPDF('Resumen General', exportHeaders, exportRows, {
+      companyName: 'Vex Pro',
+      subtitle: `Período: ${summary.period.label}`,
+      date: new Date().toLocaleDateString(),
+    });
+  });
+
+  const fs = summary.financialStatus;
+
+  return (
+    <div className="space-y-6">
+      {Modal2FA}
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">{t('summary.title')}</h1>
+          <p className="text-muted-foreground text-sm mt-1">{t('summary.subtitle')}</p>
+        </div>
+        <div className="flex items-center gap-2 overflow-x-auto">
+          <button
+            onClick={handleExport}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
+            title={t('common.csv')}
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('common.csv')}</span>
+          </button>
+          <button
+            onClick={handleExportExcel}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
+            title="Excel"
+          >
+            <FileSpreadsheet className="w-4 h-4" />
+            <span className="hidden sm:inline">Excel</span>
+          </button>
+          <button
+            onClick={handleExportPDF}
+            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
+            title="PDF"
+          >
+            <FileText className="w-4 h-4" />
+            <span className="hidden sm:inline">PDF</span>
+          </button>
+          <PeriodSelector />
+        </div>
+      </div>
+
+      {/* Negative balance warning */}
+      {balanceDisponible < 0 && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm font-medium">
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          {t('summary.negativeBalance', { amount: formatCurrency(balanceDisponible) })}
+        </div>
+      )}
+
+      {/* KPI Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+        <Card>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
+              <ArrowDownCircle className="w-5 h-5 text-blue-500" />
+            </div>
+            <CardTitle>{t('summary.deposits')}</CardTitle>
+          </div>
+          <CardValue>{formatCurrency(summary.totalDeposits)}</CardValue>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
+              <ArrowUpCircle className="w-5 h-5 text-red-500" />
+            </div>
+            <CardTitle>{t('summary.withdrawals')}</CardTitle>
+          </div>
+          <CardValue>{formatCurrency(summary.totalWithdrawals)}</CardValue>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
+              <DollarSign className="w-5 h-5 text-emerald-500" />
+            </div>
+            <CardTitle>{t('summary.netDeposit')}</CardTitle>
+          </div>
+          <CardValue positive={summary.netDeposit > 0} negative={summary.netDeposit < 0}>
+            {formatCurrency(summary.netDeposit)}
+          </CardValue>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
+              <Receipt className="w-5 h-5 text-amber-500" />
+            </div>
+            <CardTitle>{t('summary.expenses')}</CardTitle>
+          </div>
+          <CardValue>{formatCurrency(summary.totalExpenses)}</CardValue>
+        </Card>
+      </div>
+
+      {/* Second row */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Card>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
+              <TrendingUp className="w-5 h-5 text-violet-500" />
+            </div>
+            <CardTitle>{t('summary.operatingIncome')}</CardTitle>
+          </div>
+          <CardValue positive={totalIncome > 0} negative={totalIncome < 0}>
+            {formatCurrency(totalIncome)}
+          </CardValue>
+          <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+            {summary.propFirmNetIncome !== 0 && (
+              <div className="flex justify-between">
+                <span>Balance Prop Firm</span>
+                <span>{formatCurrency(summary.propFirmNetIncome)}</span>
+              </div>
+            )}
+            {income && (
+              <div className="flex justify-between">
+                <span>{t('summary.brokerPnl')}</span>
+                <span>{formatCurrency(income.broker_pnl)}</span>
+              </div>
+            )}
+          </div>
+        </Card>
+
+        <Card>
+          <div className="flex items-center gap-3 mb-3">
+            <div className="p-2 rounded-lg bg-sky-50 dark:bg-sky-950/50">
+              <Wallet className="w-5 h-5 text-sky-500" />
+            </div>
+            <CardTitle>{t('summary.balance')}</CardTitle>
+          </div>
+          <CardValue positive={balanceDisponible > 0} negative={balanceDisponible < 0}>
+            {formatCurrency(balanceDisponible)}
+          </CardValue>
+          <div className="mt-3 space-y-1 text-sm text-muted-foreground">
+            <div className="flex justify-between">
+              <span>{t('summary.operatingIncome')}</span>
+              <span className={totalIncome >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                {formatCurrency(totalIncome)}
+              </span>
+            </div>
+            <div className="flex justify-between">
+              <span>{t('summary.expenses')}</span>
+              <span className="text-red-600">
+                -{formatCurrency(summary.totalExpenses)}
+              </span>
+            </div>
+          </div>
+        </Card>
+      </div>
+
+      {/* Chart */}
+      <Card>
+        <h2 className="text-lg font-semibold mb-4">{t('summary.chart')}</h2>
+        <MonthlyChart />
+      </Card>
+    </div>
+  );
+}

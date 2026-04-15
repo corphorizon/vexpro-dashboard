@@ -11,6 +11,7 @@ import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
 import {
   LayoutDashboard,
+  BarChart3,
   ArrowLeftRight,
   Receipt,
   Droplets,
@@ -59,7 +60,7 @@ interface NavItem {
 type NavEntry = NavItem | NavSection;
 
 const NAV_STRUCTURE: NavEntry[] = [
-  // Dashboard (standalone)
+  // Dashboard — HR summary
   { type: 'link', href: '/', i18nKey: 'nav.dashboard', icon: LayoutDashboard, module: 'summary' },
 
   // Finanzas (collapsible)
@@ -68,6 +69,7 @@ const NAV_STRUCTURE: NavEntry[] = [
     i18nKey: 'nav.finance',
     icon: DollarSign,
     children: [
+      { href: '/resumen-general', i18nKey: 'nav.generalSummary', icon: BarChart3, module: 'summary' },
       { href: '/movimientos', i18nKey: 'nav.movements', icon: ArrowLeftRight, module: 'movements' },
       { href: '/egresos', i18nKey: 'nav.expenses', icon: Receipt, module: 'expenses' },
       { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
