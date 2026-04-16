@@ -668,11 +668,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         try {
           const comp = company;
           if (!comp) return;
-          const [cProfiles, mResults] = await Promise.all([
-            fetchCommercialProfiles(comp.id),
-            fetchCommercialMonthlyResults(comp.id),
-          ]);
-          setCommercialProfiles(cProfiles);
+          // Solo recargar monthlyResults, los profiles no cambian al guardar comisiones
+          const mResults = await fetchCommercialMonthlyResults(comp.id);
           setMonthlyResults(mResults);
         } catch (err) {
           console.warn('Error refreshing commissions:', err);

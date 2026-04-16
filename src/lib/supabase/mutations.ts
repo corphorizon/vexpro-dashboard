@@ -463,6 +463,7 @@ export interface CommissionEntryRow {
   accumulated_out: number;
   salary_paid: number;
   total_earned: number;
+  bonus?: number;
 }
 
 export async function upsertCommissionEntries(

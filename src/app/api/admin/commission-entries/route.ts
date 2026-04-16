@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
         pnl_current: 0,
         pnl_accumulated: 0,
         pnl_total: 0,
-        bonus: 0,
+        bonus: entry.bonus ?? 0,
       };
 
       // Upsert: check if exists, then update or insert

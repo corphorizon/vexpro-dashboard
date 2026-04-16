@@ -17,12 +17,12 @@ export interface CommissionCalcResult {
   netDepositCurrent: number;
   accumulatedIn: number;
   division: number;
-  base: number;
   commissionPct: number;
   commission: number;
   realPayment: number;
   accumulatedOut: number;
   salary: number;
+  totalEarnedDebt: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -41,26 +41,28 @@ export function calculateCommission(
   netDepositCurrent: number,
   accumulatedIn: number,
   commissionPct: number,
-): Omit<CommissionCalcResult, 'profileId' | 'salary' | 'commissionPct'> {
-  // Only calculate if there's actual ND data for this month (0 = no data entered)
+): Omit<CommissionCalcResult, 'profileId' | 'salary' | 'commissionPct' | 'totalEarnedDebt'> {
   if (netDepositCurrent === 0) {
-    return { netDepositCurrent: 0, accumulatedIn, division: 0, base: 0, commission: 0, realPayment: 0, accumulatedOut: accumulatedIn };
+    return {
+      netDepositCurrent: 0,
+      accumulatedIn,
+      division: 0,
+      commission: 0,
+      realPayment: 0,
+      accumulatedOut: 0,
+    };
   }
-  // Negative ND is allowed — represents net withdrawals
 
   const division = round2(netDepositCurrent / 2);
-  const base = round2(division + accumulatedIn);
-  const commission = round2(base * (commissionPct / 100));
-  const realPayment = round2(commission); // Real payment includes negatives — they affect the total
-  // If commission >= 0: debt is settled, only carry forward the division (half of new ND)
-  // If commission < 0: debt persists, carry forward the full base (negative accumulates until compensated)
-  const accumulatedOut = round2(commission >= 0 ? division : base);
+  const commission = round2((division + accumulatedIn) * (commissionPct / 100));
+  const realPayment = round2(commission);
+  // accumulatedOut siempre es division — positivo o negativo
+  const accumulatedOut = division;
 
   return {
     netDepositCurrent,
     accumulatedIn,
     division,
-    base,
     commission,
     realPayment,
     accumulatedOut,
@@ -87,6 +89,7 @@ export function calculateGroupCommissions(
       profileId: profile.id,
       commissionPct: pct,
       salary: profile.salary ?? 0,
+      totalEarnedDebt: 0,
       ...calc,
     };
   });
@@ -99,7 +102,16 @@ export function calculateGroupCommissions(
 export function getAccumulatedIn(
   previousResults: CommercialMonthlyResult[],
   profileId: string,
+  headId?: string,
 ): number {
+  // Primero buscar el registro específico del grupo actual
+  if (headId) {
+    const prev = previousResults.find(
+      (r) => r.profile_id === profileId && r.head_id === headId
+    );
+    if (prev) return prev.accumulated_out ?? 0;
+  }
+  // Fallback: cualquier registro del perfil (compatibilidad hacia atrás)
   const prev = previousResults.find((r) => r.profile_id === profileId);
   return prev?.accumulated_out ?? 0;
 }
@@ -231,7 +243,6 @@ export interface DifferentialDetail {
   bdmPct: number;
   diffPct: number;
   division: number;
-  base: number;
   commission: number;
   realPayment: number;
 }
@@ -250,8 +261,7 @@ export function calculateHeadDifferential(
   const details: DifferentialDetail[] = bdmResults.map((bdm) => {
     const diffPct = (headPct - bdm.commissionPct) + extraPct;
     const division = round2(bdm.netDepositCurrent / 2);
-    const base = round2(division + bdm.accumulatedIn);
-    const commission = round2(base * (diffPct / 100));
+    const commission = round2((division + bdm.accumulatedIn) * (diffPct / 100));
     const realPayment = round2(Math.max(0, commission));
 
     return {
@@ -261,7 +271,6 @@ export function calculateHeadDifferential(
       bdmPct: bdm.commissionPct,
       diffPct,
       division,
-      base,
       commission,
       realPayment,
     };
@@ -297,4 +306,37 @@ export function calculateGroupSummary(
     totalWithSalary: round2(totalRealPayment + totalSalary),
     totalCommission,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Apply accumulated debt to total_earned
+//
+// previousDebt: valor del campo `bonus` del mes anterior (deuda acumulada)
+//   - si es negativo: hay deuda que restar
+//   - si es 0 o positivo: no hay deuda
+// currentRaw: realPayment + salary del mes actual (antes de deuda)
+//
+// Returns:
+//   finalTotalEarned → valor a mostrar y guardar en total_earned
+//   debtOut → valor a guardar en `bonus` (deuda para el siguiente mes, 0 si no hay)
+// ---------------------------------------------------------------------------
+export function applyTotalEarnedDebt(
+  previousDebt: number,
+  currentRaw: number,
+): { finalTotalEarned: number; debtOut: number } {
+  // Sin deuda del mes anterior
+  if (previousDebt >= 0) {
+    const finalTotalEarned = round2(currentRaw);
+    const debtOut = finalTotalEarned < 0 ? finalTotalEarned : 0;
+    return { finalTotalEarned, debtOut };
+  }
+  // Aplicar deuda acumulada
+  const afterDebt = round2(currentRaw + previousDebt);
+  if (afterDebt >= 0) {
+    // Se saldó la deuda
+    return { finalTotalEarned: afterDebt, debtOut: 0 };
+  } else {
+    // Sigue en deuda — acumular para el siguiente mes
+    return { finalTotalEarned: afterDebt, debtOut: afterDebt };
+  }
 }
