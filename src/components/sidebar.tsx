@@ -31,6 +31,8 @@ import {
   DollarSign,
   Wallet,
   Calculator,
+  ShieldCheck,
+  FileSearch,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -89,6 +91,16 @@ const NAV_STRUCTURE: NavEntry[] = [
     children: [
       { href: '/rrhh', i18nKey: 'nav.hrManagement', icon: UsersIcon, module: 'hr' },
       { href: '/comisiones', i18nKey: 'nav.commissions', icon: Calculator, module: 'commissions' },
+    ],
+  },
+
+  // Risk Management (collapsible)
+  {
+    type: 'section',
+    i18nKey: 'nav.risk',
+    icon: ShieldCheck,
+    children: [
+      { href: '/risk/retiros-propfirm', i18nKey: 'nav.riskWithdrawals', icon: FileSearch, module: 'risk' },
     ],
   },
 

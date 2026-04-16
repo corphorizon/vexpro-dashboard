@@ -259,6 +259,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.commLotPlaceholder')}</label>
             <input type="number" value={commLot} onChange={e => setCommLot(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
+          <p className="text-xs text-muted-foreground italic px-1 -mt-1">{t('hr.commMethodHint')}</p>
           <div>
             <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground mb-1 cursor-pointer">
               <input type="checkbox" checked={fixedSalary} onChange={e => setFixedSalary(e.target.checked)} className="rounded border-border" />

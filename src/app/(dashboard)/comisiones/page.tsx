@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { useData } from '@/lib/data-context';
@@ -20,6 +20,7 @@ import {
   SALARY_TIERS,
   HEAD_SALARY_TIERS,
   BDM_PCT_TIERS,
+  applyTotalEarnedDebt,
   type CommissionCalcResult,
 } from '@/lib/commission-calculator';
 import { upsertCommissionEntries, type CommissionEntryRow } from '@/lib/supabase/mutations';
@@ -112,9 +113,12 @@ export default function ComisionesPage() {
   const [ndInputs, setNdInputs] = useState<Map<string, number>>(new Map());
   // Store raw string for display (allows empty field + typing negatives)
   const [ndRawInputs, setNdRawInputs] = useState<Map<string, string>>(new Map());
+  // Flag para evitar que el useEffect sobreescriba los inputs tras un save
+  const isSavingRef = useRef(false);
 
   // Seed ND inputs from saved data when period changes
   useEffect(() => {
+    if (isSavingRef.current) return;
     if (!selectedPeriod) return;
     const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
     const m = new Map<string, number>();
@@ -150,7 +154,9 @@ export default function ComisionesPage() {
   }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab]);
 
   // Limpiar raw inputs solo cuando cambia el período o el head seleccionado
+  // También liberar el flag isSavingRef para que el useEffect pueda correr
   useEffect(() => {
+    isSavingRef.current = false;
     setNdRawInputs(new Map());
   }, [selectedPeriod?.id, selectedHeadId]);
 
@@ -196,6 +202,24 @@ export default function ComisionesPage() {
     return getPreviousPeriodResults(selectedPeriod.id);
   }, [selectedPeriod, getPreviousPeriodResults]);
 
+  // Leer deuda acumulada del mes anterior (guardada en campo bonus)
+  const getPrevDebt = useCallback((profileId: string, headId: string): number => {
+    const prev = previousResults.find(
+      (r) => r.profile_id === profileId && r.head_id === headId
+    ) ?? previousResults.find(
+      (r) => r.profile_id === profileId && r.head_id === profileId
+    ) ?? previousResults.find((r) => r.profile_id === profileId);
+    return prev?.bonus ?? 0;
+  }, [previousResults]);
+
+  const getPrevDebtAll = useCallback((profileId: string): number => {
+    const profile = commercialProfiles.find((p) => p.id === profileId);
+    const prev = previousResultsAll.find(
+      (r) => r.profile_id === profileId && r.head_id === (profile?.head_id ?? profileId)
+    ) ?? previousResultsAll.find((r) => r.profile_id === profileId);
+    return prev?.bonus ?? 0;
+  }, [previousResultsAll, commercialProfiles]);
+
   // HEAD's own ND commission — uses their personal ND from ndInputs
   // When HEAD has parent, accumulated is from their OWN group context (stored in division field of previous period)
   // not from the parent's accumulated_out
@@ -209,10 +233,16 @@ export default function ComisionesPage() {
         accIn = prevResult.accumulated_out ?? 0;
       }
     } else {
-      accIn = getAccumulatedIn(previousResults, headProfile.id);
+      // HEAD sin parent: buscar su registro del período anterior en su propio grupo
+      const prevResult = previousResults.find(
+        (r) => r.profile_id === headProfile.id && r.head_id === selectedHeadId
+      ) ?? previousResults.find(
+        (r) => r.profile_id === headProfile.id
+      );
+      accIn = prevResult?.accumulated_out ?? 0;
     }
     const calc = calculateCommission(nd, accIn, headPct);
-    return { profileId: headProfile.id, commissionPct: headPct, salary: 0, ...calc };
+    return { profileId: headProfile.id, commissionPct: headPct, salary: 0, totalEarnedDebt: 0, ...calc };
   }, [headProfile, ndInputs, previousResults, headPct, headHasParent]);
 
   // BDM rows — commission calculated at the DIFFERENTIAL rate (what HEAD earns from each BDM)
@@ -220,11 +250,11 @@ export default function ComisionesPage() {
     const bdms = teamProfiles.filter((_, i) => i > 0);
     return bdms.map((profile) => {
       const nd = ndInputs.get(profile.id) ?? 0;
-      const accIn = getAccumulatedIn(previousResults, profile.id);
+      const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
       // Dynamic BDM pct tiers only apply to actual BDMs, not sub-HEADs
       const isSubHead = profile.role === 'head' || profile.role === 'sales_manager'
         || commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active');
-      const bdmOwnPct = isSubHead
+      const bdmOwnPct = isSubHead || profile.fixed_salary
         ? (profile.net_deposit_pct ?? 0)
         : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
       const naturalDiff = headPct - bdmOwnPct;
@@ -232,7 +262,7 @@ export default function ComisionesPage() {
       const diffPct = naturalDiff === 0 ? extraPct : naturalDiff;
       const calc = calculateCommission(nd, accIn, diffPct);
       const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
-      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: bdmSalary, ...calc };
+      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
   }, [teamProfiles, ndInputs, previousResults, headPct, extraPct]);
 
@@ -275,18 +305,37 @@ export default function ComisionesPage() {
   }, [headProfile, selectedPeriod, existingResults, teamTotalND, commercialProfiles]);
 
   const teamSummary = useMemo(() => {
-    // bdmCalcs already uses differential % — that IS what the HEAD earns from BDMs
-    // So headDiff.totalRealPayment === bdmTotal (same data, no double count)
     const diffTotal = bdmCalcs.reduce((s, c) => s + c.realPayment, 0);
     const headOwnPayment = headOwnCalc?.realPayment ?? 0;
     const totalPayment = headOwnPayment + diffTotal;
+    const rawTotalWithSalary = totalPayment + autoSalary;
+
+    // La deuda del grupo se guarda en el campo bonus del HEAD (propio grupo)
+    // Si bonus = 0 pero total_earned del mes anterior fue negativo,
+    // usar total_earned como fallback (datos históricos sin bonus guardado)
+    const prevHeadRecord = headProfile
+      ? (previousResults.find(
+          (r) => r.profile_id === headProfile.id && r.head_id === selectedHeadId
+        ) ?? previousResults.find(
+          (r) => r.profile_id === headProfile.id && r.head_id === headProfile.id
+        ) ?? previousResults.find((r) => r.profile_id === headProfile.id))
+      : null;
+
+    // Usar bonus si tiene valor negativo — es la deuda acumulada del grupo
+    // NO usar total_earned como fallback porque puede ser incorrecto
+    const prevDebt = prevHeadRecord?.bonus ?? 0;
+
+    const { finalTotalEarned: totalWithSalary, debtOut } = applyTotalEarnedDebt(prevDebt, rawTotalWithSalary);
     return {
       diffTotal,
       headOwnPayment,
       totalPayment,
-      totalWithSalary: totalPayment + autoSalary,
+      totalWithSalary,
+      rawTotalWithSalary,
+      prevDebt,
+      debtOut,
     };
-  }, [bdmCalcs, headOwnCalc, autoSalary]);
+  }, [bdmCalcs, headOwnCalc, autoSalary, headProfile, selectedHeadId, previousResults]);
 
   // ═══════════════════════════════════════════════════════════
   // TAB: INDIVIDUAL (all BDMs)
@@ -300,16 +349,38 @@ export default function ComisionesPage() {
   const indCalcs = useMemo((): CommissionCalcResult[] => {
     return allBdms.map((profile) => {
       const nd = ndInputs.get(profile.id) ?? 0;
-      const accIn = getAccumulatedIn(previousResultsAll, profile.id);
+      const accIn = getAccumulatedIn(previousResultsAll, profile.id, profile.head_id ?? undefined);
       // BDM percentage is dynamic based on their individual ND (falls back to profile pct if < $50k)
-      const pct = calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
+      const pct = profile.fixed_salary
+        ? (profile.net_deposit_pct ?? 0)
+        : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
       const calc = calculateCommission(nd, accIn, pct);
       const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
-      return { profileId: profile.id, commissionPct: pct, salary: bdmSalary, ...calc };
+      return { profileId: profile.id, commissionPct: pct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
   }, [allBdms, ndInputs, previousResultsAll]);
 
   const indSummary = useMemo(() => calculateGroupSummary(indCalcs), [indCalcs]);
+
+  // Filtered BDM lists by commission type
+  const ndBdms = useMemo(() => allBdms.filter((p) => p.net_deposit_pct != null), [allBdms]);
+  const pnlBdms = useMemo(() => allBdms.filter((p) => p.pnl_pct != null), [allBdms]);
+  const lotBdms = useMemo(() => allBdms.filter((p) => p.commission_per_lot != null), [allBdms]);
+
+  // PnL calculations — same formula as ND but using pnl_pct, no salary tiers
+  const pnlCalcs = useMemo((): CommissionCalcResult[] => {
+    return pnlBdms.map((profile) => {
+      const nd = ndInputs.get(profile.id) ?? 0; // "PnL" value input
+      const accIn = getAccumulatedIn(previousResultsAll, profile.id, profile.head_id ?? undefined);
+      const pct = profile.pnl_pct ?? 0; // always fixed, no dynamic tiers
+      const calc = calculateCommission(nd, accIn, pct);
+      // No salary tiers for PnL — only fixed salary if configured
+      const pnlSalary = profile.fixed_salary ? (profile.salary ?? 0) : 0;
+      return { profileId: profile.id, commissionPct: pct, salary: pnlSalary, totalEarnedDebt: 0, ...calc };
+    });
+  }, [pnlBdms, ndInputs, previousResultsAll]);
+
+  const pnlSummary = useMemo(() => calculateGroupSummary(pnlCalcs), [pnlCalcs]);
 
   // ─── History filter (últimos 7 meses por defecto) ───
   const [historyFrom, setHistoryFrom] = useState(Math.max(0, sortedPeriods.length - 7));
@@ -336,6 +407,7 @@ export default function ComisionesPage() {
       return;
     }
 
+    isSavingRef.current = true;
     setSaving(true);
     try {
       let entries: CommissionEntryRow[];
@@ -347,11 +419,11 @@ export default function ComisionesPage() {
           const isHead = profile.id === headProfile?.id;
 
           const nd = ndInputs.get(profile.id) ?? 0;
-          const accIn = getAccumulatedIn(previousResults, profile.id);
+          const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
           // HEAD/sub-HEADs keep profile pct; only actual BDMs use dynamic pct based on ND
           const isSubHead = !isHead && (profile.role === 'head' || profile.role === 'sales_manager'
             || commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active'));
-          const pct = (isHead || isSubHead) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
+          const pct = (isHead || isSubHead || profile.fixed_salary) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
           const calc = calculateCommission(nd, accIn, pct);
 
           if (isHead && headHasParent) {
@@ -363,12 +435,13 @@ export default function ComisionesPage() {
               net_deposit_current: null, // flag: don't overwrite (parent manages this)
               net_deposit_accumulated: nd, // store personal ND here
               division: calc.division,
-              base_amount: calc.base,
+              base_amount: 0,
               commissions_earned: calc.commission + headDiff.totalDifferential,
               real_payment: calc.realPayment + headDiff.totalRealPayment,
               accumulated_out: calc.accumulatedOut,
               salary_paid: autoSalary,
-              total_earned: calc.realPayment + headDiff.totalRealPayment + autoSalary,
+              total_earned: teamSummary.totalWithSalary,
+              bonus: teamSummary.debtOut,
             });
           } else {
             // Sub-members with own team: preserve net_deposit_accumulated (-1 flag)
@@ -379,19 +452,21 @@ export default function ComisionesPage() {
               net_deposit_current: nd,
               net_deposit_accumulated: isSubWithTeam ? null : accIn,
               division: calc.division,
-              base_amount: calc.base,
+              base_amount: 0,
               commissions_earned: calc.commission,
               real_payment: calc.realPayment,
               accumulated_out: calc.accumulatedOut,
               salary_paid: isHead ? autoSalary : (profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd)),
               total_earned: (isHead && !headHasParent)
-                ? calc.realPayment + headDiff.totalRealPayment + autoSalary
+                ? teamSummary.totalWithSalary
                 : calc.realPayment + (profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd)),
+              bonus: isHead ? teamSummary.debtOut : 0,
             });
           }
         }
       } else {
-        entries = indCalcs.map((c) => {
+        // ND BDM entries
+        const ndEntries = indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).map((c) => {
           const profile = commercialProfiles.find((p) => p.id === c.profileId);
           return {
             profile_id: c.profileId,
@@ -399,14 +474,44 @@ export default function ComisionesPage() {
             net_deposit_current: c.netDepositCurrent,
             net_deposit_accumulated: c.accumulatedIn,
             division: c.division,
-            base_amount: c.base,
+            base_amount: 0,
             commissions_earned: c.commission,
             real_payment: c.realPayment,
             accumulated_out: c.accumulatedOut,
             salary_paid: c.salary,
-            total_earned: c.realPayment + c.salary,
+            ...(() => {
+              const prevDebt = getPrevDebtAll(c.profileId);
+              const rawTE = c.realPayment + c.salary;
+              const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
+              return { total_earned: finalTotalEarned, bonus: debtOut };
+            })(),
           };
         });
+        // PnL BDM entries
+        const pnlEntries = pnlCalcs.map((c) => {
+          const profile = commercialProfiles.find((p) => p.id === c.profileId);
+          return {
+            profile_id: c.profileId,
+            head_id: profile?.head_id ?? selectedHeadId,
+            net_deposit_current: c.netDepositCurrent,
+            net_deposit_accumulated: c.accumulatedIn,
+            division: c.division,
+            base_amount: 0,
+            commissions_earned: c.commission,
+            real_payment: c.realPayment,
+            accumulated_out: c.accumulatedOut,
+            salary_paid: c.salary,
+            ...(() => {
+              const prevDebt = getPrevDebtAll(c.profileId);
+              const rawTE = c.realPayment + c.salary;
+              const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
+              return { total_earned: finalTotalEarned, bonus: debtOut };
+            })(),
+          };
+        });
+        // Merge: if a BDM appears in both ND and PnL, keep ND entry (primary)
+        const pnlOnly = pnlEntries.filter((pe) => !ndEntries.some((ne) => ne.profile_id === pe.profile_id));
+        entries = [...ndEntries, ...pnlOnly];
       }
       console.log('[SAVE] entries:', entries.length, entries.map(e => ({ id: e.profile_id, nd: e.net_deposit_current })));
       if (entries.length === 0) {
@@ -417,17 +522,33 @@ export default function ComisionesPage() {
       }
       await upsertCommissionEntries(company.id, selectedPeriod.id, selectedHeadId, entries);
       console.log('[SAVE] success');
+      // Actualizar ndInputs MANUALMENTE con los valores que acabamos de guardar
+      setNdInputs((prev) => {
+        const next = new Map(prev);
+        for (const entry of entries) {
+          if (entry.net_deposit_current !== null) {
+            next.set(entry.profile_id, entry.net_deposit_current);
+          }
+        }
+        return next;
+      });
       // Limpiar raw inputs para que el display muestre los valores guardados
       setNdRawInputs(new Map());
       // Liberar el botón y mostrar éxito INMEDIATAMENTE
       setSaving(false);
       setToast({ type: 'success', msg: 'Comisiones guardadas' });
       setTimeout(() => setToast(null), 4000);
+      // Bloquear el useEffect ANTES del refresh para que no sobreescriba
+      // los inputs cuando monthlyResults se actualice
+      isSavingRef.current = true;
       // Refrescar datos en background sin bloquear la UI
       refreshCommissions().catch((err) => {
         console.warn('Background refresh failed:', err);
+      }).finally(() => {
+        isSavingRef.current = false;
       });
     } catch (err) {
+      isSavingRef.current = false;
       setSaving(false);
       setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al guardar' });
       setTimeout(() => setToast(null), 4000);
@@ -488,10 +609,10 @@ export default function ComisionesPage() {
     }
     if (!selectedPeriod) return;
     if (tab === 'teams') {
-      const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.base'), t('comm.commission'), t('comm.realPayment')];
+      const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.commission'), t('comm.realPayment')];
       const rows = bdmCalcs.map((c) => {
         const p = commercialProfiles.find((pr) => pr.id === c.profileId);
-        return [p?.name ?? '', 'BDM', c.commissionPct, c.netDepositCurrent, c.division, c.base, c.commission, c.realPayment] as (string | number)[];
+        return [p?.name ?? '', 'BDM', c.commissionPct, c.netDepositCurrent, c.division, c.commission, c.realPayment] as (string | number)[];
       });
       if (headProfile) {
         rows.push([headProfile.name, ROLE_LABEL[headProfile.role], `Diff`, '', '', '', headDiff.totalDifferential, headDiff.totalRealPayment]);
@@ -500,7 +621,7 @@ export default function ComisionesPage() {
       downloadCSV(`comisiones_${headName}_${selectedPeriod.year}-${selectedPeriod.month}.csv`, headers, rows);
     } else {
       // Export from saved DB data — not from real-time calculations (which may show 0 if ndInputs didn't load)
-      const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.base'), t('comm.commission'), t('comm.realPayment'), 'Salario', 'Total'];
+      const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.commission'), t('comm.realPayment'), 'Salario', 'Total'];
       const periodData = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
       const bdmProfilesSorted = [...commercialProfiles]
         .filter((p) => p.status === 'active')
@@ -520,7 +641,6 @@ export default function ComisionesPage() {
           profile.net_deposit_pct ?? 0,
           rec.net_deposit_current,
           rec.division,
-          rec.base_amount,
           rec.commissions_earned,
           rec.real_payment,
           rec.salary_paid,
@@ -552,7 +672,6 @@ export default function ComisionesPage() {
         netDepositCurrent: headOwnCalc.netDepositCurrent,
         accumulatedIn: headOwnCalc.accumulatedIn,
         division: headOwnCalc.division,
-        base: headOwnCalc.base,
         commissionPct: headOwnCalc.commissionPct,
         commission: headOwnCalc.commission,
         realPayment: headOwnCalc.realPayment,
@@ -569,7 +688,6 @@ export default function ComisionesPage() {
           diffPct: c.diffPct,
           nd: c.netDepositCurrent,
           division: c.division,
-          base: c.base,
           commission: c.commission,
           realPayment: c.realPayment,
           accOut: c.accumulatedOut,
@@ -700,6 +818,11 @@ export default function ComisionesPage() {
             <Card>
               <p className="text-sm text-muted-foreground">{t('comm.totalWithSalary')}</p>
               <p className={cn('text-2xl font-bold', teamSummary.totalWithSalary >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(teamSummary.totalWithSalary)}</p>
+              {teamSummary.prevDebt < 0 && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                  {formatCurrency(teamSummary.rawTotalWithSalary)} − {formatCurrency(Math.abs(teamSummary.prevDebt))} deuda = {formatCurrency(teamSummary.totalWithSalary)}
+                </p>
+              )}
             </Card>
           </div>
 
@@ -730,7 +853,6 @@ export default function ComisionesPage() {
                       <th className="text-right px-3 py-3 font-medium">{t('comm.ndCurrent')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.accumulated')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.division')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.base')}</th>
                       <th className="text-center px-3 py-3 font-medium">%</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
@@ -748,7 +870,6 @@ export default function ComisionesPage() {
                         </td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.accumulatedIn)}</td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.division)}</td>
-                        <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.base)}</td>
                         <td className="px-3 py-3 text-center text-xs font-medium">{headOwnCalc.commissionPct}%</td>
                         <td className={cn('px-3 py-3 text-right font-medium', headOwnCalc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(headOwnCalc.commission)}</td>
                         <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(headOwnCalc.realPayment)}</td>
@@ -772,7 +893,6 @@ export default function ComisionesPage() {
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.base)}</td>
                           <td className="px-3 py-3 text-center text-xs font-medium">
                             <span className="text-violet-600">{calc.diffPct}%</span>
                             <span className="block text-muted-foreground text-[10px]">({calc.bdmOwnPct}% base)</span>
@@ -819,7 +939,13 @@ export default function ComisionesPage() {
             <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.allBdms')} — {allBdms.length} BDMs</span>
           </div>
 
-          {allBdms.length > 0 ? (
+          {/* ── Section: Net Deposit ── */}
+          <h3 className="text-base font-semibold flex items-center gap-2 mt-2">
+            <Calculator className="w-4 h-4 text-emerald-600" />
+            {t('comm.sectionND')}
+            <span className="text-xs text-muted-foreground font-normal">({ndBdms.length})</span>
+          </h3>
+          {ndBdms.length > 0 ? (
             <Card className="p-0 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm min-w-[900px]">
@@ -830,7 +956,6 @@ export default function ComisionesPage() {
                       <th className="text-right px-3 py-3 font-medium">{t('comm.ndCurrent')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.accumulated')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.division')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.base')}</th>
                       <th className="text-center px-3 py-3 font-medium">%</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
@@ -841,7 +966,7 @@ export default function ComisionesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {indCalcs.map((calc) => {
+                    {indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).map((calc) => {
                       const profile = commercialProfiles.find((p) => p.id === calc.profileId);
                       if (!profile) return null;
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
@@ -854,12 +979,25 @@ export default function ComisionesPage() {
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.base)}</td>
                           <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
                           <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
                           <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.salary)}</td>
-                          <td className="px-3 py-3 text-right font-semibold">{formatCurrency(calc.realPayment + calc.salary)}</td>
+                          <td className="px-3 py-3 text-right font-semibold">
+                            {(() => {
+                              const rawTE = calc.realPayment + calc.salary;
+                              const prevDebt = getPrevDebtAll(calc.profileId);
+                              const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
+                              return (
+                                <span className={prevDebt < 0 ? 'text-orange-600' : ''}>
+                                  {formatCurrency(finalTotalEarned)}
+                                  {prevDebt < 0 && (
+                                    <span className="block text-[10px] text-orange-500">deuda: {formatCurrency(prevDebt)}</span>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                          </td>
                           <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
                           <td className="px-2 py-3 text-center">
                             <button
@@ -877,7 +1015,6 @@ export default function ComisionesPage() {
                                   nd: calc.netDepositCurrent,
                                   accumulatedIn: calc.accumulatedIn,
                                   division: calc.division,
-                                  base: calc.base,
                                   commission: calc.commission,
                                   realPayment: calc.realPayment,
                                   accumulatedOut: calc.accumulatedOut,
@@ -898,12 +1035,12 @@ export default function ComisionesPage() {
                   <tfoot>
                     <tr className="bg-muted/50 font-semibold">
                       <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
-                      <td className="px-3 py-3 text-right">{formatCurrency(indCalcs.reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
+                      <td className="px-3 py-3 text-right">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
                       <td className="px-3 py-3" colSpan={4}></td>
-                      <td className={cn('px-3 py-3 text-right', indSummary.totalCommission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(indSummary.totalCommission)}</td>
-                      <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(indSummary.totalRealPayment)}</td>
-                      <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(indSummary.totalSalary)}</td>
-                      <td className="px-3 py-3 text-right font-semibold">{formatCurrency(indSummary.totalWithSalary)}</td>
+                      <td className={cn('px-3 py-3 text-right', indSummary.totalCommission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.realPayment, 0))}</td>
+                      <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.realPayment, 0))}</td>
+                      <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.salary, 0))}</td>
+                      <td className="px-3 py-3 text-right font-semibold">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.realPayment + c.salary, 0))}</td>
                       <td className="px-3 py-3"></td>
                       <td className="px-2 py-3"></td>
                     </tr>
@@ -912,7 +1049,154 @@ export default function ComisionesPage() {
               </div>
             </Card>
           ) : (
-            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noData')}</p></Card>
+            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noBdmsInSection')}</p></Card>
+          )}
+
+          {/* ── Section: PnL ── */}
+          <h3 className="text-base font-semibold flex items-center gap-2 mt-6">
+            <BarChart3 className="w-4 h-4 text-blue-600" />
+            {t('comm.sectionPnL')}
+            <span className="text-xs text-muted-foreground font-normal">({pnlBdms.length})</span>
+          </h3>
+          {pnlBdms.length > 0 ? (
+            <Card className="p-0 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[900px]">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50">
+                      <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
+                      <th className="text-left px-3 py-3 font-medium">HEAD</th>
+                      <th className="text-right px-3 py-3 font-medium">PnL</th>
+                      <th className="text-right px-3 py-3 font-medium">{t('comm.accumulated')}</th>
+                      <th className="text-right px-3 py-3 font-medium">{t('comm.division')}</th>
+                      <th className="text-center px-3 py-3 font-medium">%</th>
+                      <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
+                      <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
+                      <th className="text-right px-3 py-3 font-medium">Total</th>
+                      <th className="text-right px-3 py-3 font-medium">{t('comm.accNext')}</th>
+                      <th className="px-2 py-3"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pnlCalcs.map((calc) => {
+                      const profile = commercialProfiles.find((p) => p.id === calc.profileId);
+                      if (!profile) return null;
+                      const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
+                      return (
+                        <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
+                          <td className="px-4 py-3"><span className="font-medium block">{profile.name}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
+                          <td className="px-3 py-3">
+                            <input type="number" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                          </td>
+                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
+                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
+                          <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
+                          <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
+                          <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
+                          <td className="px-3 py-3 text-right font-semibold">
+                            {(() => {
+                              const rawTE = calc.realPayment + calc.salary;
+                              const prevDebt = getPrevDebtAll(calc.profileId);
+                              const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
+                              return (
+                                <span className={prevDebt < 0 ? 'text-orange-600' : ''}>
+                                  {formatCurrency(finalTotalEarned)}
+                                  {prevDebt < 0 && (
+                                    <span className="block text-[10px] text-orange-500">deuda: {formatCurrency(prevDebt)}</span>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                          <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
+                          <td className="px-2 py-3 text-center">
+                            <button
+                              onClick={() => verify2FA(() => {
+                                if (!selectedPeriod) return;
+                                const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
+                                generateIndividualPDF({
+                                  companyName: company?.name ?? 'VexPro',
+                                  periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+                                  name: profile.name,
+                                  email: profile.email,
+                                  role: ROLE_LABEL[profile.role] || profile.role,
+                                  headName: headP?.name ?? '—',
+                                  pct: calc.commissionPct,
+                                  nd: calc.netDepositCurrent,
+                                  accumulatedIn: calc.accumulatedIn,
+                                  division: calc.division,
+                                  commission: calc.commission,
+                                  realPayment: calc.realPayment,
+                                  accumulatedOut: calc.accumulatedOut,
+                                  salary: calc.salary,
+                                  total: calc.realPayment + calc.salary,
+                                });
+                              })}
+                              className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                              title="Descargar PDF"
+                            >
+                              <FileText className="w-4 h-4" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-muted/50 font-semibold">
+                      <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
+                      <td className="px-3 py-3 text-right">{formatCurrency(pnlCalcs.reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
+                      <td className="px-3 py-3" colSpan={4}></td>
+                      <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(pnlSummary.totalRealPayment)}</td>
+                      <td className="px-3 py-3 text-right font-semibold">{formatCurrency(pnlSummary.totalWithSalary)}</td>
+                      <td className="px-3 py-3"></td>
+                      <td className="px-2 py-3"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </Card>
+          ) : (
+            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noBdmsInSection')}</p></Card>
+          )}
+
+          {/* ── Section: Commission per Lot ── */}
+          <h3 className="text-base font-semibold flex items-center gap-2 mt-6">
+            <FileSpreadsheet className="w-4 h-4 text-amber-600" />
+            {t('comm.sectionLot')}
+            <span className="text-xs text-muted-foreground font-normal">({lotBdms.length})</span>
+          </h3>
+          {lotBdms.length > 0 ? (
+            <Card className="p-0 overflow-hidden">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border bg-muted/50">
+                      <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
+                      <th className="text-left px-3 py-3 font-medium">HEAD</th>
+                      <th className="text-center px-3 py-3 font-medium">USD/Lote</th>
+                      <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lotBdms.map((profile) => {
+                      const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
+                      return (
+                        <tr key={profile.id} className="border-b border-border hover:bg-muted/30">
+                          <td className="px-4 py-3"><span className="font-medium block">{profile.name}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
+                          <td className="px-3 py-3 text-center text-xs font-medium">{formatCurrency(profile.commission_per_lot ?? 0)}</td>
+                          <td className="px-3 py-3 text-right text-muted-foreground italic text-xs">—</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          ) : (
+            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noBdmsInSection')}</p></Card>
           )}
         </>
       )}

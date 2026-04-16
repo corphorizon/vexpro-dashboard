@@ -30,14 +30,13 @@ interface PdfCommissionData {
     netDepositCurrent: number;
     accumulatedIn: number;
     division: number;
-    base: number;
     commissionPct: number;
     commission: number;
     realPayment: number;
     accumulatedOut: number;
   } | null;
   headDiff: { totalDifferential: number; totalRealPayment: number };
-  teamSummary: { headOwnPayment: number; diffTotal: number; totalPayment: number; totalWithSalary: number };
+  teamSummary: { headOwnPayment: number; diffTotal: number; totalPayment: number; totalWithSalary: number; rawTotalWithSalary: number; prevDebt: number; debtOut: number };
   bdms: {
     name: string;
     email: string;
@@ -45,7 +44,6 @@ interface PdfCommissionData {
     diffPct: number;
     nd: number;
     division: number;
-    base: number;
     commission: number;
     realPayment: number;
     accOut: number;
@@ -120,12 +118,11 @@ export function generateCommissionPDF(data: PdfCommissionData) {
   if (data.headOwnCalc) {
     autoTable(doc, {
       startY: y,
-      head: [['ND Mes Actual', 'Acumulado', 'Division', 'Base', '%', 'Comision', 'Pago Real', 'Acc → Sig.']],
+      head: [['ND Mes Actual', 'Acumulado', 'Division', '%', 'Comision', 'Pago Real', 'Acc → Sig.']],
       body: [[
         `$${fmt(data.headOwnCalc.netDepositCurrent)}`,
         `$${fmt(data.headOwnCalc.accumulatedIn)}`,
         `$${fmt(data.headOwnCalc.division)}`,
-        `$${fmt(data.headOwnCalc.base)}`,
         `${data.headOwnCalc.commissionPct}%`,
         `$${fmt(data.headOwnCalc.commission)}`,
         `$${fmt(data.headOwnCalc.realPayment)}`,
@@ -148,7 +145,7 @@ export function generateCommissionPDF(data: PdfCommissionData) {
 
   autoTable(doc, {
     startY: y,
-    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Division', 'Base', 'Comision', 'Pago Real', 'Acc → Sig.', 'Sueldo']],
+    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Division', 'Comision', 'Pago Real', 'Acc → Sig.', 'Sueldo']],
     body: data.bdms.map(b => [
       b.name,
       b.email,
@@ -156,7 +153,6 @@ export function generateCommissionPDF(data: PdfCommissionData) {
       `${b.diffPct}%`,
       `$${fmt(b.nd)}`,
       `$${fmt(b.division)}`,
-      `$${fmt(b.base)}`,
       `$${fmt(b.commission)}`,
       `$${fmt(b.realPayment)}`,
       `$${fmt(b.accOut)}`,
@@ -177,24 +173,35 @@ export function generateCommissionPDF(data: PdfCommissionData) {
   doc.text('Resumen de Pagos', 14, y);
   y += 2;
 
+  const summaryRows: string[][] = [
+    ['Comision propia del HEAD', `$${fmt(data.teamSummary.headOwnPayment)}`],
+    ['Diferencial de BDMs', `$${fmt(data.teamSummary.diffTotal)}`],
+    ['Total comisiones', `$${fmt(data.teamSummary.totalPayment)}`],
+    ['Salario base', `$${fmt(data.autoSalary)}`],
+  ];
+  if (data.teamSummary.prevDebt < 0) {
+    summaryRows.push(['Subtotal antes de deuda', `$${fmt(data.teamSummary.rawTotalWithSalary)}`]);
+    summaryRows.push(['Deuda mes anterior', `$${fmt(data.teamSummary.prevDebt)}`]);
+  }
+  summaryRows.push(['TOTAL A PAGAR', `$${fmt(data.teamSummary.totalWithSalary)}`]);
+  const totalRowIndex = summaryRows.length - 1;
+
   autoTable(doc, {
     startY: y,
     head: [['Concepto', 'Monto']],
-    body: [
-      ['Comision propia del HEAD', `$${fmt(data.teamSummary.headOwnPayment)}`],
-      ['Diferencial de BDMs', `$${fmt(data.teamSummary.diffTotal)}`],
-      ['Total comisiones', `$${fmt(data.teamSummary.totalPayment)}`],
-      ['Salario base', `$${fmt(data.autoSalary)}`],
-      ['TOTAL A PAGAR', `$${fmt(data.teamSummary.totalWithSalary)}`],
-    ],
+    body: summaryRows,
     theme: 'grid',
     styles: { fontSize: 9, cellPadding: 3 },
     headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
     bodyStyles: { textColor: [30, 41, 59] },
     didParseCell: (hookData) => {
-      if (hookData.section === 'body' && hookData.row.index === 4) {
+      if (hookData.section === 'body' && hookData.row.index === totalRowIndex) {
         hookData.cell.styles.fontStyle = 'bold';
         hookData.cell.styles.fillColor = [234, 245, 255];
+      }
+      // Highlight debt row in amber
+      if (hookData.section === 'body' && data.teamSummary.prevDebt < 0 && hookData.row.index === totalRowIndex - 1) {
+        hookData.cell.styles.textColor = [180, 83, 9]; // amber-700
       }
     },
     columnStyles: { 0: { cellWidth: 80 }, 1: { halign: 'right' } },
@@ -232,7 +239,6 @@ interface PdfIndividualData {
   nd: number;
   accumulatedIn: number;
   division: number;
-  base: number;
   commission: number;
   realPayment: number;
   accumulatedOut: number;
@@ -311,8 +317,7 @@ export function generateIndividualPDF(data: PdfIndividualData) {
       ['ND Mes Actual', `$${fmt(data.nd)}`],
       ['Acumulado del mes anterior', `$${fmt(data.accumulatedIn)}`],
       ['Division (ND / 2)', `$${fmt(data.division)}`],
-      ['Base (Division + Acumulado)', `$${fmt(data.base)}`],
-      ['Comision (Base x %)', `$${fmt(data.commission)}`],
+      ['Comision ((Division + Acumulado) x %)', `$${fmt(data.commission)}`],
       ['Pago Real', `$${fmt(data.realPayment)}`],
       ['Acumulado → Siguiente mes', `$${fmt(data.accumulatedOut)}`],
     ],
