@@ -869,13 +869,46 @@ export default function UploadPage() {
   // Liquidity totals
   const liqTotalDeposits = filteredLiquidity.reduce((s, r) => s + r.deposit, 0);
   const liqTotalWithdrawals = filteredLiquidity.reduce((s, r) => s + r.withdrawal, 0);
-  const liqCurrentBalance = filteredLiquidity.length > 0 ? filteredLiquidity[filteredLiquidity.length - 1].balance : 0;
 
   // Investment totals
   const invTotalDeposits = filteredInvestments.reduce((s, r) => s + r.deposit, 0);
   const invTotalWithdrawals = filteredInvestments.reduce((s, r) => s + r.withdrawal, 0);
   const invTotalProfit = filteredInvestments.reduce((s, r) => s + r.profit, 0);
-  const invCurrentBalance = filteredInvestments.length > 0 ? filteredInvestments[filteredInvestments.length - 1].balance : 0;
+
+  // Balance maps — computed on-the-fly. The stored `balance` column is
+  // unreliable (insert passes 0; recalc* never runs). Use these everywhere
+  // we need a per-row or cumulative balance.
+  const liqBalanceMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const sorted = [...liquidityRows].sort((a, b) => a.date.localeCompare(b.date));
+    let running = 0;
+    for (const r of sorted) {
+      running += r.deposit - r.withdrawal;
+      map.set(r.id, running);
+    }
+    return map;
+  }, [liquidityRows]);
+  const invBalanceMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const sorted = [...investmentRows].sort((a, b) => a.date.localeCompare(b.date));
+    let running = 0;
+    for (const r of sorted) {
+      running += r.deposit - r.withdrawal + r.profit;
+      map.set(r.id, running);
+    }
+    return map;
+  }, [investmentRows]);
+
+  const liqCurrentBalance = useMemo(() => {
+    if (filteredLiquidity.length === 0) return 0;
+    const sortedFiltered = [...filteredLiquidity].sort((a, b) => a.date.localeCompare(b.date));
+    return liqBalanceMap.get(sortedFiltered.at(-1)!.id) ?? 0;
+  }, [filteredLiquidity, liqBalanceMap]);
+  const invCurrentBalance = useMemo(() => {
+    if (filteredInvestments.length === 0) return 0;
+    const sortedFiltered = [...filteredInvestments].sort((a, b) => a.date.localeCompare(b.date));
+    return invBalanceMap.get(sortedFiltered.at(-1)!.id) ?? 0;
+  }, [filteredInvestments, invBalanceMap]);
 
   return (
     <div className="space-y-6">
@@ -1617,7 +1650,7 @@ export default function UploadPage() {
                         <td className="py-2 px-3"><input value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2 px-3"><input type="number" step="0.01" value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2 px-3"><input type="number" step="0.01" value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(row.balance)}</td>
+                        <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2 px-3 text-center">
                           <div className="flex justify-center gap-1">
                             <button onClick={saveEditLiq} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
@@ -1632,7 +1665,7 @@ export default function UploadPage() {
                         <td className="py-2.5 px-3 text-muted-foreground">{row.mt_account || '—'}</td>
                         <td className="py-2.5 px-3 text-right font-medium text-emerald-600">{row.deposit > 0 ? formatCurrency(row.deposit) : '—'}</td>
                         <td className="py-2.5 px-3 text-right font-medium text-red-600">{row.withdrawal > 0 ? formatCurrency(row.withdrawal) : '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(row.balance)}</td>
+                        <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
                         {(userCanEdit || userCanDelete) && (
                           <td className="py-2.5 px-3 text-center">
                             <div className="flex justify-center gap-1">
@@ -1805,7 +1838,7 @@ export default function UploadPage() {
                         <td className="py-2 px-3"><input type="number" step="0.01" value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2 px-3"><input type="number" step="0.01" value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2 px-3"><input type="number" step="0.01" value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(row.balance)}</td>
+                        <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2 px-3 text-center">
                           <div className="flex justify-center gap-1">
                             <button onClick={saveEditInv} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
@@ -1821,7 +1854,7 @@ export default function UploadPage() {
                         <td className="py-2.5 px-3 text-right font-medium text-emerald-600">{row.deposit > 0 ? formatCurrency(row.deposit) : '—'}</td>
                         <td className="py-2.5 px-3 text-right font-medium text-red-600">{row.withdrawal > 0 ? formatCurrency(row.withdrawal) : '—'}</td>
                         <td className="py-2.5 px-3 text-right font-medium text-blue-600">{row.profit > 0 ? formatCurrency(row.profit) : '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(row.balance)}</td>
+                        <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
                         {(userCanEdit || userCanDelete) && (
                           <td className="py-2.5 px-3 text-center">
                             <div className="flex justify-center gap-1">

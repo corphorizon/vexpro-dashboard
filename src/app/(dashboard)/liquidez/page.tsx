@@ -56,7 +56,34 @@ export default function LiquidezPage() {
     });
   }, [filter, liquidityData]);
 
-  const lastBalance = filtered[filtered.length - 1]?.balance || 0;
+  // Running balance map — computed on-the-fly from ALL movements sorted by
+  // date ascending. We don't trust the stored `balance` column because
+  // addLiquidityRow inserts it as 0 (legacy bug, recalcLiquidityBalances
+  // was never called). Recomputing makes the UI resilient to bad stored data.
+  const balanceMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const sorted = [...liquidityData].sort((a, b) => a.date.localeCompare(b.date));
+    let running = 0;
+    for (const m of sorted) {
+      running += m.deposit - m.withdrawal;
+      map.set(m.id, running);
+    }
+    return map;
+  }, [liquidityData]);
+
+  // Balance Actual = running total at the end of the filtered range.
+  // For filter='total' it's the final running balance.
+  // For filter='YYYY-MM' it's the balance at the end of that month
+  // (includes all prior months + this one).
+  const lastBalance = useMemo(() => {
+    if (filtered.length === 0) {
+      const sorted = [...liquidityData].sort((a, b) => a.date.localeCompare(b.date));
+      return sorted.length > 0 ? balanceMap.get(sorted.at(-1)!.id) ?? 0 : 0;
+    }
+    const sortedFiltered = [...filtered].sort((a, b) => a.date.localeCompare(b.date));
+    return balanceMap.get(sortedFiltered.at(-1)!.id) ?? 0;
+  }, [filtered, liquidityData, balanceMap]);
+
   const totalDeposits = filtered.reduce((s, m) => s + m.deposit, 0);
   const totalWithdrawals = filtered.reduce((s, m) => s + m.withdrawal, 0);
 
@@ -183,7 +210,7 @@ export default function LiquidezPage() {
                   <td className="py-2.5 px-3 text-right font-medium text-red-600">
                     {mov.withdrawal > 0 ? formatCurrency(mov.withdrawal) : '—'}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(mov.balance)}</td>
+                  <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(balanceMap.get(mov.id) ?? 0)}</td>
                 </tr>
               ))}
             </tbody>

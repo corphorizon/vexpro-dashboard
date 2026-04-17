@@ -56,7 +56,30 @@ export default function InversionesPage() {
     });
   }, [filter, investmentsData]);
 
-  const lastBalance = filtered[filtered.length - 1]?.balance || 0;
+  // Running balance computed on-the-fly. The stored `balance` column is
+  // unreliable because addInvestmentRow / updateInvestment pass `balance: 0`
+  // on insert. Formula matches recalcInvestmentBalances: deposit - withdrawal
+  // + profit accumulated in date order.
+  const balanceMap = useMemo(() => {
+    const map = new Map<string, number>();
+    const sorted = [...investmentsData].sort((a, b) => a.date.localeCompare(b.date));
+    let running = 0;
+    for (const inv of sorted) {
+      running += inv.deposit - inv.withdrawal + inv.profit;
+      map.set(inv.id, running);
+    }
+    return map;
+  }, [investmentsData]);
+
+  const lastBalance = useMemo(() => {
+    if (filtered.length === 0) {
+      const sorted = [...investmentsData].sort((a, b) => a.date.localeCompare(b.date));
+      return sorted.length > 0 ? balanceMap.get(sorted.at(-1)!.id) ?? 0 : 0;
+    }
+    const sortedFiltered = [...filtered].sort((a, b) => a.date.localeCompare(b.date));
+    return balanceMap.get(sortedFiltered.at(-1)!.id) ?? 0;
+  }, [filtered, investmentsData, balanceMap]);
+
   const totalDeposits = filtered.reduce((s, i) => s + i.deposit, 0);
   const totalWithdrawals = filtered.reduce((s, i) => s + i.withdrawal, 0);
   const totalProfit = filtered.reduce((s, i) => s + i.profit, 0);
@@ -191,7 +214,7 @@ export default function InversionesPage() {
                   <td className="py-2.5 px-3 text-right font-medium text-emerald-600">
                     {inv.profit > 0 ? formatCurrency(inv.profit) : '—'}
                   </td>
-                  <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(inv.balance)}</td>
+                  <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(balanceMap.get(inv.id) ?? 0)}</td>
                 </tr>
               ))}
             </tbody>

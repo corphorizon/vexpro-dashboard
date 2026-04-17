@@ -158,15 +158,18 @@ export default function BalancesPage() {
 
   // ─── Section B: Balances por Canal (snapshots for selected date) ───
 
-  // Auto-derived values from other modules
+  // Auto-derived values from other modules. Computed on-the-fly because the
+  // stored `balance` column on liquidity_movements / investments is always
+  // 0 (insert bug — addLiquidityRow / addInvestmentRow never called
+  // recalc*Balances). Running sum is the correct current balance regardless.
   const liquidityBalance = useMemo(() => {
     const data = getLiquidityData();
-    return data[data.length - 1]?.balance || 0;
+    return data.reduce((s, m) => s + m.deposit - m.withdrawal, 0);
   }, [getLiquidityData]);
 
   const investmentsBalance = useMemo(() => {
     const data = getInvestmentsData();
-    return data[data.length - 1]?.balance || 0;
+    return data.reduce((s, i) => s + i.deposit - i.withdrawal + i.profit, 0);
   }, [getInvestmentsData]);
 
   // ─── Coinsbuy Wallets (API en tiempo real) — declared early for getChannelValue ───
