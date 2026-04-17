@@ -1,53 +1,23 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { checkRateLimit, recordFailure, clearAttempts } from '@/lib/rate-limit';
 import speakeasy from 'speakeasy';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/verify-2fa
 //
-// Server-side 2FA PIN verification. Receives email + password + pin,
-// verifies the PIN against the stored twofa_secret (server-side only),
+// Server-side 2FA PIN verification during login. Receives email + password
+// + pin, verifies the PIN against the stored twofa_secret (server-side only),
 // and returns whether verification passed. If it did, the client should
 // call signInWithPassword again to establish a proper Supabase session.
 //
-// Rate-limited: max 3 attempts per user, 15-minute lockout.
+// Rate-limited: max 3 failed attempts per user, 15-minute lockout.
+// State is persisted in the twofa_attempts Supabase table so it survives
+// serverless worker restarts and is shared across instances.
 // ---------------------------------------------------------------------------
 
-const attempts = new Map<string, { count: number; lockedUntil: number }>();
 const MAX_ATTEMPTS = 3;
-const LOCKOUT_MS = 15 * 60 * 1000; // 15 minutes
-
-function checkRateLimit(userId: string): { allowed: boolean; message?: string } {
-  const now = Date.now();
-  const entry = attempts.get(userId);
-
-  if (entry) {
-    if (entry.lockedUntil > now) {
-      const minutesLeft = Math.ceil((entry.lockedUntil - now) / 60000);
-      return { allowed: false, message: `Cuenta bloqueada. Intenta en ${minutesLeft} minutos.` };
-    }
-    if (entry.lockedUntil <= now && entry.count >= MAX_ATTEMPTS) {
-      // Lockout expired, reset
-      attempts.delete(userId);
-    }
-  }
-
-  return { allowed: true };
-}
-
-function recordFailedAttempt(userId: string): void {
-  const now = Date.now();
-  const entry = attempts.get(userId) || { count: 0, lockedUntil: 0 };
-  entry.count += 1;
-  if (entry.count >= MAX_ATTEMPTS) {
-    entry.lockedUntil = now + LOCKOUT_MS;
-  }
-  attempts.set(userId, entry);
-}
-
-function clearAttempts(userId: string): void {
-  attempts.delete(userId);
-}
+const LOCK_MS = 15 * 60 * 1000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -65,10 +35,16 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!/^\d{6}$/.test(pin)) {
+      return NextResponse.json(
+        { success: false, error: 'El PIN debe tener 6 dígitos' },
+        { status: 400 },
+      );
+    }
+
     const adminClient = createAdminClient();
 
     // Look up the user's company_users record to get twofa_secret
-    // We verify by email — the PIN must match server-side
     const { data: companyUser, error: lookupError } = await adminClient
       .from('company_users')
       .select('id, twofa_secret, twofa_enabled')
@@ -89,42 +65,51 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Check rate limit
-    const rateCheck = checkRateLimit(companyUser.id);
-    if (!rateCheck.allowed) {
+    const rlOpts = { key: companyUser.id, kind: 'verify-2fa' as const };
+
+    // Check rate-limit (durable, cross-worker)
+    const gate = await checkRateLimit(adminClient, rlOpts);
+    if (gate.locked) {
+      const minutes = Math.ceil(gate.waitMs / 60000);
       return NextResponse.json(
-        { success: false, error: rateCheck.message },
+        {
+          success: false,
+          error: `Cuenta bloqueada. Intenta en ${minutes} minuto${minutes === 1 ? '' : 's'}.`,
+          locked: true,
+          waitMs: gate.waitMs,
+        },
         { status: 429 },
       );
     }
 
-    // Verify TOTP code server-side using speakeasy
+    // Verify TOTP code server-side
     const isValid = speakeasy.totp.verify({
       secret: companyUser.twofa_secret,
       encoding: 'base32',
       token: pin,
-      window: 1, // Accept 1 step before/after (30s tolerance)
+      window: 1,
     });
+
     if (!isValid) {
-      recordFailedAttempt(companyUser.id);
-      const entry = attempts.get(companyUser.id);
-      const remaining = MAX_ATTEMPTS - (entry?.count || 0);
+      const next = await recordFailure(adminClient, {
+        ...rlOpts,
+        max: MAX_ATTEMPTS,
+        lockMs: LOCK_MS,
+      });
+      const remaining = Math.max(0, MAX_ATTEMPTS - next.failedCount);
       return NextResponse.json(
         {
           success: false,
-          error: remaining > 0
-            ? `PIN incorrecto. ${remaining} intentos restantes.`
-            : 'PIN incorrecto. Cuenta bloqueada por 15 minutos.',
+          error: next.locked
+            ? 'PIN incorrecto. Cuenta bloqueada por 15 minutos.'
+            : `PIN incorrecto. ${remaining} intento${remaining === 1 ? '' : 's'} restantes.`,
+          locked: next.locked,
         },
-        { status: 401 },
+        { status: next.locked ? 429 : 401 },
       );
     }
 
-    // PIN is correct — clear rate limit
-    clearAttempts(companyUser.id);
-
-    // Verify credentials are still valid by signing in
-    // (this ensures the user has valid email/password)
+    // Verify credentials are still valid by signing in temporarily
     const { createClient } = await import('@supabase/supabase-js');
     const tempClient = createClient(
       process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -144,8 +129,19 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Sign out the temp client — the real sign-in happens on the browser
-    await tempClient.auth.signOut();
+    // PIN is correct → clear rate limit
+    await clearAttempts(adminClient, rlOpts);
+
+    // Sign out the temp client — real sign-in happens on the browser.
+    // If this fails, the refresh token could remain valid. Log loudly so
+    // operators notice and can invalidate it manually.
+    const { error: signOutError } = await tempClient.auth.signOut();
+    if (signOutError) {
+      console.error(
+        '[verify-2fa] SECURITY: temp signOut failed — orphan refresh token possible',
+        { userId: companyUser.id, error: signOutError.message },
+      );
+    }
 
     return NextResponse.json({ success: true, verified: true });
   } catch (err: unknown) {

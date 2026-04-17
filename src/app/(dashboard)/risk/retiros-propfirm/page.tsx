@@ -1,8 +1,10 @@
 'use client';
 
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { useI18n } from '@/lib/i18n';
+import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { cn } from '@/lib/utils';
 import { parseTradeReport, type ParseResult } from '@/lib/risk/parser';
 import { analyzeReport } from '@/lib/risk/rules';
@@ -57,6 +59,19 @@ const PAGE_SIZE = 50;
 
 export default function RetirosPropFirmPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  const router = useRouter();
+
+  // Module access guard — redirect users without the 'risk' module.
+  // The redirect happens in the effect; while it runs we render null.
+  useEffect(() => {
+    if (user === null) return; // still loading
+    if (!hasModuleAccess(user, 'risk')) {
+      router.replace('/');
+    }
+  }, [user, router]);
+
+  const accessDenied = user !== null && !hasModuleAccess(user, 'risk');
 
   // State
   const [config, setConfig] = useState<RuleConfig>(structuredClone(DEFAULT_RULE_CONFIG));
@@ -288,12 +303,9 @@ export default function RetirosPropFirmPage() {
 
   const downloadPDF = useCallback(async () => {
     if (!result) return;
-    const jspdfModule = await import('jspdf');
-    // @ts-ignore — handle both CJS and ESM exports
-    const jsPDF = jspdfModule.jsPDF || jspdfModule.default?.jsPDF || jspdfModule.default;
-    const atModule = await import('jspdf-autotable');
-    // @ts-ignore — use standalone autoTable function
-    const autoTable = atModule.default || atModule.autoTable;
+    // Dynamic import for code-splitting; both libs expose CJS+ESM variants.
+    const { jsPDF } = await import('jspdf');
+    const { default: autoTable } = await import('jspdf-autotable');
 
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
     const meta = result.metadata;
@@ -339,15 +351,17 @@ export default function RetirosPropFirmPage() {
       headStyles: { fillColor: [30, 30, 30], textColor: 255, fontSize: 8 },
       bodyStyles: { fontSize: 8 },
       columnStyles: { 1: { fontStyle: 'bold' } },
-      didParseCell: (data: any) => {
+      didParseCell: (data) => {
         if (data.column.index === 1 && data.section === 'body') {
-          data.cell.styles.textColor = data.cell.raw?.startsWith('✓') ? [0, 150, 0] : [180, 0, 0];
+          const raw = typeof data.cell.raw === 'string' ? data.cell.raw : '';
+          data.cell.styles.textColor = raw.startsWith('✓') ? [0, 150, 0] : [180, 0, 0];
         }
       },
     });
 
     // All trades table
-    const afterRules = (doc as any).lastAutoTable.finalY + 8;
+    // autoTable augments the doc with `lastAutoTable` but it's not in the public types.
+    const afterRules = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     doc.text(`Todas las Operaciones (${result.trades.length})`, 14, afterRules);
@@ -377,7 +391,7 @@ export default function RetirosPropFirmPage() {
       theme: 'striped',
       headStyles: { fillColor: [30, 30, 30], textColor: 255, fontSize: 7 },
       bodyStyles: { fontSize: 7 },
-      didParseCell: (data: any) => {
+      didParseCell: (data) => {
         if (data.section === 'body') {
           const row = tradeRows[data.row.index];
           if (row?.isViolation) {
@@ -396,6 +410,9 @@ export default function RetirosPropFirmPage() {
   }, [result, verdict, tradeRuleMap, violatedTradeIndices]);
 
   // ─── Render ───
+
+  // Module access guard — render nothing while the effect redirects.
+  if (accessDenied) return null;
 
   return (
     <div className="space-y-6">

@@ -12,10 +12,53 @@ function parseDate(s: string | null | undefined): Date | null {
 
 function parseNumber(s: string | number | null | undefined): number {
   if (s === null || s === undefined) return 0;
-  // MetaTrader uses spaces as thousands separator and "- " prefix for negatives
-  const raw = String(s).replace(/\s/g, '').replace(/^-(?=\d)/, '-');
-  const n = parseFloat(raw);
-  return isNaN(n) ? 0 : n;
+  if (typeof s === 'number') return isNaN(s) ? 0 : s;
+
+  let raw = String(s).trim();
+  if (!raw) return 0;
+
+  // Accounting-style negatives: "($1,234.56)" → "-1234.56"
+  let negative = false;
+  if (/^\(.*\)$/.test(raw)) {
+    negative = true;
+    raw = raw.slice(1, -1).trim();
+  }
+  // Explicit minus (including "- 1234" — MT5 style)
+  if (/^[-−]\s*/.test(raw)) {
+    negative = true;
+    raw = raw.replace(/^[-−]\s*/, '');
+  }
+
+  // Strip currency symbols and common prefixes
+  raw = raw.replace(/[$€£¥USD]/gi, '').trim();
+
+  // Decide decimal separator: if the string has both "," and ".", the LAST one
+  // is the decimal. If only "," is present, treat it as decimal (European).
+  const lastComma = raw.lastIndexOf(',');
+  const lastDot = raw.lastIndexOf('.');
+  let normalized: string;
+  if (lastComma > -1 && lastDot > -1) {
+    if (lastComma > lastDot) {
+      // European: "1.234,56" → "1234.56"
+      normalized = raw.replace(/\./g, '').replace(',', '.');
+    } else {
+      // US: "1,234.56" → "1234.56"
+      normalized = raw.replace(/,/g, '');
+    }
+  } else if (lastComma > -1) {
+    // Only comma — treat as decimal if followed by 1-2 digits; else thousands sep
+    const afterComma = raw.length - lastComma - 1;
+    normalized = afterComma <= 2
+      ? raw.replace(',', '.')
+      : raw.replace(/,/g, '');
+  } else {
+    // Only dot or neither — strip whitespace (MT5 uses spaces as thousands sep)
+    normalized = raw.replace(/\s/g, '');
+  }
+
+  const n = parseFloat(normalized);
+  if (isNaN(n)) return 0;
+  return negative ? -n : n;
 }
 
 function parseNullableNumber(s: string | number | null | undefined): number | null {

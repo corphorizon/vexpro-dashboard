@@ -1,6 +1,21 @@
 import type { Trade, RuleConfig, RuleResult, RuleViolation, AnalysisResult } from './types';
 import type { ParseResult } from './parser';
 
+// Helper: safe percentage that avoids NaN when there are zero trades
+const safePct = (violations: number, total: number): number =>
+  total > 0 ? (violations / total) * 100 : 0;
+
+// Helper: build a "skipped because no trades" result
+const emptyResult = (ruleName: RuleResult['ruleName'], displayName: string): RuleResult => ({
+  ruleName,
+  displayName,
+  isActive: true,
+  status: 'skipped',
+  violations: [],
+  violationPct: 0,
+  computedParams: { reason: 'no-trades' },
+});
+
 // ─── Rule 1: Consistencia (Volume Consistency) ───
 function ruleConsistencia(
   trades: Trade[],
@@ -9,6 +24,8 @@ function ruleConsistencia(
   if (!config.enabled) {
     return { ruleName: 'consistencia', displayName: 'Consistencia de Volumen', isActive: false, status: 'skipped', violations: [], violationPct: 0, computedParams: {} };
   }
+
+  if (trades.length === 0) return emptyResult('consistencia', 'Consistencia de Volumen');
 
   const volumes = trades.map((t) => t.volume);
   const avgVolume = volumes.reduce((s, v) => s + v, 0) / volumes.length;
@@ -31,7 +48,7 @@ function ruleConsistencia(
     isActive: true,
     status: violations.length > 0 ? 'fail' : 'pass',
     violations,
-    violationPct: (violations.length / trades.length) * 100,
+    violationPct: safePct(violations.length, trades.length),
     computedParams: {
       avgVolume: avgVolume.toFixed(4),
       minAllowed: minAllowed.toFixed(4),
@@ -49,6 +66,8 @@ function ruleProfitPct(
   if (!config.enabled) {
     return { ruleName: 'profitPct', displayName: 'Porcentaje de Profit', isActive: false, status: 'skipped', violations: [], violationPct: 0, computedParams: {} };
   }
+
+  if (trades.length === 0) return emptyResult('profitPct', 'Porcentaje de Profit');
 
   const limite = totalNetProfit * (config.pct / 100);
   const violations: RuleViolation[] = [];
@@ -68,7 +87,7 @@ function ruleProfitPct(
     isActive: true,
     status: violations.length > 0 ? 'fail' : 'pass',
     violations,
-    violationPct: (violations.length / trades.length) * 100,
+    violationPct: safePct(violations.length, trades.length),
     computedParams: {
       limite: limite.toFixed(2),
       totalNetProfit: totalNetProfit.toFixed(2),
@@ -85,6 +104,8 @@ function ruleTiempoMin(
   if (!config.enabled) {
     return { ruleName: 'tiempoMin', displayName: 'Tiempo Mínimo', isActive: false, status: 'skipped', violations: [], violationPct: 0, computedParams: {} };
   }
+
+  if (trades.length === 0) return emptyResult('tiempoMin', 'Tiempo Mínimo');
 
   const violations: RuleViolation[] = [];
 
@@ -104,7 +125,7 @@ function ruleTiempoMin(
     isActive: true,
     status: violations.length > 0 ? 'fail' : 'pass',
     violations,
-    violationPct: (violations.length / trades.length) * 100,
+    violationPct: safePct(violations.length, trades.length),
     computedParams: { minutosMinimos: config.minutos },
   };
 }
@@ -117,6 +138,8 @@ function ruleGrid(
   if (!config.enabled) {
     return { ruleName: 'grid', displayName: 'Grid / Cobertura', isActive: false, status: 'skipped', violations: [], violationPct: 0, computedParams: {} };
   }
+
+  if (trades.length === 0) return emptyResult('grid', 'Grid / Cobertura');
 
   // Group by symbol
   const bySymbol = new Map<string, Trade[]>();
@@ -160,7 +183,7 @@ function ruleGrid(
     isActive: true,
     status: violations.length > 0 ? 'fail' : 'pass',
     violations,
-    violationPct: (violations.length / trades.length) * 100,
+    violationPct: safePct(violations.length, trades.length),
     computedParams: {
       minGrid: config.minGrid,
       maxSimultaneas,
@@ -176,6 +199,8 @@ function ruleMartingala(
   if (!config.enabled) {
     return { ruleName: 'martingala', displayName: 'Martingala', isActive: false, status: 'skipped', violations: [], violationPct: 0, computedParams: {} };
   }
+
+  if (trades.length === 0) return emptyResult('martingala', 'Martingala');
 
   // Group by symbol, sort by openTime
   const bySymbol = new Map<string, Trade[]>();
@@ -226,7 +251,7 @@ function ruleMartingala(
     isActive: true,
     status: violations.length > 0 ? 'fail' : 'pass',
     violations,
-    violationPct: (violations.length / trades.length) * 100,
+    violationPct: safePct(violations.length, trades.length),
     computedParams: { gapMaximo: config.gapMaximo },
   };
 }

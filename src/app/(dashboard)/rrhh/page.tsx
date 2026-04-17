@@ -71,7 +71,7 @@ function getFilteredPeriodIds(periods: { id: string; year: number; month: number
 }
 
 // ─── Employee Form ───
-function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSave: (e: Employee) => void; editing?: Employee }) {
+function EmployeeForm({ onClose, onSave, editing, companyId }: { onClose: () => void; onSave: (e: Employee) => void; editing?: Employee; companyId: string }) {
   const { t } = useI18n();
   const [name, setName] = useState(editing?.name || '');
   const [email, setEmail] = useState(editing?.email || '');
@@ -88,7 +88,7 @@ function EmployeeForm({ onClose, onSave, editing }: { onClose: () => void; onSav
     if (!name || !email) return;
     onSave({
       id: editing?.id || `emp-${Date.now()}`,
-      company_id: 'vexpro-001',
+      company_id: editing?.company_id || companyId,
       name, email, position, department, start_date: startDate,
       salary: salary ? parseFloat(salary) : null,
       status, phone: null, country: null, notes: null,
@@ -1032,9 +1032,10 @@ export default function RRHHPage() {
               <Plus className="w-4 h-4" /> {t('hr.addEmployee')}
             </button>
           </div>
-          {showEmpForm && (
+          {showEmpForm && company && (
             <EmployeeForm
               editing={editingEmp}
+              companyId={company.id}
               onClose={() => { setShowEmpForm(false); setEditingEmp(undefined); }}
               onSave={handleSaveEmployee}
             />

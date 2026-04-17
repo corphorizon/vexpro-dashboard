@@ -41,7 +41,7 @@ interface AuthState {
   refreshUser: () => Promise<void>;
 }
 
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'upload', 'periods', 'users', 'audit'];
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users', 'audit'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -636,7 +636,7 @@ export const ROLE_DESCRIPTIONS: Record<string, string> = {
 export const ROLE_DEFAULT_MODULES: Record<string, string[]> = {
   admin: ALL_MODULES,
   socio: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners'],
-  auditor: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'upload'],
+  auditor: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'upload', 'risk'],
   soporte: ['summary', 'movements', 'expenses', 'liquidity', 'balances'],
   hr: ['summary', 'hr'],
   invitado: ['summary'],
@@ -652,6 +652,7 @@ export const MODULE_LABELS: Record<string, string> = {
   partners: 'Socios',
   commissions: 'Comisiones',
   hr: 'Recursos Humanos',
+  risk: 'Gestión de Riesgo',
   upload: 'Carga de Datos',
   periods: 'Períodos',
   users: 'Usuarios',

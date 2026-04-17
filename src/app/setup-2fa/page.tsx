@@ -77,7 +77,8 @@ export default function Setup2FAPage() {
       const res = await fetch('/api/auth/setup-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'verify', secret, token }),
+        // Server reads the pending secret from the DB; do NOT send it from the client.
+        body: JSON.stringify({ action: 'verify', token }),
       });
       const data = await res.json();
 

@@ -8,12 +8,19 @@ import QRCode from 'qrcode';
 // POST /api/auth/setup-2fa
 //
 // Actions:
-//   generate — Creates a TOTP secret + QR code (not stored until verified)
+//   generate — Creates a TOTP secret + QR code. The secret is stored
+//              server-side as `twofa_pending_secret`; the client receives the
+//              secret and QR for display, but `verify` always uses the
+//              server copy (prevents XSS swapping the secret at verify time).
 //   verify   — Verifies a TOTP code and activates 2FA
 //   disable  — Disables 2FA (requires valid TOTP code)
+//
+// Re-generating when 2FA is already active requires a valid current TOTP
+// token in `currentToken` — prevents silent rotation via stolen session.
 // ---------------------------------------------------------------------------
 
 const APP_NAME = 'VexPro FX';
+const PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export async function POST(request: NextRequest) {
   try {
@@ -35,10 +42,12 @@ export async function POST(request: NextRequest) {
 
     // Action: generate — create a new TOTP secret and QR code
     if (!action || action === 'generate') {
-      // Get user email for the QR label
+      const { currentToken } = body as { currentToken?: string };
+
+      // Get user email + current 2FA state
       const { data: companyUser } = await adminClient
         .from('company_users')
-        .select('email, twofa_enabled')
+        .select('email, twofa_enabled, twofa_secret')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -49,6 +58,33 @@ export async function POST(request: NextRequest) {
         );
       }
 
+      // If 2FA is already active, require a valid TOTP from the current secret
+      // before allowing rotation.
+      if (companyUser.twofa_enabled && companyUser.twofa_secret) {
+        if (!currentToken) {
+          return NextResponse.json(
+            {
+              success: false,
+              error: 'Ya tienes 2FA activo. Ingresa un código actual para regenerar.',
+              requiresCurrentToken: true,
+            },
+            { status: 400 },
+          );
+        }
+        const validCurrent = speakeasy.totp.verify({
+          secret: companyUser.twofa_secret,
+          encoding: 'base32',
+          token: currentToken,
+          window: 1,
+        });
+        if (!validCurrent) {
+          return NextResponse.json(
+            { success: false, error: 'Código actual incorrecto.' },
+            { status: 401 },
+          );
+        }
+      }
+
       // Generate a new TOTP secret
       const secretObj = speakeasy.generateSecret({
         name: `${APP_NAME}:${companyUser.email}`,
@@ -57,6 +93,23 @@ export async function POST(request: NextRequest) {
       });
 
       const otpauthUrl = secretObj.otpauth_url!;
+
+      // Store the pending secret server-side (replaces any previous pending)
+      const { error: pendingErr } = await adminClient
+        .from('company_users')
+        .update({
+          twofa_pending_secret: secretObj.base32,
+          twofa_pending_at: new Date().toISOString(),
+        })
+        .eq('user_id', user.id);
+
+      if (pendingErr) {
+        console.error('[setup-2fa] Error saving pending secret:', pendingErr.message);
+        return NextResponse.json(
+          { success: false, error: 'Error generando código QR' },
+          { status: 500 },
+        );
+      }
 
       // Generate QR code as data URL
       const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl, {
@@ -70,26 +123,47 @@ export async function POST(request: NextRequest) {
 
       return NextResponse.json({
         success: true,
-        secret: secretObj.base32,
+        secret: secretObj.base32, // shown to user for manual entry
         qrCode: qrCodeDataUrl,
         otpauthUrl,
       });
     }
 
-    // Action: verify — verify a TOTP code and activate 2FA
+    // Action: verify — verify a TOTP code against the server-stored pending
+    // secret and activate 2FA. The `secret` from the body is IGNORED.
     if (action === 'verify') {
-      const { secret, token } = body as { secret?: string; token?: string };
+      const { token } = body as { token?: string };
 
-      if (!secret || !token) {
+      if (!token || !/^\d{6}$/.test(token)) {
         return NextResponse.json(
-          { success: false, error: 'Se requiere secret y token' },
+          { success: false, error: 'Se requiere un código de 6 dígitos' },
           { status: 400 },
         );
       }
 
-      // Verify the TOTP token against the provided secret
+      const { data: companyUser } = await adminClient
+        .from('company_users')
+        .select('twofa_pending_secret, twofa_pending_at')
+        .eq('user_id', user.id)
+        .maybeSingle();
+
+      if (!companyUser?.twofa_pending_secret || !companyUser.twofa_pending_at) {
+        return NextResponse.json(
+          { success: false, error: 'No hay configuración pendiente. Genera un nuevo código.' },
+          { status: 400 },
+        );
+      }
+
+      const age = Date.now() - new Date(companyUser.twofa_pending_at).getTime();
+      if (age > PENDING_TTL_MS) {
+        return NextResponse.json(
+          { success: false, error: 'El código expiró. Genera uno nuevo.' },
+          { status: 400 },
+        );
+      }
+
       const isValid = speakeasy.totp.verify({
-        secret,
+        secret: companyUser.twofa_pending_secret,
         encoding: 'base32',
         token,
         window: 1,
@@ -102,12 +176,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Token is valid — store the secret and enable 2FA
+      // Promote pending → active, clear pending
       const { error: updateError } = await adminClient
         .from('company_users')
         .update({
           twofa_enabled: true,
-          twofa_secret: secret,
+          twofa_secret: companyUser.twofa_pending_secret,
+          twofa_pending_secret: null,
+          twofa_pending_at: null,
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', user.id);
@@ -127,9 +203,9 @@ export async function POST(request: NextRequest) {
     if (action === 'disable') {
       const { token } = body as { token?: string };
 
-      if (!token) {
+      if (!token || !/^\d{6}$/.test(token)) {
         return NextResponse.json(
-          { success: false, error: 'Se requiere el código de verificación' },
+          { success: false, error: 'Se requiere un código de 6 dígitos' },
           { status: 400 },
         );
       }
@@ -169,6 +245,8 @@ export async function POST(request: NextRequest) {
         .update({
           twofa_enabled: false,
           twofa_secret: null,
+          twofa_pending_secret: null,
+          twofa_pending_at: null,
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', user.id);
