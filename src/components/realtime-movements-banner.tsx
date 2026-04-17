@@ -14,7 +14,6 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { REFRESH_INTERVAL_MS } from '@/lib/api-integrations/config';
 import { computeProviderTotals } from '@/lib/api-integrations/totals';
 import type {
   ProviderDataset,
@@ -81,9 +80,18 @@ interface WalletOption {
   currencyCode: string;
 }
 
-const DEFAULT_WALLET_ID = '1079'; // VexPro Main Wallet
+export const DEFAULT_WALLET_ID = '1079'; // VexPro Main Wallet
 
-export function RealTimeMovementsBanner() {
+interface BannerProps {
+  /** Optional controlled wallet id. When provided, banner becomes controlled
+   *  and propagates changes via onWalletChange. Used so the Movimientos
+   *  page can keep the banner AND the "Depósitos" table in sync (same
+   *  walletId → same totals). */
+  walletId?: string;
+  onWalletChange?: (walletId: string) => void;
+}
+
+export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange }: BannerProps = {}) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -91,7 +99,12 @@ export function RealTimeMovementsBanner() {
   const [month, setMonth] = useState<string>(currentMonthStr());
   const [rangeFrom, setRangeFrom] = useState<string>('');
   const [rangeTo, setRangeTo] = useState<string>('');
-  const [walletId, setWalletId] = useState<string>(DEFAULT_WALLET_ID);
+  const [walletIdLocal, setWalletIdLocal] = useState<string>(DEFAULT_WALLET_ID);
+  const walletId = walletIdProp ?? walletIdLocal;
+  const setWalletId = (id: string) => {
+    if (onWalletChange) onWalletChange(id);
+    else setWalletIdLocal(id);
+  };
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
 
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
@@ -127,7 +140,34 @@ export function RealTimeMovementsBanner() {
     return { from: rangeFrom, to: rangeTo };
   }, [mode, month, rangeFrom, rangeTo]);
 
-  const load = useCallback(async () => {
+  // Two modes of loading:
+  //   1. loadFromCache (default on mount + filter changes): reads the last
+  //      persisted state from Supabase. NO external API calls.
+  //   2. loadLive (triggered by the "Refrescar" button): hits the real
+  //      providers, writes through to api_transactions, and shows fresh data.
+  // This way opening the page is fast and free of API quotas, and the user
+  // explicitly decides when to sync.
+  const loadFromCache = useCallback(async () => {
+    setLoading(true);
+    setErrorMsg(null);
+    try {
+      const qs = new URLSearchParams();
+      if (from) qs.set('from', from);
+      if (to) qs.set('to', to);
+      if (walletId) qs.set('walletId', walletId);
+      const res = await fetch(`/api/integrations/persisted-movements?${qs.toString()}`);
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error || 'Error cargando datos persistidos');
+      setDatasets(json.datasets ?? []);
+      setFetchedAt(json.fetchedAt);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Error de red');
+    } finally {
+      setLoading(false);
+    }
+  }, [from, to, walletId]);
+
+  const loadLive = useCallback(async () => {
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -147,12 +187,11 @@ export function RealTimeMovementsBanner() {
     }
   }, [from, to, walletId]);
 
-  // Refetch on filter change + poll every REFRESH_INTERVAL_MS.
+  // Load from cache on mount + whenever filters change. Never auto-fetch
+  // from external APIs — that only happens when the user clicks Refrescar.
   useEffect(() => {
-    load();
-    const id = setInterval(load, REFRESH_INTERVAL_MS);
-    return () => clearInterval(id);
-  }, [load]);
+    loadFromCache();
+  }, [loadFromCache]);
 
   // Query-string carried over into the breakdown page link so the breakdown
   // starts on the same range (it has its own filter afterwards).
@@ -177,99 +216,113 @@ export function RealTimeMovementsBanner() {
           )}
         </div>
         <button
-          onClick={load}
+          onClick={loadLive}
           disabled={loading}
-          className="self-start sm:self-auto flex items-center gap-1.5 px-2.5 py-1 rounded-md border border-border bg-card text-xs hover:bg-muted transition-colors disabled:opacity-50"
+          title="Consulta las APIs externas y guarda los resultados"
+          className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 text-xs font-medium hover:bg-[var(--color-primary)]/10 transition-colors disabled:opacity-50"
         >
           <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          Refrescar
+          {loading ? 'Sincronizando…' : 'Refrescar desde APIs'}
         </button>
       </div>
 
       {/* Filter controls */}
-      <div className="flex flex-wrap items-center gap-2 mb-4 p-2 rounded-lg bg-muted/30 border border-border">
-        <div className="flex items-center gap-1.5 pl-1 pr-0.5">
-          <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-          <span className="text-xs font-medium text-muted-foreground">Período</span>
+      <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-lg bg-muted/30 border border-border">
+        {/* Mode toggle: Mes vs Rango */}
+        <div className="flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-muted-foreground" />
+          <div className="inline-flex rounded-md border border-border bg-card overflow-hidden">
+            <button
+              type="button"
+              onClick={() => setMode('month')}
+              aria-pressed={mode === 'month'}
+              className={`px-3.5 py-1.5 text-xs font-semibold transition-colors ${
+                mode === 'month'
+                  ? 'bg-[var(--color-primary)] text-white'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              Mes
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('range')}
+              aria-pressed={mode === 'range'}
+              className={`px-3.5 py-1.5 text-xs font-semibold transition-colors border-l border-border ${
+                mode === 'range'
+                  ? 'bg-[var(--color-primary)] text-white border-l-[var(--color-primary)]'
+                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+              }`}
+            >
+              Rango
+            </button>
+          </div>
         </div>
-        {/* Segmented toggle — single pill with evenly sized buttons and no seams */}
-        <div className="inline-flex h-8 items-center rounded-md border border-border bg-card p-0.5">
-          <button
-            type="button"
-            onClick={() => setMode('month')}
-            className={`h-7 px-3 text-xs font-medium rounded-[5px] transition-colors ${
-              mode === 'month'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Mes
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('range')}
-            className={`h-7 px-3 text-xs font-medium rounded-[5px] transition-colors ${
-              mode === 'range'
-                ? 'bg-primary text-primary-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            Rango
-          </button>
-        </div>
+
+        {/* Date input(s) — mes único o rango */}
         {mode === 'month' ? (
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30"
-          />
+          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <span className="font-medium">Mes:</span>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              aria-label="Seleccionar mes"
+            />
+          </label>
         ) : (
-          <div className="flex items-center gap-1.5">
-            <input
-              type="date"
-              value={rangeFrom}
-              onChange={(e) => setRangeFrom(e.target.value)}
-              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30"
-              aria-label="Desde"
-            />
-            <span className="text-xs text-muted-foreground">—</span>
-            <input
-              type="date"
-              value={rangeTo}
-              onChange={(e) => setRangeTo(e.target.value)}
-              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30"
-              aria-label="Hasta"
-            />
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="font-medium">Desde:</span>
+              <input
+                type="date"
+                value={rangeFrom}
+                onChange={(e) => setRangeFrom(e.target.value)}
+                className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                aria-label="Fecha desde"
+              />
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <span className="font-medium">Hasta:</span>
+              <input
+                type="date"
+                value={rangeTo}
+                onChange={(e) => setRangeTo(e.target.value)}
+                className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                aria-label="Fecha hasta"
+              />
+            </label>
           </div>
         )}
 
+        {/* Divider + wallet selector */}
+        <div className="w-px h-6 bg-border hidden sm:block" />
+
         {/* Wallet selector (Coinsbuy) — only admins can change */}
-        <>
-          <div className="w-px h-5 bg-border hidden sm:block" />
-          <div className="flex items-center gap-1.5">
-            <Wallet className="w-3.5 h-3.5 text-muted-foreground" />
-            {isAdmin && walletOptions.length > 0 ? (
-              <select
-                value={walletId}
-                onChange={(e) => setWalletId(e.target.value)}
-                className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30 max-w-[200px]"
-                aria-label="Wallet filter"
-              >
-                <option value="">Todas las wallets</option>
-                {walletOptions.map((w) => (
-                  <option key={w.id} value={w.id}>
-                    {w.label} ({w.currencyCode})
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="h-8 flex items-center px-2.5 text-xs rounded-md border border-border bg-muted/50 text-muted-foreground">
-                VexPro Main Wallet
-              </span>
-            )}
-          </div>
-        </>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Wallet className="w-4 h-4" />
+          <span className="font-medium">Wallet:</span>
+          {isAdmin && walletOptions.length > 0 ? (
+            <select
+              value={walletId}
+              onChange={(e) => setWalletId(e.target.value)}
+              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 max-w-[240px]"
+              aria-label="Seleccionar wallet de Coinsbuy"
+            >
+              <option value="">Todas las wallets</option>
+              {walletOptions.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.label} ({w.currencyCode})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="h-8 flex items-center px-2.5 text-xs rounded-md border border-border bg-muted/50 text-foreground">
+              VexPro Main Wallet
+            </span>
+          )}
+        </label>
       </div>
 
       {errorMsg && (
@@ -328,7 +381,11 @@ export function RealTimeMovementsBanner() {
 
 // Exported so the main Movimientos page can read API totals for the
 // "Depósitos Totales" / "Retiros Totales" lines in the period tables.
-export function useApiTotals(from: string, to: string) {
+// Reads from the persisted cache — never triggers a live API call on its
+// own. The banner's "Refrescar" button is what syncs new data in.
+// `walletId` MUST be passed so the totals stay consistent with what the
+// banner displays.
+export function useApiTotals(from: string, to: string, walletId: string = DEFAULT_WALLET_ID) {
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
 
   useEffect(() => {
@@ -338,19 +395,20 @@ export function useApiTotals(from: string, to: string) {
         const qs = new URLSearchParams();
         if (from) qs.set('from', from);
         if (to) qs.set('to', to);
-        const res = await fetch(`/api/integrations/movements?${qs.toString()}`);
+        if (walletId) qs.set('walletId', walletId);
+        const res = await fetch(`/api/integrations/persisted-movements?${qs.toString()}`);
         const json = await res.json();
         if (!cancelled && json.success) {
           setDatasets(json.datasets ?? []);
         }
       } catch {
-        // Silent — API card already shows errors.
+        // Silent — card already shows errors.
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [from, to]);
+  }, [from, to, walletId]);
 
   return useMemo(() => {
     const by: Record<ProviderSlug, number> = {

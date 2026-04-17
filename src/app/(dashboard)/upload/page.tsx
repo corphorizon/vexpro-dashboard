@@ -8,7 +8,53 @@ import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { LiquidityMovement, Investment } from '@/lib/types';
-import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+
+// ─── Pagination ──────────────────────────────────────────────────────────
+// Shared cap across all three data-entry tables (Egresos, Liquidez, Inv.).
+const PAGE_SIZE = 25;
+
+function PaginationControls({
+  page, totalPages, totalItems, onChange,
+}: {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  onChange: (next: number) => void;
+}) {
+  // Hidden for small datasets — the spec says "25 or fewer → single page".
+  if (totalItems <= PAGE_SIZE) return null;
+  const from = page * PAGE_SIZE + 1;
+  const to = Math.min((page + 1) * PAGE_SIZE, totalItems);
+  return (
+    <div className="flex items-center justify-between mt-3 text-sm">
+      <span className="text-muted-foreground">
+        {from}–{to} de {totalItems}
+      </span>
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => onChange(Math.max(0, page - 1))}
+          disabled={page === 0}
+          className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+          aria-label="Página anterior"
+        >
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <span className="px-2 tabular-nums">
+          Página {page + 1} de {totalPages}
+        </span>
+        <button
+          onClick={() => onChange(Math.min(totalPages - 1, page + 1))}
+          disabled={page >= totalPages - 1}
+          className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+          aria-label="Página siguiente"
+        >
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
 import { FixedExpenseTemplatesPanel } from '@/components/fixed-expense-templates-panel';
@@ -46,7 +92,7 @@ const SECTION_KEYS: Record<DataSection, string> = {
 
 interface DepositRow { id: string; channel: string; amount: number; }
 interface WithdrawalRow { id: string; category: string; amount: number; }
-interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; }
+interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; }
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
 interface DocRow { id: string; filename: string; date: string; description: string; uploaded_by?: string; }
 
@@ -116,11 +162,27 @@ export default function UploadPage() {
   }, [allDeposits]);
 
   const loadWithdrawalsForPeriod = useCallback((periodId: string): WithdrawalRow[] => {
-    const periodWithdrawals = allWithdrawals.filter(w => w.period_id === periodId);
+    // Aggregate rows are the ones without a description.
+    const periodWithdrawals = allWithdrawals.filter(w => w.period_id === periodId && !w.description);
     return INITIAL_WITHDRAWALS.map(init => {
       const match = periodWithdrawals.find(w => w.category === init.category);
       return { ...init, amount: match?.amount || 0 };
     });
+  }, [allWithdrawals]);
+
+  // Extra manual withdrawal entries — rows with a description in DB.
+  // Shown below the fixed 4 aggregates so users can register individual
+  // manual withdrawals alongside what the APIs report.
+  interface ExtraWithdrawalRow {
+    id: string;
+    category: 'ib_commissions' | 'broker' | 'prop_firm' | 'other';
+    amount: number;
+    description: string;
+  }
+  const loadWithdrawalExtrasForPeriod = useCallback((periodId: string): ExtraWithdrawalRow[] => {
+    return allWithdrawals
+      .filter(w => w.period_id === periodId && !!w.description)
+      .map(w => ({ id: w.id, category: w.category, amount: w.amount, description: w.description || '' }));
   }, [allWithdrawals]);
 
   const loadExpensesForPeriod = useCallback((periodId: string): ExpenseRow[] => {
@@ -135,6 +197,7 @@ export default function UploadPage() {
         paid: e.paid,
         pending: e.pending,
         is_fixed: !!e.is_fixed,
+        category: e.category ?? null,
       }));
     }
 
@@ -147,6 +210,7 @@ export default function UploadPage() {
       paid: 0,
       pending: tpl.amount,
       is_fixed: true,
+      category: null,
     }));
   }, [allExpenses, expenseTemplates]);
 
@@ -159,6 +223,12 @@ export default function UploadPage() {
   const lastPeriodId = periods[periods.length - 1]?.id || '';
   const [deposits, setDepositsRaw] = useState<DepositRow[]>(() => loadDepositsForPeriod(lastPeriodId));
   const [withdrawals, setWithdrawalsRaw] = useState<WithdrawalRow[]>(() => loadWithdrawalsForPeriod(lastPeriodId));
+  const [withdrawalExtras, setWithdrawalExtras] = useState<ExtraWithdrawalRow[]>(() => loadWithdrawalExtrasForPeriod(lastPeriodId));
+  const [newExtraWithdrawal, setNewExtraWithdrawal] = useState<{ category: 'ib_commissions' | 'broker' | 'prop_firm' | 'other'; amount: string; description: string }>({
+    category: 'broker',
+    amount: '',
+    description: '',
+  });
   const [expenses, setExpensesRaw] = useState<ExpenseRow[]>(() => loadExpensesForPeriod(lastPeriodId));
   const [income, setIncomeRaw] = useState<IncomeRow>(() => loadIncomeForPeriod(lastPeriodId));
   const [propFirmAmount, setPropFirmAmount] = useState<number>(() => allPropFirmSales.find(p => p.period_id === lastPeriodId)?.amount || 0);
@@ -177,11 +247,12 @@ export default function UploadPage() {
   useEffect(() => {
     setDepositsRaw(loadDepositsForPeriod(selectedPeriod));
     setWithdrawalsRaw(loadWithdrawalsForPeriod(selectedPeriod));
+    setWithdrawalExtras(loadWithdrawalExtrasForPeriod(selectedPeriod));
     setExpensesRaw(loadExpensesForPeriod(selectedPeriod));
     setIncomeRaw(loadIncomeForPeriod(selectedPeriod));
     setPropFirmAmount(allPropFirmSales.find(p => p.period_id === selectedPeriod)?.amount || 0);
     setP2PAmount(allP2PTransfers.find(p => p.period_id === selectedPeriod)?.amount || 0);
-  }, [selectedPeriod, loadDepositsForPeriod, loadWithdrawalsForPeriod, loadExpensesForPeriod, loadIncomeForPeriod, allPropFirmSales, allP2PTransfers]);
+  }, [selectedPeriod, loadDepositsForPeriod, loadWithdrawalsForPeriod, loadWithdrawalExtrasForPeriod, loadExpensesForPeriod, loadIncomeForPeriod, allPropFirmSales, allP2PTransfers]);
 
   const setDeposits = useCallback((updater: DepositRow[] | ((prev: DepositRow[]) => DepositRow[])) => {
     setDepositsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
@@ -274,10 +345,11 @@ export default function UploadPage() {
 
   // UI state
   const [confirmAction, setConfirmAction] = useState<{ type: string; message: string; onConfirm: () => void } | null>(null);
-  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false });
+  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
-  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false });
+  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const [savingAll, setSavingAll] = useState(false);
 
@@ -311,11 +383,56 @@ export default function UploadPage() {
     return conceptSuggestions.filter(c => c.toLowerCase().includes(q));
   }, [newExpense.concept, conceptSuggestions]);
 
+  // Expense category autocomplete — mirrors the concept pattern above.
+  // Categories come from (a) localStorage history and (b) every category ever
+  // saved on an expense row for this company.
+  const CATEGORY_STORAGE_KEY = 'fd_expense_categories';
+  const [categorySuggestions, setCategorySuggestions] = useState<string[]>(() => loadFromStorage(CATEGORY_STORAGE_KEY, [] as string[]));
+  const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
+  const [showEditCategoryDropdown, setShowEditCategoryDropdown] = useState(false);
+
+  useEffect(() => {
+    const all = allExpenses.map(e => e.category).filter((c): c is string => !!c && !!c.trim());
+    const stored = loadFromStorage<string[]>(CATEGORY_STORAGE_KEY, []);
+    const merged = Array.from(new Set([...stored, ...all])).filter(Boolean).sort((a, b) => a.localeCompare(b));
+    setCategorySuggestions(merged);
+    saveToStorage(CATEGORY_STORAGE_KEY, merged);
+  }, [allExpenses]);
+
+  const addCategoryToHistory = (cat: string) => {
+    const trimmed = cat.trim();
+    if (!trimmed) return;
+    setCategorySuggestions(prev => {
+      const updated = Array.from(new Set([...prev, trimmed])).sort((a, b) => a.localeCompare(b));
+      saveToStorage(CATEGORY_STORAGE_KEY, updated);
+      return updated;
+    });
+  };
+
+  const filteredCategoriesNew = useMemo(() => {
+    if (!newExpense.category) return categorySuggestions;
+    const q = newExpense.category.toLowerCase();
+    return categorySuggestions.filter(c => c.toLowerCase().includes(q));
+  }, [newExpense.category, categorySuggestions]);
+
+  const filteredCategoriesEdit = useMemo(() => {
+    if (!editExpense.category) return categorySuggestions;
+    const q = editExpense.category.toLowerCase();
+    return categorySuggestions.filter(c => c.toLowerCase().includes(q));
+  }, [editExpense.category, categorySuggestions]);
+
   const periodLabel = periods.find(p => p.id === selectedPeriod)?.label || '';
 
   const showSuccess = (msg: string) => {
+    setErrorMsg('');
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(''), 3000);
+  };
+
+  const showError = (msg: string) => {
+    setSuccessMsg('');
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(''), 6000);
   };
 
   const askConfirmation = (message: string, onConfirm: () => void) => {
@@ -386,6 +503,35 @@ export default function UploadPage() {
     return rows;
   }, [investmentRows, invDateFrom, invDateTo, invPeriodFilter, invSortAsc]);
 
+  // --- Pagination state (one per table; 25 items per page) ---
+  const [expensesPage, setExpensesPage] = useState(0);
+  const [liquidityPage, setLiquidityPage] = useState(0);
+  const [investmentsPage, setInvestmentsPage] = useState(0);
+
+  // Reset page when the underlying data changes so the user isn't stuck on
+  // an empty page after filtering or switching periods.
+  useEffect(() => { setExpensesPage(0); }, [selectedPeriod, expenses.length]);
+  useEffect(() => { setLiquidityPage(0); }, [liqPeriodFilter, liqDateFrom, liqDateTo, filteredLiquidity.length]);
+  useEffect(() => { setInvestmentsPage(0); }, [invPeriodFilter, invDateFrom, invDateTo, filteredInvestments.length]);
+
+  const expensesTotalPages = Math.max(1, Math.ceil(expenses.length / PAGE_SIZE));
+  const liquidityTotalPages = Math.max(1, Math.ceil(filteredLiquidity.length / PAGE_SIZE));
+  const investmentsTotalPages = Math.max(1, Math.ceil(filteredInvestments.length / PAGE_SIZE));
+
+  // Paged slices — totals/footers still reduce over the FULL data set.
+  const pagedExpenses = useMemo(
+    () => expenses.slice(expensesPage * PAGE_SIZE, (expensesPage + 1) * PAGE_SIZE),
+    [expenses, expensesPage],
+  );
+  const pagedLiquidity = useMemo(
+    () => filteredLiquidity.slice(liquidityPage * PAGE_SIZE, (liquidityPage + 1) * PAGE_SIZE),
+    [filteredLiquidity, liquidityPage],
+  );
+  const pagedInvestments = useMemo(
+    () => filteredInvestments.slice(investmentsPage * PAGE_SIZE, (investmentsPage + 1) * PAGE_SIZE),
+    [filteredInvestments, investmentsPage],
+  );
+
   // --- Liquidity helpers ---
   const recalcLiquidityBalances = (rows: LiquidityMovement[]): LiquidityMovement[] => {
     const sorted = [...rows].sort((a, b) => a.date.localeCompare(b.date));
@@ -415,7 +561,7 @@ export default function UploadPage() {
         setLiquidityRowsRaw([...getLiquidityData()]);
         showSuccess(t('upload.liquidityAdded'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -451,7 +597,7 @@ export default function UploadPage() {
         setLiquidityRowsRaw([...getLiquidityData()]);
         showSuccess(t('upload.liquidityUpdated'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -465,7 +611,7 @@ export default function UploadPage() {
         setLiquidityRowsRaw([...getLiquidityData()]);
         showSuccess(t('upload.liquidityDeleted'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -501,7 +647,7 @@ export default function UploadPage() {
         setInvestmentRowsRaw([...getInvestmentsData()]);
         showSuccess(t('upload.investmentAdded'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -540,7 +686,7 @@ export default function UploadPage() {
         setInvestmentRowsRaw([...getInvestmentsData()]);
         showSuccess(t('upload.investmentUpdated'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -554,7 +700,7 @@ export default function UploadPage() {
         setInvestmentRowsRaw([...getInvestmentsData()]);
         showSuccess(t('upload.investmentDeleted'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -572,7 +718,7 @@ export default function UploadPage() {
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.depositRegistered'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -590,7 +736,7 @@ export default function UploadPage() {
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.withdrawalRegistered'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
@@ -601,6 +747,7 @@ export default function UploadPage() {
     const amt = parseFloat(newExpense.amount) || 0;
     const pd = parseFloat(newExpense.paid) || 0;
     const pn = parseFloat(newExpense.pending) || amt - pd;
+    const cat = newExpense.category.trim() || null;
     askConfirmation(`Agregar egreso "${newExpense.concept}" por $${amt.toLocaleString()}?`, () => {
       setExpenses(prev => [...prev, {
         id: `exp-${Date.now()}`,
@@ -609,9 +756,11 @@ export default function UploadPage() {
         paid: pd,
         pending: pn,
         is_fixed: newExpense.is_fixed,
+        category: cat,
       }]);
-      setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false });
+      setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
       addConceptToHistory(newExpense.concept);
+      if (cat) addCategoryToHistory(cat);
       if (user) logAction(user.id, user.name, 'create', 'expenses', `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}`);
       showSuccess(t('upload.expenseAdded'));
     });
@@ -620,7 +769,7 @@ export default function UploadPage() {
   const startEditExpense = (exp: ExpenseRow) => {
     if (!userCanEdit) return;
     setEditingExpenseId(exp.id);
-    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed });
+    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed, category: exp.category ?? '' });
   };
 
   const saveEditExpense = () => {
@@ -628,8 +777,10 @@ export default function UploadPage() {
     const amt = parseFloat(editExpense.amount) || 0;
     const pd = parseFloat(editExpense.paid) || 0;
     const pn = parseFloat(editExpense.pending) || amt - pd;
+    const cat = editExpense.category.trim() || null;
     askConfirmation(`Actualizar egreso "${editExpense.concept}"?`, () => {
-      setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed } : e));
+      setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e));
+      if (cat) addCategoryToHistory(cat);
       setEditingExpenseId(null);
       showSuccess(t('upload.expenseUpdated'));
     });
@@ -660,12 +811,14 @@ export default function UploadPage() {
         if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
         showSuccess(t('upload.incomeSaved'));
       } catch (err) {
-        showSuccess(`Error: ${(err as Error).message}`);
+        showError(`Error: ${(err as Error).message}`);
       }
     });
   };
 
-  // Save All handler — saves all fields to Supabase
+  // Save All handler — saves all fields in the current section to Supabase.
+  // Liquidez and Inversiones persist per-row so they're not in here (they
+  // have Add/Edit/Save buttons right on each row).
   const saveAll = async () => {
     if (!userCanAdd || !company) return;
     setSavingAll(true);
@@ -677,17 +830,26 @@ export default function UploadPage() {
         await upsertPropFirmSales(companyId, periodId, propFirmAmount);
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
       } else if (section === 'retiros') {
-        await upsertWithdrawals(companyId, periodId, withdrawals);
+        // Combine the four fixed aggregate rows (no description) with the
+        // free-form extras (each with its own description).
+        const combined = [
+          ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
+          ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
+        ];
+        await upsertWithdrawals(companyId, periodId, combined);
         await upsertP2PTransfers(companyId, periodId, p2pAmount);
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
       } else if (section === 'egresos') {
         await upsertExpenses(companyId, periodId, expenses);
         if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
+      } else if (section === 'ingresos') {
+        await upsertOperatingIncome(companyId, periodId, income);
+        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
       }
       await refresh();
       showSuccess('Todos los datos guardados correctamente');
     } catch (err) {
-      showSuccess(`Error al guardar: ${(err as Error).message}`);
+      showError(`Error al guardar: ${(err as Error).message}`);
     } finally {
       setSavingAll(false);
     }
@@ -728,6 +890,14 @@ export default function UploadPage() {
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">
           <Check className="w-4 h-4" />
           {successMsg}
+        </div>
+      )}
+
+      {/* Error message */}
+      {errorMsg && (
+        <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm font-medium" role="alert" aria-live="assertive">
+          <X className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>{errorMsg}</span>
         </div>
       )}
 
@@ -958,6 +1128,123 @@ export default function UploadPage() {
               </div>
             </div>
           </div>
+
+          {/* ─── Retiros adicionales manuales ─────────────────────────── */}
+          {/* Free-form entries that coexist with what the APIs report.
+              Stored with a non-null `description` in the withdrawals table
+              so they can be listed separately from the 4 fixed aggregates. */}
+          <div className="mt-6 pt-5 border-t border-border">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h3 className="text-sm font-semibold">Retiros manuales adicionales</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Se guardan en la BD junto con los 4 agregados arriba y conviven con los datos de las APIs.
+                </p>
+              </div>
+            </div>
+
+            {/* Add form */}
+            {userCanAdd && (
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-3">
+                <select
+                  value={newExtraWithdrawal.category}
+                  onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, category: e.target.value as typeof p.category }))}
+                  className="px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option value="ib_commissions">{WITHDRAWAL_LABELS['ib_commissions']}</option>
+                  <option value="broker">{WITHDRAWAL_LABELS['broker']}</option>
+                  <option value="prop_firm">{WITHDRAWAL_LABELS['prop_firm']}</option>
+                  <option value="other">{WITHDRAWAL_LABELS['other']}</option>
+                </select>
+                <input
+                  type="text"
+                  value={newExtraWithdrawal.description}
+                  onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, description: e.target.value }))}
+                  placeholder="Descripción (ej: retiro manual, ajuste)"
+                  className="md:col-span-2 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                />
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newExtraWithdrawal.amount}
+                  onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, amount: e.target.value }))}
+                  placeholder="Monto"
+                  className="text-right px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    const amt = parseFloat(newExtraWithdrawal.amount) || 0;
+                    if (!newExtraWithdrawal.description.trim() || amt <= 0) return;
+                    setWithdrawalExtras(prev => [...prev, {
+                      id: `extra-${Date.now()}`,
+                      category: newExtraWithdrawal.category,
+                      amount: amt,
+                      description: newExtraWithdrawal.description.trim(),
+                    }]);
+                    setNewExtraWithdrawal({ category: 'broker', amount: '', description: '' });
+                  }}
+                  disabled={!newExtraWithdrawal.description.trim() || !(parseFloat(newExtraWithdrawal.amount) > 0)}
+                  className="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-1.5"
+                >
+                  <Plus className="w-4 h-4" /> Agregar
+                </button>
+              </div>
+            )}
+
+            {/* List of extras */}
+            {withdrawalExtras.length === 0 ? (
+              <p className="text-center text-xs text-muted-foreground py-4">
+                {userCanAdd ? 'Agrega entradas libres cuando necesites registrar un retiro fuera de los 4 agregados.' : 'Sin retiros manuales adicionales.'}
+              </p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">Categoría</th>
+                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">Descripción</th>
+                      <th className="text-right py-2 px-3 text-muted-foreground font-medium">Monto</th>
+                      {userCanAdd && <th className="w-16 text-center py-2 px-3 text-muted-foreground font-medium">Acción</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {withdrawalExtras.map((w) => (
+                      <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50">
+                        <td className="py-2.5 px-3">
+                          <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                            {WITHDRAWAL_LABELS[w.category]}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3">{w.description}</td>
+                        <td className="py-2.5 px-3 text-right font-medium text-red-600">{formatCurrency(w.amount)}</td>
+                        {userCanAdd && (
+                          <td className="py-2.5 px-3 text-center">
+                            <button
+                              onClick={() => setWithdrawalExtras(prev => prev.filter(x => x.id !== w.id))}
+                              className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
+                              title="Eliminar"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="font-bold bg-muted/50">
+                      <td colSpan={2} className="py-3 px-3">Total extras</td>
+                      <td className="py-3 px-3 text-right text-red-600">
+                        {formatCurrency(withdrawalExtras.reduce((s, w) => s + w.amount, 0))}
+                      </td>
+                      {userCanAdd && <td></td>}
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
         </Card>
       )}
 
@@ -971,6 +1258,7 @@ export default function UploadPage() {
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">#</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Categoría</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Monto</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Pagado</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Pendiente</th>
@@ -980,19 +1268,46 @@ export default function UploadPage() {
             </thead>
             <tbody>
               {expenses.length === 0 && (
-                <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
+                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
               )}
-              {expenses.map((exp, i) => (
+              {pagedExpenses.map((exp, i) => (
                 <tr key={exp.id} className="border-b border-border/50 hover:bg-muted/50">
                   {editingExpenseId === exp.id ? (
                     <>
-                      <td className="py-2 px-3 text-muted-foreground">{i + 1}</td>
+                      <td className="py-2 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
                       <td className="py-2 px-3">
                         <input value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
                         <label className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground cursor-pointer">
                           <input type="checkbox" checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
                           {t('expenses.fixed')} ({t('expenses.fixedHint')})
                         </label>
+                      </td>
+                      <td className="py-2 px-3">
+                        <div className="relative">
+                          <input
+                            value={editExpense.category}
+                            onChange={e => { setEditExpense(p => ({ ...p, category: e.target.value })); setShowEditCategoryDropdown(true); }}
+                            onFocus={() => setShowEditCategoryDropdown(true)}
+                            onBlur={() => setTimeout(() => setShowEditCategoryDropdown(false), 200)}
+                            placeholder="Categoría"
+                            className="w-full px-2 py-1 rounded border border-border text-sm"
+                            autoComplete="off"
+                          />
+                          {showEditCategoryDropdown && filteredCategoriesEdit.length > 0 && (
+                            <div className="absolute z-30 top-full left-0 right-0 mt-1 max-h-40 overflow-auto bg-card border border-border rounded-lg shadow-lg">
+                              {filteredCategoriesEdit.map(c => (
+                                <button
+                                  key={c}
+                                  type="button"
+                                  onMouseDown={(e) => { e.preventDefault(); setEditExpense(p => ({ ...p, category: c })); setShowEditCategoryDropdown(false); }}
+                                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted transition-colors"
+                                >
+                                  {c}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
                       </td>
                       <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                       <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
@@ -1007,7 +1322,7 @@ export default function UploadPage() {
                     </>
                   ) : (
                     <>
-                      <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
+                      <td className="py-2.5 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
                       <td className="py-2.5 px-3">
                         <span className="inline-flex items-center gap-1.5">
                           {exp.concept}
@@ -1017,6 +1332,15 @@ export default function UploadPage() {
                             </span>
                           )}
                         </span>
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {exp.category ? (
+                          <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                            {exp.category}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
                       </td>
                       <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(exp.amount)}</td>
                       <td className="py-2.5 px-3 text-right">{formatCurrency(exp.paid)}</td>
@@ -1046,7 +1370,7 @@ export default function UploadPage() {
             {expenses.length > 0 && (
               <tfoot>
                 <tr className="font-bold bg-muted/50">
-                  <td className="py-3 px-3" colSpan={2}>Total</td>
+                  <td className="py-3 px-3" colSpan={3}>Total</td>
                   <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
                   <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
                   <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
@@ -1057,11 +1381,18 @@ export default function UploadPage() {
           </table>
           </div>
 
+          <PaginationControls
+            page={expensesPage}
+            totalPages={expensesTotalPages}
+            totalItems={expenses.length}
+            onChange={setExpensesPage}
+          />
+
           {/* Add expense form */}
           {userCanAdd && (
             <div className="mt-4 pt-4 border-t border-border">
               <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addExpense')}</h3>
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                 <div className="md:col-span-2 relative">
                   <input
                     ref={conceptInputRef}
@@ -1086,6 +1417,34 @@ export default function UploadPage() {
                         </button>
                       ))}
                     </div>
+                  )}
+                </div>
+                <div className="relative">
+                  <input
+                    value={newExpense.category}
+                    onChange={e => { setNewExpense(p => ({ ...p, category: e.target.value })); setShowCategoryDropdown(true); }}
+                    onFocus={() => setShowCategoryDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 200)}
+                    placeholder="Categoría"
+                    className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                    autoComplete="off"
+                  />
+                  {showCategoryDropdown && filteredCategoriesNew.length > 0 && (
+                    <div className="absolute z-20 top-full left-0 right-0 mt-1 max-h-48 overflow-auto bg-card border border-border rounded-lg shadow-lg">
+                      {filteredCategoriesNew.map(c => (
+                        <button
+                          key={c}
+                          type="button"
+                          onMouseDown={(e) => { e.preventDefault(); setNewExpense(p => ({ ...p, category: c })); setShowCategoryDropdown(false); }}
+                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors"
+                        >
+                          {c}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {newExpense.category && !filteredCategoriesNew.some(c => c.toLowerCase() === newExpense.category.toLowerCase()) && (
+                    <p className="text-[11px] text-muted-foreground mt-1 px-1">Nueva categoría · se guardará al agregar</p>
                   )}
                 </div>
                 <input
@@ -1257,7 +1616,7 @@ export default function UploadPage() {
                 {filteredLiquidity.length === 0 && (
                   <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">{t('upload.noLiquidity')}</td></tr>
                 )}
-                {filteredLiquidity.map(row => (
+                {pagedLiquidity.map(row => (
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
                     {editingLiqId === row.id ? (
                       <>
@@ -1312,6 +1671,13 @@ export default function UploadPage() {
               )}
             </table>
           </div>
+
+          <PaginationControls
+            page={liquidityPage}
+            totalPages={liquidityTotalPages}
+            totalItems={filteredLiquidity.length}
+            onChange={setLiquidityPage}
+          />
 
           {/* Add liquidity form */}
           {userCanAdd && (
@@ -1437,7 +1803,7 @@ export default function UploadPage() {
                 {filteredInvestments.length === 0 && (
                   <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">{t('upload.noInvestments')}</td></tr>
                 )}
-                {filteredInvestments.map(row => (
+                {pagedInvestments.map(row => (
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
                     {editingInvId === row.id ? (
                       <>
@@ -1495,6 +1861,13 @@ export default function UploadPage() {
               )}
             </table>
           </div>
+
+          <PaginationControls
+            page={investmentsPage}
+            totalPages={investmentsTotalPages}
+            totalItems={filteredInvestments.length}
+            onChange={setInvestmentsPage}
+          />
 
           {/* Add investment form */}
           {userCanAdd && (
@@ -1642,7 +2015,7 @@ export default function UploadPage() {
             ))}
           </select>
         </div>
-        {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && section !== 'ingresos' && (
+        {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && (
           <button
             onClick={saveAll}
             disabled={savingAll}

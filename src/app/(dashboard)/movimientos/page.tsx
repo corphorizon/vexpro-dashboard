@@ -1,11 +1,12 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { MovimientosPeriodSelector } from '@/components/movimientos-period-selector';
 import {
   RealTimeMovementsBanner,
   useApiTotals,
+  DEFAULT_WALLET_ID,
 } from '@/components/realtime-movements-banner';
 import {
   allPeriodsUseDerivedBroker,
@@ -84,7 +85,11 @@ export default function MovimientosPage() {
     };
   }, [useDerivedBroker, activePeriods]);
 
-  const apiTotals = useApiTotals(apiFrom, apiTo);
+  // Keep the Coinsbuy wallet id in page-level state so the banner AND the
+  // "Depósitos" table below both filter by the same wallet (prevents the
+  // card total ≠ table row total bug).
+  const [coinsbuyWalletId, setCoinsbuyWalletId] = useState<string>(DEFAULT_WALLET_ID);
+  const apiTotals = useApiTotals(apiFrom, apiTo, coinsbuyWalletId);
 
   const handleExport = () => verify2FA(() => {
     if (!summary) return;
@@ -224,7 +229,10 @@ export default function MovimientosPage() {
       </div>
 
       {/* ─── Upper section: APIs en tiempo real (owns its own filter) ─── */}
-      <RealTimeMovementsBanner />
+      <RealTimeMovementsBanner
+        walletId={coinsbuyWalletId}
+        onWalletChange={setCoinsbuyWalletId}
+      />
 
       {/* ─── Lower section: Datos del período (mes) ─── */}
       <div className="flex flex-col gap-3 pt-2 border-t border-border">

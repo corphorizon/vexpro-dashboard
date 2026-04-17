@@ -88,28 +88,31 @@ export async function fetchCoinsbuyTransfers(
 ): Promise<CoinsbuyTransferResult> {
   const now = new Date().toISOString();
 
-  // Mock mode
+  // No credentials → surface an empty error dataset rather than faking data.
+  // This keeps the user from looking at mock numbers and thinking they're
+  // real. Set COINSBUY_CLIENT_ID / COINSBUY_CLIENT_SECRET in .env.local to
+  // enable the live path.
   if (!isCoinsbuyV3Enabled()) {
-    const allDeposits = generateCoinsbuyDeposits();
-    const allWithdrawals = generateCoinsbuyWithdrawals();
+    const error: Pick<ProviderDataset, 'fetchedAt' | 'status' | 'isMock' | 'errorMessage'> = {
+      fetchedAt: now,
+      status: 'error',
+      isMock: false,
+      errorMessage: 'Coinsbuy no está configurado (faltan credenciales en el servidor)',
+    };
     return {
       deposits: {
         slug: 'coinsbuy-deposits',
         provider: PROVIDER,
         kind: 'deposits',
-        transactions: filterByDateRange(allDeposits, options.from, options.to),
-        fetchedAt: now,
-        status: 'fresh',
-        isMock: true,
+        transactions: [],
+        ...error,
       },
       payouts: {
         slug: 'coinsbuy-withdrawals',
         provider: PROVIDER,
         kind: 'withdrawals',
-        transactions: filterByDateRange(allWithdrawals, options.from, options.to),
-        fetchedAt: now,
-        status: 'fresh',
-        isMock: true,
+        transactions: [],
+        ...error,
       },
     };
   }
@@ -137,7 +140,7 @@ export async function fetchCoinsbuyTransfers(
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/vnd.api+json',
           },
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(12_000),
         });
 
         if (!res.ok) {

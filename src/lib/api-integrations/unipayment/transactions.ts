@@ -63,17 +63,17 @@ export async function fetchUnipaymentDepositsV2(
 ): Promise<ProviderDataset<UnipaymentDepositTx>> {
   const now = new Date().toISOString();
 
-  // Mock mode
+  // No credentials → empty error dataset. Keeps fake demo data out of the UI.
   if (!isUnipaymentEnabled()) {
-    const all = generateUnipaymentDeposits();
     return {
       slug: 'unipayment',
       provider: PROVIDER,
       kind: 'deposits',
-      transactions: filterByDateRange(all, options.from, options.to),
+      transactions: [],
       fetchedAt: now,
-      status: 'fresh',
-      isMock: true,
+      status: 'error',
+      isMock: false,
+      errorMessage: 'UniPayment no está configurado (faltan credenciales)',
     };
   }
 
@@ -103,7 +103,7 @@ export async function fetchUnipaymentDepositsV2(
             'User-Agent':
               'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           },
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(12_000),
         });
 
         if (!res.ok) {

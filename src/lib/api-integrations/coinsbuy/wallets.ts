@@ -120,12 +120,15 @@ export async function fetchCoinsbuyWallets(): Promise<{
 }> {
   const now = new Date().toISOString();
 
-  // Mock mode: return static wallet data.
+  // No credentials → return empty result with a clear error. Previously we
+  // served a list of mock wallets (mock-1/2/3) which confused users into
+  // thinking the integration was live.
   if (!isCoinsbuyV3Enabled()) {
     return {
-      wallets: MOCK_WALLETS,
-      isMock: true,
+      wallets: [],
+      isMock: false,
       fetchedAt: now,
+      error: 'Coinsbuy no está configurado (faltan credenciales en el servidor)',
     };
   }
 
@@ -140,7 +143,7 @@ export async function fetchCoinsbuyWallets(): Promise<{
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/vnd.api+json',
         },
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(12_000),
       });
 
       if (!res.ok) {

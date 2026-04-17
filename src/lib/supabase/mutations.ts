@@ -126,7 +126,7 @@ export async function upsertDeposits(
 export async function upsertWithdrawals(
   companyId: string,
   periodId: string,
-  withdrawals: { category: string; amount: number }[]
+  withdrawals: { category: string; amount: number; description?: string | null }[]
 ): Promise<void> {
   const { error: delError } = await supabase
     .from('withdrawals')
@@ -143,6 +143,7 @@ export async function upsertWithdrawals(
       period_id: periodId,
       category: w.category,
       amount: w.amount,
+      description: w.description ?? null,
     }));
 
   if (rows.length > 0) {
@@ -156,7 +157,7 @@ export async function upsertWithdrawals(
 export async function upsertExpenses(
   companyId: string,
   periodId: string,
-  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean }[]
+  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null }[]
 ): Promise<void> {
   const { error: delError } = await supabase
     .from('expenses')
@@ -175,6 +176,7 @@ export async function upsertExpenses(
       paid: e.paid,
       pending: e.pending,
       is_fixed: !!e.is_fixed,
+      category: e.category ?? null,
       sort_order: i + 1,
     }));
 

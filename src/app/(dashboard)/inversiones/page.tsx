@@ -13,7 +13,7 @@ import type { Investment } from '@/lib/types';
 import { TrendingUp, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 50;
 
 export default function InversionesPage() {
   const { t } = useI18n();
@@ -165,6 +165,7 @@ export default function InversionesPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium w-12">#</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Responsable</th>
@@ -175,8 +176,9 @@ export default function InversionesPage() {
               </tr>
             </thead>
             <tbody>
-              {pagedRows.map((inv) => (
+              {pagedRows.map((inv, i) => (
                 <tr key={inv.id} className="border-b border-border/50 hover:bg-muted/50">
+                  <td className="py-2.5 px-3 text-muted-foreground tabular-nums">{page * PAGE_SIZE + i + 1}</td>
                   <td className="py-2.5 px-3">{new Date(inv.date).toLocaleDateString('es-ES')}</td>
                   <td className="py-2.5 px-3">{inv.concept || '—'}</td>
                   <td className="py-2.5 px-3">{inv.responsible || '—'}</td>
@@ -198,32 +200,36 @@ export default function InversionesPage() {
         {filtered.length === 0 && (
           <p className="text-center text-muted-foreground py-8">{t('common.noData')}</p>
         )}
-        {filtered.length > PAGE_SIZE && (
-          <div className="flex items-center justify-between mt-4 text-sm">
+        {filtered.length > 0 && (
+          <div className="flex items-center justify-between mt-4 text-sm flex-wrap gap-2">
             <span className="text-muted-foreground">
-              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} de {filtered.length}
+              Mostrando <strong className="text-foreground">{page * PAGE_SIZE + 1}</strong>
+              –<strong className="text-foreground">{Math.min((page + 1) * PAGE_SIZE, filtered.length)}</strong>
+              {' '}de <strong className="text-foreground">{filtered.length}</strong> items
             </span>
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-                aria-label="Página anterior"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="px-2 tabular-nums">
-                {page + 1} / {totalPages}
-              </span>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-                aria-label="Página siguiente"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
+            {filtered.length > PAGE_SIZE && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => setPage(p => Math.max(0, p - 1))}
+                  disabled={page === 0}
+                  className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                  aria-label="Página anterior"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="px-2 tabular-nums">
+                  Página {page + 1} de {totalPages}
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                  disabled={page >= totalPages - 1}
+                  className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                  aria-label="Página siguiente"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </Card>

@@ -1,5 +1,6 @@
 'use client';
 
+import { useMemo } from 'react';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
 import { PeriodSelector } from '@/components/period-selector';
 import { MonthlyChart } from '@/components/charts/monthly-chart';
@@ -11,6 +12,8 @@ import { downloadExcel, downloadPDF } from '@/lib/export-utils';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
+import { useApiTotals, DEFAULT_WALLET_ID } from '@/components/realtime-movements-banner';
+import { allPeriodsUseDerivedBroker, computeDerivedBroker } from '@/lib/broker-logic';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -29,13 +32,65 @@ export default function ResumenPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, periods } = useData();
 
   const summary = mode === 'consolidated'
     ? getConsolidatedSummary(selectedPeriodIds)
     : getPeriodSummary(selectedPeriodId);
 
+  // Mirror the consolidation logic from /movimientos so both pages show the
+  // SAME numbers for any given period. For "new broker" periods (April 2026+)
+  // we blend live/persisted API data with manual "other" entries.
+  const activePeriods = useMemo(() => {
+    const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
+    return periods.filter((p) => ids.includes(p.id));
+  }, [mode, selectedPeriodId, selectedPeriodIds, periods]);
+  const useDerivedBroker = useMemo(
+    () => allPeriodsUseDerivedBroker(activePeriods),
+    [activePeriods],
+  );
+  const { apiFrom, apiTo } = useMemo(() => {
+    if (!useDerivedBroker || activePeriods.length === 0) return { apiFrom: '', apiTo: '' };
+    const sorted = [...activePeriods].sort((a, b) => a.year - b.year || a.month - b.month);
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const lastDay = new Date(last.year, last.month, 0).getDate();
+    return {
+      apiFrom: `${first.year}-${pad(first.month)}-01`,
+      apiTo: `${last.year}-${pad(last.month)}-${pad(lastDay)}`,
+    };
+  }, [useDerivedBroker, activePeriods]);
+  const apiTotals = useApiTotals(apiFrom, apiTo, DEFAULT_WALLET_ID);
+
   if (!summary) return null;
+
+  // Consolidated deposits: API providers (when applicable) + manual "other"
+  // channel. Matches /movimientos exactly.
+  const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
+  const consolidatedDeposits = useDerivedBroker
+    ? apiTotals.depositsTotal + storedOther
+    : summary.totalDeposits;
+
+  // Consolidated withdrawals: broker category is derived from API when
+  // applicable; everything else stays manual.
+  const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
+  const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
+  const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
+  const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
+  const derivedBroker = useDerivedBroker
+    ? computeDerivedBroker({
+        apiWithdrawalsTotal: apiTotals.withdrawalsTotal,
+        ibCommissions,
+        propFirm: propFirmWithdrawal,
+        other: otherWithdrawal,
+      })
+    : storedBroker;
+  const consolidatedWithdrawals = useDerivedBroker
+    ? derivedBroker + ibCommissions + propFirmWithdrawal + otherWithdrawal
+    : summary.totalWithdrawals;
+
+  const consolidatedNetDeposit = consolidatedDeposits - consolidatedWithdrawals;
 
   const income = summary.operatingIncome;
   const totalIncome = (income
@@ -45,9 +100,9 @@ export default function ResumenPage() {
 
   const exportHeaders = ['Metrica', 'Valor'];
   const exportRows: (string | number)[][] = [
-    ['Depósitos Totales', summary.totalDeposits],
-    ['Retiros Totales', summary.totalWithdrawals],
-    ['Net Deposit', summary.netDeposit],
+    ['Depósitos Totales', consolidatedDeposits],
+    ['Retiros Totales', consolidatedWithdrawals],
+    ['Net Deposit', consolidatedNetDeposit],
     ['Egresos Operativos', summary.totalExpenses],
     ['Ingresos Operativos', totalIncome],
     ['Balance Total', balanceDisponible],
@@ -126,7 +181,7 @@ export default function ResumenPage() {
             </div>
             <CardTitle>{t('summary.deposits')}</CardTitle>
           </div>
-          <CardValue>{formatCurrency(summary.totalDeposits)}</CardValue>
+          <CardValue>{formatCurrency(consolidatedDeposits)}</CardValue>
         </Card>
 
         <Card>
@@ -136,7 +191,7 @@ export default function ResumenPage() {
             </div>
             <CardTitle>{t('summary.withdrawals')}</CardTitle>
           </div>
-          <CardValue>{formatCurrency(summary.totalWithdrawals)}</CardValue>
+          <CardValue>{formatCurrency(consolidatedWithdrawals)}</CardValue>
         </Card>
 
         <Card>
@@ -146,8 +201,8 @@ export default function ResumenPage() {
             </div>
             <CardTitle>{t('summary.netDeposit')}</CardTitle>
           </div>
-          <CardValue positive={summary.netDeposit > 0} negative={summary.netDeposit < 0}>
-            {formatCurrency(summary.netDeposit)}
+          <CardValue positive={consolidatedNetDeposit > 0} negative={consolidatedNetDeposit < 0}>
+            {formatCurrency(consolidatedNetDeposit)}
           </CardValue>
         </Card>
 

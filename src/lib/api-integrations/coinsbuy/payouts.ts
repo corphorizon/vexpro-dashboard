@@ -105,7 +105,7 @@ export async function fetchCoinsbuyPayoutsV3(
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/vnd.api+json',
           },
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(12_000),
         });
 
         if (!res.ok) {

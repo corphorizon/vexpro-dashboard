@@ -37,9 +37,11 @@ export const PROVIDER_CONFIG: Record<ProviderId, ProviderConfig> = {
 // Refresh interval for the Movimientos page (5 minutes)
 export const REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 
-// Retry configuration
-export const RETRY_MAX_ATTEMPTS = 3;
-export const RETRY_BACKOFF_MS = 1000; // multiplied per attempt
+// Retry configuration.
+// Lowered from 3→2 attempts because 3 attempts with 30s timeouts could
+// freeze the UI for up to 90s when an external API is unreachable.
+export const RETRY_MAX_ATTEMPTS = 2;
+export const RETRY_BACKOFF_MS = 800; // multiplied per attempt
 
 export function isProviderEnabled(provider: ProviderId): boolean {
   return PROVIDER_CONFIG[provider]?.enabled ?? false;

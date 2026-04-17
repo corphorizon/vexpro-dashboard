@@ -2,6 +2,24 @@ import { createServerClient } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
 export async function updateSession(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+
+  // Perf: skip the Supabase auth round-trip for API routes and static paths.
+  // Each /api/* route already enforces its own auth via verifyAuth /
+  // verifyAdminAuth and returns 401 JSON when missing — the middleware's
+  // only job here is to redirect HTML navigation when unauthenticated.
+  // Running `supabase.auth.getUser()` on every fetch was adding ~150-300ms
+  // per API call (a full RTT to the Supabase auth server).
+  const skipAuthCheck =
+    pathname.startsWith('/api') ||
+    pathname.startsWith('/_next') ||
+    pathname === '/favicon.ico' ||
+    pathname === '/icon.png';
+
+  if (skipAuthCheck) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({
     request,
   });
@@ -34,17 +52,11 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser();
 
-  // Protect all dashboard routes — redirect to login if no session
-  const { pathname } = request.nextUrl;
   const isPublicRoute =
     pathname.startsWith('/login') ||
     pathname.startsWith('/auth') ||
     pathname.startsWith('/reset-password') ||
-    pathname.startsWith('/reset-2fa') ||
-    pathname.startsWith('/api') ||
-    pathname.startsWith('/_next') ||
-    pathname === '/favicon.ico' ||
-    pathname === '/icon.png';
+    pathname.startsWith('/reset-2fa');
 
   if (!user && !isPublicRoute) {
     const url = request.nextUrl.clone();

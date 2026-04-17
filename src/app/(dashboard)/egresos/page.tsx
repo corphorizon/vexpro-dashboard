@@ -189,8 +189,18 @@ export default function EgresosPage() {
           <button
             onClick={() => verify2FA(() => {
               const exps = showPreoperativo ? preoperativeExpenses : filteredExpenses;
-              const headers = ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
-              const rows = exps.map((e, i) => [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[]);
+              // Preoperative expenses don't have a category column, only
+              // period expenses do — guard the export shape.
+              const headers = showPreoperativo
+                ? ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')]
+                : ['#', t('expenses.concept'), 'Categoría', t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
+              const rows = exps.map((e, i) => {
+                if (showPreoperativo) {
+                  return [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[];
+                }
+                const exp = e as Expense;
+                return [i + 1, exp.concept, exp.category ?? '', exp.amount, exp.paid, exp.pending] as (string | number)[];
+              });
               downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
             })}
             className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
@@ -311,6 +321,7 @@ export default function EgresosPage() {
                   <tr className="border-b border-border">
                     <th className="text-left py-2 px-3 text-muted-foreground font-medium w-8">#</th>
                     <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
+                    <th className="text-left py-2 px-3 text-muted-foreground font-medium">Categoría</th>
                     <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.amount')}</th>
                     <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
                     <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
@@ -323,7 +334,7 @@ export default function EgresosPage() {
                 <tbody>
                   {filteredExpenses.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-muted-foreground">
+                      <td colSpan={8} className="py-8 text-center text-muted-foreground">
                         {searchQuery ? t('expenses.noResults') : t('expenses.noExpenses')}
                       </td>
                     </tr>
@@ -339,6 +350,10 @@ export default function EgresosPage() {
                               onChange={e => setEditForm(p => ({ ...p, concept: e.target.value }))}
                               className="w-full px-2 py-1 rounded border border-border text-sm"
                             />
+                          </td>
+                          <td className="py-2 px-3 text-xs text-muted-foreground">
+                            {/* Category editing happens in /upload; read-only here */}
+                            {expense.category || '—'}
                           </td>
                           <td className="py-2 px-3">
                             <input
@@ -379,6 +394,15 @@ export default function EgresosPage() {
                         <>
                           <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
                           <td className="py-2.5 px-3">{expense.concept}</td>
+                          <td className="py-2.5 px-3">
+                            {expense.category ? (
+                              <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                {expense.category}
+                              </span>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </td>
                           <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
                           <td className="py-2.5 px-3 text-right">{formatCurrency(expense.paid)}</td>
                           <td className="py-2.5 px-3 text-right">{formatCurrency(expense.pending)}</td>
@@ -420,7 +444,7 @@ export default function EgresosPage() {
                 </tbody>
                 <tfoot>
                   <tr className="font-bold bg-muted/50">
-                    <td className="py-3 px-3" colSpan={2}>TOTAL</td>
+                    <td className="py-3 px-3" colSpan={3}>TOTAL</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalExpenses)}</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPaid)}</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPending)}</td>

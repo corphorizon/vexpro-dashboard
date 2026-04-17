@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { useData } from '@/lib/data-context';
+import { usePeriod } from '@/lib/period-context';
 import { useAuth, hasModuleAccess, canAdd } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
@@ -35,13 +36,17 @@ interface ChannelDef {
   key: string;
   label: string;
   type: 'api' | 'manual' | 'auto';
+  /** When true, the user can override the auto-fetched value with a manual
+   *  snapshot. Used for channels where the API can fail and we still need
+   *  a number shown (UniPayment). */
+  allowManualOverride?: boolean;
   icon?: React.ComponentType<{ className?: string }>;
   description?: string;
 }
 
 const CHANNELS: ChannelDef[] = [
   { key: 'coinsbuy',       label: 'Coinsbuy',                   type: 'auto',   icon: Plug,       description: 'Wallet VexPro Main — balance en tiempo real' },
-  { key: 'unipayment',     label: 'UniPayment',                 type: 'auto',   icon: Plug,       description: 'My Wallet — balance en tiempo real' },
+  { key: 'unipayment',     label: 'UniPayment',                 type: 'auto',   allowManualOverride: true, icon: Plug, description: 'My Wallet — balance en tiempo real (editable como respaldo)' },
   { key: 'fairpay',        label: 'FairPay',                    type: 'manual',                    description: 'Ingreso manual' },
   { key: 'wallet_externa', label: 'Wallet Externa',             type: 'manual',                    description: 'Ingreso manual' },
   { key: 'otros',          label: 'Otros',                      type: 'manual',                    description: 'Ingreso manual' },
@@ -69,6 +74,7 @@ export default function BalancesPage() {
   const { t } = useI18n();
   const { user } = useAuth();
   const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData } = useData();
+  const { selectedPeriodId } = usePeriod();
   const userCanAdd = canAdd(user);
 
   const [selectedDate, setSelectedDate] = useState<string>(todayISO());
@@ -79,6 +85,7 @@ export default function BalancesPage() {
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [pinnedWallets, setPinnedWallets] = useState<PinnedCoinsbuyWallet[]>([]);
+  const [showCoinsbuyModal, setShowCoinsbuyModal] = useState(false);
   const isAdmin = user?.role === 'admin';
 
   // ─── Access control ───
@@ -132,7 +139,22 @@ export default function BalancesPage() {
     return rows;
   }, [periods, getPeriodSummary, computeSaldoChain]);
 
-  const currentBalanceRow = balanceChain[balanceChain.length - 1];
+  // Show the 6 months ending at the globally selected period. If no period
+  // is selected yet or the id isn't in balanceChain, fall back to the latest.
+  const selectedIndex = useMemo(() => {
+    const idx = balanceChain.findIndex(r => r.periodId === selectedPeriodId);
+    return idx >= 0 ? idx : balanceChain.length - 1;
+  }, [balanceChain, selectedPeriodId]);
+
+  const sixMonthWindow = useMemo(() => {
+    if (selectedIndex < 0) return [];
+    const from = Math.max(0, selectedIndex - 5);
+    return balanceChain.slice(from, selectedIndex + 1);
+  }, [balanceChain, selectedIndex]);
+
+  // Summary cards (Net Deposit, Egresos, Monto a Distribuir, Saldo Anterior)
+  // correspond to the SELECTED period, as requested.
+  const currentBalanceRow = balanceChain[selectedIndex];
 
   // ─── Section B: Balances por Canal (snapshots for selected date) ───
 
@@ -308,8 +330,17 @@ export default function BalancesPage() {
     if (key === 'inversiones') return investmentsBalance;
     // Coinsbuy: sum of all pinned wallet balances (real-time API)
     if (key === 'coinsbuy') return pinnedWalletsTotal;
-    // UniPayment: real-time balance from My Wallet
-    if (key === 'unipayment') return unipaymentBalance;
+    // UniPayment: prefer API when it returns > 0; fall back to a manually
+    // saved snapshot for the current date if the API is down or hasn't
+    // responded yet. Users can still override the API value explicitly by
+    // editing the row — the manual value takes precedence while the saved
+    // snapshot matches the selected date.
+    if (key === 'unipayment') {
+      const snap = snapshots.find(s => s.channel_key === 'unipayment');
+      if (snap && snap.amount > 0 && snap.source === 'manual') return snap.amount;
+      if (unipaymentBalance > 0) return unipaymentBalance;
+      return snap?.amount ?? 0;
+    }
     const snap = snapshots.find(s => s.channel_key === key);
     return snap?.amount ?? 0;
   };
@@ -463,16 +494,22 @@ export default function BalancesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {balanceChain.map((row) => (
-                    <tr key={row.periodId} className="border-b border-border/50 hover:bg-muted/30">
-                      <td className="py-2 px-3 font-medium">{row.label}</td>
-                      <td className="py-2 px-3 text-right text-emerald-600 dark:text-emerald-400">{formatCurrency(row.netDeposit)}</td>
-                      <td className="py-2 px-3 text-right text-red-600 dark:text-red-400">{formatCurrency(row.egresos)}</td>
-                      <td className="py-2 px-3 text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.montoDistribuir)}</td>
-                      <td className={`py-2 px-3 text-right font-medium ${row.balanceMes >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.balanceMes)}</td>
-                      <td className={`py-2 px-3 text-right font-bold ${row.saldoFinal >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.saldoFinal)}</td>
-                    </tr>
-                  ))}
+                  {sixMonthWindow.map((row) => {
+                    const isSelected = row.periodId === currentBalanceRow?.periodId;
+                    return (
+                      <tr
+                        key={row.periodId}
+                        className={`border-b border-border/50 ${isSelected ? 'bg-blue-50/40 dark:bg-blue-950/20 font-medium' : 'hover:bg-muted/30'}`}
+                      >
+                        <td className="py-2 px-3 font-medium">{row.label}</td>
+                        <td className="py-2 px-3 text-right text-emerald-600 dark:text-emerald-400">{formatCurrency(row.netDeposit)}</td>
+                        <td className="py-2 px-3 text-right text-red-600 dark:text-red-400">{formatCurrency(row.egresos)}</td>
+                        <td className="py-2 px-3 text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.montoDistribuir)}</td>
+                        <td className={`py-2 px-3 text-right font-medium ${row.balanceMes >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.balanceMes)}</td>
+                        <td className={`py-2 px-3 text-right font-bold ${row.saldoFinal >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.saldoFinal)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -502,6 +539,8 @@ export default function BalancesPage() {
             const isEditing = editing[ch.key] !== undefined;
             const isAuto = ch.type === 'auto';
             const isCoinsbuy = ch.key === 'coinsbuy';
+            // Channels where the user can overwrite the auto-fetched value.
+            const canOverride = !!ch.allowManualOverride;
             const Icon = ch.icon;
 
             return (
@@ -515,9 +554,14 @@ export default function BalancesPage() {
                     <p className="font-medium truncate">{ch.label}</p>
                     <p className="text-xs text-muted-foreground truncate">{ch.description}</p>
                   </div>
-                  {isAuto && (
+                  {isAuto && !canOverride && (
                     <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                       Automático
+                    </span>
+                  )}
+                  {canOverride && (
+                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                      API + manual
                     </span>
                   )}
                 </div>
@@ -554,12 +598,22 @@ export default function BalancesPage() {
                       <span className={`font-semibold text-base ${value >= 0 ? '' : 'text-red-600 dark:text-red-400'}`}>
                         {formatCurrency(value)}
                       </span>
-                      {!isAuto && !isCoinsbuy && userCanAdd && (
+                      {((!isAuto && !isCoinsbuy) || canOverride) && userCanAdd && (
                         <button
                           onClick={() => startEdit(ch.key)}
                           className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
                           aria-label="Editar"
-                          title="Editar balance"
+                          title={canOverride ? 'Agregar valor manual (respaldo si la API falla)' : 'Editar balance'}
+                        >
+                          <Edit2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                      {isCoinsbuy && isAdmin && (
+                        <button
+                          onClick={() => setShowCoinsbuyModal(true)}
+                          className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                          aria-label="Editar wallets"
+                          title="Elegir wallets de Coinsbuy"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
@@ -618,133 +672,161 @@ export default function BalancesPage() {
         </div>
       </Card>
 
-      {/* ═══════════ SECTION C: COINSBUY WALLETS (admin only) ═══════════ */}
-      {isAdmin && <Card>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
-              <Wallet className="w-5 h-5 text-emerald-500" />
+      {/* Modal: Coinsbuy wallet selector (admin only, triggered from the
+          pencil button on the Coinsbuy row above). Lets admin pick which
+          wallets get summed into the Balances por Canal total. */}
+      {isAdmin && showCoinsbuyModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setShowCoinsbuyModal(false)}
+        >
+          <div
+            className="bg-card border border-border rounded-xl shadow-lg w-full max-w-2xl max-h-[85vh] flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-5 border-b border-border">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 shrink-0">
+                  <Wallet className="w-5 h-5 text-emerald-500" />
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-lg font-semibold">Wallets de Coinsbuy</h2>
+                  <p className="text-xs text-muted-foreground">
+                    Elige cuáles suman al balance del canal
+                    {walletsIsMock && <span className="ml-1 text-amber-500">(Mock)</span>}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                {walletsFetchedAt && (
+                  <span className="text-[10px] text-muted-foreground hidden sm:inline">
+                    Sync: {new Date(walletsFetchedAt).toLocaleTimeString('es-ES')}
+                  </span>
+                )}
+                <button
+                  onClick={fetchWallets}
+                  disabled={walletsLoading}
+                  className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
+                  title="Refrescar wallets"
+                >
+                  <RefreshCw className={`w-4 h-4 ${walletsLoading ? 'animate-spin' : ''}`} />
+                </button>
+                <button
+                  onClick={() => setShowCoinsbuyModal(false)}
+                  className="p-2 rounded-lg hover:bg-muted"
+                  aria-label="Cerrar"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
             </div>
-            <div>
-              <h2 className="text-lg font-semibold">Coinsbuy Wallets</h2>
-              <p className="text-xs text-muted-foreground">
-                Balances en tiempo real de wallets activas
-                {walletsIsMock && <span className="ml-1 text-amber-500">(Mock)</span>}
+
+            {/* Body */}
+            <div className="p-5 overflow-y-auto flex-1">
+              {walletsError && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-sm mb-3">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+                  <span>
+                    {walletsError}
+                    {walletsFetchedAt && ` — Datos desactualizados (última sync: ${new Date(walletsFetchedAt).toLocaleString('es-ES')})`}
+                  </span>
+                </div>
+              )}
+
+              <p className="text-xs text-muted-foreground mb-3">
+                Usa el <strong>pin</strong> para incluir/excluir una wallet del canal Coinsbuy en Balances por Canal. El toggle controla si se suma al total temporal de esta vista.
               </p>
+
+              {wallets.length > 0 ? (
+                <div className="space-y-2">
+                  {wallets.map((w) => {
+                    const isOn = walletToggles[w.id] !== false;
+                    return (
+                      <div
+                        key={w.id}
+                        className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
+                          isOn ? 'border-border hover:bg-muted/30' : 'border-border/50 bg-muted/20 opacity-60'
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <button
+                            onClick={() => toggleWallet(w.id)}
+                            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                            title={isOn ? 'Excluir del total' : 'Incluir en el total'}
+                          >
+                            {isOn
+                              ? <ToggleRight className="w-6 h-6 text-emerald-500" />
+                              : <ToggleLeft className="w-6 h-6" />
+                            }
+                          </button>
+                          <div className="min-w-0">
+                            <p className="font-medium truncate">{w.label}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {w.currencyCode}
+                              {w.balancePending > 0 && (
+                                <span className="ml-2 text-amber-500">
+                                  Pendiente: {w.balancePending.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`font-semibold text-sm tabular-nums ${isOn ? '' : 'text-muted-foreground'}`}>
+                            {w.balanceConfirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} {w.currencyCode}
+                          </span>
+                          {isPinned(w.id) ? (
+                            <button
+                              onClick={() => handleUnpin(w.id)}
+                              className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
+                              title="Quitar de Balances por Canal"
+                            >
+                              <PinOff className="w-4 h-4" />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => handlePin(w.id, w.label)}
+                              className="p-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                              title="Fijar en Balances por Canal"
+                            >
+                              <Pin className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : walletsLoading ? (
+                <p className="text-center text-muted-foreground py-8">Cargando wallets…</p>
+              ) : (
+                <p className="text-center text-muted-foreground py-8">No hay wallets activas</p>
+              )}
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {walletsFetchedAt && (
-              <span className="text-[10px] text-muted-foreground hidden sm:inline">
-                Sync: {new Date(walletsFetchedAt).toLocaleTimeString('es-ES')}
-              </span>
+
+            {/* Footer totals */}
+            {wallets.length > 0 && (
+              <div className="p-4 border-t border-border flex items-center justify-between">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                    Wallets fijadas
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {pinnedWallets.length} fijada{pinnedWallets.length === 1 ? '' : 's'} · suman en Balances por Canal
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowCoinsbuyModal(false)}
+                  className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
+                >
+                  Listo
+                </button>
+              </div>
             )}
-            <button
-              onClick={fetchWallets}
-              disabled={walletsLoading}
-              className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-              title="Refrescar wallets"
-            >
-              <RefreshCw className={`w-4 h-4 ${walletsLoading ? 'animate-spin' : ''}`} />
-            </button>
           </div>
         </div>
-
-        {walletsError && (
-          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-sm mb-3">
-            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-            <span>
-              {walletsError}
-              {walletsFetchedAt && ` — Datos desactualizados (última sync: ${new Date(walletsFetchedAt).toLocaleString('es-ES')})`}
-            </span>
-          </div>
-        )}
-
-        {wallets.length > 0 ? (
-          <div className="space-y-2">
-            {wallets.map((w) => {
-              const isOn = walletToggles[w.id] !== false;
-              return (
-                <div
-                  key={w.id}
-                  className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
-                    isOn ? 'border-border hover:bg-muted/30' : 'border-border/50 bg-muted/20 opacity-60'
-                  }`}
-                >
-                  <div className="flex items-center gap-3 min-w-0 flex-1">
-                    <button
-                      onClick={() => toggleWallet(w.id)}
-                      className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                      title={isOn ? 'Excluir del total' : 'Incluir en el total'}
-                    >
-                      {isOn
-                        ? <ToggleRight className="w-6 h-6 text-emerald-500" />
-                        : <ToggleLeft className="w-6 h-6" />
-                      }
-                    </button>
-                    <div className="min-w-0">
-                      <p className="font-medium truncate">{w.label}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {w.currencyCode}
-                        {w.balancePending > 0 && (
-                          <span className="ml-2 text-amber-500">
-                            Pendiente: {w.balancePending.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                          </span>
-                        )}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`font-semibold text-base tabular-nums ${isOn ? '' : 'text-muted-foreground'}`}>
-                      {w.balanceConfirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} {w.currencyCode}
-                    </span>
-                    {isAdmin && (
-                      isPinned(w.id) ? (
-                        <button
-                          onClick={() => handleUnpin(w.id)}
-                          className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
-                          title="Quitar de Balances por Canal"
-                        >
-                          <PinOff className="w-4 h-4" />
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => handlePin(w.id, w.label)}
-                          className="p-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                          title="Fijar en Balances por Canal"
-                        >
-                          <Pin className="w-4 h-4" />
-                        </button>
-                      )
-                    )}
-                    {!isAdmin && isPinned(w.id) && (
-                      <Pin className="w-3.5 h-3.5 text-emerald-500" />
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : !walletsLoading ? (
-          <p className="text-center text-muted-foreground py-8">No hay wallets activas</p>
-        ) : null}
-
-        {wallets.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-                Total Wallets Seleccionadas
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {wallets.filter(w => walletToggles[w.id] !== false).length} de {wallets.length} wallets incluidas
-              </p>
-            </div>
-            <p className={`text-2xl font-bold ${walletTotal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-              {walletTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
-            </p>
-          </div>
-        )}
-      </Card>}
+      )}
     </div>
   );
 }

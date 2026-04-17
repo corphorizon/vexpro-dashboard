@@ -92,25 +92,30 @@ export async function fetchFairpayDeposits(
 ): Promise<ProviderDataset<FairpayDepositTx>> {
   const now = new Date().toISOString();
 
-  // ── Mock mode ──
+  // No credentials → return empty error dataset rather than faking numbers.
   if (!isFairpayEnabled()) {
-    const all = generateFairpayDeposits();
     return {
       slug: 'fairpay',
       provider: PROVIDER,
       kind: 'deposits',
-      transactions: filterByDateRange(all, options.from, options.to),
+      transactions: [],
       fetchedAt: now,
-      status: 'fresh',
-      isMock: true,
+      status: 'error',
+      isMock: false,
+      errorMessage: 'FairPay no está configurado (falta FAIRPAY_API_KEY)',
     };
   }
 
   // ── Live mode ──
   try {
     const { from: defaultFrom, to: defaultTo } = defaultDateRange();
-    const startDate = options.from ?? defaultFrom;
-    const endDate = options.to ?? defaultTo;
+    // Business rule: FairPay history only goes back to 2026-04-01.
+    // Never request anything earlier than that regardless of the requested
+    // range — keeps the UI from showing pre-launch noise.
+    const FAIRPAY_MIN_DATE = '2026-04-01';
+    const clampFrom = (d: string) => (d < FAIRPAY_MIN_DATE ? FAIRPAY_MIN_DATE : d);
+    const startDate = clampFrom(options.from ?? defaultFrom);
+    const endDate = clampFrom(options.to ?? defaultTo);
 
     const token = await getFairpayToken();
 
@@ -130,7 +135,7 @@ export async function fetchFairpayDeposits(
             Accept: 'application/json',
           },
           body: body.toString(),
-          signal: AbortSignal.timeout(30_000),
+          signal: AbortSignal.timeout(12_000),
         },
       );
 

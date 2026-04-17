@@ -26,7 +26,7 @@ export async function fetchCoinsbuyBalance(): Promise<number | null> {
         Authorization: `Bearer ${cfg.credentials.apiKey ?? ''}`,
         'Content-Type': 'application/json',
       },
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(12_000),
     });
     if (!res.ok) {
       throw new Error(`Coinsbuy balance ${res.status}: ${await res.text()}`);

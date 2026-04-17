@@ -28,7 +28,7 @@ async function callUnipayment(path: string): Promise<unknown> {
       Authorization: `Bearer ${cfg.credentials.apiKey ?? ''}`,
       'Content-Type': 'application/json',
     },
-    signal: AbortSignal.timeout(30_000),
+    signal: AbortSignal.timeout(12_000),
   });
   if (!res.ok) {
     throw new Error(`Unipayment ${res.status}: ${await res.text()}`);

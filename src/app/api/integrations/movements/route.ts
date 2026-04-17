@@ -5,6 +5,7 @@ import {
   fetchProviderBySlug,
   type ProviderSlug,
 } from '@/lib/api-integrations';
+import { persistDataset } from '@/lib/api-integrations/persistence';
 
 // ---------------------------------------------------------------------------
 // GET /api/integrations/movements
@@ -47,10 +48,22 @@ export async function GET(request: Request) {
         );
       }
       const dataset = await fetchProviderBySlug(slug as ProviderSlug, { from, to, walletId });
+      // Fire-and-forget write-through to api_transactions + api_sync_log.
+      persistDataset(auth.companyId, dataset, { from, to }).catch((err) =>
+        console.error('[movements] persistDataset (single) failed:', err),
+      );
       return NextResponse.json({ success: true, dataset });
     }
 
     const data = await fetchAggregatedMovements({ from, to, walletId });
+
+    // Fire-and-forget persistence for every fresh dataset. Never blocks the
+    // user response — an API fetch should always return even if Supabase is
+    // slow or misconfigured.
+    Promise.all(
+      data.datasets.map((ds) => persistDataset(auth.companyId, ds, { from, to })),
+    ).catch((err) => console.error('[movements] persistDataset failed:', err));
+
     return NextResponse.json({ success: true, ...data });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

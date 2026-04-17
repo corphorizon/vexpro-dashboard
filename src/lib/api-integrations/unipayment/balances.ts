@@ -64,9 +64,10 @@ export async function fetchUnipaymentBalances(): Promise<{
 
   if (!isUnipaymentEnabled()) {
     return {
-      balances: MOCK_BALANCES,
-      isMock: true,
+      balances: [],
+      isMock: false,
       fetchedAt: now,
+      error: 'UniPayment no está configurado (faltan credenciales)',
     };
   }
 

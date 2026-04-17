@@ -36,6 +36,7 @@ export interface Withdrawal {
   category: 'ib_commissions' | 'broker' | 'prop_firm' | 'other';
   amount: number;
   notes: string | null;
+  description?: string | null;
 }
 
 export interface PropFirmSale {
