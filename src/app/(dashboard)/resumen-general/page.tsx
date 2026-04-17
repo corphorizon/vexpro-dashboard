@@ -65,29 +65,45 @@ export default function ResumenPage() {
 
   if (!summary) return null;
 
-  // Consolidated deposits: API providers (when applicable) + manual "other"
-  // channel. Matches /movimientos exactly.
+  // ─── Consolidation: API + manual coexist ───
+  // Same formula Movimientos uses. Every channel/category sums both sources
+  // so the number shown here always matches what Movimientos shows.
+
+  // Deposits per channel: API amount (when derived-logic period) + manual.
+  const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0;
+  const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0;
+  const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0;
   const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
+
+  const apiCoinsbuy = useDerivedBroker ? apiTotals.by['coinsbuy-deposits'] ?? 0 : 0;
+  const apiFairpay = useDerivedBroker ? apiTotals.by['fairpay'] ?? 0 : 0;
+  const apiUnipayment = useDerivedBroker ? apiTotals.by['unipayment'] ?? 0 : 0;
+
   const consolidatedDeposits = useDerivedBroker
-    ? apiTotals.depositsTotal + storedOther
+    ? (apiCoinsbuy + manualCoinsbuy) +
+      (apiFairpay + manualFairpay) +
+      (apiUnipayment + manualUnipayment) +
+      storedOther
     : summary.totalDeposits;
 
-  // Consolidated withdrawals: broker category is derived from API when
-  // applicable; everything else stays manual.
+  // Withdrawals: broker = derived-from-API + manual, others are manual-only.
   const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
   const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
   const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
   const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-  const derivedBroker = useDerivedBroker
+  const derivedBrokerFromApi = useDerivedBroker
     ? computeDerivedBroker({
         apiWithdrawalsTotal: apiTotals.withdrawalsTotal,
         ibCommissions,
         propFirm: propFirmWithdrawal,
         other: otherWithdrawal,
       })
+    : 0;
+  const brokerConsolidated = useDerivedBroker
+    ? derivedBrokerFromApi + storedBroker
     : storedBroker;
   const consolidatedWithdrawals = useDerivedBroker
-    ? derivedBroker + ibCommissions + propFirmWithdrawal + otherWithdrawal
+    ? brokerConsolidated + ibCommissions + propFirmWithdrawal + otherWithdrawal
     : summary.totalWithdrawals;
 
   const consolidatedNetDeposit = consolidatedDeposits - consolidatedWithdrawals;

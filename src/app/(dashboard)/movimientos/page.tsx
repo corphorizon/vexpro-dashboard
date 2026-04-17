@@ -89,7 +89,10 @@ export default function MovimientosPage() {
   // "Depósitos" table below both filter by the same wallet (prevents the
   // card total ≠ table row total bug).
   const [coinsbuyWalletId, setCoinsbuyWalletId] = useState<string>(DEFAULT_WALLET_ID);
-  const apiTotals = useApiTotals(apiFrom, apiTo, coinsbuyWalletId);
+  // Bumped by the banner after a live sync finishes — forces useApiTotals to
+  // re-read from the persisted cache so the tables reflect the fresh data.
+  const [apiRefreshKey, setApiRefreshKey] = useState(0);
+  const apiTotals = useApiTotals(apiFrom, apiTo, coinsbuyWalletId, apiRefreshKey);
 
   const handleExport = () => verify2FA(() => {
     if (!summary) return;
@@ -152,57 +155,63 @@ export default function MovimientosPage() {
 
   if (!summary) return null;
 
-  // ── Totales "solo API" ──
-  // For new-logic periods (useDerivedBroker), use real-time API totals.
-  // For historical periods, fall back to stored Supabase values.
-  const apiDepositsTotal = useDerivedBroker
-    ? apiTotals.depositsTotal
-    : (summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0) +
-      (summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0) +
-      (summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0);
+  // ─── Consolidación API + manual ───
+  // Both sources coexist and add up. For each channel/category the displayed
+  // number is (API amount when applicable) + (manual amount stored in
+  // Supabase). The manual entry is never overwritten or hidden by the API.
 
-  // Stored manual amounts per category (what's in Supabase right now).
-  const storedBroker =
-    summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-  const ibCommissions =
-    summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount ||
-    0;
-  const propFirmWithdrawal =
-    summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
-  const otherWithdrawal =
-    summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
+  // Manual values per deposit channel (may be 0 if the user didn't enter any).
+  const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0;
+  const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0;
+  const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0;
+  const otherDeposits = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
 
-  // "Retiros Totales (API)" is the actual Coinsbuy withdrawal total for
-  // new-logic periods, or the legacy stored broker value for history.
-  const apiWithdrawalsTotal = useDerivedBroker
-    ? apiTotals.withdrawalsTotal
-    : storedBroker;
+  // API amounts (0 when not a derived-logic period or when the API cache is
+  // empty). These are whatever `api_transactions` holds for the active
+  // period's date range.
+  const apiCoinsbuy = useDerivedBroker ? apiTotals.by['coinsbuy-deposits'] ?? 0 : 0;
+  const apiFairpay = useDerivedBroker ? apiTotals.by['fairpay'] ?? 0 : 0;
+  const apiUnipayment = useDerivedBroker ? apiTotals.by['unipayment'] ?? 0 : 0;
 
-  // Derived broker only replaces display for April 2026+; otherwise we keep
-  // the historical manually-entered value exactly as stored.
-  const brokerDisplay = useDerivedBroker
+  // Per-channel totals shown in the table rows.
+  const coinsbuyDisplay = apiCoinsbuy + manualCoinsbuy;
+  const fairpayDisplay = apiFairpay + manualFairpay;
+  const unipaymentDisplay = apiUnipayment + manualUnipayment;
+
+  // "Depósitos Totales (API)" — the sum of the three API-backed channels,
+  // including any manual entry the user added for those channels.
+  const apiDepositsTotal = coinsbuyDisplay + fairpayDisplay + unipaymentDisplay;
+
+  // Stored manual amounts per withdrawal category.
+  const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
+  const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
+  const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
+  const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
+
+  // "Retiros Totales (API)" tracks the real Coinsbuy-side outflow. For
+  // historical periods it reduces to the stored broker value.
+  const apiWithdrawalsTotal = useDerivedBroker ? apiTotals.withdrawalsTotal : storedBroker;
+
+  // Broker display = API-derived amount + any manual override the user
+  // typed in Carga de Datos. They coexist; the user can use the manual
+  // column to reflect adjustments the API doesn't know about.
+  const derivedBrokerFromApi = useDerivedBroker
     ? computeDerivedBroker({
         apiWithdrawalsTotal,
         ibCommissions,
         propFirm: propFirmWithdrawal,
         other: otherWithdrawal,
       })
-    : storedBroker;
+    : 0;
+  const brokerDisplay = useDerivedBroker ? derivedBrokerFromApi + storedBroker : storedBroker;
 
-  // For new-logic periods, use the real API deposits total (Coinsbuy + FairPay + Unipayment)
-  // plus any manual "other" deposits.
-  const otherDeposits =
-    summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
+  // Consolidated totals = sum of all channels/categories (API+manual).
   const displayTotalDeposits = useDerivedBroker
     ? apiDepositsTotal + otherDeposits
     : summary.totalDeposits;
-
-  // Re-derive total withdrawals and net deposit for the summary cards so
-  // they reflect the new logic. Historical periods pass through unchanged.
   const displayTotalWithdrawals = useDerivedBroker
     ? ibCommissions + brokerDisplay + propFirmWithdrawal + otherWithdrawal
     : summary.totalWithdrawals;
-
   const displayNetDeposit = useDerivedBroker
     ? displayTotalDeposits - displayTotalWithdrawals
     : summary.netDeposit;
@@ -232,6 +241,7 @@ export default function MovimientosPage() {
       <RealTimeMovementsBanner
         walletId={coinsbuyWalletId}
         onWalletChange={setCoinsbuyWalletId}
+        onAfterLiveSync={() => setApiRefreshKey((k) => k + 1)}
       />
 
       {/* ─── Lower section: Datos del período (mes) ─── */}
@@ -354,17 +364,20 @@ export default function MovimientosPage() {
             </thead>
             <tbody>
               {fullDeposits.map((d) => {
-                // For new-logic periods, API channels show real-time values
-                const API_SLUG_MAP: Record<string, string> = {
+                // API + manual coexist: per-channel display = API amount
+                // (when this period uses derived broker logic) + manual
+                // entry from Supabase `deposits` table.
+                const API_SLUG_MAP: Record<string, 'coinsbuy-deposits' | 'fairpay' | 'unipayment'> = {
                   coinsbuy: 'coinsbuy-deposits',
                   fairpay: 'fairpay',
                   unipayment: 'unipayment',
                 };
                 const apiSlug = API_SLUG_MAP[d.channel];
-                const displayAmount =
-                  useDerivedBroker && apiSlug
-                    ? apiTotals.by[apiSlug as keyof typeof apiTotals.by] ?? d.amount
-                    : d.amount;
+                const apiAmount = useDerivedBroker && apiSlug
+                  ? apiTotals.by[apiSlug] ?? 0
+                  : 0;
+                const manualAmount = d.amount;
+                const displayAmount = apiAmount + manualAmount;
                 const isApiChannel = !!apiSlug;
 
                 return (
@@ -382,7 +395,16 @@ export default function MovimientosPage() {
                         </span>
                       )}
                     </td>
-                    <td className="py-2.5 text-right font-medium">{formatCurrency(displayAmount)}</td>
+                    <td className="py-2.5 text-right font-medium">
+                      {formatCurrency(displayAmount)}
+                      {/* Breakdown when both sources contribute — shows the
+                          user that manual + API are coexisting, not fighting. */}
+                      {isApiChannel && useDerivedBroker && apiAmount > 0 && manualAmount > 0 && (
+                        <span className="block text-[10px] text-muted-foreground">
+                          {formatCurrency(apiAmount)} API + {formatCurrency(manualAmount)} manual
+                        </span>
+                      )}
+                    </td>
                   </tr>
                 );
               })}
@@ -424,27 +446,22 @@ export default function MovimientosPage() {
             </thead>
             <tbody>
               {fullWithdrawals.map((w) => {
-                // Display override: for new-logic periods, broker is no
-                // longer a manual input — it's derived from API withdrawals
-                // minus the other manual categories. Historical periods
-                // still read the stored manual value untouched.
+                // Broker = derived-from-API + manual override. Other
+                // categories are manual-only.
                 const displayAmount =
                   w.category === 'broker' ? brokerDisplay : w.amount;
-                const isAutoBroker =
-                  w.category === 'broker' && useDerivedBroker;
-                const isManualRow =
-                  w.category !== 'broker' ||
-                  (w.category === 'broker' && !useDerivedBroker);
+                const isBroker = w.category === 'broker';
+                const hasBothSources =
+                  isBroker && useDerivedBroker && derivedBrokerFromApi > 0 && storedBroker > 0;
                 return (
                   <tr key={w.id} className="border-b border-border/50">
                     <td className="py-2.5">
                       {WITHDRAWAL_LABELS[w.category]}
-                      {isAutoBroker && (
+                      {isBroker && useDerivedBroker ? (
                         <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
-                          auto
+                          api+manual
                         </span>
-                      )}
-                      {isManualRow && (
+                      ) : (
                         <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
                           manual
                         </span>
@@ -452,6 +469,11 @@ export default function MovimientosPage() {
                     </td>
                     <td className="py-2.5 text-right font-medium">
                       {formatCurrency(displayAmount)}
+                      {hasBothSources && (
+                        <span className="block text-[10px] text-muted-foreground">
+                          {formatCurrency(derivedBrokerFromApi)} API + {formatCurrency(storedBroker)} manual
+                        </span>
+                      )}
                     </td>
                   </tr>
                 );

@@ -89,9 +89,13 @@ interface BannerProps {
    *  walletId → same totals). */
   walletId?: string;
   onWalletChange?: (walletId: string) => void;
+  /** Fires after the banner finishes a live sync (user pressed "Refrescar").
+   *  The parent page uses this to invalidate its own persisted-movements
+   *  cache so the tables below update with the freshly synced data. */
+  onAfterLiveSync?: () => void;
 }
 
-export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange }: BannerProps = {}) {
+export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange, onAfterLiveSync }: BannerProps = {}) {
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -180,12 +184,19 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (!json.success) throw new Error(json.error || 'Error desconocido');
       setDatasets(json.datasets ?? []);
       setFetchedAt(json.fetchedAt);
+      // Wait briefly for the server-side fire-and-forget persist to complete,
+      // THEN tell the parent page to re-read from Supabase. Without this
+      // delay the tables below could fetch persisted-movements before the
+      // write-through finished, showing stale zeros.
+      if (onAfterLiveSync) {
+        setTimeout(onAfterLiveSync, 1500);
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Error de red');
     } finally {
       setLoading(false);
     }
-  }, [from, to, walletId]);
+  }, [from, to, walletId, onAfterLiveSync]);
 
   // Load from cache on mount + whenever filters change. Never auto-fetch
   // from external APIs — that only happens when the user clicks Refrescar.
@@ -385,7 +396,14 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
 // own. The banner's "Refrescar" button is what syncs new data in.
 // `walletId` MUST be passed so the totals stay consistent with what the
 // banner displays.
-export function useApiTotals(from: string, to: string, walletId: string = DEFAULT_WALLET_ID) {
+export function useApiTotals(
+  from: string,
+  to: string,
+  walletId: string = DEFAULT_WALLET_ID,
+  /** Bump this number to force a re-read of the persisted cache (after the
+   *  banner finishes a live sync and writes through to Supabase). */
+  refreshKey: number = 0,
+) {
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
 
   useEffect(() => {
@@ -408,7 +426,7 @@ export function useApiTotals(from: string, to: string, walletId: string = DEFAUL
     return () => {
       cancelled = true;
     };
-  }, [from, to, walletId]);
+  }, [from, to, walletId, refreshKey]);
 
   return useMemo(() => {
     const by: Record<ProviderSlug, number> = {

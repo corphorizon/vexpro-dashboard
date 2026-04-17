@@ -1027,46 +1027,39 @@ export default function UploadPage() {
                       )}
                     </td>
                     <td className="py-3 px-3 text-right">
-                      {isBrokerAutoRow ? (
-                        <div className="flex flex-col items-end">
-                          <span className="font-medium">
-                            {formatCurrency(derivedBrokerAmount)}
-                          </span>
-                          <span className="text-[10px] text-muted-foreground">
-                            API − IB − Prop Firm − Otros
-                          </span>
+                      {userCanAdd ? (
+                        <div className="flex flex-col items-end gap-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={w.amount || ''}
+                            onChange={(e) => setWithdrawals(prev => prev.map(ww => ww.id === w.id ? { ...ww, amount: parseFloat(e.target.value) || 0 } : ww))}
+                            className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                            placeholder="0.00"
+                          />
+                          {/* When broker row is in derived-logic period, show
+                              the API-derived amount as info BESIDE the manual
+                              input. Both coexist: the final broker total in
+                              /movimientos = derived + this manual input. */}
+                          {isBrokerAutoRow && (
+                            <span className="text-[10px] text-muted-foreground">
+                              + API {formatCurrency(derivedBrokerAmount)} (auto)
+                            </span>
+                          )}
                         </div>
-                      ) : userCanAdd ? (
-                        <input
-                          type="number"
-                          step="0.01"
-                          value={w.amount || ''}
-                          onChange={(e) => setWithdrawals(prev => prev.map(ww => ww.id === w.id ? { ...ww, amount: parseFloat(e.target.value) || 0 } : ww))}
-                          className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-                          placeholder="0.00"
-                        />
                       ) : (
                         <span className="font-medium">{formatCurrency(w.amount)}</span>
                       )}
                     </td>
                     {userCanAdd && (
                       <td className="py-3 px-3 text-center">
-                        {isBrokerAutoRow ? (
-                          <span
-                            className="text-[10px] text-muted-foreground"
-                            title="Broker se calcula automáticamente en este período"
-                          >
-                            —
-                          </span>
-                        ) : (
-                          <button
-                            onClick={() => updateWithdrawal(w.id, w.amount)}
-                            className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                            title={t('common.save')}
-                          >
-                            <Save className="w-4 h-4" />
-                          </button>
-                        )}
+                        <button
+                          onClick={() => updateWithdrawal(w.id, w.amount)}
+                          className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
+                          title={t('common.save')}
+                        >
+                          <Save className="w-4 h-4" />
+                        </button>
                       </td>
                     )}
                   </tr>
@@ -1078,14 +1071,13 @@ export default function UploadPage() {
                 <td className="py-3 px-3">Total</td>
                 <td className="py-3 px-3 text-right text-red-600">
                   {formatCurrency(
-                    withdrawals.reduce(
-                      (s, w) =>
-                        s +
-                        (w.category === 'broker' && brokerIsDerived
-                          ? derivedBrokerAmount
-                          : w.amount),
-                      0
-                    )
+                    // Total includes the manual amount entered in THIS form
+                    // for every row. The API-derived broker amount is NOT
+                    // added here because it's an auto-calculation shown for
+                    // reference — the Movimientos page adds it at render
+                    // time so both sources remain visible separately.
+                    withdrawals.reduce((s, w) => s + w.amount, 0) +
+                    (brokerIsDerived ? derivedBrokerAmount : 0)
                   )}
                 </td>
                 {userCanAdd && <td></td>}
@@ -1096,9 +1088,9 @@ export default function UploadPage() {
                     colSpan={userCanAdd ? 3 : 2}
                     className="py-2 px-3 text-[11px] text-muted-foreground italic"
                   >
-                    Desde abril 2026 el campo Broker se calcula automáticamente
-                    a partir de los retiros reales de la API de Coinsbuy. Los
-                    datos históricos permanecen sin cambios.
+                    Broker: el campo manual de arriba convive con el monto
+                    auto-derivado de Coinsbuy. En Movimientos se muestran
+                    ambos por separado y se suman al total.
                   </td>
                 </tr>
               )}
