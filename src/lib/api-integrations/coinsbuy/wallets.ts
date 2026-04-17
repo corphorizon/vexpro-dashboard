@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
-import { getProxyDispatcher } from '../proxy';
+import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 
 const COINSBUY_BASE_URL =
@@ -135,14 +135,13 @@ export async function fetchCoinsbuyWallets(): Promise<{
     const url = `${COINSBUY_BASE_URL}/wallet/?include=currency&page[size]=100`;
 
     const response: JsonApiResponse = await withRetry(async () => {
-      const res = await fetch(url, {
+      const res = await proxiedFetch(url, {
         headers: {
           Authorization: `Bearer ${token}`,
           'Content-Type': 'application/vnd.api+json',
         },
         signal: AbortSignal.timeout(30_000),
-        dispatcher: getProxyDispatcher(),
-      } as RequestInit);
+      });
 
       if (!res.ok) {
         throw new Error(

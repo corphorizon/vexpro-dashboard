@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
-import { getProxyDispatcher } from '../proxy';
+import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import { generateCoinsbuyDeposits } from '../mocks';
 import { generateCoinsbuyWithdrawals } from '../mocks';
@@ -132,14 +132,13 @@ export async function fetchCoinsbuyTransfers(
       const url = `${COINSBUY_BASE_URL}/transfer/?${params.toString()}`;
 
       const response: TransferListResponse = await withRetry(async () => {
-        const res = await fetch(url, {
+        const res = await proxiedFetch(url, {
           headers: {
             Authorization: `Bearer ${token}`,
             'Content-Type': 'application/vnd.api+json',
           },
           signal: AbortSignal.timeout(30_000),
-          dispatcher: getProxyDispatcher(),
-        } as RequestInit);
+        });
 
         if (!res.ok) {
           const errBody = await res.text().catch(() => '');

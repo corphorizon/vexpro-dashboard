@@ -11,7 +11,7 @@
 // dev), requests go direct.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getProxyDispatcher } from '../proxy';
+import { proxiedFetch } from '../proxy';
 
 const COINSBUY_BASE_URL =
   process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
@@ -65,7 +65,7 @@ export async function getCoinsbuyToken(): Promise<string> {
     );
   }
 
-  const response = await fetch(`${COINSBUY_BASE_URL}/token/`, {
+  const response = await proxiedFetch(`${COINSBUY_BASE_URL}/token/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/vnd.api+json',
@@ -80,8 +80,7 @@ export async function getCoinsbuyToken(): Promise<string> {
       },
     }),
     signal: AbortSignal.timeout(15_000),
-    dispatcher: getProxyDispatcher(),
-  } as RequestInit);
+  });
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');

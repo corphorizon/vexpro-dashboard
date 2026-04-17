@@ -14,7 +14,7 @@
 // for HTTPS destinations (undici + ALPN). Cached after first creation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { Agent, type Dispatcher } from 'undici';
+import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import { SocksClient } from 'socks';
 import tls from 'node:tls';
 
@@ -99,13 +99,21 @@ export function getProxyDispatcher(): Dispatcher | undefined {
 }
 
 /**
- * Convenience wrapper: returns a fetch-compatible init object that includes
- * the proxy dispatcher when available. Merges with existing init options.
+ * Drop-in fetch replacement that routes through the proxy when FIXIE_URL is
+ * set, falling back to the platform's native fetch otherwise.
+ *
+ * Uses `undici.fetch` (not native global fetch) to guarantee the dispatcher
+ * option is respected — Vercel's serverless runtime wraps native fetch and
+ * may silently drop the dispatcher, bypassing the proxy.
  */
-export function withProxy(init?: RequestInit): RequestInit & { dispatcher?: Dispatcher } {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function proxiedFetch(url: string | URL, init?: any): Promise<Response> {
   const dispatcher = getProxyDispatcher();
-  if (!dispatcher) return init ?? {};
-  return { ...init, dispatcher };
+  if (!dispatcher) {
+    return fetch(url, init);
+  }
+  // Cast to Response to satisfy callers that use the standard fetch API.
+  return undiciFetch(url, { ...init, dispatcher }) as unknown as Response;
 }
 
 /**
