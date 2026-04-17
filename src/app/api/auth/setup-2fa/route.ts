@@ -176,7 +176,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Promote pending → active, clear pending
+      // Promote pending → active, clear pending, clear force-setup flag
       const { error: updateError } = await adminClient
         .from('company_users')
         .update({
@@ -184,6 +184,7 @@ export async function POST(request: NextRequest) {
           twofa_secret: companyUser.twofa_pending_secret,
           twofa_pending_secret: null,
           twofa_pending_at: null,
+          force_2fa_setup: false,
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', user.id);

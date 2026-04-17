@@ -244,14 +244,16 @@ export default function Setup2FAPage() {
                 Ya escaneé el código
               </button>
 
-              <div className="text-center">
-                <button
-                  onClick={handleSkip}
-                  className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                >
-                  Omitir por ahora
-                </button>
-              </div>
+              {!user?.force_2fa_setup && (
+                <div className="text-center">
+                  <button
+                    onClick={handleSkip}
+                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    Omitir por ahora
+                  </button>
+                </div>
+              )}
             </div>
           )}
 

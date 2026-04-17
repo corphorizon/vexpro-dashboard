@@ -107,12 +107,20 @@ export default function DashboardLayout({
   const { t } = useI18n();
 
   useEffect(() => {
-    if (!isLoading && !user) {
+    if (isLoading) return;
+    if (!user) {
       router.replace('/login');
+      return;
     }
-    if (!isLoading && user && !user.twofa_enabled) {
-      // Uncomment to force 2FA setup on first login:
-      // router.replace('/setup-2fa');
+    // Force password change takes priority over 2FA setup.
+    if (user.must_change_password) {
+      router.replace('/perfil?forceChangePassword=1');
+      return;
+    }
+    // Force 2FA setup on first login (unless user has already set it up).
+    if (user.force_2fa_setup && !user.twofa_enabled) {
+      router.replace('/setup-2fa');
+      return;
     }
   }, [user, isLoading, router]);
 

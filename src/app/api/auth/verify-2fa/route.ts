@@ -97,15 +97,29 @@ export async function POST(request: NextRequest) {
         lockMs: LOCK_MS,
       });
       const remaining = Math.max(0, MAX_ATTEMPTS - next.failedCount);
+
+      // On 3rd consecutive 2FA failure, also lock the full account so a
+      // password reset is required to unlock (policy: any 3 auth failures
+      // lock the account).
+      if (next.locked) {
+        const ACCOUNT_LOCK_MS = 24 * 60 * 60 * 1000;
+        await adminClient
+          .from('company_users')
+          .update({
+            locked_until: new Date(Date.now() + ACCOUNT_LOCK_MS).toISOString(),
+          })
+          .eq('id', companyUser.id);
+      }
+
       return NextResponse.json(
         {
           success: false,
           error: next.locked
-            ? 'PIN incorrecto. Cuenta bloqueada por 15 minutos.'
+            ? 'Demasiados intentos fallidos. Tu cuenta ha sido bloqueada. Restablece tu contraseña o el 2FA.'
             : `PIN incorrecto. ${remaining} intento${remaining === 1 ? '' : 's'} restantes.`,
           locked: next.locked,
         },
-        { status: next.locked ? 429 : 401 },
+        { status: next.locked ? 423 : 401 },
       );
     }
 

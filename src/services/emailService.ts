@@ -155,6 +155,34 @@ export async function sendDashboardReportEmail(
   return sendEmail(to, subject, html, text);
 }
 
+export async function sendTwofaResetCodeEmail(params: {
+  to: string;
+  userName: string;
+  code: string;
+  expiresInMinutes?: number;
+}): Promise<SendEmailResponse> {
+  const { to, userName, code, expiresInMinutes = 15 } = params;
+  const safeName = escapeHtml(userName);
+  const safeCode = escapeHtml(code);
+  const subject = 'Your 2FA reset code';
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
+      <h2 style="color: #1a1a2e;">Two-factor reset code</h2>
+      <p>Hi <strong>${safeName}</strong>,</p>
+      <p>Use the code below to reset your two-factor authentication. It expires in ${expiresInMinutes} minutes.</p>
+      <div style="margin: 24px 0; padding: 16px; background: #f1f5f9; border-radius: 8px; text-align: center;">
+        <code style="font-size: 32px; letter-spacing: 8px; font-weight: 700; color: #0f172a;">${safeCode}</code>
+      </div>
+      <p style="color: #64748b; font-size: 13px;">
+        If you did not request this code, ignore this email — your account is still safe. Never share this code with anyone.
+      </p>
+      <p style="color: #666; font-size: 12px;">— Horizon Consulting</p>
+    </div>
+  `;
+  const text = `Your 2FA reset code is: ${code}\n\nIt expires in ${expiresInMinutes} minutes. If you did not request it, ignore this email.`;
+  return sendEmail(to, subject, html, text);
+}
+
 export async function sendNotificationEmail(
   to: string,
   title: string,

@@ -15,12 +15,14 @@ export interface User {
   company_id: string;
   allowed_modules: string[];
   twofa_enabled: boolean;
+  force_2fa_setup: boolean;
+  must_change_password: boolean;
 }
 
 export type LoginResult =
   | { success: true; needs2fa: false }
   | { success: true; needs2fa: true; userId: string; email: string }
-  | { success: false; needs2fa: false };
+  | { success: false; needs2fa: false; locked?: boolean; attemptsLeft?: number; error?: string };
 
 // twofa_secret is excluded from User but needed for DB writes (setup/deactivation)
 type UserUpdate = Partial<User> & { twofa_secret?: string | null };
@@ -68,6 +70,8 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
     company_id: data.company_id,
     allowed_modules: data.allowed_modules || [],
     twofa_enabled: data.twofa_enabled || false,
+    force_2fa_setup: data.force_2fa_setup ?? true,
+    must_change_password: data.must_change_password ?? false,
   };
 }
 
@@ -75,7 +79,7 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
 async function fetchAllUsers(companyId: string): Promise<User[]> {
   const { data, error } = await supabase
     .from('company_users')
-    .select('id, email, name, role, company_id, allowed_modules, twofa_enabled')
+    .select('id, email, name, role, company_id, allowed_modules, twofa_enabled, force_2fa_setup, must_change_password')
     .eq('company_id', companyId);
 
   if (error || !data) {
@@ -91,6 +95,8 @@ async function fetchAllUsers(companyId: string): Promise<User[]> {
     company_id: u.company_id as string,
     allowed_modules: (u.allowed_modules as string[]) || [],
     twofa_enabled: (u.twofa_enabled as boolean) || false,
+    force_2fa_setup: (u.force_2fa_setup as boolean) ?? true,
+    must_change_password: (u.must_change_password as boolean) ?? false,
   }));
 }
 
@@ -155,25 +161,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string): Promise<LoginResult> => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
+    // Step 1: server-side gate — checks lockout + verifies credentials WITHOUT
+    // setting a cookie. Prevents bypassing our counter by talking to Supabase
+    // directly from the browser.
+    const gateRes = await fetch('/api/auth/login-gate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
     });
+    const gate = await gateRes.json();
 
+    if (!gate.success) {
+      return {
+        success: false,
+        needs2fa: false,
+        locked: !!gate.locked,
+        attemptsLeft: gate.attemptsLeft,
+        error: gate.error,
+      };
+    }
+
+    // If 2FA is required, defer the real sign-in until after PIN verification.
+    if (gate.needs2fa) {
+      return { success: true, needs2fa: true, userId: gate.userId, email };
+    }
+
+    // No 2FA → establish the real cookie-backed session now.
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error || !data.user) {
-      return { success: false, needs2fa: false };
+      return { success: false, needs2fa: false, error: 'No fue posible iniciar sesión' };
     }
 
     const profile = await fetchUserProfile(data.user);
     if (!profile) {
       return { success: false, needs2fa: false };
-    }
-
-    // Check 2FA
-    if (profile.twofa_enabled) {
-      // Sign out temporarily — need 2FA verification first
-      await supabase.auth.signOut();
-      return { success: true, needs2fa: true, userId: profile.id, email };
     }
 
     setUser(profile);

@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
-import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -48,8 +48,12 @@ export default function LoginPage() {
           notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
           router.push('/');
         }
+      } else if (result.locked) {
+        setError(result.error ?? 'Your account is locked. Reset your password to unlock it.');
+      } else if (typeof result.attemptsLeft === 'number' && result.attemptsLeft > 0) {
+        setError(`Invalid credentials. ${result.attemptsLeft} attempt${result.attemptsLeft === 1 ? '' : 's'} left.`);
       } else {
-        setError('Invalid email or password.');
+        setError(result.error ?? 'Invalid email or password.');
       }
     } catch {
       setError('Something went wrong. Please try again.');
@@ -90,50 +94,7 @@ export default function LoginPage() {
   };
 
   if (showRecovery) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <div className="w-full max-w-md">
-          <div className="text-center mb-8">
-            <Image
-              src="/vex-logofull.png"
-              alt="VexPro FX"
-              width={220}
-              height={60}
-              className="mx-auto mb-4 block dark:hidden"
-              priority
-            />
-            <Image
-              src="/vex-logofull-white.png"
-              alt="VexPro FX"
-              width={220}
-              height={60}
-              className="mx-auto mb-4 hidden dark:block"
-              priority
-            />
-            <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
-          </div>
-
-          <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-            <h2 className="text-lg font-semibold mb-4">Account recovery</h2>
-            <div className="space-y-4">
-              <div className="px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-400 text-sm">
-                Enter your email address. If an account exists, you will receive a password reset link within a few minutes.
-              </div>
-              <p className="text-sm text-muted-foreground">
-                If you do not receive the email, please contact your administrator.
-              </p>
-              <button
-                onClick={() => setShowRecovery(false)}
-                className="flex items-center gap-2 text-sm text-[var(--color-primary)] hover:underline"
-              >
-                <ArrowLeft className="w-4 h-4" />
-                Back to sign in
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    );
+    return <RecoveryScreen onBack={() => setShowRecovery(false)} initialEmail={email} />;
   }
 
   return (
@@ -276,13 +237,19 @@ export default function LoginPage() {
                 </button>
               </form>
 
-              <div className="mt-4 text-center">
+              <div className="mt-4 text-center space-y-2">
                 <button
                   onClick={handleBackToCredentials}
                   className="flex items-center gap-2 mx-auto text-sm text-[var(--color-primary)] hover:underline"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   Back to sign in
+                </button>
+                <button
+                  onClick={() => router.push('/reset-2fa')}
+                  className="block mx-auto text-xs text-muted-foreground hover:text-foreground"
+                >
+                  Can&apos;t access your authenticator? Reset 2FA
                 </button>
               </div>
             </>
@@ -292,6 +259,100 @@ export default function LoginPage() {
         <p className="text-center text-xs text-muted-foreground mt-6">
           Smart Dashboard v1.0 — Horizon Consulting
         </p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Recovery screen (forgot password) ───
+function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialEmail: string }) {
+  const [email, setEmail] = useState(initialEmail);
+  const [loading, setLoading] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const res = await fetch('/api/auth/forgot-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Error');
+      setSent(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Something went wrong');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+      <div className="w-full max-w-md">
+        <div className="text-center mb-8">
+          <Image src="/vex-logofull.png" alt="VexPro FX" width={220} height={60} className="mx-auto mb-4 block dark:hidden" priority />
+          <Image src="/vex-logofull-white.png" alt="VexPro FX" width={220} height={60} className="mx-auto mb-4 hidden dark:block" priority />
+          <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
+        </div>
+
+        <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
+          <h2 className="text-lg font-semibold mb-4">Account recovery</h2>
+          {sent ? (
+            <div className="space-y-4">
+              <div className="px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-400 text-sm">
+                If an account exists for <span className="font-medium">{email}</span>, you will receive a password reset link within a few minutes.
+              </div>
+              <p className="text-sm text-muted-foreground">
+                The link will expire in 1 hour. If you don&apos;t receive it, check spam or contact your administrator.
+              </p>
+              <button onClick={onBack} className="flex items-center gap-2 text-sm text-[var(--color-primary)] hover:underline">
+                <ArrowLeft className="w-4 h-4" />
+                Back to sign in
+              </button>
+            </div>
+          ) : (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Enter the email associated with your account. We&apos;ll email you a link to reset your password.
+              </p>
+              <div>
+                <label htmlFor="recovery-email" className="block text-sm font-medium mb-1.5">Email</label>
+                <input
+                  id="recovery-email"
+                  type="email"
+                  value={email}
+                  onChange={e => setEmail(e.target.value)}
+                  placeholder="you@company.com"
+                  required
+                  autoFocus
+                  autoComplete="email"
+                  className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                />
+              </div>
+              {error && (
+                <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert">
+                  {error}
+                </div>
+              )}
+              <button
+                type="submit"
+                disabled={loading || !email}
+                className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+              >
+                {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Sending…</> : 'Send reset link'}
+              </button>
+              <button type="button" onClick={onBack} className="w-full flex items-center gap-2 justify-center text-sm text-muted-foreground hover:text-foreground">
+                <ArrowLeft className="w-4 h-4" />
+                Back to sign in
+              </button>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );

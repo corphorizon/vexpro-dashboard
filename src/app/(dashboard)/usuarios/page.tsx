@@ -89,6 +89,8 @@ export default function UsuariosPage() {
             company_id: user?.company_id || '',
             allowed_modules: form.allowed_modules,
             twofa_enabled: false,
+            force_2fa_setup: true,      // new users must set up 2FA on first login
+            must_change_password: false,
           },
           form.password
         );
