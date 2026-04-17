@@ -44,7 +44,8 @@ export async function GET() {
       });
     }
 
-    const json = await res.json() as {
+    const rawJson = await res.text();
+    let json: {
       data?: {
         models?: Array<{
           invoice_id: string;
@@ -58,7 +59,16 @@ export async function GET() {
       };
       msg?: string;
       code?: string;
-    };
+    } = {};
+    try {
+      json = JSON.parse(rawJson);
+    } catch {
+      return NextResponse.json({
+        success: false,
+        error: 'Invalid JSON from UniPayment',
+        raw: rawJson.slice(0, 1000),
+      });
+    }
 
     const models = json.data?.models ?? [];
 
@@ -79,7 +89,11 @@ export async function GET() {
     return NextResponse.json({
       success: true,
       envUrl: process.env.UNIPAYMENT_BASE_URL ?? '(default)',
+      clientIdPreview: (process.env.UNIPAYMENT_CLIENT_ID ?? '').slice(0, 8) + '...',
+      rawResponseSample: rawJson.slice(0, 500),
       response: {
+        msg: json.msg,
+        code: json.code,
         totalFromApi: json.data?.total,
         pageCount: json.data?.page_count,
         modelsOnThisPage: models.length,
