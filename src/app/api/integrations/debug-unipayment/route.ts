@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { getUnipaymentToken } from '@/lib/api-integrations/unipayment/auth';
+import { proxiedFetch } from '@/lib/api-integrations/proxy';
 
 // ---------------------------------------------------------------------------
 // GET /api/integrations/debug-unipayment
@@ -27,7 +28,7 @@ export async function GET() {
       is_asc: 'false',
     });
 
-    const res = await fetch(`${BASE_URL}/v1.0/invoices?${params.toString()}`, {
+    const res = await proxiedFetch(`${BASE_URL}/v1.0/invoices?${params.toString()}`, {
       headers: {
         Authorization: `Bearer ${token}`,
         Accept: 'application/json',

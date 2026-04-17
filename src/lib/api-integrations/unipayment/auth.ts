@@ -14,6 +14,8 @@
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
+import { proxiedFetch } from '../proxy';
+
 const UNIPAYMENT_BASE_URL =
   process.env.UNIPAYMENT_BASE_URL ?? 'https://api.unipayment.io';
 
@@ -60,7 +62,7 @@ export async function getUnipaymentToken(): Promise<string> {
     client_secret: clientSecret,
   });
 
-  const response = await fetch(`${UNIPAYMENT_BASE_URL}/connect/token`, {
+  const response = await proxiedFetch(`${UNIPAYMENT_BASE_URL}/connect/token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',

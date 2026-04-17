@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getUnipaymentToken, isUnipaymentEnabled } from './auth';
+import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 
 const UNIPAYMENT_BASE_URL =
@@ -73,7 +74,7 @@ export async function fetchUnipaymentBalances(): Promise<{
     const token = await getUnipaymentToken();
 
     const response: BalancesResponse = await withRetry(async () => {
-      const res = await fetch(`${UNIPAYMENT_BASE_URL}/v1.0/wallet/balances`, {
+      const res = await proxiedFetch(`${UNIPAYMENT_BASE_URL}/v1.0/wallet/balances`, {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/json',

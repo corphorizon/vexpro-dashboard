@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getUnipaymentToken, isUnipaymentEnabled } from './auth';
+import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import { generateUnipaymentDeposits } from '../mocks';
 import { filterByDateRange } from '../totals';
@@ -95,7 +96,7 @@ export async function fetchUnipaymentDepositsV2(
       const url = `${UNIPAYMENT_BASE_URL}/v1.0/invoices?${params.toString()}`;
 
       const response: InvoicesResponse = await withRetry(async () => {
-        const res = await fetch(url, {
+        const res = await proxiedFetch(url, {
           headers: {
             Authorization: `Bearer ${token}`,
             Accept: 'application/json',
