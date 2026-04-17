@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient } from '@/lib/supabase/admin';
 import { sendLoginNotificationEmail } from '@/services/emailService';
 
 // ---------------------------------------------------------------------------
@@ -111,6 +112,15 @@ export async function POST(request: NextRequest) {
       process.env.NEXT_PUBLIC_DASHBOARD_URL ||
       request.nextUrl.origin;
 
+    // Look up the user's company_id so we can send via that company's
+    // SendGrid credentials when configured.
+    const adminClient = createAdminClient();
+    const { data: profile } = await adminClient
+      .from('company_users')
+      .select('company_id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+
     // Send email
     const result = await sendLoginNotificationEmail(userEmail, userName, {
       loginDate,
@@ -118,7 +128,7 @@ export async function POST(request: NextRequest) {
       browser,
       ipAddress,
       dashboardUrl,
-    });
+    }, profile?.company_id);
 
     if (!result.success) {
       console.error('[LoginNotification] Failed to send');

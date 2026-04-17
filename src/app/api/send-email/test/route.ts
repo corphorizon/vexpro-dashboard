@@ -41,11 +41,12 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Send a real test email
+  // Send a real test email — uses the caller's company credentials if set.
   const result = await sendNotificationEmail(
     to,
     'Smart Dashboard — Test Email',
     'This is a test email to verify that SendGrid is configured correctly. If you received this, the integration is working!',
+    auth.companyId,
   );
 
   return NextResponse.json({

@@ -39,7 +39,7 @@ export async function POST(request: NextRequest) {
 
     const { data: companyUser } = await adminClient
       .from('company_users')
-      .select('user_id, name, email, twofa_enabled')
+      .select('user_id, name, email, twofa_enabled, company_id')
       .eq('email', normalized)
       .maybeSingle();
 
@@ -87,6 +87,7 @@ export async function POST(request: NextRequest) {
       userName: companyUser.name,
       code,
       expiresInMinutes: 15,
+      companyId: companyUser.company_id,
     }).catch((err) => console.error('[request-2fa-reset] email send failed:', err));
 
     return NextResponse.json({ success: true });

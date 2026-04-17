@@ -111,24 +111,25 @@ export async function POST(request: NextRequest) {
     }
 
     const { to, type, data } = validation.data;
+    const cid = auth.companyId; // use caller's company credentials if configured
 
     let result;
 
     switch (type) {
       case 'welcome':
-        result = await sendWelcomeEmail(to, (data as WelcomeEmailData).userName);
+        result = await sendWelcomeEmail(to, (data as WelcomeEmailData).userName, cid);
         break;
       case 'password_reset':
-        result = await sendPasswordResetEmail(to, (data as PasswordResetEmailData).resetLink);
+        result = await sendPasswordResetEmail(to, (data as PasswordResetEmailData).resetLink, cid);
         break;
       case 'report': {
         const r = data as ReportEmailData;
-        result = await sendDashboardReportEmail(to, r.reportName, r.reportPeriod, r.reportSummary);
+        result = await sendDashboardReportEmail(to, r.reportName, r.reportPeriod, r.reportSummary, cid);
         break;
       }
       case 'notification': {
         const n = data as NotificationEmailData;
-        result = await sendNotificationEmail(to, n.title, n.message);
+        result = await sendNotificationEmail(to, n.title, n.message, cid);
         break;
       }
       case 'login_notification': {
@@ -139,7 +140,7 @@ export async function POST(request: NextRequest) {
           browser: l.browser || 'Unknown Device',
           ipAddress: l.ipAddress || 'Unknown IP',
           dashboardUrl: l.dashboardUrl || '',
-        });
+        }, cid);
         break;
       }
     }

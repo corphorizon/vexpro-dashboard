@@ -37,7 +37,7 @@ export async function POST(request: NextRequest) {
     // return 200 without doing anything.
     const { data: companyUser } = await adminClient
       .from('company_users')
-      .select('user_id, name, email')
+      .select('user_id, name, email, company_id')
       .eq('email', normalized)
       .maybeSingle();
 
@@ -83,8 +83,9 @@ export async function POST(request: NextRequest) {
         : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000');
     const resetUrl = `${origin}/reset-password?token=${encodeURIComponent(rawToken)}`;
 
-    // Fire-and-forget email send
-    sendPasswordResetEmail(companyUser.email, resetUrl).catch((err) => {
+    // Fire-and-forget email send — uses the company's own SendGrid creds if
+    // configured, otherwise falls back to env.
+    sendPasswordResetEmail(companyUser.email, resetUrl, companyUser.company_id).catch((err) => {
       console.error('[forgot-password] email send failed:', err);
     });
 

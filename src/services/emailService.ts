@@ -1,5 +1,7 @@
-import sgMail from '@sendgrid/mail';
+import sgMail, { MailService } from '@sendgrid/mail';
 import type { SendEmailResponse, LoginNotificationData } from '@/lib/types';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { decryptSecret } from '@/lib/crypto';
 
 // ---------------------------------------------------------------------------
 // HTML escaping to prevent XSS in email templates
@@ -15,33 +17,75 @@ function escapeHtml(str: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// SendGrid initialization
+// SendGrid credential resolution
+//
+// Priority:
+//   1. Per-company credential from `api_credentials` (set via the admin
+//      /configuraciones UI). Decrypted via API_CREDENTIALS_MASTER_KEY.
+//   2. Fallback to env vars (SENDGRID_API_KEY / SENDGRID_FROM_EMAIL / NAME).
+//
+// Per-call config avoids stale global state when multiple companies send
+// emails through the same serverless instance.
 // ---------------------------------------------------------------------------
 
-let initialized = false;
-
-function initSendGrid(): void {
-  if (initialized) return;
-
-  const apiKey = process.env.SENDGRID_API_KEY;
-  if (!apiKey || apiKey === 'your_sendgrid_api_key_here') {
-    console.warn('[EmailService] SENDGRID_API_KEY is not configured');
-    return;
-  }
-
-  sgMail.setApiKey(apiKey);
-  initialized = true;
+interface SendGridConfig {
+  apiKey: string;
+  fromEmail: string;
+  fromName: string;
+  source: 'db' | 'env';
 }
 
-function getFromAddress(): { email: string; name: string } {
+async function getSendGridConfig(companyId?: string): Promise<SendGridConfig | null> {
+  // 1. Try per-company DB credential first
+  if (companyId) {
+    try {
+      const adminClient = createAdminClient();
+      const { data } = await adminClient
+        .from('api_credentials')
+        .select('encrypted_secret, iv, auth_tag, extra_config')
+        .eq('company_id', companyId)
+        .eq('provider', 'sendgrid')
+        .eq('is_configured', true)
+        .maybeSingle();
+
+      if (data) {
+        const apiKey = decryptSecret({
+          ciphertext: data.encrypted_secret,
+          iv: data.iv,
+          authTag: data.auth_tag,
+        });
+        const extra = (data.extra_config || {}) as Record<string, unknown>;
+        return {
+          apiKey,
+          fromEmail: (extra.from_email as string) || process.env.SENDGRID_FROM_EMAIL || 'noreply@horizonconsulting.com',
+          fromName: (extra.from_name as string) || process.env.SENDGRID_FROM_NAME || 'Horizon Consulting',
+          source: 'db',
+        };
+      }
+    } catch (err) {
+      // If decryption or lookup fails, warn and fall through to env.
+      console.warn('[EmailService] DB credential lookup failed, falling back to env:', err instanceof Error ? err.message : err);
+    }
+  }
+
+  // 2. Env fallback
+  const envKey = process.env.SENDGRID_API_KEY;
+  if (!envKey || envKey === 'your_sendgrid_api_key_here') return null;
   return {
-    email: process.env.SENDGRID_FROM_EMAIL || 'noreply@horizonconsulting.com',
-    name: process.env.SENDGRID_FROM_NAME || 'Horizon Consulting',
+    apiKey: envKey,
+    fromEmail: process.env.SENDGRID_FROM_EMAIL || 'noreply@horizonconsulting.com',
+    fromName: process.env.SENDGRID_FROM_NAME || 'Horizon Consulting',
+    source: 'env',
   };
 }
 
 // ---------------------------------------------------------------------------
 // Base send function
+//
+// `companyId` is optional. When provided, uses per-company credentials;
+// otherwise falls back to env. A fresh MailService instance is created per
+// call so concurrent requests from different companies don't stomp on each
+// other's API key in the shared `sgMail` singleton.
 // ---------------------------------------------------------------------------
 
 export async function sendEmail(
@@ -49,46 +93,48 @@ export async function sendEmail(
   subject: string,
   html: string,
   text?: string,
+  companyId?: string,
 ): Promise<SendEmailResponse> {
-  initSendGrid();
-
-  if (!initialized) {
-    const error = 'SendGrid is not configured. Set SENDGRID_API_KEY in .env.local';
+  const config = await getSendGridConfig(companyId);
+  if (!config) {
+    const error = 'SendGrid is not configured for this company or environment';
     console.error(`[EmailService] ${error}`);
     return { success: false, error };
   }
 
   try {
-    const from = getFromAddress();
+    const client = new MailService();
+    client.setApiKey(config.apiKey);
+
     const msg: sgMail.MailDataRequired = {
       to,
-      from,
+      from: { email: config.fromEmail, name: config.fromName },
       subject,
       html,
       ...(text ? { text } : {}),
     };
 
-    const [response] = await sgMail.send(msg);
+    const [response] = await client.send(msg);
     const messageId = response?.headers?.['x-message-id'] ?? undefined;
 
-    console.log(`[EmailService] Email sent to ${to} — subject: "${subject}"`);
+    console.log(`[EmailService] Email sent to ${to} via ${config.source} — "${subject}"`);
     return { success: true, messageId };
   } catch (err: unknown) {
-    const message =
-      err instanceof Error ? err.message : 'Unknown error sending email';
-
+    const message = err instanceof Error ? err.message : 'Unknown error sending email';
     console.error(`[EmailService] Failed to send email to ${to}:`, message);
     return { success: false, error: message };
   }
 }
 
 // ---------------------------------------------------------------------------
-// Specialized email functions
+// Specialized email functions. All accept optional companyId to look up
+// per-company SendGrid credentials; omit for env-only defaults.
 // ---------------------------------------------------------------------------
 
 export async function sendWelcomeEmail(
   to: string,
   userName: string,
+  companyId?: string,
 ): Promise<SendEmailResponse> {
   const subject = 'Welcome to Smart Dashboard — Horizon Consulting';
   const html = `
@@ -102,13 +148,13 @@ export async function sendWelcomeEmail(
     </div>
   `;
   const text = `Welcome to Smart Dashboard, ${userName}! Your account has been created successfully.`;
-
-  return sendEmail(to, subject, html, text);
+  return sendEmail(to, subject, html, text, companyId);
 }
 
 export async function sendPasswordResetEmail(
   to: string,
   resetLink: string,
+  companyId?: string,
 ): Promise<SendEmailResponse> {
   const subject = 'Reset your password — Smart Dashboard';
   const html = `
@@ -126,8 +172,7 @@ export async function sendPasswordResetEmail(
     </div>
   `;
   const text = `Reset your password by visiting: ${resetLink}. If you did not request this, ignore this email.`;
-
-  return sendEmail(to, subject, html, text);
+  return sendEmail(to, subject, html, text, companyId);
 }
 
 export async function sendDashboardReportEmail(
@@ -135,6 +180,7 @@ export async function sendDashboardReportEmail(
   reportName: string,
   reportPeriod: string,
   reportSummary: string,
+  companyId?: string,
 ): Promise<SendEmailResponse> {
   const subject = `Financial Report: ${reportName} — ${reportPeriod}`;
   const html = `
@@ -151,8 +197,7 @@ export async function sendDashboardReportEmail(
     </div>
   `;
   const text = `Financial Report: ${reportName} — ${reportPeriod}\n\n${reportSummary}`;
-
-  return sendEmail(to, subject, html, text);
+  return sendEmail(to, subject, html, text, companyId);
 }
 
 export async function sendTwofaResetCodeEmail(params: {
@@ -160,8 +205,9 @@ export async function sendTwofaResetCodeEmail(params: {
   userName: string;
   code: string;
   expiresInMinutes?: number;
+  companyId?: string;
 }): Promise<SendEmailResponse> {
-  const { to, userName, code, expiresInMinutes = 15 } = params;
+  const { to, userName, code, expiresInMinutes = 15, companyId } = params;
   const safeName = escapeHtml(userName);
   const safeCode = escapeHtml(code);
   const subject = 'Your 2FA reset code';
@@ -180,13 +226,14 @@ export async function sendTwofaResetCodeEmail(params: {
     </div>
   `;
   const text = `Your 2FA reset code is: ${code}\n\nIt expires in ${expiresInMinutes} minutes. If you did not request it, ignore this email.`;
-  return sendEmail(to, subject, html, text);
+  return sendEmail(to, subject, html, text, companyId);
 }
 
 export async function sendNotificationEmail(
   to: string,
   title: string,
   message: string,
+  companyId?: string,
 ): Promise<SendEmailResponse> {
   const subject = `Smart Dashboard Alert: ${title}`;
   const html = `
@@ -198,14 +245,14 @@ export async function sendNotificationEmail(
     </div>
   `;
   const text = `${title}\n\n${message}`;
-
-  return sendEmail(to, subject, html, text);
+  return sendEmail(to, subject, html, text, companyId);
 }
 
 export async function sendLoginNotificationEmail(
   to: string,
   userName: string,
   details: Omit<LoginNotificationData, 'userName'>,
+  companyId?: string,
 ): Promise<SendEmailResponse> {
   const { loginDate, loginTime, browser, ipAddress, dashboardUrl } = details;
 
@@ -284,5 +331,5 @@ export async function sendLoginNotificationEmail(
     `If this wasn't you, please reset your password immediately at ${dashboardUrl}/perfil`,
   ].join('\n');
 
-  return sendEmail(to, subject, html, text);
+  return sendEmail(to, subject, html, text, companyId);
 }
