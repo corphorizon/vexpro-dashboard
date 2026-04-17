@@ -111,6 +111,7 @@ const NAV_STRUCTURE: NavEntry[] = [
     icon: Settings,
     children: [
       { href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
+      { href: '/configuraciones', i18nKey: 'nav.config', icon: Settings, module: 'settings' },
       { href: '/auditoria', i18nKey: 'nav.audit', icon: ClipboardList, module: 'audit' },
     ],
   },

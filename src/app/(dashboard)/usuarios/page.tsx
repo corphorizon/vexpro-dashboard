@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, hasModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
@@ -9,6 +9,14 @@ import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-reac
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
 const ALL_ROLES: Array<User['role']> = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
+
+interface CustomRoleOption {
+  id: string;
+  name: string;
+  description: string | null;
+  base_role: string;
+  default_modules: string[];
+}
 
 interface UserForm {
   name: string;
@@ -41,6 +49,15 @@ export default function UsuariosPage() {
   const [reset2faUser, setReset2faUser] = useState<User | null>(null);
   const [reset2faLoading, setReset2faLoading] = useState(false);
   const [reset2faError, setReset2faError] = useState<string | null>(null);
+  const [customRoles, setCustomRoles] = useState<CustomRoleOption[]>([]);
+
+  useEffect(() => {
+    // Fetch per-company custom roles — admin can assign them alongside built-ins.
+    fetch('/api/admin/custom-roles')
+      .then(r => r.json())
+      .then(data => { if (data.success) setCustomRoles(data.roles); })
+      .catch(() => { /* non-fatal */ });
+  }, []);
 
   if (!hasModuleAccess(user, 'users')) {
     return (
@@ -81,11 +98,16 @@ export default function UsuariosPage() {
           allowed_modules: form.allowed_modules,
         });
       } else {
+        // Figure out the effective capability tier for the UI. Built-ins map
+        // to themselves; custom roles resolve via their base_role.
+        const custom = customRoles.find(c => c.name === form.role);
+        const effectiveRole = (custom?.base_role ?? form.role) as User['role'];
         await createUser(
           {
             name: form.name,
             email: form.email,
             role: form.role,
+            effective_role: effectiveRole,
             company_id: user?.company_id || '',
             allowed_modules: form.allowed_modules,
             twofa_enabled: false,
@@ -229,16 +251,42 @@ export default function UsuariosPage() {
                 <select
                   value={form.role}
                   onChange={(e) => {
-                    const newRole = e.target.value as User['role'];
-                    setForm(prev => ({ ...prev, role: newRole, allowed_modules: ROLE_DEFAULT_MODULES[newRole] || [] }));
+                    const newRole = e.target.value;
+                    const custom = customRoles.find(c => c.name === newRole);
+                    if (custom) {
+                      setForm(prev => ({
+                        ...prev,
+                        role: newRole as User['role'],
+                        allowed_modules: custom.default_modules,
+                      }));
+                    } else {
+                      setForm(prev => ({
+                        ...prev,
+                        role: newRole as User['role'],
+                        allowed_modules: ROLE_DEFAULT_MODULES[newRole] || [],
+                      }));
+                    }
                   }}
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 >
-                  {ALL_ROLES.map(role => (
-                    <option key={role} value={role}>{ROLE_LABELS[role]}</option>
-                  ))}
+                  <optgroup label="Roles del sistema">
+                    {ALL_ROLES.map(role => (
+                      <option key={role} value={role}>{ROLE_LABELS[role]}</option>
+                    ))}
+                  </optgroup>
+                  {customRoles.length > 0 && (
+                    <optgroup label="Roles personalizados">
+                      {customRoles.map(c => (
+                        <option key={c.id} value={c.name}>{c.name}</option>
+                      ))}
+                    </optgroup>
+                  )}
                 </select>
-                <p className="text-xs text-muted-foreground mt-1">{ROLE_DESCRIPTIONS[form.role]}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  {customRoles.find(c => c.name === form.role)?.description
+                    ?? ROLE_DESCRIPTIONS[form.role]
+                    ?? 'Rol personalizado — capacidades heredadas del rol base.'}
+                </p>
               </div>
             </div>
 

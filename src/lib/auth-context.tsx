@@ -12,12 +12,20 @@ export interface User {
   email: string;
   name: string;
   role: UserRole;
+  /**
+   * Resolved capability tier. For built-in roles it equals `role`. For custom
+   * roles it resolves to the role's `base_role`. Permission helpers check
+   * this field, not `role`, so custom roles can inherit admin/auditor tiers.
+   */
+  effective_role: UserRole;
   company_id: string;
   allowed_modules: string[];
   twofa_enabled: boolean;
   force_2fa_setup: boolean;
   must_change_password: boolean;
 }
+
+const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
 
 export type LoginResult =
   | { success: true; needs2fa: false }
@@ -43,11 +51,23 @@ interface AuthState {
   refreshUser: () => Promise<void>;
 }
 
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users', 'audit'];
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users', 'audit', 'settings'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
 const supabase = createClient();
+
+/** Resolve a role string to its capability tier (base_role for custom roles). */
+async function resolveEffectiveRole(role: string, companyId: string): Promise<UserRole> {
+  if (BUILT_IN_ROLES.includes(role as typeof BUILT_IN_ROLES[number])) return role as UserRole;
+  const { data } = await supabase
+    .from('custom_roles')
+    .select('base_role')
+    .eq('company_id', companyId)
+    .eq('name', role)
+    .maybeSingle();
+  return ((data?.base_role as UserRole) ?? 'invitado');
+}
 
 // Fetch the company_user profile for a given auth user
 async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
@@ -62,11 +82,14 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
     return null;
   }
 
+  const effective_role = await resolveEffectiveRole(data.role, data.company_id);
+
   return {
     id: data.id,
     email: data.email,
     name: data.name,
     role: data.role as UserRole,
+    effective_role,
     company_id: data.company_id,
     allowed_modules: data.allowed_modules || [],
     twofa_enabled: data.twofa_enabled || false,
@@ -87,17 +110,34 @@ async function fetchAllUsers(companyId: string): Promise<User[]> {
     return [];
   }
 
-  return data.map((u: Record<string, unknown>) => ({
-    id: u.id as string,
-    email: u.email as string,
-    name: u.name as string,
-    role: u.role as UserRole,
-    company_id: u.company_id as string,
-    allowed_modules: (u.allowed_modules as string[]) || [],
-    twofa_enabled: (u.twofa_enabled as boolean) || false,
-    force_2fa_setup: (u.force_2fa_setup as boolean) ?? true,
-    must_change_password: (u.must_change_password as boolean) ?? false,
-  }));
+  // Batch resolve custom roles once for the whole company
+  const { data: customRoles } = await supabase
+    .from('custom_roles')
+    .select('name, base_role')
+    .eq('company_id', companyId);
+  const customMap = new Map<string, string>(
+    (customRoles || []).map((r) => [r.name, r.base_role]),
+  );
+  const resolve = (role: string): UserRole => {
+    if (BUILT_IN_ROLES.includes(role as typeof BUILT_IN_ROLES[number])) return role as UserRole;
+    return (customMap.get(role) as UserRole) ?? 'invitado';
+  };
+
+  return data.map((u: Record<string, unknown>) => {
+    const roleStr = u.role as string;
+    return {
+      id: u.id as string,
+      email: u.email as string,
+      name: u.name as string,
+      role: roleStr as UserRole,
+      effective_role: resolve(roleStr),
+      company_id: u.company_id as string,
+      allowed_modules: (u.allowed_modules as string[]) || [],
+      twofa_enabled: (u.twofa_enabled as boolean) || false,
+      force_2fa_setup: (u.force_2fa_setup as boolean) ?? true,
+      must_change_password: (u.must_change_password as boolean) ?? false,
+    };
+  });
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -617,23 +657,23 @@ export function useAuth() {
 
 export function hasModuleAccess(user: User | null, module: string): boolean {
   if (!user) return false;
-  if (user.role === 'admin') return true;
+  if (user.effective_role === 'admin') return true;
   return user.allowed_modules.includes(module);
 }
 
 export function canAdd(user: User | null): boolean {
   if (!user) return false;
-  return user.role === 'admin' || user.role === 'auditor';
+  return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
 export function canEdit(user: User | null): boolean {
   if (!user) return false;
-  return user.role === 'admin' || user.role === 'auditor';
+  return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
 export function canDelete(user: User | null): boolean {
   if (!user) return false;
-  return user.role === 'admin';
+  return user.effective_role === 'admin';
 }
 
 export const ROLE_LABELS: Record<string, string> = {
@@ -678,4 +718,5 @@ export const MODULE_LABELS: Record<string, string> = {
   periods: 'Períodos',
   users: 'Usuarios',
   audit: 'Auditoría',
+  settings: 'Configuración',
 };
