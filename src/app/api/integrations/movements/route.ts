@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAuth } from '@/lib/api-auth';
 import {
   fetchAggregatedMovements,
   fetchProviderBySlug,
@@ -30,13 +30,14 @@ const VALID_SLUGS: ProviderSlug[] = [
 
 export async function GET(request: Request) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAuth();
     if (auth instanceof NextResponse) return auth;
 
     const url = new URL(request.url);
     const from = url.searchParams.get('from') ?? undefined;
     const to = url.searchParams.get('to') ?? undefined;
     const slug = url.searchParams.get('slug');
+    const walletId = url.searchParams.get('walletId') ?? undefined;
 
     if (slug) {
       if (!VALID_SLUGS.includes(slug as ProviderSlug)) {
@@ -45,11 +46,11 @@ export async function GET(request: Request) {
           { status: 400 },
         );
       }
-      const dataset = await fetchProviderBySlug(slug as ProviderSlug, { from, to });
+      const dataset = await fetchProviderBySlug(slug as ProviderSlug, { from, to, walletId });
       return NextResponse.json({ success: true, dataset });
     }
 
-    const data = await fetchAggregatedMovements({ from, to });
+    const data = await fetchAggregatedMovements({ from, to, walletId });
     return NextResponse.json({ success: true, ...data });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

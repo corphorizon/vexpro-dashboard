@@ -175,6 +175,24 @@ export async function fetchChannelBalances(
   return data ?? [];
 }
 
+// ─── Pinned Coinsbuy Wallets ───
+
+export async function fetchPinnedCoinsbuyWallets(
+  companyId: string
+): Promise<import('../types').PinnedCoinsbuyWallet[]> {
+  const { data, error } = await supabase
+    .from('pinned_coinsbuy_wallets')
+    .select('*')
+    .eq('company_id', companyId)
+    .order('created_at', { ascending: true });
+
+  if (error) {
+    console.error('Error fetching pinned wallets:', error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
 // ─── Preoperative Expenses ───
 
 export async function fetchPreoperativeExpenses(companyId: string): Promise<PreoperativeExpense[]> {

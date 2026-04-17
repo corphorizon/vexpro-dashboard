@@ -1,0 +1,256 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Coinsbuy v3 — Shared transfers fetcher
+//
+// Fetches ALL transfers from GET /transfer/ once (paginated) and splits them
+// into deposits (op_type 1) and payouts (op_type 2) client-side. This avoids
+// making two identical API calls when the aggregator fetches both.
+//
+// Accepts optional filters: date range, walletId.
+// Only confirmed transfers (status 2) are included.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { withRetry } from '../retry';
+import { generateCoinsbuyDeposits } from '../mocks';
+import { generateCoinsbuyWithdrawals } from '../mocks';
+import { filterByDateRange } from '../totals';
+import type {
+  CoinsbuyDepositTx,
+  CoinsbuyWithdrawalTx,
+  ProviderDataset,
+} from '../types';
+
+const COINSBUY_BASE_URL =
+  process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
+
+const PROVIDER = 'coinsbuy' as const;
+const PAGE_SIZE = 100;
+const MAX_PAGES = 20;
+
+// ── JSON:API response shapes ────────────────────────────────────────────────
+
+interface TransferAttributes {
+  op_id: number;
+  op_type: number;
+  amount: string;
+  amount_target: string;
+  rate_target?: string;
+  commission: string;
+  fee: string;
+  txid: string;
+  status: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TransferResource {
+  id: string;
+  type: string;
+  attributes: TransferAttributes;
+  relationships?: {
+    currency?: { data: { type: string; id: string } };
+    wallet?: { data: { type: string; id: string } };
+    parent?: { data: { type: string; id: string } };
+  };
+}
+
+interface TransferListResponse {
+  data: TransferResource[];
+  meta: {
+    pagination: {
+      page: number;
+      pages: number;
+      count: number;
+    };
+  };
+}
+
+// ── Options ─────────────────────────────────────────────────────────────────
+
+export interface TransferFetchOptions {
+  from?: string;
+  to?: string;
+  walletId?: string;
+}
+
+// ── Result ──────────────────────────────────────────────────────────────────
+
+export interface CoinsbuyTransferResult {
+  deposits: ProviderDataset<CoinsbuyDepositTx>;
+  payouts: ProviderDataset<CoinsbuyWithdrawalTx>;
+}
+
+// ── Main fetch ──────────────────────────────────────────────────────────────
+
+export async function fetchCoinsbuyTransfers(
+  options: TransferFetchOptions = {},
+): Promise<CoinsbuyTransferResult> {
+  const now = new Date().toISOString();
+
+  // Mock mode
+  if (!isCoinsbuyV3Enabled()) {
+    const allDeposits = generateCoinsbuyDeposits();
+    const allWithdrawals = generateCoinsbuyWithdrawals();
+    return {
+      deposits: {
+        slug: 'coinsbuy-deposits',
+        provider: PROVIDER,
+        kind: 'deposits',
+        transactions: filterByDateRange(allDeposits, options.from, options.to),
+        fetchedAt: now,
+        status: 'fresh',
+        isMock: true,
+      },
+      payouts: {
+        slug: 'coinsbuy-withdrawals',
+        provider: PROVIDER,
+        kind: 'withdrawals',
+        transactions: filterByDateRange(allWithdrawals, options.from, options.to),
+        fetchedAt: now,
+        status: 'fresh',
+        isMock: true,
+      },
+    };
+  }
+
+  // Live mode: fetch ALL transfers once, split client-side
+  try {
+    const token = await getCoinsbuyToken();
+    const depositTxs: CoinsbuyDepositTx[] = [];
+    const payoutTxs: CoinsbuyWithdrawalTx[] = [];
+
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+      const params = new URLSearchParams();
+      params.set('page[size]', String(PAGE_SIZE));
+      params.set('page[number]', String(page));
+      params.set('ordering', '-created_at');
+
+      const url = `${COINSBUY_BASE_URL}/transfer/?${params.toString()}`;
+
+      const response: TransferListResponse = await withRetry(async () => {
+        const res = await fetch(url, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+            'Content-Type': 'application/vnd.api+json',
+          },
+          signal: AbortSignal.timeout(30_000),
+        });
+
+        if (!res.ok) {
+          const errBody = await res.text().catch(() => '');
+          throw new Error(
+            `Coinsbuy v3 transfers ${res.status}: ${errBody.slice(0, 200)}`,
+          );
+        }
+
+        return res.json() as Promise<TransferListResponse>;
+      }, { maxAttempts: 2 });
+
+      for (const transfer of response.data ?? []) {
+        const attrs = transfer.attributes;
+
+        // Only confirmed transfers
+        if (attrs.status !== 2) continue;
+
+        // Optional wallet filter
+        if (options.walletId) {
+          const walletRelId = transfer.relationships?.wallet?.data?.id;
+          if (walletRelId !== options.walletId) continue;
+        }
+
+        // Optional date range filter
+        if (options.from && attrs.created_at < `${options.from}T00:00:00`) continue;
+        if (options.to && attrs.created_at > `${options.to}T23:59:59`) continue;
+
+        if (attrs.op_type === 1) {
+          // Deposit
+          const amountTarget = Number(attrs.amount_target ?? 0);
+          if (amountTarget <= 0) continue;
+
+          depositTxs.push({
+            id: transfer.id,
+            provider: PROVIDER,
+            kind: 'deposit',
+            createdAt: attrs.created_at,
+            label: `Deposit #${attrs.op_id}`,
+            trackingId: attrs.txid ?? '',
+            commission: Number(attrs.commission ?? 0),
+            amountTarget,
+            currency: 'USD',
+            status: 'Confirmed',
+          });
+        } else if (attrs.op_type === 2) {
+          // Payout
+          const amount = Number(attrs.amount ?? 0);
+          if (amount <= 0) continue;
+          const commission = Number(attrs.commission ?? 0);
+
+          payoutTxs.push({
+            id: transfer.id,
+            provider: PROVIDER,
+            kind: 'withdrawal',
+            createdAt: attrs.created_at,
+            label: `Withdraw #${attrs.op_id}`,
+            trackingId: attrs.txid ?? '',
+            amount,
+            chargedAmount: amount + commission,
+            commission,
+            currency: 'USD',
+            status: 'Approved',
+          });
+        }
+      }
+
+      totalPages = response.meta?.pagination?.pages ?? 1;
+      page++;
+    } while (page <= totalPages && page <= MAX_PAGES);
+
+    return {
+      deposits: {
+        slug: 'coinsbuy-deposits',
+        provider: PROVIDER,
+        kind: 'deposits',
+        transactions: depositTxs,
+        fetchedAt: now,
+        status: 'fresh',
+        isMock: false,
+      },
+      payouts: {
+        slug: 'coinsbuy-withdrawals',
+        provider: PROVIDER,
+        kind: 'withdrawals',
+        transactions: payoutTxs,
+        fetchedAt: now,
+        status: 'fresh',
+        isMock: false,
+      },
+    };
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    return {
+      deposits: {
+        slug: 'coinsbuy-deposits',
+        provider: PROVIDER,
+        kind: 'deposits',
+        transactions: [],
+        fetchedAt: now,
+        status: 'error',
+        isMock: false,
+        errorMessage,
+      },
+      payouts: {
+        slug: 'coinsbuy-withdrawals',
+        provider: PROVIDER,
+        kind: 'withdrawals',
+        transactions: [],
+        fetchedAt: now,
+        status: 'error',
+        isMock: false,
+        errorMessage,
+      },
+    };
+  }
+}

@@ -273,6 +273,34 @@ export async function upsertChannelBalance(
   }
 }
 
+// ─── Pinned Coinsbuy Wallets ───
+
+export async function pinCoinsbuyWallet(
+  companyId: string,
+  walletId: string,
+  walletLabel: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('pinned_coinsbuy_wallets')
+    .insert({ company_id: companyId, wallet_id: walletId, wallet_label: walletLabel });
+  if (error) {
+    if (error.code === '23505') return; // Already pinned — ignore duplicate
+    throw new Error(`Error fijando wallet: ${error.message}`);
+  }
+}
+
+export async function unpinCoinsbuyWallet(
+  companyId: string,
+  walletId: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('pinned_coinsbuy_wallets')
+    .delete()
+    .eq('company_id', companyId)
+    .eq('wallet_id', walletId);
+  if (error) throw new Error(`Error quitando wallet fijada: ${error.message}`);
+}
+
 // ─── Operating Income (upsert single row per period) ───
 
 export async function upsertOperatingIncome(
@@ -464,6 +492,7 @@ export interface CommissionEntryRow {
   salary_paid: number;
   total_earned: number;
   bonus?: number;
+  pnl_current?: number;
 }
 
 export async function upsertCommissionEntries(

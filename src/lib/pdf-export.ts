@@ -368,3 +368,166 @@ export function generateIndividualPDF(data: PdfIndividualData) {
   const fileName = `Comision_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
   doc.save(fileName);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// generatePnlPDF — Individual PnL commission report with lot commissions
+// ═══════════════════════════════════════════════════════════════════════════════
+
+interface PdfPnlData {
+  companyName: string;
+  periodLabel: string;
+  name: string;
+  email: string;
+  role: string;
+  headName: string;
+  pct: number;
+  pnl: number;
+  accumulatedIn: number;
+  division: number;
+  commission: number;
+  lotCommissions: number;
+  realPayment: number;
+  accumulatedOut: number;
+  salary: number;
+  total: number;
+}
+
+export function generatePnlPDF(data: PdfPnlData) {
+  const doc = new jsPDF('portrait', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // Header
+  doc.setFillColor(30, 41, 59);
+  doc.rect(0, 0, pageWidth, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Informe Individual de Comisiones - PnL', 14, 14);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(data.companyName, 14, 22);
+  doc.text(data.periodLabel, pageWidth - 14, 14, { align: 'right' });
+  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
+
+  // Profile Info
+  let y = 38;
+  doc.setTextColor(30, 41, 59);
+  doc.setFontSize(16);
+  doc.setFont('helvetica', 'bold');
+  doc.text(data.name, 14, y);
+  y += 6;
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(100, 116, 139);
+  doc.text(`${data.role}  |  ${data.email}  |  HEAD: ${data.headName}`, 14, y);
+
+  // Summary cards
+  y += 12;
+  const cardW = 42;
+  const cardGap = 4;
+  const cards = [
+    { label: 'PnL Mes Actual', value: `$${fmt(data.pnl)}` },
+    { label: 'Comisión', value: `$${fmt(data.commission)}` },
+    { label: 'Com. por Lotes', value: `$${fmt(data.lotCommissions)}` },
+    { label: 'Pago Real', value: `$${fmt(data.realPayment)}` },
+  ];
+  cards.forEach((card, i) => {
+    const x = 14 + i * (cardW + cardGap);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(x, y, cardW, 20, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(x, y, cardW, 20, 2, 2, 'S');
+    doc.setFontSize(7);
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'normal');
+    doc.text(card.label, x + 4, y + 7);
+    doc.setFontSize(12);
+    doc.setTextColor(30, 41, 59);
+    doc.setFont('helvetica', 'bold');
+    doc.text(card.value, x + 4, y + 16);
+  });
+
+  // Calculation detail
+  y += 30;
+  doc.setFontSize(12);
+  doc.setTextColor(30, 41, 59);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Detalle del Calculo', 14, y);
+  y += 3;
+
+  const detailRows: string[][] = [
+    ['Porcentaje de comision', `${data.pct}%`],
+    ['PnL Mes Actual', `$${fmt(data.pnl)}`],
+    ['Acumulado del mes anterior', `$${fmt(data.accumulatedIn)}`],
+    ['Division (PnL / 2)', `$${fmt(data.division)}`],
+    ['Comision ((Division + Acumulado) x %)', `$${fmt(data.commission)}`],
+    ['Comisiones ganadas por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
+    ['Pago Real (Comision - Com. Lotes)', `$${fmt(data.realPayment)}`],
+    ['Acumulado -> Siguiente mes', `$${fmt(data.accumulatedOut)}`],
+  ];
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Concepto', 'Valor']],
+    body: detailRows,
+    theme: 'striped',
+    styles: { fontSize: 9.5, cellPadding: 4 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [248, 250, 252] },
+    didParseCell: (hookData) => {
+      // Resaltar fila de descuento lotes en ámbar
+      if (hookData.section === 'body' && hookData.row.index === 5) {
+        hookData.cell.styles.textColor = [180, 83, 9];
+      }
+      // Resaltar Pago Real en verde/rojo
+      if (hookData.section === 'body' && hookData.row.index === 6) {
+        hookData.cell.styles.fontStyle = 'bold';
+        hookData.cell.styles.textColor = data.realPayment >= 0 ? [0, 130, 0] : [180, 0, 0];
+      }
+    },
+    columnStyles: { 0: { cellWidth: 110 }, 1: { halign: 'right', fontStyle: 'bold' } },
+    margin: { left: 14, right: 14 },
+  });
+
+  // Resumen de pago
+  y = getLastTableY(doc, y + 60, 10);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Resumen de Pago', 14, y);
+  y += 3;
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Concepto', 'Monto']],
+    body: [
+      ['Comision bruta', `$${fmt(data.commission)}`],
+      ['Comisiones por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
+      ['Pago Real (Comision - Lotes)', `$${fmt(data.realPayment)}`],
+      ['Salario', `$${fmt(data.salary)}`],
+      ['TOTAL A PAGAR', `$${fmt(data.total)}`],
+    ],
+    theme: 'grid',
+    styles: { fontSize: 10, cellPadding: 4 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
+    didParseCell: (hookData) => {
+      if (hookData.section === 'body' && hookData.row.index === 4) {
+        hookData.cell.styles.fontStyle = 'bold';
+        hookData.cell.styles.fillColor = [234, 245, 255];
+      }
+      if (hookData.section === 'body' && hookData.row.index === 1) {
+        hookData.cell.styles.textColor = [180, 83, 9];
+      }
+    },
+    columnStyles: { 0: { cellWidth: 110 }, 1: { halign: 'right' } },
+    margin: { left: 14, right: 14 },
+  });
+
+  // Footer
+  const pageH = doc.internal.pageSize.getHeight();
+  doc.setFontSize(7);
+  doc.setTextColor(160, 174, 192);
+  doc.text('Documento generado automaticamente — VexPro Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
+
+  const fileName = `ComisionPnL_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
+  doc.save(fileName);
+}

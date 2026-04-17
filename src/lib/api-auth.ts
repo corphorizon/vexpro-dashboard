@@ -62,3 +62,44 @@ export async function verifyAdminAuth(): Promise<AuthInfo | NextResponse> {
     email: profile.email ?? user.email ?? '',
   };
 }
+
+/**
+ * Verify the caller is authenticated and belongs to a company — any role.
+ * Use for read-only endpoints that all company members can access
+ * (e.g. movements, balances).
+ */
+export async function verifyAuth(): Promise<AuthInfo | NextResponse> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+
+  if (error || !user) {
+    return NextResponse.json(
+      { success: false, error: 'No autenticado' },
+      { status: 401 },
+    );
+  }
+
+  const { data: profile } = await supabase
+    .from('company_users')
+    .select('company_id, role, name, email')
+    .eq('user_id', user.id)
+    .single();
+
+  if (!profile) {
+    return NextResponse.json(
+      { success: false, error: 'Usuario sin empresa asignada' },
+      { status: 403 },
+    );
+  }
+
+  return {
+    userId: user.id,
+    companyId: profile.company_id,
+    role: profile.role,
+    name: profile.name ?? '',
+    email: profile.email ?? user.email ?? '',
+  };
+}

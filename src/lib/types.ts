@@ -84,6 +84,14 @@ export interface ChannelBalance {
   notes: string | null;
 }
 
+export interface PinnedCoinsbuyWallet {
+  id: string;
+  company_id: string;
+  wallet_id: string;
+  wallet_label: string;
+  created_at: string;
+}
+
 export interface PreoperativeExpense {
   id: string;
   company_id: string;

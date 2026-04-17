@@ -15,12 +15,15 @@ import type { ProviderId, ProviderConfig } from './types';
 function readConfig(prefix: string): ProviderConfig {
   // NOTE: process.env is server-side only. These integrations should be
   // called from API routes (server) — never directly from the browser.
-  const apiKey = process.env[`${prefix}_API_KEY`];
-  const apiSecret = process.env[`${prefix}_API_SECRET`];
+  //
+  // Coinsbuy v3 uses CLIENT_ID/CLIENT_SECRET (OAuth 2.0) instead of API_KEY/API_SECRET.
+  // We check both for backward compatibility.
+  const apiKey = process.env[`${prefix}_API_KEY`] ?? process.env[`${prefix}_CLIENT_ID`];
+  const apiSecret = process.env[`${prefix}_API_SECRET`] ?? process.env[`${prefix}_CLIENT_SECRET`];
   const baseUrl = process.env[`${prefix}_BASE_URL`];
 
   return {
-    enabled: !!(apiKey && apiSecret),
+    enabled: !!(apiKey && apiSecret && apiKey !== 'mock'),
     credentials: { apiKey, apiSecret, baseUrl },
   };
 }

@@ -1,14 +1,14 @@
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { useData } from '@/lib/data-context';
 import { useAuth, hasModuleAccess, canAdd } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
-import { upsertChannelBalance } from '@/lib/supabase/mutations';
-import { fetchChannelBalances } from '@/lib/supabase/queries';
-import type { ChannelBalance } from '@/lib/types';
+import { upsertChannelBalance, pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
+import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
+import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
 import {
   Wallet,
   Calendar,
@@ -20,6 +20,11 @@ import {
   Edit2,
   Check,
   X,
+  AlertTriangle,
+  ToggleLeft,
+  ToggleRight,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,7 +40,8 @@ interface ChannelDef {
 }
 
 const CHANNELS: ChannelDef[] = [
-  { key: 'coinsbuy',       label: 'Coinsbuy',                   type: 'api',    icon: Plug,       description: 'API en tiempo real (con fallback manual)' },
+  { key: 'coinsbuy',       label: 'Coinsbuy',                   type: 'auto',   icon: Plug,       description: 'Wallet VexPro Main — balance en tiempo real' },
+  { key: 'unipayment',     label: 'UniPayment',                 type: 'auto',   icon: Plug,       description: 'My Wallet — balance en tiempo real' },
   { key: 'fairpay',        label: 'FairPay',                    type: 'manual',                    description: 'Ingreso manual' },
   { key: 'wallet_externa', label: 'Wallet Externa',             type: 'manual',                    description: 'Ingreso manual' },
   { key: 'otros',          label: 'Otros',                      type: 'manual',                    description: 'Ingreso manual' },
@@ -72,6 +78,8 @@ export default function BalancesPage() {
   const [editing, setEditing] = useState<Record<string, string>>({}); // pending edits per channel key
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [pinnedWallets, setPinnedWallets] = useState<PinnedCoinsbuyWallet[]>([]);
+  const isAdmin = user?.role === 'admin';
 
   // ─── Access control ───
   if (!hasModuleAccess(user, 'balances')) {
@@ -139,6 +147,140 @@ export default function BalancesPage() {
     return data[data.length - 1]?.balance || 0;
   }, [getInvestmentsData]);
 
+  // ─── Coinsbuy Wallets (API en tiempo real) — declared early for getChannelValue ───
+  interface WalletData {
+    id: string;
+    label: string;
+    balanceConfirmed: number;
+    balancePending: number;
+    currencyCode: string;
+    currencyName: string;
+  }
+
+  const [wallets, setWallets] = useState<WalletData[]>([]);
+  const [walletsLoading, setWalletsLoading] = useState(false);
+  const [walletsError, setWalletsError] = useState<string | null>(null);
+  const [walletsFetchedAt, setWalletsFetchedAt] = useState<string | null>(null);
+  const [walletsIsMock, setWalletsIsMock] = useState(false);
+  const [walletToggles, setWalletToggles] = useState<Record<string, boolean>>({});
+
+  const fetchWallets = useCallback(async () => {
+    setWalletsLoading(true);
+    setWalletsError(null);
+    try {
+      const res = await fetch('/api/integrations/coinsbuy/wallets');
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error ?? 'Error fetching wallets');
+      setWallets(json.wallets ?? []);
+      setWalletsFetchedAt(json.fetchedAt ?? new Date().toISOString());
+      setWalletsIsMock(json.isMock ?? false);
+      // Initialize toggles for new wallets (default: on)
+      setWalletToggles(prev => {
+        const next = { ...prev };
+        for (const w of json.wallets ?? []) {
+          if (next[w.id] === undefined) next[w.id] = true;
+        }
+        return next;
+      });
+    } catch (err) {
+      setWalletsError(err instanceof Error ? err.message : 'Error');
+    } finally {
+      setWalletsLoading(false);
+    }
+  }, []);
+
+  // Fetch on mount + auto-refresh every 5 minutes
+  useEffect(() => {
+    fetchWallets();
+    const interval = setInterval(fetchWallets, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [fetchWallets]);
+
+  const toggleWallet = (id: string) => {
+    setWalletToggles(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const walletTotal = wallets
+    .filter(w => walletToggles[w.id] !== false)
+    .reduce((sum, w) => sum + w.balanceConfirmed, 0);
+
+  // Load pinned wallets from Supabase
+  const loadPinnedWallets = useCallback(async () => {
+    if (!company) return;
+    const pins = await fetchPinnedCoinsbuyWallets(company.id);
+    setPinnedWallets(pins);
+  }, [company]);
+
+  useEffect(() => {
+    loadPinnedWallets();
+  }, [loadPinnedWallets]);
+
+  // Pin / unpin handlers (admin only)
+  const handlePin = async (walletId: string, label: string) => {
+    if (!company) return;
+    try {
+      await pinCoinsbuyWallet(company.id, walletId, label);
+      setOkMsg('Wallet fijada en Balances');
+      setTimeout(() => setOkMsg(null), 2000);
+      await loadPinnedWallets();
+    } catch (err) {
+      setErrMsg(err instanceof Error ? err.message : 'Error fijando wallet');
+    }
+  };
+
+  const handleUnpin = async (walletId: string) => {
+    if (!company) return;
+    try {
+      await unpinCoinsbuyWallet(company.id, walletId);
+      setOkMsg('Wallet removida de Balances');
+      setTimeout(() => setOkMsg(null), 2000);
+      await loadPinnedWallets();
+    } catch (err) {
+      setErrMsg(err instanceof Error ? err.message : 'Error removiendo wallet');
+    }
+  };
+
+  const isPinned = (walletId: string) =>
+    pinnedWallets.some(p => p.wallet_id === walletId);
+
+  // Get balance of a pinned wallet from the API wallets data
+  const getPinnedWalletBalance = (walletId: string): number => {
+    const w = wallets.find(wl => wl.id === walletId);
+    return w?.balanceConfirmed ?? 0;
+  };
+
+  // Total of all pinned wallet balances (for the consolidated total)
+  const pinnedWalletsTotal = useMemo(() => {
+    return pinnedWallets.reduce((sum, p) => sum + getPinnedWalletBalance(p.wallet_id), 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinnedWallets, wallets]);
+
+  // ─── UniPayment Balance (API en tiempo real) ───
+  const [unipaymentBalance, setUnipaymentBalance] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchUniBalance = async () => {
+      try {
+        const res = await fetch('/api/integrations/unipayment/balances');
+        const json = await res.json();
+        if (!cancelled && json.success && Array.isArray(json.balances) && json.balances.length > 0) {
+          // Sum all available balances (primary wallet)
+          const total = json.balances.reduce(
+            (sum: number, b: { availableBalance: number }) => sum + (b.availableBalance ?? 0),
+            0,
+          );
+          setUnipaymentBalance(total);
+        }
+      } catch {
+        // Silent — channel shows $0 on error
+      }
+    };
+    fetchUniBalance();
+    const interval = setInterval(fetchUniBalance, 5 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, []);
+
   // Load snapshots for selected date
   const loadSnapshots = async () => {
     if (!company) return;
@@ -164,6 +306,10 @@ export default function BalancesPage() {
   const getChannelValue = (key: string): number => {
     if (key === 'liquidez') return liquidityBalance;
     if (key === 'inversiones') return investmentsBalance;
+    // Coinsbuy: sum of all pinned wallet balances (real-time API)
+    if (key === 'coinsbuy') return pinnedWalletsTotal;
+    // UniPayment: real-time balance from My Wallet
+    if (key === 'unipayment') return unipaymentBalance;
     const snap = snapshots.find(s => s.channel_key === key);
     return snap?.amount ?? 0;
   };
@@ -201,6 +347,8 @@ export default function BalancesPage() {
 
   // Total consolidado (suma de todos los canales)
   const totalConsolidado = CHANNELS.reduce((sum, c) => sum + getChannelValue(c.key), 0);
+
+  // ─── Section C: Coinsbuy Wallets (state + fetch declared above) ───
 
   return (
     <div className="space-y-6">
@@ -353,12 +501,12 @@ export default function BalancesPage() {
             const value = getChannelValue(ch.key);
             const isEditing = editing[ch.key] !== undefined;
             const isAuto = ch.type === 'auto';
-            const isApi = ch.type === 'api';
+            const isCoinsbuy = ch.key === 'coinsbuy';
             const Icon = ch.icon;
 
             return (
+              <div key={ch.key}>
               <div
-                key={ch.key}
                 className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -367,11 +515,6 @@ export default function BalancesPage() {
                     <p className="font-medium truncate">{ch.label}</p>
                     <p className="text-xs text-muted-foreground truncate">{ch.description}</p>
                   </div>
-                  {isApi && (
-                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
-                      API pendiente
-                    </span>
-                  )}
                   {isAuto && (
                     <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
                       Automático
@@ -411,12 +554,12 @@ export default function BalancesPage() {
                       <span className={`font-semibold text-base ${value >= 0 ? '' : 'text-red-600 dark:text-red-400'}`}>
                         {formatCurrency(value)}
                       </span>
-                      {!isAuto && userCanAdd && (
+                      {!isAuto && !isCoinsbuy && userCanAdd && (
                         <button
                           onClick={() => startEdit(ch.key)}
                           className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
                           aria-label="Editar"
-                          title={isApi ? 'Ingreso manual (fallback)' : 'Editar balance'}
+                          title="Editar balance"
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
@@ -424,6 +567,36 @@ export default function BalancesPage() {
                     </>
                   )}
                 </div>
+              </div>
+
+              {/* Pinned wallet sub-rows under Coinsbuy */}
+              {isCoinsbuy && pinnedWallets.length > 0 && (
+                <div className="ml-6 mt-1 space-y-1">
+                  {pinnedWallets.map((pw) => {
+                    const wBalance = getPinnedWalletBalance(pw.wallet_id);
+                    const wData = wallets.find(wl => wl.id === pw.wallet_id);
+                    return (
+                      <div
+                        key={pw.wallet_id}
+                        className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border/50 bg-emerald-50/30 dark:bg-emerald-950/10"
+                      >
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <Wallet className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate">{pw.wallet_label}</p>
+                            <p className="text-[10px] text-muted-foreground">
+                              {wData?.currencyCode ?? 'USDT'} · Wallet #{pw.wallet_id}
+                            </p>
+                          </div>
+                        </div>
+                        <span className="font-semibold text-sm tabular-nums">
+                          {formatCurrency(wBalance)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               </div>
             );
           })}
@@ -444,6 +617,134 @@ export default function BalancesPage() {
           </p>
         </div>
       </Card>
+
+      {/* ═══════════ SECTION C: COINSBUY WALLETS (admin only) ═══════════ */}
+      {isAdmin && <Card>
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
+              <Wallet className="w-5 h-5 text-emerald-500" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Coinsbuy Wallets</h2>
+              <p className="text-xs text-muted-foreground">
+                Balances en tiempo real de wallets activas
+                {walletsIsMock && <span className="ml-1 text-amber-500">(Mock)</span>}
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {walletsFetchedAt && (
+              <span className="text-[10px] text-muted-foreground hidden sm:inline">
+                Sync: {new Date(walletsFetchedAt).toLocaleTimeString('es-ES')}
+              </span>
+            )}
+            <button
+              onClick={fetchWallets}
+              disabled={walletsLoading}
+              className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
+              title="Refrescar wallets"
+            >
+              <RefreshCw className={`w-4 h-4 ${walletsLoading ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+        </div>
+
+        {walletsError && (
+          <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-sm mb-3">
+            <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+            <span>
+              {walletsError}
+              {walletsFetchedAt && ` — Datos desactualizados (última sync: ${new Date(walletsFetchedAt).toLocaleString('es-ES')})`}
+            </span>
+          </div>
+        )}
+
+        {wallets.length > 0 ? (
+          <div className="space-y-2">
+            {wallets.map((w) => {
+              const isOn = walletToggles[w.id] !== false;
+              return (
+                <div
+                  key={w.id}
+                  className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
+                    isOn ? 'border-border hover:bg-muted/30' : 'border-border/50 bg-muted/20 opacity-60'
+                  }`}
+                >
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
+                    <button
+                      onClick={() => toggleWallet(w.id)}
+                      className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
+                      title={isOn ? 'Excluir del total' : 'Incluir en el total'}
+                    >
+                      {isOn
+                        ? <ToggleRight className="w-6 h-6 text-emerald-500" />
+                        : <ToggleLeft className="w-6 h-6" />
+                      }
+                    </button>
+                    <div className="min-w-0">
+                      <p className="font-medium truncate">{w.label}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {w.currencyCode}
+                        {w.balancePending > 0 && (
+                          <span className="ml-2 text-amber-500">
+                            Pendiente: {w.balancePending.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                          </span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className={`font-semibold text-base tabular-nums ${isOn ? '' : 'text-muted-foreground'}`}>
+                      {w.balanceConfirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} {w.currencyCode}
+                    </span>
+                    {isAdmin && (
+                      isPinned(w.id) ? (
+                        <button
+                          onClick={() => handleUnpin(w.id)}
+                          className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
+                          title="Quitar de Balances por Canal"
+                        >
+                          <PinOff className="w-4 h-4" />
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => handlePin(w.id, w.label)}
+                          className="p-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                          title="Fijar en Balances por Canal"
+                        >
+                          <Pin className="w-4 h-4" />
+                        </button>
+                      )
+                    )}
+                    {!isAdmin && isPinned(w.id) && (
+                      <Pin className="w-3.5 h-3.5 text-emerald-500" />
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : !walletsLoading ? (
+          <p className="text-center text-muted-foreground py-8">No hay wallets activas</p>
+        ) : null}
+
+        {wallets.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
+            <div>
+              <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                Total Wallets Seleccionadas
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {wallets.filter(w => walletToggles[w.id] !== false).length} de {wallets.length} wallets incluidas
+              </p>
+            </div>
+            <p className={`text-2xl font-bold ${walletTotal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+              {walletTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })}
+            </p>
+          </div>
+        )}
+      </Card>}
     </div>
   );
 }

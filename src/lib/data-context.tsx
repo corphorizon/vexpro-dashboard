@@ -118,6 +118,7 @@ export interface DataContextValue {
   // Refresh functions
   refresh: () => Promise<void>;
   refreshCommissions: () => Promise<void>;
+  patchMonthlyResults: (updates: CommercialMonthlyResult[]) => void;
 }
 
 const DataContext = createContext<DataContextValue | null>(null);
@@ -674,6 +675,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
         } catch (err) {
           console.warn('Error refreshing commissions:', err);
         }
+      },
+
+      // Actualiza monthlyResults localmente con los registros guardados
+      // sin hacer fetch a Supabase — la UI se actualiza instantáneamente
+      patchMonthlyResults: (updates: CommercialMonthlyResult[]) => {
+        setMonthlyResults((prev) => {
+          const next = [...prev];
+          for (const update of updates) {
+            const idx = next.findIndex(
+              (r) => r.profile_id === update.profile_id
+                && r.period_id === update.period_id
+                && r.head_id === update.head_id
+            );
+            if (idx >= 0) {
+              next[idx] = { ...next[idx], ...update };
+            } else {
+              next.push(update);
+            }
+          }
+          return next;
+        });
       },
     }),
     [

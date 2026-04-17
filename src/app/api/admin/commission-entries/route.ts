@@ -36,7 +36,7 @@ export async function POST(request: NextRequest) {
         accumulated_out: entry.accumulated_out ?? 0,
         salary_paid: entry.salary_paid ?? 0,
         total_earned: entry.total_earned ?? 0,
-        pnl_current: 0,
+        pnl_current: entry.pnl_current ?? 0,
         pnl_accumulated: 0,
         pnl_total: 0,
         bonus: entry.bonus ?? 0,

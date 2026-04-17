@@ -1,14 +1,15 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { useData } from '@/lib/data-context';
+import type { CommercialMonthlyResult } from '@/lib/types';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
-import { generateCommissionPDF, generateIndividualPDF } from '@/lib/pdf-export';
+import { generateCommissionPDF, generateIndividualPDF, generatePnlPDF } from '@/lib/pdf-export';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import {
   calculateCommission,
@@ -39,6 +40,7 @@ import {
   FileText,
   FileSpreadsheet,
   ChevronDown,
+  Loader2,
 } from 'lucide-react';
 
 const ROLE_BADGE: Record<string, string> = {
@@ -66,7 +68,7 @@ export default function ComisionesPage() {
     getProfilesByHead,
     getPreviousPeriodResults,
     refresh,
-    refreshCommissions,
+    patchMonthlyResults,
   } = useData();
 
   const searchParams = useSearchParams();
@@ -113,12 +115,8 @@ export default function ComisionesPage() {
   const [ndInputs, setNdInputs] = useState<Map<string, number>>(new Map());
   // Store raw string for display (allows empty field + typing negatives)
   const [ndRawInputs, setNdRawInputs] = useState<Map<string, string>>(new Map());
-  // Flag para evitar que el useEffect sobreescriba los inputs tras un save
-  const isSavingRef = useRef(false);
-
   // Seed ND inputs from saved data when period changes
   useEffect(() => {
-    if (isSavingRef.current) return;
     if (!selectedPeriod) return;
     const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
     const m = new Map<string, number>();
@@ -126,8 +124,7 @@ export default function ComisionesPage() {
       // Buscar el registro que corresponde al grupo actual (head_id = selectedHeadId)
       // Así no se confunde con registros del mismo usuario en otros grupos
       const ex = tab === 'individual'
-        ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== 0 && r.net_deposit_current !== null)
-          ?? results.find((r) => r.profile_id === p.id)
+        ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null)
         : results.find((r) => r.profile_id === p.id && r.head_id === selectedHeadId);
       // Fallback al primer registro si no hay uno con head_id (datos anteriores al fix)
       // If this profile is the currently selected HEAD and has own team + parent,
@@ -148,15 +145,24 @@ export default function ComisionesPage() {
         m.set(p.id, ex?.net_deposit_current ?? 0);
       }
     }
+    // Seedear lotInputs desde pnl_current (donde se guarda el lotComm)
+    if (tab === 'individual') {
+      const lotMap = new Map<string, number>();
+      for (const p of commercialProfiles) {
+        if (p.pnl_pct != null) {
+          const ex = results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null);
+          lotMap.set(p.id, ex?.pnl_current ?? 0);
+        }
+      }
+      setLotInputs(lotMap);
+    }
     setNdInputs(m);
     // NO limpiar ndRawInputs aquí — se limpia en un effect separado
     // para preservar lo que el usuario está editando después de un refresh
   }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab]);
 
   // Limpiar raw inputs solo cuando cambia el período o el head seleccionado
-  // También liberar el flag isSavingRef para que el useEffect pueda correr
   useEffect(() => {
-    isSavingRef.current = false;
     setNdRawInputs(new Map());
   }, [selectedPeriod?.id, selectedHeadId]);
 
@@ -171,6 +177,22 @@ export default function ComisionesPage() {
     if (raw !== undefined) return raw;
     return (ndInputs.get(id) ?? 0).toString();
   }, [ndRawInputs, ndInputs]);
+
+  // ─── Lot commissions (PnL section) ───
+  const [lotInputs, setLotInputs] = useState<Map<string, number>>(new Map());
+  const [lotRawInputs, setLotRawInputs] = useState<Map<string, string>>(new Map());
+
+  const handleLotChange = useCallback((id: string, v: string) => {
+    setLotRawInputs((prev) => { const n = new Map(prev); n.set(id, v); return n; });
+    const num = v === '' || v === '-' ? 0 : parseFloat(v);
+    setLotInputs((prev) => { const n = new Map(prev); n.set(id, isNaN(num) ? 0 : num); return n; });
+  }, []);
+
+  const getLotDisplay = useCallback((id: string): string => {
+    const raw = lotRawInputs.get(id);
+    if (raw !== undefined) return raw;
+    return (lotInputs.get(id) ?? 0).toString();
+  }, [lotRawInputs, lotInputs]);
 
   useEffect(() => { if (!selectedHeadId && heads.length > 0) setSelectedHeadId(heads[0].id); }, [heads, selectedHeadId]);
 
@@ -392,6 +414,108 @@ export default function ComisionesPage() {
   // ═══════════════════════════════════════════════════════════
 
   const [saving, setSaving] = useState(false);
+  const [savingBdm, setSavingBdm] = useState<Set<string>>(new Set());
+
+  const handleSaveBdm = useCallback(async (profileId: string, isNd: boolean) => {
+    if (!selectedPeriod || !company) return;
+
+    setSavingBdm((prev) => new Set(prev).add(profileId));
+    try {
+      const profile = commercialProfiles.find((p) => p.id === profileId);
+      if (!profile) return;
+
+      const headId = profile.head_id ?? profileId;
+
+      let entry: CommissionEntryRow;
+
+      if (isNd) {
+        // ND BDM
+        const calc = indCalcs.find((c) => c.profileId === profileId);
+        if (!calc) return;
+        const prevDebt = getPrevDebtAll(profileId);
+        const rawTE = calc.realPayment + calc.salary;
+        const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
+        entry = {
+          profile_id: profileId,
+          head_id: headId,
+          net_deposit_current: calc.netDepositCurrent,
+          net_deposit_accumulated: calc.accumulatedIn,
+          division: calc.division,
+          base_amount: 0,
+          commissions_earned: calc.commission,
+          real_payment: calc.realPayment,
+          accumulated_out: calc.accumulatedOut,
+          salary_paid: calc.salary,
+          total_earned: finalTotalEarned,
+          bonus: debtOut,
+        };
+      } else {
+        // PnL BDM
+        const calc = pnlCalcs.find((c) => c.profileId === profileId);
+        if (!calc) return;
+        const lotComm = lotInputs.get(profileId) ?? 0;
+        const adjustedReal = calc.realPayment - lotComm;
+        const prevDebt = getPrevDebtAll(profileId);
+        const rawTE = adjustedReal + calc.salary;
+        const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
+        entry = {
+          profile_id: profileId,
+          head_id: headId,
+          net_deposit_current: calc.netDepositCurrent,
+          net_deposit_accumulated: calc.accumulatedIn,
+          division: calc.division,
+          base_amount: 0,
+          commissions_earned: calc.commission,
+          real_payment: adjustedReal,
+          pnl_current: lotComm,
+          accumulated_out: calc.accumulatedOut,
+          salary_paid: calc.salary,
+          total_earned: finalTotalEarned,
+          bonus: debtOut,
+        };
+      }
+
+      await upsertCommissionEntries(company.id, selectedPeriod.id, headId, [entry]);
+
+      // Actualizar monthlyResults localmente
+      patchMonthlyResults([{
+        id: `temp-${entry.profile_id}`,
+        profile_id: entry.profile_id,
+        period_id: selectedPeriod.id,
+        head_id: entry.head_id ?? headId,
+        net_deposit_current: entry.net_deposit_current ?? 0,
+        net_deposit_accumulated: entry.net_deposit_accumulated ?? 0,
+        net_deposit_total: entry.net_deposit_current ?? 0,
+        division: entry.division ?? 0,
+        base_amount: entry.base_amount ?? 0,
+        commissions_earned: entry.commissions_earned ?? 0,
+        real_payment: entry.real_payment ?? 0,
+        accumulated_out: entry.accumulated_out ?? 0,
+        salary_paid: entry.salary_paid ?? 0,
+        total_earned: entry.total_earned ?? 0,
+        bonus: entry.bonus ?? 0,
+        pnl_current: 0,
+        pnl_accumulated: 0,
+        pnl_total: 0,
+      }]);
+
+      // Actualizar input visual
+      setNdInputs((prev) => {
+        const next = new Map(prev);
+        if (entry.net_deposit_current !== null) next.set(profileId, entry.net_deposit_current);
+        return next;
+      });
+      setNdRawInputs((prev) => { const next = new Map(prev); next.delete(profileId); return next; });
+
+      setToast({ type: 'success', msg: 'Guardado correctamente' });
+      setTimeout(() => setToast(null), 3000);
+    } catch (err) {
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al guardar' });
+      setTimeout(() => setToast(null), 4000);
+    } finally {
+      setSavingBdm((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
+    }
+  }, [selectedPeriod, company, commercialProfiles, ndInputs, indCalcs, pnlCalcs, lotInputs, getPrevDebtAll, applyTotalEarnedDebt, patchMonthlyResults]);
 
   const handleSave = async () => {
     if (!selectedPeriod || !company) return;
@@ -407,7 +531,6 @@ export default function ComisionesPage() {
       return;
     }
 
-    isSavingRef.current = true;
     setSaving(true);
     try {
       let entries: CommissionEntryRow[];
@@ -490,6 +613,8 @@ export default function ComisionesPage() {
         // PnL BDM entries
         const pnlEntries = pnlCalcs.map((c) => {
           const profile = commercialProfiles.find((p) => p.id === c.profileId);
+          const lotComm = lotInputs.get(c.profileId) ?? 0;
+          const adjustedReal = c.realPayment - lotComm;
           return {
             profile_id: c.profileId,
             head_id: profile?.head_id ?? selectedHeadId,
@@ -498,12 +623,13 @@ export default function ComisionesPage() {
             division: c.division,
             base_amount: 0,
             commissions_earned: c.commission,
-            real_payment: c.realPayment,
+            real_payment: adjustedReal,
+            pnl_current: lotComm,
             accumulated_out: c.accumulatedOut,
             salary_paid: c.salary,
             ...(() => {
               const prevDebt = getPrevDebtAll(c.profileId);
-              const rawTE = c.realPayment + c.salary;
+              const rawTE = adjustedReal + c.salary;
               const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
               return { total_earned: finalTotalEarned, bonus: debtOut };
             })(),
@@ -521,34 +647,43 @@ export default function ComisionesPage() {
         return;
       }
       await upsertCommissionEntries(company.id, selectedPeriod.id, selectedHeadId, entries);
-      console.log('[SAVE] success');
-      // Actualizar ndInputs MANUALMENTE con los valores que acabamos de guardar
+
+      // Actualizar monthlyResults localmente con los datos guardados
+      const patched: CommercialMonthlyResult[] = entries.map((e) => ({
+        id: `temp-${e.profile_id}`,
+        profile_id: e.profile_id,
+        period_id: selectedPeriod.id,
+        head_id: e.head_id ?? selectedHeadId,
+        net_deposit_current: e.net_deposit_current ?? 0,
+        net_deposit_accumulated: e.net_deposit_accumulated ?? 0,
+        net_deposit_total: e.net_deposit_current ?? 0,
+        division: e.division ?? 0,
+        base_amount: e.base_amount ?? 0,
+        commissions_earned: e.commissions_earned ?? 0,
+        real_payment: e.real_payment ?? 0,
+        accumulated_out: e.accumulated_out ?? 0,
+        salary_paid: e.salary_paid ?? 0,
+        total_earned: e.total_earned ?? 0,
+        bonus: e.bonus ?? 0,
+        pnl_current: 0,
+        pnl_accumulated: 0,
+        pnl_total: 0,
+      }));
+      patchMonthlyResults(patched);
+
+      // Actualizar ndInputs con valores guardados
       setNdInputs((prev) => {
         const next = new Map(prev);
         for (const entry of entries) {
-          if (entry.net_deposit_current !== null) {
-            next.set(entry.profile_id, entry.net_deposit_current);
-          }
+          if (entry.net_deposit_current !== null) next.set(entry.profile_id, entry.net_deposit_current);
         }
         return next;
       });
-      // Limpiar raw inputs para que el display muestre los valores guardados
       setNdRawInputs(new Map());
-      // Liberar el botón y mostrar éxito INMEDIATAMENTE
       setSaving(false);
       setToast({ type: 'success', msg: 'Comisiones guardadas' });
       setTimeout(() => setToast(null), 4000);
-      // Bloquear el useEffect ANTES del refresh para que no sobreescriba
-      // los inputs cuando monthlyResults se actualice
-      isSavingRef.current = true;
-      // Refrescar datos en background sin bloquear la UI
-      refreshCommissions().catch((err) => {
-        console.warn('Background refresh failed:', err);
-      }).finally(() => {
-        isSavingRef.current = false;
-      });
     } catch (err) {
-      isSavingRef.current = false;
       setSaving(false);
       setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al guardar' });
       setTimeout(() => setToast(null), 4000);
@@ -999,34 +1134,46 @@ export default function ComisionesPage() {
                             })()}
                           </td>
                           <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
-                          <td className="px-2 py-3 text-center">
-                            <button
-                              onClick={() => verify2FA(() => {
-                                if (!selectedPeriod) return;
-                                const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
-                                generateIndividualPDF({
-                                  companyName: company?.name ?? 'VexPro',
-                                  periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
-                                  name: profile.name,
-                                  email: profile.email,
-                                  role: ROLE_LABEL[profile.role] || profile.role,
-                                  headName: headP?.name ?? '—',
-                                  pct: calc.commissionPct,
-                                  nd: calc.netDepositCurrent,
-                                  accumulatedIn: calc.accumulatedIn,
-                                  division: calc.division,
-                                  commission: calc.commission,
-                                  realPayment: calc.realPayment,
-                                  accumulatedOut: calc.accumulatedOut,
-                                  salary: calc.salary,
-                                  total: calc.realPayment + calc.salary,
-                                });
-                              })}
-                              className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                              title="Descargar PDF"
-                            >
-                              <FileText className="w-4 h-4" />
-                            </button>
+                          <td className="px-2 py-3">
+                            <div className="flex items-center gap-1 justify-center">
+                              <button
+                                onClick={() => handleSaveBdm(calc.profileId, true)}
+                                disabled={savingBdm.has(calc.profileId)}
+                                className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                title="Guardar este BDM"
+                              >
+                                {savingBdm.has(calc.profileId)
+                                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                                  : <Save className="w-4 h-4" />}
+                              </button>
+                              <button
+                                onClick={() => verify2FA(() => {
+                                  if (!selectedPeriod) return;
+                                  const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
+                                  generateIndividualPDF({
+                                    companyName: company?.name ?? 'VexPro',
+                                    periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+                                    name: profile.name,
+                                    email: profile.email,
+                                    role: ROLE_LABEL[profile.role] || profile.role,
+                                    headName: headP?.name ?? '—',
+                                    pct: calc.commissionPct,
+                                    nd: calc.netDepositCurrent,
+                                    accumulatedIn: calc.accumulatedIn,
+                                    division: calc.division,
+                                    commission: calc.commission,
+                                    realPayment: calc.realPayment,
+                                    accumulatedOut: calc.accumulatedOut,
+                                    salary: calc.salary,
+                                    total: calc.realPayment + calc.salary,
+                                  });
+                                })}
+                                className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                                title="Descargar PDF"
+                              >
+                                <FileText className="w-4 h-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1067,6 +1214,7 @@ export default function ComisionesPage() {
                       <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
                       <th className="text-left px-3 py-3 font-medium">HEAD</th>
                       <th className="text-right px-3 py-3 font-medium">PnL</th>
+                      <th className="text-right px-3 py-3 font-medium">Com. Lotes</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.accumulated')}</th>
                       <th className="text-right px-3 py-3 font-medium">{t('comm.division')}</th>
                       <th className="text-center px-3 py-3 font-medium">%</th>
@@ -1089,14 +1237,41 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3">
                             <input type="number" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                           </td>
+                          <td className="px-3 py-3">
+                            <input
+                              type="number"
+                              value={getLotDisplay(calc.profileId)}
+                              onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
+                              onFocus={(e) => e.target.select()}
+                              placeholder="0"
+                              className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                            />
+                          </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
                           <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
                           <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
-                          <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
                           <td className="px-3 py-3 text-right font-semibold">
                             {(() => {
-                              const rawTE = calc.realPayment + calc.salary;
+                              const lotComm = lotInputs.get(calc.profileId) ?? 0;
+                              const finalReal = calc.realPayment - lotComm;
+                              return (
+                                <span className={finalReal >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                                  {formatCurrency(finalReal)}
+                                  {lotComm > 0 && (
+                                    <span className="block text-[10px] text-muted-foreground">
+                                      {formatCurrency(calc.realPayment)} − {formatCurrency(lotComm)} lotes
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            })()}
+                          </td>
+                          <td className="px-3 py-3 text-right font-semibold">
+                            {(() => {
+                              const lotComm = lotInputs.get(calc.profileId) ?? 0;
+                              const adjustedReal = calc.realPayment - lotComm;
+                              const rawTE = adjustedReal + calc.salary;
                               const prevDebt = getPrevDebtAll(calc.profileId);
                               const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
                               return (
@@ -1110,34 +1285,49 @@ export default function ComisionesPage() {
                             })()}
                           </td>
                           <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
-                          <td className="px-2 py-3 text-center">
-                            <button
-                              onClick={() => verify2FA(() => {
-                                if (!selectedPeriod) return;
-                                const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
-                                generateIndividualPDF({
-                                  companyName: company?.name ?? 'VexPro',
-                                  periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
-                                  name: profile.name,
-                                  email: profile.email,
-                                  role: ROLE_LABEL[profile.role] || profile.role,
-                                  headName: headP?.name ?? '—',
-                                  pct: calc.commissionPct,
-                                  nd: calc.netDepositCurrent,
-                                  accumulatedIn: calc.accumulatedIn,
-                                  division: calc.division,
-                                  commission: calc.commission,
-                                  realPayment: calc.realPayment,
-                                  accumulatedOut: calc.accumulatedOut,
-                                  salary: calc.salary,
-                                  total: calc.realPayment + calc.salary,
-                                });
-                              })}
-                              className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                              title="Descargar PDF"
-                            >
-                              <FileText className="w-4 h-4" />
-                            </button>
+                          <td className="px-2 py-3">
+                            <div className="flex items-center gap-1 justify-center">
+                              <button
+                                onClick={() => handleSaveBdm(calc.profileId, false)}
+                                disabled={savingBdm.has(calc.profileId)}
+                                className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                title="Guardar este BDM"
+                              >
+                                {savingBdm.has(calc.profileId)
+                                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                                  : <Save className="w-4 h-4" />}
+                              </button>
+                              <button
+                                onClick={() => verify2FA(() => {
+                                  if (!selectedPeriod) return;
+                                  const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
+                                  const lotComm = lotInputs.get(calc.profileId) ?? 0;
+                                  const adjustedReal = calc.realPayment - lotComm;
+                                  generatePnlPDF({
+                                    companyName: company?.name ?? 'VexPro',
+                                    periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+                                    name: profile.name,
+                                    email: profile.email,
+                                    role: ROLE_LABEL[profile.role] || profile.role,
+                                    headName: headP?.name ?? '—',
+                                    pct: calc.commissionPct,
+                                    pnl: calc.netDepositCurrent,
+                                    accumulatedIn: calc.accumulatedIn,
+                                    division: calc.division,
+                                    commission: calc.commission,
+                                    lotCommissions: lotComm,
+                                    realPayment: adjustedReal,
+                                    accumulatedOut: calc.accumulatedOut,
+                                    salary: calc.salary,
+                                    total: adjustedReal + calc.salary,
+                                  });
+                                })}
+                                className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                                title="Descargar PDF"
+                              >
+                                <FileText className="w-4 h-4" />
+                              </button>
+                            </div>
                           </td>
                         </tr>
                       );
@@ -1147,7 +1337,7 @@ export default function ComisionesPage() {
                     <tr className="bg-muted/50 font-semibold">
                       <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
                       <td className="px-3 py-3 text-right">{formatCurrency(pnlCalcs.reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
-                      <td className="px-3 py-3" colSpan={4}></td>
+                      <td className="px-3 py-3" colSpan={5}></td>
                       <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(pnlSummary.totalRealPayment)}</td>
                       <td className="px-3 py-3 text-right font-semibold">{formatCurrency(pnlSummary.totalWithSalary)}</td>
                       <td className="px-3 py-3"></td>

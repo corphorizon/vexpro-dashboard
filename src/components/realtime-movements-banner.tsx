@@ -11,7 +11,9 @@ import {
   Plug,
   ChevronRight,
   Calendar,
+  Wallet,
 } from 'lucide-react';
+import { useAuth } from '@/lib/auth-context';
 import { REFRESH_INTERVAL_MS } from '@/lib/api-integrations/config';
 import { computeProviderTotals } from '@/lib/api-integrations/totals';
 import type {
@@ -73,16 +75,51 @@ function monthBounds(yearMonth: string): { from: string; to: string } {
 
 type FilterMode = 'month' | 'range';
 
+interface WalletOption {
+  id: string;
+  label: string;
+  currencyCode: string;
+}
+
+const DEFAULT_WALLET_ID = '1079'; // VexPro Main Wallet
+
 export function RealTimeMovementsBanner() {
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+
   const [mode, setMode] = useState<FilterMode>('month');
   const [month, setMonth] = useState<string>(currentMonthStr());
   const [rangeFrom, setRangeFrom] = useState<string>('');
   const [rangeTo, setRangeTo] = useState<string>('');
+  const [walletId, setWalletId] = useState<string>(DEFAULT_WALLET_ID);
+  const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
 
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Load wallet options once on mount — only admins need the full list
+  useEffect(() => {
+    if (!isAdmin) return; // Non-admins use the default wallet, no need to fetch
+    (async () => {
+      try {
+        const res = await fetch('/api/integrations/coinsbuy/wallets');
+        const json = await res.json();
+        if (json.success && Array.isArray(json.wallets)) {
+          setWalletOptions(
+            json.wallets.map((w: { id: string; label: string; currencyCode: string }) => ({
+              id: w.id,
+              label: w.label,
+              currencyCode: w.currencyCode,
+            })),
+          );
+        }
+      } catch {
+        // Silent — wallets are optional filter
+      }
+    })();
+  }, [isAdmin]);
 
   // Resolve the effective {from, to} from the filter state.
   const { from, to } = useMemo(() => {
@@ -97,6 +134,7 @@ export function RealTimeMovementsBanner() {
       const qs = new URLSearchParams();
       if (from) qs.set('from', from);
       if (to) qs.set('to', to);
+      if (walletId) qs.set('walletId', walletId);
       const res = await fetch(`/api/integrations/movements?${qs.toString()}`);
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error desconocido');
@@ -107,7 +145,7 @@ export function RealTimeMovementsBanner() {
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [from, to, walletId]);
 
   // Refetch on filter change + poll every REFRESH_INTERVAL_MS.
   useEffect(() => {
@@ -205,6 +243,33 @@ export function RealTimeMovementsBanner() {
             />
           </div>
         )}
+
+        {/* Wallet selector (Coinsbuy) — only admins can change */}
+        <>
+          <div className="w-px h-5 bg-border hidden sm:block" />
+          <div className="flex items-center gap-1.5">
+            <Wallet className="w-3.5 h-3.5 text-muted-foreground" />
+            {isAdmin && walletOptions.length > 0 ? (
+              <select
+                value={walletId}
+                onChange={(e) => setWalletId(e.target.value)}
+                className="h-8 px-2.5 text-xs rounded-md border border-border bg-card focus:outline-none focus:ring-2 focus:ring-primary/30 max-w-[200px]"
+                aria-label="Wallet filter"
+              >
+                <option value="">Todas las wallets</option>
+                {walletOptions.map((w) => (
+                  <option key={w.id} value={w.id}>
+                    {w.label} ({w.currencyCode})
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="h-8 flex items-center px-2.5 text-xs rounded-md border border-border bg-muted/50 text-muted-foreground">
+                VexPro Main Wallet
+              </span>
+            )}
+          </div>
+        </>
       </div>
 
       {errorMsg && (

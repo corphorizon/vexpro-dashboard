@@ -37,3 +37,12 @@ export {
 } from './totals';
 
 export { fetchCoinsbuyBalance } from './coinsbuy';
+export { fetchCoinsbuyWallets, type CoinsbuyWallet } from './coinsbuy/wallets';
+export { fetchCoinsbuyDepositsV3 } from './coinsbuy/deposits';
+export { fetchCoinsbuyPayoutsV3 } from './coinsbuy/payouts';
+export { fetchCoinsbuyTransfers } from './coinsbuy/transfers';
+export type { CoinsbuyTransferResult, TransferFetchOptions } from './coinsbuy/transfers';
+
+export { fetchUnipaymentDepositsV2 } from './unipayment/transactions';
+export { fetchUnipaymentBalances, type UnipaymentWalletBalance } from './unipayment/balances';
+export { isUnipaymentEnabled } from './unipayment/auth';

@@ -6,15 +6,17 @@
 // provider failing never breaks the others.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { fetchCoinsbuyDeposits } from './coinsbuy-deposits';
-import { fetchCoinsbuyWithdrawals } from './coinsbuy-withdrawals';
-import { fetchFairpayDeposits } from './fairpay';
-import { fetchUnipaymentDeposits } from './unipayment';
+import { fetchCoinsbuyTransfers } from './coinsbuy/transfers';
+import { fetchCoinsbuyDepositsV3 } from './coinsbuy/deposits';
+import { fetchCoinsbuyPayoutsV3 } from './coinsbuy/payouts';
+import { fetchFairpayDeposits } from './fairpay/transactions';
+import { fetchUnipaymentDepositsV2 } from './unipayment/transactions';
 import type { ProviderDataset, ProviderSlug } from './types';
 
 export interface FetchOptions {
   from?: string;
   to?: string;
+  walletId?: string;
 }
 
 export interface AggregatedMovements {
@@ -25,14 +27,14 @@ export interface AggregatedMovements {
 export async function fetchAggregatedMovements(
   options: FetchOptions = {}
 ): Promise<AggregatedMovements> {
-  const [coinsbuyDeposits, coinsbuyWithdrawals, fairpay, unipayment] = await Promise.all([
-    fetchCoinsbuyDeposits(options),
-    fetchCoinsbuyWithdrawals(options),
+  // Use shared transfers fetcher for Coinsbuy (1 API call instead of 2)
+  const [coinsbuyResult, fairpay, unipayment] = await Promise.all([
+    fetchCoinsbuyTransfers(options),
     fetchFairpayDeposits(options),
-    fetchUnipaymentDeposits(options),
+    fetchUnipaymentDepositsV2(options),
   ]);
   return {
-    datasets: [coinsbuyDeposits, coinsbuyWithdrawals, fairpay, unipayment],
+    datasets: [coinsbuyResult.deposits, coinsbuyResult.payouts, fairpay, unipayment],
     fetchedAt: new Date().toISOString(),
   };
 }
@@ -46,12 +48,12 @@ export async function fetchProviderBySlug(
 ): Promise<ProviderDataset> {
   switch (slug) {
     case 'coinsbuy-deposits':
-      return fetchCoinsbuyDeposits(options);
+      return fetchCoinsbuyDepositsV3(options);
     case 'coinsbuy-withdrawals':
-      return fetchCoinsbuyWithdrawals(options);
+      return fetchCoinsbuyPayoutsV3(options);
     case 'fairpay':
       return fetchFairpayDeposits(options);
     case 'unipayment':
-      return fetchUnipaymentDeposits(options);
+      return fetchUnipaymentDepositsV2(options);
   }
 }

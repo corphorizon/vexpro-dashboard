@@ -148,12 +148,13 @@ export default function MovimientosPage() {
   if (!summary) return null;
 
   // ── Totales "solo API" ──
-  // Depósitos Totales API = Coinsbuy (confirmed) + FairPay (completed) + Unipayment (completed)
-  // (manual "otros" no entra)
-  const apiDepositsTotal =
-    (summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0) +
-    (summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0) +
-    (summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0);
+  // For new-logic periods (useDerivedBroker), use real-time API totals.
+  // For historical periods, fall back to stored Supabase values.
+  const apiDepositsTotal = useDerivedBroker
+    ? apiTotals.depositsTotal
+    : (summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0) +
+      (summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0) +
+      (summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0);
 
   // Stored manual amounts per category (what's in Supabase right now).
   const storedBroker =
@@ -183,6 +184,14 @@ export default function MovimientosPage() {
       })
     : storedBroker;
 
+  // For new-logic periods, use the real API deposits total (Coinsbuy + FairPay + Unipayment)
+  // plus any manual "other" deposits.
+  const otherDeposits =
+    summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
+  const displayTotalDeposits = useDerivedBroker
+    ? apiDepositsTotal + otherDeposits
+    : summary.totalDeposits;
+
   // Re-derive total withdrawals and net deposit for the summary cards so
   // they reflect the new logic. Historical periods pass through unchanged.
   const displayTotalWithdrawals = useDerivedBroker
@@ -190,7 +199,7 @@ export default function MovimientosPage() {
     : summary.totalWithdrawals;
 
   const displayNetDeposit = useDerivedBroker
-    ? summary.totalDeposits - displayTotalWithdrawals
+    ? displayTotalDeposits - displayTotalWithdrawals
     : summary.netDeposit;
 
   return (
@@ -239,7 +248,7 @@ export default function MovimientosPage() {
                 Depósitos Totales
               </p>
               <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1 truncate">
-                {formatCurrency(summary.totalDeposits)}
+                {formatCurrency(displayTotalDeposits)}
               </p>
               {/* Deposits are unchanged by broker logic — they are always the
                   stored/summary value for both historical and new periods. */}
@@ -336,19 +345,39 @@ export default function MovimientosPage() {
               </tr>
             </thead>
             <tbody>
-              {fullDeposits.map((d) => (
-                <tr key={d.id} className="border-b border-border/50">
-                  <td className="py-2.5">
-                    {CHANNEL_LABELS[d.channel]}
-                    {d.channel === 'other' && (
-                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                        manual
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2.5 text-right font-medium">{formatCurrency(d.amount)}</td>
-                </tr>
-              ))}
+              {fullDeposits.map((d) => {
+                // For new-logic periods, API channels show real-time values
+                const API_SLUG_MAP: Record<string, string> = {
+                  coinsbuy: 'coinsbuy-deposits',
+                  fairpay: 'fairpay',
+                  unipayment: 'unipayment',
+                };
+                const apiSlug = API_SLUG_MAP[d.channel];
+                const displayAmount =
+                  useDerivedBroker && apiSlug
+                    ? apiTotals.by[apiSlug as keyof typeof apiTotals.by] ?? d.amount
+                    : d.amount;
+                const isApiChannel = !!apiSlug;
+
+                return (
+                  <tr key={d.id} className="border-b border-border/50">
+                    <td className="py-2.5">
+                      {CHANNEL_LABELS[d.channel]}
+                      {d.channel === 'other' && (
+                        <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                          manual
+                        </span>
+                      )}
+                      {isApiChannel && useDerivedBroker && (
+                        <span className="ml-2 text-[10px] text-emerald-500 uppercase tracking-wide">
+                          api
+                        </span>
+                      )}
+                    </td>
+                    <td className="py-2.5 text-right font-medium">{formatCurrency(displayAmount)}</td>
+                  </tr>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr className="font-bold">
