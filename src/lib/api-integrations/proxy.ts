@@ -17,6 +17,23 @@
 import { Agent, fetch as undiciFetch, type Dispatcher } from 'undici';
 import { SocksClient } from 'socks';
 import tls from 'node:tls';
+import dnsPromises from 'node:dns/promises';
+
+// UniPayment's API sits behind Cloudflare which blocks IPv6 connections from
+// certain proxy ranges (including Fixie). Resolve hostnames to IPv4 ourselves
+// before passing them to the SOCKS5 proxy so the outbound connection is
+// guaranteed to be IPv4.
+async function resolveIPv4(hostname: string): Promise<string> {
+  // If already an IP, return as-is
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(hostname)) return hostname;
+  try {
+    const res = await dnsPromises.lookup(hostname, { family: 4 });
+    return res.address;
+  } catch {
+    // Fallback to the original hostname — SOCKS5 will try to resolve it
+    return hostname;
+  }
+}
 
 let cachedDispatcher: Dispatcher | null = null;
 
@@ -57,7 +74,11 @@ export function getProxyDispatcher(): Dispatcher | undefined {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     connect: async (opts: any, callback: any) => {
       try {
-        // 1) Open raw TCP tunnel through SOCKS5 to the destination host:port
+        // Force IPv4 resolution — Cloudflare-fronted APIs (e.g. UniPayment)
+        // reject IPv6 connections from proxy ranges.
+        const ipv4Host = await resolveIPv4(opts.hostname);
+
+        // 1) Open raw TCP tunnel through SOCKS5 to the destination IPv4:port
         const { socket } = await SocksClient.createConnection({
           proxy: {
             host: proxy.host,
@@ -68,7 +89,7 @@ export function getProxyDispatcher(): Dispatcher | undefined {
           },
           command: 'connect',
           destination: {
-            host: opts.hostname,
+            host: ipv4Host,
             port: Number(opts.port) || (opts.protocol === 'https:' ? 443 : 80),
           },
           timeout: 15_000,
