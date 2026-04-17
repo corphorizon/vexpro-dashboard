@@ -5,7 +5,13 @@
 //   { data: { type: "auth-token", attributes: { client_id, client_secret } } }
 //
 // Response: { data: { attributes: { access, expires_in, token_type } } }
+//
+// All Coinsbuy API calls go through the Fixie SOCKS5 proxy when FIXIE_URL is
+// set — required because Coinsbuy whitelists source IPs. When unset (local
+// dev), requests go direct.
 // ─────────────────────────────────────────────────────────────────────────────
+
+import { getProxyDispatcher } from '../proxy';
 
 const COINSBUY_BASE_URL =
   process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
@@ -74,7 +80,8 @@ export async function getCoinsbuyToken(): Promise<string> {
       },
     }),
     signal: AbortSignal.timeout(15_000),
-  });
+    dispatcher: getProxyDispatcher(),
+  } as RequestInit);
 
   if (!response.ok) {
     const errorBody = await response.text().catch(() => '');

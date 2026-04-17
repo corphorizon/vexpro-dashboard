@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { getProxyDispatcher } from '../proxy';
 import { withRetry } from '../retry';
 import { generateCoinsbuyDeposits } from '../mocks';
 import { generateCoinsbuyWithdrawals } from '../mocks';
@@ -137,7 +138,8 @@ export async function fetchCoinsbuyTransfers(
             'Content-Type': 'application/vnd.api+json',
           },
           signal: AbortSignal.timeout(30_000),
-        });
+          dispatcher: getProxyDispatcher(),
+        } as RequestInit);
 
         if (!res.ok) {
           const errBody = await res.text().catch(() => '');

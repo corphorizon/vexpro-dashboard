@@ -13,6 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { getProxyDispatcher } from '../proxy';
 import { withRetry } from '../retry';
 import type { CoinsbuyWithdrawalTx, ProviderDataset } from '../types';
 import { generateCoinsbuyWithdrawals } from '../mocks';
@@ -105,7 +106,8 @@ export async function fetchCoinsbuyPayoutsV3(
             'Content-Type': 'application/vnd.api+json',
           },
           signal: AbortSignal.timeout(30_000),
-        });
+          dispatcher: getProxyDispatcher(),
+        } as RequestInit);
 
         if (!res.ok) {
           const errBody = await res.text().catch(() => '');

@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { getProxyDispatcher } from '../proxy';
 import { withRetry } from '../retry';
 
 const COINSBUY_BASE_URL =
@@ -140,7 +141,8 @@ export async function fetchCoinsbuyWallets(): Promise<{
           'Content-Type': 'application/vnd.api+json',
         },
         signal: AbortSignal.timeout(30_000),
-      });
+        dispatcher: getProxyDispatcher(),
+      } as RequestInit);
 
       if (!res.ok) {
         throw new Error(
