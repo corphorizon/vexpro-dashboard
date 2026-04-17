@@ -4,13 +4,12 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
-import { useI18n } from '@/lib/i18n';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
-  const { t } = useI18n();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
@@ -50,10 +49,10 @@ export default function LoginPage() {
           router.push('/');
         }
       } else {
-        setError(t('login.error'));
+        setError('Invalid email or password.');
       }
     } catch {
-      setError(t('login.error'));
+      setError('Something went wrong. Please try again.');
     } finally {
       setLoading(false);
     }
@@ -72,11 +71,11 @@ export default function LoginPage() {
         notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
         router.push('/');
       } else {
-        setError(result.error || t('login.pinError'));
+        setError(result.error || 'Invalid code.');
         setPin('');
       }
     } catch {
-      setError(t('login.pinError'));
+      setError('Invalid code.');
       setPin('');
     } finally {
       setLoading(false);
@@ -115,20 +114,20 @@ export default function LoginPage() {
           </div>
 
           <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-            <h2 className="text-lg font-semibold mb-4">{t('login.recoveryTitle')}</h2>
+            <h2 className="text-lg font-semibold mb-4">Account recovery</h2>
             <div className="space-y-4">
               <div className="px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-400 text-sm">
-                {t('login.recoveryMsg')}
+                Enter your email address. If an account exists, you will receive a password reset link within a few minutes.
               </div>
               <p className="text-sm text-muted-foreground">
-                {t('login.contactInfo')}
+                If you do not receive the email, please contact your administrator.
               </p>
               <button
                 onClick={() => setShowRecovery(false)}
                 className="flex items-center gap-2 text-sm text-[var(--color-primary)] hover:underline"
               >
                 <ArrowLeft className="w-4 h-4" />
-                {t('login.back')}
+                Back to sign in
               </button>
             </div>
           </div>
@@ -165,37 +164,50 @@ export default function LoginPage() {
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           {step === 'credentials' ? (
             <>
-              <h2 className="text-lg font-semibold mb-6">{t('login.title')}</h2>
+              <h2 className="text-lg font-semibold mb-6">Sign in to your account</h2>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <label htmlFor="email" className="block text-sm font-medium mb-1.5">
-                    {t('login.email')}
+                    Email
                   </label>
                   <input
                     id="email"
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="correo@empresa.com"
+                    placeholder="you@company.com"
                     required
+                    autoComplete="email"
                     className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                   />
                 </div>
 
                 <div>
                   <label htmlFor="password" className="block text-sm font-medium mb-1.5">
-                    {t('login.password')}
+                    Password
                   </label>
-                  <input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="********"
-                    required
-                    className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                  />
+                  <div className="relative">
+                    <input
+                      id="password"
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      autoComplete="current-password"
+                      className="w-full pr-11 px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(v => !v)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      aria-pressed={showPassword}
+                      className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] rounded-r-lg"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
                 </div>
 
                 {error && (
@@ -209,7 +221,7 @@ export default function LoginPage() {
                   disabled={loading}
                   className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
-                  {loading ? t('login.loading') : t('login.submit')}
+                  {loading ? 'Signing in…' : 'Sign in'}
                 </button>
               </form>
 
@@ -218,21 +230,21 @@ export default function LoginPage() {
                   onClick={() => setShowRecovery(true)}
                   className="text-sm text-[var(--color-secondary)] hover:underline font-medium"
                 >
-                  {t('login.recovery')}
+                  Forgot your password?
                 </button>
               </div>
             </>
           ) : (
             <>
-              <h2 className="text-lg font-semibold mb-2">{t('login.2faTitle')}</h2>
+              <h2 className="text-lg font-semibold mb-2">Two-factor authentication</h2>
               <p className="text-sm text-muted-foreground mb-6">
-                {t('login.2faSubtitle')}
+                Enter the 6-digit code from your authenticator app.
               </p>
 
               <form onSubmit={handle2faSubmit} className="space-y-4">
                 <div>
                   <label htmlFor="pin" className="block text-sm font-medium mb-1.5">
-                    {t('login.pinLabel')}
+                    Verification code
                   </label>
                   <input
                     id="pin"
@@ -244,6 +256,7 @@ export default function LoginPage() {
                     placeholder="000000"
                     required
                     autoFocus
+                    autoComplete="one-time-code"
                     className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                   />
                 </div>
@@ -256,10 +269,10 @@ export default function LoginPage() {
 
                 <button
                   type="submit"
-                  disabled={pin.length !== 6}
+                  disabled={pin.length !== 6 || loading}
                   className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
-                  {t('login.submit')}
+                  {loading ? 'Verifying…' : 'Verify'}
                 </button>
               </form>
 
@@ -269,7 +282,7 @@ export default function LoginPage() {
                   className="flex items-center gap-2 mx-auto text-sm text-[var(--color-primary)] hover:underline"
                 >
                   <ArrowLeft className="w-4 h-4" />
-                  {t('login.back')}
+                  Back to sign in
                 </button>
               </div>
             </>

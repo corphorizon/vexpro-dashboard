@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, hasModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
-import { Users, Plus, Pencil, Trash2, X, KeyRound } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
 const ALL_ROLES: Array<User['role']> = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
@@ -38,6 +38,9 @@ export default function UsuariosPage() {
   const [resetSuccess, setResetSuccess] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [reset2faUser, setReset2faUser] = useState<User | null>(null);
+  const [reset2faLoading, setReset2faLoading] = useState(false);
+  const [reset2faError, setReset2faError] = useState<string | null>(null);
 
   if (!hasModuleAccess(user, 'users')) {
     return (
@@ -121,6 +124,30 @@ export default function UsuariosPage() {
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Error eliminando usuario');
       setDeleteConfirm(null);
+    }
+  };
+
+  const handleReset2fa = async () => {
+    if (!reset2faUser) return;
+    setReset2faLoading(true);
+    setReset2faError(null);
+    try {
+      const res = await fetch('/api/admin/reset-user-2fa', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: reset2faUser.id }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || 'Error reseteando 2FA');
+      }
+      // Reflect new state in the local list so the UI updates immediately
+      updateUser(reset2faUser.id, { twofa_enabled: false });
+      setReset2faUser(null);
+    } catch (err) {
+      setReset2faError(err instanceof Error ? err.message : 'Error reseteando 2FA');
+    } finally {
+      setReset2faLoading(false);
     }
   };
 
@@ -320,6 +347,16 @@ export default function UsuariosPage() {
                       >
                         <KeyRound className="w-3.5 h-3.5 text-amber-500" />
                       </button>
+                      {u.twofa_enabled && (
+                        <button
+                          onClick={() => { setReset2faUser(u); setReset2faError(null); }}
+                          className="p-1.5 rounded hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors"
+                          title="Resetear 2FA"
+                          aria-label="Resetear 2FA"
+                        >
+                          <ShieldOff className="w-3.5 h-3.5 text-indigo-500" />
+                        </button>
+                      )}
                       {u.id !== user?.id && (
                         deleteConfirm === u.id ? (
                           <div className="flex items-center gap-1">
@@ -405,6 +442,46 @@ export default function UsuariosPage() {
                 </div>
               </form>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Reset 2FA confirmation modal */}
+      {reset2faUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="bg-card border border-border rounded-xl p-6 shadow-lg w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-lg font-semibold">Resetear 2FA</h2>
+              <button onClick={() => setReset2faUser(null)} className="p-1 hover:bg-muted rounded" aria-label="Cerrar">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-sm text-muted-foreground mb-4">
+              Se desactivará la autenticación de dos factores para{' '}
+              <span className="font-medium text-foreground">{reset2faUser.name}</span> ({reset2faUser.email}).
+              El usuario deberá volver a configurar su aplicación de autenticación.
+            </p>
+            {reset2faError && (
+              <div className="px-3 py-2 mb-4 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
+                {reset2faError}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <button
+                onClick={handleReset2fa}
+                disabled={reset2faLoading}
+                className="flex-1 px-4 py-2 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 transition-colors disabled:opacity-50"
+              >
+                {reset2faLoading ? 'Reseteando…' : 'Resetear 2FA'}
+              </button>
+              <button
+                onClick={() => setReset2faUser(null)}
+                disabled={reset2faLoading}
+                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
+              >
+                Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -10,9 +10,10 @@ import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import type { Investment } from '@/lib/types';
-import { TrendingUp, Download } from 'lucide-react';
+import { TrendingUp, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+const PAGE_SIZE = 25;
 
 export default function InversionesPage() {
   const { t } = useI18n();
@@ -59,6 +60,15 @@ export default function InversionesPage() {
   const totalDeposits = filtered.reduce((s, i) => s + i.deposit, 0);
   const totalWithdrawals = filtered.reduce((s, i) => s + i.withdrawal, 0);
   const totalProfit = filtered.reduce((s, i) => s + i.profit, 0);
+
+  // Pagination
+  const [page, setPage] = useState(0);
+  useEffect(() => { setPage(0); }, [filter, investmentsData.length]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pagedRows = useMemo(
+    () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
+    [filtered, page],
+  );
 
   return (
     <div className="space-y-6">
@@ -165,7 +175,7 @@ export default function InversionesPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((inv) => (
+              {pagedRows.map((inv) => (
                 <tr key={inv.id} className="border-b border-border/50 hover:bg-muted/50">
                   <td className="py-2.5 px-3">{new Date(inv.date).toLocaleDateString('es-ES')}</td>
                   <td className="py-2.5 px-3">{inv.concept || '—'}</td>
@@ -187,6 +197,34 @@ export default function InversionesPage() {
         </div>
         {filtered.length === 0 && (
           <p className="text-center text-muted-foreground py-8">{t('common.noData')}</p>
+        )}
+        {filtered.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between mt-4 text-sm">
+            <span className="text-muted-foreground">
+              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} de {filtered.length}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0}
+                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                aria-label="Página anterior"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              <span className="px-2 tabular-nums">
+                {page + 1} / {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1}
+                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+                aria-label="Página siguiente"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
         )}
       </Card>
     </div>

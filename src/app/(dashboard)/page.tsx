@@ -17,8 +17,6 @@ import {
   DollarSign,
   TrendingUp,
   UserCog,
-  Calculator,
-  Clock,
 } from 'lucide-react';
 
 const ROLE_BADGE: Record<string, string> = {
@@ -144,21 +142,6 @@ export default function DashboardPage() {
       };
     }).sort((a, b) => b.teamND - a.teamND);
   }, [commercialProfiles, getProfilesByHead, periodResults]);
-
-  // ─── Recent hires (last 90 days) ───
-  const recentHires = useMemo(() => {
-    const now = new Date();
-    const cutoff = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
-    const allPeople = [
-      ...commercialProfiles
-        .filter((p) => p.hire_date && new Date(p.hire_date) >= cutoff)
-        .map((p) => ({ name: p.name, role: ROLE_LABEL[p.role] || p.role, date: p.hire_date!, type: 'commercial' as const })),
-      ...employees
-        .filter((e) => e.start_date && new Date(e.start_date) >= cutoff)
-        .map((e) => ({ name: e.name, role: e.position, date: e.start_date, type: 'employee' as const })),
-    ];
-    return allPeople.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 5);
-  }, [commercialProfiles, employees]);
 
   return (
     <div className="space-y-6">
@@ -328,66 +311,6 @@ export default function DashboardPage() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      {/* Row 3 — Recent Hires + Departments */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Recent Hires */}
-        <Card>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-green-50 dark:bg-green-950/50">
-              <Clock className="w-5 h-5 text-green-500" />
-            </div>
-            <h2 className="font-semibold">{t('hrDash.recentHires')}</h2>
-          </div>
-          {recentHires.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('hrDash.noData')}</p>
-          ) : (
-            <div className="space-y-3">
-              {recentHires.map((h, i) => (
-                <div key={i} className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium">{h.name}</p>
-                    <p className="text-xs text-muted-foreground">{h.role}</p>
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(h.date).toLocaleDateString()}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
-
-        {/* Departments */}
-        <Card>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-sky-50 dark:bg-sky-950/50">
-              <Calculator className="w-5 h-5 text-sky-500" />
-            </div>
-            <h2 className="font-semibold">{t('hrDash.departments')}</h2>
-          </div>
-          {empStats.departments.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('hrDash.noData')}</p>
-          ) : (
-            <div className="space-y-3">
-              {empStats.departments.map((d) => (
-                <div key={d.name} className="flex items-center justify-between">
-                  <span className="text-sm">{d.name}</span>
-                  <div className="flex items-center gap-2">
-                    <div className="w-24 h-2 rounded-full bg-muted overflow-hidden">
-                      <div
-                        className="h-full rounded-full bg-sky-500"
-                        style={{ width: `${Math.min(100, (d.count / empStats.active.length) * 100)}%` }}
-                      />
-                    </div>
-                    <span className="text-sm font-medium w-6 text-right">{d.count}</span>
-                  </div>
-                </div>
-              ))}
             </div>
           )}
         </Card>
