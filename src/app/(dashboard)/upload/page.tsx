@@ -1631,8 +1631,8 @@ export default function UploadPage() {
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.userEmail')}</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.mtAccount')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.deposit')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.withdrawal')}</th>
+                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
+                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
                   <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
                   {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
                 </tr>
@@ -1817,8 +1817,8 @@ export default function UploadPage() {
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.responsible')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.deposit')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.withdrawal')}</th>
+                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
+                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
                   <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.profit')}</th>
                   <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
                   {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}

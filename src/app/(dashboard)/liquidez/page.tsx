@@ -107,8 +107,8 @@ export default function LiquidezPage() {
         </div>
         <button
           onClick={() => verify2FA(() => {
-            const headers = ['Fecha', 'Usuario', 'Cuenta MT', 'Deposito', 'Retiro', 'Balance'];
-            const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, m.balance] as (string | number)[]);
+            const headers = ['Fecha', 'Usuario', 'Cuenta MT', '+', '-', 'Balance'];
+            const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, balanceMap.get(m.id) ?? 0] as (string | number)[]);
             downloadCSV('liquidez.csv', headers, rows);
           })}
           className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
@@ -173,11 +173,11 @@ export default function LiquidezPage() {
           <p className="text-2xl font-bold">{formatCurrency(lastBalance)}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted-foreground mb-1">{t('liquidity.totalDeposits')}</p>
+          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">+</span></p>
           <p className="text-2xl font-bold text-blue-600">{formatCurrency(totalDeposits)}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted-foreground mb-1">{t('liquidity.totalWithdrawals')}</p>
+          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">−</span></p>
           <p className="text-2xl font-bold text-red-600">{formatCurrency(totalWithdrawals)}</p>
         </Card>
       </div>
@@ -192,8 +192,8 @@ export default function LiquidezPage() {
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Usuario</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Cuenta MT</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Depósito</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Retiro</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Balance</th>
               </tr>
             </thead>

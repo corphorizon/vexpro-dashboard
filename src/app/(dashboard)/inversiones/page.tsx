@@ -103,8 +103,8 @@ export default function InversionesPage() {
         </div>
         <button
           onClick={() => verify2FA(() => {
-            const headers = ['Fecha', 'Concepto', 'Responsable', 'Deposito', 'Retiro', 'Profit', 'Balance'];
-            const rows = filtered.map(i => [i.date, i.concept || '', i.responsible || '', i.deposit, i.withdrawal, i.profit, i.balance] as (string | number)[]);
+            const headers = ['Fecha', 'Concepto', 'Responsable', '+', '-', 'Profit', 'Balance'];
+            const rows = filtered.map(i => [i.date, i.concept || '', i.responsible || '', i.deposit, i.withdrawal, i.profit, balanceMap.get(i.id) ?? 0] as (string | number)[]);
             downloadCSV('inversiones.csv', headers, rows);
           })}
           className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
@@ -169,11 +169,11 @@ export default function InversionesPage() {
           <p className="text-2xl font-bold">{formatCurrency(lastBalance)}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted-foreground mb-1">{t('investments.totalInvested')}</p>
+          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">+</span></p>
           <p className="text-2xl font-bold text-blue-600">{formatCurrency(totalDeposits)}</p>
         </Card>
         <Card>
-          <p className="text-sm text-muted-foreground mb-1">{t('investments.totalWithdrawn')}</p>
+          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">−</span></p>
           <p className="text-2xl font-bold text-red-600">{formatCurrency(totalWithdrawals)}</p>
         </Card>
         <Card>
@@ -192,8 +192,8 @@ export default function InversionesPage() {
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Responsable</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Depósito</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Retiro</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Profit</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Balance</th>
               </tr>
