@@ -41,11 +41,13 @@ Auditoría completa del módulo **Finanzas** con corrección de 6 bugs críticos
 - `supabase/migration-020-liquidity-profit.sql` — agrega columna opcional `profit NUMERIC(14,2) DEFAULT 0` a `liquidity_movements`.
 - **NO la apliqué en Supabase**, queda lista para cuando Kevin decida activar el tracking de profit por movimiento de liquidez. Hoy la StatCard "Profit" de `/liquidez` calcula `Ingreso − Salida` client-side y funciona sin la columna.
 
-### 7. `package.json` — heap de Node ampliado
-- `npm run dev` y `npm run build` ahora arrancan con `NODE_OPTIONS='--max-old-space-size=8192'`.
-- **Motivo**: el dev server se estaba crasheando con `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory` al compilar con Turbopack (Next.js 16) después de varios ciclos de HMR. Node por default usa ~2 GB de heap; 4 GB tampoco fue suficiente con el tamaño actual del proyecto, así que quedó en 8 GB.
-- **Impacto para ti**: ninguna acción. Solo sigue usando `npm run dev` / `npm run build` como siempre.
-- En CI/Vercel no cambia nada porque Vercel ya usa heap generoso en sus builders. El flag local está escrito de forma cross-platform (sh-compatible) — si compilas en Windows puro puedes necesitar `cross-env`, pero macOS/Linux/WSL funcionan sin setup adicional.
+### 7. `package.json` — heap ampliado + dev con Webpack (Turbopack memory leak)
+- `npm run dev` y `npm run build` arrancan con `NODE_OPTIONS='--max-old-space-size=8192'`.
+- `npm run dev` ahora usa **`--webpack`** en vez de Turbopack (que es el default de Next.js 16).
+- Si quieres probar Turbopack: `npm run dev:turbo` (script separado).
+- **Motivo**: Next.js 16 + Turbopack tiene un memory leak conocido en dev mode — el heap crece hasta 8 GB en ~15 min por acumulación de state de HMR, y luego crashea con `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory`. Webpack es un poco más lento al arrancar pero estable en memoria durante sesiones largas.
+- **Impacto para ti**: ninguna acción. Solo sigue usando `npm run dev` como siempre.
+- En CI/Vercel no cambia nada: `build` sigue con Turbopack/Next default y Vercel usa su propio heap generoso.
 
 ---
 
