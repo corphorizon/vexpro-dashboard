@@ -12,6 +12,7 @@ import {
   allPeriodsUseDerivedBroker,
   computeDerivedBroker,
 } from '@/lib/broker-logic';
+import { useBrokerCrmTotals } from '@/lib/api-integrations/broker-crm';
 import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { usePeriod } from '@/lib/period-context';
@@ -94,6 +95,10 @@ export default function MovimientosPage() {
   // re-read from the persisted cache so the tables reflect the fresh data.
   const [apiRefreshKey, setApiRefreshKey] = useState(0);
   const apiTotals = useApiTotals(apiFrom, apiTo, coinsbuyWalletId, apiRefreshKey);
+  // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0
+  // until the CRM endpoint exists), but wired so the display already sums
+  // apiValue + manualValue with zero migration work when the API lands.
+  const brokerCrmTotals = useBrokerCrmTotals(apiFrom, apiTo, apiRefreshKey);
 
   const handleExport = () => verify2FA(() => {
     if (!summary) return;
@@ -205,6 +210,33 @@ export default function MovimientosPage() {
       })
     : 0;
   const brokerDisplay = useDerivedBroker ? derivedBrokerFromApi + storedBroker : storedBroker;
+
+  // ─── Broker CRM coexistence (Prop Firm sales + P2P) ───
+  // Same coexistence rule as Coinsbuy/FairPay/Unipayment: the manual value
+  // stored in Supabase is added on top of whatever the CRM reports. When the
+  // CRM isn't connected yet, the API side is 0 and only the manual value
+  // shows — the UI stays correct either way.
+  const apiPropFirmSales = brokerCrmTotals.propFirmSales;
+  const manualPropFirmSales = summary.propFirmSales;
+  const propFirmSalesDisplay = apiPropFirmSales + manualPropFirmSales;
+
+  const apiP2PTransfer = brokerCrmTotals.p2pTransfer;
+  const manualP2PTransfer = summary.p2pTransfer;
+  const p2pTransferDisplay = apiP2PTransfer + manualP2PTransfer;
+
+  // Prop-firm net income recomputed with the combined sales value so it
+  // tracks what the user sees on screen, not just the stored manual figure.
+  const propFirmNetIncomeDisplay = propFirmSalesDisplay - propFirmWithdrawal;
+
+  // ─── Depósitos Broker ───
+  // Business rule (Abr-2026+): the "broker" deposits line is derived, not
+  // entered. It's whatever's left of the API deposits after subtracting
+  // prop-firm sales (which are their own bucket). For historical periods we
+  // keep the legacy stored value so nothing moves retroactively.
+
+  const brokerDepositsDisplay = useDerivedBroker
+    ? Math.max(0, apiDepositsTotal - propFirmSalesDisplay)
+    : summary.brokerDeposits;
 
   // Consolidated totals = sum of all channels/categories (API+manual).
   const displayTotalDeposits = useDerivedBroker
@@ -417,11 +449,18 @@ export default function MovimientosPage() {
               </tr>
               <tr className="text-muted-foreground">
                 <td className="py-1">{t('movements.propFirmSales')}</td>
-                <td className="py-1 text-right">{formatCurrency(summary.propFirmSales)}</td>
+                <td className="py-1 text-right">{formatCurrency(propFirmSalesDisplay)}</td>
               </tr>
               <tr className="text-muted-foreground">
-                <td className="py-1">{t('movements.brokerDeposits')}</td>
-                <td className="py-1 text-right">{formatCurrency(summary.brokerDeposits)}</td>
+                <td className="py-1">
+                  {t('movements.brokerDeposits')}
+                  {useDerivedBroker && (
+                    <span className="ml-2 text-[10px] text-muted-foreground/80 uppercase tracking-wide">
+                      total api − prop firm
+                    </span>
+                  )}
+                </td>
+                <td className="py-1 text-right">{formatCurrency(brokerDepositsDisplay)}</td>
               </tr>
             </tfoot>
           </table>
@@ -486,8 +525,22 @@ export default function MovimientosPage() {
                 </td>
               </tr>
               <tr className="text-muted-foreground">
-                <td className="py-1">{t('movements.p2pTransfer')}</td>
-                <td className="py-1 text-right">{formatCurrency(summary.p2pTransfer)}</td>
+                <td className="py-1">
+                  {t('movements.p2pTransfer')}
+                  {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
+                    <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                      api+manual
+                    </span>
+                  )}
+                </td>
+                <td className="py-1 text-right">
+                  {formatCurrency(p2pTransferDisplay)}
+                  {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
+                    <span className="block text-[10px] text-muted-foreground">
+                      {formatCurrency(apiP2PTransfer)} API + {formatCurrency(manualP2PTransfer)} manual
+                    </span>
+                  )}
+                </td>
               </tr>
               <tr className="font-bold border-t border-border">
                 <td className="py-3">{t('movements.netDeposit')}</td>
@@ -509,22 +562,36 @@ export default function MovimientosPage() {
           <table className="w-full text-sm">
             <tbody>
               <tr className="border-b border-border/50">
-                <td className="py-2.5">{t('movements.propFirmSales')}</td>
+                <td className="py-2.5">
+                  {t('movements.propFirmSales')}
+                  {brokerCrmTotals.connected && apiPropFirmSales > 0 && manualPropFirmSales > 0 ? (
+                    <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                      api+manual
+                    </span>
+                  ) : (
+                    <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                      {brokerCrmTotals.connected ? 'api' : 'manual'}
+                    </span>
+                  )}
+                </td>
                 <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(summary.propFirmSales)}
+                  {formatCurrency(propFirmSalesDisplay)}
+                  {brokerCrmTotals.connected && apiPropFirmSales > 0 && manualPropFirmSales > 0 && (
+                    <span className="block text-[10px] text-muted-foreground">
+                      {formatCurrency(apiPropFirmSales)} API + {formatCurrency(manualPropFirmSales)} manual
+                    </span>
+                  )}
                 </td>
               </tr>
               <tr className="border-b border-border/50">
                 <td className="py-2.5">{t('movements.propFirmWithdrawals')}</td>
                 <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(
-                    summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0
-                  )}
+                  {formatCurrency(propFirmWithdrawal)}
                 </td>
               </tr>
               <tr className="font-bold">
                 <td className="py-3">{t('movements.netIncome')}</td>
-                <td className="py-3 text-right">{formatCurrency(summary.propFirmNetIncome)}</td>
+                <td className="py-3 text-right">{formatCurrency(propFirmNetIncomeDisplay)}</td>
               </tr>
             </tbody>
           </table>

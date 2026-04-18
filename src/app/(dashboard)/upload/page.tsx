@@ -730,7 +730,12 @@ export default function UploadPage() {
       try {
         const updated = withdrawals.map(w => w.id === id ? { ...w, amount } : w);
         setWithdrawalsRaw(updated);
-        await upsertWithdrawals(company.id, selectedPeriodRef.current, updated);
+        // Combine fixed withdrawals with extras so upsert (delete+reinsert) doesn't wipe extras
+        const combined = [
+          ...updated.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
+          ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
+        ];
+        await upsertWithdrawals(company.id, selectedPeriodRef.current, combined);
 
         await refresh();
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
