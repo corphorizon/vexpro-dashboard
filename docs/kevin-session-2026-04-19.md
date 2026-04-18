@@ -41,6 +41,12 @@ Auditoría completa del módulo **Finanzas** con corrección de 6 bugs críticos
 - `supabase/migration-020-liquidity-profit.sql` — agrega columna opcional `profit NUMERIC(14,2) DEFAULT 0` a `liquidity_movements`.
 - **NO la apliqué en Supabase**, queda lista para cuando Kevin decida activar el tracking de profit por movimiento de liquidez. Hoy la StatCard "Profit" de `/liquidez` calcula `Ingreso − Salida` client-side y funciona sin la columna.
 
+### 7. `package.json` — heap de Node ampliado
+- `npm run dev` y `npm run build` ahora arrancan con `NODE_OPTIONS='--max-old-space-size=4096'`.
+- **Motivo**: el dev server se estaba crasheando con `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory` al compilar con Turbopack (Next.js 16) por la cantidad de rutas y dependencias del proyecto. Node por default usa ~2 GB de heap; 4 GB elimina el problema.
+- **Impacto para ti**: ninguna acción. Solo sigue usando `npm run dev` / `npm run build` como siempre.
+- En CI/Vercel no cambia nada porque Vercel ya usa heap generoso en sus builders. El flag local está escrito de forma cross-platform (sh-compatible) — si compilas en Windows puro puedes necesitar `cross-env`, pero macOS/Linux/WSL funcionan sin setup adicional.
+
 ---
 
 ## 🔴 Bugs críticos corregidos (6)
@@ -164,7 +170,7 @@ src/lib/api-integrations/broker-crm.ts
 supabase/migration-020-liquidity-profit.sql
 ```
 
-### Modificados (13)
+### Modificados (14)
 ```
 src/app/(dashboard)/balances/page.tsx
 src/app/(dashboard)/egresos/page.tsx
@@ -180,6 +186,7 @@ src/components/ui/stat-card.tsx
 src/lib/data-context.tsx
 src/lib/i18n.tsx
 src/lib/supabase/mutations.ts
+package.json
 ```
 
 ---
