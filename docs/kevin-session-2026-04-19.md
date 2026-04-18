@@ -42,8 +42,8 @@ Auditoría completa del módulo **Finanzas** con corrección de 6 bugs críticos
 - **NO la apliqué en Supabase**, queda lista para cuando Kevin decida activar el tracking de profit por movimiento de liquidez. Hoy la StatCard "Profit" de `/liquidez` calcula `Ingreso − Salida` client-side y funciona sin la columna.
 
 ### 7. `package.json` — heap de Node ampliado
-- `npm run dev` y `npm run build` ahora arrancan con `NODE_OPTIONS='--max-old-space-size=4096'`.
-- **Motivo**: el dev server se estaba crasheando con `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory` al compilar con Turbopack (Next.js 16) por la cantidad de rutas y dependencias del proyecto. Node por default usa ~2 GB de heap; 4 GB elimina el problema.
+- `npm run dev` y `npm run build` ahora arrancan con `NODE_OPTIONS='--max-old-space-size=8192'`.
+- **Motivo**: el dev server se estaba crasheando con `FATAL ERROR: Ineffective mark-compacts near heap limit — JavaScript heap out of memory` al compilar con Turbopack (Next.js 16) después de varios ciclos de HMR. Node por default usa ~2 GB de heap; 4 GB tampoco fue suficiente con el tamaño actual del proyecto, así que quedó en 8 GB.
 - **Impacto para ti**: ninguna acción. Solo sigue usando `npm run dev` / `npm run build` como siempre.
 - En CI/Vercel no cambia nada porque Vercel ya usa heap generoso en sus builders. El flag local está escrito de forma cross-platform (sh-compatible) — si compilas en Windows puro puedes necesitar `cross-env`, pero macOS/Linux/WSL funcionan sin setup adicional.
 
