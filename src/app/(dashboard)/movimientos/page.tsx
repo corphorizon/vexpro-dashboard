@@ -2,19 +2,19 @@
 
 import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
+import { StatCard } from '@/components/ui/stat-card';
 import { MovimientosPeriodSelector } from '@/components/movimientos-period-selector';
 import {
   RealTimeMovementsBanner,
-  useApiTotals,
   DEFAULT_WALLET_ID,
 } from '@/components/realtime-movements-banner';
-import {
-  allPeriodsUseDerivedBroker,
-  computeDerivedBroker,
-} from '@/lib/broker-logic';
+import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { useBrokerCrmTotals } from '@/lib/api-integrations/broker-crm';
 import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { InfoTip } from '@/components/ui/info-tip';
+import { GLOSSARY } from '@/lib/glossary';
+import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -63,30 +63,6 @@ export default function MovimientosPage() {
     return periods.filter((p) => ids.includes(p.id));
   }, [mode, selectedPeriodId, selectedPeriodIds, periods]);
 
-  const useDerivedBroker = useMemo(
-    () => allPeriodsUseDerivedBroker(activePeriods),
-    [activePeriods]
-  );
-
-  // Date range to ask the API for Coinsbuy withdrawals. Spans from the first
-  // day of the earliest active period to the last day of the latest.
-  const { apiFrom, apiTo } = useMemo(() => {
-    if (!useDerivedBroker || activePeriods.length === 0) {
-      return { apiFrom: '', apiTo: '' };
-    }
-    const sorted = [...activePeriods].sort(
-      (a, b) => a.year - b.year || a.month - b.month
-    );
-    const first = sorted[0];
-    const last = sorted[sorted.length - 1];
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const lastDay = new Date(last.year, last.month, 0).getDate();
-    return {
-      apiFrom: `${first.year}-${pad(first.month)}-01`,
-      apiTo: `${last.year}-${pad(last.month)}-${pad(lastDay)}`,
-    };
-  }, [useDerivedBroker, activePeriods]);
-
   // Keep the Coinsbuy wallet id in page-level state so the banner AND the
   // "Depósitos" table below both filter by the same wallet (prevents the
   // card total ≠ table row total bug).
@@ -94,7 +70,10 @@ export default function MovimientosPage() {
   // Bumped by the banner after a live sync finishes — forces useApiTotals to
   // re-read from the persisted cache so the tables reflect the fresh data.
   const [apiRefreshKey, setApiRefreshKey] = useState(0);
-  const apiTotals = useApiTotals(apiFrom, apiTo, coinsbuyWalletId, apiRefreshKey);
+
+  // Centralized API + manual coexistence (same hook feeds /resumen-general).
+  const coexist = useApiCoexistence(activePeriods, coinsbuyWalletId, apiRefreshKey);
+  const { useDerivedBroker, apiFrom, apiTo } = coexist;
   // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0
   // until the CRM endpoint exists), but wired so the display already sums
   // apiValue + manualValue with zero migration work when the API lands.
@@ -172,12 +151,8 @@ export default function MovimientosPage() {
   const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0;
   const otherDeposits = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
 
-  // API amounts (0 when not a derived-logic period or when the API cache is
-  // empty). These are whatever `api_transactions` holds for the active
-  // period's date range.
-  const apiCoinsbuy = useDerivedBroker ? apiTotals.by['coinsbuy-deposits'] ?? 0 : 0;
-  const apiFairpay = useDerivedBroker ? apiTotals.by['fairpay'] ?? 0 : 0;
-  const apiUnipayment = useDerivedBroker ? apiTotals.by['unipayment'] ?? 0 : 0;
+  // API amounts from the shared coexistence hook (0 for historical periods).
+  const { apiCoinsbuy, apiFairpay, apiUnipayment } = coexist;
 
   // Per-channel totals shown in the table rows.
   const coinsbuyDisplay = apiCoinsbuy + manualCoinsbuy;
@@ -196,19 +171,16 @@ export default function MovimientosPage() {
 
   // "Retiros Totales (API)" tracks the real Coinsbuy-side outflow. For
   // historical periods it reduces to the stored broker value.
-  const apiWithdrawalsTotal = useDerivedBroker ? apiTotals.withdrawalsTotal : storedBroker;
+  const apiWithdrawalsTotal = useDerivedBroker ? coexist.apiWithdrawalsTotal : storedBroker;
 
   // Broker display = API-derived amount + any manual override the user
   // typed in Carga de Datos. They coexist; the user can use the manual
   // column to reflect adjustments the API doesn't know about.
-  const derivedBrokerFromApi = useDerivedBroker
-    ? computeDerivedBroker({
-        apiWithdrawalsTotal,
-        ibCommissions,
-        propFirm: propFirmWithdrawal,
-        other: otherWithdrawal,
-      })
-    : 0;
+  const derivedBrokerFromApi = coexist.derivedBrokerFromApi(
+    ibCommissions,
+    propFirmWithdrawal,
+    otherWithdrawal,
+  );
   const brokerDisplay = useDerivedBroker ? derivedBrokerFromApi + storedBroker : storedBroker;
 
   // ─── Broker CRM coexistence (Prop Firm sales + P2P) ───
@@ -234,6 +206,10 @@ export default function MovimientosPage() {
   // prop-firm sales (which are their own bucket). For historical periods we
   // keep the legacy stored value so nothing moves retroactively.
 
+  // Depósitos Broker = Depósitos Totales (API) − Prop Firm Sales (API + manual).
+  // La resta incluye tanto la parte reportada por la API como el manual que el
+  // usuario haya cargado en /upload, de modo que el valor refleje la realidad
+  // completa de ventas Prop Firm, no solo lo que vino por integración.
   const brokerDepositsDisplay = useDerivedBroker
     ? Math.max(0, apiDepositsTotal - propFirmSalesDisplay)
     : summary.brokerDeposits;
@@ -257,14 +233,17 @@ export default function MovimientosPage() {
         subtitle={t('movements.subtitle')}
         icon={ArrowLeftRight}
         actions={
-          <button
-            onClick={handleExport}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-            title={t('common.csv')}
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('common.csv')}</span>
-          </button>
+          <>
+            <ConsolidatedBadge count={mode === 'consolidated' ? activePeriods.length : 1} />
+            <button
+              onClick={handleExport}
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+              title={t('common.csv')}
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">{t('common.csv')}</span>
+            </button>
+          </>
         }
       />
 
@@ -289,91 +268,27 @@ export default function MovimientosPage() {
 
       {/* ─── Summary cards: Depósitos / Retiros / Net Deposit ─── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Depósitos Totales */}
-        <Card className="border-blue-200/60 dark:border-blue-900/60 bg-gradient-to-br from-blue-50/60 to-transparent dark:from-blue-950/20">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Depósitos Totales
-              </p>
-              <p className="text-2xl font-bold text-blue-600 dark:text-blue-400 mt-1 truncate">
-                {formatCurrency(displayTotalDeposits)}
-              </p>
-              {/* Deposits are unchanged by broker logic — they are always the
-                  stored/summary value for both historical and new periods. */}
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Período seleccionado
-              </p>
-            </div>
-            <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-950/40 flex-shrink-0">
-              <ArrowDownCircle className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            </div>
-          </div>
-        </Card>
-
-        {/* Retiros Totales */}
-        <Card className="border-red-200/60 dark:border-red-900/60 bg-gradient-to-br from-red-50/60 to-transparent dark:from-red-950/20">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Retiros Totales
-              </p>
-              <p className="text-2xl font-bold text-red-600 dark:text-red-400 mt-1 truncate">
-                {formatCurrency(displayTotalWithdrawals)}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Período seleccionado
-              </p>
-            </div>
-            <div className="p-2 rounded-lg bg-red-100 dark:bg-red-950/40 flex-shrink-0">
-              <ArrowUpCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
-            </div>
-          </div>
-        </Card>
-
-        {/* Net Deposit */}
-        <Card
-          className={`bg-gradient-to-br to-transparent ${
-            displayNetDeposit >= 0
-              ? 'border-emerald-200/60 dark:border-emerald-900/60 from-emerald-50/60 dark:from-emerald-950/20'
-              : 'border-red-200/60 dark:border-red-900/60 from-red-50/60 dark:from-red-950/20'
-          }`}
-        >
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Net Deposit
-              </p>
-              <p
-                className={`text-2xl font-bold mt-1 truncate ${
-                  displayNetDeposit >= 0
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-red-600 dark:text-red-400'
-                }`}
-              >
-                {formatCurrency(displayNetDeposit)}
-              </p>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                Depósitos − Retiros
-              </p>
-            </div>
-            <div
-              className={`p-2 rounded-lg flex-shrink-0 ${
-                displayNetDeposit >= 0
-                  ? 'bg-emerald-100 dark:bg-emerald-950/40'
-                  : 'bg-red-100 dark:bg-red-950/40'
-              }`}
-            >
-              <Wallet
-                className={`w-5 h-5 ${
-                  displayNetDeposit >= 0
-                    ? 'text-emerald-600 dark:text-emerald-400'
-                    : 'text-red-600 dark:text-red-400'
-                }`}
-              />
-            </div>
-          </div>
-        </Card>
+        <StatCard
+          label="Depósitos Totales"
+          value={formatCurrency(displayTotalDeposits)}
+          hint="Período seleccionado"
+          icon={ArrowDownCircle}
+          tone="info"
+        />
+        <StatCard
+          label="Retiros Totales"
+          value={formatCurrency(displayTotalWithdrawals)}
+          hint="Período seleccionado"
+          icon={ArrowUpCircle}
+          tone="negative"
+        />
+        <StatCard
+          label={<>Depósito Neto <InfoTip text={GLOSSARY.netDeposit} /></>}
+          value={formatCurrency(displayNetDeposit)}
+          hint="Depósitos − Retiros"
+          icon={Wallet}
+          tone={displayNetDeposit >= 0 ? 'positive' : 'negative'}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -405,7 +320,7 @@ export default function MovimientosPage() {
                 };
                 const apiSlug = API_SLUG_MAP[d.channel];
                 const apiAmount = useDerivedBroker && apiSlug
-                  ? apiTotals.by[apiSlug] ?? 0
+                  ? coexist.apiTotalsBy[apiSlug] ?? 0
                   : 0;
                 const manualAmount = d.amount;
                 const displayAmount = apiAmount + manualAmount;
@@ -448,12 +363,20 @@ export default function MovimientosPage() {
                 </td>
               </tr>
               <tr className="text-muted-foreground">
-                <td className="py-1">{t('movements.propFirmSales')}</td>
+                <td className="py-1">
+                  <span className="inline-flex items-center gap-1.5">
+                    {t('movements.propFirmSales')}
+                    <InfoTip text={GLOSSARY.propFirm} />
+                  </span>
+                </td>
                 <td className="py-1 text-right">{formatCurrency(propFirmSalesDisplay)}</td>
               </tr>
               <tr className="text-muted-foreground">
                 <td className="py-1">
-                  {t('movements.brokerDeposits')}
+                  <span className="inline-flex items-center gap-1.5">
+                    {t('movements.brokerDeposits')}
+                    <InfoTip text={GLOSSARY.brokerDeposits} />
+                  </span>
                   {useDerivedBroker && (
                     <span className="ml-2 text-[10px] text-muted-foreground/80 uppercase tracking-wide">
                       total api − prop firm
@@ -603,7 +526,12 @@ export default function MovimientosPage() {
           <table className="w-full text-sm">
             <tbody>
               <tr className="border-b border-border/50">
-                <td className="py-2.5">Broker P&L (Libro B)</td>
+                <td className="py-2.5">
+                  <span className="inline-flex items-center gap-1.5">
+                    Broker P&L (Libro B)
+                    <InfoTip text={GLOSSARY.libroB} />
+                  </span>
+                </td>
                 <td className="py-2.5 text-right font-medium">
                   {formatCurrency(summary.operatingIncome?.broker_pnl || 0)}
                 </td>

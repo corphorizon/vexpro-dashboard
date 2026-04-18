@@ -310,13 +310,15 @@ export async function upsertOperatingIncome(
   periodId: string,
   income: { prop_firm: number; broker_pnl: number; other: number }
 ): Promise<void> {
-  // Check if row exists
+  // Check if row exists. `maybeSingle()` returns null without erroring when
+  // there's no match — `single()` would raise PGRST116 on an empty table and
+  // the swallowed error path made first-time saves flaky.
   const { data: existing } = await supabase
     .from('operating_income')
     .select('id')
     .eq('company_id', companyId)
     .eq('period_id', periodId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     const { error } = await supabase
@@ -435,7 +437,7 @@ export async function upsertPropFirmSales(
     .select('id')
     .eq('company_id', companyId)
     .eq('period_id', periodId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     const { error } = await supabase
@@ -463,7 +465,7 @@ export async function upsertP2PTransfers(
     .select('id')
     .eq('company_id', companyId)
     .eq('period_id', periodId)
-    .single();
+    .maybeSingle();
 
   if (existing) {
     const { error } = await supabase

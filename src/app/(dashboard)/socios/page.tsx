@@ -2,6 +2,9 @@
 
 import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
+import { StatCard } from '@/components/ui/stat-card';
+import { InfoTip } from '@/components/ui/info-tip';
+import { GLOSSARY } from '@/lib/glossary';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
@@ -10,6 +13,7 @@ import { useExport2FA } from '@/components/verify-2fa-modal';
 import { formatCurrency, formatPercent } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
+import { useConfirm } from '@/lib/use-confirm';
 import {
   createPartner,
   updatePartner,
@@ -41,7 +45,9 @@ export default function SociosPage() {
   const [saving, setSaving] = useState(false);
   const [successMsg, setSuccessMsg] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
-  const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
+  // `deleteConfirm` kept for legacy pattern compatibility in the two rows that
+  // still reference it (they open the shared useConfirm modal via setter).
+  const { confirm, Modal: ConfirmModal } = useConfirm();
 
   // ─── Reserve edit state ───
   const [showReserveEdit, setShowReserveEdit] = useState(false);
@@ -173,13 +179,28 @@ export default function SociosPage() {
       })()
     : partnerDistributions.filter(d => d.period_id === selectedPeriodId);
 
-  // Recalculate distribution amounts — no distribution in negative/debt months
+  // Recalculate distribution amounts so the displayed number always reflects
+  // the CURRENT `reserve_pct` and the CURRENT partner percentages, not the
+  // stale `amount` column persisted by earlier sessions.
+  //
+  //  - Single period: amount = montoDistribuir(period) × partner.percentage
+  //  - Consolidated:  amount = Σ over selected periods of
+  //                              montoDistribuir(period_i) × partner.percentage
+  //
+  // This keeps historical consolidated months (Mar-2026 and older) coherent
+  // with single-period views without rewriting the stored rows.
   const effectiveDistributions = mode === 'single'
     ? distributions.map(d => ({
         ...d,
         amount: totalToDistribute > 0 ? totalToDistribute * d.percentage : 0,
       }))
-    : distributions;
+    : distributions.map(d => {
+        const recomputed = selectedPeriodIds.reduce((sum, pid) => {
+          const md = periodChain.get(pid)?.montoDistribuir ?? 0;
+          return sum + (md > 0 ? md * d.percentage : 0);
+        }, 0);
+        return { ...d, amount: recomputed };
+      });
 
   const totalDistributed = effectiveDistributions.reduce((sum, d) => sum + d.amount, 0);
   const totalPercentage = effectiveDistributions.reduce((sum, d) => sum + d.percentage, 0);
@@ -269,7 +290,6 @@ export default function SociosPage() {
       await deletePartner(id);
       await refresh();
       showSuccess(t('partners.deleted'));
-      setDeleteConfirm(null);
     } catch (err) {
       showError(err instanceof Error ? err.message : 'Error');
     } finally {
@@ -358,45 +378,28 @@ export default function SociosPage() {
       {/* Summary cards */}
       {/* Row 1: Ingresos, Egresos, Saldo a Favor */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
-              <Users className="w-5 h-5 text-violet-500" />
-            </div>
-            <p className="text-sm text-muted-foreground">{t('partners.netIncome')}</p>
-          </div>
-          <p className={`text-2xl font-bold ${ingresosNetos >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-            {formatCurrency(ingresosNetos)}
-          </p>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
-              <TrendingDown className="w-5 h-5 text-red-500" />
-            </div>
-            <p className="text-sm text-muted-foreground">{t('partners.egresosNetos')}</p>
-          </div>
-          <p className="text-2xl font-bold text-red-600">
-            {formatCurrency(egresosNetos)}
-          </p>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
-              <Wallet className="w-5 h-5 text-amber-500" />
-            </div>
-            <p className="text-sm text-muted-foreground">{t('partners.saldoFavor')}</p>
-          </div>
-          <p className={`text-2xl font-bold ${saldoAFavor >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-            {formatCurrency(saldoAFavor)}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">Ingresos Netos - Egresos Netos</p>
-        </Card>
+        <StatCard
+          label={t('partners.netIncome')}
+          value={formatCurrency(ingresosNetos)}
+          icon={Users}
+          tone={ingresosNetos >= 0 ? 'positive' : 'negative'}
+        />
+        <StatCard
+          label={t('partners.egresosNetos')}
+          value={formatCurrency(egresosNetos)}
+          icon={TrendingDown}
+          tone="negative"
+        />
+        <StatCard
+          label={<>{t('partners.saldoFavor')} <InfoTip text={GLOSSARY.netoOperativo} /></>}
+          value={formatCurrency(saldoAFavor)}
+          icon={Wallet}
+          tone={saldoAFavor >= 0 ? 'positive' : 'negative'}
+          hint="Ingresos Operativos − Egresos Operativos"
+        />
       </div>
 
-      {/* Row 2: Respaldo, Respaldo Acumulado, Deuda Arrastrada (if any) */}
+      {/* Row 2: Reserva del Período, Reserva Acumulada, Deuda Arrastrada (if any) */}
       <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${carryDebt > 0 ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
         <Card>
           <div className="flex items-center justify-between mb-2">
@@ -404,7 +407,10 @@ export default function SociosPage() {
               <div className="p-2 rounded-lg bg-orange-50 dark:bg-orange-950/50">
                 <Shield className="w-5 h-5 text-orange-500" />
               </div>
-              <p className="text-sm text-muted-foreground">{t('partners.reserveThisPeriod')}</p>
+              <p className="text-sm text-muted-foreground inline-flex items-center gap-1.5">
+                {t('partners.reserveThisPeriod')}
+                <InfoTip text={GLOSSARY.reserve} />
+              </p>
             </div>
             {isAdmin && mode === 'single' && (
               <button
@@ -420,50 +426,39 @@ export default function SociosPage() {
           <p className="text-xs text-muted-foreground mt-1">
             {reserveThisPeriod > 0
               ? `${(RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
-              : saldoAFavor <= 0 ? 'Mes negativo — sin respaldo' : 'Cubriendo deuda arrastrada'}
+              : saldoAFavor <= 0 ? 'Mes negativo — sin reserva' : 'Cubriendo deuda arrastrada'}
           </p>
         </Card>
 
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
-              <PiggyBank className="w-5 h-5 text-amber-600" />
-            </div>
-            <p className="text-sm text-muted-foreground">{t('partners.reserveAccumulated')}</p>
-          </div>
-          <p className="text-2xl font-bold text-amber-600">{formatCurrency(accumulatedReserve)}</p>
-          <p className="text-xs text-muted-foreground mt-1">Fondo acumulado hasta este período</p>
-        </Card>
+        <StatCard
+          label={t('partners.reserveAccumulated')}
+          value={formatCurrency(accumulatedReserve)}
+          icon={PiggyBank}
+          tone="warning"
+          hint="Fondo acumulado hasta este período"
+        />
 
         {carryDebt > 0 && (
-          <Card>
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
-                <AlertTriangle className="w-5 h-5 text-red-500" />
-              </div>
-              <p className="text-sm text-muted-foreground">Deuda Arrastrada</p>
-            </div>
-            <p className="text-2xl font-bold text-red-600">{formatCurrency(-carryDebt)}</p>
-            <p className="text-xs text-muted-foreground mt-1">Se descuenta antes de distribuir</p>
-          </Card>
+          <StatCard
+            label={<>Deuda Arrastrada <InfoTip text={GLOSSARY.deudaArrastrada} /></>}
+            value={formatCurrency(-carryDebt)}
+            icon={AlertTriangle}
+            tone="negative"
+            hint="Se descuenta antes de distribuir"
+          />
         )}
 
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
-              <Users className="w-5 h-5 text-emerald-500" />
-            </div>
-            <p className="text-sm text-muted-foreground">{t('partners.distributableAmount')}</p>
-          </div>
-          <p className={`text-2xl font-bold ${totalToDistribute > 0 ? 'text-emerald-600' : 'text-muted-foreground'}`}>
-            {formatCurrency(totalToDistribute)}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {totalToDistribute > 0
+        <StatCard
+          label={<>{t('partners.distributableAmount')} <InfoTip text={GLOSSARY.montoDistribuir} /></>}
+          value={formatCurrency(totalToDistribute)}
+          icon={Users}
+          tone={totalToDistribute > 0 ? 'positive' : 'neutral'}
+          hint={
+            totalToDistribute > 0
               ? `${(100 - RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
-              : 'Sin distribución este período'}
-          </p>
-        </Card>
+              : 'Sin distribución este período'
+          }
+        />
       </div>
 
       {/* Distribution */}
@@ -526,7 +521,11 @@ export default function SociosPage() {
                             <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                           </button>
                           <button
-                            onClick={() => setDeleteConfirm({ id: dist.partner_id, name: partner?.name || '' })}
+                            onClick={() => confirm(
+                              t('partners.deleteConfirm', { name: partner?.name || '' }),
+                              () => handleDeletePartner(dist.partner_id),
+                              { tone: 'danger', title: t('partners.deletePartner'), confirmLabel: t('partners.deletePartner') },
+                            )}
                             className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
                             title={t('partners.deletePartner')}
                           >
@@ -570,7 +569,11 @@ export default function SociosPage() {
                             <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                           </button>
                           <button
-                            onClick={() => setDeleteConfirm({ id: partner.id, name: partner.name })}
+                            onClick={() => confirm(
+                              t('partners.deleteConfirm', { name: partner.name }),
+                              () => handleDeletePartner(partner.id),
+                              { tone: 'danger', title: t('partners.deletePartner'), confirmLabel: t('partners.deletePartner') },
+                            )}
                             className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
                             title={t('partners.deletePartner')}
                           >
@@ -700,7 +703,8 @@ export default function SociosPage() {
                     <td className="py-2 px-2 text-right">
                       {formatCurrency(periods.reduce((sum, period) => {
                         const pChain = periodChain.get(period.id);
-                        return sum + (pChain?.montoDistribuir ?? 0 > 0 ? pChain?.montoDistribuir ?? 0 : 0);
+                        const md = pChain?.montoDistribuir ?? 0;
+                        return sum + (md > 0 ? md : 0);
                       }, 0))}
                     </td>
                   </tr>
@@ -787,32 +791,7 @@ export default function SociosPage() {
         </div>
       )}
 
-      {/* ─── Delete Confirmation Modal ─── */}
-      {deleteConfirm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-xl shadow-xl p-6 max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-2">{t('partners.deletePartner')}</h3>
-            <p className="text-sm text-muted-foreground mb-6">
-              {t('partners.deleteConfirm', { name: deleteConfirm.name })}
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setDeleteConfirm(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('partners.cancel')}
-              </button>
-              <button
-                onClick={() => handleDeletePartner(deleteConfirm.id)}
-                disabled={saving}
-                className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 disabled:opacity-50 transition-colors"
-              >
-                {saving ? 'Eliminando...' : t('partners.deletePartner')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {ConfirmModal}
 
       {/* ─── Reserve Edit Modal ─── */}
       {showReserveEdit && (
@@ -826,7 +805,7 @@ export default function SociosPage() {
             </div>
 
             <div className="mb-4">
-              <label className="block text-sm font-medium mb-1">% Respaldo</label>
+              <label className="block text-sm font-medium mb-1">% Reserva</label>
               <div className="flex items-center gap-2">
                 <input
                   type="number"

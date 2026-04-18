@@ -303,11 +303,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
     loadAllData();
   }, [loadAllData]);
 
-  // ─── Saldo start period: March 2026 (year=2026, month=3) ───
-
-  // Saldo chain applies from the first period onwards (all periods)
+  // ─── Saldo chain start ───
+  //
+  // Historical behavior: the saldo chain starts at the FIRST period in the
+  // list. Data up to March 2026 has already been manually reconciled and is
+  // considered immutable — touching `saldoStartIndex` would re-chain those
+  // months with today's formulas and drift away from the consolidated
+  // numbers, so we intentionally leave the start at index 0.
+  //
+  // If in the future you want to cut the chain off (for a fresh epoch),
+  // change `SALDO_START_YM` below to the YYYY-MM of the new starting period
+  // — the effect is that earlier periods stop contributing to the chain.
+  const SALDO_START_YM = null as string | null; // e.g. '2026-03' to cut over
   const saldoStartIndex = useMemo(() => {
-    return periods.length > 0 ? 0 : -1;
+    if (periods.length === 0) return -1;
+    const cutoff: string | null = SALDO_START_YM;
+    if (!cutoff) return 0;
+    const idx = periods.findIndex(p => {
+      const ym = `${p.year}-${String(p.month).padStart(2, '0')}`;
+      return ym >= cutoff;
+    });
+    return idx >= 0 ? idx : 0;
   }, [periods]);
 
   const isPeriodAfterSaldoStart = useCallback(

@@ -3,6 +3,9 @@
 import { useMemo } from 'react';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
+import { InfoTip } from '@/components/ui/info-tip';
+import { GLOSSARY } from '@/lib/glossary';
+import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { PeriodSelector } from '@/components/period-selector';
 import { MonthlyChart } from '@/components/charts/monthly-chart';
 import { usePeriod } from '@/lib/period-context';
@@ -13,8 +16,7 @@ import { downloadExcel, downloadPDF } from '@/lib/export-utils';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
-import { useApiTotals, DEFAULT_WALLET_ID } from '@/components/realtime-movements-banner';
-import { allPeriodsUseDerivedBroker, computeDerivedBroker } from '@/lib/broker-logic';
+import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -40,32 +42,34 @@ export default function ResumenPage() {
     ? getConsolidatedSummary(selectedPeriodIds)
     : getPeriodSummary(selectedPeriodId);
 
-  // Mirror the consolidation logic from /movimientos so both pages show the
-  // SAME numbers for any given period. For "new broker" periods (April 2026+)
-  // we blend live/persisted API data with manual "other" entries.
+  // Single source of truth for the API + manual coexistence block. Same
+  // hook feeds /movimientos so both pages can't drift.
   const activePeriods = useMemo(() => {
     const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
     return periods.filter((p) => ids.includes(p.id));
   }, [mode, selectedPeriodId, selectedPeriodIds, periods]);
-  const useDerivedBroker = useMemo(
-    () => allPeriodsUseDerivedBroker(activePeriods),
-    [activePeriods],
-  );
-  const { apiFrom, apiTo } = useMemo(() => {
-    if (!useDerivedBroker || activePeriods.length === 0) return { apiFrom: '', apiTo: '' };
-    const sorted = [...activePeriods].sort((a, b) => a.year - b.year || a.month - b.month);
-    const first = sorted[0];
-    const last = sorted[sorted.length - 1];
-    const pad = (n: number) => String(n).padStart(2, '0');
-    const lastDay = new Date(last.year, last.month, 0).getDate();
-    return {
-      apiFrom: `${first.year}-${pad(first.month)}-01`,
-      apiTo: `${last.year}-${pad(last.month)}-${pad(lastDay)}`,
-    };
-  }, [useDerivedBroker, activePeriods]);
-  const apiTotals = useApiTotals(apiFrom, apiTo, DEFAULT_WALLET_ID);
+  const coexist = useApiCoexistence(activePeriods);
+  const useDerivedBroker = coexist.useDerivedBroker;
 
-  if (!summary) return null;
+  // Skeleton while the data-context hasn't produced a summary yet. A blank
+  // page mid-load (what used to show) felt like the app was broken.
+  if (!summary) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="h-8 w-56 bg-muted rounded" />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-28 rounded-xl bg-muted/60" />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="h-48 rounded-xl bg-muted/60" />
+          <div className="h-48 rounded-xl bg-muted/60" />
+        </div>
+        <div className="h-64 rounded-xl bg-muted/60" />
+      </div>
+    );
+  }
 
   // ─── Consolidation: API + manual coexist ───
   // Same formula Movimientos uses. Every channel/category sums both sources
@@ -77,15 +81,8 @@ export default function ResumenPage() {
   const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0;
   const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
 
-  const apiCoinsbuy = useDerivedBroker ? apiTotals.by['coinsbuy-deposits'] ?? 0 : 0;
-  const apiFairpay = useDerivedBroker ? apiTotals.by['fairpay'] ?? 0 : 0;
-  const apiUnipayment = useDerivedBroker ? apiTotals.by['unipayment'] ?? 0 : 0;
-
   const consolidatedDeposits = useDerivedBroker
-    ? (apiCoinsbuy + manualCoinsbuy) +
-      (apiFairpay + manualFairpay) +
-      (apiUnipayment + manualUnipayment) +
-      storedOther
+    ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
     : summary.totalDeposits;
 
   // Withdrawals: broker = derived-from-API + manual, others are manual-only.
@@ -93,14 +90,11 @@ export default function ResumenPage() {
   const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
   const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
   const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-  const derivedBrokerFromApi = useDerivedBroker
-    ? computeDerivedBroker({
-        apiWithdrawalsTotal: apiTotals.withdrawalsTotal,
-        ibCommissions,
-        propFirm: propFirmWithdrawal,
-        other: otherWithdrawal,
-      })
-    : 0;
+  const derivedBrokerFromApi = coexist.derivedBrokerFromApi(
+    ibCommissions,
+    propFirmWithdrawal,
+    otherWithdrawal,
+  );
   const brokerConsolidated = useDerivedBroker
     ? derivedBrokerFromApi + storedBroker
     : storedBroker;
@@ -153,6 +147,7 @@ export default function ResumenPage() {
         icon={BarChart3}
         actions={
           <>
+            <ConsolidatedBadge count={mode === 'consolidated' ? activePeriods.length : 1} />
             <button
               onClick={handleExport}
               className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
@@ -217,7 +212,10 @@ export default function ResumenPage() {
             <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
               <DollarSign className="w-5 h-5 text-emerald-500" />
             </div>
-            <CardTitle>{t('summary.netDeposit')}</CardTitle>
+            <CardTitle className="inline-flex items-center gap-1.5">
+              {t('summary.netDeposit')}
+              <InfoTip text={GLOSSARY.netDeposit} />
+            </CardTitle>
           </div>
           <CardValue positive={consolidatedNetDeposit > 0} negative={consolidatedNetDeposit < 0}>
             {formatCurrency(consolidatedNetDeposit)}
@@ -268,7 +266,10 @@ export default function ResumenPage() {
             <div className="p-2 rounded-lg bg-sky-50 dark:bg-sky-950/50">
               <Wallet className="w-5 h-5 text-sky-500" />
             </div>
-            <CardTitle>{t('summary.balance')}</CardTitle>
+            <CardTitle className="inline-flex items-center gap-1.5">
+              {t('summary.balance')}
+              <InfoTip text={GLOSSARY.netoOperativo} />
+            </CardTitle>
           </div>
           <CardValue positive={balanceDisponible > 0} negative={balanceDisponible < 0}>
             {formatCurrency(balanceDisponible)}

@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
+import { StatCard } from '@/components/ui/stat-card';
 import { Badge } from '@/components/ui/badge';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
@@ -12,6 +13,10 @@ import { formatCurrency } from '@/lib/utils';
 import type { Expense } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
+import { upsertExpenses } from '@/lib/supabase/mutations';
+import { logAction } from '@/lib/audit-log';
+import { useConfirm } from '@/lib/use-confirm';
+import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download, Receipt } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 
@@ -28,7 +33,7 @@ export default function EgresosPage() {
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
-  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, allExpenses } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, company, refresh } = useData();
   const userCanEdit = canEdit(user);
   const userCanDelete = canDelete(user);
 
@@ -45,8 +50,9 @@ export default function EgresosPage() {
 
   // Add expense removed — expenses loaded via "Carga de Datos"
 
-  // Confirmation dialog
-  const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  // Shared confirmation dialog — replaces the inline modal + askConfirmation
+  // helper. Same semantics, centralized styling.
+  const { confirm, Modal: ConfirmModal } = useConfirm();
 
   // Success message
   const [successMsg, setSuccessMsg] = useState('');
@@ -54,10 +60,6 @@ export default function EgresosPage() {
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(''), 3000);
-  };
-
-  const askConfirmation = (message: string, onConfirm: () => void) => {
-    setConfirmAction({ message, onConfirm });
   };
 
   // Get summary based on period mode
@@ -115,17 +117,50 @@ export default function EgresosPage() {
 
   // Sort icon now extracted as top-level component
 
-  // --- Helpers to mutate expenses ---
-  const updateExpensesList = (updater: (prev: Expense[]) => Expense[]) => {
-    setExpensesOverrides(prev => ({
-      ...prev,
-      [periodKey]: updater(prev[periodKey] || currentExpenses),
-    }));
+  // Error banner (red) — kept separate from the success (green) one so the
+  // user knows at a glance whether a save worked.
+  const [errorMsg, setErrorMsg] = useState('');
+  const [saving, setSaving] = useState(false);
+  const showError = (msg: string) => {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(''), 4500);
+  };
+
+  // Editing mutations ONLY make sense for a single period. In consolidated
+  // mode we don't know which period the edit belongs to, so we disable the
+  // actions in the UI (see `editingDisabled` below).
+  const editingDisabled = mode === 'consolidated';
+
+  // Persist `nextList` to Supabase. We run the delete+reinsert helper and
+  // then call `refresh()` so the data-context reloads.
+  const persistExpenses = async (nextList: Expense[]) => {
+    if (!company || !selectedPeriodId) return;
+    setSaving(true);
+    try {
+      await upsertExpenses(company.id, selectedPeriodId, nextList.map(e => ({
+        concept: e.concept,
+        amount: e.amount,
+        paid: e.paid,
+        pending: e.pending,
+        is_fixed: !!e.is_fixed,
+        category: e.category ?? null,
+      })));
+      // Clear the optimistic override — next read pulls from the refreshed
+      // data-context so we never show stale numbers.
+      setExpensesOverrides(prev => {
+        const next = { ...prev };
+        delete next[periodKey];
+        return next;
+      });
+      await refresh();
+    } finally {
+      setSaving(false);
+    }
   };
 
   // --- Edit expense ---
   const startEdit = (expense: Expense) => {
-    if (!userCanEdit) return;
+    if (!userCanEdit || editingDisabled) return;
     setEditingId(expense.id);
     setEditForm({
       concept: expense.concept,
@@ -135,21 +170,31 @@ export default function EgresosPage() {
     });
   };
 
-  const saveEdit = () => {
+  const saveEdit = async () => {
     if (!editingId) return;
-    const amt = parseFloat(editForm.amount) || 0;
-    const pd = parseFloat(editForm.paid) || 0;
-    const pn = parseFloat(editForm.pending) || amt - pd;
-    askConfirmation(t('expenses.updateConfirm', { concept: editForm.concept }), () => {
-      updateExpensesList(prev =>
-        prev.map(e => e.id === editingId
-          ? { ...e, concept: editForm.concept, amount: amt, paid: pd, pending: pn }
-          : e
-        )
-      );
-      setEditingId(null);
+    // Explicit NaN/negative guards — parseFloat silently turned "abc" into
+    // NaN which then collapsed to 0 and looked like a successful save.
+    const amt = parseFloat(editForm.amount);
+    const pd = parseFloat(editForm.paid);
+    const pnRaw = parseFloat(editForm.pending);
+    if (Number.isNaN(amt) || amt < 0) { showError('Monto inválido'); return; }
+    if (Number.isNaN(pd) || pd < 0)   { showError('Pagado inválido'); return; }
+    const pn = Number.isNaN(pnRaw) ? Math.max(0, amt - pd) : pnRaw;
+    if (pn < 0) { showError('Pendiente inválido'); return; }
+    if (!editForm.concept.trim()) { showError('Concepto requerido'); return; }
+
+    const nextList = currentExpenses.map(e => e.id === editingId
+      ? { ...e, concept: editForm.concept.trim(), amount: amt, paid: pd, pending: pn }
+      : e
+    );
+    setEditingId(null);
+    try {
+      await persistExpenses(nextList);
+      if (user) logAction(user.id, user.name, 'update', 'expenses', `Egreso ${editForm.concept}: $${amt.toLocaleString()}`);
       showSuccess(t('expenses.updatedSuccess'));
-    });
+    } catch (err) {
+      showError(`Error guardando: ${(err as Error).message}`);
+    }
   };
 
   const cancelEdit = () => {
@@ -158,14 +203,32 @@ export default function EgresosPage() {
 
   // --- Delete expense ---
   const handleDelete = (expense: Expense) => {
-    if (!userCanDelete) return;
-    askConfirmation(t('expenses.deleteConfirm', { concept: expense.concept }), () => {
-      updateExpensesList(prev => prev.filter(e => e.id !== expense.id));
-      showSuccess(t('expenses.deletedSuccess'));
-    });
+    if (!userCanDelete || editingDisabled) return;
+    confirm(t('expenses.deleteConfirm', { concept: expense.concept }), async () => {
+      const nextList = currentExpenses.filter(e => e.id !== expense.id);
+      try {
+        await persistExpenses(nextList);
+        if (user) logAction(user.id, user.name, 'delete', 'expenses', `Egreso eliminado: ${expense.concept}`);
+        showSuccess(t('expenses.deletedSuccess'));
+      } catch (err) {
+        showError(`Error eliminando: ${(err as Error).message}`);
+      }
+    }, { tone: 'danger', confirmLabel: t('common.delete') });
   };
 
-  if (!summary) return null;
+  if (!summary) {
+    return (
+      <div className="space-y-6 animate-pulse">
+        <div className="h-8 w-48 bg-muted rounded" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="h-20 rounded-xl bg-muted/60" />
+          ))}
+        </div>
+        <div className="h-72 rounded-xl bg-muted/60" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -176,6 +239,7 @@ export default function EgresosPage() {
         icon={Receipt}
         actions={
           <>
+            <ConsolidatedBadge count={mode === 'consolidated' ? selectedPeriodIds.length : 1} />
             <button
               onClick={() => setShowPreoperativo(!showPreoperativo)}
               className={`h-9 px-3 rounded-lg border text-sm font-medium transition-colors ${
@@ -212,11 +276,29 @@ export default function EgresosPage() {
         }
       />
 
-      {/* Success message */}
+      {/* Success / error banners — saving toast stays visible until the
+          persist round-trip finishes so the user has feedback on slow
+          networks. */}
       {successMsg && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">
           <Check className="w-4 h-4" />
           {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 text-sm font-medium" aria-live="assertive">
+          <X className="w-4 h-4" />
+          {errorMsg}
+        </div>
+      )}
+      {saving && (
+        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-medium">
+          Guardando…
+        </div>
+      )}
+      {editingDisabled && (userCanEdit || userCanDelete) && (
+        <div className="px-3 py-2 rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xs">
+          Edición desactivada en modo consolidado — selecciona un solo mes para editar o eliminar egresos.
         </div>
       )}
 
@@ -267,18 +349,23 @@ export default function EgresosPage() {
         <>
           {/* Summary cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <Card>
-              <p className="text-sm text-muted-foreground mb-1">{t('expenses.title')}</p>
-              <p className="text-2xl font-bold">{formatCurrency(summary.totalExpenses)}</p>
-            </Card>
-            <Card>
-              <p className="text-sm text-muted-foreground mb-1">{t('expenses.paid')}</p>
-              <p className="text-2xl font-bold text-emerald-600">{formatCurrency(summary.totalExpensesPaid)}</p>
-            </Card>
-            <Card>
-              <p className="text-sm text-muted-foreground mb-1">{t('expenses.pending')}</p>
-              <p className="text-2xl font-bold text-amber-600">{formatCurrency(summary.totalExpensesPending)}</p>
-            </Card>
+            <StatCard
+              label={t('expenses.title')}
+              value={formatCurrency(summary.totalExpenses)}
+              icon={Receipt}
+              tone="neutral"
+            />
+            <StatCard
+              label={t('expenses.paid')}
+              value={formatCurrency(summary.totalExpensesPaid)}
+              icon={Check}
+              tone="positive"
+            />
+            <StatCard
+              label={t('expenses.pending')}
+              value={formatCurrency(summary.totalExpensesPending)}
+              tone="warning"
+            />
           </div>
 
           {/* Expenses table */}
@@ -416,8 +503,9 @@ export default function EgresosPage() {
                                 {userCanEdit && (
                                   <button
                                     onClick={() => startEdit(expense)}
-                                    className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                                    title={t('common.edit')}
+                                    disabled={editingDisabled}
+                                    className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title={editingDisabled ? 'Selecciona un solo mes' : t('common.edit')}
                                     aria-label={t('common.edit')}
                                   >
                                     <Edit2 className="w-3.5 h-3.5" />
@@ -426,8 +514,9 @@ export default function EgresosPage() {
                                 {userCanDelete && (
                                   <button
                                     onClick={() => handleDelete(expense)}
-                                    className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
-                                    title={t('common.delete')}
+                                    disabled={editingDisabled}
+                                    className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title={editingDisabled ? 'Selecciona un solo mes' : t('common.delete')}
                                     aria-label={t('common.delete')}
                                   >
                                     <Trash2 className="w-3.5 h-3.5" />
@@ -459,29 +548,7 @@ export default function EgresosPage() {
         </>
       )}
 
-      {/* Confirmation dialog */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-xl shadow-xl p-6 max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-2">{t('upload.confirm')}</h3>
-            <p className="text-sm text-muted-foreground mb-6">{confirmAction.message}</p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmAction(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={() => { confirmAction.onConfirm(); setConfirmAction(null); }}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-              >
-                {t('users.confirm')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {ConfirmModal}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { useData } from '@/lib/data-context';
 import type { Period } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
 import { updatePeriodStatus } from '@/lib/supabase/mutations';
+import { useConfirm } from '@/lib/use-confirm';
 import { Calendar, Lock, Unlock, Clock, Check } from 'lucide-react';
 
 type PeriodStatus = 'closed' | 'open' | 'in_progress';
@@ -75,13 +76,18 @@ export default function PeríodosPage() {
     );
   }, [dataPeriods]);
 
-  const [confirmAction, setConfirmAction] = useState<{ message: string; onConfirm: () => void } | null>(null);
+  const { confirm, Modal: ConfirmModal } = useConfirm();
   const [successMsg, setSuccessMsg] = useState('');
+  const [errorMsg, setErrorMsg] = useState('');
   const [updating, setUpdating] = useState<string | null>(null);
 
   const showSuccess = (msg: string) => {
     setSuccessMsg(msg);
     setTimeout(() => setSuccessMsg(''), 3000);
+  };
+  const showError = (msg: string) => {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(''), 4500);
   };
 
   const changeStatus = (id: string, newStatus: PeriodStatus) => {
@@ -89,25 +95,27 @@ export default function PeríodosPage() {
     if (!period) return;
 
     const statusLabel = t(STATUS_LABEL_KEY[newStatus]);
-    setConfirmAction({
-      message: t('periods.changeStatusConfirm', { label: period.label, status: statusLabel }) + (newStatus === 'closed' ? t('periods.closedWarning') : ''),
-      onConfirm: async () => {
+    confirm(
+      t('periods.changeStatusConfirm', { label: period.label, status: statusLabel }) +
+        (newStatus === 'closed' ? t('periods.closedWarning') : ''),
+      async () => {
         setUpdating(id);
         try {
           const isClosed = newStatus === 'closed';
-          // Persist to Supabase
           await updatePeriodStatus(id, isClosed);
-          // Refresh all data so every page sees the updated is_closed
           await refresh();
           showSuccess(t('periods.statusChanged', { label: period.label, status: statusLabel }));
         } catch (err) {
           console.error('Error updating period status:', err);
-          showSuccess(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+          showError(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
         } finally {
           setUpdating(null);
         }
       },
-    });
+      // Closing a period is a consequential (near-destructive) action — use
+      // the red tone. Opening back is fine with default styling.
+      { tone: newStatus === 'closed' ? 'danger' : 'default' },
+    );
   };
 
   const closedCount = managedPeriods.filter(p => p.status === 'closed').length;
@@ -125,6 +133,12 @@ export default function PeríodosPage() {
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">
           <Check className="w-4 h-4" />
           {successMsg}
+        </div>
+      )}
+      {errorMsg && (
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 text-sm font-medium" aria-live="assertive">
+          <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" /></svg>
+          {errorMsg}
         </div>
       )}
 
@@ -260,29 +274,7 @@ export default function PeríodosPage() {
         </div>
       </Card>
 
-      {/* Confirmation dialog */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-xl shadow-xl p-6 max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-2">{t('upload.confirm')}</h3>
-            <p className="text-sm text-muted-foreground mb-6">{confirmAction.message}</p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmAction(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                onClick={() => { confirmAction.onConfirm(); setConfirmAction(null); }}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-              >
-                {t('users.confirm')}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {ConfirmModal}
     </div>
   );
 }

@@ -406,25 +406,36 @@ export function useApiTotals(
 ) {
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
 
+  // Debounce rapid wallet-selector clicks (350 ms) and support AbortController
+  // so a newer request supersedes an older one mid-flight — fixes N-fetches-
+  // per-click when the user scrolls through wallets quickly.
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const qs = new URLSearchParams();
-        if (from) qs.set('from', from);
-        if (to) qs.set('to', to);
-        if (walletId) qs.set('walletId', walletId);
-        const res = await fetch(`/api/integrations/persisted-movements?${qs.toString()}`);
-        const json = await res.json();
-        if (!cancelled && json.success) {
-          setDatasets(json.datasets ?? []);
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      (async () => {
+        try {
+          const qs = new URLSearchParams();
+          if (from) qs.set('from', from);
+          if (to) qs.set('to', to);
+          if (walletId) qs.set('walletId', walletId);
+          const res = await fetch(
+            `/api/integrations/persisted-movements?${qs.toString()}`,
+            { signal: controller.signal },
+          );
+          const json = await res.json();
+          if (!cancelled && json.success) {
+            setDatasets(json.datasets ?? []);
+          }
+        } catch {
+          // Silent — card already shows errors.
         }
-      } catch {
-        // Silent — card already shows errors.
-      }
-    })();
+      })();
+    }, 350);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
     };
   }, [from, to, walletId, refreshKey]);
 

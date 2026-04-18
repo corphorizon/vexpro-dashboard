@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
+import { StatCard } from '@/components/ui/stat-card';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
@@ -9,9 +10,9 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
-import type { Investment } from '@/lib/types';
 import { TrendingUp, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { useRunningBalance } from '@/lib/use-running-balance';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const PAGE_SIZE = 50;
@@ -22,11 +23,9 @@ export default function InversionesPage() {
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { getInvestmentsData } = useData();
   const [filter, setFilter] = useState('total');
-  const [investmentsData, setInvestmentsData] = useState<Investment[]>([]);
-
-  useEffect(() => {
-    setInvestmentsData(getInvestmentsData());
-  }, [getInvestmentsData]);
+  // Read directly from the data-context — removing the local-state mirror
+  // eliminates the flash-of-stale-data after add/edit/delete.
+  const investmentsData = useMemo(() => getInvestmentsData(), [getInvestmentsData]);
 
   const dataByYear = useMemo(() => {
     const map = new Map<number, Set<number>>();
@@ -61,16 +60,10 @@ export default function InversionesPage() {
   // unreliable because addInvestmentRow / updateInvestment pass `balance: 0`
   // on insert. Formula matches recalcInvestmentBalances: deposit - withdrawal
   // + profit accumulated in date order.
-  const balanceMap = useMemo(() => {
-    const map = new Map<string, number>();
-    const sorted = [...investmentsData].sort((a, b) => a.date.localeCompare(b.date));
-    let running = 0;
-    for (const inv of sorted) {
-      running += inv.deposit - inv.withdrawal + inv.profit;
-      map.set(inv.id, running);
-    }
-    return map;
-  }, [investmentsData]);
+  const balanceMap = useRunningBalance(
+    investmentsData,
+    inv => inv.deposit - inv.withdrawal + inv.profit,
+  );
 
   const lastBalance = useMemo(() => {
     if (filtered.length === 0) {
@@ -161,27 +154,21 @@ export default function InversionesPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
-              <TrendingUp className="w-5 h-5 text-emerald-500" />
-            </div>
-            <p className="text-sm text-muted-foreground">{t('investments.currentBalance')}</p>
-          </div>
-          <p className="text-2xl font-bold">{formatCurrency(lastBalance)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">+</span></p>
-          <p className="text-2xl font-bold text-blue-600">{formatCurrency(totalDeposits)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">−</span></p>
-          <p className="text-2xl font-bold text-red-600">{formatCurrency(totalWithdrawals)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground mb-1">{t('investments.profit')}</p>
-          <p className="text-2xl font-bold text-emerald-600">{formatCurrency(totalProfit)}</p>
-        </Card>
+        <StatCard
+          label={t('investments.currentBalance')}
+          value={formatCurrency(lastBalance)}
+          icon={TrendingUp}
+          tone="positive"
+        />
+        <StatCard label="Aportes" value={formatCurrency(totalDeposits)} tone="info" />
+        <StatCard label="Retiros" value={formatCurrency(totalWithdrawals)} tone="negative" />
+        {/* Profit puede ser negativo cuando una inversión pierde (se ingresa
+            con signo − en /upload). La card cambia de tono según el signo. */}
+        <StatCard
+          label={t('investments.profit')}
+          value={formatCurrency(totalProfit)}
+          tone={totalProfit >= 0 ? 'positive' : 'negative'}
+        />
       </div>
 
       <Card>
@@ -194,8 +181,8 @@ export default function InversionesPage() {
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Responsable</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Aporte</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Retiro</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Profit</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Balance</th>
               </tr>

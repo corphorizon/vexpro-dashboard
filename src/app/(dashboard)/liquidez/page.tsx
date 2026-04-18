@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
+import { StatCard } from '@/components/ui/stat-card';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
@@ -9,9 +10,9 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
-import type { LiquidityMovement } from '@/lib/types';
 import { Droplets, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { useRunningBalance } from '@/lib/use-running-balance';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const PAGE_SIZE = 50;
@@ -22,11 +23,10 @@ export default function LiquidezPage() {
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { getLiquidityData } = useData();
   const [filter, setFilter] = useState('total');
-  const [liquidityData, setLiquidityData] = useState<LiquidityMovement[]>([]);
-
-  useEffect(() => {
-    setLiquidityData(getLiquidityData());
-  }, [getLiquidityData]);
+  // Read directly from the data-context on every render — previously the
+  // page copied it into local state via `useEffect`, which created a
+  // one-tick lag after a mutation and flashed stale rows.
+  const liquidityData = useMemo(() => getLiquidityData(), [getLiquidityData]);
 
   const dataByYear = useMemo(() => {
     const map = new Map<number, Set<number>>();
@@ -59,18 +59,9 @@ export default function LiquidezPage() {
 
   // Running balance map — computed on-the-fly from ALL movements sorted by
   // date ascending. We don't trust the stored `balance` column because
-  // addLiquidityRow inserts it as 0 (legacy bug, recalcLiquidityBalances
-  // was never called). Recomputing makes the UI resilient to bad stored data.
-  const balanceMap = useMemo(() => {
-    const map = new Map<string, number>();
-    const sorted = [...liquidityData].sort((a, b) => a.date.localeCompare(b.date));
-    let running = 0;
-    for (const m of sorted) {
-      running += m.deposit - m.withdrawal;
-      map.set(m.id, running);
-    }
-    return map;
-  }, [liquidityData]);
+  // addLiquidityRow inserts it as 0 (legacy bug). Shared helper in
+  // `useRunningBalance` keeps /liquidez, /inversiones, and /balances in sync.
+  const balanceMap = useRunningBalance(liquidityData, m => m.deposit - m.withdrawal);
 
   // Balance Actual = running total at the end of the filtered range.
   // For filter='total' it's the final running balance.
@@ -164,24 +155,33 @@ export default function LiquidezPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
-              <Droplets className="w-5 h-5 text-blue-500" />
-            </div>
-            <p className="text-sm text-muted-foreground">{t('liquidity.currentBalance')}</p>
-          </div>
-          <p className="text-2xl font-bold">{formatCurrency(lastBalance)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">+</span></p>
-          <p className="text-2xl font-bold text-blue-600">{formatCurrency(totalDeposits)}</p>
-        </Card>
-        <Card>
-          <p className="text-sm text-muted-foreground mb-1">Total <span className="font-bold">−</span></p>
-          <p className="text-2xl font-bold text-red-600">{formatCurrency(totalWithdrawals)}</p>
-        </Card>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <StatCard
+          label={t('liquidity.currentBalance')}
+          value={formatCurrency(lastBalance)}
+          icon={Droplets}
+          tone="info"
+        />
+        <StatCard
+          label="Ingreso"
+          value={formatCurrency(totalDeposits)}
+          tone="info"
+        />
+        {/* "Salida" cubre retiros reales y pérdidas (comisiones, transferencias
+            fallidas, etc) en un solo término. */}
+        <StatCard
+          label="Salida"
+          value={formatCurrency(totalWithdrawals)}
+          tone="negative"
+        />
+        {/* Profit = Ingreso − Salida en el rango filtrado. Útil para ver
+            rápidamente si el período fue positivo o negativo. */}
+        <StatCard
+          label="Profit"
+          value={formatCurrency(totalDeposits - totalWithdrawals)}
+          tone={totalDeposits - totalWithdrawals >= 0 ? 'positive' : 'negative'}
+          hint="Ingreso − Salida del rango filtrado"
+        />
       </div>
 
       <Card>
@@ -194,8 +194,8 @@ export default function LiquidezPage() {
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Usuario</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Cuenta MT</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Ingreso</th>
+                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Salida</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Balance</th>
               </tr>
             </thead>

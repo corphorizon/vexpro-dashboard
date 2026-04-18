@@ -12,7 +12,11 @@ import { Card } from './card';
 type Tone = 'neutral' | 'info' | 'positive' | 'negative' | 'warning' | 'primary';
 
 interface StatCardProps {
-  label: string;
+  /**
+   * Label shown above the value. Accepts any ReactNode so callers can inline
+   * tooltips / badges / info icons next to the text.
+   */
+  label: React.ReactNode;
   value: React.ReactNode;
   hint?: React.ReactNode;
   icon?: React.ComponentType<{ className?: string }>;
@@ -61,7 +65,7 @@ export function StatCard({ label, value, hint, icon: Icon, tone = 'neutral', emp
     <Card className={cn('relative overflow-hidden', className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">{label}</div>
           <p className={cn(
             'font-bold tabular-nums mt-1 truncate',
             emphasis ? 'text-3xl sm:text-4xl' : 'text-2xl',

@@ -89,15 +89,11 @@ export default function BalancesPage() {
   const [pinnedWallets, setPinnedWallets] = useState<PinnedCoinsbuyWallet[]>([]);
   const [showCoinsbuyModal, setShowCoinsbuyModal] = useState(false);
   const isAdmin = user?.role === 'admin';
-
-  // ─── Access control ───
-  if (!hasModuleAccess(user, 'balances')) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">{t('common.noAccess')}</p>
-      </div>
-    );
-  }
+  // Access-control result is computed here but the early return happens at
+  // the bottom of the component — pulling it up before the rest of the
+  // hooks would violate the Rules of Hooks on re-renders where access
+  // changes (e.g. role switch in the same session).
+  const accessDenied = !hasModuleAccess(user, 'balances');
 
   // ─── Section A: Balance Actual Disponible (chained across periods) ───
   // Formula per period: Net Deposit - Egresos Operativos - Monto a Distribuir
@@ -273,11 +269,33 @@ export default function BalancesPage() {
     }
   }, []);
 
-  // Fetch on mount + auto-refresh every 5 minutes
+  // Fetch on mount + auto-refresh every 5 minutes. The interval pauses
+  // while the tab is hidden so we don't burn API quota on a backgrounded
+  // page; when the tab becomes visible again we refresh immediately.
   useEffect(() => {
     fetchWallets();
-    const interval = setInterval(fetchWallets, 5 * 60 * 1000);
-    return () => clearInterval(interval);
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const start = () => {
+      if (interval) return;
+      interval = setInterval(fetchWallets, 5 * 60 * 1000);
+    };
+    const stop = () => {
+      if (interval) { clearInterval(interval); interval = null; }
+    };
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        fetchWallets();
+        start();
+      } else {
+        stop();
+      }
+    };
+    start();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      stop();
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, [fetchWallets]);
 
   const toggleWallet = (id: string) => {
@@ -361,8 +379,22 @@ export default function BalancesPage() {
       }
     };
     fetchUniBalance();
-    const interval = setInterval(fetchUniBalance, 5 * 60 * 1000);
-    return () => { cancelled = true; clearInterval(interval); };
+    let interval: ReturnType<typeof setInterval> | null = setInterval(fetchUniBalance, 5 * 60 * 1000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        fetchUniBalance();
+        if (!interval) interval = setInterval(fetchUniBalance, 5 * 60 * 1000);
+      } else if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
+    };
   }, []);
 
   // Load snapshots for selected date
@@ -456,6 +488,14 @@ export default function BalancesPage() {
   const totalConsolidado = CHANNELS.reduce((sum, c) => sum + getChannelValue(c.key), 0);
 
   // ─── Section C: Coinsbuy Wallets (state + fetch declared above) ───
+
+  if (accessDenied) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">{t('common.noAccess')}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

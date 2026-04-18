@@ -57,6 +57,7 @@ function PaginationControls({
 }
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
+import { useConfirm } from '@/lib/use-confirm';
 import { FixedExpenseTemplatesPanel } from '@/components/fixed-expense-templates-panel';
 import { useApiTotals } from '@/components/realtime-movements-banner';
 import {
@@ -343,8 +344,8 @@ export default function UploadPage() {
   const [editInv, setEditInv] = useState({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
   const [newInv, setNewInv] = useState({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
 
-  // UI state
-  const [confirmAction, setConfirmAction] = useState<{ type: string; message: string; onConfirm: () => void } | null>(null);
+  // UI state — shared confirmation dialog for destructive deletes.
+  const { confirm, Modal: ConfirmModal } = useConfirm();
   const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
@@ -435,8 +436,10 @@ export default function UploadPage() {
     setTimeout(() => setErrorMsg(''), 6000);
   };
 
+  // Back-compat alias so existing call sites keep working. Every remaining
+  // usage is a destructive delete — pass `tone: 'danger'` uniformly.
   const askConfirmation = (message: string, onConfirm: () => void) => {
-    setConfirmAction({ type: 'confirm', message, onConfirm });
+    confirm(message, onConfirm, { tone: 'danger' });
   };
 
   // --- Period date range helper ---
@@ -546,7 +549,7 @@ export default function UploadPage() {
     if (!userCanAdd || !company || !newLiq.date || !newLiq.user_email) return;
     const dep = parseFloat(newLiq.deposit) || 0;
     const wth = parseFloat(newLiq.withdrawal) || 0;
-    askConfirmation(`Agregar movimiento de liquidez: Deposito ${formatCurrency(dep)}, Retiro ${formatCurrency(wth)}?`, async () => {
+    (async () => {
       try {
         await insertLiquidityMovement(company.id, {
           date: newLiq.date,
@@ -563,7 +566,7 @@ export default function UploadPage() {
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
-    });
+    })();
   };
 
   const startEditLiq = (row: LiquidityMovement) => {
@@ -582,7 +585,7 @@ export default function UploadPage() {
     if (!editingLiqId) return;
     const dep = parseFloat(editLiq.deposit) || 0;
     const wth = parseFloat(editLiq.withdrawal) || 0;
-    askConfirmation('Actualizar movimiento de liquidez?', async () => {
+    (async () => {
       try {
         await updateLiquidityMovement(editingLiqId, {
           date: editLiq.date,
@@ -599,7 +602,7 @@ export default function UploadPage() {
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
-    });
+    })();
   };
 
   const deleteLiqRow = (id: string) => {
@@ -631,7 +634,7 @@ export default function UploadPage() {
     const dep = parseFloat(newInv.deposit) || 0;
     const wth = parseFloat(newInv.withdrawal) || 0;
     const prf = parseFloat(newInv.profit) || 0;
-    askConfirmation(`Agregar movimiento de inversion: Deposito ${formatCurrency(dep)}, Retiro ${formatCurrency(wth)}, Profit ${formatCurrency(prf)}?`, async () => {
+    (async () => {
       try {
         await insertInvestment(company.id, {
           date: newInv.date,
@@ -649,7 +652,7 @@ export default function UploadPage() {
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
-    });
+    })();
   };
 
   const startEditInv = (row: Investment) => {
@@ -670,7 +673,7 @@ export default function UploadPage() {
     const dep = parseFloat(editInv.deposit) || 0;
     const wth = parseFloat(editInv.withdrawal) || 0;
     const prf = parseFloat(editInv.profit) || 0;
-    askConfirmation('Actualizar movimiento de inversion?', async () => {
+    (async () => {
       try {
         await updateInvestment(editingInvId, {
           date: editInv.date,
@@ -688,7 +691,7 @@ export default function UploadPage() {
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
-    });
+    })();
   };
 
   const deleteInvRow = (id: string) => {
@@ -706,9 +709,17 @@ export default function UploadPage() {
   };
 
   // Deposit handlers
+  //
+  // IMPORTANT: `upsertDeposits` is a delete-then-reinsert helper (see
+  // `src/lib/supabase/mutations.ts`). If a second list of deposit rows is
+  // ever added to this page (e.g. "depósitos adicionales"), the array passed
+  // here MUST be the combined list — otherwise the rows not included get
+  // wiped on save. Today only fixed channels exist so the array is complete.
   const updateDeposit = (id: string, amount: number) => {
     if (!userCanAdd || !company) return;
-    askConfirmation(`Registrar ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}?`, async () => {
+    // Skip confirmation modal — the inline input onBlur/save is already a
+    // deliberate action. Toast feedback + undo-via-re-edit is faster UX.
+    (async () => {
       try {
         const updated = deposits.map(d => d.id === id ? { ...d, amount } : d);
         setDepositsRaw(updated);
@@ -720,13 +731,16 @@ export default function UploadPage() {
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
-    });
+    })();
   };
 
   // Withdrawal handlers
   const updateWithdrawal = (id: string, amount: number) => {
     if (!userCanAdd || !company) return;
-    askConfirmation(`Registrar ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}?`, async () => {
+    // Skip confirmation modal — the inline input commit (blur / enter) is
+    // the deliberate action. Toast feedback gives the user a fast signal
+    // without the extra click.
+    (async () => {
       try {
         const updated = withdrawals.map(w => w.id === id ? { ...w, amount } : w);
         setWithdrawalsRaw(updated);
@@ -743,7 +757,7 @@ export default function UploadPage() {
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
-    });
+    })();
   };
 
   // Expense handlers
@@ -753,22 +767,20 @@ export default function UploadPage() {
     const pd = parseFloat(newExpense.paid) || 0;
     const pn = parseFloat(newExpense.pending) || amt - pd;
     const cat = newExpense.category.trim() || null;
-    askConfirmation(`Agregar egreso "${newExpense.concept}" por $${amt.toLocaleString()}?`, () => {
-      setExpenses(prev => [...prev, {
-        id: `exp-${Date.now()}`,
-        concept: newExpense.concept,
-        amount: amt,
-        paid: pd,
-        pending: pn,
-        is_fixed: newExpense.is_fixed,
-        category: cat,
-      }]);
-      setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
-      addConceptToHistory(newExpense.concept);
-      if (cat) addCategoryToHistory(cat);
-      if (user) logAction(user.id, user.name, 'create', 'expenses', `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}`);
-      showSuccess(t('upload.expenseAdded'));
-    });
+    setExpenses(prev => [...prev, {
+      id: `exp-${Date.now()}`,
+      concept: newExpense.concept,
+      amount: amt,
+      paid: pd,
+      pending: pn,
+      is_fixed: newExpense.is_fixed,
+      category: cat,
+    }]);
+    setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
+    addConceptToHistory(newExpense.concept);
+    if (cat) addCategoryToHistory(cat);
+    if (user) logAction(user.id, user.name, 'create', 'expenses', `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}`);
+    showSuccess(t('upload.expenseAdded'));
   };
 
   const startEditExpense = (exp: ExpenseRow) => {
@@ -783,12 +795,10 @@ export default function UploadPage() {
     const pd = parseFloat(editExpense.paid) || 0;
     const pn = parseFloat(editExpense.pending) || amt - pd;
     const cat = editExpense.category.trim() || null;
-    askConfirmation(`Actualizar egreso "${editExpense.concept}"?`, () => {
-      setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e));
-      if (cat) addCategoryToHistory(cat);
-      setEditingExpenseId(null);
-      showSuccess(t('upload.expenseUpdated'));
-    });
+    setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e));
+    if (cat) addCategoryToHistory(cat);
+    setEditingExpenseId(null);
+    showSuccess(t('upload.expenseUpdated'));
   };
 
   const toggleExpenseFixed = (id: string) => {
@@ -808,7 +818,7 @@ export default function UploadPage() {
   // Income handler
   const saveIncome = () => {
     if (!userCanAdd || !company) return;
-    askConfirmation(`Registrar ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}?`, async () => {
+    (async () => {
       try {
         await upsertOperatingIncome(company.id, selectedPeriodRef.current, income);
 
@@ -818,7 +828,7 @@ export default function UploadPage() {
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
-    });
+    })();
   };
 
   // Save All handler — saves all fields in the current section to Supabase.
@@ -864,10 +874,8 @@ export default function UploadPage() {
   const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];
     if (!f) return;
-    askConfirmation(`Subir documento "${f.name}" al período ${periodLabel}?`, () => {
-      setDocs(prev => [{ id: `doc-${Date.now()}`, filename: f.name, date: new Date().toISOString().split('T')[0], description: '', uploaded_by: user?.name || '' }, ...prev]);
-      showSuccess(t('upload.documentUploaded'));
-    });
+    setDocs(prev => [{ id: `doc-${Date.now()}`, filename: f.name, date: new Date().toISOString().split('T')[0], description: '', uploaded_by: user?.name || '' }, ...prev]);
+    showSuccess(t('upload.documentUploaded'));
     e.target.value = '';
   };
 
@@ -2057,29 +2065,7 @@ export default function UploadPage() {
         )}
       </div>
 
-      {/* Confirmation dialog */}
-      {confirmAction && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-xl shadow-xl p-6 max-w-md mx-4">
-            <h3 className="text-lg font-semibold mb-2">Confirmar acción</h3>
-            <p className="text-sm text-muted-foreground mb-6">{confirmAction.message}</p>
-            <div className="flex gap-3 justify-end">
-              <button
-                onClick={() => setConfirmAction(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => { confirmAction.onConfirm(); setConfirmAction(null); }}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-              >
-                Confirmar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {ConfirmModal}
     </div>
   );
 }
