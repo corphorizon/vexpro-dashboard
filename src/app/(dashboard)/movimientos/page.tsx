@@ -12,7 +12,8 @@ import {
   allPeriodsUseDerivedBroker,
   computeDerivedBroker,
 } from '@/lib/broker-logic';
-import { ArrowDownCircle, ArrowUpCircle, Wallet } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -219,23 +220,21 @@ export default function MovimientosPage() {
   return (
     <div className="space-y-6">
       {Modal2FA}
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('movements.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('movements.subtitle')}</p>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
+      <PageHeader
+        title={t('movements.title')}
+        subtitle={t('movements.subtitle')}
+        icon={ArrowLeftRight}
+        actions={
           <button
             onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
             title={t('common.csv')}
           >
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">{t('common.csv')}</span>
           </button>
-        </div>
-      </div>
+        }
+      />
 
       {/* ─── Upper section: APIs en tiempo real (owns its own filter) ─── */}
       <RealTimeMovementsBanner

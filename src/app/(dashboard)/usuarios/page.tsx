@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { useAuth, hasModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
 const ALL_ROLES: Array<User['role']> = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
@@ -186,20 +187,20 @@ export default function UsuariosPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{t('users.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('users.subtitle')}</p>
-        </div>
-        <button
-          onClick={handleCreate}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-        >
-          <Plus className="w-4 h-4" />
-          {t('users.create')}
-        </button>
-      </div>
+      <PageHeader
+        title={t('users.title')}
+        subtitle={t('users.subtitle')}
+        icon={Users}
+        actions={
+          <button
+            onClick={handleCreate}
+            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+          >
+            <Plus className="w-4 h-4" />
+            {t('users.create')}
+          </button>
+        }
+      />
 
       {/* Form */}
       {showForm && (

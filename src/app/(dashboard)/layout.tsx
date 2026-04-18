@@ -21,31 +21,24 @@ function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
   const { locale, setLocale } = useI18n();
 
   return (
-    <header className="lg:hidden fixed top-0 left-0 right-0 z-30 bg-card border-b border-border">
+    <header className="lg:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 text-slate-200 shadow-sm">
       <div className="flex items-center justify-between px-4 h-14">
         {/* Left: hamburger + logo */}
         <div className="flex items-center gap-3">
           <button
             onClick={onMenuToggle}
-            className="p-2 -ml-2 rounded-lg hover:bg-muted transition-colors"
+            className="p-2 -ml-2 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
             aria-label="Toggle menu"
           >
             <Menu className="w-5 h-5" />
           </button>
           <Link href="/">
             <Image
-              src="/vex-logofull.png"
-              alt={company?.name || 'Company'}
-              width={100}
-              height={28}
-              className="object-contain block dark:hidden"
-            />
-            <Image
               src="/vex-logofull-white.png"
               alt={company?.name || 'Company'}
               width={100}
               height={28}
-              className="object-contain hidden dark:block"
+              className="object-contain"
             />
           </Link>
         </div>
@@ -54,21 +47,21 @@ function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => setLocale(locale === 'es' ? 'en' : 'es')}
-            className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
             aria-label="Change language"
           >
             <Globe className="w-5 h-5" />
           </button>
           <button
             onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-            className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
             aria-label="Toggle theme"
           >
             {resolvedTheme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
           </button>
           <Link
             href="/perfil"
-            className="p-2 rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
             aria-label="Profile"
           >
             <UserCircle className="w-5 h-5" />

@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
@@ -145,14 +146,11 @@ export default function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('hrDash.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('hrDash.subtitle')}</p>
-        </div>
-        <PeriodSelector />
-      </div>
+      <PageHeader
+        title={t('hrDash.title')}
+        subtitle={t('hrDash.subtitle')}
+        actions={<PeriodSelector />}
+      />
 
       {/* KPI Row 1 — People count */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

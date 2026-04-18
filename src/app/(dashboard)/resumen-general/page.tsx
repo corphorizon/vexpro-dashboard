@@ -2,6 +2,7 @@
 
 import { useMemo } from 'react';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
 import { PeriodSelector } from '@/components/period-selector';
 import { MonthlyChart } from '@/components/charts/monthly-chart';
 import { usePeriod } from '@/lib/period-context';
@@ -25,6 +26,7 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
+  BarChart3,
 } from 'lucide-react';
 
 export default function ResumenPage() {
@@ -145,40 +147,40 @@ export default function ResumenPage() {
   return (
     <div className="space-y-6">
       {Modal2FA}
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('summary.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('summary.subtitle')}</p>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
-          <button
-            onClick={handleExport}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-            title={t('common.csv')}
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('common.csv')}</span>
-          </button>
-          <button
-            onClick={handleExportExcel}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-            title="Excel"
-          >
-            <FileSpreadsheet className="w-4 h-4" />
-            <span className="hidden sm:inline">Excel</span>
-          </button>
-          <button
-            onClick={handleExportPDF}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-            title="PDF"
-          >
-            <FileText className="w-4 h-4" />
-            <span className="hidden sm:inline">PDF</span>
-          </button>
-          <PeriodSelector />
-        </div>
-      </div>
+      <PageHeader
+        title={t('summary.title')}
+        subtitle={t('summary.subtitle')}
+        icon={BarChart3}
+        actions={
+          <>
+            <button
+              onClick={handleExport}
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+              title={t('common.csv')}
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">{t('common.csv')}</span>
+            </button>
+            <button
+              onClick={handleExportExcel}
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+              title="Excel"
+            >
+              <FileSpreadsheet className="w-4 h-4" />
+              <span className="hidden sm:inline">Excel</span>
+            </button>
+            <button
+              onClick={handleExportPDF}
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+              title="PDF"
+            >
+              <FileText className="w-4 h-4" />
+              <span className="hidden sm:inline">PDF</span>
+            </button>
+            <PeriodSelector />
+          </>
+        }
+      />
 
       {/* Negative balance warning */}
       {balanceDisponible < 0 && (

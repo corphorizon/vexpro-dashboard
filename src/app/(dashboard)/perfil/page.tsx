@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
 import { useAuth, ROLE_LABELS } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { UserCircle, Lock, ShieldCheck, Eye, EyeOff, Check, X, Copy, Loader2 } from 'lucide-react';
@@ -211,11 +212,11 @@ export default function PerfilPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">{t('profile.title')}</h1>
-        <p className="text-muted-foreground text-sm mt-1">{t('profile.subtitle')}</p>
-      </div>
+      <PageHeader
+        title={t('profile.title')}
+        subtitle={t('profile.subtitle')}
+        icon={UserCircle}
+      />
 
       {/* Profile Info Card */}
       <Card>

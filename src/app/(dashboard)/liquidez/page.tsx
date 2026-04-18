@@ -11,6 +11,7 @@ import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import type { LiquidityMovement } from '@/lib/types';
 import { Droplets, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const PAGE_SIZE = 50;
@@ -100,24 +101,25 @@ export default function LiquidezPage() {
   return (
     <div className="space-y-6">
       {Modal2FA}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold">{t('liquidity.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('liquidity.subtitle')}</p>
-        </div>
-        <button
-          onClick={() => verify2FA(() => {
-            const headers = ['Fecha', 'Usuario', 'Cuenta MT', '+', '-', 'Balance'];
-            const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, balanceMap.get(m.id) ?? 0] as (string | number)[]);
-            downloadCSV('liquidez.csv', headers, rows);
-          })}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-          title={t('common.csv')}
-        >
-          <Download className="w-4 h-4" />
-          {t('common.csv')}
-        </button>
-      </div>
+      <PageHeader
+        title={t('liquidity.title')}
+        subtitle={t('liquidity.subtitle')}
+        icon={Droplets}
+        actions={
+          <button
+            onClick={() => verify2FA(() => {
+              const headers = ['Fecha', 'Usuario', 'Cuenta MT', '+', '-', 'Balance'];
+              const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, balanceMap.get(m.id) ?? 0] as (string | number)[]);
+              downloadCSV('liquidez.csv', headers, rows);
+            })}
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+            title={t('common.csv')}
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('common.csv')}</span>
+          </button>
+        }
+      />
 
       {/* Filter */}
       <div className="flex flex-wrap items-center gap-3">

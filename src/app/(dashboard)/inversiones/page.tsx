@@ -11,6 +11,7 @@ import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import type { Investment } from '@/lib/types';
 import { TrendingUp, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const PAGE_SIZE = 50;
@@ -96,24 +97,25 @@ export default function InversionesPage() {
   return (
     <div className="space-y-6">
       {Modal2FA}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('investments.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('investments.subtitle')}</p>
-        </div>
-        <button
-          onClick={() => verify2FA(() => {
-            const headers = ['Fecha', 'Concepto', 'Responsable', '+', '-', 'Profit', 'Balance'];
-            const rows = filtered.map(i => [i.date, i.concept || '', i.responsible || '', i.deposit, i.withdrawal, i.profit, balanceMap.get(i.id) ?? 0] as (string | number)[]);
-            downloadCSV('inversiones.csv', headers, rows);
-          })}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-          title={t('common.csv')}
-        >
-          <Download className="w-4 h-4" />
-          <span className="hidden sm:inline">{t('common.csv')}</span>
-        </button>
-      </div>
+      <PageHeader
+        title={t('investments.title')}
+        subtitle={t('investments.subtitle')}
+        icon={TrendingUp}
+        actions={
+          <button
+            onClick={() => verify2FA(() => {
+              const headers = ['Fecha', 'Concepto', 'Responsable', '+', '-', 'Profit', 'Balance'];
+              const rows = filtered.map(i => [i.date, i.concept || '', i.responsible || '', i.deposit, i.withdrawal, i.profit, balanceMap.get(i.id) ?? 0] as (string | number)[]);
+              downloadCSV('inversiones.csv', headers, rows);
+            })}
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+            title={t('common.csv')}
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('common.csv')}</span>
+          </button>
+        }
+      />
 
       {/* Filter */}
       <div className="flex flex-wrap items-center gap-3">

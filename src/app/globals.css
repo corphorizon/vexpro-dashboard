@@ -19,17 +19,19 @@
 }
 
 .dark {
-  --background: #0F172A;
-  --foreground: #E2E8F0;
-  --card: #1E293B;
-  --card-foreground: #E2E8F0;
-  --border: #334155;
-  --muted: #1E293B;
-  --muted-foreground: #94A3B8;
-  --accent: #3B82F6;
-  --positive: #10B981;
-  --negative: #EF4444;
-  --warning: #F59E0B;
+  /* Tuned for better contrast + hierarchy: bg darker, card distinct from
+     muted, borders more visible, secondary text slightly brighter. */
+  --background: #0B1222;         /* a touch darker than slate-900 so cards pop */
+  --foreground: #F1F5F9;         /* slate-100 — easier to read than slate-200 */
+  --card: #1E293B;               /* slate-800 */
+  --card-foreground: #F1F5F9;
+  --border: #334155;             /* slate-700 */
+  --muted: #263548;              /* between card and slate-700 — distinct surface for chips/badges/empty states */
+  --muted-foreground: #B8C4D4;   /* easier to read on dark bg than slate-400 */
+  --accent: #60A5FA;             /* slightly lighter blue for dark mode contrast */
+  --positive: #34D399;
+  --negative: #F87171;
+  --warning: #FBBF24;
 }
 
 @theme inline {
@@ -59,6 +61,12 @@ body {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
 .dark ::-webkit-scrollbar-thumb { background: #475569; }
+
+/* Sidebar scrollbar (always-dark slate palette regardless of theme) */
+.custom-scrollbar::-webkit-scrollbar { width: 4px; }
+.custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
 
 /* ─── Loading screen animations ─── */
 @keyframes vex-fade-in {

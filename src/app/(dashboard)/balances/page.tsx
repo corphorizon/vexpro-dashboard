@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 import { useAuth, hasModuleAccess, canAdd } from '@/lib/auth-context';
@@ -10,6 +11,7 @@ import { formatCurrency } from '@/lib/utils';
 import { upsertChannelBalance, pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
 import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
 import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
+import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
 import {
   Wallet,
   Calendar,
@@ -100,6 +102,38 @@ export default function BalancesPage() {
   // ─── Section A: Balance Actual Disponible (chained across periods) ───
   // Formula per period: Net Deposit - Egresos Operativos - Monto a Distribuir
   // The result accumulates as the starting balance of the next period.
+  //
+  // For derived-broker periods (April 2026+), Net Deposit also includes the
+  // API transactions persisted in api_transactions — otherwise the current
+  // month would read as $0 until someone manually loads deposits in /upload.
+
+  const [apiMonthly, setApiMonthly] = useState<Record<string, { deposits: number; withdrawals: number }>>({});
+  const [apiTotalsLoading, setApiTotalsLoading] = useState(false);
+
+  const loadApiMonthly = useCallback(async () => {
+    setApiTotalsLoading(true);
+    try {
+      // Pull the last 18 months of persisted API data — enough for the 6-month
+      // window plus history for the accumulation chain.
+      const end = new Date();
+      const start = new Date(end.getFullYear(), end.getMonth() - 17, 1);
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const from = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-01`;
+      const to = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate())}`;
+      const res = await fetch(`/api/integrations/period-totals?from=${from}&to=${to}`);
+      const json = await res.json();
+      if (json.success) setApiMonthly(json.months ?? {});
+    } catch {
+      // Non-fatal — card will fall back to 0 API contribution.
+    } finally {
+      setApiTotalsLoading(false);
+    }
+  }, []);
+
+  // Load once on mount.
+  useEffect(() => {
+    loadApiMonthly();
+  }, [loadApiMonthly]);
 
   const balanceChain = useMemo(() => {
     const saldoChain = computeSaldoChain();
@@ -120,7 +154,22 @@ export default function BalancesPage() {
       if (!summary) continue;
       const saldoInfo = saldoChain.get(p.id);
       const montoDistribuir = saldoInfo?.totalDistribuir ?? 0;
-      const netDeposit = summary.netDeposit;
+
+      // Base net deposit from manual entries in /upload.
+      let netDeposit = summary.netDeposit;
+
+      // For derived-broker periods, add the API-persisted net (deposits − withdrawals)
+      // for that calendar month, so the hero shows a real number on day 1
+      // without waiting for someone to load /upload. The value matches the
+      // coexistence rule used in /movimientos: API + manual.
+      if (isDerivedBrokerPeriod({ year: p.year, month: p.month })) {
+        const ymKey = `${p.year}-${String(p.month).padStart(2, '0')}`;
+        const api = apiMonthly[ymKey];
+        if (api) {
+          netDeposit += api.deposits - api.withdrawals;
+        }
+      }
+
       const egresos = summary.totalExpenses;
       const balanceMes = netDeposit - egresos - montoDistribuir;
       const saldoInicial = acumulado;
@@ -137,14 +186,26 @@ export default function BalancesPage() {
       });
     }
     return rows;
-  }, [periods, getPeriodSummary, computeSaldoChain]);
+  }, [periods, getPeriodSummary, computeSaldoChain, apiMonthly]);
 
-  // Show the 6 months ending at the globally selected period. If no period
-  // is selected yet or the id isn't in balanceChain, fall back to the latest.
+  // The month shown in "Balance Actual Disponible". Starts tracking the
+  // globally selected period, but the user can override it from the in-card
+  // selector — this decouples "which balances-by-channel day am I viewing"
+  // from "which month am I viewing in the accumulated balance card".
+  const [balanceMonthPeriodId, setBalanceMonthPeriodId] = useState<string>('');
+  useEffect(() => {
+    // Initialize (or keep in sync when globally selected period changes and
+    // the user hasn't overridden yet).
+    if (!balanceMonthPeriodId && selectedPeriodId) {
+      setBalanceMonthPeriodId(selectedPeriodId);
+    }
+  }, [selectedPeriodId, balanceMonthPeriodId]);
+
   const selectedIndex = useMemo(() => {
-    const idx = balanceChain.findIndex(r => r.periodId === selectedPeriodId);
+    const targetId = balanceMonthPeriodId || selectedPeriodId;
+    const idx = balanceChain.findIndex(r => r.periodId === targetId);
     return idx >= 0 ? idx : balanceChain.length - 1;
-  }, [balanceChain, selectedPeriodId]);
+  }, [balanceChain, balanceMonthPeriodId, selectedPeriodId]);
 
   const sixMonthWindow = useMemo(() => {
     if (selectedIndex < 0) return [];
@@ -152,8 +213,6 @@ export default function BalancesPage() {
     return balanceChain.slice(from, selectedIndex + 1);
   }, [balanceChain, selectedIndex]);
 
-  // Summary cards (Net Deposit, Egresos, Monto a Distribuir, Saldo Anterior)
-  // correspond to the SELECTED period, as requested.
   const currentBalanceRow = balanceChain[selectedIndex];
 
   // ─── Section B: Balances por Canal (snapshots for selected date) ───
@@ -327,24 +386,38 @@ export default function BalancesPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [company?.id, selectedDate]);
 
-  // Helper: get value for a channel for the selected date
+  // Helper: get value for a channel for the selected date.
+  //
+  // Resolution order per channel:
+  //   1. Snapshot stored in channel_balances for the selected date
+  //      (written by the daily cron at 00:00 UTC or by manual edits).
+  //   2. Live API value (coinsbuy/unipayment) — only sensible when viewing
+  //      TODAY, since live always represents "right now".
+  //   3. Zero as last resort.
+  //
+  // For liquidez/inversiones, we can always reconstruct the balance from
+  // the movements table on the fly, so we use that directly.
   const getChannelValue = (key: string): number => {
     if (key === 'liquidez') return liquidityBalance;
     if (key === 'inversiones') return investmentsBalance;
-    // Coinsbuy: sum of all pinned wallet balances (real-time API)
-    if (key === 'coinsbuy') return pinnedWalletsTotal;
-    // UniPayment: prefer API when it returns > 0; fall back to a manually
-    // saved snapshot for the current date if the API is down or hasn't
-    // responded yet. Users can still override the API value explicitly by
-    // editing the row — the manual value takes precedence while the saved
-    // snapshot matches the selected date.
+
+    const snap = snapshots.find((s) => s.channel_key === key);
+
+    if (key === 'coinsbuy') {
+      // Past date with snapshot → show historical value.
+      if (snap && snap.source) return snap.amount;
+      // Today / no snapshot → live API total.
+      return pinnedWalletsTotal;
+    }
     if (key === 'unipayment') {
-      const snap = snapshots.find(s => s.channel_key === 'unipayment');
-      if (snap && snap.amount > 0 && snap.source === 'manual') return snap.amount;
+      // Manual override always wins (user explicitly set a value).
+      if (snap && snap.source === 'manual') return snap.amount;
+      // API-captured snapshot for a past date → show that.
+      if (snap && snap.source === 'api') return snap.amount;
+      // Today / no snapshot → live API.
       if (unipaymentBalance > 0) return unipaymentBalance;
       return snap?.amount ?? 0;
     }
-    const snap = snapshots.find(s => s.channel_key === key);
     return snap?.amount ?? 0;
   };
 
@@ -386,31 +459,12 @@ export default function BalancesPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('balances.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('balances.subtitle')}</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-muted-foreground" />
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => setSelectedDate(e.target.value)}
-            className="px-3 py-2 rounded-lg border border-border bg-card text-sm"
-          />
-          <button
-            onClick={loadSnapshots}
-            disabled={loadingSnap}
-            className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-            title="Recargar"
-            aria-label="Recargar"
-          >
-            <RefreshCw className={`w-4 h-4 ${loadingSnap ? 'animate-spin' : ''}`} />
-          </button>
-        </div>
-      </div>
+      {/* Header — filters are in-card (see each Card below). */}
+      <PageHeader
+        title={t('balances.title')}
+        subtitle={t('balances.subtitle')}
+        icon={Wallet}
+      />
 
       {okMsg && (
         <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-sm">
@@ -423,17 +477,49 @@ export default function BalancesPage() {
         </div>
       )}
 
-      {/* ═══════════ SECTION A: BALANCE ACTUAL DISPONIBLE ═══════════ */}
+      {/* ═══════════ SECTION A: RESUMEN DEL MES ═══════════ */}
       <Card>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
-            <Wallet className="w-5 h-5 text-blue-500" />
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
+              <Wallet className="w-5 h-5 text-blue-500" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">Resumen del mes</h2>
+              <p className="text-xs text-muted-foreground">
+                Net Deposit − Egresos Operativos − Monto a Distribuir. Se acumula al siguiente período.
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-semibold">{t('balances.availableBalance')}</h2>
-            <p className="text-xs text-muted-foreground">
-              {t('balances.formulaHint')}
-            </p>
+          <div className="flex items-center gap-2">
+            {/* Month selector — in-card. Replaces the top-right date picker.
+                Each option label includes how that month closed so the user
+                sees historical values at a glance. */}
+            {balanceChain.length > 0 && (
+              <select
+                value={balanceMonthPeriodId || selectedPeriodId || ''}
+                onChange={(e) => setBalanceMonthPeriodId(e.target.value)}
+                className="h-9 px-3 text-sm rounded-lg border border-border bg-card min-w-[200px] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                aria-label="Seleccionar mes"
+              >
+                {balanceChain.map((r) => (
+                  <option key={r.periodId} value={r.periodId}>
+                    {r.label} — {formatCurrency(r.saldoFinal)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {/* Refrescar API totals — re-reads api_transactions so Abr 26
+                (or whatever the current month is) picks up fresh data. */}
+            <button
+              onClick={loadApiMonthly}
+              disabled={apiTotalsLoading}
+              className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
+              title="Refrescar datos de API"
+              aria-label="Refrescar datos de API"
+            >
+              <RefreshCw className={`w-4 h-4 ${apiTotalsLoading ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
 
@@ -441,13 +527,13 @@ export default function BalancesPage() {
           <>
             <div className="text-center py-6 mb-4 bg-muted/30 rounded-lg">
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-                {currentBalanceRow.label}
+                Resultado del mes · {currentBalanceRow.label}
               </p>
-              <p className={`text-4xl font-bold ${currentBalanceRow.saldoFinal >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                {formatCurrency(currentBalanceRow.saldoFinal)}
+              <p className={`text-3xl sm:text-4xl font-bold tabular-nums ${currentBalanceRow.balanceMes >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                {formatCurrency(currentBalanceRow.balanceMes)}
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                {t('balances.accumulatedHint')}
+                Net Deposit − Egresos − Monto a Distribuir (acumulado del mes: <span className="font-medium text-foreground">{formatCurrency(currentBalanceRow.saldoFinal)}</span>)
               </p>
             </div>
 
@@ -524,15 +610,39 @@ export default function BalancesPage() {
 
       {/* ═══════════ SECTION B: BALANCES POR CANAL ═══════════ */}
       <Card>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
-            <Plug className="w-5 h-5 text-violet-500" />
+        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
+              <Plug className="w-5 h-5 text-violet-500" />
+            </div>
+            <div>
+              <h2 className="text-lg font-semibold">{t('balances.byChannel')}</h2>
+              <p className="text-xs text-muted-foreground">
+                {t('balances.byChannelHint')}
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-lg font-semibold">{t('balances.byChannel')}</h2>
-            <p className="text-xs text-muted-foreground">
-              {t('balances.byChannelHint')} — {selectedDate}
-            </p>
+          {/* Day filter — in-card. Picks a specific day to view the snapshot
+              of how every channel closed. Cron writes daily snapshots at
+              00:00 UTC so historical days are queryable. */}
+          <div className="flex items-center gap-2">
+            <Calendar className="w-4 h-4 text-muted-foreground" />
+            <input
+              type="date"
+              value={selectedDate}
+              onChange={(e) => setSelectedDate(e.target.value)}
+              className="h-9 px-3 text-sm rounded-lg border border-border bg-card focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              aria-label="Fecha del snapshot"
+            />
+            <button
+              onClick={loadSnapshots}
+              disabled={loadingSnap}
+              className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
+              title="Recargar"
+              aria-label="Recargar"
+            >
+              <RefreshCw className={`w-4 h-4 ${loadingSnap ? 'animate-spin' : ''}`} />
+            </button>
           </div>
         </div>
 

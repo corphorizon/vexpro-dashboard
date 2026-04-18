@@ -12,7 +12,8 @@ import { formatCurrency } from '@/lib/utils';
 import type { Expense } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
-import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download } from 'lucide-react';
+import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download, Receipt } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 
 type SortState = 'default' | 'desc' | 'asc';
 
@@ -169,49 +170,47 @@ export default function EgresosPage() {
   return (
     <div className="space-y-6">
       {Modal2FA}
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('expenses.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('expenses.subtitle')}</p>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
-          <button
-            onClick={() => setShowPreoperativo(!showPreoperativo)}
-            className={`px-3 py-2 rounded-lg border text-sm font-medium transition-colors flex-shrink-0 ${
-              showPreoperativo
-                ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                : 'border-border bg-card hover:bg-muted'
-            }`}
-          >
-            Preoperativo
-          </button>
-          <button
-            onClick={() => verify2FA(() => {
-              const exps = showPreoperativo ? preoperativeExpenses : filteredExpenses;
-              // Preoperative expenses don't have a category column, only
-              // period expenses do — guard the export shape.
-              const headers = showPreoperativo
-                ? ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')]
-                : ['#', t('expenses.concept'), 'Categoría', t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
-              const rows = exps.map((e, i) => {
-                if (showPreoperativo) {
-                  return [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[];
-                }
-                const exp = e as Expense;
-                return [i + 1, exp.concept, exp.category ?? '', exp.amount, exp.paid, exp.pending] as (string | number)[];
-              });
-              downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
-            })}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-            title={t('common.csv')}
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('common.csv')}</span>
-          </button>
-          <PeriodSelector />
-        </div>
-      </div>
+      <PageHeader
+        title={t('expenses.title')}
+        subtitle={t('expenses.subtitle')}
+        icon={Receipt}
+        actions={
+          <>
+            <button
+              onClick={() => setShowPreoperativo(!showPreoperativo)}
+              className={`h-9 px-3 rounded-lg border text-sm font-medium transition-colors ${
+                showPreoperativo
+                  ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                  : 'border-border bg-card hover:bg-muted'
+              }`}
+            >
+              Preoperativo
+            </button>
+            <button
+              onClick={() => verify2FA(() => {
+                const exps = showPreoperativo ? preoperativeExpenses : filteredExpenses;
+                const headers = showPreoperativo
+                  ? ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')]
+                  : ['#', t('expenses.concept'), 'Categoría', t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
+                const rows = exps.map((e, i) => {
+                  if (showPreoperativo) {
+                    return [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[];
+                  }
+                  const exp = e as Expense;
+                  return [i + 1, exp.concept, exp.category ?? '', exp.amount, exp.paid, exp.pending] as (string | number)[];
+                });
+                downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
+              })}
+              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+              title={t('common.csv')}
+            >
+              <Download className="w-4 h-4" />
+              <span className="hidden sm:inline">{t('common.csv')}</span>
+            </button>
+            <PeriodSelector />
+          </>
+        }
+      />
 
       {/* Success message */}
       {successMsg && (

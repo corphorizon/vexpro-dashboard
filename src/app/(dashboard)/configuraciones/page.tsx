@@ -22,6 +22,7 @@ import {
   Eye,
   EyeOff,
 } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
 
 type Tab = 'roles' | 'apis';
 
@@ -95,18 +96,14 @@ export default function ConfiguracionesPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-900/50">
-          <Settings className="w-5 h-5 text-slate-600 dark:text-slate-300" />
-        </div>
-        <div>
-          <h1 className="text-2xl font-bold">Configuración</h1>
-          <p className="text-sm text-muted-foreground">Roles personalizados e integraciones externas.</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Configuración"
+        subtitle="Roles personalizados e integraciones externas."
+        icon={Settings}
+      />
 
       {/* Tabs */}
-      <div className="flex border-b border-border">
+      <div className="flex border-b border-border overflow-x-auto">
         <TabButton active={tab === 'roles'} onClick={() => setTab('roles')} icon={Shield} label="Roles" />
         <TabButton active={tab === 'apis'} onClick={() => setTab('apis')} icon={Key} label="APIs externas" />
       </div>

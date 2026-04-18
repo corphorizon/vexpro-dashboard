@@ -33,6 +33,7 @@ import {
   Calculator,
   ShieldCheck,
   FileSearch,
+  Briefcase,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -77,7 +78,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
       { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
       { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
-      { href: '/socios', i18nKey: 'nav.partners', icon: UsersIcon, module: 'partners' },
+      { href: '/socios', i18nKey: 'nav.partners', icon: Briefcase, module: 'partners' },
       { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
       { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },
     ],
@@ -154,7 +155,6 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   };
 
   const handleNavClick = () => {
-    // Close mobile menu on navigation
     onClose?.();
   };
 
@@ -168,15 +168,18 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
         href={item.href}
         onClick={handleNavClick}
         className={cn(
-          'flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-          indent && 'ml-4',
+          'group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
+          indent && 'ml-3 pl-3 border-l border-slate-700/60',
           isActive
-            ? 'bg-[var(--color-primary)] text-white'
-            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+            ? 'bg-[var(--color-primary)] text-white shadow-sm'
+            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
         )}
       >
-        <Icon className="w-4 h-4" />
-        {t(item.i18nKey)}
+        <Icon className={cn(
+          'w-4 h-4 shrink-0 transition-colors',
+          isActive ? 'text-white' : 'text-slate-400 group-hover:text-white'
+        )} />
+        <span className="truncate">{t(item.i18nKey)}</span>
       </Link>
     );
   };
@@ -186,50 +189,45 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
       {/* Backdrop for mobile */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
           onClick={onClose}
         />
       )}
 
+      {/*
+        Sidebar: always-dark slate palette regardless of theme. Works with
+        both the light and dark content areas because the sidebar reads as
+        a distinct surface. White logo + slate icons + primary color for
+        active states.
+      */}
       <aside
         className={cn(
-          'w-64 border-r border-border bg-card flex flex-col min-h-screen',
-          // Desktop: always visible, static
+          'w-64 flex flex-col min-h-screen bg-slate-900 border-r border-slate-800 text-slate-200',
           'hidden lg:flex',
-          // Mobile: fixed overlay drawer
           mobileOpen && '!flex fixed inset-y-0 left-0 z-50 shadow-2xl'
         )}
       >
         {/* Logo */}
-        <div className="p-4 border-b border-border">
+        <div className="p-5 border-b border-slate-800">
           <Link href="/" onClick={handleNavClick} className="flex items-center justify-center">
-            <Image
-              src="/vex-logofull.png"
-              alt={company?.name || 'Company'}
-              width={180}
-              height={50}
-              className="object-contain block dark:hidden"
-              priority
-            />
             <Image
               src="/vex-logofull-white.png"
               alt={company?.name || 'Company'}
               width={180}
               height={50}
-              className="object-contain hidden dark:block"
+              className="object-contain"
               priority
             />
           </Link>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
+        <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
           {NAV_STRUCTURE.map((entry) => {
             if (entry.type === 'link') {
               return renderLink(entry as NavLink);
             }
 
-            // Section (collapsible)
             const section = entry as NavSection;
             const visibleChildren = section.children.filter(c => hasModuleAccess(user, c.module));
             if (visibleChildren.length === 0) return null;
@@ -239,23 +237,26 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             const SectionIcon = section.icon;
 
             return (
-              <div key={section.i18nKey}>
+              <div key={section.i18nKey} className="pt-0.5">
                 <button
                   onClick={() => toggleSection(section.i18nKey)}
                   className={cn(
-                    'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
+                    'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-semibold transition-all',
                     hasActiveChild
-                      ? 'text-[var(--color-primary)]'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                      ? 'text-white bg-slate-800/50'
+                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
                   )}
                 >
                   <span className="flex items-center gap-3">
-                    <SectionIcon className="w-4 h-4" />
-                    {t(section.i18nKey)}
+                    <SectionIcon className={cn(
+                      'w-4 h-4 shrink-0',
+                      hasActiveChild ? 'text-[var(--color-primary)]' : ''
+                    )} />
+                    <span className="uppercase tracking-wide text-[11px]">{t(section.i18nKey)}</span>
                   </span>
                   <ChevronDown
                     className={cn(
-                      'w-4 h-4 transition-transform duration-200',
+                      'w-3.5 h-3.5 transition-transform duration-200',
                       isOpen && 'rotate-180'
                     )}
                   />
@@ -271,54 +272,60 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-border space-y-3">
-          {/* Theme & Language toggles */}
-          <div className="flex items-center justify-center gap-1">
+        <div className="p-3 border-t border-slate-800 space-y-2">
+          {/* User info */}
+          {user && (
+            <div className="px-3 pb-2 text-center">
+              <p className="text-xs font-medium text-slate-200 truncate">{user.name}</p>
+              <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">
+                {ROLE_LABELS[user.role] || user.role}
+              </p>
+            </div>
+          )}
+
+          {/* Profile + Logout */}
+          <Link
+            href="/perfil"
+            onClick={handleNavClick}
+            className={cn(
+              'group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
+              pathname === '/perfil'
+                ? 'bg-[var(--color-primary)] text-white'
+                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+            )}
+          >
+            <UserCircle className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
+            <span>{t('nav.profile')}</span>
+          </Link>
+          <button
+            onClick={handleLogout}
+            aria-label={t('nav.logout')}
+            className="group flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all"
+          >
+            <LogOut className="w-4 h-4 text-slate-400 group-hover:text-red-200 transition-colors" />
+            <span>{t('nav.logout')}</span>
+          </button>
+
+          {/* Theme + Language toggles */}
+          <div className="flex items-center justify-center gap-1 pt-2 mt-2 border-t border-slate-800">
             <button
               onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
               aria-label={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
             >
               {resolvedTheme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
               {resolvedTheme === 'dark' ? 'Light' : 'Dark'}
             </button>
-            <span className="text-muted-foreground/30">|</span>
+            <span className="text-slate-700">|</span>
             <button
               onClick={() => setLocale(locale === 'es' ? 'en' : 'es')}
               aria-label="Change language"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
             >
               <Globe className="w-3.5 h-3.5" />
               {locale === 'es' ? 'EN' : 'ES'}
             </button>
           </div>
-
-          {user && (
-            <div className="text-xs text-muted-foreground text-center">
-              {user.name} ({ROLE_LABELS[user.role] || user.role})
-            </div>
-          )}
-          <Link
-            href="/perfil"
-            onClick={handleNavClick}
-            className={cn(
-              'flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg text-sm font-medium transition-colors',
-              pathname === '/perfil'
-                ? 'bg-[var(--color-primary)] text-white'
-                : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-            )}
-          >
-            <UserCircle className="w-4 h-4" />
-            {t('nav.profile')}
-          </Link>
-          <button
-            onClick={handleLogout}
-            aria-label={t('nav.logout')}
-            className="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg text-sm font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          >
-            <LogOut className="w-4 h-4" />
-            {t('nav.logout')}
-          </button>
         </div>
       </aside>
     </>
