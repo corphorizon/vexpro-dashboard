@@ -53,6 +53,28 @@ function fmtDate(d: Date): string {
   });
 }
 
+// ─── History persistence (localStorage) ───
+
+interface HistoryRecord {
+  id: string;
+  savedAt: string; // ISO datetime
+  fileName: string;
+  traderName: string;
+  accountNumber: string;
+  broker: string;
+  period: string;
+  totalNetProfit: number;
+  totalTrades: number;
+  verdict: 'approved' | 'rejected' | 'review' | null;
+  verdictMsg: string;
+  rulesSummary: { ruleName: string; displayName: string; violations: number; status: string }[];
+  // Guardamos el resultado completo serializado para poder restaurarlo
+  resultSnapshot: string; // JSON.stringify(AnalysisResult) sin los trades completos
+}
+
+const HISTORY_KEY = 'risk_propfirm_history';
+const MAX_HISTORY = 50;
+
 // ─── Page ───
 
 const PAGE_SIZE = 50;
@@ -82,6 +104,19 @@ export default function RetirosPropFirmPage() {
   const [fileName, setFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // History state (lazy-init from localStorage)
+  const [showHistory, setShowHistory] = useState(false);
+  const [history, setHistory] = useState<HistoryRecord[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = localStorage.getItem(HISTORY_KEY);
+      return raw ? (JSON.parse(raw) as HistoryRecord[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [historyLoading, setHistoryLoading] = useState<string | null>(null);
+
   // Table state
   const [ruleFilter, setRuleFilter] = useState<string>('all');
   const [violPage, setViolPage] = useState(0);
@@ -93,6 +128,213 @@ export default function RetirosPropFirmPage() {
 
   // Drag & drop
   const [dragOver, setDragOver] = useState(false);
+
+  // ─── Save analysis to history (localStorage) ───
+
+  const saveToHistory = useCallback((
+    analysis: AnalysisResult,
+    file: string,
+    verdictResult: { approved: boolean; msg: string } | null,
+  ) => {
+    const record: HistoryRecord = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      savedAt: new Date().toISOString(),
+      fileName: file,
+      traderName: analysis.metadata.traderName,
+      accountNumber: analysis.metadata.accountNumber,
+      broker: analysis.metadata.broker,
+      period: analysis.metadata.period,
+      totalNetProfit: analysis.metadata.totalNetProfit,
+      totalTrades: analysis.trades.length,
+      verdict: verdictResult === null ? null : verdictResult.approved ? 'approved' : 'rejected',
+      verdictMsg: verdictResult?.msg ?? '',
+      rulesSummary: analysis.ruleResults.map(r => ({
+        ruleName: r.ruleName,
+        displayName: r.displayName,
+        violations: r.violations.length,
+        status: r.status,
+      })),
+      resultSnapshot: JSON.stringify({
+        metadata: analysis.metadata,
+        ruleResults: analysis.ruleResults.map(r => ({
+          ...r,
+          violations: r.violations.slice(0, 200).map(v => ({
+            ...v,
+            // Incluir datos del trade para poder restaurar y mostrar en PDF
+            tradeData: analysis.trades[v.tradeIndex] ? {
+              position: analysis.trades[v.tradeIndex].position,
+              symbol: analysis.trades[v.tradeIndex].symbol,
+              type: analysis.trades[v.tradeIndex].type,
+              volume: analysis.trades[v.tradeIndex].volume,
+              profit: analysis.trades[v.tradeIndex].profit,
+              durationMinutes: analysis.trades[v.tradeIndex].durationMinutes,
+              openTime: analysis.trades[v.tradeIndex].openTime,
+            } : null,
+          })),
+        })),
+      }),
+    };
+
+    setHistory((prev) => {
+      const next = [record, ...prev].slice(0, MAX_HISTORY);
+      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
+
+  // ─── Restore an analysis from history ───
+
+  const restoreFromHistory = useCallback((rec: HistoryRecord) => {
+    try {
+      const snapshot = JSON.parse(rec.resultSnapshot);
+
+      // Reconstruir trades desde los datos guardados en violations
+      const tradesMap = new Map<number, Trade>();
+      for (const rr of snapshot.ruleResults) {
+        for (const v of rr.violations ?? []) {
+          if (v.tradeData && !tradesMap.has(v.tradeIndex)) {
+            tradesMap.set(v.tradeIndex, {
+              index: v.tradeIndex,
+              position: v.tradeData.position,
+              symbol: v.tradeData.symbol,
+              type: v.tradeData.type,
+              volume: v.tradeData.volume,
+              profit: v.tradeData.profit,
+              durationMinutes: v.tradeData.durationMinutes,
+              openTime: new Date(v.tradeData.openTime),
+              closeTime: new Date(v.tradeData.openTime), // aproximado
+              openPrice: 0,
+              closePrice: 0,
+              sl: null,
+              tp: null,
+              commission: 0,
+              swap: 0,
+            } as Trade);
+          }
+        }
+      }
+
+      const restored: AnalysisResult = {
+        trades: Array.from(tradesMap.values()),
+        metadata: snapshot.metadata,
+        ruleResults: snapshot.ruleResults,
+      };
+      setResult(restored);
+      setFileName(rec.fileName);
+      setShowHistory(false);
+      setViolPage(0);
+      setOpsPage(0);
+      setRuleFilter('all');
+      setShowAll(false);
+    } catch (err) {
+      console.error('Error restaurando desde historial:', err);
+    }
+  }, []);
+
+  // ─── Generate PDF from a history record ───
+
+  const downloadPDFFromHistory = useCallback(async (rec: HistoryRecord) => {
+    setHistoryLoading(rec.id);
+    try {
+      const snapshot = JSON.parse(rec.resultSnapshot);
+      const { jsPDF } = await import('jspdf');
+      const { default: autoTable } = await import('jspdf-autotable');
+
+      const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const meta = snapshot.metadata;
+      const v = rec.verdict === 'approved'
+        ? { status: 'pass' as const, msg: rec.verdictMsg }
+        : rec.verdict === 'rejected'
+          ? { status: 'fail' as const, msg: rec.verdictMsg }
+          : null;
+
+      // Header
+      doc.setFontSize(16);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Informe de Revisión PropFirm', 14, 16);
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.text(`Trader: ${meta.traderName}`, 14, 23);
+      doc.text(`Cuenta: ${meta.accountNumber}`, 14, 28);
+      doc.text(`Broker: ${meta.broker}`, 14, 33);
+      doc.text(`Período: ${meta.period}`, 14, 38);
+      doc.text(`Total Net Profit: ${fmt$(meta.totalNetProfit)}`, 14, 43);
+      doc.text(`Total Operaciones: ${rec.totalTrades}`, 14, 48);
+      doc.text(`Revisado: ${new Date(rec.savedAt).toLocaleDateString('es-ES')}`, 14, 53);
+      doc.text(`Archivo: ${rec.fileName}`, 14, 58);
+
+      // Verdict
+      if (v) {
+        doc.setFontSize(11);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor(v.status === 'pass' ? 0 : 180, v.status === 'pass' ? 120 : 0, 0);
+        doc.text(v.status === 'pass' ? `✓ APROBADO — ${v.msg}` : `✗ RECHAZADO — ${v.msg}`, 14, 67);
+        doc.setTextColor(0, 0, 0);
+      }
+
+      // Rules summary
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Resumen de Reglas', 14, 78);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ruleRows = snapshot.ruleResults.filter((r: any) => r.isActive).map((r: any) => [
+        r.displayName,
+        r.status === 'pass' ? '✓ OK' : '✗ FALLA',
+        `${r.violations.length} (${r.violationPct?.toFixed(1) ?? 0}%)`,
+        Object.entries(r.computedParams ?? {}).map(([k, val]) => `${k}: ${val}`).join(' | '),
+      ]);
+      autoTable(doc, {
+        startY: 81,
+        head: [['Regla', 'Estado', 'Incumplimientos', 'Parámetros']],
+        body: ruleRows,
+        theme: 'grid',
+        headStyles: { fillColor: [30, 30, 30], textColor: 255, fontSize: 8 },
+        bodyStyles: { fontSize: 8 },
+      });
+
+      // Violations table
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const afterRules = ((doc as any).lastAutoTable?.finalY ?? 132) + 8;
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Operaciones con Incumplimientos', 14, afterRules);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const allViolations: any[] = [];
+      const seen = new Set<number>();
+      for (const rr of snapshot.ruleResults) {
+        for (const v of rr.violations ?? []) {
+          if (!seen.has(v.tradeIndex)) {
+            seen.add(v.tradeIndex);
+            allViolations.push({ ...v, ruleName: rr.displayName });
+          }
+        }
+      }
+      autoTable(doc, {
+        startY: afterRules + 3,
+        head: [['Position', 'Symbol', 'Tipo', 'Volume', 'Profit', 'Duración', 'Regla Violada', 'Detalle']],
+        body: allViolations.map(v => [
+          v.tradeData?.position ?? '—',
+          v.tradeData?.symbol ?? '—',
+          v.tradeData?.type?.toUpperCase() ?? '—',
+          v.tradeData?.volume ?? '—',
+          fmt$(v.tradeData?.profit ?? 0),
+          fmtDuration(v.tradeData?.durationMinutes ?? 0),
+          v.ruleName ?? '—',
+          v.detail ?? '—',
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [30, 30, 30], textColor: 255, fontSize: 7 },
+        bodyStyles: { fontSize: 7, fillColor: [255, 235, 235], textColor: [150, 0, 0] },
+      });
+
+      const fileNamePdf = `RevisionPropFirm_${meta.accountNumber}_${meta.period?.replace(/[^a-zA-Z0-9]/g, '_') ?? 'periodo'}.pdf`;
+      doc.save(fileNamePdf);
+    } catch (err) {
+      console.error('Error generando PDF desde historial:', err);
+    } finally {
+      setHistoryLoading(null);
+    }
+  }, []);
 
   // ─── File handling ───
 
@@ -111,12 +353,14 @@ export default function RetirosPropFirmPage() {
       const parsed: ParseResult = parseTradeReport(buffer);
       const analysis = analyzeReport(parsed, config);
       setResult(analysis);
+      // Guardar en historial automáticamente
+      saveToHistory(analysis, file.name, null); // verdict se actualiza después con approvalStatus
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al procesar el archivo');
     } finally {
       setLoading(false);
     }
-  }, [config]);
+  }, [config, saveToHistory]);
 
   const handleDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -145,9 +389,10 @@ export default function RetirosPropFirmPage() {
       config,
     );
     setResult(reResult);
+    saveToHistory(reResult, fileName ?? '', null);
     setViolPage(0);
     setRuleFilter('all');
-  }, [result, config]);
+  }, [result, config, saveToHistory, fileName]);
 
   // ─── Computed data ───
 
@@ -180,9 +425,8 @@ export default function RetirosPropFirmPage() {
   const filteredViolations = useMemo(() => {
     if (!result) return [];
     if (ruleFilter === 'all') {
-      // All unique violated trades with their rules
       const seen = new Set<number>();
-      const list: { trade: Trade; rules: string[]; details: string[] }[] = [];
+      const list: { trade: Trade | undefined; tradeIndex: number; rules: string[]; details: string[] }[] = [];
       for (const rr of result.ruleResults) {
         if (!rr.isActive) continue;
         for (const v of rr.violations) {
@@ -190,22 +434,23 @@ export default function RetirosPropFirmPage() {
             seen.add(v.tradeIndex);
             list.push({
               trade: result.trades[v.tradeIndex],
+              tradeIndex: v.tradeIndex,
               rules: tradeRuleMap.get(v.tradeIndex) || [],
               details: [],
             });
           }
-          // Add detail
-          const item = list.find(l => l.trade.index === v.tradeIndex);
+          // Add detail — usar tradeIndex directamente, no l.trade.index
+          const item = list.find(l => l.tradeIndex === v.tradeIndex);
           if (item) item.details.push(`${rr.displayName}: ${v.detail}`);
         }
       }
       return list;
     }
-    // Filter by specific rule
     const rr = result.ruleResults.find(r => r.ruleName === ruleFilter);
     if (!rr) return [];
     return rr.violations.map(v => ({
       trade: result.trades[v.tradeIndex],
+      tradeIndex: v.tradeIndex,
       rules: [rr.displayName],
       details: [v.detail],
     }));
@@ -417,12 +662,26 @@ export default function RetirosPropFirmPage() {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div>
-        <p className="text-xs text-muted-foreground mb-1">
-          {t('risk.breadcrumb')}
-        </p>
-        <h1 className="text-2xl font-bold text-foreground">{t('risk.title')}</h1>
-        <p className="text-sm text-muted-foreground mt-1">{t('risk.subtitle')}</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-xs text-muted-foreground mb-1">
+            {t('risk.breadcrumb')}
+          </p>
+          <h1 className="text-2xl font-bold text-foreground">{t('risk.title')}</h1>
+          <p className="text-sm text-muted-foreground mt-1">{t('risk.subtitle')}</p>
+        </div>
+        <button
+          onClick={() => setShowHistory(!showHistory)}
+          className={cn(
+            'flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors flex-shrink-0',
+            showHistory
+              ? 'bg-[var(--color-primary)] text-white border-transparent'
+              : 'border-border hover:bg-muted',
+          )}
+        >
+          <FileSearch className="w-4 h-4" />
+          Historial ({history.length})
+        </button>
       </div>
 
       {/* Rule Config Panel */}
@@ -579,6 +838,121 @@ export default function RetirosPropFirmPage() {
           </div>
         )}
       </Card>
+
+      {/* History Panel */}
+      {showHistory && (
+        <Card className="p-0 overflow-hidden">
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
+            <h3 className="font-semibold flex items-center gap-2">
+              <FileSearch className="w-4 h-4 text-[var(--color-primary)]" />
+              Historial de Revisiones
+              <span className="text-sm font-normal text-muted-foreground">({history.length} registros)</span>
+            </h3>
+            {history.length > 0 && (
+              <button
+                onClick={() => {
+                  if (confirm('¿Eliminar todo el historial?')) {
+                    setHistory([]);
+                    localStorage.removeItem(HISTORY_KEY);
+                  }
+                }}
+                className="text-xs text-red-500 hover:text-red-600 transition-colors"
+              >
+                Limpiar historial
+              </button>
+            )}
+          </div>
+          {history.length === 0 ? (
+            <p className="text-center text-muted-foreground py-8 text-sm">No hay revisiones guardadas aún</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-border bg-muted/30 text-xs">
+                    <th className="text-left px-4 py-3 font-medium">Fecha</th>
+                    <th className="text-left px-3 py-3 font-medium">Trader</th>
+                    <th className="text-left px-3 py-3 font-medium">Cuenta</th>
+                    <th className="text-left px-3 py-3 font-medium">Período</th>
+                    <th className="text-right px-3 py-3 font-medium">Operaciones</th>
+                    <th className="text-right px-3 py-3 font-medium">Net Profit</th>
+                    <th className="text-center px-3 py-3 font-medium">Veredicto</th>
+                    <th className="text-left px-3 py-3 font-medium">Reglas</th>
+                    <th className="text-center px-3 py-3 font-medium">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((rec) => (
+                    <tr key={rec.id} className="border-b border-border/40 hover:bg-muted/20 text-xs">
+                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                        {new Date(rec.savedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </td>
+                      <td className="px-3 py-3 font-medium">{rec.traderName || '—'}</td>
+                      <td className="px-3 py-3 font-mono text-muted-foreground">{rec.accountNumber || '—'}</td>
+                      <td className="px-3 py-3 text-muted-foreground">{rec.period || '—'}</td>
+                      <td className="px-3 py-3 text-right">{rec.totalTrades}</td>
+                      <td className={cn('px-3 py-3 text-right font-medium', rec.totalNetProfit >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                        {fmt$(rec.totalNetProfit)}
+                      </td>
+                      <td className="px-3 py-3 text-center">
+                        {rec.verdict === 'approved' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
+                            <CheckCircle className="w-2.5 h-2.5" /> Aprobado
+                          </span>
+                        )}
+                        {rec.verdict === 'rejected' && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400">
+                            <XCircle className="w-2.5 h-2.5" /> Rechazado
+                          </span>
+                        )}
+                        {rec.verdict === null && (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex gap-1 flex-wrap">
+                          {rec.rulesSummary.map((r) => (
+                            <span key={r.ruleName} className={cn(
+                              'px-1.5 py-0.5 rounded text-[9px] font-medium',
+                              r.status === 'pass'
+                                ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400'
+                                : 'bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400',
+                            )}>
+                              {r.displayName}: {r.violations}
+                            </span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            onClick={() => restoreFromHistory(rec)}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-colors"
+                            title="Ver análisis"
+                          >
+                            <Eye className="w-3 h-3" />
+                            Ver
+                          </button>
+                          <button
+                            onClick={() => downloadPDFFromHistory(rec)}
+                            disabled={historyLoading === rec.id}
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 transition-colors disabled:opacity-50"
+                            title="Descargar PDF"
+                          >
+                            {historyLoading === rec.id
+                              ? <Loader2 className="w-3 h-3 animate-spin" />
+                              : <FileText className="w-3 h-3" />}
+                            PDF
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
 
       {/* Upload Zone */}
       {!result && !loading && (
@@ -747,19 +1121,21 @@ export default function RetirosPropFirmPage() {
                   </thead>
                   <tbody>
                     {violPageItems.map((item, i) => (
-                      <tr key={`${item.trade.index}-${i}`} className="border-b border-border/50 hover:bg-muted/30">
-                        <td className="px-3 py-2 font-mono">{item.trade.position}</td>
-                        <td className="px-3 py-2 font-medium">{item.trade.symbol}</td>
+                      <tr key={`${item.tradeIndex}-${i}`} className="border-b border-border/50 hover:bg-muted/30">
+                        <td className="px-3 py-2 font-mono">{item.trade?.position ?? '—'}</td>
+                        <td className="px-3 py-2 font-medium">{item.trade?.symbol ?? '—'}</td>
                         <td className="px-3 py-2">
-                          <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium uppercase',
-                            item.trade.type === 'buy' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                          )}>{item.trade.type}</span>
+                          {item.trade ? (
+                            <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium uppercase',
+                              item.trade.type === 'buy' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                            )}>{item.trade.type}</span>
+                          ) : '—'}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono">{item.trade.volume}</td>
-                        <td className={cn('px-3 py-2 text-right font-mono', item.trade.profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
-                          {fmt$(item.trade.profit)}
+                        <td className="px-3 py-2 text-right font-mono">{item.trade?.volume ?? '—'}</td>
+                        <td className={cn('px-3 py-2 text-right font-mono', (item.trade?.profit ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                          {fmt$(item.trade?.profit ?? 0)}
                         </td>
-                        <td className="px-3 py-2 text-right">{fmtDuration(item.trade.durationMinutes)}</td>
+                        <td className="px-3 py-2 text-right">{fmtDuration(item.trade?.durationMinutes ?? 0)}</td>
                         <td className="px-3 py-2">
                           <div className="flex flex-wrap gap-1">
                             {item.rules.map((r, ri) => (
@@ -802,6 +1178,14 @@ export default function RetirosPropFirmPage() {
                 </div>
               )}
             </Card>
+          )}
+
+          {/* Restored-from-history notice */}
+          {result.trades.length === 0 && (
+            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 text-amber-700 text-sm">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              <span>Este análisis fue restaurado del historial. Las operaciones individuales no están disponibles — sube el archivo original para verlas.</span>
+            </div>
           )}
 
           {/* Full Operations Table */}

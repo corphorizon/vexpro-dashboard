@@ -102,6 +102,7 @@ const NAV_STRUCTURE: NavEntry[] = [
     icon: ShieldCheck,
     children: [
       { href: '/risk/retiros-propfirm', i18nKey: 'nav.riskWithdrawals', icon: FileSearch, module: 'risk' },
+      { href: '/risk/retiros-wallet', i18nKey: 'nav.riskWalletWithdrawals', icon: Wallet, module: 'risk' },
     ],
   },
 
