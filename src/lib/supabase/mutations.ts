@@ -569,3 +569,13 @@ export async function updateCommercialProfile(
 export async function deleteCommercialProfile(id: string): Promise<void> {
   await profileApi({ action: 'delete', id });
 }
+
+export async function deleteEmployee(id: string): Promise<void> {
+  const res = await fetch('/api/admin/employees', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'delete', id }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `Request failed: ${res.status}`);
+}

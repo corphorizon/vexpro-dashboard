@@ -9,7 +9,7 @@ import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
-import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile } from '@/lib/supabase/mutations';
+import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee } from '@/lib/supabase/mutations';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
@@ -693,6 +693,22 @@ export default function RRHHPage() {
     }
   };
 
+  const handleDeleteEmployee = async (id: string) => {
+    // Local-only rows (not yet persisted) carry a non-UUID id like `emp-<timestamp>`.
+    // Skip the API call for those — just drop from state.
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+    try {
+      if (isUuid) await deleteEmployee(id);
+      setEmployees(prev => prev.filter(e => e.id !== id));
+      setDeletingId(null);
+      if (isUuid) await refresh();
+    } catch (err) {
+      setDeletingId(null);
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al eliminar' });
+      setTimeout(() => setToast(null), 4000);
+    }
+  };
+
   const handleExportEmployees = () => verify2FA(() => {
     const headers = [t('common.name'), t('common.email'), t('hr.position'), t('hr.department'), t('hr.startDate'), t('hr.salary'), t('hr.status')];
     const rows = employees.map(e => [e.name, e.email, e.position, e.department, e.start_date, e.salary ?? 'N/A', t(STATUS_LABEL_KEYS[e.status])] as (string | number)[]);
@@ -1074,9 +1090,21 @@ export default function RRHHPage() {
                         </span>
                       </td>
                       <td className="py-2.5 text-right">
-                        <button onClick={() => { setEditingEmp(emp); setShowEmpForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
+                        <div className="flex items-center justify-end gap-1">
+                          <button onClick={() => { setEditingEmp(emp); setShowEmpForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                          {deletingId === emp.id ? (
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => handleDeleteEmployee(emp.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
+                              <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
+                            </div>
+                          ) : (
+                            <button onClick={() => setDeletingId(emp.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
