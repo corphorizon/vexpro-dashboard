@@ -5,7 +5,14 @@ import { createClient } from '@/lib/supabase/client';
 import { logAction } from '@/lib/audit-log';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
-export type UserRole = 'admin' | 'socio' | 'auditor' | 'soporte' | 'hr' | 'invitado';
+export type UserRole =
+  | 'admin'
+  | 'socio'
+  | 'auditor'
+  | 'soporte'
+  | 'hr'
+  | 'invitado'
+  | 'superadmin';
 
 export interface User {
   id: string;
@@ -18,11 +25,17 @@ export interface User {
    * this field, not `role`, so custom roles can inherit admin/auditor tiers.
    */
   effective_role: UserRole;
-  company_id: string;
+  /**
+   * Null when the user is a platform-level SUPERADMIN — they don't belong to
+   * any company and work cross-tenant. Non-null for every other role.
+   */
+  company_id: string | null;
   allowed_modules: string[];
   twofa_enabled: boolean;
   force_2fa_setup: boolean;
   must_change_password: boolean;
+  /** True only when the user record came from `platform_users`, not `company_users`. */
+  is_superadmin: boolean;
 }
 
 const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
@@ -69,37 +82,74 @@ async function resolveEffectiveRole(role: string, companyId: string): Promise<Us
   return ((data?.base_role as UserRole) ?? 'invitado');
 }
 
-// Fetch the company_user profile for a given auth user
+// Fetch the profile for a given auth user.
+//
+// Resolution order:
+//   1. `company_users` — standard tenant user. Carries company_id + role.
+//   2. `platform_users` — Horizon superadmin. No company_id, cross-tenant.
+//
+// Returns null only if the auth user is authenticated but has no profile at
+// either table (orphan auth.user).
 async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
-  const { data, error } = await supabase
+  // 1) Try company_users first — most users live here.
+  const { data: cu, error: cuErr } = await supabase
     .from('company_users')
     .select('*')
     .eq('user_id', authUser.id)
-    .single();
+    .maybeSingle();
 
-  if (error || !data) {
-    console.error('Error fetching user profile:', error?.message);
-    return null;
+  if (!cuErr && cu) {
+    const effective_role = await resolveEffectiveRole(cu.role, cu.company_id);
+    return {
+      id: cu.id,
+      email: cu.email,
+      name: cu.name,
+      role: cu.role as UserRole,
+      effective_role,
+      company_id: cu.company_id,
+      allowed_modules: cu.allowed_modules || [],
+      twofa_enabled: cu.twofa_enabled || false,
+      force_2fa_setup: cu.force_2fa_setup ?? true,
+      must_change_password: cu.must_change_password ?? false,
+      is_superadmin: false,
+    };
   }
 
-  const effective_role = await resolveEffectiveRole(data.role, data.company_id);
+  // 2) Not in company_users — try platform_users (superadmin).
+  const { data: pu, error: puErr } = await supabase
+    .from('platform_users')
+    .select('*')
+    .eq('user_id', authUser.id)
+    .maybeSingle();
 
-  return {
-    id: data.id,
-    email: data.email,
-    name: data.name,
-    role: data.role as UserRole,
-    effective_role,
-    company_id: data.company_id,
-    allowed_modules: data.allowed_modules || [],
-    twofa_enabled: data.twofa_enabled || false,
-    force_2fa_setup: data.force_2fa_setup ?? true,
-    must_change_password: data.must_change_password ?? false,
-  };
+  if (!puErr && pu) {
+    // Superadmin has access to every module conceptually. We still ship the
+    // full module list so UI guards that check `allowed_modules` pass. The
+    // real cross-tenant reads are gated by RLS (`is_superadmin()` bypass).
+    return {
+      id: pu.id,
+      email: pu.email,
+      name: pu.name,
+      role: 'superadmin',
+      effective_role: 'superadmin',
+      company_id: null,
+      allowed_modules: ALL_MODULES,
+      twofa_enabled: pu.twofa_enabled || false,
+      // Superadmin doesn't follow the company-level onboarding flow.
+      force_2fa_setup: false,
+      must_change_password: false,
+      is_superadmin: true,
+    };
+  }
+
+  console.error('Auth user has no profile in company_users or platform_users:', authUser.id);
+  return null;
 }
 
-// Fetch all company_users for the same company — never include twofa_secret
-async function fetchAllUsers(companyId: string): Promise<User[]> {
+// Fetch all company_users for the same company — never include twofa_secret.
+// Returns empty array when called with null (superadmin context).
+async function fetchAllUsers(companyId: string | null): Promise<User[]> {
+  if (!companyId) return [];
   const { data, error } = await supabase
     .from('company_users')
     .select('id, email, name, role, company_id, allowed_modules, twofa_enabled, force_2fa_setup, must_change_password')
@@ -136,6 +186,7 @@ async function fetchAllUsers(companyId: string): Promise<User[]> {
       twofa_enabled: (u.twofa_enabled as boolean) || false,
       force_2fa_setup: (u.force_2fa_setup as boolean) ?? true,
       must_change_password: (u.must_change_password as boolean) ?? false,
+      is_superadmin: false,
     };
   });
 }

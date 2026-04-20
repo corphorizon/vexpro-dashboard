@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Sidebar } from '@/components/sidebar';
+import { ViewingAsBanner } from '@/components/viewing-as-banner';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { PeriodProvider } from '@/lib/period-context';
 import { DataProvider } from '@/lib/data-context';
@@ -80,6 +81,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
       <MobileTopBar onMenuToggle={() => setMobileMenuOpen(prev => !prev)} />
       <Sidebar mobileOpen={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
       <main className="flex-1 overflow-auto pt-14 lg:pt-0">
+        <ViewingAsBanner />
         <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
           <ErrorBoundary>
             {children}
@@ -103,6 +105,21 @@ export default function DashboardLayout({
     if (isLoading) return;
     if (!user) {
       router.replace('/login');
+      return;
+    }
+    // Superadmins live in /superadmin; if they land on any dashboard route
+    // without first choosing a company via the "Viewing as" flow, bounce them
+    // to the platform panel. (Once they enter an entity, activeCompanyId is
+    // set and the data-context loads that company's data — they stay here.)
+    if (user.is_superadmin) {
+      // Using a dynamic import rather than a static one to avoid pulling
+      // localStorage access into this file's top-level. The helper itself
+      // already guards against SSR.
+      import('@/lib/active-company').then(({ getActiveCompanyId }) => {
+        if (!getActiveCompanyId()) {
+          router.replace('/superadmin');
+        }
+      });
       return;
     }
     // Force password change takes priority over 2FA setup.

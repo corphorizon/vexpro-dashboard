@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
+import { clearActiveCompanyId } from '@/lib/active-company';
 import { ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
@@ -46,6 +47,10 @@ export default function LoginPage() {
         } else {
           const loggedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
           notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
+          // Fresh login — clear any stale "viewing as" pointer left over from
+          // a previous superadmin session on this browser. The dashboard
+          // layout will redirect superadmins to /superadmin automatically.
+          clearActiveCompanyId();
           router.push('/');
         }
       } else if (result.locked) {
@@ -73,6 +78,7 @@ export default function LoginPage() {
       if (result.success) {
         const loggedUser = users.find(u => u.id === pendingUserId);
         notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
+        clearActiveCompanyId();
         router.push('/');
       } else {
         setError(result.error || 'Invalid code.');

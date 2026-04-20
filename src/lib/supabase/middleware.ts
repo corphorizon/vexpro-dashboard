@@ -64,5 +64,24 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(url);
   }
 
+  // Defense in depth for /superadmin — the client-side guard in the layout
+  // is the primary check, but we also do a quick server check so a non-
+  // superadmin can't even hit the route (no layout flash).
+  //
+  // NOTE: checking `platform_users` requires a DB round-trip; we keep this
+  // gated behind the pathname prefix so normal navigation stays fast.
+  if (user && pathname.startsWith('/superadmin')) {
+    const { data: pu } = await supabase
+      .from('platform_users')
+      .select('id')
+      .eq('user_id', user.id)
+      .maybeSingle();
+    if (!pu) {
+      const url = request.nextUrl.clone();
+      url.pathname = '/';
+      return NextResponse.redirect(url);
+    }
+  }
+
   return supabaseResponse;
 }
