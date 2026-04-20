@@ -102,7 +102,6 @@ function ResetPasswordInner() {
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
         <AuthBrand />
-        <h2 className="text-center text-xl font-bold mb-6">Smart Dashboard</h2>
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           <h2 className="text-lg font-semibold mb-2">Reset your password</h2>

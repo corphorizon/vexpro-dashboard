@@ -108,7 +108,6 @@ export default function LoginPage() {
       <div className="w-full max-w-md">
         {/* Neutral platform brand — actual tenant colors/logo come after login. */}
         <AuthBrand />
-        <h2 className="text-center text-xl font-bold mb-6">Smart Dashboard</h2>
 
         {/* Form */}
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
@@ -178,9 +177,9 @@ export default function LoginPage() {
               <div className="mt-4 text-center">
                 <button
                   onClick={() => setShowRecovery(true)}
-                  className="text-sm text-[var(--color-secondary)] hover:underline font-medium"
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--color-primary)] hover:underline"
                 >
-                  Forgot your password?
+                  ¿Olvidaste tu contraseña?
                 </button>
               </div>
             </>
@@ -244,10 +243,6 @@ export default function LoginPage() {
             </>
           )}
         </div>
-
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          Smart Dashboard v1.0 — Horizon Consulting
-        </p>
       </div>
     </div>
   );
@@ -284,7 +279,6 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
         <AuthBrand />
-        <h2 className="text-center text-xl font-bold mb-6">Smart Dashboard</h2>
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           <h2 className="text-lg font-semibold mb-4">Account recovery</h2>
