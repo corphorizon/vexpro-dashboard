@@ -20,7 +20,11 @@ import { encryptSecret, lastChars } from '@/lib/crypto';
 //     targets that tenant. This is the path used by the superadmin panel.
 // ---------------------------------------------------------------------------
 
-const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay'];
+// SendGrid dropped from the tenant-facing list — transactional email is
+// always sent from the Horizon SendGrid account (env var SENDGRID_API_KEY).
+// The code path that reads api_credentials for sendgrid still works for
+// legacy rows, but new writes via this route are rejected.
+const SUPPORTED_PROVIDERS = ['coinsbuy', 'unipayment', 'fairpay'];
 
 /**
  * Resolve the effective `company_id` for the request. Returns either:

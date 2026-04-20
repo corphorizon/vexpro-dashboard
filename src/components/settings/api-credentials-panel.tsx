@@ -17,8 +17,13 @@ import { Key, Check, Loader2, Eye, EyeOff } from 'lucide-react';
 // route knows which tenant to operate on (see /api/admin/api-credentials).
 // ─────────────────────────────────────────────────────────────────────────────
 
+// SendGrid intentionally NOT exposed here. Transactional email (invites,
+// password recovery, login notifications) is sent from the Horizon
+// dashboard's own SendGrid account — tenants don't need their own keys.
+// If a future tenant ever wants branded sender, re-add 'sendgrid' to this
+// union + the PROVIDER_META map.
 interface ApiCredential {
-  provider: 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay';
+  provider: 'coinsbuy' | 'unipayment' | 'fairpay';
   last_four: string | null;
   extra_config: Record<string, unknown> | null;
   is_configured: boolean;
@@ -30,14 +35,6 @@ const PROVIDER_META: Record<ApiCredential['provider'], {
   description: string;
   extraFields: Array<{ key: string; label: string; placeholder?: string }>;
 }> = {
-  sendgrid: {
-    label: 'SendGrid',
-    description: 'Correos transaccionales (recuperación, notificaciones).',
-    extraFields: [
-      { key: 'from_email', label: 'From email', placeholder: 'dashboard@tu-dominio.com' },
-      { key: 'from_name', label: 'From name', placeholder: 'Tu Empresa' },
-    ],
-  },
   coinsbuy: {
     label: 'Coinsbuy',
     description: 'Procesador de pagos crypto.',
