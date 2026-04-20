@@ -134,7 +134,7 @@ export default function SuperadminHome() {
       )}
       {!error && companies !== null && companies.length === 0 && (
         <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          Aún no hay entidades. Crea la primera con "Nueva entidad".
+          Aún no hay entidades. Crea la primera con &quot;Nueva entidad&quot;.
         </div>
       )}
 

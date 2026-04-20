@@ -1,26 +1,43 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// AuthBrand — neutral platform mark shown on screens that run BEFORE we know
+// AuthBrand — Smart Dashboard mark shown on screens that run BEFORE we know
 // which tenant the visitor belongs to (login, password recovery, 2FA setup,
 // global loading). Tenant-specific branding takes over inside the dashboard
 // once the user is authenticated and `company` loads.
 //
-// Keeps a simple, text-first approach: a colored shield with "H" (Horizon)
-// plus "Smart Dashboard · Horizon Consulting" as the line under it. No
-// tenant logo or name appears here, which also prevents information leakage
-// ("is admin@x.com in tenant Y?").
+// Uses the official Smart Dashboard logo with dark/light variants swapped
+// automatically by the theme. The subtitle below the logo is optional and
+// defaults to attributing Horizon Consulting.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { ShieldCheck } from 'lucide-react';
+'use client';
+
+// Intentionally using a native <img> rather than next/image here: the auth
+// screens are tiny, the image is static in /public, and we want an instant
+// swap between dark/light without next/image's loader round-trip.
 
 export function AuthBrand({
-  subtitle = 'Smart Dashboard · Horizon Consulting',
+  subtitle = 'The all-in-one financial and operations dashboard',
 }: { subtitle?: string }) {
   return (
     <div className="text-center mb-8">
-      <div className="inline-flex items-center justify-center w-14 h-14 rounded-xl bg-slate-900 text-amber-300 mb-3">
-        <ShieldCheck className="w-7 h-7" />
-      </div>
-      <p className="text-xs uppercase tracking-widest text-muted-foreground">
+      {/* Dark variant: visible in light mode. White variant: visible in dark mode. */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/smart-dashboard-dark.png"
+        alt="Smart Dashboard"
+        width={180}
+        height={180}
+        className="mx-auto mb-3 block dark:hidden h-24 w-24 object-contain"
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/smart-dashboard-white.png"
+        alt="Smart Dashboard"
+        width={180}
+        height={180}
+        className="mx-auto mb-3 hidden dark:block h-24 w-24 object-contain"
+      />
+      <p className="text-xs text-muted-foreground max-w-[280px] mx-auto">
         {subtitle}
       </p>
     </div>

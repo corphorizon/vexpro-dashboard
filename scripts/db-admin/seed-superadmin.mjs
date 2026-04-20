@@ -39,7 +39,7 @@ const TARGET_EMAIL = argVal('email', 'admin@horizonconsulting.ai');
 const TARGET_NAME = argVal('name', 'Horizon Consulting Admin');
 const REDIRECT_URL = argVal(
   'redirect',
-  'http://localhost:3100/reset-password',
+  'https://dashboard.horizonconsulting.ai/reset-password',
 );
 
 // ── Supabase admin client ───────────────────────────────────────────────

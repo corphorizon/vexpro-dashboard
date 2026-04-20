@@ -1,7 +1,5 @@
 'use client';
 
-import { ShieldCheck } from 'lucide-react';
-
 interface LoadingScreenProps {
   message?: string;
 }
@@ -17,9 +15,23 @@ export function LoadingScreen({ message }: LoadingScreenProps) {
   return (
     <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
       <div className="flex flex-col items-center gap-6">
-        <div className="vex-logo-pulse inline-flex items-center gap-2 text-slate-900 dark:text-white">
-          <ShieldCheck className="w-8 h-8 text-amber-500" />
-          <span className="font-semibold text-lg">Smart Dashboard</span>
+        <div className="vex-logo-pulse">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-dark.png"
+            alt="Smart Dashboard"
+            width={96}
+            height={96}
+            className="block dark:hidden h-24 w-24 object-contain mx-auto"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-white.png"
+            alt="Smart Dashboard"
+            width={96}
+            height={96}
+            className="hidden dark:block h-24 w-24 object-contain mx-auto"
+          />
         </div>
         <div className="vex-bar-track" role="progressbar" aria-label="Cargando">
           <div className="vex-bar-fill" />
@@ -44,9 +56,23 @@ export function LoadingError({ message, onRetry }: LoadingErrorProps) {
   return (
     <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
       <div className="flex flex-col items-center gap-5 text-center max-w-md">
-        <div className="inline-flex items-center gap-2 text-slate-900 dark:text-white opacity-80">
-          <ShieldCheck className="w-6 h-6 text-amber-500" />
-          <span className="font-semibold">Smart Dashboard</span>
+        <div className="opacity-80">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-dark.png"
+            alt="Smart Dashboard"
+            width={80}
+            height={80}
+            className="block dark:hidden h-20 w-20 object-contain mx-auto"
+          />
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-white.png"
+            alt="Smart Dashboard"
+            width={80}
+            height={80}
+            className="hidden dark:block h-20 w-20 object-contain mx-auto"
+          />
         </div>
         <div className="space-y-1">
           <p className="text-sm font-medium text-red-600 dark:text-red-400">

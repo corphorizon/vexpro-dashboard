@@ -51,12 +51,12 @@ export function ModuleRouteGuard({ children }: { children: React.ReactNode }) {
   // Personal routes + home pass through.
   if (ALWAYS_ALLOWED.test(pathname)) return <>{children}</>;
 
-  const module = resolveModule(pathname);
-  if (!module) return <>{children}</>; // unmapped route — let it render
+  const moduleKey = resolveModule(pathname);
+  if (!moduleKey) return <>{children}</>; // unmapped route — let it render
 
   // Superadmin bypass is baked into hasModuleAccess. For normal users this
   // enforces both user.allowed_modules AND company.active_modules.
-  if (hasModuleAccess(user, module, company?.active_modules)) {
+  if (hasModuleAccess(user, moduleKey, company?.active_modules)) {
     return <>{children}</>;
   }
 
