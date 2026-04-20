@@ -706,10 +706,41 @@ export function useAuth() {
   return ctx;
 }
 
-export function hasModuleAccess(user: User | null, module: string): boolean {
+/**
+ * Check if a user can access a module.
+ *
+ * Two layers of authorization:
+ *   1. User-level: the user has the module in their `allowed_modules` list
+ *      (company admins bypass this list — they access everything).
+ *   2. Tenant-level: if the caller passes `activeModules`, the module must
+ *      also be present there. A module the tenant has deactivated is
+ *      invisible and unreachable regardless of the user's permissions.
+ *
+ * The SUPERADMIN (platform) bypasses both layers and sees every module,
+ * regardless of what the current tenant has enabled — they need to audit
+ * and configure tenants that may have restrictive setups.
+ *
+ * Backward compatible: call sites that don't pass `activeModules` keep the
+ * original user-only semantics.
+ */
+export function hasModuleAccess(
+  user: User | null,
+  module: string,
+  activeModules?: string[] | null,
+): boolean {
   if (!user) return false;
-  if (user.effective_role === 'admin') return true;
-  return user.allowed_modules.includes(module);
+  // Platform superadmin sees everything — tenant filters don't apply.
+  if (user.is_superadmin) return true;
+
+  // User-level check: admins pass; others must have the module on their list.
+  const passesUserCheck =
+    user.effective_role === 'admin' || user.allowed_modules.includes(module);
+  if (!passesUserCheck) return false;
+
+  // Tenant-level check (optional — skipped when activeModules not provided).
+  if (activeModules && !activeModules.includes(module)) return false;
+
+  return true;
 }
 
 export function canAdd(user: User | null): boolean {

@@ -160,7 +160,10 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   };
 
   const renderLink = (item: NavLink, indent = false) => {
-    if (!hasModuleAccess(user, item.module)) return null;
+    // Sidebar respects BOTH the user's allowed_modules AND the tenant's
+    // active_modules — a deactivated module never shows, even to admins.
+    // Superadmins bypass (handled inside hasModuleAccess).
+    if (!hasModuleAccess(user, item.module, company?.active_modules)) return null;
     const isActive = pathname === item.href;
     const Icon = item.icon;
     return (
@@ -233,7 +236,9 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             }
 
             const section = entry as NavSection;
-            const visibleChildren = section.children.filter(c => hasModuleAccess(user, c.module));
+            const visibleChildren = section.children.filter(c =>
+              hasModuleAccess(user, c.module, company?.active_modules),
+            );
             if (visibleChildren.length === 0) return null;
 
             const isOpen = openSections[section.i18nKey] ?? false;

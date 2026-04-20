@@ -3,7 +3,8 @@
 import { useState, useMemo } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useAuth, hasModuleAccess } from '@/lib/auth-context';
+import { useAuth } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import {
   getAuditLog,
   exportAuditLogCSV,
@@ -32,6 +33,7 @@ const ALL_MODULES: AuditModule[] = ['auth', 'deposits', 'withdrawals', 'expenses
 export default function AuditoriaPage() {
   const { t } = useI18n();
   const { user, users } = useAuth();
+  const canAccess = useModuleAccess('audit');
 
   const [filterUser, setFilterUser] = useState('');
   const [filterAction, setFilterAction] = useState('');
@@ -40,7 +42,7 @@ export default function AuditoriaPage() {
   const [filterDateTo, setFilterDateTo] = useState('');
   const [showFilters, setShowFilters] = useState(false);
 
-  if (!hasModuleAccess(user, 'audit')) {
+  if (!canAccess) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-muted-foreground">{t('common.noAccess')}</p>

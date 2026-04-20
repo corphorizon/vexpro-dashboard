@@ -5,10 +5,10 @@ import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
   useAuth,
-  hasModuleAccess,
   MODULE_LABELS,
   ROLE_LABELS,
 } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import {
   Settings,
   Shield,
@@ -84,9 +84,10 @@ const PROVIDER_META: Record<ApiCredential['provider'], { label: string; descript
 
 export default function ConfiguracionesPage() {
   const { user } = useAuth();
+  const canAccess = useModuleAccess('settings');
   const [tab, setTab] = useState<Tab>('roles');
 
-  if (!hasModuleAccess(user, 'settings')) {
+  if (!canAccess) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-muted-foreground">No tienes acceso a esta sección.</p>

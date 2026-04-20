@@ -3,7 +3,8 @@
 import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useAuth, hasModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
+import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -38,6 +39,7 @@ const emptyForm: UserForm = {
 export default function UsuariosPage() {
   const { t } = useI18n();
   const { user, users, createUser, updateUser, deleteUser, resetPassword } = useAuth();
+  const canAccess = useModuleAccess('users');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
@@ -60,7 +62,7 @@ export default function UsuariosPage() {
       .catch(() => { /* non-fatal */ });
   }, []);
 
-  if (!hasModuleAccess(user, 'users')) {
+  if (!canAccess) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-muted-foreground">{t('common.noAccess')}</p>

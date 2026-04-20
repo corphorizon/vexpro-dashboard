@@ -5,7 +5,8 @@ import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
-import { useAuth, hasModuleAccess, canAdd } from '@/lib/auth-context';
+import { useAuth, canAdd } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 import { upsertChannelBalance, pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
@@ -93,7 +94,7 @@ export default function BalancesPage() {
   // the bottom of the component — pulling it up before the rest of the
   // hooks would violate the Rules of Hooks on re-renders where access
   // changes (e.g. role switch in the same session).
-  const accessDenied = !hasModuleAccess(user, 'balances');
+  const accessDenied = !useModuleAccess('balances');
 
   // ─── Section A: Balance Actual Disponible (chained across periods) ───
   // Formula per period: Net Deposit - Egresos Operativos - Monto a Distribuir
