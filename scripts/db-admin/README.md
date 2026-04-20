@@ -24,6 +24,8 @@ node scripts/db-admin/<script>.mjs
 | `_client.mjs` | Shared connection helper (`withClient(async (c) => ...)`) |
 | `audit.mjs`   | Read-only health check: RLS coverage, public policies, unindexed FKs, orphan data, table sizes |
 | `run-sql-file.mjs` | Execute an arbitrary `.sql` file: `node scripts/db-admin/run-sql-file.mjs supabase/migration-XXX.sql` |
+| `migrate-vexprofx.mjs` | **Phase 2** — Verify VexPro FX is tenant-scoped, sync `active_modules` with code. Idempotent. Supports `--dry-run`. |
+| `seed-superadmin.mjs` | **Phase 2** — Create the first platform_users row + invite email. Idempotent (aborts if already seeded). Requires `NEXT_PUBLIC_SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`. |
 
 ## Safety rules
 
