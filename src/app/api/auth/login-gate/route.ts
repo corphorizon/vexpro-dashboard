@@ -110,12 +110,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Password valid. Clear counter/lock and return state.
-    if (companyUser && (companyUser.failed_login_count > 0 || companyUser.locked_until)) {
-      await adminClient
-        .from('company_users')
-        .update({ failed_login_count: 0, locked_until: null })
-        .eq('id', companyUser.id);
+    // Password valid. Clear counter/lock; if no 2FA is required, stamp
+    // last_login_at now (otherwise verify-2fa will stamp it after the PIN).
+    if (companyUser) {
+      const update: Record<string, unknown> = {};
+      if (companyUser.failed_login_count > 0 || companyUser.locked_until) {
+        update.failed_login_count = 0;
+        update.locked_until = null;
+      }
+      if (!companyUser.twofa_enabled) {
+        update.last_login_at = new Date().toISOString();
+      }
+      if (Object.keys(update).length > 0) {
+        await adminClient.from('company_users').update(update).eq('id', companyUser.id);
+      }
     }
 
     return NextResponse.json({

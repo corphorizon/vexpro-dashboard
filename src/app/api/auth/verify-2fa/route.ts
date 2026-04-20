@@ -143,8 +143,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // PIN is correct → clear rate limit
+    // PIN is correct → clear rate limit + stamp last_login_at for this
+    // membership (post-2FA is the real "successful login" moment).
     await clearAttempts(adminClient, rlOpts);
+    await adminClient
+      .from('company_users')
+      .update({ last_login_at: new Date().toISOString() })
+      .eq('id', companyUser.id);
 
     // Sign out the temp client — real sign-in happens on the browser.
     // If this fails, the refresh token could remain valid. Log loudly so
