@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft } from 'lucide-react';
+import { ArrowLeft, Settings as SettingsIcon, Key } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { CompanyForm, type CompanyFormValues } from '../_form';
+import { ApiCredentialsPanel } from '@/components/settings/api-credentials-panel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/companies/[id] — edit existing tenant
@@ -25,6 +26,9 @@ export default function EditCompanyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Two tabs: "Configuración" (branding + modules form) and "APIs externas"
+  // (ApiCredentialsPanel targeted at this tenant).
+  const [activeTab, setActiveTab] = useState<'settings' | 'apis'>('settings');
 
   useEffect(() => {
     if (!id) return;
@@ -89,10 +93,36 @@ export default function EditCompanyPage() {
         <ArrowLeft className="w-4 h-4" /> Volver al panel
       </Link>
       <div>
-        <h1 className="text-2xl font-bold">Editar entidad</h1>
+        <h1 className="text-2xl font-bold">
+          Editar entidad{values?.name ? ` — ${values.name}` : ''}
+        </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Modifica branding, módulos y estado.
+          Modifica branding, módulos, estado y credenciales de APIs.
         </p>
+      </div>
+
+      {/* Tabs */}
+      <div className="flex border-b border-border overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('settings')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'settings'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <SettingsIcon className="w-4 h-4" /> Configuración
+        </button>
+        <button
+          onClick={() => setActiveTab('apis')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'apis'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Key className="w-4 h-4" /> APIs externas
+        </button>
       </div>
 
       {loadErr && (
@@ -105,7 +135,11 @@ export default function EditCompanyPage() {
         <div className="animate-pulse h-48 rounded-lg bg-muted/50" />
       )}
 
-      {values !== null && (
+      {activeTab === 'apis' && id && (
+        <ApiCredentialsPanel companyId={id} />
+      )}
+
+      {activeTab === 'settings' && values !== null && (
         <CompanyForm
           mode="edit"
           initial={values}

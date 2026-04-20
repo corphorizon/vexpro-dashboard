@@ -112,8 +112,9 @@ const NAV_STRUCTURE: NavEntry[] = [
     i18nKey: 'nav.settings',
     icon: Settings,
     children: [
+      // "Configuraciones" was removed in favor of tabs inside /usuarios
+      // (Roles) and /superadmin/companies/[id] (APIs externas).
       { href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
-      { href: '/configuraciones', i18nKey: 'nav.config', icon: Settings, module: 'settings' },
       { href: '/auditoria', i18nKey: 'nav.audit', icon: ClipboardList, module: 'audit' },
     ],
   },

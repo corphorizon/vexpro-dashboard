@@ -35,7 +35,6 @@ const CODE_MODULES = [
   'hr',            // /rrhh
   'commissions',   // /comisiones
   'risk',          // /risk/retiros-*
-  'settings',      // /configuraciones
   'users',         // /usuarios
   'audit',         // /auditoria
 ];

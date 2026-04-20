@@ -29,7 +29,6 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/rrhh(\/|$)/, 'hr'],
   [/^\/comisiones(\/|$)/, 'commissions'],
   [/^\/risk(\/|$)/, 'risk'],
-  [/^\/configuraciones(\/|$)/, 'settings'],
   [/^\/usuarios(\/|$)/, 'users'],
   [/^\/auditoria(\/|$)/, 'audit'],
 ];

@@ -64,7 +64,9 @@ interface AuthState {
   refreshUser: () => Promise<void>;
 }
 
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users', 'audit', 'settings'];
+// `settings` removed when /configuraciones was dissolved: Roles moved into
+// /usuarios (tab) and API credentials into /superadmin/companies/[id].
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users', 'audit'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
