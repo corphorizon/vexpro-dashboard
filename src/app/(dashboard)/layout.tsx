@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import Image from 'next/image';
 import { Sidebar } from '@/components/sidebar';
+import { CompanyLogo } from '@/components/company-logo';
 import { ViewingAsBanner } from '@/components/viewing-as-banner';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { PeriodProvider } from '@/lib/period-context';
@@ -33,14 +33,17 @@ function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
           >
             <Menu className="w-5 h-5" />
           </button>
-          <Link href="/">
-            <Image
-              src="/vex-logofull-white.png"
-              alt={company?.name || 'Company'}
-              width={100}
-              height={28}
-              className="object-contain"
+          <Link href="/" className="flex items-center gap-2">
+            <CompanyLogo
+              name={company?.name || 'Horizon'}
+              logoUrl={company?.logo_url}
+              colorPrimary={company?.color_primary}
+              className="w-7 h-7"
+              initialsClassName="text-[10px]"
             />
+            <span className="font-semibold text-sm truncate max-w-[140px]">
+              {company?.name || 'Dashboard'}
+            </span>
           </Link>
         </div>
 

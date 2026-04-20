@@ -2,8 +2,8 @@
 
 import { useState, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import Image from 'next/image';
 import { Eye, EyeOff, ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
+import { AuthBrand } from '@/components/auth-brand';
 
 function ResetPasswordInner() {
   const router = useRouter();
@@ -101,25 +101,8 @@ function ResetPasswordInner() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <Image
-            src="/vex-logofull.png"
-            alt="VexPro FX"
-            width={220}
-            height={60}
-            className="mx-auto mb-4 block dark:hidden"
-            priority
-          />
-          <Image
-            src="/vex-logofull-white.png"
-            alt="VexPro FX"
-            width={220}
-            height={60}
-            className="mx-auto mb-4 hidden dark:block"
-            priority
-          />
-          <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
-        </div>
+        <AuthBrand />
+        <h2 className="text-center text-xl font-bold mb-6">Smart Dashboard</h2>
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           <h2 className="text-lg font-semibold mb-2">Reset your password</h2>

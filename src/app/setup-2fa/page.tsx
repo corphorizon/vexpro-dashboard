@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import Image from 'next/image';
+import { AuthBrand } from '@/components/auth-brand';
 import { ShieldCheck, ArrowRight, Copy, Check, Loader2 } from 'lucide-react';
 
 export default function Setup2FAPage() {
@@ -133,7 +134,7 @@ export default function Setup2FAPage() {
               </div>
 
               <div className="px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-400 text-sm">
-                <strong>Importante:</strong> No elimines la cuenta de VexPro FX de tu aplicación de autenticación. Si la pierdes, contacta al administrador.
+                <strong>Importante:</strong> No elimines la cuenta del dashboard en tu aplicación de autenticación. Si la pierdes, contacta al administrador de tu empresa.
               </div>
 
               <button
@@ -155,22 +156,7 @@ export default function Setup2FAPage() {
       <div className="w-full max-w-md">
         {/* Header */}
         <div className="text-center mb-8">
-          <Image
-            src="/vex-logofull.png"
-            alt="VexPro FX"
-            width={180}
-            height={50}
-            className="mx-auto mb-4 block dark:hidden"
-            priority
-          />
-          <Image
-            src="/vex-logofull-white.png"
-            alt="VexPro FX"
-            width={180}
-            height={50}
-            className="mx-auto mb-4 hidden dark:block"
-            priority
-          />
+          <AuthBrand />
           <p className="text-muted-foreground text-sm mt-1">Configuración de seguridad</p>
         </div>
 

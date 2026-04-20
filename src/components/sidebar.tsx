@@ -2,11 +2,11 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
+import { CompanyLogo } from '@/components/company-logo';
 import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -208,17 +208,20 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
           mobileOpen && '!flex fixed inset-y-0 left-0 z-50 shadow-2xl'
         )}
       >
-        {/* Logo */}
+        {/* Logo — tenant-branded. Uses company.logo_url when present,
+            otherwise renders initials on the company's primary color. */}
         <div className="p-5 border-b border-slate-800">
-          <Link href="/" onClick={handleNavClick} className="flex items-center justify-center">
-            <Image
-              src="/vex-logofull-white.png"
-              alt={company?.name || 'Company'}
-              width={180}
-              height={50}
-              className="object-contain"
-              priority
+          <Link href="/" onClick={handleNavClick} className="flex items-center gap-3 justify-center">
+            <CompanyLogo
+              name={company?.name || 'Horizon'}
+              logoUrl={company?.logo_url}
+              colorPrimary={company?.color_primary}
+              className="w-10 h-10"
+              initialsClassName="text-sm"
             />
+            <span className="text-white font-semibold text-sm truncate max-w-[140px]">
+              {company?.name || 'Dashboard'}
+            </span>
           </Link>
         </div>
 

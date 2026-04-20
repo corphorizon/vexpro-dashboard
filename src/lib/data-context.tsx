@@ -15,6 +15,7 @@ import {
   getActiveCompanyId,
   subscribeActiveCompanyId,
 } from '@/lib/active-company';
+import { applyCompanyTheme, resetCompanyTheme } from '@/lib/theme-apply';
 import type {
   Company,
   Period,
@@ -335,6 +336,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
+
+  // Whenever `company` changes, push its brand colors into the live CSS
+  // variables so every `var(--color-primary)` / `var(--color-secondary)`
+  // in the UI picks them up without reloading. When the company becomes
+  // null (superadmin on /superadmin), fall back to globals.css defaults.
+  useEffect(() => {
+    if (company) {
+      applyCompanyTheme({
+        primary: company.color_primary,
+        secondary: company.color_secondary,
+      });
+    } else {
+      resetCompanyTheme();
+    }
+  }, [company]);
 
   // ─── Saldo chain start ───
   //

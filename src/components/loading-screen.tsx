@@ -1,6 +1,6 @@
 'use client';
 
-import Image from 'next/image';
+import { ShieldCheck } from 'lucide-react';
 
 interface LoadingScreenProps {
   message?: string;
@@ -8,31 +8,18 @@ interface LoadingScreenProps {
 
 /**
  * Branded full-screen loading state.
- * Shows the VexPro logo (light/dark variant) with a soft pulse and a
- * sliding progress bar. Uses keyframes defined in globals.css so it
- * works without external animation libraries.
+ *
+ * Renders a neutral "Smart Dashboard" mark — this screen can show for
+ * superadmin navigation (no tenant context yet) or during the initial
+ * data load, so using a tenant logo here would be wrong.
  */
 export function LoadingScreen({ message }: LoadingScreenProps) {
   return (
     <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
       <div className="flex flex-col items-center gap-6">
-        <div className="vex-logo-pulse">
-          <Image
-            src="/vex-logofull.png"
-            alt="VexPro"
-            width={180}
-            height={50}
-            priority
-            className="object-contain block dark:hidden"
-          />
-          <Image
-            src="/vex-logofull-white.png"
-            alt="VexPro"
-            width={180}
-            height={50}
-            priority
-            className="object-contain hidden dark:block"
-          />
+        <div className="vex-logo-pulse inline-flex items-center gap-2 text-slate-900 dark:text-white">
+          <ShieldCheck className="w-8 h-8 text-amber-500" />
+          <span className="font-semibold text-lg">Smart Dashboard</span>
         </div>
         <div className="vex-bar-track" role="progressbar" aria-label="Cargando">
           <div className="vex-bar-fill" />
@@ -57,23 +44,9 @@ export function LoadingError({ message, onRetry }: LoadingErrorProps) {
   return (
     <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
       <div className="flex flex-col items-center gap-5 text-center max-w-md">
-        <div>
-          <Image
-            src="/vex-logofull.png"
-            alt="VexPro"
-            width={160}
-            height={44}
-            priority
-            className="object-contain block dark:hidden opacity-80"
-          />
-          <Image
-            src="/vex-logofull-white.png"
-            alt="VexPro"
-            width={160}
-            height={44}
-            priority
-            className="object-contain hidden dark:block opacity-80"
-          />
+        <div className="inline-flex items-center gap-2 text-slate-900 dark:text-white opacity-80">
+          <ShieldCheck className="w-6 h-6 text-amber-500" />
+          <span className="font-semibold">Smart Dashboard</span>
         </div>
         <div className="space-y-1">
           <p className="text-sm font-medium text-red-600 dark:text-red-400">

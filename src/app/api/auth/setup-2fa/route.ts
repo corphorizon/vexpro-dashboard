@@ -19,7 +19,9 @@ import QRCode from 'qrcode';
 // token in `currentToken` — prevents silent rotation via stolen session.
 // ---------------------------------------------------------------------------
 
-const APP_NAME = 'VexPro FX';
+// Fallback when we can't resolve a tenant name (e.g. orphan auth user).
+// The tenant's own name is used when available — see `resolveIssuer`.
+const DEFAULT_APP_NAME = 'Smart Dashboard';
 const PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 export async function POST(request: NextRequest) {
@@ -44,10 +46,11 @@ export async function POST(request: NextRequest) {
     if (!action || action === 'generate') {
       const { currentToken } = body as { currentToken?: string };
 
-      // Get user email + current 2FA state
+      // Get user email + current 2FA state + company name (for the TOTP
+      // label shown in the authenticator app).
       const { data: companyUser } = await adminClient
         .from('company_users')
-        .select('email, twofa_enabled, twofa_secret')
+        .select('email, twofa_enabled, twofa_secret, companies(name)')
         .eq('user_id', user.id)
         .maybeSingle();
 
@@ -57,6 +60,14 @@ export async function POST(request: NextRequest) {
           { status: 404 },
         );
       }
+
+      // Per-tenant TOTP issuer so users with accounts in multiple companies
+      // see them as distinct entries in Google Authenticator / Authy.
+      const companyRel = (companyUser as { companies?: { name?: string } | { name?: string }[] | null }).companies;
+      const companyName = Array.isArray(companyRel)
+        ? companyRel[0]?.name
+        : companyRel?.name;
+      const issuer = companyName || DEFAULT_APP_NAME;
 
       // If 2FA is already active, require a valid TOTP from the current secret
       // before allowing rotation.
@@ -87,8 +98,8 @@ export async function POST(request: NextRequest) {
 
       // Generate a new TOTP secret
       const secretObj = speakeasy.generateSecret({
-        name: `${APP_NAME}:${companyUser.email}`,
-        issuer: APP_NAME,
+        name: `${issuer}:${companyUser.email}`,
+        issuer,
         length: 20,
       });
 
