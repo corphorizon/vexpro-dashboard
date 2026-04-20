@@ -63,8 +63,8 @@ interface NavItem {
 type NavEntry = NavItem | NavSection;
 
 const NAV_STRUCTURE: NavEntry[] = [
-  // Dashboard — HR summary
-  { type: 'link', href: '/', i18nKey: 'nav.dashboard', icon: LayoutDashboard, module: 'summary' },
+  // Home — adaptive dashboard (different view per role; see src/app/(dashboard)/page.tsx)
+  { type: 'link', href: '/', i18nKey: 'nav.home', icon: LayoutDashboard, module: 'summary' },
 
   // Finanzas (collapsible)
   {
@@ -90,6 +90,8 @@ const NAV_STRUCTURE: NavEntry[] = [
     i18nKey: 'nav.hr',
     icon: UserCog,
     children: [
+      // HR dashboard (formerly the app home) now sits inside the HR group.
+      { href: '/rrhh/dashboard', i18nKey: 'nav.hrDashboard', icon: LayoutDashboard, module: 'hr' },
       { href: '/rrhh', i18nKey: 'nav.hrManagement', icon: UsersIcon, module: 'hr' },
       { href: '/comisiones', i18nKey: 'nav.commissions', icon: Calculator, module: 'commissions' },
     ],

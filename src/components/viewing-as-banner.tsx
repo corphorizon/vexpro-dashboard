@@ -38,12 +38,14 @@ export function ViewingAsBanner() {
     <div
       role="status"
       aria-live="polite"
-      className="sticky top-0 z-40 flex items-center justify-between gap-3 px-4 py-2 text-sm font-medium border-b border-amber-300/80 bg-amber-50 text-amber-900 dark:bg-amber-950/60 dark:text-amber-100 dark:border-amber-800"
+      // Non-dismissable: only the Salir button removes it. Sits above every
+      // dashboard content because the operator must see it at all times.
+      className="sticky top-0 z-40 flex items-center justify-between gap-3 px-4 py-2 text-sm font-semibold border-b-2 border-amber-400 bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-100 dark:border-amber-700 shadow-sm"
     >
       <div className="flex items-center gap-2 min-w-0">
-        <ShieldCheck className="w-4 h-4 shrink-0" />
+        <ShieldCheck className="w-4 h-4 shrink-0 text-amber-700 dark:text-amber-300" />
         <span className="truncate">
-          Viendo como superadmin · <strong className="font-semibold">{company.name}</strong>
+          Viendo como Admin: <strong className="font-bold">{company.name}</strong>
         </span>
       </div>
       <div className="flex items-center gap-2 shrink-0">
@@ -55,10 +57,10 @@ export function ViewingAsBanner() {
         </Link>
         <button
           onClick={handleExit}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-200/80 hover:bg-amber-200 dark:bg-amber-900 dark:hover:bg-amber-800 text-amber-900 dark:text-amber-100 text-xs"
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-300 hover:bg-amber-400 dark:bg-amber-900 dark:hover:bg-amber-800 text-amber-900 dark:text-amber-100 text-xs font-bold"
         >
           <ArrowLeft className="w-3 h-3" />
-          Volver al panel
+          Salir
         </button>
       </div>
     </div>

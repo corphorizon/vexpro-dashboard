@@ -3,8 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Plus, Users, Building2, ArrowRight, Settings, PowerOff } from 'lucide-react';
-import { setActiveCompanyId } from '@/lib/active-company';
+import { Plus, Users, Building2, ArrowRight, Settings, PowerOff, AlertTriangle } from 'lucide-react';
 
 interface CompanyRow {
   id: string;
@@ -53,13 +52,15 @@ export default function SuperadminHome() {
     load();
   }, [load]);
 
-  const enterCompany = (id: string) => {
-    setActiveCompanyId(id);
-    router.push('/');
+  // "Enter as admin" routes through the viewing shim so the URL reflects
+  // that we're inside a supervised session (/superadmin/viewing/<id>).
+  const enterAsAdmin = (id: string) => {
+    router.push(`/superadmin/viewing/${id}`);
   };
 
   const totalUsers = (companies ?? []).reduce((sum, c) => sum + c.user_count, 0);
   const activeCount = (companies ?? []).filter((c) => c.status === 'active').length;
+  const inactiveCount = (companies?.length ?? 0) - activeCount;
 
   return (
     <div className="space-y-6">
@@ -99,10 +100,24 @@ export default function SuperadminHome() {
         <MetricCard
           icon={PowerOff}
           label="Inactivas"
-          value={(companies?.length ?? 0) - activeCount}
+          value={inactiveCount}
           tone="muted"
         />
       </div>
+
+      {/* System alerts — surfaces inactive tenants so the operator notices at
+          a glance. Non-blocking and always dismissable by the status change. */}
+      {inactiveCount > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-3 text-sm">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">{inactiveCount} {inactiveCount === 1 ? 'empresa inactiva' : 'empresas inactivas'}</p>
+            <p className="text-xs mt-0.5">
+              Los usuarios de entidades inactivas no pueden iniciar sesión. Revisa el estado en la tabla de abajo.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Error / Loading / Empty */}
       {error && (
@@ -187,11 +202,11 @@ export default function SuperadminHome() {
                         <Settings className="w-3 h-3" /> Gestionar
                       </Link>
                       <button
-                        onClick={() => enterCompany(c.id)}
+                        onClick={() => enterAsAdmin(c.id)}
                         disabled={c.status !== 'active'}
                         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-primary)] text-white text-xs hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
                       >
-                        Entrar <ArrowRight className="w-3 h-3" />
+                        Entrar como Admin <ArrowRight className="w-3 h-3" />
                       </button>
                     </div>
                   </td>
