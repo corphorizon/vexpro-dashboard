@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Settings as SettingsIcon, Key, ClipboardList } from 'lucide-react';
+import { ArrowLeft, Settings as SettingsIcon, Key, ClipboardList, Users } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { CompanyForm, type CompanyFormValues } from '../_form';
 import { ApiCredentialsPanel } from '@/components/settings/api-credentials-panel';
@@ -135,6 +135,12 @@ export default function EditCompanyPage() {
         >
           <ClipboardList className="w-4 h-4" /> Auditoría
         </button>
+        <Link
+          href={`/superadmin/companies/${id}/users`}
+          className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground transition-colors"
+        >
+          <Users className="w-4 h-4" /> Usuarios
+        </Link>
       </div>
 
       {loadErr && (
@@ -158,6 +164,7 @@ export default function EditCompanyPage() {
       {activeTab === 'settings' && values !== null && (
         <CompanyForm
           mode="edit"
+          companyId={id}
           initial={values}
           submitting={submitting}
           error={error}

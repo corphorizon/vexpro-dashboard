@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
+import { LogoUploader } from '@/components/logo-uploader';
 
 // Modules the sidebar knows about. Kept in sync with
 // scripts/db-admin/migrate-vexprofx.mjs CODE_MODULES.
@@ -40,9 +41,11 @@ interface Props {
   onSubmit: (values: CompanyFormValues) => void;
   onCancel: () => void;
   mode: 'create' | 'edit';
+  /** Only present in edit mode — enables logo upload to Supabase Storage. */
+  companyId?: string;
 }
 
-export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mode }: Props) {
+export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mode, companyId }: Props) {
   const [values, setValues] = useState<CompanyFormValues>(initial);
 
   const toggleModule = (key: string) => {
@@ -86,14 +89,16 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
             />
           </Field>
         )}
-        <Field label="URL del logo (opcional)">
-          <input
-            value={values.logo_url}
-            onChange={(e) => setValues({ ...values, logo_url: e.target.value })}
-            placeholder="https://..."
-            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+        <div className="md:col-span-2">
+          <span className="text-xs font-medium mb-1 inline-block">Logo</span>
+          <LogoUploader
+            companyId={companyId ?? null}
+            companyName={values.name || 'Organización'}
+            colorPrimary={values.color_primary}
+            logoUrl={values.logo_url || null}
+            onChange={(next) => setValues((v) => ({ ...v, logo_url: next ?? '' }))}
           />
-        </Field>
+        </div>
         <Field label="Moneda">
           <input
             value={values.currency}
