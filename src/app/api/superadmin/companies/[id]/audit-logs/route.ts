@@ -32,9 +32,11 @@ export async function GET(
     const admin = createAdminClient();
     let query = admin
       .from('audit_logs')
-      .select('id, timestamp, user_id, user_name, action, module, details')
+      // `created_at` is the canonical column name in the audit_logs table;
+      // aliasing to `timestamp` keeps the client payload stable / readable.
+      .select('id, timestamp:created_at, user_id, user_name, action, module, details')
       .eq('company_id', id)
-      .order('timestamp', { ascending: false })
+      .order('created_at', { ascending: false })
       .limit(limit);
 
     if (action) query = query.eq('action', action);

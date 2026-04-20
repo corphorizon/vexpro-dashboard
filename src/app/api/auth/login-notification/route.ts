@@ -107,9 +107,10 @@ export async function POST(request: NextRequest) {
       hour12: true,
     });
 
-    // Dashboard URL
+    // Dashboard URL — unified under NEXT_PUBLIC_APP_URL (previously this
+    // route read a separate NEXT_PUBLIC_DASHBOARD_URL that nobody else used).
     const dashboardUrl =
-      process.env.NEXT_PUBLIC_DASHBOARD_URL ||
+      process.env.NEXT_PUBLIC_APP_URL ||
       request.nextUrl.origin;
 
     // Look up the user's company_id so we can send via that company's

@@ -71,17 +71,23 @@ await withClient(async (c) => {
     const total = rows.reduce((s, r) => s + r.n, 0);
     policyRows.push({ table: t, total, ...counts });
   }
-  const gaps = policyRows.filter((p) => p.total < 4);
+  // audit_logs is immutable by design — only SELECT + INSERT policies are
+  // required. Excluded from the "must have 4 policies" gate.
+  const POLICY_GAP_EXEMPT = new Set(['audit_logs']);
+  const gaps = policyRows.filter((p) => p.total < 4 && !POLICY_GAP_EXEMPT.has(p.table));
   if (gaps.length === 0) {
-    pass(`2. RLS policy coverage (all scoped tables have SELECT/INSERT/UPDATE/DELETE)`, policyRows);
+    pass(`2. RLS policy coverage (all scoped tables have required policies)`, policyRows);
   } else {
-    warn(`2. RLS policy coverage — some tables have < 4 policies`, gaps);
+    warn(`2. RLS policy coverage — some tables have fewer policies than expected`, gaps);
   }
 
   // ── 3. Orphan scan — no row should have company_id = NULL ─────────
+  // audit_logs is intentionally exempt: platform-level events (superadmin
+  // login, etc.) legitimately have company_id = NULL.
+  const ORPHAN_EXEMPT = new Set(['platform_users', 'companies', 'audit_logs']);
   const orphans = [];
   for (const t of scopedTables) {
-    if (t === 'platform_users' || t === 'companies') continue; // no company_id
+    if (ORPHAN_EXEMPT.has(t)) continue;
     try {
       const { rows } = await c.query(
         `SELECT count(*)::int AS n FROM ${t} WHERE company_id IS NULL`,
@@ -92,7 +98,7 @@ await withClient(async (c) => {
     }
   }
   if (orphans.length === 0) {
-    pass(`3. Anti-cross-tenant: no orphan rows (company_id NULL)`, [{ status: 'all tenant-scoped' }]);
+    pass(`3. Anti-cross-tenant: no orphan rows (company_id NULL)`, [{ status: 'all tenant-scoped (audit_logs exempt by design)' }]);
   } else {
     fail(`3. Anti-cross-tenant: orphan rows found`, orphans);
   }

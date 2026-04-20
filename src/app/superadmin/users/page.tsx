@@ -72,28 +72,36 @@ export default function SuperadminUsersPage() {
   }, [load]);
 
   const updateUser = async (id: string, patch: Partial<Pick<UserRow, 'role' | 'name' | 'allowed_modules'>>) => {
-    const res = await fetch(`/api/superadmin/users/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(patch),
-    });
-    const json = await res.json();
-    if (!res.ok || !json.success) {
-      alert(json.error || 'Error actualizando');
-      return;
+    try {
+      const res = await fetch(`/api/superadmin/users/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        alert(json.error || 'Error actualizando');
+        return;
+      }
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error de red');
     }
-    load();
   };
 
   const deleteUser = async (id: string, email: string) => {
     if (!confirm(`Eliminar la membresía de ${email}?`)) return;
-    const res = await fetch(`/api/superadmin/users/${id}`, { method: 'DELETE' });
-    const json = await res.json();
-    if (!res.ok || !json.success) {
-      alert(json.error || 'Error eliminando');
-      return;
+    try {
+      const res = await fetch(`/api/superadmin/users/${id}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        alert(json.error || 'Error eliminando');
+        return;
+      }
+      load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error de red');
     }
-    load();
   };
 
   return (

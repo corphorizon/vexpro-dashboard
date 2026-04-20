@@ -1,7 +1,6 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
@@ -225,11 +224,6 @@ export function AdminHome() {
                 </li>
               ))}
             </ul>
-            <div className="p-2 text-center border-t border-border">
-              <Link href="/auditoria" className="text-xs text-muted-foreground hover:text-foreground">
-                Ver todo →
-              </Link>
-            </div>
           </Card>
         )}
       </section>
