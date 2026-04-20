@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { encryptSecret, lastChars } from '@/lib/crypto';
 
@@ -14,20 +14,54 @@ import { encryptSecret, lastChars } from '@/lib/crypto';
 // server after save. Reads return only provider/last_four/extra_config so the
 // UI can show "••••u-Q" style masks.
 //
-// Admin-only.
+// Authorization:
+//   · Company admin: no `company_id` in query/body → uses caller's companyId.
+//   · Horizon superadmin: MUST pass `company_id` explicitly (query or body) —
+//     targets that tenant. This is the path used by the superadmin panel.
 // ---------------------------------------------------------------------------
 
-const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay'];
+// SendGrid dropped from the tenant-facing list — transactional email is
+// always sent from the Horizon SendGrid account (env var SENDGRID_API_KEY).
+// The code path that reads api_credentials for sendgrid still works for
+// legacy rows, but new writes via this route are rejected.
+const SUPPORTED_PROVIDERS = ['coinsbuy', 'unipayment', 'fairpay'];
 
-export async function GET() {
-  const auth = await verifyAdminAuth();
-  if (auth instanceof NextResponse) return auth;
+/**
+ * Resolve the effective `company_id` for the request. Returns either:
+ *   - the company_id to operate on + the caller's auth user id, or
+ *   - an error NextResponse ready to be returned.
+ */
+async function resolveCompanyAndAuth(
+  explicitCompanyId: string | null,
+): Promise<{ companyId: string; userId: string } | NextResponse> {
+  if (explicitCompanyId) {
+    // Explicit target → must be superadmin.
+    const sa = await verifySuperadminAuth();
+    if (sa instanceof NextResponse) return sa;
+    return { companyId: explicitCompanyId, userId: sa.userId };
+  }
+  // Implicit target → regular admin flow.
+  const admin = await verifyAdminAuth();
+  if (admin instanceof NextResponse) return admin;
+  if (admin.role !== 'admin') {
+    return NextResponse.json(
+      { success: false, error: 'Solo administradores pueden gestionar credenciales' },
+      { status: 403 },
+    );
+  }
+  return { companyId: admin.companyId, userId: admin.userId };
+}
+
+export async function GET(request: NextRequest) {
+  const explicit = request.nextUrl.searchParams.get('company_id');
+  const ctx = await resolveCompanyAndAuth(explicit);
+  if (ctx instanceof NextResponse) return ctx;
 
   const adminClient = createAdminClient();
   const { data, error } = await adminClient
     .from('api_credentials')
     .select('provider, last_four, extra_config, is_configured, updated_at')
-    .eq('company_id', auth.companyId)
+    .eq('company_id', ctx.companyId)
     .order('provider');
 
   if (error) {
@@ -38,17 +72,15 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await verifyAdminAuth();
-  if (auth instanceof NextResponse) return auth;
-
-  if (auth.role !== 'admin') {
-    return NextResponse.json(
-      { success: false, error: 'Solo administradores pueden gestionar credenciales' },
-      { status: 403 },
-    );
-  }
-
   const body = await request.json().catch(() => ({}));
+  // company_id can come from query or body — both accepted so the panel can
+  // POST without re-appending to the URL.
+  const explicit =
+    request.nextUrl.searchParams.get('company_id') || (body as { company_id?: string }).company_id || null;
+
+  const ctx = await resolveCompanyAndAuth(explicit);
+  if (ctx instanceof NextResponse) return ctx;
+
   const { action, provider } = body as { action?: string; provider?: string };
 
   if (!provider || !SUPPORTED_PROVIDERS.includes(provider)) {
@@ -83,7 +115,7 @@ export async function POST(request: NextRequest) {
     }
 
     const payload = {
-      company_id: auth.companyId,
+      company_id: ctx.companyId,
       provider,
       encrypted_secret: bundle.ciphertext,
       iv: bundle.iv,
@@ -92,7 +124,7 @@ export async function POST(request: NextRequest) {
       last_four: lastChars(secret, 4),
       is_configured: true,
       updated_at: new Date().toISOString(),
-      updated_by: auth.userId,
+      updated_by: ctx.userId,
     };
 
     const { error } = await adminClient
@@ -110,7 +142,7 @@ export async function POST(request: NextRequest) {
     const { error } = await adminClient
       .from('api_credentials')
       .delete()
-      .eq('company_id', auth.companyId)
+      .eq('company_id', ctx.companyId)
       .eq('provider', provider);
 
     if (error) {

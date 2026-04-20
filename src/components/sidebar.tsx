@@ -2,11 +2,12 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
+import { CompanyLogo } from '@/components/company-logo';
+import { getAccessibleGroups, getAccessibleItems } from '@/lib/module-groups';
 import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -63,8 +64,8 @@ interface NavItem {
 type NavEntry = NavItem | NavSection;
 
 const NAV_STRUCTURE: NavEntry[] = [
-  // Dashboard — HR summary
-  { type: 'link', href: '/', i18nKey: 'nav.dashboard', icon: LayoutDashboard, module: 'summary' },
+  // Home — adaptive dashboard (different view per role; see src/app/(dashboard)/page.tsx)
+  { type: 'link', href: '/', i18nKey: 'nav.home', icon: LayoutDashboard, module: 'summary' },
 
   // Finanzas (collapsible)
   {
@@ -90,6 +91,8 @@ const NAV_STRUCTURE: NavEntry[] = [
     i18nKey: 'nav.hr',
     icon: UserCog,
     children: [
+      // HR dashboard (formerly the app home) now sits inside the HR group.
+      { href: '/rrhh/dashboard', i18nKey: 'nav.hrDashboard', icon: LayoutDashboard, module: 'hr' },
       { href: '/rrhh', i18nKey: 'nav.hrManagement', icon: UsersIcon, module: 'hr' },
       { href: '/comisiones', i18nKey: 'nav.commissions', icon: Calculator, module: 'commissions' },
     ],
@@ -101,22 +104,18 @@ const NAV_STRUCTURE: NavEntry[] = [
     i18nKey: 'nav.risk',
     icon: ShieldCheck,
     children: [
+      // Landing page for risk-only roles (support). Listed first so the
+      // flat-menu mode puts it at the top.
+      { href: '/risk/dashboard', i18nKey: 'nav.riskDashboard', icon: LayoutDashboard, module: 'risk' },
       { href: '/risk/retiros-propfirm', i18nKey: 'nav.riskWithdrawals', icon: FileSearch, module: 'risk' },
       { href: '/risk/retiros-wallet', i18nKey: 'nav.riskWalletWithdrawals', icon: Wallet, module: 'risk' },
     ],
   },
 
-  // Configuraciones (collapsible)
-  {
-    type: 'section',
-    i18nKey: 'nav.settings',
-    icon: Settings,
-    children: [
-      { href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
-      { href: '/configuraciones', i18nKey: 'nav.config', icon: Settings, module: 'settings' },
-      { href: '/auditoria', i18nKey: 'nav.audit', icon: ClipboardList, module: 'audit' },
-    ],
-  },
+  // Usuarios — top-level now that the "Configuraciones" group is gone.
+  // Auditoría is no longer in the tenant sidebar; it's only reachable from
+  // the superadmin panel (per-company tab).
+  { type: 'link', href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
 ];
 
 interface SidebarProps {
@@ -159,8 +158,25 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
     onClose?.();
   };
 
+  // ── Flat-menu detection ────────────────────────────────────────────────
+  // When a non-admin user has access to exactly ONE module group (Finanzas,
+  // RRHH, Risk, or Config), render a simplified sidebar: no collapsibles,
+  // a group heading at the top, and the group's items listed directly.
+  // Admin and superadmin always see the full collapsible structure.
+  const accessibleGroups = getAccessibleGroups(user, company?.active_modules);
+  const useFlatMenu =
+    user !== null &&
+    !user.is_superadmin &&
+    user.effective_role !== 'admin' &&
+    accessibleGroups.length === 1;
+  const flatGroup = useFlatMenu ? accessibleGroups[0] : null;
+  const flatItems = flatGroup ? getAccessibleItems(user, flatGroup, company?.active_modules) : [];
+
   const renderLink = (item: NavLink, indent = false) => {
-    if (!hasModuleAccess(user, item.module)) return null;
+    // Sidebar respects BOTH the user's allowed_modules AND the tenant's
+    // active_modules — a deactivated module never shows, even to admins.
+    // Superadmins bypass (handled inside hasModuleAccess).
+    if (!hasModuleAccess(user, item.module, company?.active_modules)) return null;
     const isActive = pathname === item.href;
     const Icon = item.icon;
     return (
@@ -208,29 +224,66 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
           mobileOpen && '!flex fixed inset-y-0 left-0 z-50 shadow-2xl'
         )}
       >
-        {/* Logo */}
+        {/* Logo — tenant-branded. Uses company.logo_url when present,
+            otherwise renders initials on the company's primary color. */}
         <div className="p-5 border-b border-slate-800">
-          <Link href="/" onClick={handleNavClick} className="flex items-center justify-center">
-            <Image
-              src="/vex-logofull-white.png"
-              alt={company?.name || 'Company'}
-              width={180}
-              height={50}
-              className="object-contain"
-              priority
+          <Link href="/" onClick={handleNavClick} className="flex items-center gap-3 justify-center">
+            <CompanyLogo
+              name={company?.name || 'Horizon'}
+              logoUrl={company?.logo_url}
+              colorPrimary={company?.color_primary}
+              className="w-10 h-10"
+              initialsClassName="text-sm"
             />
+            <span className="text-white font-semibold text-sm truncate max-w-[140px]">
+              {company?.name || 'Dashboard'}
+            </span>
           </Link>
         </div>
 
+        {/* Flat-menu heading (single-group users) — shows the group name
+            above the links so the user knows which area they're in. */}
+        {useFlatMenu && flatGroup && (
+          <div className="px-5 pt-4 pb-2">
+            <p className="text-[10px] uppercase tracking-[0.15em] text-slate-400">
+              {flatGroup.labelEs}
+            </p>
+          </div>
+        )}
+
         {/* Navigation */}
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
-          {NAV_STRUCTURE.map((entry) => {
+          {/* Flat mode: direct list of accessible items, no collapsibles,
+              slightly roomier padding for easier clicking. */}
+          {useFlatMenu && flatGroup ? (
+            flatItems.map((item) => {
+              const isActive = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={handleNavClick}
+                  className={cn(
+                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
+                    isActive
+                      ? 'bg-[var(--color-primary)] text-white shadow-sm'
+                      : 'text-slate-300 hover:bg-slate-800 hover:text-white',
+                  )}
+                >
+                  <span className="truncate">{item.labelEs}</span>
+                </Link>
+              );
+            })
+          ) : (
+          NAV_STRUCTURE.map((entry) => {
             if (entry.type === 'link') {
               return renderLink(entry as NavLink);
             }
 
             const section = entry as NavSection;
-            const visibleChildren = section.children.filter(c => hasModuleAccess(user, c.module));
+            const visibleChildren = section.children.filter(c =>
+              hasModuleAccess(user, c.module, company?.active_modules),
+            );
             if (visibleChildren.length === 0) return null;
 
             const isOpen = openSections[section.i18nKey] ?? false;
@@ -269,7 +322,8 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                 )}
               </div>
             );
-          })}
+          })
+          )}
         </nav>
 
         {/* Footer */}

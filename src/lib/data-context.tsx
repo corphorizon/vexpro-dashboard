@@ -11,6 +11,11 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import {
+  getActiveCompanyId,
+  subscribeActiveCompanyId,
+} from '@/lib/active-company';
+import { applyCompanyTheme, resetCompanyTheme } from '@/lib/theme-apply';
 import type {
   Company,
   Period,
@@ -127,6 +132,24 @@ const DataContext = createContext<DataContextValue | null>(null);
 
 export function DataProvider({ children }: { children: ReactNode }) {
   const { user: authUser } = useAuth();
+
+  // For a superadmin, the "active company" is the one they navigated into
+  // from /superadmin. Stored in localStorage (see src/lib/active-company.ts).
+  // Regular users always use their own `company_id`.
+  const [activeCompanyId, setActiveCompanyIdState] = useState<string | null>(() => getActiveCompanyId());
+
+  useEffect(() => {
+    const unsub = subscribeActiveCompanyId((next) => setActiveCompanyIdState(next));
+    return unsub;
+  }, []);
+
+  // The company_id that should drive all data loads.
+  //   - Superadmin: whatever company they're currently viewing (or null when
+  //     they're on /superadmin without having entered an entity yet).
+  //   - Regular user: their own membership.
+  const effectiveCompanyId: string | null = authUser?.is_superadmin
+    ? activeCompanyId
+    : authUser?.company_id ?? null;
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -178,9 +201,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // ── Stage 1: critical data (with timeout) ──
     // These are the tables needed for the UI to render immediately.
     const fetchCritical = async () => {
-      const comp = authUser?.company_id
-        ? await fetchCompanyById(authUser.company_id)
-        : await fetchCompany('vexprofx');
+      // Superadmin on /superadmin (no company chosen yet) → skip data load.
+      // The DataProvider still renders, but `company` is null so downstream
+      // pages that need company data should guard accordingly.
+      if (!effectiveCompanyId) {
+        if (isStale()) return null;
+        setCompany(null);
+        setPeriods([]);
+        setEmployees([]);
+        setCommercialProfiles([]);
+        setMonthlyResults([]);
+        return null;
+      }
+
+      const comp = await fetchCompanyById(effectiveCompanyId);
       if (!comp) throw new Error('No se encontró la empresa');
       if (isStale()) return null;
       setCompany(comp);
@@ -297,11 +331,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (comp) {
       fetchRest(comp);
     }
-  }, [authUser?.company_id]);
+  }, [effectiveCompanyId]);
 
   useEffect(() => {
     loadAllData();
   }, [loadAllData]);
+
+  // Whenever `company` changes, push its brand colors into the live CSS
+  // variables so every `var(--color-primary)` / `var(--color-secondary)`
+  // in the UI picks them up without reloading. When the company becomes
+  // null (superadmin on /superadmin), fall back to globals.css defaults.
+  useEffect(() => {
+    if (company) {
+      applyCompanyTheme({
+        primary: company.color_primary,
+        secondary: company.color_secondary,
+      });
+    } else {
+      resetCompanyTheme();
+    }
+  }, [company]);
 
   // ─── Saldo chain start ───
   //

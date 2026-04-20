@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Image from 'next/image';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
+import { AuthBrand } from '@/components/auth-brand';
+import { clearActiveCompanyId } from '@/lib/active-company';
 import { ArrowLeft, Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
@@ -46,6 +47,10 @@ export default function LoginPage() {
         } else {
           const loggedUser = users.find(u => u.email.toLowerCase() === email.toLowerCase());
           notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
+          // Fresh login — clear any stale "viewing as" pointer left over from
+          // a previous superadmin session on this browser. The dashboard
+          // layout will redirect superadmins to /superadmin automatically.
+          clearActiveCompanyId();
           router.push('/');
         }
       } else if (result.locked) {
@@ -73,6 +78,7 @@ export default function LoginPage() {
       if (result.success) {
         const loggedUser = users.find(u => u.id === pendingUserId);
         notifyLogin(loggedUser?.name ?? email.split('@')[0], email);
+        clearActiveCompanyId();
         router.push('/');
       } else {
         setError(result.error || 'Invalid code.');
@@ -100,26 +106,8 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
-        {/* Logo */}
-        <div className="text-center mb-8">
-          <Image
-            src="/vex-logofull.png"
-            alt="VexPro FX"
-            width={220}
-            height={60}
-            className="mx-auto mb-4 block dark:hidden"
-            priority
-          />
-          <Image
-            src="/vex-logofull-white.png"
-            alt="VexPro FX"
-            width={220}
-            height={60}
-            className="mx-auto mb-4 hidden dark:block"
-            priority
-          />
-          <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
-        </div>
+        {/* Neutral platform brand — actual tenant colors/logo come after login. */}
+        <AuthBrand />
 
         {/* Form */}
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
@@ -189,9 +177,9 @@ export default function LoginPage() {
               <div className="mt-4 text-center">
                 <button
                   onClick={() => setShowRecovery(true)}
-                  className="text-sm text-[var(--color-secondary)] hover:underline font-medium"
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--color-primary)] hover:underline"
                 >
-                  Forgot your password?
+                  ¿Olvidaste tu contraseña?
                 </button>
               </div>
             </>
@@ -255,10 +243,6 @@ export default function LoginPage() {
             </>
           )}
         </div>
-
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          Smart Dashboard v1.0 — Horizon Consulting
-        </p>
       </div>
     </div>
   );
@@ -294,11 +278,7 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="w-full max-w-md">
-        <div className="text-center mb-8">
-          <Image src="/vex-logofull.png" alt="VexPro FX" width={220} height={60} className="mx-auto mb-4 block dark:hidden" priority />
-          <Image src="/vex-logofull-white.png" alt="VexPro FX" width={220} height={60} className="mx-auto mb-4 hidden dark:block" priority />
-          <h2 className="text-xl font-bold mt-2">Smart Dashboard</h2>
-        </div>
+        <AuthBrand />
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           <h2 className="text-lg font-semibold mb-4">Account recovery</h2>

@@ -36,7 +36,7 @@ export default function ResumenPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, periods } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, periods, company } = useData();
 
   const summary = mode === 'consolidated'
     ? getConsolidatedSummary(selectedPeriodIds)
@@ -130,7 +130,7 @@ export default function ResumenPage() {
 
   const handleExportPDF = () => verify2FA(() => {
     downloadPDF('Resumen General', exportHeaders, exportRows, {
-      companyName: 'Vex Pro',
+      companyName: company?.name ?? 'Smart Dashboard',
       subtitle: `Período: ${summary.period.label}`,
       date: new Date().toLocaleDateString(),
     });

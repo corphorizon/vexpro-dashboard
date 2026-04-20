@@ -3,9 +3,11 @@
 import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useAuth, hasModuleAccess, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
+import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
+import { RolesPanel } from '@/components/settings/roles-panel';
 import { useI18n } from '@/lib/i18n';
-import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff, Shield } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
@@ -38,6 +40,10 @@ const emptyForm: UserForm = {
 export default function UsuariosPage() {
   const { t } = useI18n();
   const { user, users, createUser, updateUser, deleteUser, resetPassword } = useAuth();
+  const canAccess = useModuleAccess('users');
+  // Two tabs inside /usuarios: the user list (default) and custom roles
+  // (moved here from the old /configuraciones page).
+  const [activeTab, setActiveTab] = useState<'users' | 'roles'>('users');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
@@ -60,7 +66,7 @@ export default function UsuariosPage() {
       .catch(() => { /* non-fatal */ });
   }, []);
 
-  if (!hasModuleAccess(user, 'users')) {
+  if (!canAccess) {
     return (
       <div className="flex items-center justify-center h-64">
         <p className="text-muted-foreground">{t('common.noAccess')}</p>
@@ -112,6 +118,8 @@ export default function UsuariosPage() {
             company_id: user?.company_id || '',
             allowed_modules: form.allowed_modules,
             twofa_enabled: false,
+            // Created via the in-company flow — never a superadmin.
+            is_superadmin: false,
             force_2fa_setup: true,      // new users must set up 2FA on first login
             must_change_password: false,
           },
@@ -192,18 +200,46 @@ export default function UsuariosPage() {
         subtitle={t('users.subtitle')}
         icon={Users}
         actions={
-          <button
-            onClick={handleCreate}
-            className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            <Plus className="w-4 h-4" />
-            {t('users.create')}
-          </button>
+          activeTab === 'users' ? (
+            <button
+              onClick={handleCreate}
+              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+            >
+              <Plus className="w-4 h-4" />
+              {t('users.create')}
+            </button>
+          ) : undefined
         }
       />
 
+      {/* Tabs — Usuarios + Roles (Roles was /configuraciones, now lives here) */}
+      <div className="flex border-b border-border overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('users')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'users'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Users className="w-4 h-4" /> Usuarios
+        </button>
+        <button
+          onClick={() => setActiveTab('roles')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'roles'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <Shield className="w-4 h-4" /> Roles
+        </button>
+      </div>
+
+      {activeTab === 'roles' && <RolesPanel />}
+
       {/* Form */}
-      {showForm && (
+      {activeTab === 'users' && showForm && (
         <Card>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">
@@ -338,6 +374,7 @@ export default function UsuariosPage() {
       )}
 
       {/* Users Table */}
+      {activeTab === 'users' && (
       <Card>
         <div className="flex items-center gap-3 mb-4">
           <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
@@ -443,6 +480,7 @@ export default function UsuariosPage() {
           </table>
         </div>
       </Card>
+      )}
 
       {/* Reset Password Modal */}
       {resetPwUser && (

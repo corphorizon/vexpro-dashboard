@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       request.headers.get('origin') ||
       request.headers.get('host')
         ? `${request.headers.get('x-forwarded-proto') || 'https'}://${request.headers.get('host')}`
-        : (process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000');
+        : (process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.horizonconsulting.ai');
     const resetUrl = `${origin}/reset-password?token=${encodeURIComponent(rawToken)}`;
 
     // Fire-and-forget email send — uses the company's own SendGrid creds if

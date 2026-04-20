@@ -11,6 +11,9 @@ const translations: Record<Locale, TranslationDict> = {
   en: {
     // Navigation
     'nav.dashboard': 'Dashboard',
+    'nav.home': 'Home',
+    'nav.hrDashboard': 'HR Dashboard',
+    'nav.riskDashboard': 'Risk Dashboard',
     'nav.summary': 'Summary',
     'nav.generalSummary': 'General Summary',
     'nav.finance': 'Finance',
@@ -753,6 +756,9 @@ const translations: Record<Locale, TranslationDict> = {
   es: {
     // Navigation
     'nav.dashboard': 'Dashboard',
+    'nav.home': 'Inicio',
+    'nav.hrDashboard': 'Dashboard RRHH',
+    'nav.riskDashboard': 'Dashboard Risk',
     'nav.summary': 'Resumen',
     'nav.generalSummary': 'Resumen General',
     'nav.finance': 'Finanzas',

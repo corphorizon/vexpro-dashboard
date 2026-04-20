@@ -12,7 +12,8 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
-import { useAuth, hasModuleAccess } from '@/lib/auth-context';
+import { useAuth } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import { cn } from '@/lib/utils';
 import {
   Search,
@@ -434,16 +435,17 @@ function VerdictBadge({ level, size = 'md' }: { level: VerdictLevel; size?: 'sm'
 
 export default function RetirosWalletPage() {
   const { user } = useAuth();
+  const hasRiskAccess = useModuleAccess('risk');
   const router = useRouter();
 
   useEffect(() => {
     if (user === null) return;
-    if (!hasModuleAccess(user, 'risk')) {
+    if (!hasRiskAccess) {
       router.replace('/');
     }
-  }, [user, router]);
+  }, [user, hasRiskAccess, router]);
 
-  const accessDenied = user !== null && !hasModuleAccess(user, 'risk');
+  const accessDenied = user !== null && !hasRiskAccess;
 
   // Filters
   const [search, setSearch] = useState('');

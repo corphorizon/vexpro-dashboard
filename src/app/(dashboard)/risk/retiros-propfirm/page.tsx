@@ -4,7 +4,8 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { useI18n } from '@/lib/i18n';
-import { useAuth, hasModuleAccess } from '@/lib/auth-context';
+import { useAuth } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import { cn } from '@/lib/utils';
 import { parseTradeReport, type ParseResult } from '@/lib/risk/parser';
 import { analyzeReport } from '@/lib/risk/rules';
@@ -82,18 +83,19 @@ const PAGE_SIZE = 50;
 export default function RetirosPropFirmPage() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const hasRiskAccess = useModuleAccess('risk');
   const router = useRouter();
 
   // Module access guard — redirect users without the 'risk' module.
   // The redirect happens in the effect; while it runs we render null.
   useEffect(() => {
     if (user === null) return; // still loading
-    if (!hasModuleAccess(user, 'risk')) {
+    if (!hasRiskAccess) {
       router.replace('/');
     }
-  }, [user, router]);
+  }, [user, hasRiskAccess, router]);
 
-  const accessDenied = user !== null && !hasModuleAccess(user, 'risk');
+  const accessDenied = user !== null && !hasRiskAccess;
 
   // State
   const [config, setConfig] = useState<RuleConfig>(structuredClone(DEFAULT_RULE_CONFIG));

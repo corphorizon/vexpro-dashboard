@@ -5,7 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { useData } from '@/lib/data-context';
 import type { CommercialMonthlyResult } from '@/lib/types';
-import { useAuth, hasModuleAccess } from '@/lib/auth-context';
+import { useAuth } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
@@ -59,6 +60,7 @@ type Tab = 'teams' | 'individual' | 'history';
 export default function ComisionesPage() {
   const { t } = useI18n();
   const { user } = useAuth();
+  const canAccess = useModuleAccess('commissions');
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const {
     company,
@@ -839,7 +841,7 @@ export default function ComisionesPage() {
   // RENDER
   // ═══════════════════════════════════════════════════════════
 
-  if (!hasModuleAccess(user, 'commissions')) {
+  if (!canAccess) {
     return <div className="flex items-center justify-center h-64"><p className="text-muted-foreground">{t('common.noAccess')}</p></div>;
   }
 

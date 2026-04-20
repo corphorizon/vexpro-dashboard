@@ -1,37 +1,36 @@
 'use client';
 
-import Image from 'next/image';
-
 interface LoadingScreenProps {
   message?: string;
 }
 
 /**
  * Branded full-screen loading state.
- * Shows the VexPro logo (light/dark variant) with a soft pulse and a
- * sliding progress bar. Uses keyframes defined in globals.css so it
- * works without external animation libraries.
+ *
+ * Renders a neutral "Smart Dashboard" mark — this screen can show for
+ * superadmin navigation (no tenant context yet) or during the initial
+ * data load, so using a tenant logo here would be wrong.
  */
 export function LoadingScreen({ message }: LoadingScreenProps) {
   return (
     <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
       <div className="flex flex-col items-center gap-6">
         <div className="vex-logo-pulse">
-          <Image
-            src="/vex-logofull.png"
-            alt="VexPro"
-            width={180}
-            height={50}
-            priority
-            className="object-contain block dark:hidden"
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-dark.png"
+            alt="Smart Dashboard"
+            width={96}
+            height={96}
+            className="block dark:hidden h-24 w-24 object-contain mx-auto"
           />
-          <Image
-            src="/vex-logofull-white.png"
-            alt="VexPro"
-            width={180}
-            height={50}
-            priority
-            className="object-contain hidden dark:block"
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-white.png"
+            alt="Smart Dashboard"
+            width={96}
+            height={96}
+            className="hidden dark:block h-24 w-24 object-contain mx-auto"
           />
         </div>
         <div className="vex-bar-track" role="progressbar" aria-label="Cargando">
@@ -57,22 +56,22 @@ export function LoadingError({ message, onRetry }: LoadingErrorProps) {
   return (
     <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
       <div className="flex flex-col items-center gap-5 text-center max-w-md">
-        <div>
-          <Image
-            src="/vex-logofull.png"
-            alt="VexPro"
-            width={160}
-            height={44}
-            priority
-            className="object-contain block dark:hidden opacity-80"
+        <div className="opacity-80">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-dark.png"
+            alt="Smart Dashboard"
+            width={80}
+            height={80}
+            className="block dark:hidden h-20 w-20 object-contain mx-auto"
           />
-          <Image
-            src="/vex-logofull-white.png"
-            alt="VexPro"
-            width={160}
-            height={44}
-            priority
-            className="object-contain hidden dark:block opacity-80"
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src="/smart-dashboard-white.png"
+            alt="Smart Dashboard"
+            width={80}
+            height={80}
+            className="hidden dark:block h-20 w-20 object-contain mx-auto"
           />
         </div>
         <div className="space-y-1">
