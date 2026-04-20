@@ -77,42 +77,44 @@ await withClient(async (c) => {
     return;
   }
 
-  // ── 2. Look for existing auth.users with this email ───────────────────
-  // The Admin API exposes listUsers (paginated) and getUserById. For emails
-  // we grep the first page; adequate for our single-superadmin case.
-  console.log('→ Checking auth.users for existing email...');
-  const { data: listed, error: listErr } = await sb.auth.admin.listUsers({
-    page: 1,
-    perPage: 1000,
-  });
-  if (listErr) throw new Error(`auth.admin.listUsers failed: ${listErr.message}`);
-  let authUser = listed?.users?.find(
-    (u) => u.email?.toLowerCase() === TARGET_EMAIL.toLowerCase(),
+  // ── 2. Invite (creates auth.user + sends email) ───────────────────────
+  // inviteUserByEmail is itself idempotent-ish: if the email is already in
+  // auth.users Supabase returns an error we can recognize. We skip the
+  // pre-lookup (listUsers) because in some regions the Admin API is slow or
+  // errors on it — the invite call is authoritative either way.
+  console.log('→ Inviting via auth.admin.inviteUserByEmail...');
+  let authUser = null;
+  const { data: invited, error: invErr } = await sb.auth.admin.inviteUserByEmail(
+    TARGET_EMAIL,
+    {
+      data: { name: TARGET_NAME, role: 'superadmin' },
+      redirectTo: REDIRECT_URL,
+    },
   );
 
-  if (authUser) {
-    console.log(`✓ Found existing auth.user: ${authUser.id}`);
-    console.log(
-      `  (reusing — no new invite email sent; call resetPasswordForEmail if needed)`,
-    );
-  } else {
-    // ── 3. Invite via Admin API ─────────────────────────────────────────
-    console.log('→ No existing auth.user — creating via inviteUserByEmail...');
-    const { data: invited, error: invErr } = await sb.auth.admin.inviteUserByEmail(
-      TARGET_EMAIL,
-      {
-        data: { name: TARGET_NAME, role: 'superadmin' },
-        redirectTo: REDIRECT_URL,
-      },
-    );
-    if (invErr) {
-      throw new Error(`auth.admin.inviteUserByEmail failed: ${invErr.message}`);
-    }
-    authUser = invited?.user;
+  if (!invErr && invited?.user) {
+    authUser = invited.user;
     console.log(`✓ Invite sent: auth.user.id = ${authUser.id}`);
-    console.log(
-      `  An email has been dispatched to ${TARGET_EMAIL} so the user sets a password.`,
+    console.log(`  Email dispatched to ${TARGET_EMAIL}.`);
+  } else {
+    // Fallback: email is already registered (common if you re-run or this
+    // email was invited previously). Query the pg layer directly via the
+    // `auth.users` schema (service role has access). We look up by email
+    // because `listUsers` proved unreliable.
+    console.log(`ℹ️  Invite returned: ${invErr?.message || 'no user'}`);
+    console.log('→ Looking up existing auth.user via SQL…');
+    const { rows } = await c.query(
+      `SELECT id, email FROM auth.users WHERE lower(email) = lower($1) LIMIT 1`,
+      [TARGET_EMAIL],
     );
+    if (rows.length === 0) {
+      throw new Error(
+        `Could not invite and no existing auth.user found for ${TARGET_EMAIL}. Original error: ${invErr?.message}`,
+      );
+    }
+    authUser = { id: rows[0].id };
+    console.log(`✓ Reusing existing auth.user id=${authUser.id}`);
+    console.log(`  (no new invite email sent; send resetPasswordForEmail if needed)`);
   }
 
   // ── 4. Insert platform_users row ──────────────────────────────────────
