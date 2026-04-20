@@ -30,7 +30,8 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/comisiones(\/|$)/, 'commissions'],
   [/^\/risk(\/|$)/, 'risk'],
   [/^\/usuarios(\/|$)/, 'users'],
-  [/^\/auditoria(\/|$)/, 'audit'],
+  // /auditoria was removed — platform audit lives at
+  //   /superadmin/companies/[id] (tab "Auditoría") and is superadmin-only.
 ];
 
 // Routes that are always accessible — personal surfaces and the dashboard home.

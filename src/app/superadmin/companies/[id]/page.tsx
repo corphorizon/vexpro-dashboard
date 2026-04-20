@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Settings as SettingsIcon, Key } from 'lucide-react';
+import { ArrowLeft, Settings as SettingsIcon, Key, ClipboardList } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { CompanyForm, type CompanyFormValues } from '../_form';
 import { ApiCredentialsPanel } from '@/components/settings/api-credentials-panel';
+import { CompanyAuditPanel } from '@/components/settings/company-audit-panel';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/companies/[id] — edit existing tenant
@@ -26,9 +27,10 @@ export default function EditCompanyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
-  // Two tabs: "Configuración" (branding + modules form) and "APIs externas"
-  // (ApiCredentialsPanel targeted at this tenant).
-  const [activeTab, setActiveTab] = useState<'settings' | 'apis'>('settings');
+  // Three tabs: Configuración (branding + modules), APIs externas, Auditoría.
+  // Auditoría lives here (not in the tenant sidebar) because platform audit
+  // is a superadmin-only surface.
+  const [activeTab, setActiveTab] = useState<'settings' | 'apis' | 'audit'>('settings');
 
   useEffect(() => {
     if (!id) return;
@@ -123,6 +125,16 @@ export default function EditCompanyPage() {
         >
           <Key className="w-4 h-4" /> APIs externas
         </button>
+        <button
+          onClick={() => setActiveTab('audit')}
+          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === 'audit'
+              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          <ClipboardList className="w-4 h-4" /> Auditoría
+        </button>
       </div>
 
       {loadErr && (
@@ -137,6 +149,10 @@ export default function EditCompanyPage() {
 
       {activeTab === 'apis' && id && (
         <ApiCredentialsPanel companyId={id} />
+      )}
+
+      {activeTab === 'audit' && id && (
+        <CompanyAuditPanel companyId={id} />
       )}
 
       {activeTab === 'settings' && values !== null && (

@@ -5,7 +5,7 @@ import { useMemo } from 'react';
 import {
   BarChart3, ArrowLeftRight, Receipt, Droplets, TrendingUp,
   Wallet, Briefcase, Upload, CalendarDays, Users, Calculator,
-  FileSearch, ClipboardList, LayoutDashboard,
+  FileSearch, LayoutDashboard,
 } from 'lucide-react';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
@@ -39,7 +39,7 @@ const ENTRIES: Entry[] = [
   { href: '/risk/retiros-propfirm', label: 'Risk · Prop Firm', module: 'risk', Icon: FileSearch, color: 'text-teal-600' },
   { href: '/risk/retiros-wallet', label: 'Risk · Wallet', module: 'risk', Icon: Wallet, color: 'text-teal-600' },
   { href: '/usuarios', label: 'Usuarios', module: 'users', Icon: Users, color: 'text-slate-600' },
-  { href: '/auditoria', label: 'Auditoría', module: 'audit', Icon: ClipboardList, color: 'text-slate-600' },
+  // Auditoría removed from tenant quick-access — lives in /superadmin/companies/[id] now.
 ];
 
 export function QuickAccess({ heading = 'Accesos rápidos' }: { heading?: string }) {

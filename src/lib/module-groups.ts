@@ -67,12 +67,15 @@ export const MODULE_GROUPS: ModuleGroup[] = [
     ],
   },
   {
+    // Kept as a "group" so single-module users (e.g. HR-only → /usuarios)
+    // still get the flat sidebar treatment. Only Usuarios remains — the
+    // Configuraciones umbrella disappeared with the dissolved settings
+    // module, and Audit moved to the superadmin panel.
     key: 'config',
-    labelEs: 'Configuraciones',
+    labelEs: 'Usuarios',
     homeHref: '/usuarios',
     items: [
-      { module: 'users',       href: '/usuarios',        labelEs: 'Usuarios' },
-      { module: 'audit',       href: '/auditoria',       labelEs: 'Auditoría' },
+      { module: 'users', href: '/usuarios', labelEs: 'Usuarios' },
     ],
   },
 ];

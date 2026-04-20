@@ -64,9 +64,13 @@ interface AuthState {
   refreshUser: () => Promise<void>;
 }
 
-// `settings` removed when /configuraciones was dissolved: Roles moved into
-// /usuarios (tab) and API credentials into /superadmin/companies/[id].
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users', 'audit'];
+// Modules assignable to a tenant user. Excludes:
+//   · `settings` — dissolved (Roles now live inside /usuarios; APIs externas
+//     only in the superadmin panel).
+//   · `audit`    — reserved for SUPERADMIN only. Tenants cannot grant the
+//     audit module to their users; platform-level audit lives inside the
+//     superadmin panel (/superadmin/companies/[id]).
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -734,6 +738,11 @@ export function hasModuleAccess(
   // Platform superadmin sees everything — tenant filters don't apply.
   if (user.is_superadmin) return true;
 
+  // `audit` is reserved for SUPERADMIN. Not even a tenant admin can access
+  // /auditoria — platform-level auditing is surfaced inside /superadmin
+  // (per-company tabs).
+  if (module === 'audit') return false;
+
   // User-level check: admins pass; others must have the module on their list.
   const passesUserCheck =
     user.effective_role === 'admin' || user.allowed_modules.includes(module);
@@ -801,6 +810,5 @@ export const MODULE_LABELS: Record<string, string> = {
   upload: 'Carga de Datos',
   periods: 'Períodos',
   users: 'Usuarios',
-  audit: 'Auditoría',
-  settings: 'Configuración',
+  // audit + settings intentionally omitted — see comment above ALL_MODULES.
 };

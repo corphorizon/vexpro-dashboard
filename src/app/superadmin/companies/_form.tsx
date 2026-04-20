@@ -19,7 +19,6 @@ export const ALL_MODULES: { key: string; label: string }[] = [
   { key: 'commissions', label: 'Comisiones' },
   { key: 'risk', label: 'Risk Management' },
   { key: 'users', label: 'Usuarios' },
-  { key: 'audit', label: 'Auditoría' },
 ];
 
 export interface CompanyFormValues {

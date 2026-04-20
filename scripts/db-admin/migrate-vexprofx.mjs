@@ -36,7 +36,6 @@ const CODE_MODULES = [
   'commissions',   // /comisiones
   'risk',          // /risk/retiros-*
   'users',         // /usuarios
-  'audit',         // /auditoria
 ];
 
 // Business tables that must have every row scoped to a company.
