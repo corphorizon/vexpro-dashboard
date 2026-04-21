@@ -38,7 +38,26 @@ export interface User {
   is_superadmin: boolean;
 }
 
-const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
+// ─── Built-in roles — single source of truth ─────────────────────────────
+// These are the roles accepted by the `company_users.role` CHECK constraint
+// in Postgres. Any UI that picks a role, any API that validates one, and
+// any permission function that branches on role MUST import from here.
+// Adding a new built-in role requires: (1) updating this list, (2) updating
+// the DB CHECK constraint via migration, (3) adding a case to any permission
+// matrix that covers roles exhaustively.
+export const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
+
+export type BuiltInRole = typeof BUILT_IN_ROLES[number];
+
+/** Human-readable labels for the 6 built-in roles — for selects/badges. */
+export const BUILT_IN_ROLE_LABELS: Record<BuiltInRole, string> = {
+  admin: 'Admin',
+  socio: 'Socio',
+  auditor: 'Auditor',
+  soporte: 'Soporte',
+  hr: 'HR',
+  invitado: 'Invitado',
+};
 
 export type LoginResult =
   | { success: true; needs2fa: false }

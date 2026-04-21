@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/utils';
+import { formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import {
   ArrowLeft,
@@ -59,14 +60,7 @@ const SLUG_KIND_LABEL: Record<ProviderSlug, { amountCard: string; countCard: str
   unipayment: { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
 };
 
-function formatDateTime(iso: string): string {
-  const d = new Date(iso);
-  if (isNaN(d.getTime())) return iso;
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(
-    d.getHours()
-  )}:${pad(d.getMinutes())}`;
-}
+// formatDateTime moved to src/lib/dates.ts — centralised across the app.
 
 export default function BreakdownPage({
   params,

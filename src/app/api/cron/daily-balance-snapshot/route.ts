@@ -67,8 +67,11 @@ export async function GET(request: NextRequest) {
     };
 
     // ── Coinsbuy ──
+    // Pass company.id so the fetcher picks up per-tenant credentials from
+    // api_credentials (falling back to env when that tenant hasn't uploaded
+    // its own). This is the same resolution the interactive endpoints use.
     try {
-      const cb = await fetchCoinsbuyWallets();
+      const cb = await fetchCoinsbuyWallets(company.id);
       if (cb.error) {
         entry.coinsbuy_error = cb.error;
       } else {
@@ -85,7 +88,7 @@ export async function GET(request: NextRequest) {
 
     // ── UniPayment ──
     try {
-      const up = await fetchUnipaymentBalances();
+      const up = await fetchUnipaymentBalances(company.id);
       if (up.error) {
         entry.unipayment_error = up.error;
       } else {

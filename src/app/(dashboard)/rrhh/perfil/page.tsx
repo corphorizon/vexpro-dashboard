@@ -7,6 +7,7 @@ import { Card, CardTitle, CardValue } from '@/components/ui/card';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
+import { formatDate } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
@@ -15,11 +16,14 @@ import { updateCommercialProfile } from '@/lib/supabase/mutations';
 import type { CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus } from '@/lib/types';
 import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X, FileText, Upload, ExternalLink, Handshake, Trash2 } from 'lucide-react';
 
+// Small adapter so callsites that used to render the raw `hire_date` string
+// when formatter returned null keep that behaviour. formatDate returns ''
+// for nullish input — we preserve that behaviour by accepting null and
+// returning the raw string for unparseable dates.
 function formatDateDMY(dateStr: string | null): string | null {
   if (!dateStr) return null;
-  const parts = dateStr.split('-');
-  if (parts.length !== 3) return dateStr;
-  return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  const formatted = formatDate(dateStr);
+  return formatted || dateStr;
 }
 
 export default function PerfilPage() {
@@ -741,7 +745,7 @@ export default function PerfilPage() {
                       </span>
                     </div>
                     {neg.description && <p className="text-xs text-muted-foreground">{neg.description}</p>}
-                    <p className="text-[10px] text-muted-foreground mt-1">{new Date(neg.updated_at).toLocaleDateString()}</p>
+                    <p className="text-[10px] text-muted-foreground mt-1">{formatDate(neg.updated_at)}</p>
                   </div>
                   <button onClick={() => handleDeleteNegotiation(neg.id)} className="text-muted-foreground hover:text-red-500 shrink-0">
                     <Trash2 className="w-3.5 h-3.5" />

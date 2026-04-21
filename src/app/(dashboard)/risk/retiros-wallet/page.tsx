@@ -15,6 +15,7 @@ import { Card } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { cn } from '@/lib/utils';
+import { formatDate, formatDateTime } from '@/lib/dates';
 import {
   Search,
   Filter,
@@ -120,23 +121,10 @@ function fmt$(n: number): string {
   }).format(n);
 }
 
-function fmtDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('es-ES', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  });
-}
-
-function fmtDateTime(iso: string): string {
-  return new Date(iso).toLocaleString('es-ES', {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
+// Local thin wrappers keep existing call sites (fmtDate / fmtDateTime)
+// readable while routing through the centralised formatters in @/lib/dates.
+const fmtDate = (iso: string) => formatDate(iso);
+const fmtDateTime = (iso: string) => formatDateTime(iso);
 
 function daysBetween(a: string, b: string): number {
   return Math.abs(

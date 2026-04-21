@@ -7,7 +7,8 @@ import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_L
 import { useModuleAccess } from '@/lib/use-module-access';
 import { RolesPanel } from '@/components/settings/roles-panel';
 import { useI18n } from '@/lib/i18n';
-import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff, Shield } from 'lucide-react';
+// Shield icon removed with the Roles tab — keep ShieldOff for the 2FA badge.
+import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
@@ -212,7 +213,17 @@ export default function UsuariosPage() {
         }
       />
 
-      {/* Tabs — Usuarios + Roles (Roles was /configuraciones, now lives here) */}
+      {/* Tabs — Usuarios + Roles
+          NOTE: The Roles tab is temporarily HIDDEN because the backing
+          logic is half-built: the custom_roles table and RolesPanel UI
+          exist and can create/edit rows, but hasModuleAccess() in
+          auth-context.tsx only recognises the 6 BUILT_IN_ROLES — custom
+          roles don't grant module permissions yet. Re-enable this tab
+          once the permission resolver wires up `effective_role`.
+          Keeping the RolesPanel import and the setActiveTab('roles')
+          branch below so nothing rots while the feature is paused.
+          TODO: Custom roles UI — pendiente wirear con hasModuleAccess
+          antes de activar. */}
       <div className="flex border-b border-border overflow-x-auto">
         <button
           onClick={() => setActiveTab('users')}
@@ -224,18 +235,9 @@ export default function UsuariosPage() {
         >
           <Users className="w-4 h-4" /> Usuarios
         </button>
-        <button
-          onClick={() => setActiveTab('roles')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'roles'
-              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Shield className="w-4 h-4" /> Roles
-        </button>
       </div>
 
+      {/* Roles tab body still wired for future re-enable — never shown today. */}
       {activeTab === 'roles' && <RolesPanel />}
 
       {/* Form */}

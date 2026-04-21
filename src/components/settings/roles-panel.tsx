@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { MODULE_LABELS, ROLE_LABELS } from '@/lib/auth-context';
+import { MODULE_LABELS, ROLE_LABELS, BUILT_IN_ROLES } from '@/lib/auth-context';
 import { Plus, Pencil, Trash2, X, Loader2 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,7 +15,9 @@ import { Plus, Pencil, Trash2, X, Loader2 } from 'lucide-react';
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ALL_MODULES = Object.keys(MODULE_LABELS);
-const BASE_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
+// Alias to the single built-in roles list — kept as BASE_ROLES locally for
+// readability within this file (custom roles extend a "base" built-in role).
+const BASE_ROLES = BUILT_IN_ROLES;
 
 interface CustomRole {
   id: string;

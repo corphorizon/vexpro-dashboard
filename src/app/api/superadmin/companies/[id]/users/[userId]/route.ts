@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
+import { BUILT_IN_ROLES } from '@/lib/auth-context';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/superadmin/companies/:id/users/:userId
@@ -18,7 +19,8 @@ import { serverAuditLog } from '@/lib/server-audit';
 // The :userId here is `company_users.id` (not auth.users.id).
 // ---------------------------------------------------------------------------
 
-const ALLOWED_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
+// Import roles list instead of duplicating — single source of truth in auth-context.
+const ALLOWED_ROLES = BUILT_IN_ROLES;
 const ALLOWED_STATUSES = ['active', 'inactive'];
 
 export async function PATCH(
@@ -58,7 +60,7 @@ export async function PATCH(
       update.email = body.email.trim().toLowerCase();
     }
     if (typeof body.role === 'string') {
-      if (!ALLOWED_ROLES.includes(body.role)) {
+      if (!(ALLOWED_ROLES as readonly string[]).includes(body.role)) {
         return NextResponse.json(
           { success: false, error: `Rol inválido. Permitidos: ${ALLOWED_ROLES.join(', ')}` },
           { status: 400 },

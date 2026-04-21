@@ -6,12 +6,14 @@ import { Card } from '@/components/ui/card';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
+import { formatDate } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
 import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee } from '@/lib/supabase/mutations';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
+import { useModuleAccess } from '@/lib/use-module-access';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search } from 'lucide-react';
 
@@ -593,6 +595,12 @@ export default function RRHHPage() {
   const { t } = useI18n();
   const { company, employees: dataEmployees, commercialProfiles, monthlyResults: dataMonthlyResults, periods, refresh } = useData();
   const { user } = useAuth();
+  // Module gate — other module pages (comisiones, balances, risk, users)
+  // all run this check at the top. /rrhh was the outlier: the page used
+  // to render unconditionally, so a user of a tenant without `hr` in
+  // active_modules could navigate directly to /rrhh and see employees.
+  // Superadmin bypass is baked into hasModuleAccess inside the hook.
+  const canAccess = useModuleAccess('hr');
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const [tab, setTab] = useState<Tab>('commercial');
   const [employees, setEmployees] = useState<Employee[]>(dataEmployees);
@@ -949,6 +957,14 @@ export default function RRHHPage() {
       </Card>
     );
   };
+
+  if (!canAccess) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <p className="text-muted-foreground">{t('common.noAccess')}</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -1378,7 +1394,7 @@ export default function RRHHPage() {
                             </span>
                           </td>
                           <td className="py-2.5 text-muted-foreground text-xs hidden sm:table-cell">
-                            {new Date(neg.updated_at).toLocaleDateString()}
+                            {formatDate(neg.updated_at)}
                           </td>
                           <td className="py-2.5 text-right">
                             <div className="flex items-center justify-end gap-1">

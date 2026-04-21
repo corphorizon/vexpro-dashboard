@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// UniPayment — OAuth 2.0 Authentication
+// UniPayment — OAuth 2.0 Authentication (per-tenant)
 //
 // POST /connect/token with application/x-www-form-urlencoded:
 //   grant_type=client_credentials&client_id=X&client_secret=Y
@@ -9,60 +9,98 @@
 // IMPORTANT: Force IPv4 for all DNS lookups. UniPayment's CDN (Cloudflare)
 // blocks IPv6 connections with a 403. This global setting ensures Node.js
 // resolves hostnames to IPv4 addresses first.
+//
+// MULTI-TENANT: every exported function accepts an optional `companyId`.
+// Resolution order per-tenant:
+//   1. api_credentials row for (company_id, 'unipayment') — per-tenant.
+//   2. UNIPAYMENT_CLIENT_ID / UNIPAYMENT_CLIENT_SECRET env — global fallback.
+//
+// Tokens cached per-tenant (Map keyed by companyId, '__env__' for env path).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
 import { proxiedFetch } from '../proxy';
+import { resolveUnipaymentCredentials } from '../credentials';
 
-const UNIPAYMENT_BASE_URL =
+const ENV_BASE_URL =
   process.env.UNIPAYMENT_BASE_URL ?? 'https://api.unipayment.io';
+
+const ENV_KEY = '__env__';
 
 interface CachedToken {
   accessToken: string;
   expiresAt: number;
 }
 
-let cachedToken: CachedToken | null = null;
+const tokenCache = new Map<string, CachedToken>();
 
-/**
- * Returns true when the UniPayment integration is configured and not mocked.
- */
-export function isUnipaymentEnabled(): boolean {
-  const clientId = process.env.UNIPAYMENT_CLIENT_ID;
-  return !!clientId && clientId !== 'mock';
+interface ResolvedConfig {
+  clientId: string;
+  clientSecret: string;
+  baseUrl: string;
+}
+
+async function resolveConfig(companyId: string | null | undefined): Promise<ResolvedConfig | null> {
+  if (companyId) {
+    const perTenant = await resolveUnipaymentCredentials(companyId);
+    if (perTenant) {
+      return {
+        clientId: perTenant.clientId,
+        clientSecret: perTenant.clientSecret,
+        baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
+      };
+    }
+  }
+  const envId = process.env.UNIPAYMENT_CLIENT_ID;
+  const envSecret = process.env.UNIPAYMENT_CLIENT_SECRET;
+  if (!envId || envId === 'mock' || !envSecret) return null;
+  return { clientId: envId, clientSecret: envSecret, baseUrl: ENV_BASE_URL };
 }
 
 /**
- * Fetches (or returns a cached) UniPayment OAuth 2.0 Bearer token.
- *
- * The token is kept in memory and automatically renewed when it is
- * within 60 seconds of expiration.
+ * True when UniPayment is configured for the given tenant (per-tenant row
+ * OR env fallback). Async because the DB lookup is per-tenant.
  */
-export async function getUnipaymentToken(): Promise<string> {
-  const now = Date.now();
+export async function isUnipaymentEnabled(
+  companyId?: string | null,
+): Promise<boolean> {
+  const config = await resolveConfig(companyId ?? null);
+  return !!config;
+}
 
-  if (cachedToken && cachedToken.expiresAt - now > 60_000) {
-    return cachedToken.accessToken;
+/**
+ * Fetches (or returns a cached) UniPayment OAuth 2.0 Bearer token for the
+ * given tenant. Tokens cached per-tenant to prevent cross-tenant leaks.
+ */
+export async function getUnipaymentToken(
+  companyId?: string | null,
+): Promise<string> {
+  const now = Date.now();
+  const key = companyId ?? ENV_KEY;
+
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt - now > 60_000) {
+    return cached.accessToken;
   }
 
-  const clientId = process.env.UNIPAYMENT_CLIENT_ID;
-  const clientSecret = process.env.UNIPAYMENT_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
+  const config = await resolveConfig(companyId ?? null);
+  if (!config) {
     throw new Error(
-      'Missing UNIPAYMENT_CLIENT_ID or UNIPAYMENT_CLIENT_SECRET environment variables',
+      companyId
+        ? 'UniPayment no está configurado para esta empresa ni hay credenciales globales.'
+        : 'Missing UNIPAYMENT_CLIENT_ID or UNIPAYMENT_CLIENT_SECRET environment variables',
     );
   }
 
   const body = new URLSearchParams({
     grant_type: 'client_credentials',
-    client_id: clientId,
-    client_secret: clientSecret,
+    client_id: config.clientId,
+    client_secret: config.clientSecret,
   });
 
-  const response = await proxiedFetch(`${UNIPAYMENT_BASE_URL}/connect/token`, {
+  const response = await proxiedFetch(`${config.baseUrl}/connect/token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -83,17 +121,27 @@ export async function getUnipaymentToken(): Promise<string> {
     );
   }
 
-  const data = await response.json() as {
+  const data = (await response.json()) as {
     access_token: string;
     expires_in: number;
     token_type: string;
     scope: string;
   };
 
-  cachedToken = {
+  const fresh: CachedToken = {
     accessToken: data.access_token,
     expiresAt: now + data.expires_in * 1000,
   };
+  tokenCache.set(key, fresh);
+  return fresh.accessToken;
+}
 
-  return cachedToken.accessToken;
+/**
+ * Returns the resolved UniPayment base URL for a given tenant.
+ */
+export async function getUnipaymentBaseUrl(
+  companyId?: string | null,
+): Promise<string> {
+  const config = await resolveConfig(companyId ?? null);
+  return config?.baseUrl ?? ENV_BASE_URL;
 }

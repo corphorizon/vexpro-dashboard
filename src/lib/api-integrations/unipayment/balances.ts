@@ -6,12 +6,11 @@
 // When credentials are not configured, falls back to mock data.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getUnipaymentToken, isUnipaymentEnabled } from './auth';
+import { getUnipaymentToken, isUnipaymentEnabled, getUnipaymentBaseUrl } from './auth';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 
-const UNIPAYMENT_BASE_URL =
-  process.env.UNIPAYMENT_BASE_URL ?? 'https://api.unipayment.io';
+// Per-tenant base URL resolved at call time via getUnipaymentBaseUrl().
 
 // ── Public types ───────────────────────────────────────────────────────────
 
@@ -54,7 +53,9 @@ const MOCK_BALANCES: UnipaymentWalletBalance[] = [
 
 // ── Main fetch ─────────────────────────────────────────────────────────────
 
-export async function fetchUnipaymentBalances(): Promise<{
+export async function fetchUnipaymentBalances(
+  companyId?: string | null,
+): Promise<{
   balances: UnipaymentWalletBalance[];
   isMock: boolean;
   fetchedAt: string;
@@ -62,7 +63,7 @@ export async function fetchUnipaymentBalances(): Promise<{
 }> {
   const now = new Date().toISOString();
 
-  if (!isUnipaymentEnabled()) {
+  if (!(await isUnipaymentEnabled(companyId))) {
     return {
       balances: [],
       isMock: false,
@@ -72,10 +73,11 @@ export async function fetchUnipaymentBalances(): Promise<{
   }
 
   try {
-    const token = await getUnipaymentToken();
+    const token = await getUnipaymentToken(companyId);
+    const baseUrl = await getUnipaymentBaseUrl(companyId);
 
     const response: BalancesResponse = await withRetry(async () => {
-      const res = await proxiedFetch(`${UNIPAYMENT_BASE_URL}/v1.0/wallet/balances`, {
+      const res = await proxiedFetch(`${baseUrl}/v1.0/wallet/balances`, {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/json',

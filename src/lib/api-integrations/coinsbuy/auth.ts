@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Coinsbuy v3 — OAuth 2.0 Authentication
+// Coinsbuy v3 — OAuth 2.0 Authentication (per-tenant)
 //
 // POST /token/ with JSON:API format:
 //   { data: { type: "auth-token", attributes: { client_id, client_secret } } }
@@ -9,12 +9,26 @@
 // All Coinsbuy API calls go through the Fixie SOCKS5 proxy when FIXIE_URL is
 // set — required because Coinsbuy whitelists source IPs. When unset (local
 // dev), requests go direct.
+//
+// MULTI-TENANT: every exported function accepts an optional `companyId`.
+// Resolution order per-tenant:
+//   1. api_credentials row for (company_id, 'coinsbuy') — per-tenant.
+//   2. COINSBUY_CLIENT_ID / COINSBUY_CLIENT_SECRET env — global fallback.
+//      Keeps VexPro FX working until the superadmin uploads per-tenant creds.
+//
+// Tokens are cached per-tenant (or per "__env__" key for env fallback) so
+// two tenants never accidentally share a token.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { proxiedFetch } from '../proxy';
+import { resolveCoinsbuyCredentials } from '../credentials';
 
-const COINSBUY_BASE_URL =
+const ENV_BASE_URL =
   process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
+
+// Sentinel key used in the cache when running off process.env only.
+// UUIDs always contain dashes, so '__env__' will never collide.
+const ENV_KEY = '__env__';
 
 interface TokenResponseData {
   data: {
@@ -33,39 +47,82 @@ interface CachedToken {
   expiresAt: number;
 }
 
-let cachedToken: CachedToken | null = null;
+// One cache entry per tenant — critical to avoid leaking tokens between
+// companies when one is misconfigured and falls through to env while
+// another has its own creds.
+const tokenCache = new Map<string, CachedToken>();
 
-/**
- * Returns true when the Coinsbuy v3 integration is configured and not mocked.
- */
-export function isCoinsbuyV3Enabled(): boolean {
-  const clientId = process.env.COINSBUY_CLIENT_ID;
-  return !!clientId && clientId !== 'mock';
+interface ResolvedConfig {
+  clientId: string;
+  clientSecret: string;
+  baseUrl: string;
 }
 
 /**
- * Fetches (or returns a cached) Coinsbuy v3 OAuth 2.0 Bearer token.
+ * Loads per-tenant credentials from api_credentials, falling back to env.
+ * Returns null when neither path has a client_id — caller treats as
+ * "not configured" and produces empty/mock data.
+ */
+async function resolveConfig(companyId: string | null | undefined): Promise<ResolvedConfig | null> {
+  if (companyId) {
+    const perTenant = await resolveCoinsbuyCredentials(companyId);
+    if (perTenant) {
+      return {
+        clientId: perTenant.clientId,
+        clientSecret: perTenant.clientSecret,
+        baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
+      };
+    }
+  }
+  const envId = process.env.COINSBUY_CLIENT_ID;
+  const envSecret = process.env.COINSBUY_CLIENT_SECRET;
+  if (!envId || envId === 'mock' || !envSecret) return null;
+  return { clientId: envId, clientSecret: envSecret, baseUrl: ENV_BASE_URL };
+}
+
+/**
+ * Returns true when Coinsbuy is configured for the given tenant (per-tenant
+ * row OR env fallback) and not stubbed to 'mock'. Async because the DB
+ * lookup is per-tenant.
+ *
+ * Callers that need to know "configured at all, regardless of tenant" can
+ * pass null and the answer falls through to env.
+ */
+export async function isCoinsbuyV3Enabled(
+  companyId?: string | null,
+): Promise<boolean> {
+  const config = await resolveConfig(companyId ?? null);
+  return !!config;
+}
+
+/**
+ * Fetches (or returns a cached) Coinsbuy v3 OAuth 2.0 Bearer token for the
+ * given tenant. Tokens are cached per-tenant — never leak across companies.
  *
  * The token is kept in memory and automatically renewed when it is
  * within 60 seconds of expiration.
  */
-export async function getCoinsbuyToken(): Promise<string> {
+export async function getCoinsbuyToken(
+  companyId?: string | null,
+): Promise<string> {
   const now = Date.now();
+  const key = companyId ?? ENV_KEY;
 
-  if (cachedToken && cachedToken.expiresAt - now > 60_000) {
-    return cachedToken.accessToken;
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt - now > 60_000) {
+    return cached.accessToken;
   }
 
-  const clientId = process.env.COINSBUY_CLIENT_ID;
-  const clientSecret = process.env.COINSBUY_CLIENT_SECRET;
-
-  if (!clientId || !clientSecret) {
+  const config = await resolveConfig(companyId ?? null);
+  if (!config) {
     throw new Error(
-      'Missing COINSBUY_CLIENT_ID or COINSBUY_CLIENT_SECRET environment variables',
+      companyId
+        ? `Coinsbuy no está configurado para esta empresa ni hay credenciales globales.`
+        : 'Missing COINSBUY_CLIENT_ID or COINSBUY_CLIENT_SECRET environment variables',
     );
   }
 
-  const response = await proxiedFetch(`${COINSBUY_BASE_URL}/token/`, {
+  const response = await proxiedFetch(`${config.baseUrl}/token/`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/vnd.api+json',
@@ -74,8 +131,8 @@ export async function getCoinsbuyToken(): Promise<string> {
       data: {
         type: 'auth-token',
         attributes: {
-          client_id: clientId,
-          client_secret: clientSecret,
+          client_id: config.clientId,
+          client_secret: config.clientSecret,
         },
       },
     }),
@@ -91,10 +148,22 @@ export async function getCoinsbuyToken(): Promise<string> {
 
   const data: TokenResponseData = await response.json();
 
-  cachedToken = {
+  const fresh: CachedToken = {
     accessToken: data.data.attributes.access,
     expiresAt: now + data.data.attributes.expires_in * 1000,
   };
+  tokenCache.set(key, fresh);
+  return fresh.accessToken;
+}
 
-  return cachedToken.accessToken;
+/**
+ * Returns the resolved Coinsbuy base URL for a given tenant (per-tenant
+ * override OR env default). Used by downstream helpers (wallets, deposits,
+ * payouts, transfers) so per-tenant base_url overrides propagate.
+ */
+export async function getCoinsbuyBaseUrl(
+  companyId?: string | null,
+): Promise<string> {
+  const config = await resolveConfig(companyId ?? null);
+  return config?.baseUrl ?? ENV_BASE_URL;
 }

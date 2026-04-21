@@ -10,15 +10,14 @@
 // When credentials are not configured, falls back to mock data.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getUnipaymentToken, isUnipaymentEnabled } from './auth';
+import { getUnipaymentToken, isUnipaymentEnabled, getUnipaymentBaseUrl } from './auth';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import { generateUnipaymentDeposits } from '../mocks';
 import { filterByDateRange } from '../totals';
 import type { UnipaymentDepositTx, ProviderDataset } from '../types';
 
-const UNIPAYMENT_BASE_URL =
-  process.env.UNIPAYMENT_BASE_URL ?? 'https://api.unipayment.io';
+// Per-tenant base URL resolved at call time via getUnipaymentBaseUrl().
 
 const PROVIDER = 'unipayment' as const;
 const PAGE_SIZE = 100;
@@ -59,12 +58,13 @@ interface InvoicesResponse {
 // ── Main fetch ──────────────────────────────────────────────────────────────
 
 export async function fetchUnipaymentDepositsV2(
-  options: { from?: string; to?: string } = {},
+  options: { from?: string; to?: string; companyId?: string | null } = {},
 ): Promise<ProviderDataset<UnipaymentDepositTx>> {
   const now = new Date().toISOString();
+  const { companyId } = options;
 
   // No credentials → empty error dataset. Keeps fake demo data out of the UI.
-  if (!isUnipaymentEnabled()) {
+  if (!(await isUnipaymentEnabled(companyId))) {
     return {
       slug: 'unipayment',
       provider: PROVIDER,
@@ -79,7 +79,8 @@ export async function fetchUnipaymentDepositsV2(
 
   // Live mode
   try {
-    const token = await getUnipaymentToken();
+    const token = await getUnipaymentToken(companyId);
+    const baseUrl = await getUnipaymentBaseUrl(companyId);
     const allTransactions: UnipaymentDepositTx[] = [];
 
     let pageNo = 1;
@@ -93,7 +94,7 @@ export async function fetchUnipaymentDepositsV2(
       // Filter only completed invoices server-side
       params.set('status', 'Complete');
 
-      const url = `${UNIPAYMENT_BASE_URL}/v1.0/invoices?${params.toString()}`;
+      const url = `${baseUrl}/v1.0/invoices?${params.toString()}`;
 
       const response: InvoicesResponse = await withRetry(async () => {
         const res = await proxiedFetch(url, {

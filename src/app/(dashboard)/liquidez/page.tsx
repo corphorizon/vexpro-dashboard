@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
+import { formatDate } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
@@ -203,7 +204,7 @@ export default function LiquidezPage() {
               {pagedRows.map((mov, i) => (
                 <tr key={mov.id} className="border-b border-border/50 hover:bg-muted/50">
                   <td className="py-2.5 px-3 text-muted-foreground tabular-nums">{page * PAGE_SIZE + i + 1}</td>
-                  <td className="py-2.5 px-3">{new Date(mov.date).toLocaleDateString('es-ES')}</td>
+                  <td className="py-2.5 px-3">{formatDate(mov.date)}</td>
                   <td className="py-2.5 px-3 text-xs max-w-[200px] truncate">{mov.user_email || '—'}</td>
                   <td className="py-2.5 px-3">{mov.mt_account || '—'}</td>
                   <td className="py-2.5 px-3 text-right font-medium text-blue-600">

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { X, Loader2, KeyRound, ShieldOff, Power, ClipboardList, Check } from 'lucide-react';
 import { ALL_MODULES } from '../../_form';
+import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/auth-context';
 import type { CompanyUser } from './page';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -19,14 +20,12 @@ import type { CompanyUser } from './page';
 // without closing the panel so the user can retry.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const ROLES: { key: string; label: string }[] = [
-  { key: 'admin', label: 'Admin' },
-  { key: 'socio', label: 'Socio' },
-  { key: 'auditor', label: 'Auditor' },
-  { key: 'soporte', label: 'Soporte' },
-  { key: 'hr', label: 'HR' },
-  { key: 'invitado', label: 'Invitado' },
-];
+// Roles rendered as { key, label } pairs for the <select>. Sourced from the
+// single built-in roles export in auth-context so UI stays in sync with DB.
+const ROLES: { key: string; label: string }[] = BUILT_IN_ROLES.map((key) => ({
+  key,
+  label: BUILT_IN_ROLE_LABELS[key],
+}));
 
 interface AuditEntry {
   id: string;

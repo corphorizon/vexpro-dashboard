@@ -1,5 +1,11 @@
-import * as XLSX from 'xlsx';
+import ExcelJS from 'exceljs';
 import type { Trade, ReportMetadata } from './types';
+
+// NOTE: We migrated off `xlsx` (sheetJS) because it has two unpatched
+// high-severity CVEs (prototype pollution + ReDoS) with no upstream fix.
+// `exceljs` has no equivalent issues. The parser is now async because
+// exceljs's load API returns a Promise; the only caller (the risk
+// retiros-propfirm page) was already inside an async handler.
 
 // ─── Parse MetaTrader 5 Trade History Excel ───
 
@@ -71,11 +77,45 @@ export interface ParseResult {
   metadata: ReportMetadata;
 }
 
-export function parseTradeReport(buffer: ArrayBuffer): ParseResult {
-  const wb = XLSX.read(buffer, { type: 'array' });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const raw: any[][] = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false });
+/**
+ * Reads every cell of a worksheet into a 0-indexed rectangular array of
+ * display strings — mirrors what `XLSX.utils.sheet_to_json(ws, { header: 1,
+ * raw: false })` produced, so the rest of the parser can stay byte-for-byte
+ * identical.
+ *
+ * exceljs is 1-indexed (`row.getCell(1)` = column A) and `row.values[0]`
+ * is always null. We normalise to 0-indexed arrays and coerce every cell
+ * to its text representation via `cell.text` (handles rich text, formulas,
+ * hyperlinks — parseNumber/parseDate below expect strings anyway).
+ */
+function sheetToMatrix(ws: ExcelJS.Worksheet): (string | null)[][] {
+  const rows: (string | null)[][] = [];
+  ws.eachRow({ includeEmpty: true }, (row) => {
+    const arr: (string | null)[] = [];
+    const last = row.cellCount;
+    for (let c = 1; c <= last; c++) {
+      const cell = row.getCell(c);
+      // cell.text already applies number format / formula result / rich text.
+      // Coerce defensively (rich-text cells can return non-string objects)
+      // and normalise empty strings to null so `!row[0]` matches the old
+      // xlsx behaviour.
+      const t = cell.text;
+      const s = t == null ? null : String(t);
+      arr.push(s === '' ? null : s);
+    }
+    rows.push(arr);
+  });
+  return rows;
+}
+
+export async function parseTradeReport(buffer: ArrayBuffer): Promise<ParseResult> {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(buffer);
+  const ws = wb.worksheets[0];
+  if (!ws) {
+    throw new Error('El archivo no contiene hojas de cálculo');
+  }
+  const raw = sheetToMatrix(ws);
 
   // ─── Extract metadata ───
   let traderName = '';

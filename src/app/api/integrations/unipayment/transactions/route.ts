@@ -19,7 +19,7 @@ export async function GET(request: Request) {
     const from = url.searchParams.get('from') ?? undefined;
     const to = url.searchParams.get('to') ?? undefined;
 
-    const dataset = await fetchUnipaymentDepositsV2({ from, to });
+    const dataset = await fetchUnipaymentDepositsV2({ from, to, companyId: auth.companyId });
     return NextResponse.json({ success: true, dataset });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

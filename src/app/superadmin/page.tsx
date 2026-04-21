@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Plus, Users, Building2, ArrowRight, Settings, PowerOff, AlertTriangle } from 'lucide-react';
+import { formatDate } from '@/lib/dates';
 
 interface CompanyRow {
   id: string;
@@ -173,7 +174,7 @@ export default function SuperadminHome() {
                       <div className="min-w-0">
                         <div className="font-medium truncate">{c.name}</div>
                         <div className="text-xs text-muted-foreground">
-                          Creada: {new Date(c.created_at).toLocaleDateString()}
+                          Creada: {formatDate(c.created_at)}
                         </div>
                       </div>
                     </div>
