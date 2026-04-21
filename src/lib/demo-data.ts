@@ -18,6 +18,7 @@ export const DEMO_COMPANY: Company = {
   color_secondary: '#3B82F6',
   currency: 'USD',
   active_modules: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'partners'],
+  default_wallet_id: '1079',
 };
 
 // ============================================================

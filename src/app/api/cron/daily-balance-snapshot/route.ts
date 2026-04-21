@@ -58,9 +58,22 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const results: Array<Record<string, unknown>> = [];
-
-  for (const company of companies) {
+  // Parallel per-tenant snapshot.
+  //
+  // Old code iterated companies sequentially with two awaits per iteration,
+  // so total time grew linearly: ~3s × N companies. At 20 tenants that was
+  // already ~60s and approached Vercel Pro's 300s function-timeout cliff.
+  //
+  // Promise.all over the whole list fans out per-tenant work concurrently.
+  // Each tenant still runs Coinsbuy + UniPayment sequentially (they share
+  // DNS resolution work and IPv4-first side effect setup, so parallelising
+  // within a tenant offered marginal gain and risked rate-limiting the
+  // same global account today).
+  //
+  // Every tenant's work is wrapped in its own try/catch so one API blip
+  // doesn't take down the whole run — each tenant reports its own errors
+  // in the `results` array.
+  const snapshotOneCompany = async (company: { id: string; name: string }) => {
     const entry: Record<string, unknown> = {
       company_id: company.id,
       company_name: company.name,
@@ -69,7 +82,7 @@ export async function GET(request: NextRequest) {
     // ── Coinsbuy ──
     // Pass company.id so the fetcher picks up per-tenant credentials from
     // api_credentials (falling back to env when that tenant hasn't uploaded
-    // its own). This is the same resolution the interactive endpoints use.
+    // its own). Same resolution the interactive endpoints use.
     try {
       const cb = await fetchCoinsbuyWallets(company.id);
       if (cb.error) {
@@ -103,8 +116,10 @@ export async function GET(request: NextRequest) {
       entry.unipayment_error = err instanceof Error ? err.message : 'Unknown error';
     }
 
-    results.push(entry);
-  }
+    return entry;
+  };
+
+  const results = await Promise.all(companies.map(snapshotOneCompany));
 
   return NextResponse.json({
     success: true,

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
+import { sanitizeDbError } from '@/lib/errors';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/superadmin/users/:id
@@ -39,15 +40,18 @@ export async function PATCH(
       .single();
 
     if (error || !data) {
+      if (error) console.error('[superadmin/users:update]', error);
       return NextResponse.json(
-        { success: false, error: error?.message || 'Usuario no encontrado' },
+        { success: false, error: 'Usuario no encontrado' },
         { status: 404 },
       );
     }
     return NextResponse.json({ success: true, user: data });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return NextResponse.json(
+      sanitizeDbError(err, 'superadmin/users[id]:PATCH'),
+      { status: 500 },
+    );
   }
 }
 
@@ -76,11 +80,13 @@ export async function DELETE(
       .eq('id', id);
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return NextResponse.json(sanitizeDbError(error, 'superadmin/users[id]:delete'), { status: 500 });
     }
     return NextResponse.json({ success: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return NextResponse.json(
+      sanitizeDbError(err, 'superadmin/users[id]:DELETE'),
+      { status: 500 },
+    );
   }
 }
