@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { StatCard } from '@/components/ui/stat-card';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
+import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { formatCurrency } from '@/lib/utils';
 import { QuickAccess } from './quick-access';
 import {
@@ -53,41 +54,62 @@ export function AdminHome() {
   const currentSummary = currentPeriod ? getPeriodSummary(currentPeriod.id) : null;
   const prevSummary = prevPeriod ? getPeriodSummary(prevPeriod.id) : null;
 
-  // ── Variations vs prior period ────────────────────────────────────────
+  // ── API + manual consolidation ────────────────────────────────────────
+  // Mirrors /resumen-general and /movimientos so the home matches what
+  // the user sees on those pages. Without this, post Apr-2026 periods
+  // showed only the manual subset (often $0) and looked broken.
+  const currentCoexist = useApiCoexistence(currentPeriod ? [currentPeriod] : []);
+  const prevCoexist = useApiCoexistence(prevPeriod ? [prevPeriod] : []);
+
+  const consolidate = (
+    summary: typeof currentSummary,
+    coexist: typeof currentCoexist,
+  ) => {
+    if (!summary) return { deposits: 0, withdrawals: 0, netDeposit: 0, balance: 0 };
+    const useDerivedBroker = coexist.useDerivedBroker;
+
+    const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount ?? 0;
+    const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount ?? 0;
+    const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount ?? 0;
+    const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount ?? 0;
+    const deposits = useDerivedBroker
+      ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
+      : summary.totalDeposits;
+
+    const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount ?? 0;
+    const propFirmW = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount ?? 0;
+    const otherW = summary.withdrawals.find((w) => w.category === 'other')?.amount ?? 0;
+    const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;
+    const derivedBrokerFromApi = coexist.derivedBrokerFromApi(ibCommissions, propFirmW, otherW);
+    const brokerConsolidated = useDerivedBroker ? derivedBrokerFromApi + storedBroker : storedBroker;
+    const withdrawals = useDerivedBroker
+      ? brokerConsolidated + ibCommissions + propFirmW + otherW
+      : summary.totalWithdrawals;
+
+    const netDeposit = deposits - withdrawals;
+
+    const ingresosNetos = (summary.operatingIncome
+      ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
+      : 0) + summary.propFirmNetIncome;
+    const balance = ingresosNetos - summary.totalExpenses;
+
+    return { deposits, withdrawals, netDeposit, balance };
+  };
+
+  const cur = useMemo(() => consolidate(currentSummary, currentCoexist), [currentSummary, currentCoexist]);
+  const prv = useMemo(() => consolidate(prevSummary, prevCoexist), [prevSummary, prevCoexist]);
+
   const pct = (now: number, prev: number) => {
     if (!prev) return null;
     return ((now - prev) / Math.abs(prev)) * 100;
   };
 
-  const netDepositDelta = currentSummary && prevSummary
-    ? pct(currentSummary.netDeposit, prevSummary.netDeposit)
-    : null;
+  const netDepositDelta = pct(cur.netDeposit, prv.netDeposit);
   const expensesDelta = currentSummary && prevSummary
     ? pct(currentSummary.totalExpenses, prevSummary.totalExpenses)
     : null;
-  const withdrawalsDelta = currentSummary && prevSummary
-    ? pct(currentSummary.totalWithdrawals, prevSummary.totalWithdrawals)
-    : null;
-
-  // ── Available balance = ingresos netos − gastos pagados ───────────────
-  // Simplified from /balances: show the running figure for the current period.
-  const balanceDisponible = useMemo(() => {
-    if (!currentSummary) return 0;
-    const ingresosNetos = (currentSummary.operatingIncome
-      ? currentSummary.operatingIncome.broker_pnl + currentSummary.operatingIncome.other
-      : 0) + currentSummary.propFirmNetIncome;
-    return ingresosNetos - currentSummary.totalExpenses;
-  }, [currentSummary]);
-
-  const prevBalance = useMemo(() => {
-    if (!prevSummary) return 0;
-    const ingresosNetos = (prevSummary.operatingIncome
-      ? prevSummary.operatingIncome.broker_pnl + prevSummary.operatingIncome.other
-      : 0) + prevSummary.propFirmNetIncome;
-    return ingresosNetos - prevSummary.totalExpenses;
-  }, [prevSummary]);
-
-  const balanceDelta = pct(balanceDisponible, prevBalance);
+  const withdrawalsDelta = pct(cur.withdrawals, prv.withdrawals);
+  const balanceDelta = pct(cur.balance, prv.balance);
 
   // ── Module availability shortcuts ──────────────────────────────────────
   const has = (m: string) => hasModuleAccess(user, m, company?.active_modules);
@@ -105,23 +127,33 @@ export function AdminHome() {
         </p>
       </header>
 
-      {/* Row 1 — Flow of the month */}
+      {/* Row 1 — Flow of the month
+            Order: Net Deposit · Depósitos · Retiros · Egresos
+            (depositos and retiros sit together so net deposit "story" reads
+             left-to-right). All values consolidate API + manual. */}
       {loading && !currentSummary ? (
         <SkeletonRow n={4} />
       ) : hasFinance ? (
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
             label="Net Deposit · mes"
-            value={formatCurrency(currentSummary?.netDeposit ?? 0)}
+            value={formatCurrency(cur.netDeposit)}
             icon={Wallet}
-            tone={(currentSummary?.netDeposit ?? 0) >= 0 ? 'positive' : 'negative'}
+            tone={cur.netDeposit >= 0 ? 'positive' : 'negative'}
             hint={deltaHint(netDepositDelta)}
           />
           <StatCard
             label="Depósitos · mes"
-            value={formatCurrency(currentSummary?.totalDeposits ?? 0)}
+            value={formatCurrency(cur.deposits)}
             icon={ArrowDownCircle}
             tone="info"
+          />
+          <StatCard
+            label="Retiros · mes"
+            value={formatCurrency(cur.withdrawals)}
+            icon={ArrowUpCircle}
+            tone="warning"
+            hint={deltaHint(withdrawalsDelta, /* invertColor */ true)}
           />
           <StatCard
             label="Egresos · mes"
@@ -130,26 +162,27 @@ export function AdminHome() {
             tone="warning"
             hint={deltaHint(expensesDelta, /* invertColor */ true)}
           />
-          <StatCard
-            label="Retiros · mes"
-            value={formatCurrency(currentSummary?.totalWithdrawals ?? 0)}
-            icon={ArrowUpCircle}
-            tone="warning"
-            hint={deltaHint(withdrawalsDelta, /* invertColor */ true)}
-          />
         </section>
       ) : null}
 
-      {/* Row 2 — Position snapshot */}
+      {/* Row 2 — Position snapshot
+            Order: Balance Disponible · Inversiones · Liquidez · Socios
+            (money figures grouped left, headcount card last) */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {hasFinance && (
           <StatCard
             label="Balance Disponible"
-            value={formatCurrency(balanceDisponible)}
+            value={formatCurrency(cur.balance)}
             icon={TrendingUp}
-            tone={balanceDisponible >= 0 ? 'positive' : 'negative'}
+            tone={cur.balance >= 0 ? 'positive' : 'negative'}
             hint={deltaHint(balanceDelta)}
           />
+        )}
+        {has('investments') && (
+          <ModuleMoneyCard label="Inversiones · balance" kind="investments" />
+        )}
+        {has('liquidity') && (
+          <ModuleMoneyCard label="Liquidez · balance" kind="liquidity" />
         )}
         {has('partners') && (
           <StatCard
@@ -158,12 +191,6 @@ export function AdminHome() {
             icon={Briefcase}
             tone="primary"
           />
-        )}
-        {has('investments') && (
-          <ModuleMoneyCard label="Inversiones · balance" kind="investments" />
-        )}
-        {has('liquidity') && (
-          <ModuleMoneyCard label="Liquidez · balance" kind="liquidity" />
         )}
       </section>
 
