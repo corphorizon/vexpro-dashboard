@@ -49,7 +49,7 @@ interface ChannelDef {
 
 const CHANNELS: ChannelDef[] = [
   { key: 'coinsbuy',       label: 'Coinsbuy',                   type: 'auto',   icon: Plug,       description: 'Wallet VexPro Main — balance en tiempo real' },
-  { key: 'unipayment',     label: 'UniPayment',                 type: 'auto',   allowManualOverride: true, icon: Plug, description: 'My Wallet — balance en tiempo real (editable como respaldo)' },
+  { key: 'unipayment',     label: 'UniPayment',                 type: 'auto',   icon: Plug,       description: 'My Wallet — balance en tiempo real desde la API' },
   { key: 'fairpay',        label: 'FairPay',                    type: 'manual',                    description: 'Ingreso manual' },
   { key: 'wallet_externa', label: 'Wallet Externa',             type: 'manual',                    description: 'Ingreso manual' },
   { key: 'otros',          label: 'Otros',                      type: 'manual',                    description: 'Ingreso manual' },
@@ -443,13 +443,14 @@ export default function BalancesPage() {
       return pinnedWalletsTotal;
     }
     if (key === 'unipayment') {
-      // Manual override always wins (user explicitly set a value).
-      if (snap && snap.source === 'manual') return snap.amount;
-      // API-captured snapshot for a past date → show that.
+      // UniPayment is API-only. Manual snapshots are no longer accepted
+      // (any legacy rows are filtered out below). Resolution:
+      //   · Past date: API-source snapshot stored by the cron, or 0 if missing.
+      //   · Today: live API value (unipaymentBalance) when available,
+      //     else the most recent api snapshot, else 0.
       if (snap && snap.source === 'api') return snap.amount;
-      // Today / no snapshot → live API.
       if (unipaymentBalance > 0) return unipaymentBalance;
-      return snap?.amount ?? 0;
+      return 0;
     }
     return snap?.amount ?? 0;
   };
