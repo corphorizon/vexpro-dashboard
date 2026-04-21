@@ -32,6 +32,14 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
       router.replace('/');
       return;
     }
+    // Mandatory 2FA enrolment — applies to superadmins too. Mirror of the
+    // gate in (dashboard)/layout.tsx. Migration 029 set force_2fa_setup=true
+    // on every platform_users row, so the first time a superadmin lands
+    // here after the reset they are redirected to /setup-2fa.
+    if (user.force_2fa_setup && !user.twofa_enabled) {
+      router.replace('/setup-2fa');
+      return;
+    }
   }, [user, isLoading, router]);
 
   if (isLoading) {

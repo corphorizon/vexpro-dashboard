@@ -80,7 +80,13 @@ interface WalletOption {
   currencyCode: string;
 }
 
-export const DEFAULT_WALLET_ID = '1079'; // VexPro Main Wallet
+// TECH DEBT: this is a VexPro-specific Coinsbuy wallet ID used as the
+// default selection for the Movimientos page dropdown. It works today
+// because VexPro is the only tenant with real Coinsbuy data. When a
+// second tenant onboards (AP Markets, etc.) each tenant needs a
+// per-company default_wallet_id stored on the companies row or in
+// pinned_coinsbuy_wallets. Flagged in the audit — SEC-4 follow-up.
+export const DEFAULT_WALLET_ID = '1079';
 
 interface BannerProps {
   /** Optional controlled wallet id. When provided, banner becomes controlled
@@ -330,7 +336,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
             </select>
           ) : (
             <span className="h-8 flex items-center px-2.5 text-xs rounded-md border border-border bg-muted/50 text-foreground">
-              VexPro Main Wallet
+              Wallet principal
             </span>
           )}
         </label>

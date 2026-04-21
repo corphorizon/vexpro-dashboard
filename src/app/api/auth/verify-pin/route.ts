@@ -60,14 +60,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Look up the stored secret using admin client (server-side only)
-    const { data: companyUser } = await adminClient
+    // Look up the stored secret using admin client (server-side only).
+    // Try company_users first, then platform_users so superadmins can
+    // also complete gated actions with a PIN prompt.
+    const { data: cu } = await adminClient
       .from('company_users')
       .select('twofa_secret')
       .eq('user_id', user.id)
       .maybeSingle();
 
-    if (!companyUser || !companyUser.twofa_secret) {
+    let twofaSecret = cu?.twofa_secret ?? null;
+    if (!twofaSecret) {
+      const { data: pu } = await adminClient
+        .from('platform_users')
+        .select('twofa_secret')
+        .eq('user_id', user.id)
+        .maybeSingle();
+      twofaSecret = pu?.twofa_secret ?? null;
+    }
+
+    if (!twofaSecret) {
       return NextResponse.json(
         { success: false, error: '2FA no configurado' },
         { status: 400 },
@@ -75,7 +87,7 @@ export async function POST(request: NextRequest) {
     }
 
     const isValid = speakeasy.totp.verify({
-      secret: companyUser.twofa_secret,
+      secret: twofaSecret,
       encoding: 'base32',
       token: pin,
       window: 1,

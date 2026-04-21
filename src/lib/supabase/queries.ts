@@ -24,7 +24,11 @@ const supabase = createClient();
 
 // ─── Company ───
 
-export async function fetchCompany(slug: string = 'vexprofx'): Promise<Company | null> {
+// `slug` is required — removed the default 'vexprofx' so we can't
+// accidentally load the wrong tenant when a caller forgets the arg.
+// fetchCompanyById is the preferred entry point; this one is kept for
+// subdomain-based lookups if/when we re-enable per-tenant subdomains.
+export async function fetchCompany(slug: string): Promise<Company | null> {
   const { data, error } = await supabase
     .from('companies')
     .select('*')

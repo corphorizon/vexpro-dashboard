@@ -160,8 +160,10 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
       company_id: null,
       allowed_modules: ALL_MODULES,
       twofa_enabled: pu.twofa_enabled || false,
-      // Superadmin doesn't follow the company-level onboarding flow.
-      force_2fa_setup: false,
+      // 2FA enrolment is now mandatory for superadmins too — the flag
+      // lives on platform_users (migration 029). Default to true (force
+      // setup) when the column is missing on older rows.
+      force_2fa_setup: pu.force_2fa_setup ?? true,
       must_change_password: false,
       is_superadmin: true,
     };

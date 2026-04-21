@@ -797,7 +797,7 @@ export default function ComisionesPage() {
     const tierLabels = HEAD_SALARY_TIERS.map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
 
     generateCommissionPDF({
-      companyName: company?.name ?? 'VexPro',
+      companyName: company?.name ?? 'Smart Dashboard',
       headName: headProfile.name,
       headRole: ROLE_LABEL[headProfile.role] || headProfile.role,
       headEmail: headProfile.email,
@@ -1153,7 +1153,7 @@ export default function ComisionesPage() {
                                   if (!selectedPeriod) return;
                                   const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
                                   generateIndividualPDF({
-                                    companyName: company?.name ?? 'VexPro',
+                                    companyName: company?.name ?? 'Smart Dashboard',
                                     periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
                                     name: profile.name,
                                     email: profile.email,
@@ -1306,7 +1306,7 @@ export default function ComisionesPage() {
                                   const lotComm = lotInputs.get(calc.profileId) ?? 0;
                                   const adjustedReal = calc.realPayment - lotComm;
                                   generatePnlPDF({
-                                    companyName: company?.name ?? 'VexPro',
+                                    companyName: company?.name ?? 'Smart Dashboard',
                                     periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
                                     name: profile.name,
                                     email: profile.email,

@@ -44,19 +44,45 @@ export async function POST(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
-    // Look up the user's company_users record to get twofa_secret
-    const { data: companyUser, error: lookupError } = await adminClient
+    // DUAL-TABLE: the same email can live in company_users (tenant user)
+    // OR platform_users (superadmin). Try both so superadmin login works
+    // through the same PIN verification path. `table` is threaded through
+    // the rest of this handler so any write targets the right row.
+    type AccountRow = {
+      id: string;
+      twofa_secret: string | null;
+      twofa_enabled: boolean;
+      table: 'company_users' | 'platform_users';
+    };
+    let account: AccountRow | null = null;
+
+    const { data: cu } = await adminClient
       .from('company_users')
       .select('id, twofa_secret, twofa_enabled')
       .eq('email', email)
       .maybeSingle();
+    if (cu) {
+      account = { ...cu, table: 'company_users' } as AccountRow;
+    } else {
+      const { data: pu } = await adminClient
+        .from('platform_users')
+        .select('id, twofa_secret, twofa_enabled')
+        .eq('email', email)
+        .maybeSingle();
+      if (pu) account = { ...pu, table: 'platform_users' } as AccountRow;
+    }
 
-    if (lookupError || !companyUser) {
+    if (!account) {
       return NextResponse.json(
         { success: false, error: 'Usuario no encontrado' },
         { status: 404 },
       );
     }
+
+    // Re-bind to the pre-existing variable name so the rest of the handler
+    // stays readable; `companyUser` is a misnomer now but changing every
+    // reference would balloon the diff.
+    const companyUser = account;
 
     if (!companyUser.twofa_enabled || !companyUser.twofa_secret) {
       return NextResponse.json(
@@ -101,7 +127,11 @@ export async function POST(request: NextRequest) {
       // On 3rd consecutive 2FA failure, also lock the full account so a
       // password reset is required to unlock (policy: any 3 auth failures
       // lock the account).
-      if (next.locked) {
+      if (next.locked && account.table === 'company_users') {
+        // Only tenant users have locked_until — platform_users has no
+        // such column today. For superadmins the rate-limit table still
+        // gates further attempts for 15 min; full account lockout is
+        // tenant-only.
         const ACCOUNT_LOCK_MS = 24 * 60 * 60 * 1000;
         await adminClient
           .from('company_users')
@@ -145,11 +175,14 @@ export async function POST(request: NextRequest) {
 
     // PIN is correct → clear rate limit + stamp last_login_at for this
     // membership (post-2FA is the real "successful login" moment).
+    // last_login_at only exists on company_users; skip for superadmins.
     await clearAttempts(adminClient, rlOpts);
-    await adminClient
-      .from('company_users')
-      .update({ last_login_at: new Date().toISOString() })
-      .eq('id', companyUser.id);
+    if (account.table === 'company_users') {
+      await adminClient
+        .from('company_users')
+        .update({ last_login_at: new Date().toISOString() })
+        .eq('id', companyUser.id);
+    }
 
     // Sign out the temp client — real sign-in happens on the browser.
     // If this fails, the refresh token could remain valid. Log loudly so

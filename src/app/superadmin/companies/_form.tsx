@@ -77,7 +77,7 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
             value={values.name}
             onChange={(e) => setValues({ ...values, name: e.target.value })}
             className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            placeholder="VexPro FX"
+            placeholder="Ej: Acme Inc"
           />
         </Field>
         {mode === 'edit' && (

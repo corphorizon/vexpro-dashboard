@@ -47,6 +47,18 @@ export async function POST(request: NextRequest) {
       .eq('email', email.toLowerCase())
       .maybeSingle();
 
+    // Superadmins live in platform_users (never company_users). They share
+    // the same auth.users table, so a login by a superadmin returns null
+    // above. Fetch the platform_users row too so downstream code knows to
+    // prompt for 2FA and apply the same force_2fa_setup redirect.
+    const { data: platformUser } = companyUser
+      ? { data: null as { twofa_enabled?: boolean } | null }
+      : await adminClient
+          .from('platform_users')
+          .select('twofa_enabled')
+          .eq('email', email.toLowerCase())
+          .maybeSingle();
+
     // Block deactivated users + deactivated tenants. Both checks use 403
     // with a vague message — we don't want to tell attackers "this email
     // exists but is disabled" either, so we apply them AFTER the password
@@ -153,10 +165,13 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // needs2fa fires when EITHER table has twofa_enabled. This is the only
+    // source of truth the client trusts to decide whether to prompt for
+    // the PIN after password success.
     return NextResponse.json({
       success: true,
       userId: signInData.user.id,
-      needs2fa: !!companyUser?.twofa_enabled,
+      needs2fa: !!(companyUser?.twofa_enabled || platformUser?.twofa_enabled),
       mustChangePassword: !!companyUser?.must_change_password,
     });
   } catch (err: unknown) {

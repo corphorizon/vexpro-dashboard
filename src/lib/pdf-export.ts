@@ -216,7 +216,7 @@ export function generateCommissionPDF(data: PdfCommissionData) {
     doc.setFontSize(7);
     doc.setTextColor(160, 174, 192);
     doc.text(`Pagina ${i} de ${pageCount}`, pageWidth / 2, pageH - 6, { align: 'center' });
-    doc.text('Documento generado automaticamente — VexPro Dashboard', pageWidth / 2, pageH - 3, { align: 'center' });
+    doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 3, { align: 'center' });
   }
 
   // Save
@@ -362,7 +362,7 @@ export function generateIndividualPDF(data: PdfIndividualData) {
   const pageH = doc.internal.pageSize.getHeight();
   doc.setFontSize(7);
   doc.setTextColor(160, 174, 192);
-  doc.text('Documento generado automaticamente — VexPro Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
+  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
 
   // Save
   const fileName = `Comision_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
@@ -526,7 +526,7 @@ export function generatePnlPDF(data: PdfPnlData) {
   const pageH = doc.internal.pageSize.getHeight();
   doc.setFontSize(7);
   doc.setTextColor(160, 174, 192);
-  doc.text('Documento generado automaticamente — VexPro Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
+  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
 
   const fileName = `ComisionPnL_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
   doc.save(fileName);

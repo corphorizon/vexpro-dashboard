@@ -48,7 +48,7 @@ interface ChannelDef {
 }
 
 const CHANNELS: ChannelDef[] = [
-  { key: 'coinsbuy',       label: 'Coinsbuy',                   type: 'auto',   icon: Plug,       description: 'Wallet VexPro Main — balance en tiempo real' },
+  { key: 'coinsbuy',       label: 'Coinsbuy',                   type: 'auto',   icon: Plug,       description: 'Wallets pinneadas — balance en tiempo real desde la API' },
   { key: 'unipayment',     label: 'UniPayment',                 type: 'auto',   icon: Plug,       description: 'My Wallet — balance en tiempo real desde la API' },
   { key: 'fairpay',        label: 'FairPay',                    type: 'manual',                    description: 'Ingreso manual' },
   { key: 'wallet_externa', label: 'Wallet Externa',             type: 'manual',                    description: 'Ingreso manual' },

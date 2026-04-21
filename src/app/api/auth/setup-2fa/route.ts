@@ -15,14 +15,82 @@ import QRCode from 'qrcode';
 //   verify   — Verifies a TOTP code and activates 2FA
 //   disable  — Disables 2FA (requires valid TOTP code)
 //
-// Re-generating when 2FA is already active requires a valid current TOTP
-// token in `currentToken` — prevents silent rotation via stolen session.
+// DUAL-TABLE: handles both tenant users (company_users) and superadmins
+// (platform_users). After migration 029 the force_2fa_setup flag applies
+// to both tables, so the same endpoint must service both on first login.
+// `resolveAccount()` does the lookup once and returns the table name so
+// every subsequent write targets the correct row.
 // ---------------------------------------------------------------------------
 
-// Fallback when we can't resolve a tenant name (e.g. orphan auth user).
-// The tenant's own name is used when available — see `resolveIssuer`.
+// Fallback when we can't resolve a tenant name (e.g. superadmin, or orphan).
 const DEFAULT_APP_NAME = 'Smart Dashboard';
 const PENDING_TTL_MS = 10 * 60 * 1000; // 10 minutes
+
+type TwofaTable = 'company_users' | 'platform_users';
+
+interface TwofaAccount {
+  table: TwofaTable;
+  email: string;
+  twofa_enabled: boolean;
+  twofa_secret: string | null;
+  twofa_pending_secret: string | null;
+  twofa_pending_at: string | null;
+  /** The issuer label shown in the authenticator app. */
+  issuer: string;
+}
+
+type AdminClient = ReturnType<typeof createAdminClient>;
+
+/**
+ * Looks up the caller in company_users first, then platform_users. Returns
+ * a shape-normalised record + which table to write back to. Null means
+ * the auth user has no corresponding profile in either table (orphan).
+ */
+async function resolveAccount(
+  admin: AdminClient,
+  userId: string,
+): Promise<TwofaAccount | null> {
+  const { data: cu } = await admin
+    .from('company_users')
+    .select('email, twofa_enabled, twofa_secret, twofa_pending_secret, twofa_pending_at, companies(name)')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (cu) {
+    const companyRel = (cu as { companies?: { name?: string } | { name?: string }[] | null }).companies;
+    const companyName = Array.isArray(companyRel) ? companyRel[0]?.name : companyRel?.name;
+    return {
+      table: 'company_users',
+      email: cu.email,
+      twofa_enabled: cu.twofa_enabled ?? false,
+      twofa_secret: cu.twofa_secret ?? null,
+      twofa_pending_secret: cu.twofa_pending_secret ?? null,
+      twofa_pending_at: cu.twofa_pending_at ?? null,
+      issuer: companyName || DEFAULT_APP_NAME,
+    };
+  }
+
+  const { data: pu } = await admin
+    .from('platform_users')
+    .select('email, twofa_enabled, twofa_secret, twofa_pending_secret, twofa_pending_at')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (pu) {
+    return {
+      table: 'platform_users',
+      email: pu.email,
+      twofa_enabled: pu.twofa_enabled ?? false,
+      twofa_secret: pu.twofa_secret ?? null,
+      twofa_pending_secret: pu.twofa_pending_secret ?? null,
+      twofa_pending_at: pu.twofa_pending_at ?? null,
+      // Superadmins don't belong to a tenant — use the global app label.
+      issuer: DEFAULT_APP_NAME,
+    };
+  }
+
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -41,37 +109,22 @@ export async function POST(request: NextRequest) {
     const { action } = body as { action?: string };
 
     const adminClient = createAdminClient();
+    const account = await resolveAccount(adminClient, user.id);
+    if (!account) {
+      return NextResponse.json(
+        { success: false, error: 'Usuario no encontrado' },
+        { status: 404 },
+      );
+    }
 
     // Action: generate — create a new TOTP secret and QR code
     if (!action || action === 'generate') {
       const { currentToken } = body as { currentToken?: string };
 
-      // Get user email + current 2FA state + company name (for the TOTP
-      // label shown in the authenticator app).
-      const { data: companyUser } = await adminClient
-        .from('company_users')
-        .select('email, twofa_enabled, twofa_secret, companies(name)')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (!companyUser) {
-        return NextResponse.json(
-          { success: false, error: 'Usuario no encontrado' },
-          { status: 404 },
-        );
-      }
-
-      // Per-tenant TOTP issuer so users with accounts in multiple companies
-      // see them as distinct entries in Google Authenticator / Authy.
-      const companyRel = (companyUser as { companies?: { name?: string } | { name?: string }[] | null }).companies;
-      const companyName = Array.isArray(companyRel)
-        ? companyRel[0]?.name
-        : companyRel?.name;
-      const issuer = companyName || DEFAULT_APP_NAME;
-
-      // If 2FA is already active, require a valid TOTP from the current secret
-      // before allowing rotation.
-      if (companyUser.twofa_enabled && companyUser.twofa_secret) {
+      // If 2FA is already active, require a valid TOTP from the current
+      // secret before allowing rotation. Prevents silent secret swap via
+      // a stolen session.
+      if (account.twofa_enabled && account.twofa_secret) {
         if (!currentToken) {
           return NextResponse.json(
             {
@@ -83,7 +136,7 @@ export async function POST(request: NextRequest) {
           );
         }
         const validCurrent = speakeasy.totp.verify({
-          secret: companyUser.twofa_secret,
+          secret: account.twofa_secret,
           encoding: 'base32',
           token: currentToken,
           window: 1,
@@ -98,8 +151,8 @@ export async function POST(request: NextRequest) {
 
       // Generate a new TOTP secret
       const secretObj = speakeasy.generateSecret({
-        name: `${issuer}:${companyUser.email}`,
-        issuer,
+        name: `${account.issuer}:${account.email}`,
+        issuer: account.issuer,
         length: 20,
       });
 
@@ -107,7 +160,7 @@ export async function POST(request: NextRequest) {
 
       // Store the pending secret server-side (replaces any previous pending)
       const { error: pendingErr } = await adminClient
-        .from('company_users')
+        .from(account.table)
         .update({
           twofa_pending_secret: secretObj.base32,
           twofa_pending_at: new Date().toISOString(),
@@ -152,20 +205,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const { data: companyUser } = await adminClient
-        .from('company_users')
-        .select('twofa_pending_secret, twofa_pending_at')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (!companyUser?.twofa_pending_secret || !companyUser.twofa_pending_at) {
+      if (!account.twofa_pending_secret || !account.twofa_pending_at) {
         return NextResponse.json(
           { success: false, error: 'No hay configuración pendiente. Genera un nuevo código.' },
           { status: 400 },
         );
       }
 
-      const age = Date.now() - new Date(companyUser.twofa_pending_at).getTime();
+      const age = Date.now() - new Date(account.twofa_pending_at).getTime();
       if (age > PENDING_TTL_MS) {
         return NextResponse.json(
           { success: false, error: 'El código expiró. Genera uno nuevo.' },
@@ -174,7 +221,7 @@ export async function POST(request: NextRequest) {
       }
 
       const isValid = speakeasy.totp.verify({
-        secret: companyUser.twofa_pending_secret,
+        secret: account.twofa_pending_secret,
         encoding: 'base32',
         token,
         window: 1,
@@ -187,12 +234,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Promote pending → active, clear pending, clear force-setup flag
+      // Promote pending → active, clear pending, clear force-setup flag.
+      // force_2fa_setup exists on both tables (company_users via
+      // migration-015, platform_users via migration-029).
       const { error: updateError } = await adminClient
-        .from('company_users')
+        .from(account.table)
         .update({
           twofa_enabled: true,
-          twofa_secret: companyUser.twofa_pending_secret,
+          twofa_secret: account.twofa_pending_secret,
           twofa_pending_secret: null,
           twofa_pending_at: null,
           force_2fa_setup: false,
@@ -222,23 +271,16 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // Get current secret
-      const { data: companyUser } = await adminClient
-        .from('company_users')
-        .select('twofa_secret, twofa_enabled')
-        .eq('user_id', user.id)
-        .maybeSingle();
-
-      if (!companyUser?.twofa_enabled || !companyUser.twofa_secret) {
+      if (!account.twofa_enabled || !account.twofa_secret) {
         return NextResponse.json(
           { success: false, error: '2FA no está habilitado' },
           { status: 400 },
         );
       }
 
-      // Verify the TOTP token
+      // Verify the TOTP token against the active secret
       const isValid = speakeasy.totp.verify({
-        secret: companyUser.twofa_secret,
+        secret: account.twofa_secret,
         encoding: 'base32',
         token,
         window: 1,
@@ -253,7 +295,7 @@ export async function POST(request: NextRequest) {
 
       // Disable 2FA
       const { error: updateError } = await adminClient
-        .from('company_users')
+        .from(account.table)
         .update({
           twofa_enabled: false,
           twofa_secret: null,
