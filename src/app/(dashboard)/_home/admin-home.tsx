@@ -1,39 +1,27 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Card } from '@/components/ui/card';
+import { useMemo } from 'react';
 import { StatCard } from '@/components/ui/stat-card';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
-import { getAuditLog } from '@/lib/audit-log';
 import { QuickAccess } from './quick-access';
 import {
   ArrowDownCircle, ArrowUpCircle, Wallet, Receipt, TrendingUp,
-  TrendingDown, Plug, Users, Briefcase, Droplets, Activity, Loader2,
+  TrendingDown, Briefcase, Droplets, Loader2,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AdminHome — full dashboard for company admins (and superadmin when
 // entering a company via /superadmin/viewing/[id]).
 //
-// Rows the spec defines:
-//   1. Financial summary       (if module 'movements' active)
-//   2. API status              (live fetch; only providers the tenant configured)
-//   3. Module summary cards    (HR, partners, investments, liquidity — if active)
-//   4. Recent activity         (last 5 audit entries)
-//   5. Quick access            (all modules the user+company have enabled)
+// Two rows of stat cards + quick access:
+//   Row 1 (financial flow): Net Deposit · Depósitos · Egresos · Retiros
+//   Row 2 (position):       Balance Disponible · Socios · Inversiones · Liquidez
 //
-// All sections guarded by `hasModuleAccess` + `company.active_modules`, so an
-// admin of a tenant that disabled a module never sees its row. When there's
-// no data for the current period we show $0.00 / "Sin datos" cleanly.
+// Row 1 is gated by the 'movements' module; Row 2 cards individually gated
+// by their respective module flags.
 // ─────────────────────────────────────────────────────────────────────────────
-
-interface ApiCredRow {
-  provider: string;
-  is_configured: boolean;
-  updated_at: string;
-}
 
 export function AdminHome() {
   const { user } = useAuth();
@@ -41,7 +29,6 @@ export function AdminHome() {
     company,
     periods,
     getPeriodSummary,
-    employees,
     partners,
     loading,
   } = useData();
@@ -78,8 +65,11 @@ export function AdminHome() {
   const expensesDelta = currentSummary && prevSummary
     ? pct(currentSummary.totalExpenses, prevSummary.totalExpenses)
     : null;
+  const withdrawalsDelta = currentSummary && prevSummary
+    ? pct(currentSummary.totalWithdrawals, prevSummary.totalWithdrawals)
+    : null;
 
-  // ── Available balance = netDeposit − expensesPaid − partnerDistribution ─
+  // ── Available balance = ingresos netos − gastos pagados ───────────────
   // Simplified from /balances: show the running figure for the current period.
   const balanceDisponible = useMemo(() => {
     if (!currentSummary) return 0;
@@ -99,20 +89,6 @@ export function AdminHome() {
 
   const balanceDelta = pct(balanceDisponible, prevBalance);
 
-  // ── APIs status ────────────────────────────────────────────────────────
-  const [apis, setApis] = useState<ApiCredRow[] | null>(null);
-  useEffect(() => {
-    // Only admins of the tenant can read api_credentials. Fails silently for
-    // lower roles (their hasModuleAccess gates already hid this UI anyway).
-    fetch('/api/admin/api-credentials')
-      .then((r) => r.json())
-      .then((j) => { if (j.success) setApis(j.credentials); })
-      .catch(() => setApis([]));
-  }, []);
-
-  // ── Recent activity ────────────────────────────────────────────────────
-  const activity = useMemo(() => getAuditLog().slice(0, 5), []);
-
   // ── Module availability shortcuts ──────────────────────────────────────
   const has = (m: string) => hasModuleAccess(user, m, company?.active_modules);
   const hasFinance = has('movements');
@@ -129,6 +105,7 @@ export function AdminHome() {
         </p>
       </header>
 
+      {/* Row 1 — Flow of the month */}
       {loading && !currentSummary ? (
         <SkeletonRow n={4} />
       ) : hasFinance ? (
@@ -154,27 +131,24 @@ export function AdminHome() {
             hint={deltaHint(expensesDelta, /* invertColor */ true)}
           />
           <StatCard
+            label="Retiros · mes"
+            value={formatCurrency(currentSummary?.totalWithdrawals ?? 0)}
+            icon={ArrowUpCircle}
+            tone="warning"
+            hint={deltaHint(withdrawalsDelta, /* invertColor */ true)}
+          />
+        </section>
+      ) : null}
+
+      {/* Row 2 — Position snapshot */}
+      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {hasFinance && (
+          <StatCard
             label="Balance Disponible"
             value={formatCurrency(balanceDisponible)}
             icon={TrendingUp}
             tone={balanceDisponible >= 0 ? 'positive' : 'negative'}
             hint={deltaHint(balanceDelta)}
-          />
-        </section>
-      ) : null}
-
-      {/* APIs status */}
-      <ApiStatusSection data={apis} />
-
-      {/* Module summary cards */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {has('hr') && (
-          <StatCard
-            label="Empleados"
-            value={employees.filter((e) => e.status === 'active').length.toString()}
-            icon={Users}
-            tone="info"
-            hint={`${employees.length} total`}
           />
         )}
         {has('partners') && (
@@ -190,41 +164,6 @@ export function AdminHome() {
         )}
         {has('liquidity') && (
           <ModuleMoneyCard label="Liquidez · balance" kind="liquidity" />
-        )}
-      </section>
-
-      {/* Recent activity */}
-      <section>
-        <h2 className="text-base font-semibold mb-3">Actividad reciente</h2>
-        {activity.length === 0 ? (
-          <Card className="text-sm text-muted-foreground text-center py-6">
-            Sin actividad reciente.
-          </Card>
-        ) : (
-          <Card className="p-0 overflow-hidden">
-            <ul className="divide-y divide-border">
-              {activity.map((a) => (
-                <li key={a.id} className="p-3 flex items-start gap-3">
-                  <Activity className="w-4 h-4 mt-0.5 text-muted-foreground shrink-0" />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm">
-                      <span className="font-medium">{a.user_name}</span>{' '}
-                      <span className="text-muted-foreground">{a.action}</span>{' '}
-                      <span className="text-xs text-muted-foreground">· {a.module}</span>
-                    </p>
-                    {a.details && (
-                      <p className="text-xs text-muted-foreground mt-0.5 truncate">{a.details}</p>
-                    )}
-                  </div>
-                  <span className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
-                    {new Date(a.timestamp).toLocaleString('es-ES', {
-                      month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                    })}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </Card>
         )}
       </section>
 
@@ -244,51 +183,6 @@ function deltaHint(pct: number | null, invertColor = false): React.ReactNode {
       <Arrow className="w-3 h-3" />
       {rounded > 0 ? '+' : ''}{rounded}% vs mes anterior
     </span>
-  );
-}
-
-function ApiStatusSection({ data }: { data: ApiCredRow[] | null }) {
-  if (data === null) {
-    return <SkeletonRow n={4} height="h-16" />;
-  }
-  if (data.length === 0) {
-    return (
-      <Card className="text-sm text-muted-foreground">
-        <div className="flex items-center gap-2">
-          <Plug className="w-4 h-4" />
-          <span>Sin APIs externas configuradas.</span>
-        </div>
-      </Card>
-    );
-  }
-  return (
-    <section>
-      <h2 className="text-base font-semibold mb-3">APIs externas</h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-        {data.map((a) => {
-          const isOk = a.is_configured;
-          const tone = isOk ? 'bg-emerald-500' : 'bg-red-500';
-          return (
-            <Card key={a.provider} className="p-3">
-              <div className="flex items-center gap-2">
-                <span className={`w-2.5 h-2.5 rounded-full ${tone}`} aria-hidden />
-                <span className="font-medium capitalize text-sm">{a.provider}</span>
-              </div>
-              <p className="text-[11px] text-muted-foreground mt-1">
-                {isOk ? 'Configurada' : 'Sin credenciales'}
-              </p>
-              {a.updated_at && (
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {new Date(a.updated_at).toLocaleString('es-ES', {
-                    month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
-                  })}
-                </p>
-              )}
-            </Card>
-          );
-        })}
-      </div>
-    </section>
   );
 }
 
