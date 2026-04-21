@@ -1,15 +1,16 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { StatCard } from '@/components/ui/stat-card';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { fetchChannelBalances } from '@/lib/supabase/queries';
 import { formatCurrency } from '@/lib/utils';
 import { QuickAccess } from './quick-access';
 import {
   ArrowDownCircle, ArrowUpCircle, Wallet, Receipt, TrendingUp,
-  TrendingDown, Briefcase, Droplets, Loader2,
+  TrendingDown, Briefcase, Droplets, Layers, Loader2,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,6 +33,8 @@ export function AdminHome() {
     getPeriodSummary,
     partners,
     loading,
+    getLiquidityData,
+    getInvestmentsData,
   } = useData();
 
   // ── Current period resolution ─────────────────────────────────────────
@@ -109,7 +112,47 @@ export function AdminHome() {
     ? pct(currentSummary.totalExpenses, prevSummary.totalExpenses)
     : null;
   const withdrawalsDelta = pct(cur.withdrawals, prv.withdrawals);
-  const balanceDelta = pct(cur.balance, prv.balance);
+
+  // ── Total Consolidado (suma de todos los canales) ─────────────────────
+  // Mirrors the big number at the bottom of /balances:
+  //   Σ channel_balances_as_of(today) + liquidity running sum + investments
+  // Snapshot fetch is async + cached via useEffect; while loading we show
+  // "—" so the card doesn't flash a misleading $0.00.
+  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
+  const [channelTotal, setChannelTotal] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (!company?.id) return;
+    let cancelled = false;
+    fetchChannelBalances(company.id, todayISO)
+      .then((rows) => {
+        if (cancelled) return;
+        // Defensive: skip any liquidez/inversiones rows so we don't
+        // double-count — those two are summed below from live movements.
+        const sum = rows
+          .filter((r) => r.channel_key !== 'liquidez' && r.channel_key !== 'inversiones')
+          .reduce((s, r) => s + Number(r.amount || 0), 0);
+        setChannelTotal(sum);
+      })
+      .catch(() => {
+        if (!cancelled) setChannelTotal(0);
+      });
+    return () => { cancelled = true; };
+  }, [company?.id, todayISO]);
+
+  const liquidityBalance = useMemo(
+    () => getLiquidityData().reduce((s, m) => s + (m.deposit ?? 0) - (m.withdrawal ?? 0), 0),
+    [getLiquidityData],
+  );
+  const investmentsBalance = useMemo(
+    () => getInvestmentsData().reduce(
+      (s, i) => s + (i.deposit ?? 0) - (i.withdrawal ?? 0) + (i.profit ?? 0),
+      0,
+    ),
+    [getInvestmentsData],
+  );
+
+  const totalConsolidado = channelTotal === null ? null : channelTotal + liquidityBalance + investmentsBalance;
 
   // ── Module availability shortcuts ──────────────────────────────────────
   const has = (m: string) => hasModuleAccess(user, m, company?.active_modules);
@@ -166,16 +209,16 @@ export function AdminHome() {
       ) : null}
 
       {/* Row 2 — Position snapshot
-            Order: Balance Disponible · Inversiones · Liquidez · Socios
+            Order: Total Consolidado · Inversiones · Liquidez · Socios
             (money figures grouped left, headcount card last) */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {hasFinance && (
           <StatCard
-            label="Balance Disponible"
-            value={formatCurrency(cur.balance)}
-            icon={TrendingUp}
-            tone={cur.balance >= 0 ? 'positive' : 'negative'}
-            hint={deltaHint(balanceDelta)}
+            label="Total Consolidado"
+            value={totalConsolidado === null ? '—' : formatCurrency(totalConsolidado)}
+            icon={Layers}
+            tone={(totalConsolidado ?? 0) >= 0 ? 'positive' : 'negative'}
+            hint="Suma de todos los balances"
           />
         )}
         {has('investments') && (
