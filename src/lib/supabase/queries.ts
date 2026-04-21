@@ -151,22 +151,35 @@ export async function fetchExpenseTemplates(companyId: string): Promise<import('
 }
 
 // ─── Channel Balances (snapshots por dia) ───
+//
+// Resolution rules (matched in /balances UI):
+//   · With `date`: return one row per channel_key — the latest snapshot
+//     where snapshot_date <= date. So a manual entry on D persists through
+//     D+1, D+2 … until a newer row exists. Backed by the SQL function
+//     `channel_balances_as_of` (migration 026).
+//   · Without `date`: return ALL historical rows (used by audit / reports).
 
 export async function fetchChannelBalances(
   companyId: string,
   date?: string
 ): Promise<import('../types').ChannelBalance[]> {
-  let query = supabase
+  if (date) {
+    const { data, error } = await supabase.rpc('channel_balances_as_of', {
+      p_company_id: companyId,
+      p_date: date,
+    });
+    if (error) {
+      console.error('Error fetching channel balances (as_of):', error.message);
+      return [];
+    }
+    return (data ?? []) as import('../types').ChannelBalance[];
+  }
+
+  const { data, error } = await supabase
     .from('channel_balances')
     .select('*')
     .eq('company_id', companyId)
     .order('snapshot_date', { ascending: false });
-
-  if (date) {
-    query = query.eq('snapshot_date', date);
-  }
-
-  const { data, error } = await query;
 
   if (error) {
     console.error('Error fetching channel balances:', error.message);
