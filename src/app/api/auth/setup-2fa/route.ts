@@ -50,15 +50,17 @@ async function resolveAccount(
   admin: AdminClient,
   userId: string,
 ): Promise<TwofaAccount | null> {
+  // Platform-level issuer for both tables — the authenticator entry label
+  // is consumer-facing branding and should say "Smart Dashboard", never
+  // the tenant name (would leak "Vex Pro" to a user of a different tenant).
+  // Users with memberships in multiple tenants still disambiguate by email.
   const { data: cu } = await admin
     .from('company_users')
-    .select('email, twofa_enabled, twofa_secret, twofa_pending_secret, twofa_pending_at, companies(name)')
+    .select('email, twofa_enabled, twofa_secret, twofa_pending_secret, twofa_pending_at')
     .eq('user_id', userId)
     .maybeSingle();
 
   if (cu) {
-    const companyRel = (cu as { companies?: { name?: string } | { name?: string }[] | null }).companies;
-    const companyName = Array.isArray(companyRel) ? companyRel[0]?.name : companyRel?.name;
     return {
       table: 'company_users',
       email: cu.email,
@@ -66,7 +68,7 @@ async function resolveAccount(
       twofa_secret: cu.twofa_secret ?? null,
       twofa_pending_secret: cu.twofa_pending_secret ?? null,
       twofa_pending_at: cu.twofa_pending_at ?? null,
-      issuer: companyName || DEFAULT_APP_NAME,
+      issuer: DEFAULT_APP_NAME,
     };
   }
 
