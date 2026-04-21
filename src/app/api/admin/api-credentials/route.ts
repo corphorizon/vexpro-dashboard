@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { encryptSecret, lastChars } from '@/lib/crypto';
+import { sanitizeDbError } from '@/lib/errors';
 
 // ---------------------------------------------------------------------------
 // /api/admin/api-credentials
@@ -65,7 +66,7 @@ export async function GET(request: NextRequest) {
     .order('provider');
 
   if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json(sanitizeDbError(error, 'api-credentials:list'), { status: 500 });
   }
 
   return NextResponse.json({ success: true, credentials: data || [] });
@@ -132,7 +133,7 @@ export async function POST(request: NextRequest) {
       .upsert(payload, { onConflict: 'company_id,provider' });
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return NextResponse.json(sanitizeDbError(error, 'api-credentials:upsert'), { status: 500 });
     }
 
     return NextResponse.json({ success: true });
@@ -146,7 +147,7 @@ export async function POST(request: NextRequest) {
       .eq('provider', provider);
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return NextResponse.json(sanitizeDbError(error, 'api-credentials:delete'), { status: 500 });
     }
     return NextResponse.json({ success: true });
   }

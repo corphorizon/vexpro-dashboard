@@ -372,6 +372,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logAction(prev.id, prev.name, 'logout', 'auth', `Cierre de sesión: ${prev.email}`);
     }
     await supabase.auth.signOut();
+    // Clear tenant-scoped state that lives in localStorage — otherwise the
+    // next user on the same browser would inherit:
+    //   · fd_audit_log → the previous session's local audit trail
+    //   · horizon.superadmin.activeCompanyId → the previous superadmin's
+    //     "viewing as" selection (would accidentally scope the next user
+    //     to the wrong tenant on first load)
+    // Other keys (fd_theme, fd_lang) stay — they're UX prefs, not sensitive.
+    try {
+      // Lazy import avoids any SSR "localStorage is not defined" issues.
+      // These helpers already no-op on the server.
+      const { clearAuditLog } = await import('./audit-log');
+      const { clearActiveCompanyId } = await import('./active-company');
+      clearAuditLog();
+      clearActiveCompanyId();
+    } catch {
+      // Non-fatal — worst case the next user sees stale non-sensitive data.
+    }
     setUser(null);
   }, []);
 

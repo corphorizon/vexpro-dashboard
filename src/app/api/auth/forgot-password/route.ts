@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash, randomBytes } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendPasswordResetEmail } from '@/services/emailService';
+import { checkRateLimit, recordFailure } from '@/lib/rate-limit';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/forgot-password
@@ -16,6 +17,13 @@ import { sendPasswordResetEmail } from '@/services/emailService';
 // ---------------------------------------------------------------------------
 
 const TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+// Rate-limit: 5 attempts per IP per 10 minutes. Prevents spam (SendGrid
+// quota abuse) AND slows brute-force enumeration attempts. Records every
+// call, not just failures, because we always return 200 regardless of
+// whether the email exists.
+const FORGOT_MAX_ATTEMPTS = 5;
+const FORGOT_LOCK_MS = 10 * 60 * 1000;
 
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
@@ -32,6 +40,26 @@ export async function POST(request: NextRequest) {
 
     const normalized = email.toLowerCase().trim();
     const adminClient = createAdminClient();
+
+    // Rate limit by caller IP — 5 attempts per 10 min, shared across
+    // every email they try. Returns 200 on lockout too, so nothing leaks.
+    const callerIp =
+      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      request.headers.get('x-real-ip') ||
+      'unknown';
+    const rlOpts = { key: `ip:${callerIp}`, kind: 'forgot-password' as const };
+    const gate = await checkRateLimit(adminClient, rlOpts);
+    if (gate.locked) {
+      // Still respond 200 to avoid giving the attacker a signal.
+      return NextResponse.json({ success: true });
+    }
+    // Every call counts as a "failure" so the counter advances even when
+    // the email doesn't exist.
+    await recordFailure(adminClient, {
+      ...rlOpts,
+      max: FORGOT_MAX_ATTEMPTS,
+      lockMs: FORGOT_LOCK_MS,
+    });
 
     // Do not reveal whether the user exists. Look up by email; if absent,
     // return 200 without doing anything.

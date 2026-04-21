@@ -14,6 +14,7 @@ import {
   Wallet,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { useData } from '@/lib/data-context';
 import { computeProviderTotals } from '@/lib/api-integrations/totals';
 import type {
   ProviderDataset,
@@ -80,13 +81,33 @@ interface WalletOption {
   currencyCode: string;
 }
 
-// TECH DEBT: this is a VexPro-specific Coinsbuy wallet ID used as the
-// default selection for the Movimientos page dropdown. It works today
-// because VexPro is the only tenant with real Coinsbuy data. When a
-// second tenant onboards (AP Markets, etc.) each tenant needs a
-// per-company default_wallet_id stored on the companies row or in
-// pinned_coinsbuy_wallets. Flagged in the audit — SEC-4 follow-up.
-export const DEFAULT_WALLET_ID = '1079';
+// Sentinel meaning "no default wallet chosen yet — use the tenant's
+// configured default (companies.default_wallet_id) or the first wallet
+// the API returns, in that order". Kept as an exported constant for
+// back-compat with older callers that still passed it explicitly.
+//
+// The old literal '1079' (VexPro's Main Wallet ID) was removed in
+// migration-031. Every tenant now owns its default_wallet_id on the
+// companies row; resolveInitialWalletId() below applies the fallback
+// chain uniformly.
+export const DEFAULT_WALLET_ID = '';
+
+/**
+ * Resolves the wallet id we should show on first render.
+ *
+ *   1. Controlled prop wins (the Movimientos page lifts state)
+ *   2. Tenant's default_wallet_id from the companies row
+ *   3. Sentinel '' — banner later swaps to the first API wallet in a
+ *      useEffect once walletOptions arrive
+ */
+function resolveInitialWalletId(
+  controlled: string | undefined,
+  tenantDefault: string | null | undefined,
+): string {
+  if (controlled !== undefined) return controlled;
+  if (tenantDefault) return tenantDefault;
+  return '';
+}
 
 interface BannerProps {
   /** Optional controlled wallet id. When provided, banner becomes controlled
@@ -103,13 +124,19 @@ interface BannerProps {
 
 export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange, onAfterLiveSync }: BannerProps = {}) {
   const { user } = useAuth();
+  const { company } = useData();
   const isAdmin = user?.role === 'admin';
 
   const [mode, setMode] = useState<FilterMode>('month');
   const [month, setMonth] = useState<string>(currentMonthStr());
   const [rangeFrom, setRangeFrom] = useState<string>('');
   const [rangeTo, setRangeTo] = useState<string>('');
-  const [walletIdLocal, setWalletIdLocal] = useState<string>(DEFAULT_WALLET_ID);
+  // Initial wallet id comes from the tenant's companies.default_wallet_id.
+  // If null (tenant hasn't picked one yet) we fall through to '' and let
+  // the walletOptions-sync effect below pick the first API wallet.
+  const [walletIdLocal, setWalletIdLocal] = useState<string>(
+    resolveInitialWalletId(walletIdProp, company?.default_wallet_id),
+  );
   const walletId = walletIdProp ?? walletIdLocal;
   const setWalletId = (id: string) => {
     if (onWalletChange) onWalletChange(id);
@@ -130,18 +157,33 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
         const res = await fetch('/api/integrations/coinsbuy/wallets');
         const json = await res.json();
         if (json.success && Array.isArray(json.wallets)) {
-          setWalletOptions(
-            json.wallets.map((w: { id: string; label: string; currencyCode: string }) => ({
+          const options: WalletOption[] = json.wallets.map(
+            (w: { id: string; label: string; currencyCode: string }) => ({
               id: w.id,
               label: w.label,
               currencyCode: w.currencyCode,
-            })),
+            }),
           );
+          setWalletOptions(options);
+
+          // Fallback: if the currently-resolved walletId is empty (no
+          // tenant default, no controlled prop, no previous local pick),
+          // seed it with the first API wallet so the rest of the page
+          // has something to filter against.
+          //
+          // setWalletId() routes through onWalletChange when controlled,
+          // so the parent's state stays in sync. When uncontrolled it
+          // writes to walletIdLocal.
+          const effective = walletIdProp ?? walletIdLocal;
+          if (!effective && options.length > 0) {
+            setWalletId(options[0].id);
+          }
         }
       } catch {
         // Silent — wallets are optional filter
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
   // Resolve the effective {from, to} from the filter state.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { sanitizeDbError } from '@/lib/errors';
 
 // GET    — list negotiations  ?profile_id=... (optional)
 // POST   — create             { action: 'create', profile_id, title, description?, status? }
@@ -27,11 +28,10 @@ export async function GET(request: NextRequest) {
     }
 
     const { data, error } = await query;
-    if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+    if (error) return NextResponse.json(sanitizeDbError(error, 'negotiations'), { status: 400 });
     return NextResponse.json(data);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(sanitizeDbError(err, 'negotiations'), { status: 500 });
   }
 }
 
@@ -62,7 +62,7 @@ export async function POST(request: NextRequest) {
         })
         .select('*')
         .single();
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return NextResponse.json(sanitizeDbError(error, 'negotiations'), { status: 400 });
       return NextResponse.json({ success: true, negotiation: data });
     }
 
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
         .eq('company_id', company_id) // scope to caller's company
         .select('*')
         .single();
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return NextResponse.json(sanitizeDbError(error, 'negotiations'), { status: 400 });
       return NextResponse.json({ success: true, negotiation: data });
     }
 
@@ -91,13 +91,12 @@ export async function POST(request: NextRequest) {
         .delete()
         .eq('id', id)
         .eq('company_id', company_id); // scope to caller's company
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return NextResponse.json(sanitizeDbError(error, 'negotiations'), { status: 400 });
       return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json(sanitizeDbError(err, 'negotiations'), { status: 500 });
   }
 }

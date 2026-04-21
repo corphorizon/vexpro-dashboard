@@ -8,6 +8,9 @@ export interface Company {
   color_secondary: string;
   currency: string;
   active_modules: string[];
+  /** Tenant-specific Coinsbuy wallet to pre-select in /movimientos.
+   *  Null = UI picks the first wallet returned by the API. */
+  default_wallet_id: string | null;
 }
 
 export interface Period {

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
+import { sanitizeDbError } from '@/lib/errors';
 
 // ---------------------------------------------------------------------------
 // GET /api/superadmin/users?company_id=<uuid>
@@ -26,7 +27,7 @@ export async function GET(request: NextRequest) {
 
     const { data, error } = await query;
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return NextResponse.json(sanitizeDbError(error, 'superadmin/users:list'), { status: 500 });
     }
 
     return NextResponse.json({ success: true, users: data ?? [] });
@@ -121,8 +122,10 @@ export async function POST(request: NextRequest) {
         if (!data?.users || data.users.length < 200) break;
       }
       if (!authUserId) {
+        // Supabase Auth error — not a Postgres code. Log + return generic.
+        console.error('[superadmin/users:invite] Auth invite failed:', inviteErr);
         return NextResponse.json(
-          { success: false, error: inviteErr.message },
+          { success: false, error: 'No se pudo enviar la invitación' },
           { status: 500 },
         );
       }
@@ -144,7 +147,7 @@ export async function POST(request: NextRequest) {
 
     if (memErr) {
       return NextResponse.json(
-        { success: false, error: memErr.message },
+        sanitizeDbError(memErr, 'superadmin/users:create-membership'),
         { status: 500 },
       );
     }

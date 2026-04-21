@@ -46,7 +46,7 @@ export default function MovimientosPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, periods } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, periods, company } = useData();
 
   const summary =
     mode === 'consolidated'
@@ -66,7 +66,13 @@ export default function MovimientosPage() {
   // Keep the Coinsbuy wallet id in page-level state so the banner AND the
   // "Depósitos" table below both filter by the same wallet (prevents the
   // card total ≠ table row total bug).
-  const [coinsbuyWalletId, setCoinsbuyWalletId] = useState<string>(DEFAULT_WALLET_ID);
+  //
+  // Initial value comes from the tenant's companies.default_wallet_id
+  // (migration 031). When that's null the banner's options-load effect
+  // swaps in the first API wallet via onWalletChange.
+  const [coinsbuyWalletId, setCoinsbuyWalletId] = useState<string>(
+    company?.default_wallet_id ?? DEFAULT_WALLET_ID,
+  );
   // Bumped by the banner after a live sync finishes — forces useApiTotals to
   // re-read from the persisted cache so the tables reflect the fresh data.
   const [apiRefreshKey, setApiRefreshKey] = useState(0);

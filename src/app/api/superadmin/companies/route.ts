@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
+import { sanitizeDbError } from '@/lib/errors';
 
 // ---------------------------------------------------------------------------
 // POST /api/superadmin/companies
@@ -102,16 +103,24 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (insertError || !created) {
+      if (insertError) {
+        return NextResponse.json(
+          sanitizeDbError(insertError, 'superadmin/companies:create'),
+          { status: 500 },
+        );
+      }
       return NextResponse.json(
-        { success: false, error: insertError?.message || 'No fue posible crear la entidad' },
+        { success: false, error: 'No fue posible crear la entidad' },
         { status: 500 },
       );
     }
 
     return NextResponse.json({ success: true, company: created });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return NextResponse.json(
+      sanitizeDbError(err, 'superadmin/companies:POST'),
+      { status: 500 },
+    );
   }
 }
 
@@ -135,7 +144,7 @@ export async function GET() {
       .order('created_at', { ascending: true });
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return NextResponse.json(sanitizeDbError(error, 'superadmin/companies:list'), { status: 500 });
     }
 
     // One aggregate query for user counts to avoid N+1.
