@@ -13,6 +13,10 @@ export async function updateSession(request: NextRequest) {
   const skipAuthCheck =
     pathname.startsWith('/api') ||
     pathname.startsWith('/_next') ||
+    // Sentry tunnel route (configured in next.config.ts). Browser
+    // error reports POST here; if middleware redirects to /login they
+    // never reach Sentry.
+    pathname.startsWith('/monitoring') ||
     pathname === '/favicon.ico' ||
     pathname === '/icon.png';
 
