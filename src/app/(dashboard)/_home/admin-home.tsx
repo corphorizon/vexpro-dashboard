@@ -5,7 +5,6 @@ import { StatCard } from '@/components/ui/stat-card';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
-import { fetchChannelBalances } from '@/lib/supabase/queries';
 import { formatCurrency } from '@/lib/utils';
 import { QuickAccess } from './quick-access';
 import {
@@ -33,8 +32,6 @@ export function AdminHome() {
     getPeriodSummary,
     partners,
     loading,
-    getLiquidityData,
-    getInvestmentsData,
   } = useData();
 
   // ── Current period resolution ─────────────────────────────────────────
@@ -114,45 +111,44 @@ export function AdminHome() {
   const withdrawalsDelta = pct(cur.withdrawals, prv.withdrawals);
 
   // ── Total Consolidado (suma de todos los canales) ─────────────────────
-  // Mirrors the big number at the bottom of /balances:
-  //   Σ channel_balances_as_of(today) + liquidity running sum + investments
-  // Snapshot fetch is async + cached via useEffect; while loading we show
-  // "—" so the card doesn't flash a misleading $0.00.
-  const todayISO = useMemo(() => new Date().toISOString().slice(0, 10), []);
-  const [channelTotal, setChannelTotal] = useState<number | null>(null);
+  // Pulls from /api/balances/total-consolidado, which calls Coinsbuy +
+  // UniPayment APIs LIVE, reads channel_balances_as_of(today) for the
+  // manual channels, and adds liquidity + investments running sums. So
+  // the number matches the bottom of /balances even before the daily cron
+  // has captured today's snapshot.
+  // Auto-refresh every 5 min while the tab is visible.
+  const [totalConsolidado, setTotalConsolidado] = useState<number | null>(null);
 
   useEffect(() => {
     if (!company?.id) return;
     let cancelled = false;
-    fetchChannelBalances(company.id, todayISO)
-      .then((rows) => {
-        if (cancelled) return;
-        // Defensive: skip any liquidez/inversiones rows so we don't
-        // double-count — those two are summed below from live movements.
-        const sum = rows
-          .filter((r) => r.channel_key !== 'liquidez' && r.channel_key !== 'inversiones')
-          .reduce((s, r) => s + Number(r.amount || 0), 0);
-        setChannelTotal(sum);
-      })
-      .catch(() => {
-        if (!cancelled) setChannelTotal(0);
-      });
-    return () => { cancelled = true; };
-  }, [company?.id, todayISO]);
-
-  const liquidityBalance = useMemo(
-    () => getLiquidityData().reduce((s, m) => s + (m.deposit ?? 0) - (m.withdrawal ?? 0), 0),
-    [getLiquidityData],
-  );
-  const investmentsBalance = useMemo(
-    () => getInvestmentsData().reduce(
-      (s, i) => s + (i.deposit ?? 0) - (i.withdrawal ?? 0) + (i.profit ?? 0),
-      0,
-    ),
-    [getInvestmentsData],
-  );
-
-  const totalConsolidado = channelTotal === null ? null : channelTotal + liquidityBalance + investmentsBalance;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/balances/total-consolidado');
+        const json = await res.json();
+        if (!cancelled && json.success) setTotalConsolidado(Number(json.total));
+      } catch {
+        if (!cancelled) setTotalConsolidado(0);
+      }
+    };
+    load();
+    let interval: ReturnType<typeof setInterval> | null = setInterval(load, 5 * 60 * 1000);
+    const onVis = () => {
+      if (document.visibilityState === 'visible') {
+        load();
+        if (!interval) interval = setInterval(load, 5 * 60 * 1000);
+      } else if (interval) {
+        clearInterval(interval);
+        interval = null;
+      }
+    };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      if (interval) clearInterval(interval);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [company?.id]);
 
   // ── Module availability shortcuts ──────────────────────────────────────
   const has = (m: string) => hasModuleAccess(user, m, company?.active_modules);
