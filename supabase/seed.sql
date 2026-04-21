@@ -44,7 +44,7 @@ VALUES (
   _seed_id('vexpro-001'),
   'Vex Pro',
   'vexprofx',
-  'dashboard.vexprofx.com',
+  'vexprofx',
   NULL,
   '#1E3A5F',
   '#3B82F6',

@@ -12,7 +12,7 @@ export const DEMO_COMPANY: Company = {
   id: 'vexpro-001',
   name: 'Vex Pro',
   slug: 'vexprofx',
-  subdomain: 'dashboard.vexprofx.com',
+  subdomain: 'vexprofx',
   logo_url: null,
   color_primary: '#1E3A5F',
   color_secondary: '#3B82F6',
