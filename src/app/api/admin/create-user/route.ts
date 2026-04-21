@@ -3,6 +3,17 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+// Redact personal data before logging. Vercel server logs are visible to
+// anyone with project access, so we avoid leaking full email addresses:
+// the local-part becomes '***' and only the domain is kept, enough to
+// diagnose provider-specific issues (gmail SMTP, corporate MX, etc.).
+function redactEmail(email: string | null | undefined): string {
+  if (!email) return '(no email)';
+  const at = email.indexOf('@');
+  if (at <= 0) return '(redacted)';
+  return `***@${email.slice(at + 1)}`;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/admin/create-user
 //
@@ -97,7 +108,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Email is reserved. Try to locate the orphan and clean it up.
-      console.log(`[AdminAPI] Email ${email} already registered — checking for orphan`);
+      console.log(`[AdminAPI] Email ${redactEmail(email)} already registered — checking for orphan`);
       const existing = await findAuthUserByEmail(adminClient, email);
       if (!existing) {
         return NextResponse.json(
@@ -121,7 +132,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Orphan — remove it and retry
-      console.log(`[AdminAPI] Cleaning up orphaned auth user ${existing.id} for ${email}`);
+      console.log(`[AdminAPI] Cleaning up orphaned auth user ${existing.id} for ${redactEmail(email)}`);
       const { error: deleteOrphanError } = await adminClient.auth.admin.deleteUser(existing.id);
       if (deleteOrphanError) {
         console.error('[AdminAPI] Failed to delete orphan:', deleteOrphanError.message);
@@ -174,7 +185,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.log(`[AdminAPI] User created: ${email} (auth: ${authUserId})`);
+    console.log(`[AdminAPI] User created: ${redactEmail(email)} (auth: ${authUserId})`);
     return NextResponse.json({ success: true, userId: authUserId });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

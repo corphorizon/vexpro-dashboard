@@ -12,15 +12,14 @@
 // When credentials are not configured, falls back to mock data.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { getCoinsbuyToken, isCoinsbuyV3Enabled, getCoinsbuyBaseUrl } from './auth';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import type { CoinsbuyWithdrawalTx, ProviderDataset } from '../types';
 import { generateCoinsbuyWithdrawals } from '../mocks';
 import { filterByDateRange } from '../totals';
 
-const COINSBUY_BASE_URL =
-  process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
+// Per-tenant base URL is resolved at call time via getCoinsbuyBaseUrl().
 
 const PAGE_SIZE = 100;
 const MAX_PAGES = 20; // safety cap
@@ -65,12 +64,13 @@ interface TransferListResponse {
 // ── Main fetch ──────────────────────────────────────────────────────────────
 
 export async function fetchCoinsbuyPayoutsV3(
-  options: { from?: string; to?: string; walletId?: string } = {},
+  options: { from?: string; to?: string; walletId?: string; companyId?: string | null } = {},
 ): Promise<ProviderDataset<CoinsbuyWithdrawalTx>> {
   const now = new Date().toISOString();
+  const { companyId } = options;
 
   // Mock fallback
-  if (!isCoinsbuyV3Enabled()) {
+  if (!(await isCoinsbuyV3Enabled(companyId))) {
     const all = generateCoinsbuyWithdrawals();
     return {
       slug: 'coinsbuy-withdrawals',
@@ -85,7 +85,8 @@ export async function fetchCoinsbuyPayoutsV3(
 
   // Live mode: fetch ALL transfers, filter client-side
   try {
-    const token = await getCoinsbuyToken();
+    const token = await getCoinsbuyToken(companyId);
+    const baseUrl = await getCoinsbuyBaseUrl(companyId);
     const allTransactions: CoinsbuyWithdrawalTx[] = [];
 
     let page = 1;
@@ -97,7 +98,7 @@ export async function fetchCoinsbuyPayoutsV3(
       params.set('page[number]', String(page));
       params.set('ordering', '-created_at');
 
-      const url = `${COINSBUY_BASE_URL}/transfer/?${params.toString()}`;
+      const url = `${baseUrl}/transfer/?${params.toString()}`;
 
       const response: TransferListResponse = await withRetry(async () => {
         const res = await proxiedFetch(url, {

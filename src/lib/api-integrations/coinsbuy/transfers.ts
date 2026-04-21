@@ -9,7 +9,7 @@
 // Only confirmed transfers (status 2) are included.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { getCoinsbuyToken, isCoinsbuyV3Enabled, getCoinsbuyBaseUrl } from './auth';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import { generateCoinsbuyDeposits } from '../mocks';
@@ -21,8 +21,7 @@ import type {
   ProviderDataset,
 } from '../types';
 
-const COINSBUY_BASE_URL =
-  process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
+// Per-tenant base URL is resolved at call time via getCoinsbuyBaseUrl().
 
 const PROVIDER = 'coinsbuy' as const;
 const PAGE_SIZE = 100;
@@ -72,6 +71,8 @@ export interface TransferFetchOptions {
   from?: string;
   to?: string;
   walletId?: string;
+  /** Resolves per-tenant API credentials. Null / undefined → env fallback. */
+  companyId?: string | null;
 }
 
 // ── Result ──────────────────────────────────────────────────────────────────
@@ -87,12 +88,13 @@ export async function fetchCoinsbuyTransfers(
   options: TransferFetchOptions = {},
 ): Promise<CoinsbuyTransferResult> {
   const now = new Date().toISOString();
+  const { companyId } = options;
 
   // No credentials → surface an empty error dataset rather than faking data.
   // This keeps the user from looking at mock numbers and thinking they're
   // real. Set COINSBUY_CLIENT_ID / COINSBUY_CLIENT_SECRET in .env.local to
-  // enable the live path.
-  if (!isCoinsbuyV3Enabled()) {
+  // enable the live path (or upload per-tenant creds via superadmin).
+  if (!(await isCoinsbuyV3Enabled(companyId))) {
     const error: Pick<ProviderDataset, 'fetchedAt' | 'status' | 'isMock' | 'errorMessage'> = {
       fetchedAt: now,
       status: 'error',
@@ -119,7 +121,8 @@ export async function fetchCoinsbuyTransfers(
 
   // Live mode: fetch ALL transfers once, split client-side
   try {
-    const token = await getCoinsbuyToken();
+    const token = await getCoinsbuyToken(companyId);
+    const baseUrl = await getCoinsbuyBaseUrl(companyId);
     const depositTxs: CoinsbuyDepositTx[] = [];
     const payoutTxs: CoinsbuyWithdrawalTx[] = [];
 
@@ -132,7 +135,7 @@ export async function fetchCoinsbuyTransfers(
       params.set('page[number]', String(page));
       params.set('ordering', '-created_at');
 
-      const url = `${COINSBUY_BASE_URL}/transfer/?${params.toString()}`;
+      const url = `${baseUrl}/transfer/?${params.toString()}`;
 
       const response: TransferListResponse = await withRetry(async () => {
         const res = await proxiedFetch(url, {

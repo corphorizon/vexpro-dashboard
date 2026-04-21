@@ -2,6 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 
+// Redact emails before logging — server logs are visible in Vercel dashboard.
+function redactEmail(email: string | null | undefined): string {
+  if (!email) return '(no email)';
+  const at = email.indexOf('@');
+  if (at <= 0) return '(redacted)';
+  return `***@${email.slice(at + 1)}`;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/admin/delete-user
 //
@@ -84,7 +92,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    console.log(`[AdminAPI] User fully deleted: ${profile.email} (${companyUserId})`);
+    console.log(`[AdminAPI] User fully deleted: ${redactEmail(profile.email)} (${companyUserId})`);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

@@ -13,7 +13,7 @@ export async function GET() {
     const auth = await verifyAuth();
     if (auth instanceof NextResponse) return auth;
 
-    const result = await fetchUnipaymentBalances();
+    const result = await fetchUnipaymentBalances(auth.companyId);
     return NextResponse.json({ success: true, ...result });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

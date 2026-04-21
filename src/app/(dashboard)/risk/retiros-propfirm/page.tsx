@@ -7,6 +7,7 @@ import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { cn } from '@/lib/utils';
+import { formatDate } from '@/lib/dates';
 import { parseTradeReport, type ParseResult } from '@/lib/risk/parser';
 import { analyzeReport } from '@/lib/risk/rules';
 import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode } from '@/lib/risk/types';
@@ -262,7 +263,7 @@ export default function RetirosPropFirmPage() {
       doc.text(`Período: ${meta.period}`, 14, 38);
       doc.text(`Total Net Profit: ${fmt$(meta.totalNetProfit)}`, 14, 43);
       doc.text(`Total Operaciones: ${rec.totalTrades}`, 14, 48);
-      doc.text(`Revisado: ${new Date(rec.savedAt).toLocaleDateString('es-ES')}`, 14, 53);
+      doc.text(`Revisado: ${formatDate(rec.savedAt)}`, 14, 53);
       doc.text(`Archivo: ${rec.fileName}`, 14, 58);
 
       // Verdict
@@ -352,7 +353,7 @@ export default function RetirosPropFirmPage() {
 
     try {
       const buffer = await file.arrayBuffer();
-      const parsed: ParseResult = parseTradeReport(buffer);
+      const parsed: ParseResult = await parseTradeReport(buffer);
       const analysis = analyzeReport(parsed, config);
       setResult(analysis);
       // Guardar en historial automáticamente
@@ -570,7 +571,7 @@ export default function RetirosPropFirmPage() {
     doc.text(`Período: ${meta.period}`, 14, 38);
     doc.text(`Total Net Profit: ${fmt$(meta.totalNetProfit)}`, 14, 43);
     doc.text(`Total Operaciones: ${result.trades.length}`, 14, 48);
-    doc.text(`Generado: ${new Date().toLocaleDateString('es-ES')}`, 14, 53);
+    doc.text(`Generado: ${formatDate(new Date())}`, 14, 53);
 
     // Verdict
     const verdictText = v ? (v.status === 'pass' ? `✓ APROBADO — ${v.msg}` : `✗ RECHAZADO — ${v.msg}`) : '';

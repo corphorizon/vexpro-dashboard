@@ -58,8 +58,8 @@ export async function GET() {
         .from('pinned_coinsbuy_wallets')
         .select('wallet_id')
         .eq('company_id', auth.companyId),
-      withTimeout(fetchCoinsbuyWallets(), API_TIMEOUT_MS),
-      withTimeout(fetchUnipaymentBalances(), API_TIMEOUT_MS),
+      withTimeout(fetchCoinsbuyWallets(auth.companyId), API_TIMEOUT_MS),
+      withTimeout(fetchUnipaymentBalances(auth.companyId), API_TIMEOUT_MS),
       admin
         .from('liquidity_movements')
         .select('deposit, withdrawal')

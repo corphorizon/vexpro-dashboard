@@ -7,12 +7,9 @@
 // When credentials are not configured, falls back to mock data.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { getCoinsbuyToken, isCoinsbuyV3Enabled, getCoinsbuyBaseUrl } from './auth';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
-
-const COINSBUY_BASE_URL =
-  process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
 
 // ── Public types ───────────────────────────────────────────────────────────
 
@@ -112,7 +109,9 @@ const MOCK_WALLETS: CoinsbuyWallet[] = [
 
 // ── Main fetch ─────────────────────────────────────────────────────────────
 
-export async function fetchCoinsbuyWallets(): Promise<{
+export async function fetchCoinsbuyWallets(
+  companyId?: string | null,
+): Promise<{
   wallets: CoinsbuyWallet[];
   isMock: boolean;
   fetchedAt: string;
@@ -123,7 +122,7 @@ export async function fetchCoinsbuyWallets(): Promise<{
   // No credentials → return empty result with a clear error. Previously we
   // served a list of mock wallets (mock-1/2/3) which confused users into
   // thinking the integration was live.
-  if (!isCoinsbuyV3Enabled()) {
+  if (!(await isCoinsbuyV3Enabled(companyId))) {
     return {
       wallets: [],
       isMock: false,
@@ -134,8 +133,9 @@ export async function fetchCoinsbuyWallets(): Promise<{
 
   // Live mode: fetch from the v3 JSON:API endpoint.
   try {
-    const token = await getCoinsbuyToken();
-    const url = `${COINSBUY_BASE_URL}/wallet/?include=currency&page[size]=100`;
+    const token = await getCoinsbuyToken(companyId);
+    const baseUrl = await getCoinsbuyBaseUrl(companyId);
+    const url = `${baseUrl}/wallet/?include=currency&page[size]=100`;
 
     const response: JsonApiResponse = await withRetry(async () => {
       const res = await proxiedFetch(url, {

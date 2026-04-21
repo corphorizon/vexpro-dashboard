@@ -76,6 +76,8 @@ interface ListTransactionResponse {
 interface FetchOptions {
   from?: string;
   to?: string;
+  /** Resolves per-tenant API credentials. Null / undefined → env fallback. */
+  companyId?: string | null;
 }
 
 // Default window when no dates are supplied (last 90 days).
@@ -91,9 +93,10 @@ export async function fetchFairpayDeposits(
   options: FetchOptions = {},
 ): Promise<ProviderDataset<FairpayDepositTx>> {
   const now = new Date().toISOString();
+  const { companyId } = options;
 
   // No credentials → return empty error dataset rather than faking numbers.
-  if (!isFairpayEnabled()) {
+  if (!(await isFairpayEnabled(companyId))) {
     return {
       slug: 'fairpay',
       provider: PROVIDER,
@@ -117,7 +120,8 @@ export async function fetchFairpayDeposits(
     const startDate = clampFrom(options.from ?? defaultFrom);
     const endDate = clampFrom(options.to ?? defaultTo);
 
-    const token = await getFairpayToken();
+    const token = await getFairpayToken(companyId);
+    const baseUrl = await getFairpayBaseUrl(companyId);
 
     const body = new URLSearchParams({
       start_date: startDate,
@@ -126,7 +130,7 @@ export async function fetchFairpayDeposits(
 
     const json: ListTransactionResponse = await withRetry(async () => {
       const res = await fetch(
-        `${getFairpayBaseUrl()}/api/v1/getTransactionList`,
+        `${baseUrl}/api/v1/getTransactionList`,
         {
           method: 'POST',
           headers: {

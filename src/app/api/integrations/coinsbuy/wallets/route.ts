@@ -24,7 +24,8 @@ export async function GET() {
     const auth = await verifyAuth();
     if (auth instanceof NextResponse) return auth;
 
-    const result = await fetchCoinsbuyWallets();
+    // Pass auth.companyId so per-tenant api_credentials win over env fallback.
+    const result = await fetchCoinsbuyWallets(auth.companyId);
 
     // Fire-and-forget balance snapshots per wallet.
     if (result.wallets && !result.isMock) {

@@ -20,7 +20,12 @@ export async function GET(request: Request) {
     const to = url.searchParams.get('to') ?? undefined;
     const walletId = url.searchParams.get('walletId') ?? undefined;
 
-    const dataset = await fetchCoinsbuyPayoutsV3({ from, to, walletId });
+    const dataset = await fetchCoinsbuyPayoutsV3({
+      from,
+      to,
+      walletId,
+      companyId: auth.companyId,
+    });
     return NextResponse.json({ success: true, dataset });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

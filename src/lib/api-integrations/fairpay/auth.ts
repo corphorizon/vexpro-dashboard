@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// FairPay — Access Token Authentication
+// FairPay — Access Token Authentication (per-tenant)
 //
 // Two-step JWT flow:
 //   POST /api/auth/getAccessToken with form data:  api_key=<merchant_api_key>
@@ -10,63 +10,108 @@
 //
 // IMPORTANT: Force IPv4 in case FairPay's host blocks IPv6 (consistent with
 // UniPayment fix). Sandbox host: sandbox-portal.fairpay.online
+//
+// MULTI-TENANT: every exported function accepts an optional `companyId`.
+// Resolution order per-tenant:
+//   1. api_credentials row for (company_id, 'fairpay') — per-tenant.
+//   2. FAIRPAY_API_KEY env — global fallback.
+//
+// Tokens cached per-tenant (Map keyed by companyId, '__env__' for env path).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import dns from 'node:dns';
 dns.setDefaultResultOrder('ipv4first');
 
+import { resolveFairpayCredentials } from '../credentials';
+
 // Production: https://portal.fairpay.online
 // Sandbox:    https://sandbox-portal.fairpay.online
-const FAIRPAY_BASE_URL =
+const ENV_BASE_URL =
   process.env.FAIRPAY_BASE_URL ?? 'https://portal.fairpay.online';
 
 // Token TTL in seconds. The JWT issued by FairPay lasts 1 hour, but we cache
 // for 50 minutes to leave a safety margin.
 const TOKEN_TTL_MS = 50 * 60 * 1000;
 
+const ENV_KEY = '__env__';
+
 interface CachedToken {
   accessToken: string;
   expiresAt: number;
 }
 
-let cachedToken: CachedToken | null = null;
+const tokenCache = new Map<string, CachedToken>();
 
-/**
- * Returns true when the FairPay integration is configured (not mocked).
- */
-export function isFairpayEnabled(): boolean {
-  const apiKey = process.env.FAIRPAY_API_KEY;
-  return !!apiKey && apiKey !== 'mock';
+interface ResolvedConfig {
+  apiKey: string;
+  baseUrl: string;
+}
+
+async function resolveConfig(companyId: string | null | undefined): Promise<ResolvedConfig | null> {
+  if (companyId) {
+    const perTenant = await resolveFairpayCredentials(companyId);
+    if (perTenant) {
+      return {
+        apiKey: perTenant.apiKey,
+        baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
+      };
+    }
+  }
+  const envKey = process.env.FAIRPAY_API_KEY;
+  if (!envKey || envKey === 'mock') return null;
+  return { apiKey: envKey, baseUrl: ENV_BASE_URL };
 }
 
 /**
- * Returns the FairPay base URL (sandbox or production from env).
+ * True when FairPay is configured for the given tenant (per-tenant row OR
+ * env fallback). Async because the DB lookup is per-tenant.
  */
-export function getFairpayBaseUrl(): string {
-  return FAIRPAY_BASE_URL;
+export async function isFairpayEnabled(
+  companyId?: string | null,
+): Promise<boolean> {
+  const config = await resolveConfig(companyId ?? null);
+  return !!config;
 }
 
 /**
- * Fetches (or returns a cached) FairPay access token.
+ * Returns the FairPay base URL for a tenant (per-tenant override or env).
+ */
+export async function getFairpayBaseUrl(
+  companyId?: string | null,
+): Promise<string> {
+  const config = await resolveConfig(companyId ?? null);
+  return config?.baseUrl ?? ENV_BASE_URL;
+}
+
+/**
+ * Fetches (or returns a cached) FairPay access token for the given tenant.
  *
- * The token is kept in memory and renewed automatically when within 60s of
- * expiration.
+ * Tokens cached per-tenant. TTL is 50min even though JWT is 60min — 10min
+ * safety margin prevents edge-case expirations mid-request.
  */
-export async function getFairpayToken(): Promise<string> {
+export async function getFairpayToken(
+  companyId?: string | null,
+): Promise<string> {
   const now = Date.now();
+  const key = companyId ?? ENV_KEY;
 
-  if (cachedToken && cachedToken.expiresAt - now > 60_000) {
-    return cachedToken.accessToken;
+  const cached = tokenCache.get(key);
+  if (cached && cached.expiresAt - now > 60_000) {
+    return cached.accessToken;
   }
 
-  const apiKey = process.env.FAIRPAY_API_KEY;
-  if (!apiKey) {
-    throw new Error('Missing FAIRPAY_API_KEY environment variable');
+  const config = await resolveConfig(companyId ?? null);
+  if (!config) {
+    throw new Error(
+      companyId
+        ? 'FairPay no está configurado para esta empresa ni hay credenciales globales.'
+        : 'Missing FAIRPAY_API_KEY environment variable',
+    );
   }
 
-  const body = new URLSearchParams({ api_key: apiKey });
+  const body = new URLSearchParams({ api_key: config.apiKey });
 
-  const response = await fetch(`${FAIRPAY_BASE_URL}/api/auth/getAccessToken`, {
+  const response = await fetch(`${config.baseUrl}/api/auth/getAccessToken`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -95,10 +140,10 @@ export async function getFairpayToken(): Promise<string> {
     );
   }
 
-  cachedToken = {
+  const fresh: CachedToken = {
     accessToken: json.data.scalar,
     expiresAt: now + TOKEN_TTL_MS,
   };
-
-  return cachedToken.accessToken;
+  tokenCache.set(key, fresh);
+  return fresh.accessToken;
 }

@@ -11,15 +11,16 @@
 // When credentials are not configured, falls back to mock data.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getCoinsbuyToken, isCoinsbuyV3Enabled } from './auth';
+import { getCoinsbuyToken, isCoinsbuyV3Enabled, getCoinsbuyBaseUrl } from './auth';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import { generateCoinsbuyDeposits } from '../mocks';
 import { filterByDateRange } from '../totals';
 import type { CoinsbuyDepositTx, ProviderDataset } from '../types';
 
-const COINSBUY_BASE_URL =
-  process.env.COINSBUY_BASE_URL ?? 'https://v3.api.coinsbuy.com';
+// Per-tenant base URL is resolved at call time via getCoinsbuyBaseUrl().
+// A module-level const would freeze to env at import time and break
+// per-tenant base_url overrides.
 
 const PROVIDER = 'coinsbuy' as const;
 const PAGE_SIZE = 100;
@@ -66,12 +67,13 @@ interface TransferListResponse {
 // ── Main fetch ──────────────────────────────────────────────────────────────
 
 export async function fetchCoinsbuyDepositsV3(
-  options: { from?: string; to?: string; walletId?: string } = {},
+  options: { from?: string; to?: string; walletId?: string; companyId?: string | null } = {},
 ): Promise<ProviderDataset<CoinsbuyDepositTx>> {
   const now = new Date().toISOString();
+  const { companyId } = options;
 
   // Mock mode
-  if (!isCoinsbuyV3Enabled()) {
+  if (!(await isCoinsbuyV3Enabled(companyId))) {
     const all = generateCoinsbuyDeposits();
     return {
       slug: 'coinsbuy-deposits',
@@ -86,7 +88,8 @@ export async function fetchCoinsbuyDepositsV3(
 
   // Live mode: fetch ALL transfers, filter client-side
   try {
-    const token = await getCoinsbuyToken();
+    const token = await getCoinsbuyToken(companyId);
+    const baseUrl = await getCoinsbuyBaseUrl(companyId);
     const allTransactions: CoinsbuyDepositTx[] = [];
 
     let page = 1;
@@ -98,7 +101,7 @@ export async function fetchCoinsbuyDepositsV3(
       params.set('page[number]', String(page));
       params.set('ordering', '-created_at');
 
-      const url = `${COINSBUY_BASE_URL}/transfer/?${params.toString()}`;
+      const url = `${baseUrl}/transfer/?${params.toString()}`;
 
       const response: TransferListResponse = await withRetry(async () => {
         const res = await proxiedFetch(url, {

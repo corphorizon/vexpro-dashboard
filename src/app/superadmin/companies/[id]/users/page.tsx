@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Users, Settings2, Loader2 } from 'lucide-react';
+import { formatDateRelative } from '@/lib/dates';
 import { ManageUserPanel } from './_manage-panel';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -235,5 +236,5 @@ function formatLastLogin(ts: string | null): string {
   if (hrs < 24) return `hace ${hrs} h`;
   const days = Math.floor(hrs / 24);
   if (days < 30) return `hace ${days} d`;
-  return d.toLocaleDateString('es', { day: '2-digit', month: 'short', year: 'numeric' });
+  return formatDateRelative(d);
 }
