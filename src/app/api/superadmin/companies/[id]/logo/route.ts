@@ -177,9 +177,13 @@ export async function POST(
     if (prevUrl && prevUrl.includes(`/storage/v1/object/public/${BUCKET}/`)) {
       const prevPath = prevUrl.split(`/public/${BUCKET}/`)[1];
       if (prevPath) {
-        await admin.storage.from(BUCKET).remove([prevPath]).catch(() => {
-          /* non-fatal */
-        });
+        await admin.storage
+          .from(BUCKET)
+          .remove([prevPath])
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn('[logo-cleanup] could not remove previous logo:', prevPath, msg);
+          });
       }
     }
 
@@ -199,7 +203,7 @@ export async function POST(
       actorId: auth.userId,
       actorName: auth.name || auth.email,
       action: 'update',
-      module: 'users',
+      module: 'companies',
       details: `Superadmin actualizó el logo de ${company.name} (${sniffed.ext.toUpperCase()}, ${(file.size / 1024).toFixed(1)} KB)`,
     });
 
@@ -237,9 +241,13 @@ export async function DELETE(
     if (prevUrl && prevUrl.includes(`/storage/v1/object/public/${BUCKET}/`)) {
       const prevPath = prevUrl.split(`/public/${BUCKET}/`)[1];
       if (prevPath) {
-        await admin.storage.from(BUCKET).remove([prevPath]).catch(() => {
-          /* non-fatal */
-        });
+        await admin.storage
+          .from(BUCKET)
+          .remove([prevPath])
+          .catch((err: unknown) => {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.warn('[logo-cleanup] could not remove previous logo:', prevPath, msg);
+          });
       }
     }
 
@@ -259,7 +267,7 @@ export async function DELETE(
       actorId: auth.userId,
       actorName: auth.name || auth.email,
       action: 'delete',
-      module: 'users',
+      module: 'companies',
       details: `Superadmin eliminó el logo de ${company.name}`,
     });
 

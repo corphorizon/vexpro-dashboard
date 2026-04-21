@@ -90,19 +90,13 @@ export async function PATCH(
 
     update.updated_at = new Date().toISOString();
 
-    // If email is changing, sync auth.users first so a DB-side success +
-    // auth-side failure doesn't leave them unable to log in.
-    if (typeof update.email === 'string' && update.email !== before.email) {
-      const { error: authErr } = await admin.auth.admin.updateUserById(before.user_id, {
-        email: update.email as string,
-      });
-      if (authErr) {
-        return NextResponse.json(
-          { success: false, error: `No pude actualizar el email en auth: ${authErr.message}` },
-          { status: 500 },
-        );
-      }
-    }
+    // Email syncing: we write company_users FIRST, then auth.users. If auth
+    // fails we roll the company_users row back to the old email so the two
+    // stores never diverge. The previous order (auth first) meant an auth
+    // success + a DB failure left us with a mismatch and no way to detect
+    // it post-hoc.
+    const emailChanged =
+      typeof update.email === 'string' && update.email !== before.email;
 
     const { data: after, error } = await admin
       .from('company_users')
@@ -117,6 +111,32 @@ export async function PATCH(
         { success: false, error: error?.message || 'No se pudo actualizar' },
         { status: 500 },
       );
+    }
+
+    if (emailChanged) {
+      const { error: authErr } = await admin.auth.admin.updateUserById(
+        before.user_id,
+        { email: update.email as string },
+      );
+      if (authErr) {
+        // Roll back company_users.email so the two sides stay in sync.
+        // updated_at stays as-is; the rollback is best-effort — if it fails
+        // too we log loudly so an operator can fix it by hand.
+        const { error: rollbackErr } = await admin
+          .from('company_users')
+          .update({ email: before.email })
+          .eq('id', userId);
+        if (rollbackErr) {
+          console.error(
+            '[superadmin/users PATCH] CRITICAL: email desync. auth.users still has old email, company_users has new email, rollback failed',
+            { userId, before: before.email, attempted: update.email, rollbackErr: rollbackErr.message },
+          );
+        }
+        return NextResponse.json(
+          { success: false, error: `No pude actualizar el email en auth: ${authErr.message}` },
+          { status: 500 },
+        );
+      }
     }
 
     // Audit: build a compact diff of what actually changed.

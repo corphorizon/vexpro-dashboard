@@ -40,11 +40,38 @@ export async function POST(request: NextRequest) {
 
     // Look up user state. Avoid leaking existence details: we respond with a
     // generic "credentials invalid" if the account doesn't exist.
+    // Join companies.status so we can block logins into deactivated tenants.
     const { data: companyUser } = await adminClient
       .from('company_users')
-      .select('id, user_id, twofa_enabled, failed_login_count, locked_until, must_change_password')
+      .select('id, user_id, status, twofa_enabled, failed_login_count, locked_until, must_change_password, companies!inner(status)')
       .eq('email', email.toLowerCase())
       .maybeSingle();
+
+    // Block deactivated users + deactivated tenants. Both checks use 403
+    // with a vague message — we don't want to tell attackers "this email
+    // exists but is disabled" either, so we apply them AFTER the password
+    // lookup would have succeeded? No — we apply them early because the
+    // deactivation is a hard stop and leaking "account disabled" vs
+    // "wrong password" is acceptable here (the user knows they were active
+    // yesterday; the admin told them they're off).
+    if (companyUser?.status === 'inactive') {
+      return NextResponse.json(
+        { success: false, error: 'Tu cuenta está desactivada. Contacta al administrador.' },
+        { status: 403 },
+      );
+    }
+    // companies is an object after `!inner` single-row join, but Supabase
+    // types it as array in some versions. Handle both defensively.
+    const companiesRel = companyUser?.companies as unknown;
+    const companyStatus = Array.isArray(companiesRel)
+      ? (companiesRel[0] as { status?: string } | undefined)?.status
+      : (companiesRel as { status?: string } | null | undefined)?.status;
+    if (companyUser && companyStatus === 'inactive') {
+      return NextResponse.json(
+        { success: false, error: 'Tu organización está desactivada. Contacta al administrador.' },
+        { status: 403 },
+      );
+    }
 
     // Check lockout BEFORE verifying password so we don't leak existence.
     if (companyUser?.locked_until) {
