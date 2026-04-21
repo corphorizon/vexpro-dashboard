@@ -1,12 +1,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Sentry — browser-side initialisation.
 //
-// Loaded automatically by @sentry/nextjs on every page that runs client JS.
+// Next.js 15+/16 replaced the old `sentry.client.config.ts` convention
+// with `instrumentation-client.ts`. The @sentry/nextjs webpack plugin
+// loads whichever file exists, but only the new name works with
+// Turbopack.
 //
-// We call Sentry.init() unconditionally (SDK no-ops when dsn is falsy)
-// because wrapping it in `if (dsn)` tree-shakes the SDK out of the bundle
-// whenever the build runs without the env var set — including the very
-// first deploy after adding it to Vercel.
+// We call Sentry.init() unconditionally — the SDK no-ops when dsn is
+// empty, and wrapping it in `if (dsn)` causes tree-shake to strip the
+// whole SDK out of the bundle when builds run without the env var set.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import * as Sentry from '@sentry/nextjs';
