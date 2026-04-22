@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
+import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/login-gate
@@ -168,10 +169,18 @@ export async function POST(request: NextRequest) {
     // needs2fa fires when EITHER table has twofa_enabled. This is the only
     // source of truth the client trusts to decide whether to prompt for
     // the PIN after password success.
+    //
+    // Dev bypass: when running locally with DEV_SKIP_2FA=true, force
+    // needs2fa=false so you can iterate without the PIN dance. Triple-
+    // gated (NODE_ENV + env var + separate client hostname check in the
+    // layout). Never fires on Vercel deployments.
+    const realNeeds2fa = !!(companyUser?.twofa_enabled || platformUser?.twofa_enabled);
+    const needs2fa = isDev2faBypassEnabled() ? false : realNeeds2fa;
+
     return NextResponse.json({
       success: true,
       userId: signInData.user.id,
-      needs2fa: !!(companyUser?.twofa_enabled || platformUser?.twofa_enabled),
+      needs2fa,
       mustChangePassword: !!companyUser?.must_change_password,
     });
   } catch (err: unknown) {

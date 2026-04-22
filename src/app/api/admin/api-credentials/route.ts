@@ -25,7 +25,10 @@ import { sanitizeDbError } from '@/lib/errors';
 // always sent from the Horizon SendGrid account (env var SENDGRID_API_KEY).
 // The code path that reads api_credentials for sendgrid still works for
 // legacy rows, but new writes via this route are rejected.
-const SUPPORTED_PROVIDERS = ['coinsbuy', 'unipayment', 'fairpay'];
+// 'orion_crm' was added in migration 033. It follows the same storage
+// convention as fairpay (single api_key as encrypted_secret, base_url
+// in extra_config).
+const SUPPORTED_PROVIDERS = ['coinsbuy', 'unipayment', 'fairpay', 'orion_crm'];
 
 /**
  * Resolve the effective `company_id` for the request. Returns either:

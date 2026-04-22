@@ -1,0 +1,41 @@
+import { NextResponse } from 'next/server';
+import { verifyAuth } from '@/lib/api-auth';
+import { fetchOrionCrmTotals } from '@/lib/api-integrations/orion-crm/totals';
+
+// ---------------------------------------------------------------------------
+// GET /api/integrations/orion-crm/totals?from=YYYY-MM-DD&to=YYYY-MM-DD
+//
+// Server-side proxy for the client hook `useOrionCrmTotals`. Keeps the
+// API key off the browser and lets us swap the real CRM endpoint in
+// without touching the React tree.
+//
+// Returns the `OrionCrmTotals` shape directly (no `{ success: … }` wrap)
+// so the hook can consume the payload verbatim.
+// ---------------------------------------------------------------------------
+
+export async function GET(request: Request) {
+  try {
+    const auth = await verifyAuth();
+    if (auth instanceof NextResponse) return auth;
+
+    const url = new URL(request.url);
+    const from = url.searchParams.get('from') ?? '';
+    const to = url.searchParams.get('to') ?? '';
+
+    const totals = await fetchOrionCrmTotals(auth.companyId, from, to);
+    return NextResponse.json(totals);
+  } catch (err) {
+    console.error('[orion-crm/totals] unhandled:', err);
+    return NextResponse.json(
+      {
+        propFirmSales: 0,
+        p2pTransfer: 0,
+        connected: false,
+        isMock: false,
+        lastSync: null,
+        errorMessage: 'Error interno',
+      },
+      { status: 500 },
+    );
+  }
+}

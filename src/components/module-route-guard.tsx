@@ -30,6 +30,7 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/comisiones(\/|$)/, 'commissions'],
   [/^\/risk(\/|$)/, 'risk'],
   [/^\/usuarios(\/|$)/, 'users'],
+  [/^\/finanzas\/reportes(\/|$)/, 'reports'],
   // /auditoria was removed — platform audit lives at
   //   /superadmin/companies/[id] (tab "Auditoría") and is superadmin-only.
 ];

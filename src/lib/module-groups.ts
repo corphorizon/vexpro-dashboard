@@ -44,6 +44,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
       { module: 'partners',    href: '/socios',          labelEs: 'Socios' },
       { module: 'upload',      href: '/upload',          labelEs: 'Carga de Datos' },
       { module: 'periods',     href: '/periodos',        labelEs: 'Períodos' },
+      { module: 'reports',     href: '/finanzas/reportes', labelEs: 'Reportes' },
     ],
   },
   {

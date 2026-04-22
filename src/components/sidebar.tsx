@@ -35,6 +35,7 @@ import {
   ShieldCheck,
   FileSearch,
   Briefcase,
+  FileText,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -82,6 +83,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/socios', i18nKey: 'nav.partners', icon: Briefcase, module: 'partners' },
       { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
       { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },
+      { href: '/finanzas/reportes', i18nKey: 'nav.reports', icon: FileText, module: 'reports' },
     ],
   },
 

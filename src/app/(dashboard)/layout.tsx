@@ -14,6 +14,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
+import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
 import { Menu, Globe, Sun, Moon, UserCircle } from 'lucide-react';
 
 function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
@@ -132,7 +133,9 @@ export default function DashboardLayout({
       return;
     }
     // Force 2FA setup on first login (unless user has already set it up).
-    if (user.force_2fa_setup && !user.twofa_enabled) {
+    // Bypass: when running on localhost with NEXT_PUBLIC_DEV_SKIP_2FA=true,
+    // skip the redirect so dev iterations don't need a real authenticator.
+    if (user.force_2fa_setup && !user.twofa_enabled && !isDev2faBypassEnabled()) {
       router.replace('/setup-2fa');
       return;
     }
