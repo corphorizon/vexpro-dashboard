@@ -19,6 +19,7 @@ export const ALL_MODULES: { key: string; label: string }[] = [
   { key: 'hr', label: 'Recursos Humanos' },
   { key: 'commissions', label: 'Comisiones' },
   { key: 'risk', label: 'Risk Management' },
+  { key: 'reports', label: 'Reportes' },
   { key: 'users', label: 'Usuarios' },
 ];
 

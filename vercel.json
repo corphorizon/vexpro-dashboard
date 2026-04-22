@@ -4,6 +4,18 @@
     {
       "path": "/api/cron/daily-balance-snapshot",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/daily-financial-report",
+      "schedule": "5 0 * * *"
+    },
+    {
+      "path": "/api/cron/weekly-financial-report",
+      "schedule": "5 0 * * 1"
+    },
+    {
+      "path": "/api/cron/monthly-financial-report",
+      "schedule": "5 0 1 * *"
     }
   ]
 }

@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
+import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
 import { ShieldCheck, LogOut } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,7 +37,8 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
     // gate in (dashboard)/layout.tsx. Migration 029 set force_2fa_setup=true
     // on every platform_users row, so the first time a superadmin lands
     // here after the reset they are redirected to /setup-2fa.
-    if (user.force_2fa_setup && !user.twofa_enabled) {
+    // Bypass only on localhost when NEXT_PUBLIC_DEV_SKIP_2FA=true.
+    if (user.force_2fa_setup && !user.twofa_enabled && !isDev2faBypassEnabled()) {
       router.replace('/setup-2fa');
       return;
     }

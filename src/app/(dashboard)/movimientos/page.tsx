@@ -9,7 +9,7 @@ import {
   DEFAULT_WALLET_ID,
 } from '@/components/realtime-movements-banner';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
-import { useBrokerCrmTotals } from '@/lib/api-integrations/broker-crm';
+import { useOrionCrmTotals } from '@/lib/api-integrations/orion-crm/client';
 import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { InfoTip } from '@/components/ui/info-tip';
@@ -83,7 +83,9 @@ export default function MovimientosPage() {
   // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0
   // until the CRM endpoint exists), but wired so the display already sums
   // apiValue + manualValue with zero migration work when the API lands.
-  const brokerCrmTotals = useBrokerCrmTotals(apiFrom, apiTo, apiRefreshKey);
+  // Orion CRM totals (prop firm sales + P2P transfers) — sums with manual
+  // values under the coexistence rule: `displayedValue = apiValue + manual`.
+  const brokerCrmTotals = useOrionCrmTotals(apiFrom, apiTo, apiRefreshKey);
 
   const handleExport = () => verify2FA(() => {
     if (!summary) return;

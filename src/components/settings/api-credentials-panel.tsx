@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Key, Check, Loader2, Eye, EyeOff } from 'lucide-react';
+import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ApiCredentialsPanel — external API credentials for a tenant.
@@ -23,18 +23,24 @@ import { Key, Check, Loader2, Eye, EyeOff } from 'lucide-react';
 // If a future tenant ever wants branded sender, re-add 'sendgrid' to this
 // union + the PROVIDER_META map.
 interface ApiCredential {
-  provider: 'coinsbuy' | 'unipayment' | 'fairpay';
+  provider: 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
   last_four: string | null;
   extra_config: Record<string, unknown> | null;
   is_configured: boolean;
   updated_at: string;
 }
 
-const PROVIDER_META: Record<ApiCredential['provider'], {
+interface ProviderMeta {
   label: string;
   description: string;
   extraFields: Array<{ key: string; label: string; placeholder?: string }>;
-}> = {
+  /** When true, the card shows a "Probar conexión" button that pings the
+   *  provider's health endpoint. Only enabled for providers whose
+   *  /api/integrations/<provider>/ping route exists. */
+  supportsPing?: boolean;
+}
+
+const PROVIDER_META: Record<ApiCredential['provider'], ProviderMeta> = {
   coinsbuy: {
     label: 'Coinsbuy',
     description: 'Procesador de pagos crypto.',
@@ -59,11 +65,36 @@ const PROVIDER_META: Record<ApiCredential['provider'], {
       { key: 'webhook_url', label: 'Webhook URL' },
     ],
   },
+  orion_crm: {
+    label: 'Orion CRM',
+    description: 'CRM del broker — usuarios registrados, Broker P&L, ventas Prop Firm.',
+    extraFields: [
+      { key: 'base_url', label: 'Base URL', placeholder: 'https://api.orion-crm.example' },
+    ],
+    supportsPing: true,
+  },
 };
+
+// Rendering order — Orion CRM last so it groups with the business/data
+// section, separate from the three payment processors above.
+const PROVIDER_ORDER: ApiCredential['provider'][] = [
+  'coinsbuy',
+  'unipayment',
+  'fairpay',
+  'orion_crm',
+];
 
 interface Props {
   /** When set, requests operate on this tenant (superadmin flow). */
   companyId?: string;
+}
+
+// Ping result shape returned by providers that support the health check.
+interface PingResult {
+  connected: boolean;
+  message: string;
+  isMock: boolean;
+  testedAt: string;
 }
 
 export function ApiCredentialsPanel({ companyId }: Props) {
@@ -71,6 +102,34 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState<ApiCredential['provider'] | null>(null);
+  // Per-provider ping state. Only populated for providers in which
+  // `supportsPing` is true and the user has clicked "Probar conexión".
+  const [pingResults, setPingResults] = useState<Partial<Record<ApiCredential['provider'], PingResult>>>({});
+  const [pingBusy, setPingBusy] = useState<ApiCredential['provider'] | null>(null);
+
+  const handlePing = async (provider: ApiCredential['provider']) => {
+    setPingBusy(provider);
+    try {
+      const res = await fetch(`/api/integrations/${provider.replace('_', '-')}/ping${qs}`);
+      const data = (await res.json()) as Omit<PingResult, 'testedAt'>;
+      setPingResults((prev) => ({
+        ...prev,
+        [provider]: { ...data, testedAt: new Date().toISOString() },
+      }));
+    } catch (err) {
+      setPingResults((prev) => ({
+        ...prev,
+        [provider]: {
+          connected: false,
+          message: err instanceof Error ? err.message : 'Error de red',
+          isMock: false,
+          testedAt: new Date().toISOString(),
+        },
+      }));
+    } finally {
+      setPingBusy(null);
+    }
+  };
 
   const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
 
@@ -118,10 +177,11 @@ export function ApiCredentialsPanel({ companyId }: Props) {
         </div>
       )}
 
-      {(Object.keys(PROVIDER_META) as Array<ApiCredential['provider']>).map((provider) => {
+      {PROVIDER_ORDER.map((provider) => {
         const meta = PROVIDER_META[provider];
         const cred = getCred(provider);
         const isEditing = editing === provider;
+        const ping = pingResults[provider];
 
         return (
           <Card key={provider}>
@@ -135,11 +195,27 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                   <p className="text-xs text-muted-foreground">{meta.description}</p>
                 </div>
               </div>
-              {cred?.is_configured && !isEditing && (
-                <Badge variant="success">
-                  <Check className="w-3 h-3" /> Configurado
-                </Badge>
-              )}
+              <div className="flex items-center gap-2">
+                {/* Live connection status — only rendered after the user has
+                    pressed "Probar conexión" at least once (empty state =
+                    no badge so we don't imply a test happened). */}
+                {ping && (
+                  <Badge variant={ping.connected ? 'success' : ping.isMock ? 'warning' : 'danger'}>
+                    {ping.connected ? (
+                      <><Wifi className="w-3 h-3" /> Conectada</>
+                    ) : ping.isMock ? (
+                      <><AlertTriangle className="w-3 h-3" /> Mock</>
+                    ) : (
+                      <><WifiOff className="w-3 h-3" /> Sin conectar</>
+                    )}
+                  </Badge>
+                )}
+                {cred?.is_configured && !isEditing && (
+                  <Badge variant="success">
+                    <Check className="w-3 h-3" /> Configurado
+                  </Badge>
+                )}
+              </div>
             </div>
 
             {loading ? (
@@ -170,13 +246,40 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                 <p className="text-xs text-muted-foreground">
                   Última actualización: {new Date(cred.updated_at).toLocaleString('es-ES')}
                 </p>
-                <div className="flex gap-2 pt-2">
+                {/* Ping result message (only for providers that support it) */}
+                {meta.supportsPing && ping && (
+                  <p
+                    className={`text-xs ${
+                      ping.connected
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : ping.isMock
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-red-600 dark:text-red-400'
+                    }`}
+                  >
+                    {ping.message} · {new Date(ping.testedAt).toLocaleString('es-ES')}
+                  </p>
+                )}
+                <div className="flex gap-2 pt-2 flex-wrap">
                   <button
                     onClick={() => setEditing(provider)}
                     className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted"
                   >
                     Cambiar
                   </button>
+                  {meta.supportsPing && (
+                    <button
+                      onClick={() => handlePing(provider)}
+                      disabled={pingBusy === provider}
+                      className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
+                    >
+                      {pingBusy === provider ? (
+                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando…</>
+                      ) : (
+                        <><Wifi className="w-3.5 h-3.5" /> Probar conexión</>
+                      )}
+                    </button>
+                  )}
                   <button
                     onClick={() => handleDelete(provider)}
                     className="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 text-sm hover:bg-red-50 dark:hover:bg-red-950/30"
@@ -186,12 +289,29 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                 </div>
               </div>
             ) : (
-              <button
-                onClick={() => setEditing(provider)}
-                className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-              >
-                Configurar
-              </button>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={() => setEditing(provider)}
+                  className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
+                >
+                  Configurar
+                </button>
+                {/* Even without credentials, Orion CRM can be probed — it
+                    reports "mock mode" which is useful info for the admin. */}
+                {meta.supportsPing && (
+                  <button
+                    onClick={() => handlePing(provider)}
+                    disabled={pingBusy === provider}
+                    className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
+                  >
+                    {pingBusy === provider ? (
+                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando…</>
+                    ) : (
+                      <><Wifi className="w-3.5 h-3.5" /> Probar conexión</>
+                    )}
+                  </button>
+                )}
+              </div>
             )}
           </Card>
         );

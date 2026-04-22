@@ -34,7 +34,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptSecret } from '@/lib/crypto';
 
-export type TenantProvider = 'coinsbuy' | 'unipayment' | 'fairpay';
+export type TenantProvider = 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
 
 interface RawCredentialRow {
   encrypted_secret: string;
@@ -165,6 +165,38 @@ export async function resolveFairpayCredentials(
   if (!raw) return null;
 
   // FairPay's secret is the api_key itself — no JSON wrapping needed.
+  const apiKey = raw.plaintext.trim();
+  if (!apiKey) return null;
+  const baseUrl =
+    typeof raw.extraConfig?.base_url === 'string'
+      ? (raw.extraConfig.base_url as string)
+      : undefined;
+  return { apiKey, baseUrl };
+}
+
+// ── Orion CRM ────────────────────────────────────────────────────────────
+//
+// Orion is the broker-side CRM — it owns registered users, prop firm
+// sales, P&L, and purchase history. Per-tenant API key; base URL is an
+// `extra_config.base_url` override so each tenant can point at its own
+// environment (sandbox vs prod) without touching env.
+//
+// Shape mirrors FairPay's "single api_key string" model — Orion uses a
+// single Bearer-style key, not a client_id/client_secret pair.
+
+export interface OrionCrmCredentials {
+  apiKey: string;
+  /** Optional per-tenant base URL override. */
+  baseUrl?: string;
+}
+
+export async function resolveOrionCrmCredentials(
+  companyId: string | null | undefined,
+): Promise<OrionCrmCredentials | null> {
+  if (!companyId) return null;
+  const raw = await readRaw(companyId, 'orion_crm');
+  if (!raw) return null;
+
   const apiKey = raw.plaintext.trim();
   if (!apiKey) return null;
   const baseUrl =
