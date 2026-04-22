@@ -486,8 +486,10 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
 
           <!-- Dark footer -->
           <tr>
-            <td style="padding:22px 32px;background:#0F172A;color:#CBD5E1;font-size:11px;text-align:center;">
-              <div style="font-weight:600;color:#ffffff;font-size:12px;margin-bottom:4px;">${escapeHtml(companyName)}</div>
+            <td style="padding:24px 32px;background:#0F172A;color:#CBD5E1;font-size:11px;text-align:center;">
+              <div style="font-weight:600;color:#ffffff;font-size:12px;margin-bottom:10px;">${escapeHtml(companyName)}</div>
+              <img src="${DASHBOARD_URL}/brand/logo-white.png" alt="Smart Dashboard" width="140" style="max-width:140px;height:auto;display:inline-block;margin:4px 0 10px 0;opacity:0.9;" />
+              <br />
               Reporte generado automáticamente por
               <a href="${DASHBOARD_URL}" style="color:#93C5FD;text-decoration:none;">Smart Dashboard</a>.
               <br />

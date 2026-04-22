@@ -65,9 +65,16 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
       {/* Header */}
       <header className="border-b border-border bg-slate-900 text-slate-100">
         <div className="max-w-7xl mx-auto flex items-center justify-between px-4 py-3">
-          <Link href="/superadmin" className="flex items-center gap-2 font-semibold">
-            <ShieldCheck className="w-5 h-5 text-amber-300" />
-            Horizon Consulting · Panel
+          <Link href="/superadmin" className="flex items-center gap-3 font-semibold">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/brand/logo-white.svg"
+              alt="Smart Dashboard"
+              className="h-7 w-auto object-contain"
+            />
+            <span className="hidden sm:inline text-slate-300 font-normal">·</span>
+            <ShieldCheck className="w-4 h-4 text-amber-300" />
+            <span className="text-sm">Superadmin</span>
           </Link>
           <div className="flex items-center gap-4 text-sm">
             <span className="hidden sm:inline text-slate-400">{user.email}</span>

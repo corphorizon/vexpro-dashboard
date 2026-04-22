@@ -20,17 +20,20 @@ interface AuthBrandProps {
 export function AuthBrand({ subtitle, sizeClassName = 'h-40 w-40' }: AuthBrandProps) {
   return (
     <div className="text-center mb-6">
+      {/* Light theme → black logo (on light bg). SVG scales perfectly
+          on any display density. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/smart-dashboard-dark.png"
+        src="/brand/logo-black.svg"
         alt="Smart Dashboard"
         width={320}
         height={320}
         className={`mx-auto block dark:hidden object-contain ${sizeClassName}`}
       />
+      {/* Dark theme → white logo (on dark bg). */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src="/smart-dashboard-white.png"
+        src="/brand/logo-white.svg"
         alt="Smart Dashboard"
         width={320}
         height={320}

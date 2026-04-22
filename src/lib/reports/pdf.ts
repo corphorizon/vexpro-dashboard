@@ -106,7 +106,28 @@ function fmtPct(pct: number | null): string {
 
 // ─── Main ─────────────────────────────────────────────────────────────────
 
-export function downloadReportPDF(params: DownloadReportPdfParams): void {
+/**
+ * Loads a public asset as a data URL. jsPDF requires base64-encoded
+ * images — it can't fetch from a URL directly. Returns null on failure
+ * (network, 404) so the PDF still renders without the brand mark.
+ */
+async function assetToDataUrl(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function downloadReportPDF(params: DownloadReportPdfParams): Promise<void> {
   const {
     data,
     cadence,
@@ -128,10 +149,16 @@ export function downloadReportPDF(params: DownloadReportPdfParams): void {
   const MARGIN_X = 40;
   const primary = hexToRgb(primaryColor);
 
+  // Smart Dashboard brand logo — loaded once, reused on cover + every footer.
+  // PNG because jsPDF needs a rasterised image with a proper data URL header.
+  // Fallback to text mark if the fetch fails (offline, 404, etc.).
+  const brandLogoDataUrl = await assetToDataUrl('/brand/logo-black.png');
+
   // ─── Cover page ───
   drawCoverPage(doc, {
     companyName,
     companyLogoDataUrl,
+    brandLogoDataUrl,
     title: titleForCadence(cadence),
     range: data.range,
     primary,
@@ -317,7 +344,7 @@ export function downloadReportPDF(params: DownloadReportPdfParams): void {
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
     doc.setPage(i);
-    drawFooter(doc, { pageNum: i, totalPages, companyName, primary });
+    drawFooter(doc, { pageNum: i, totalPages, companyName, primary, brandLogoDataUrl });
   }
 
   // ─── Download ───
@@ -361,6 +388,9 @@ function renderBucket(
 interface CoverParams {
   companyName: string;
   companyLogoDataUrl?: string | null;
+  /** Smart Dashboard brand mark (black on transparent). Used in the cover
+   *  bottom-centre as the platform signature. */
+  brandLogoDataUrl?: string | null;
   title: string;
   range: { from: string; to: string };
   primary: [number, number, number];
@@ -428,11 +458,32 @@ function drawCoverPage(doc: jsPDF, p: CoverParams): void {
     { align: 'center' },
   );
 
-  // Footer note on cover.
+  // Footer on cover — Smart Dashboard brand logo + confidentiality note.
+  if (p.brandLogoDataUrl) {
+    try {
+      doc.addImage(
+        p.brandLogoDataUrl,
+        'PNG',
+        centerX - 45,
+        pageHeight - 70,
+        90,
+        24,
+        undefined,
+        'FAST',
+      );
+    } catch {
+      doc.setTextColor(148, 163, 184);
+      doc.setFontSize(9);
+      doc.text('Smart Dashboard', centerX, pageHeight - 50, { align: 'center' });
+    }
+  } else {
+    doc.setTextColor(148, 163, 184);
+    doc.setFontSize(9);
+    doc.text('Smart Dashboard', centerX, pageHeight - 50, { align: 'center' });
+  }
   doc.setTextColor(148, 163, 184);
   doc.setFontSize(9);
-  doc.text('Smart Dashboard', centerX, pageHeight - 40, { align: 'center' });
-  doc.text('Documento confidencial', centerX, pageHeight - 26, { align: 'center' });
+  doc.text('Documento confidencial', centerX, pageHeight - 30, { align: 'center' });
 }
 
 interface FooterParams {
@@ -440,6 +491,7 @@ interface FooterParams {
   totalPages: number;
   companyName: string;
   primary: [number, number, number];
+  brandLogoDataUrl?: string | null;
 }
 
 function drawFooter(doc: jsPDF, p: FooterParams): void {
@@ -453,6 +505,24 @@ function drawFooter(doc: jsPDF, p: FooterParams): void {
   doc.setDrawColor(226, 232, 240);
   doc.setLineWidth(0.5);
   doc.line(MARGIN_X, pageHeight - 40, pageWidth - MARGIN_X, pageHeight - 40);
+
+  // Small Smart Dashboard logo, bottom-centre above the text line.
+  if (p.brandLogoDataUrl) {
+    try {
+      doc.addImage(
+        p.brandLogoDataUrl,
+        'PNG',
+        pageWidth / 2 - 30,
+        pageHeight - 36,
+        60,
+        14,
+        undefined,
+        'FAST',
+      );
+    } catch {
+      // fallthrough — text footer still renders
+    }
+  }
 
   doc.setTextColor(100, 116, 139);
   doc.setFontSize(8);

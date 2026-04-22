@@ -143,8 +143,20 @@ export default function DashboardLayout({
 
   if (isLoading) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <div className="text-muted-foreground">{t('common.loading')}</div>
+      <div className="flex h-full flex-col items-center justify-center gap-4">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/logo-black.svg"
+          alt="Smart Dashboard"
+          className="h-20 w-auto object-contain animate-pulse block dark:hidden"
+        />
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/brand/logo-white.svg"
+          alt="Smart Dashboard"
+          className="h-20 w-auto object-contain animate-pulse hidden dark:block"
+        />
+        <div className="text-muted-foreground text-sm">{t('common.loading')}</div>
       </div>
     );
   }
