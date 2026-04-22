@@ -247,6 +247,33 @@ export async function upsertExpenses(
   });
 }
 
+// ─── Expense ordering (drag-and-drop in /upload) ───
+//
+// Updates ONLY the `sort_order` column for a list of expense ids. The
+// caller passes ids in the new display order; this helper assigns 1..N.
+//
+// Runs as N parallel UPDATEs (one per row) rather than a delete+reinsert
+// because reorder happens on every drop — we want it cheap and we
+// explicitly don't want to touch amount/paid/pending fields. At the
+// scale we care about (~30 rows) parallel UPDATE takes ~300ms end-to-end.
+// ---------------------------------------------------------------------------
+
+export async function updateExpenseOrder(ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  const results = await Promise.all(
+    ids.map((id, i) =>
+      supabase
+        .from('expenses')
+        .update({ sort_order: i + 1, updated_at: new Date().toISOString() })
+        .eq('id', id),
+    ),
+  );
+  const firstError = results.find((r) => r.error)?.error;
+  if (firstError) {
+    throw new Error(`Error reordenando egresos: ${firstError.message}`);
+  }
+}
+
 // ─── Expense Templates (CRUD) ───
 
 export async function deactivateExpenseTemplate(id: string): Promise<void> {

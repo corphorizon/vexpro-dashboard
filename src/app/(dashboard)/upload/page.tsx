@@ -8,7 +8,24 @@ import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { LiquidityMovement, Investment } from '@/lib/types';
-import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical } from 'lucide-react';
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  KeyboardSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 
 // ─── Pagination ──────────────────────────────────────────────────────────
 // Shared cap across all three data-entry tables (Egresos, Liquidez, Inv.).
@@ -68,6 +85,7 @@ import {
   upsertDeposits,
   upsertWithdrawals,
   upsertExpenses,
+  updateExpenseOrder,
   upsertOperatingIncome,
   insertLiquidityMovement,
   updateLiquidityMovement,
@@ -94,6 +112,59 @@ const SECTION_KEYS: Record<DataSection, string> = {
 interface DepositRow { id: string; channel: string; amount: number; }
 interface WithdrawalRow { id: string; category: string; amount: number; }
 interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; }
+
+// ─── Sortable row wrapper (drag-and-drop reorder) ─────────────────────────
+// Wraps each expense <tr> so it can be dragged via the leading handle
+// column. We use @dnd-kit/sortable — the drag works by keyboard too
+// (tab to the handle, space to pick up, arrow keys to move, space to
+// drop), which keeps the feature accessible.
+//
+// Keep this component outside the main page so React doesn't recreate
+// the hook instances on every parent render.
+function SortableExpenseRow({
+  id,
+  disabled,
+  children,
+}: {
+  id: string;
+  disabled?: boolean;
+  children: React.ReactNode;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id, disabled });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.4 : 1,
+    // Keep the dragged row above its neighbours so the shadow reads right.
+    zIndex: isDragging ? 10 : undefined,
+    position: isDragging ? 'relative' : undefined,
+  };
+
+  return (
+    <tr ref={setNodeRef} style={style} className="border-b border-border/50 hover:bg-muted/50">
+      <td
+        className={`py-2.5 px-2 text-muted-foreground ${
+          disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
+        } touch-none select-none`}
+        {...(disabled ? {} : attributes)}
+        {...(disabled ? {} : listeners)}
+        aria-label={disabled ? 'Termina de editar para mover' : 'Arrastrar para reordenar'}
+        title={disabled ? 'Termina de editar para mover' : 'Arrastrar para reordenar'}
+      >
+        <GripVertical className="w-4 h-4" />
+      </td>
+      {children}
+    </tr>
+  );
+}
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
 interface DocRow { id: string; filename: string; date: string; description: string; uploaded_by?: string; }
 
@@ -525,6 +596,58 @@ export default function UploadPage() {
   const pagedExpenses = useMemo(
     () => expenses.slice(expensesPage * PAGE_SIZE, (expensesPage + 1) * PAGE_SIZE),
     [expenses, expensesPage],
+  );
+
+  // ── Drag-and-drop reorder for expenses ─────────────────────────────────
+  // Sensors: PointerSensor activates after 6px of movement so tiny
+  // taps on the handle (e.g. on tablets) don't kidnap the row. Keyboard
+  // support is wired for accessibility.
+  const dndSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleExpenseDragEnd = useCallback(
+    async (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+
+      // Indices inside the currently-visible page slice.
+      const oldPagedIndex = pagedExpenses.findIndex((e) => e.id === active.id);
+      const newPagedIndex = pagedExpenses.findIndex((e) => e.id === over.id);
+      if (oldPagedIndex < 0 || newPagedIndex < 0) return;
+
+      // Translate to indices in the full list (rows on other pages stay
+      // put). Reordering across pages requires first navigating to that
+      // page — intentional: cross-page drag is a footgun.
+      const startIdx = expensesPage * PAGE_SIZE;
+      const oldIndex = startIdx + oldPagedIndex;
+      const newIndex = startIdx + newPagedIndex;
+
+      // Optimistic update — show the new order immediately.
+      let reordered: ExpenseRow[] = [];
+      setExpenses((prev) => {
+        reordered = arrayMove(prev, oldIndex, newIndex);
+        return reordered;
+      });
+
+      // Persist sort_order — lightweight N-parallel UPDATE, no refresh.
+      // Only rows with real UUID ids (already saved in DB) go through;
+      // locally-created rows that haven't been saved yet are skipped.
+      try {
+        const ids = reordered
+          .map((e) => e.id)
+          .filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+        if (ids.length > 0) {
+          await updateExpenseOrder(ids);
+        }
+      } catch (err) {
+        console.error('[expenses:reorder] failed to persist order:', err);
+        showError(`No se pudo guardar el nuevo orden: ${(err as Error).message}`);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [pagedExpenses, expensesPage],
   );
   const pagedLiquidity = useMemo(
     () => filteredLiquidity.slice(liquidityPage * PAGE_SIZE, (liquidityPage + 1) * PAGE_SIZE),
@@ -1327,9 +1450,15 @@ export default function UploadPage() {
         <Card>
           <h2 className="text-base sm:text-lg font-semibold mb-4">Egresos Operativos — {periodLabel}</h2>
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+          <DndContext
+            sensors={dndSensors}
+            collisionDetection={closestCenter}
+            onDragEnd={handleExpenseDragEnd}
+          >
           <table className="w-full text-sm min-w-[500px]">
             <thead>
               <tr className="border-b border-border">
+                <th className="w-8 py-2 px-2" aria-label="Reordenar"></th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">#</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Categoría</th>
@@ -1340,12 +1469,20 @@ export default function UploadPage() {
                 {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">Acciones</th>}
               </tr>
             </thead>
+            <SortableContext
+              items={pagedExpenses.map((e) => e.id)}
+              strategy={verticalListSortingStrategy}
+            >
             <tbody>
               {expenses.length === 0 && (
-                <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
+                <tr><td colSpan={9} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
               )}
               {pagedExpenses.map((exp, i) => (
-                <tr key={exp.id} className="border-b border-border/50 hover:bg-muted/50">
+                <SortableExpenseRow
+                  key={exp.id}
+                  id={exp.id}
+                  disabled={!userCanEdit || editingExpenseId === exp.id}
+                >
                   {editingExpenseId === exp.id ? (
                     <>
                       <td className="py-2 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
@@ -1438,13 +1575,14 @@ export default function UploadPage() {
                       )}
                     </>
                   )}
-                </tr>
+                </SortableExpenseRow>
               ))}
             </tbody>
+            </SortableContext>
             {expenses.length > 0 && (
               <tfoot>
                 <tr className="font-bold bg-muted/50">
-                  <td className="py-3 px-3" colSpan={3}>Total</td>
+                  <td className="py-3 px-3" colSpan={4}>Total</td>
                   <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
                   <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
                   <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
@@ -1453,6 +1591,7 @@ export default function UploadPage() {
               </tfoot>
             )}
           </table>
+          </DndContext>
           </div>
 
           <PaginationControls
