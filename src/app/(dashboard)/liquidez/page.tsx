@@ -100,7 +100,7 @@ export default function LiquidezPage() {
         actions={
           <button
             onClick={() => verify2FA(() => {
-              const headers = ['Fecha', 'Usuario', 'Cuenta MT', '+', '-', 'Balance'];
+              const headers = ['Fecha', 'Concepto', 'Descripción', '+', '-', 'Balance'];
               const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, balanceMap.get(m.id) ?? 0] as (string | number)[]);
               downloadCSV('liquidez.csv', headers, rows);
             })}
@@ -193,8 +193,8 @@ export default function LiquidezPage() {
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium w-12">#</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Usuario</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Cuenta MT</th>
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Descripción</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Ingreso</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Salida</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">Balance</th>

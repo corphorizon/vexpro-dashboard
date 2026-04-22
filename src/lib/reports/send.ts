@@ -19,6 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendEmail } from '@/services/emailService';
 import { serverAuditLog } from '@/lib/server-audit';
 import { buildReportData } from './data';
+import { loadReportConfig } from './config';
 import {
   renderReportEmail,
   renderReportEmailText,
@@ -46,6 +47,7 @@ interface CompanyRow {
   id: string;
   name: string;
   logo_url: string | null;
+  color_primary: string | null;
   active_modules: string[];
   status: string;
 }
@@ -132,7 +134,7 @@ export async function sendReportsForCadence(
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, name, logo_url, active_modules, status')
+    .select('id, name, logo_url, color_primary, active_modules, status')
     .eq('status', 'active');
 
   if (companiesError || !companies) {
@@ -158,6 +160,21 @@ export async function sendReportsForCadence(
     };
 
     try {
+      // Respect the per-company report config: if this cadence is disabled
+      // we skip the tenant entirely. Manual (onlyCompanyId) runs bypass the
+      // cadence gate — admins triggering a send already made that choice.
+      const cfg = await loadReportConfig(company.id);
+      if (!options.onlyCompanyId) {
+        const cadenceOn =
+          (cadence === 'daily' && cfg.cadences.daily) ||
+          (cadence === 'weekly' && cfg.cadences.weekly) ||
+          (cadence === 'monthly' && cfg.cadences.monthly);
+        if (!cadenceOn) {
+          details.push(entry);
+          continue;
+        }
+      }
+
       // Recipients: users of this tenant with 'reports' in allowed_modules
       // and not deactivated.
       const { data: users, error: usersError } = await admin
@@ -166,11 +183,18 @@ export async function sendReportsForCadence(
         .eq('company_id', company.id);
       if (usersError) throw new Error(usersError.message);
 
+      // Finanzas access = reports OR movements module. Matches
+      // /api/reports/recipients so the admin panel and cron agree on who's
+      // a candidate.
+      const FINANZAS_MODULES = ['reports', 'movements'];
+      const optedOut = new Set(cfg.cadenceDisabledUsers?.[cadence] ?? []);
       const recipients = (users ?? [] as UserRow[]).filter(
         (u) =>
           u.status !== 'inactive' &&
+          !!u.email &&
           Array.isArray(u.allowed_modules) &&
-          u.allowed_modules.includes('reports'),
+          u.allowed_modules.some((m) => FINANZAS_MODULES.includes(m)) &&
+          !optedOut.has(u.id),
       );
       entry.recipients = recipients.length;
 
@@ -187,6 +211,8 @@ export async function sendReportsForCadence(
         cadence,
         companyName: company.name,
         companyLogoUrl: company.logo_url,
+        primaryColor: company.color_primary,
+        sections: cfg.sections,
       });
       const text = renderReportEmailText({
         data,

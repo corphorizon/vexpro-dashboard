@@ -7,6 +7,7 @@ import {
   FileSpreadsheet,
   FileText,
   RefreshCw,
+  Send,
   TrendingDown,
   TrendingUp,
   Users,
@@ -20,10 +21,11 @@ import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
-import { formatDate } from '@/lib/dates';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { downloadCSV } from '@/lib/csv-export';
-import { downloadPDF } from '@/lib/export-utils';
+import { downloadReportPDF } from '@/lib/reports/pdf';
+import { ReportsConfigPanel } from './config-panel';
+import { SendReportModal } from './send-modal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /finanzas/reportes — Operational financial report for a date range.
@@ -126,6 +128,18 @@ interface ReportResponse {
     connected: boolean;
     isMock: boolean;
   };
+  balances_by_channel: {
+    channels: Array<{
+      key: string;
+      label: string;
+      type: 'api' | 'manual' | 'auto';
+      amount: number;
+      source: 'live' | 'snapshot' | 'computed';
+      isCustom: boolean;
+    }>;
+    total: number;
+    asOf: string;
+  };
 }
 
 // ─── Human-friendly labels ─────────────────────────────────────────────
@@ -188,6 +202,8 @@ export default function ReportesPage() {
   const [data, setData] = useState<ReportResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [sendOpen, setSendOpen] = useState(false);
+  const isAdmin = user?.effective_role === 'admin';
 
   const applyQuickRange = (kind: QuickRange) => {
     const r = computeQuickRange(kind);
@@ -277,32 +293,23 @@ export default function ReportesPage() {
     downloadCSV(`reporte_${from}_${to}.csv`, headers, rows);
   });
 
-  const handleExportPDF = () => verify2FA(() => {
-    if (!data) return;
-    const headers = ['Métrica', 'Valor'];
-    const rows: (string | number)[][] = [
-      ['Período', `${formatDate(from)} — ${formatDate(to)}`],
-      ['Total depósitos del rango', data.deposits_withdrawals.range.total_deposits],
-      ['Total retiros del rango', data.deposits_withdrawals.range.total_withdrawals],
-      ['Net Deposit del rango', data.deposits_withdrawals.range.net_deposit],
-      ['Net Deposit del mes', monthNet],
-      ['Net Deposit mes anterior', prevNet],
-      ['Nuevos usuarios (rango)', data.crm_users.new_users_in_range],
-      ['Nuevos usuarios (mes)', data.crm_users.new_users_this_month],
-      ['Total usuarios', data.crm_users.total_users],
-      ['Broker P&L (rango)', data.broker_pnl.pnl_range],
-      ['Broker P&L (mes)', data.broker_pnl.pnl_month],
-      ['Broker P&L (mes anterior)', data.broker_pnl.pnl_prev_month],
-      ['Ventas Prop Firm (rango)', data.prop_trading.total_sales_range],
-      ['Retiros Prop Firm (rango)', data.prop_trading.prop_withdrawals_range],
-      ['P&L Prop Firm (rango)', data.prop_trading.pnl_range],
-    ];
-    downloadPDF('Reporte Financiero', headers, rows, {
-      companyName: company?.name ?? 'Smart Dashboard',
-      subtitle: `Período: ${formatDate(from)} — ${formatDate(to)}`,
-      date: formatDate(new Date()),
+  const handleExportPDF = () =>
+    verify2FA(() => {
+      if (!data) return;
+      // Company theme — primary colour + logo data-URL (fetched from the
+      // CSS custom property if possible). The PDF generator handles fallbacks.
+      const cssPrimary =
+        typeof window !== 'undefined'
+          ? getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()
+          : '';
+      downloadReportPDF({
+        data: data as unknown as import('@/lib/reports/data').ReportData,
+        cadence: 'daily',
+        companyName: company?.name ?? 'Smart Dashboard',
+        companyLogoDataUrl: null, // logos served via URL, not inlined
+        primaryColor: cssPrimary || null,
+      });
     });
-  });
 
   // ── Render ─────────────────────────────────────────────────────────
 
@@ -324,12 +331,29 @@ export default function ReportesPage() {
     <div className="space-y-6">
       {Modal2FA}
 
+      {isAdmin && <ReportsConfigPanel />}
+      {isAdmin && (
+        <SendReportModal
+          open={sendOpen}
+          onClose={() => setSendOpen(false)}
+          currentRange={{ from, to }}
+        />
+      )}
+
       <PageHeader
         title="Reportes"
         subtitle="Resumen operativo por período"
         icon={BarChart3}
         actions={
           <div className="flex gap-2">
+            {isAdmin && (
+              <button
+                onClick={() => setSendOpen(true)}
+                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm hover:opacity-90"
+              >
+                <Send className="w-4 h-4" /> Enviar Reporte
+              </button>
+            )}
             <button
               onClick={handleExportCSV}
               disabled={!data}
@@ -486,7 +510,77 @@ export default function ReportesPage() {
             </div>
           </Card>
 
-          {/* SECTION 2 — CRM Users */}
+          {/* SECTION 2 — Balances por Canal */}
+          <Card>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-muted-foreground" />
+                <h2 className="text-lg font-semibold">Balances por Canal</h2>
+              </div>
+              <span className="text-xs text-muted-foreground">
+                al {data.balances_by_channel.asOf}
+              </span>
+            </div>
+            {data.balances_by_channel.channels.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-6 text-center">
+                No hay canales visibles. Configúralos en <strong>Finanzas → Balances</strong>.
+              </p>
+            ) : (
+              <div className="rounded-lg border border-border overflow-hidden">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="text-left px-3 py-2 font-medium">Canal</th>
+                      <th className="text-left px-3 py-2 font-medium">Tipo</th>
+                      <th className="text-right px-3 py-2 font-medium">Balance</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.balances_by_channel.channels.map((c) => (
+                      <tr key={c.key} className="border-t border-border">
+                        <td className="px-3 py-2">
+                          {c.label}
+                          {c.isCustom && (
+                            <span className="ml-2 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
+                              Personalizado
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-muted-foreground capitalize">
+                          {c.type === 'auto' ? 'Automático' : c.type === 'api' ? 'API' : 'Manual'}
+                        </td>
+                        <td
+                          className={`px-3 py-2 text-right font-medium ${
+                            c.amount >= 0 ? '' : 'text-red-600 dark:text-red-400'
+                          }`}
+                        >
+                          {formatCurrency(c.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot className="bg-muted/30 font-bold">
+                    <tr className="border-t border-border">
+                      <td className="px-3 py-2" colSpan={2}>
+                        Total Consolidado
+                      </td>
+                      <td
+                        className={`px-3 py-2 text-right ${
+                          data.balances_by_channel.total >= 0
+                            ? 'text-emerald-600 dark:text-emerald-400'
+                            : 'text-red-600 dark:text-red-400'
+                        }`}
+                      >
+                        {formatCurrency(data.balances_by_channel.total)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </Card>
+
+          {/* SECTION 3 — CRM Users */}
           <Card>
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">

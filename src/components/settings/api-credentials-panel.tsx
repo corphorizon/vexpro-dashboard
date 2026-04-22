@@ -17,13 +17,11 @@ import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from '
 // route knows which tenant to operate on (see /api/admin/api-credentials).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// SendGrid intentionally NOT exposed here. Transactional email (invites,
-// password recovery, login notifications) is sent from the Horizon
-// dashboard's own SendGrid account — tenants don't need their own keys.
-// If a future tenant ever wants branded sender, re-add 'sendgrid' to this
-// union + the PROVIDER_META map.
+// SendGrid is exposed again so tenants can brand the sender domain of
+// their automated reports (e.g. `dashboard@vexprofx.com`). When a tenant
+// has no sendgrid row, emailService falls back to the env defaults.
 interface ApiCredential {
-  provider: 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
+  provider: 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
   last_four: string | null;
   extra_config: Record<string, unknown> | null;
   is_configured: boolean;
@@ -41,6 +39,15 @@ interface ProviderMeta {
 }
 
 const PROVIDER_META: Record<ApiCredential['provider'], ProviderMeta> = {
+  sendgrid: {
+    label: 'SendGrid',
+    description:
+      'Envío de reportes automáticos. El dominio del "from_email" debe estar verificado en la cuenta SendGrid.',
+    extraFields: [
+      { key: 'from_email', label: 'From email', placeholder: 'dashboard@tuempresa.com' },
+      { key: 'from_name', label: 'From name', placeholder: 'Tu Empresa' },
+    ],
+  },
   coinsbuy: {
     label: 'Coinsbuy',
     description: 'Procesador de pagos crypto.',
@@ -78,6 +85,7 @@ const PROVIDER_META: Record<ApiCredential['provider'], ProviderMeta> = {
 // Rendering order — Orion CRM last so it groups with the business/data
 // section, separate from the three payment processors above.
 const PROVIDER_ORDER: ApiCredential['provider'][] = [
+  'sendgrid',
   'coinsbuy',
   'unipayment',
   'fairpay',
