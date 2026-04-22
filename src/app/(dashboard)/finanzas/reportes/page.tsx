@@ -104,12 +104,14 @@ interface ReportResponse {
     new_users_in_range: number;
     new_users_this_month: number;
     total_users: number;
+    connected: boolean;
     isMock: boolean;
   };
   broker_pnl: {
     pnl_range: number;
     pnl_month: number;
     pnl_prev_month: number;
+    connected: boolean;
     isMock: boolean;
   };
   prop_trading: {
@@ -121,6 +123,7 @@ interface ReportResponse {
     pnl_range: number;
     pnl_month: number;
     pnl_prev_month: number;
+    connected: boolean;
     isMock: boolean;
   };
 }
@@ -492,23 +495,27 @@ export default function ReportesPage() {
               </div>
               {data.crm_users.isMock && <Badge variant="warning">· mock</Badge>}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <StatCard
-                label="Nuevos en el rango"
-                value={data.crm_users.new_users_in_range.toLocaleString('es')}
-                tone="info"
-              />
-              <StatCard
-                label="Nuevos este mes"
-                value={data.crm_users.new_users_this_month.toLocaleString('es')}
-                tone="info"
-              />
-              <StatCard
-                label="Total en plataforma"
-                value={data.crm_users.total_users.toLocaleString('es')}
-                tone="primary"
-              />
-            </div>
+            {!data.crm_users.connected && !data.crm_users.isMock ? (
+              <NotConnectedNotice />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <StatCard
+                  label="Nuevos en el rango"
+                  value={data.crm_users.new_users_in_range.toLocaleString('es')}
+                  tone="info"
+                />
+                <StatCard
+                  label="Nuevos este mes"
+                  value={data.crm_users.new_users_this_month.toLocaleString('es')}
+                  tone="info"
+                />
+                <StatCard
+                  label="Total en plataforma"
+                  value={data.crm_users.total_users.toLocaleString('es')}
+                  tone="primary"
+                />
+              </div>
+            )}
           </Card>
 
           {/* SECTION 3 — Broker P&L */}
@@ -520,29 +527,33 @@ export default function ReportesPage() {
               </div>
               {data.broker_pnl.isMock && <Badge variant="warning">· mock</Badge>}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <StatCard
-                label="P&L del rango"
-                value={formatCurrency(data.broker_pnl.pnl_range)}
-                tone={data.broker_pnl.pnl_range >= 0 ? 'positive' : 'negative'}
-                hint={
-                  brokerPnlRangePctOfMonth === null
-                    ? 'sin referencia mensual'
-                    : `${Math.round(brokerPnlRangePctOfMonth * 10) / 10}% del mes actual`
-                }
-              />
-              <StatCard
-                label="P&L mes actual"
-                value={formatCurrency(data.broker_pnl.pnl_month)}
-                tone={data.broker_pnl.pnl_month >= 0 ? 'positive' : 'negative'}
-                hint={<VariationBadge pct={brokerPnlMonthVsPrev} />}
-              />
-              <StatCard
-                label="P&L mes anterior"
-                value={formatCurrency(data.broker_pnl.pnl_prev_month)}
-                tone="neutral"
-              />
-            </div>
+            {!data.broker_pnl.connected && !data.broker_pnl.isMock ? (
+              <NotConnectedNotice />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <StatCard
+                  label="P&L del rango"
+                  value={formatCurrency(data.broker_pnl.pnl_range)}
+                  tone={data.broker_pnl.pnl_range >= 0 ? 'positive' : 'negative'}
+                  hint={
+                    brokerPnlRangePctOfMonth === null
+                      ? 'sin referencia mensual'
+                      : `${Math.round(brokerPnlRangePctOfMonth * 10) / 10}% del mes actual`
+                  }
+                />
+                <StatCard
+                  label="P&L mes actual"
+                  value={formatCurrency(data.broker_pnl.pnl_month)}
+                  tone={data.broker_pnl.pnl_month >= 0 ? 'positive' : 'negative'}
+                  hint={<VariationBadge pct={brokerPnlMonthVsPrev} />}
+                />
+                <StatCard
+                  label="P&L mes anterior"
+                  value={formatCurrency(data.broker_pnl.pnl_prev_month)}
+                  tone="neutral"
+                />
+              </div>
+            )}
           </Card>
 
           {/* SECTION 4 — Prop Trading Firm */}
@@ -555,6 +566,10 @@ export default function ReportesPage() {
               {data.prop_trading.isMock && <Badge variant="warning">· mock</Badge>}
             </div>
 
+            {!data.prop_trading.connected && !data.prop_trading.isMock ? (
+              <NotConnectedNotice />
+            ) : (
+              <>
             {/* Products table */}
             <div className="mb-4">
               <h3 className="text-sm font-medium mb-2">Productos vendidos en el rango</h3>
@@ -635,6 +650,8 @@ export default function ReportesPage() {
                 tone="neutral"
               />
             </div>
+              </>
+            )}
           </Card>
         </>
       )}
@@ -695,6 +712,17 @@ function TableList({
           </tr>
         </tfoot>
       </table>
+    </div>
+  );
+}
+
+function NotConnectedNotice() {
+  return (
+    <div className="rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
+      <p className="text-sm font-medium text-foreground">Orion CRM no conectado</p>
+      <p className="text-xs text-muted-foreground mt-1">
+        Configura las credenciales en <em>Superadmin → Empresa → APIs externas</em> para ver datos reales.
+      </p>
     </div>
   );
 }

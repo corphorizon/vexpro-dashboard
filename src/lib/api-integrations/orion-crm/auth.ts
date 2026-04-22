@@ -22,10 +22,21 @@ import { resolveOrionCrmCredentials } from '../credentials';
 
 const ENV_BASE_URL = process.env.ORION_CRM_BASE_URL ?? 'https://api.orion-crm.example';
 
-/** Whether the mock-fallback path is active. Flip to false in prod when
- * you want "no credentials" to fail loudly instead of returning fake data. */
+/** Whether the mock-fallback path is active.
+ *
+ * Default is environment-aware:
+ *   · dev / preview → `true` (local iteration without real creds)
+ *   · production    → `false` (never show fake numbers to real tenants;
+ *                              if creds are missing the report must say
+ *                              "no conectado" explicitly rather than lie
+ *                              with plausible data)
+ *
+ * Override with the ORION_CRM_ENABLE_MOCK_FALLBACK env var ('true'/'false',
+ * case insensitive). */
+const DEFAULT_MOCK_ENABLED =
+  process.env.NODE_ENV === 'production' ? 'false' : 'true';
 const MOCK_FALLBACK_ENABLED =
-  (process.env.ORION_CRM_ENABLE_MOCK_FALLBACK ?? 'true').toLowerCase() !== 'false';
+  (process.env.ORION_CRM_ENABLE_MOCK_FALLBACK ?? DEFAULT_MOCK_ENABLED).toLowerCase() !== 'false';
 
 export interface OrionCrmConfig {
   apiKey: string;

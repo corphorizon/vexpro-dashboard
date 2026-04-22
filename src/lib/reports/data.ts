@@ -73,12 +73,14 @@ export interface ReportData {
     new_users_in_range: number;
     new_users_this_month: number;
     total_users: number;
+    connected: boolean;
     isMock: boolean;
   };
   broker_pnl: {
     pnl_range: number;
     pnl_month: number;
     pnl_prev_month: number;
+    connected: boolean;
     isMock: boolean;
   };
   prop_trading: {
@@ -90,11 +92,13 @@ export interface ReportData {
     pnl_range: number;
     pnl_month: number;
     pnl_prev_month: number;
+    connected: boolean;
     isMock: boolean;
   };
   orion_totals: {
     propFirmSales: number;
     p2pTransfer: number;
+    connected: boolean;
     isMock: boolean;
   };
   /** True if any of the Orion sections returned mock data — the report
@@ -408,12 +412,14 @@ export async function buildReportData(
       new_users_in_range: crmUsersResult.new_users_in_range,
       new_users_this_month: crmUsersResult.new_users_this_month,
       total_users: crmUsersResult.total_users,
+      connected: crmUsersResult.connected,
       isMock: crmUsersResult.isMock,
     },
     broker_pnl: {
       pnl_range: brokerPnlResult.pnl_range,
       pnl_month: brokerPnlResult.pnl_month,
       pnl_prev_month: brokerPnlResult.pnl_prev_month,
+      connected: brokerPnlResult.connected,
       isMock: brokerPnlResult.isMock,
     },
     prop_trading: {
@@ -425,11 +431,13 @@ export async function buildReportData(
       pnl_range: propTradingResult.pnl_range,
       pnl_month: propTradingResult.pnl_month,
       pnl_prev_month: propTradingResult.pnl_prev_month,
+      connected: propTradingResult.connected,
       isMock: propTradingResult.isMock,
     },
     orion_totals: {
       propFirmSales: orionTotalsResult.propFirmSales,
       p2pTransfer: orionTotalsResult.p2pTransfer,
+      connected: orionTotalsResult.connected,
       isMock: orionTotalsResult.isMock,
     },
     anyMock,
