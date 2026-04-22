@@ -89,7 +89,7 @@ interface AuthState {
 //   · `audit`    — reserved for SUPERADMIN only. Tenants cannot grant the
 //     audit module to their users; platform-level audit lives inside the
 //     superadmin panel (/superadmin/companies/[id]).
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'hr', 'risk', 'upload', 'periods', 'users'];
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'reports', 'hr', 'risk', 'upload', 'periods', 'users'];
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -827,8 +827,8 @@ export const ROLE_DESCRIPTIONS: Record<string, string> = {
 
 export const ROLE_DEFAULT_MODULES: Record<string, string[]> = {
   admin: ALL_MODULES,
-  socio: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners'],
-  auditor: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'upload', 'risk'],
+  socio: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'reports'],
+  auditor: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'upload', 'risk', 'reports'],
   soporte: ['summary', 'movements', 'expenses', 'liquidity', 'balances'],
   hr: ['summary', 'hr'],
   invitado: ['summary'],
@@ -843,6 +843,7 @@ export const MODULE_LABELS: Record<string, string> = {
   balances: 'Balances',
   partners: 'Socios',
   commissions: 'Comisiones',
+  reports: 'Reportes',
   hr: 'Recursos Humanos',
   risk: 'Gestión de Riesgo',
   upload: 'Carga de Datos',

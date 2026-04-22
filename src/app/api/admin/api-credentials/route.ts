@@ -21,14 +21,15 @@ import { sanitizeDbError } from '@/lib/errors';
 //     targets that tenant. This is the path used by the superadmin panel.
 // ---------------------------------------------------------------------------
 
-// SendGrid dropped from the tenant-facing list — transactional email is
-// always sent from the Horizon SendGrid account (env var SENDGRID_API_KEY).
-// The code path that reads api_credentials for sendgrid still works for
-// legacy rows, but new writes via this route are rejected.
+// Re-enabled SendGrid for tenant-branded sender (Ajuste 3.1): each company
+// can store its own API key + from_email/from_name in extra_config so report
+// emails go out from `dashboard@<tenant-domain>` instead of Horizon's default.
+// Falls back to env SENDGRID_* when a tenant hasn't configured one yet
+// (emailService.getSendGridConfig handles the precedence).
 // 'orion_crm' was added in migration 033. It follows the same storage
 // convention as fairpay (single api_key as encrypted_secret, base_url
 // in extra_config).
-const SUPPORTED_PROVIDERS = ['coinsbuy', 'unipayment', 'fairpay', 'orion_crm'];
+const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'orion_crm'];
 
 /**
  * Resolve the effective `company_id` for the request. Returns either:

@@ -12,6 +12,7 @@ import { fetchOrionCrmTotals } from '@/lib/api-integrations/orion-crm/totals';
 import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
 import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
+import { buildBalancesByChannel, type ReportBalancesByChannel } from './balances-by-channel';
 
 interface DepositRow {
   channel: string;
@@ -101,6 +102,7 @@ export interface ReportData {
     connected: boolean;
     isMock: boolean;
   };
+  balances_by_channel: ReportBalancesByChannel;
   /** True if any of the Orion sections returned mock data — the report
    *  surfaces this as a subtle notice so readers know the numbers aren't
    *  fully live yet. */
@@ -117,6 +119,43 @@ function monthBounds(year: number, month: number): { from: string; to: string } 
     from: `${year}-${pad(month)}-01`,
     to: `${year}-${pad(month)}-${pad(lastDay)}`,
   };
+}
+
+/**
+ * Returns the list of calendar months fully covered by [from, to].
+ *
+ * The `deposits` / `withdrawals` tables store MONTHLY aggregates (one row
+ * per channel per period). They only contribute to a range when the range
+ * spans entire months — a sub-month range (e.g. "Today", "Last 7 days")
+ * cannot meaningfully pull in a whole month's aggregate.
+ *
+ *   fullMonthsInRange('2026-04-01', '2026-04-30')  → [{y:2026, m:4}]
+ *   fullMonthsInRange('2026-04-01', '2026-05-31')  → [4, 5]
+ *   fullMonthsInRange('2026-04-15', '2026-04-20')  → []  // sub-month
+ *   fullMonthsInRange('2026-04-22', '2026-04-22')  → []  // single day
+ */
+function fullMonthsInRange(
+  from: string,
+  to: string,
+): Array<{ year: number; month: number }> {
+  const [fy, fm, fd] = from.split('-').map(Number);
+  const [ty, tm, td] = to.split('-').map(Number);
+  if (!fy || !fm || !fd || !ty || !tm || !td) return [];
+  if (fd !== 1) return [];
+  const lastDay = new Date(ty, tm, 0).getDate();
+  if (td !== lastDay) return [];
+  const out: Array<{ year: number; month: number }> = [];
+  let y = fy;
+  let m = fm;
+  while (y < ty || (y === ty && m <= tm)) {
+    out.push({ year: y, month: m });
+    m++;
+    if (m > 12) {
+      m = 1;
+      y++;
+    }
+  }
+  return out;
 }
 
 function groupRows<T extends { amount: number | string }>(
@@ -204,6 +243,40 @@ export async function buildReportData(
 
   const admin = createAdminClient();
 
+  // Manual deposits/withdrawals are monthly aggregates. We only include
+  // them in the range totals when the range covers entire calendar months.
+  // For intra-month ranges (today, yesterday, last 7d) we only count the
+  // per-transaction api_transactions rows (which have real timestamps).
+  const rangeMonths = fullMonthsInRange(from, to);
+  const fetchManualDepsForMonths = async (months: typeof rangeMonths): Promise<DepositRow[]> => {
+    if (months.length === 0) return [];
+    const results = await Promise.all(
+      months.map((mo) =>
+        admin
+          .from('deposits')
+          .select('channel, amount, periods!inner(year, month)')
+          .eq('company_id', companyId)
+          .eq('periods.year', mo.year)
+          .eq('periods.month', mo.month),
+      ),
+    );
+    return results.flatMap((r) => (r.data as DepositRow[] | null) ?? []);
+  };
+  const fetchManualWdrForMonths = async (months: typeof rangeMonths): Promise<WithdrawalRow[]> => {
+    if (months.length === 0) return [];
+    const results = await Promise.all(
+      months.map((mo) =>
+        admin
+          .from('withdrawals')
+          .select('category, amount, periods!inner(year, month)')
+          .eq('company_id', companyId)
+          .eq('periods.year', mo.year)
+          .eq('periods.month', mo.month),
+      ),
+    );
+    return results.flatMap((r) => (r.data as WithdrawalRow[] | null) ?? []);
+  };
+
   const [
     manualDepositsRange,
     manualWithdrawalsRange,
@@ -218,19 +291,10 @@ export async function buildReportData(
     crmBrokerPnl,
     crmPropTrading,
     crmTotals,
+    balancesByChannel,
   ] = await Promise.allSettled([
-    admin
-      .from('deposits')
-      .select('channel, amount, periods!inner(year, month)')
-      .eq('company_id', companyId)
-      .gte('periods.year', parseInt(from.slice(0, 4), 10))
-      .lte('periods.year', parseInt(to.slice(0, 4), 10)),
-    admin
-      .from('withdrawals')
-      .select('category, amount, periods!inner(year, month)')
-      .eq('company_id', companyId)
-      .gte('periods.year', parseInt(from.slice(0, 4), 10))
-      .lte('periods.year', parseInt(to.slice(0, 4), 10)),
+    fetchManualDepsForMonths(rangeMonths),
+    fetchManualWdrForMonths(rangeMonths),
     admin
       .from('deposits')
       .select('channel, amount, periods!inner(year, month)')
@@ -277,12 +341,14 @@ export async function buildReportData(
     fetchOrionCrmBrokerPnl(companyId, from, to),
     fetchOrionCrmPropTrading(companyId, from, to),
     fetchOrionCrmTotals(companyId, from, to),
+    buildBalancesByChannel(companyId, to),
   ]);
 
   const safeData = <T>(
-    r: PromiseSettledResult<{ data: T[] | null; error: unknown } | unknown>,
+    r: PromiseSettledResult<{ data: T[] | null; error: unknown } | T[] | unknown>,
   ): T[] => {
     if (r.status !== 'fulfilled') return [];
+    if (Array.isArray(r.value)) return r.value as T[];
     const v = r.value as { data?: T[] | null } | null | undefined;
     return v?.data ?? [];
   };
@@ -297,6 +363,7 @@ export async function buildReportData(
   if (crmBrokerPnl.status !== 'fulfilled') failures.push('orion_crm_broker_pnl');
   if (crmPropTrading.status !== 'fulfilled') failures.push('orion_crm_prop_trading');
   if (crmTotals.status !== 'fulfilled') failures.push('orion_crm_totals');
+  if (balancesByChannel.status !== 'fulfilled') failures.push('balances_by_channel');
 
   const manualDepRange = groupRows(safeData<DepositRow>(manualDepositsRange), (r) => r.channel);
   const manualWdrRange = groupRows(safeData<WithdrawalRow>(manualWithdrawalsRange), (r) => r.category);
@@ -376,6 +443,11 @@ export async function buildReportData(
     lastSync: null,
     errorMessage: null,
   });
+  const balancesByChannelResult = unwrap(balancesByChannel, {
+    channels: [],
+    total: 0,
+    asOf: to,
+  });
 
   const anyMock =
     crmUsersResult.isMock ||
@@ -440,6 +512,7 @@ export async function buildReportData(
       connected: orionTotalsResult.connected,
       isMock: orionTotalsResult.isMock,
     },
+    balances_by_channel: balancesByChannelResult,
     anyMock,
     failures,
   };

@@ -14,6 +14,12 @@ import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase
 import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
 import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
 import {
+  resolveChannels as resolveChannelConfigs,
+  type ChannelConfigRow,
+  type ResolvedChannel,
+} from '@/lib/channel-configs';
+import { ChannelConfigModal } from './channel-config-modal';
+import {
   Wallet,
   Calendar,
   RefreshCw,
@@ -22,6 +28,7 @@ import {
   Droplets,
   Plug,
   Edit2,
+  Settings2,
   Check,
   X,
   AlertTriangle,
@@ -31,31 +38,22 @@ import {
   PinOff,
 } from 'lucide-react';
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Channel definitions
-// ─────────────────────────────────────────────────────────────────────────────
+// Icon lookup keyed by channel_key — only built-ins have a dedicated icon.
+// Custom channels render without one (Wallet default fallback in the row).
+const CHANNEL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  coinsbuy: Plug,
+  unipayment: Plug,
+  inversiones: TrendingUp,
+  liquidez: Droplets,
+};
 
-interface ChannelDef {
-  key: string;
-  label: string;
-  type: 'api' | 'manual' | 'auto';
-  /** When true, the user can override the auto-fetched value with a manual
-   *  snapshot. Used for channels where the API can fail and we still need
-   *  a number shown (UniPayment). */
-  allowManualOverride?: boolean;
-  icon?: React.ComponentType<{ className?: string }>;
-  description?: string;
-}
-
-const CHANNELS: ChannelDef[] = [
-  { key: 'coinsbuy',       label: 'Coinsbuy',                   type: 'auto',   icon: Plug,       description: 'Wallets pinneadas — balance en tiempo real desde la API' },
-  { key: 'unipayment',     label: 'UniPayment',                 type: 'auto',   icon: Plug,       description: 'My Wallet — balance en tiempo real desde la API' },
-  { key: 'fairpay',        label: 'FairPay',                    type: 'manual',                    description: 'Ingreso manual' },
-  { key: 'wallet_externa', label: 'Wallet Externa',             type: 'manual',                    description: 'Ingreso manual' },
-  { key: 'otros',          label: 'Otros',                      type: 'manual',                    description: 'Ingreso manual' },
-  { key: 'inversiones',    label: 'Balance Actual Inversiones', type: 'auto',   icon: TrendingUp, description: 'Automático desde módulo Inversiones' },
-  { key: 'liquidez',       label: 'Balance Actual Liquidez',    type: 'auto',   icon: Droplets,   description: 'Automático desde módulo Liquidez' },
-];
+// ─────────────────────────────────────────────────────────────────────────────
+// Channel list is now resolved dynamically from channel_configs (see
+// /src/lib/channel-configs.ts). The 7 built-ins are the default set; admins
+// can hide any of them, rename the manual ones, and add custom channels via
+// the "Configurar" button. The resolved list flows through getChannelValue
+// and the total-consolidado sum — hidden channels are skipped in both.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -89,6 +87,8 @@ export default function BalancesPage() {
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [pinnedWallets, setPinnedWallets] = useState<PinnedCoinsbuyWallet[]>([]);
   const [showCoinsbuyModal, setShowCoinsbuyModal] = useState(false);
+  const [showChannelConfig, setShowChannelConfig] = useState(false);
+  const [channelConfigRows, setChannelConfigRows] = useState<ChannelConfigRow[]>([]);
   const isAdmin = user?.role === 'admin';
   // Access-control result is computed here but the early return happens at
   // the bottom of the component — pulling it up before the rest of the
@@ -398,6 +398,30 @@ export default function BalancesPage() {
     };
   }, []);
 
+  // Load per-company channel_configs (toggle/rename/custom channels).
+  // A missing row for a built-in = "visible, default label" (see resolveChannels).
+  const loadChannelConfigs = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/channel-configs');
+      const json = (await res.json()) as { success: boolean; rows?: ChannelConfigRow[] };
+      if (json.success) setChannelConfigRows(json.rows ?? []);
+    } catch {
+      // Non-fatal — page falls back to all built-ins visible.
+    }
+  }, []);
+  useEffect(() => {
+    loadChannelConfigs();
+  }, [loadChannelConfigs]);
+
+  const resolvedChannels: ResolvedChannel[] = useMemo(
+    () => resolveChannelConfigs(channelConfigRows),
+    [channelConfigRows],
+  );
+  const visibleChannels = useMemo(
+    () => resolvedChannels.filter((c) => c.isVisible),
+    [resolvedChannels],
+  );
+
   // Load snapshots for selected date
   const loadSnapshots = async () => {
     if (!company) return;
@@ -486,8 +510,10 @@ export default function BalancesPage() {
     }
   };
 
-  // Total consolidado (suma de todos los canales)
-  const totalConsolidado = CHANNELS.reduce((sum, c) => sum + getChannelValue(c.key), 0);
+  // Total consolidado — suma SOLO los canales visibles (los ocultados con
+  // el toggle en el modal "Configurar" no aportan al total). Cambios se
+  // recalculan instantáneamente al cerrar el modal, vía loadChannelConfigs.
+  const totalConsolidado = visibleChannels.reduce((sum, c) => sum + getChannelValue(c.key), 0);
 
   // ─── Section C: Coinsbuy Wallets (state + fetch declared above) ───
 
@@ -685,18 +711,35 @@ export default function BalancesPage() {
             >
               <RefreshCw className={`w-4 h-4 ${loadingSnap ? 'animate-spin' : ''}`} />
             </button>
+            {isAdmin && (
+              <button
+                onClick={() => setShowChannelConfig(true)}
+                className="inline-flex items-center gap-1.5 h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors"
+                title="Configurar canales"
+              >
+                <Settings2 className="w-4 h-4" />
+                <span className="hidden sm:inline">Configurar</span>
+              </button>
+            )}
           </div>
         </div>
 
+        {visibleChannels.length === 0 && (
+          <p className="text-sm text-muted-foreground py-6 text-center">
+            No hay canales visibles. Abre <strong>Configurar</strong> para activar al menos uno.
+          </p>
+        )}
+
         <div className="space-y-2">
-          {CHANNELS.map((ch) => {
+          {visibleChannels.map((ch) => {
             const value = getChannelValue(ch.key);
             const isEditing = editing[ch.key] !== undefined;
             const isAuto = ch.type === 'auto';
             const isCoinsbuy = ch.key === 'coinsbuy';
-            // Channels where the user can overwrite the auto-fetched value.
-            const canOverride = !!ch.allowManualOverride;
-            const Icon = ch.icon;
+            // Built-in flag: historical `allowManualOverride` lived in the
+            // old static CHANNELS array; none of the current built-ins set it.
+            const canOverride = false;
+            const Icon = CHANNEL_ICONS[ch.key];
 
             return (
               <div key={ch.key}>
@@ -826,6 +869,21 @@ export default function BalancesPage() {
           </p>
         </div>
       </Card>
+
+      {/* Modal: channel visibility / rename / add custom (admin only).
+          Opens from the "Configurar" button in the Balances por Canal
+          card header. */}
+      {isAdmin && (
+        <ChannelConfigModal
+          open={showChannelConfig}
+          onClose={() => setShowChannelConfig(false)}
+          onChanged={() => {
+            loadChannelConfigs();
+            loadSnapshots();
+          }}
+          getValue={getChannelValue}
+        />
+      )}
 
       {/* Modal: Coinsbuy wallet selector (admin only, triggered from the
           pencil button on the Coinsbuy row above). Lets admin pick which

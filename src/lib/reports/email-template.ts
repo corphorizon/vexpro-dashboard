@@ -48,6 +48,20 @@ const CATEGORY_LABEL: Record<string, string> = {
   coinsbuy_api: 'Coinsbuy (API)',
 };
 
+/** Validates a hex colour string (#rgb or #rrggbb). Returns the normalised
+ *  6-char hex on success, null otherwise — we never interpolate user input
+ *  straight into the email HTML without a guard. */
+function normalizeHex(input: string | null | undefined): string | null {
+  if (!input) return null;
+  const s = input.trim();
+  if (/^#[0-9a-fA-F]{6}$/.test(s)) return s.toUpperCase();
+  if (/^#[0-9a-fA-F]{3}$/.test(s)) {
+    const m = s.slice(1);
+    return `#${m[0]}${m[0]}${m[1]}${m[1]}${m[2]}${m[2]}`.toUpperCase();
+  }
+  return null;
+}
+
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({
     '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
@@ -83,6 +97,17 @@ function variationTag(pct: number | null, invertColor = false): string {
   const color = positive ? '#10B981' : '#EF4444';
   const arrow = rounded >= 0 ? '▲' : '▼';
   return `<span style="color:${color};font-weight:600;font-size:12px;">${arrow} ${rounded > 0 ? '+' : ''}${rounded}% vs mes anterior</span>`;
+}
+
+/**
+ * Plain-text "+12.5%" / "-3.2%" for KPI bodies where HTML would be escaped.
+ * Use this when the percent should land in `value` (which goes through
+ * escapeHtml); use variationTag() when it goes into `hint` (raw-rendered).
+ */
+function variationText(pct: number | null): string {
+  if (pct === null || !isFinite(pct)) return 'sin datos';
+  const rounded = Math.round(pct * 10) / 10;
+  return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
 
 // ─── Cadence metadata ──────────────────────────────────────────────────
@@ -184,9 +209,54 @@ function renderTable(
 
 // ─── Sections ─────────────────────────────────────────────────────────
 
+/**
+ * Section header block — a subtle tinted background with a thick left
+ * accent bar in the company's primary colour. Gmail / Outlook / Apple Mail
+ * all render the left-border-style without issue when it lives on a
+ * table-cell.
+ */
+function sectionHeader(primary: string, emoji: string, title: string): string {
+  return `
+    <table cellspacing="0" cellpadding="0" style="width:100%;margin:32px 0 12px 0;">
+      <tr>
+        <td style="background:${primary}12;border-left:4px solid ${primary};padding:10px 14px;border-radius:4px;">
+          <h2 style="font-size:17px;color:${primary};margin:0;font-weight:700;line-height:1.2;">
+            <span style="margin-right:6px;">${emoji}</span>${title}
+          </h2>
+        </td>
+      </tr>
+    </table>
+  `;
+}
+
+function renderBalancesByChannelSection(data: ReportData, primary: string): string {
+  const b = data.balances_by_channel;
+  const typeLabel = (t: 'api' | 'manual' | 'auto') =>
+    t === 'api' ? 'API' : t === 'auto' ? 'Automático' : 'Manual';
+  const rows = b.channels.map((c) => [
+    c.label,
+    typeLabel(c.type),
+    formatCurrency(c.amount),
+  ]);
+  const totalRow: string[] = ['Total Consolidado', '', formatCurrency(b.total)];
+
+  const emptyNote =
+    b.channels.length === 0
+      ? `<p style="font-size:12px;color:#64748B;font-style:italic;margin:6px 0 0 0;">No hay canales visibles configurados.</p>`
+      : '';
+
+  return `
+    ${sectionHeader(primary, '🏦', 'Balances por Canal')}
+    <p style="font-size:11px;color:#64748B;margin:0 0 8px 0;">Al ${escapeHtml(b.asOf)}</p>
+    ${b.channels.length ? renderTable(['Canal', 'Tipo', 'Balance'], rows, totalRow) : ''}
+    ${emptyNote}
+  `;
+}
+
 function renderDepositsWithdrawalsSection(
   data: ReportData,
   cadence: ReportCadence,
+  primary: string,
 ): string {
   const d = data.deposits_withdrawals;
   const depositsRows = d.range.deposits
@@ -221,7 +291,7 @@ function renderDepositsWithdrawalsSection(
   `;
 
   return `
-    <h2 style="font-size:18px;color:#1E3A5F;margin:32px 0 12px 0;">💰 Depósitos y Retiros</h2>
+    ${sectionHeader(primary, '💰', 'Depósitos y Retiros')}
 
     <table cellspacing="0" cellpadding="0" style="width:100%;margin-bottom:16px;">${kpiRow}</table>
 
@@ -237,10 +307,11 @@ function renderDepositsWithdrawalsSection(
   `;
 }
 
-function renderCrmUsersSection(data: ReportData): string {
+function renderCrmUsersSection(data: ReportData, primary: string): string {
   const u = data.crm_users;
+  const title = `Usuarios CRM${u.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
   return `
-    <h2 style="font-size:18px;color:#1E3A5F;margin:32px 0 12px 0;">👥 Usuarios CRM${u.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}</h2>
+    ${sectionHeader(primary, '👥', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">
       <tr>
         ${renderKpi('Nuevos en el período', u.new_users_in_range.toLocaleString('es'), 'info')}
@@ -251,7 +322,7 @@ function renderCrmUsersSection(data: ReportData): string {
   `;
 }
 
-function renderBrokerPnlSection(data: ReportData, cadence: ReportCadence): string {
+function renderBrokerPnlSection(data: ReportData, cadence: ReportCadence, primary: string): string {
   const p = data.broker_pnl;
   const monthVsPrev = pctVariation(p.pnl_month, p.pnl_prev_month);
   const rangePctOfMonth = p.pnl_month
@@ -264,7 +335,7 @@ function renderBrokerPnlSection(data: ReportData, cadence: ReportCadence): strin
     <tr>
       ${renderKpi('P&L del mes', formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev))}
       ${renderKpi('P&L mes anterior', formatCurrency(p.pnl_prev_month), 'neutral')}
-      ${renderKpi('Variación', variationTag(monthVsPrev), 'info')}
+      ${renderKpi('Variación vs mes anterior', variationText(monthVsPrev), monthVsPrev === null ? 'neutral' : monthVsPrev >= 0 ? 'positive' : 'negative')}
     </tr>
   `
       : `
@@ -275,13 +346,14 @@ function renderBrokerPnlSection(data: ReportData, cadence: ReportCadence): strin
     </tr>
   `;
 
+  const title = `Broker P&amp;L${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
   return `
-    <h2 style="font-size:18px;color:#1E3A5F;margin:32px 0 12px 0;">📈 Broker P&L${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}</h2>
+    ${sectionHeader(primary, '📈', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">${kpiRow}</table>
   `;
 }
 
-function renderPropTradingSection(data: ReportData): string {
+function renderPropTradingSection(data: ReportData, primary: string): string {
   const p = data.prop_trading;
   const productRows = p.products.map((prod) => [
     prod.name,
@@ -289,8 +361,9 @@ function renderPropTradingSection(data: ReportData): string {
     formatCurrency(prod.amount),
   ]);
 
+  const title = `Prop Trading Firm${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
   return `
-    <h2 style="font-size:18px;color:#1E3A5F;margin:32px 0 12px 0;">🎯 Prop Trading Firm${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}</h2>
+    ${sectionHeader(primary, '🎯', title)}
 
     <div style="margin-bottom:16px;">
       <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">Productos vendidos</h3>
@@ -309,15 +382,37 @@ function renderPropTradingSection(data: ReportData): string {
 
 // ─── Main render ──────────────────────────────────────────────────────
 
+export interface ReportSectionToggles {
+  deposits_withdrawals: boolean;
+  balances_by_channel: boolean;
+  crm_users: boolean;
+  broker_pnl: boolean;
+  prop_trading: boolean;
+}
+
+const ALL_SECTIONS_ON: ReportSectionToggles = {
+  deposits_withdrawals: true,
+  balances_by_channel: true,
+  crm_users: true,
+  broker_pnl: true,
+  prop_trading: true,
+};
+
 export interface RenderReportEmailParams {
   data: ReportData;
   cadence: ReportCadence;
   companyName: string;
   companyLogoUrl?: string | null;
+  /** Hex colour (with leading #) that brands the email header + section
+   *  accents. Falls back to the Horizon navy. */
+  primaryColor?: string | null;
+  sections?: ReportSectionToggles;
 }
 
 export function renderReportEmail(params: RenderReportEmailParams): string {
   const { data, cadence, companyName, companyLogoUrl } = params;
+  const sections = params.sections ?? ALL_SECTIONS_ON;
+  const primary = normalizeHex(params.primaryColor) ?? '#1E3A5F';
   const title = reportTitle(cadence);
   const rangeLabel =
     cadence === 'daily'
@@ -342,8 +437,8 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
     : '';
 
   const logoHtml = companyLogoUrl
-    ? `<img src="${escapeHtml(companyLogoUrl)}" alt="${escapeHtml(companyName)}" style="max-height:40px;max-width:180px;object-fit:contain;" />`
-    : `<div style="font-size:22px;font-weight:700;color:#1E3A5F;">${escapeHtml(companyName)}</div>`;
+    ? `<img src="${escapeHtml(companyLogoUrl)}" alt="${escapeHtml(companyName)}" style="max-height:44px;max-width:200px;object-fit:contain;display:block;" />`
+    : `<div style="font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.01em;">${escapeHtml(companyName)}</div>`;
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -356,23 +451,23 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   <table cellspacing="0" cellpadding="0" style="width:100%;background:#F1F5F9;padding:24px 0;">
     <tr>
       <td align="center">
-        <table cellspacing="0" cellpadding="0" style="width:100%;max-width:680px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05);">
+        <table cellspacing="0" cellpadding="0" style="width:100%;max-width:640px;background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 2px 10px rgba(15,23,42,0.08);">
 
-          <!-- Header -->
+          <!-- Branded header (primary colour fill) -->
           <tr>
-            <td style="padding:28px 32px 20px 32px;border-bottom:3px solid #1E3A5F;">
+            <td style="background:${primary};padding:28px 32px;">
               <table cellspacing="0" cellpadding="0" style="width:100%;">
                 <tr>
                   <td style="vertical-align:middle;">
                     ${logoHtml}
                   </td>
-                  <td align="right" style="vertical-align:middle;color:#64748B;font-size:11px;">
+                  <td align="right" style="vertical-align:middle;color:#ffffffcc;font-size:11px;letter-spacing:0.3px;">
                     Smart Dashboard
                   </td>
                 </tr>
               </table>
-              <h1 style="font-size:22px;color:#1E3A5F;margin:16px 0 4px 0;">${escapeHtml(title)}</h1>
-              <div style="color:#64748B;font-size:13px;">${escapeHtml(rangeLabel)}</div>
+              <h1 style="font-size:22px;color:#ffffff;margin:18px 0 4px 0;font-weight:700;">${escapeHtml(title)}</h1>
+              <div style="color:#ffffffcc;font-size:13px;">${escapeHtml(rangeLabel)}</div>
             </td>
           </tr>
 
@@ -381,20 +476,22 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
             <td style="padding:8px 32px 32px 32px;">
               ${failureNote}
               ${mockNote}
-              ${renderDepositsWithdrawalsSection(data, cadence)}
-              ${renderCrmUsersSection(data)}
-              ${renderBrokerPnlSection(data, cadence)}
-              ${renderPropTradingSection(data)}
+              ${sections.deposits_withdrawals ? renderDepositsWithdrawalsSection(data, cadence, primary) : ''}
+              ${sections.balances_by_channel ? renderBalancesByChannelSection(data, primary) : ''}
+              ${sections.crm_users ? renderCrmUsersSection(data, primary) : ''}
+              ${sections.broker_pnl ? renderBrokerPnlSection(data, cadence, primary) : ''}
+              ${sections.prop_trading ? renderPropTradingSection(data, primary) : ''}
             </td>
           </tr>
 
-          <!-- Footer -->
+          <!-- Dark footer -->
           <tr>
-            <td style="padding:20px 32px;background:#F8FAFC;border-top:1px solid #E2E8F0;text-align:center;font-size:11px;color:#64748B;">
-              Este es un reporte automático generado por
-              <a href="${DASHBOARD_URL}" style="color:#3B82F6;text-decoration:none;">Smart Dashboard</a>.
+            <td style="padding:22px 32px;background:#0F172A;color:#CBD5E1;font-size:11px;text-align:center;">
+              <div style="font-weight:600;color:#ffffff;font-size:12px;margin-bottom:4px;">${escapeHtml(companyName)}</div>
+              Reporte generado automáticamente por
+              <a href="${DASHBOARD_URL}" style="color:#93C5FD;text-decoration:none;">Smart Dashboard</a>.
               <br />
-              <span style="color:#94A3B8;">Para dejar de recibir este reporte, contacta a tu administrador.</span>
+              <span style="color:#94A3B8;font-size:10px;">Para dejar de recibir este reporte, contacta a tu administrador.</span>
             </td>
           </tr>
 
@@ -423,6 +520,14 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
     `MES ACTUAL`,
     `  Net Deposit:     ${formatCurrency(d.month.net_deposit)}`,
     `  (mes anterior:   ${formatCurrency(d.prev_month.net_deposit)})`,
+    ``,
+    `BALANCES POR CANAL`,
+    ...(data.balances_by_channel.channels.length === 0
+      ? [`  (sin canales visibles)`]
+      : data.balances_by_channel.channels.map(
+          (c) => `  ${c.label.padEnd(28, ' ')} ${formatCurrency(c.amount)}`,
+        )),
+    `  ${'TOTAL'.padEnd(28, ' ')} ${formatCurrency(data.balances_by_channel.total)}`,
     ``,
     `USUARIOS CRM`,
     `  Nuevos en rango: ${data.crm_users.new_users_in_range}`,

@@ -425,6 +425,29 @@ export default function UploadPage() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [savingAll, setSavingAll] = useState(false);
 
+  // Per-module "saving" locks for Liquidez / Inversiones row handlers.
+  // We used to fire-and-forget the mutation inside an IIFE with no local
+  // state — a network hang left the UI frozen (form not clearing, row
+  // stuck in edit mode) without any error surfaced to the user. Now every
+  // mutation goes through `withRowTimeout` (10s hard cap) + a boolean
+  // lock that disables the relevant buttons while in-flight.
+  const [savingLiq, setSavingLiq] = useState(false);
+  const [savingInv, setSavingInv] = useState(false);
+
+  // 10-second hard ceiling around each row-level mutation. If the request
+  // doesn't resolve in time we surface a clear error instead of letting
+  // the UI hang indefinitely.
+  const withRowTimeout = <T,>(p: Promise<T>, label: string, ms = 10_000): Promise<T> =>
+    Promise.race([
+      p,
+      new Promise<T>((_, reject) =>
+        setTimeout(
+          () => reject(new Error(`${label}: la operación tardó demasiado (>${ms / 1000}s). Reintenta.`)),
+          ms,
+        ),
+      ),
+    ]);
+
   // Expense concept autocomplete
   const CONCEPT_STORAGE_KEY = 'fd_expense_concepts';
   const [conceptSuggestions, setConceptSuggestions] = useState<string[]>(() => loadFromStorage(CONCEPT_STORAGE_KEY, [] as string[]));
@@ -670,24 +693,34 @@ export default function UploadPage() {
 
   const addLiquidityRow = () => {
     if (!userCanAdd || !company || !newLiq.date || !newLiq.user_email) return;
+    if (savingLiq) return;
     const dep = parseFloat(newLiq.deposit) || 0;
     const wth = parseFloat(newLiq.withdrawal) || 0;
     (async () => {
+      setSavingLiq(true);
       try {
-        await insertLiquidityMovement(company.id, {
-          date: newLiq.date,
-          user_email: newLiq.user_email || null,
-          mt_account: newLiq.mt_account || null,
-          deposit: dep,
-          withdrawal: wth,
-          balance: 0,
-        });
+        await withRowTimeout(
+          insertLiquidityMovement(company.id, {
+            date: newLiq.date,
+            user_email: newLiq.user_email || null,
+            mt_account: newLiq.mt_account || null,
+            deposit: dep,
+            withdrawal: wth,
+            balance: 0,
+          }),
+          'Guardar liquidez',
+        );
         setNewLiq({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
-        await refresh();
+        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+          // Silent refresh failure shouldn't invalidate the successful save.
+          console.warn('[liquidez] refresh after add failed');
+        });
         setLiquidityRowsRaw([...getLiquidityData()]);
         showSuccess(t('upload.liquidityAdded'));
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
+      } finally {
+        setSavingLiq(false);
       }
     })();
   };
@@ -706,38 +739,53 @@ export default function UploadPage() {
 
   const saveEditLiq = () => {
     if (!editingLiqId) return;
+    if (savingLiq) return;
     const dep = parseFloat(editLiq.deposit) || 0;
     const wth = parseFloat(editLiq.withdrawal) || 0;
     (async () => {
+      setSavingLiq(true);
       try {
-        await updateLiquidityMovement(editingLiqId, {
-          date: editLiq.date,
-          user_email: editLiq.user_email || null,
-          mt_account: editLiq.mt_account || null,
-          deposit: dep,
-          withdrawal: wth,
-          balance: 0,
-        });
+        await withRowTimeout(
+          updateLiquidityMovement(editingLiqId, {
+            date: editLiq.date,
+            user_email: editLiq.user_email || null,
+            mt_account: editLiq.mt_account || null,
+            deposit: dep,
+            withdrawal: wth,
+            balance: 0,
+          }),
+          'Actualizar liquidez',
+        );
         setEditingLiqId(null);
-        await refresh();
+        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+          console.warn('[liquidez] refresh after edit failed');
+        });
         setLiquidityRowsRaw([...getLiquidityData()]);
         showSuccess(t('upload.liquidityUpdated'));
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
+      } finally {
+        setSavingLiq(false);
       }
     })();
   };
 
   const deleteLiqRow = (id: string) => {
     if (!userCanDelete) return;
+    if (savingLiq) return;
     askConfirmation('Eliminar este movimiento de liquidez?', async () => {
+      setSavingLiq(true);
       try {
-        await deleteLiqMutation(id);
-        await refresh();
+        await withRowTimeout(deleteLiqMutation(id), 'Eliminar liquidez');
+        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+          console.warn('[liquidez] refresh after delete failed');
+        });
         setLiquidityRowsRaw([...getLiquidityData()]);
         showSuccess(t('upload.liquidityDeleted'));
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
+      } finally {
+        setSavingLiq(false);
       }
     });
   };
@@ -754,26 +802,35 @@ export default function UploadPage() {
 
   const addInvestmentRow = () => {
     if (!userCanAdd || !company || !newInv.date) return;
+    if (savingInv) return;
     const dep = parseFloat(newInv.deposit) || 0;
     const wth = parseFloat(newInv.withdrawal) || 0;
     const prf = parseFloat(newInv.profit) || 0;
     (async () => {
+      setSavingInv(true);
       try {
-        await insertInvestment(company.id, {
-          date: newInv.date,
-          concept: newInv.concept || null,
-          responsible: newInv.responsible || null,
-          deposit: dep,
-          withdrawal: wth,
-          profit: prf,
-          balance: 0,
-        });
+        await withRowTimeout(
+          insertInvestment(company.id, {
+            date: newInv.date,
+            concept: newInv.concept || null,
+            responsible: newInv.responsible || null,
+            deposit: dep,
+            withdrawal: wth,
+            profit: prf,
+            balance: 0,
+          }),
+          'Guardar inversión',
+        );
         setNewInv({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
-        await refresh();
+        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+          console.warn('[inversiones] refresh after add failed');
+        });
         setInvestmentRowsRaw([...getInvestmentsData()]);
         showSuccess(t('upload.investmentAdded'));
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
+      } finally {
+        setSavingInv(false);
       }
     })();
   };
@@ -793,40 +850,55 @@ export default function UploadPage() {
 
   const saveEditInv = () => {
     if (!editingInvId) return;
+    if (savingInv) return;
     const dep = parseFloat(editInv.deposit) || 0;
     const wth = parseFloat(editInv.withdrawal) || 0;
     const prf = parseFloat(editInv.profit) || 0;
     (async () => {
+      setSavingInv(true);
       try {
-        await updateInvestment(editingInvId, {
-          date: editInv.date,
-          concept: editInv.concept || null,
-          responsible: editInv.responsible || null,
-          deposit: dep,
-          withdrawal: wth,
-          profit: prf,
-          balance: 0,
-        });
+        await withRowTimeout(
+          updateInvestment(editingInvId, {
+            date: editInv.date,
+            concept: editInv.concept || null,
+            responsible: editInv.responsible || null,
+            deposit: dep,
+            withdrawal: wth,
+            profit: prf,
+            balance: 0,
+          }),
+          'Actualizar inversión',
+        );
         setEditingInvId(null);
-        await refresh();
+        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+          console.warn('[inversiones] refresh after edit failed');
+        });
         setInvestmentRowsRaw([...getInvestmentsData()]);
         showSuccess(t('upload.investmentUpdated'));
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
+      } finally {
+        setSavingInv(false);
       }
     })();
   };
 
   const deleteInvRow = (id: string) => {
     if (!userCanDelete) return;
+    if (savingInv) return;
     askConfirmation('Eliminar este movimiento de inversion?', async () => {
+      setSavingInv(true);
       try {
-        await deleteInvMutation(id);
-        await refresh();
+        await withRowTimeout(deleteInvMutation(id), 'Eliminar inversión');
+        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+          console.warn('[inversiones] refresh after delete failed');
+        });
         setInvestmentRowsRaw([...getInvestmentsData()]);
         showSuccess(t('upload.investmentDeleted'));
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
+      } finally {
+        setSavingInv(false);
       }
     });
   };
@@ -1931,10 +2003,10 @@ export default function UploadPage() {
                 />
                 <button
                   onClick={addLiquidityRow}
-                  disabled={!newLiq.date || !newLiq.user_email}
+                  disabled={!newLiq.date || !newLiq.user_email || savingLiq}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
-                  {t('common.add')}
+                  {savingLiq ? 'Guardando…' : t('common.add')}
                 </button>
               </div>
             </div>
@@ -2128,10 +2200,10 @@ export default function UploadPage() {
                 />
                 <button
                   onClick={addInvestmentRow}
-                  disabled={!newInv.date}
+                  disabled={!newInv.date || savingInv}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
-                  {t('common.add')}
+                  {savingInv ? 'Guardando…' : t('common.add')}
                 </button>
               </div>
             </div>
