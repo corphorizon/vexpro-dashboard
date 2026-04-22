@@ -133,6 +133,11 @@ export default function EgresosPage() {
 
   // Persist `nextList` to Supabase. We run the delete+reinsert helper and
   // then call `refresh()` so the data-context reloads.
+  //
+  // Fixed 2026-04-22: refresh() used to be awaited inside the try block,
+  // which meant a slow context-reload kept the save button spinning even
+  // after the DB write succeeded. Now refresh runs in background and the
+  // button releases as soon as the real save is done.
   const persistExpenses = async (nextList: Expense[]) => {
     if (!company || !selectedPeriodId) return;
     setSaving(true);
@@ -152,7 +157,11 @@ export default function EgresosPage() {
         delete next[periodKey];
         return next;
       });
-      await refresh();
+      // Background refresh — the caller doesn't wait on the full context
+      // reload. If it fails we log but the save itself already succeeded.
+      void refresh().catch((err) => {
+        console.warn('[persistExpenses] background refresh failed:', err);
+      });
     } finally {
       setSaving(false);
     }

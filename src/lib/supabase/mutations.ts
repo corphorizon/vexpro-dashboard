@@ -153,63 +153,98 @@ export async function upsertWithdrawals(
 }
 
 // ─── Expenses (delete + reinsert for the period) ───
+//
+// Bug fixed 2026-04-22: the previous implementation ran a sequential N+1
+// loop over every `is_fixed` expense to sync `expense_templates` (one
+// SELECT + one UPDATE/INSERT per row). With 17 fixed expenses that was
+// 34 round-trips AFTER the main save, all inside the caller's await. Any
+// slow request or transient RLS hiccup left the button spinning forever
+// because none of those queries were wrapped in try/catch and they
+// blocked the function from returning.
+//
+// New behaviour:
+//   1. DELETE + bulk INSERT of the period's expenses (unchanged contract).
+//   2. Template sync uses a single `.upsert(..., { onConflict })` call —
+//      one round-trip total — and runs fire-and-forget. Failures here
+//      log but don't break the main save.
+//   3. A hard 20s timeout on the main save so a stuck network never
+//      locks the UI button in a "Guardando..." state.
+
+const MAIN_SAVE_TIMEOUT_MS = 20_000;
+
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} tardó demasiado (>${ms / 1000}s)`)), ms),
+    ),
+  ]);
+}
+
+async function syncExpenseTemplates(
+  companyId: string,
+  fixedExpenses: { concept: string; amount: number }[],
+): Promise<void> {
+  if (fixedExpenses.length === 0) return;
+  // `expense_templates` has UNIQUE (company_id, concept) — one bulk upsert
+  // replaces the old N+1 select-then-update/insert loop.
+  const { error } = await supabase
+    .from('expense_templates')
+    .upsert(
+      fixedExpenses.map((fx) => ({
+        company_id: companyId,
+        concept: fx.concept,
+        amount: fx.amount,
+        active: true,
+      })),
+      { onConflict: 'company_id,concept' },
+    );
+  if (error) throw new Error(error.message);
+}
 
 export async function upsertExpenses(
   companyId: string,
   periodId: string,
   expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null }[]
 ): Promise<void> {
-  const { error: delError } = await supabase
-    .from('expenses')
-    .delete()
-    .eq('company_id', companyId)
-    .eq('period_id', periodId);
-
-  if (delError) throw new Error(`Error borrando egresos: ${delError.message}`);
-
-  if (expenses.length > 0) {
-    const rows = expenses.map((e, i) => ({
-      company_id: companyId,
-      period_id: periodId,
-      concept: e.concept,
-      amount: e.amount,
-      paid: e.paid,
-      pending: e.pending,
-      is_fixed: !!e.is_fixed,
-      category: e.category ?? null,
-      sort_order: i + 1,
-    }));
-
-    const { error: insError } = await supabase.from('expenses').insert(rows);
-    if (insError) throw new Error(`Error guardando egresos: ${insError.message}`);
-  }
-
-  // Sync expense_templates: any expense marked is_fixed becomes (or updates) a template
-  const fixedExpenses = expenses.filter(e => e.is_fixed && e.concept.trim());
-  for (const fx of fixedExpenses) {
-    const { data: existing } = await supabase
-      .from('expense_templates')
-      .select('id')
+  const mainSave = (async () => {
+    const { error: delError } = await supabase
+      .from('expenses')
+      .delete()
       .eq('company_id', companyId)
-      .eq('concept', fx.concept)
-      .maybeSingle();
+      .eq('period_id', periodId);
 
-    if (existing) {
-      await supabase
-        .from('expense_templates')
-        .update({ amount: fx.amount, active: true })
-        .eq('id', existing.id);
-    } else {
-      await supabase
-        .from('expense_templates')
-        .insert({
-          company_id: companyId,
-          concept: fx.concept,
-          amount: fx.amount,
-          active: true,
-        });
+    if (delError) throw new Error(`Error borrando egresos: ${delError.message}`);
+
+    if (expenses.length > 0) {
+      const rows = expenses.map((e, i) => ({
+        company_id: companyId,
+        period_id: periodId,
+        concept: e.concept,
+        amount: e.amount,
+        paid: e.paid,
+        pending: e.pending,
+        is_fixed: !!e.is_fixed,
+        category: e.category ?? null,
+        sort_order: i + 1,
+      }));
+
+      const { error: insError } = await supabase.from('expenses').insert(rows);
+      if (insError) throw new Error(`Error guardando egresos: ${insError.message}`);
     }
-  }
+  })();
+
+  await withTimeout(mainSave, MAIN_SAVE_TIMEOUT_MS, 'upsertExpenses');
+
+  // Fire-and-forget template sync — never blocks the return. If it fails
+  // we log and move on; the user still sees a successful save, and next
+  // save will reconcile.
+  const fixedExpenses = expenses
+    .filter((e) => e.is_fixed && e.concept.trim())
+    .map((e) => ({ concept: e.concept, amount: e.amount }));
+  void syncExpenseTemplates(companyId, fixedExpenses).catch((err) => {
+    console.error('[upsertExpenses] template sync failed (non-fatal):', err);
+  });
 }
 
 // ─── Expense Templates (CRUD) ───

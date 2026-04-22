@@ -834,38 +834,74 @@ export default function UploadPage() {
   // Save All handler — saves all fields in the current section to Supabase.
   // Liquidez and Inversiones persist per-row so they're not in here (they
   // have Add/Edit/Save buttons right on each row).
+  //
+  // Bug fixed 2026-04-22: the previous version awaited `refresh()` BEFORE
+  // flipping `savingAll` back to false. Since refresh() reloads the entire
+  // data-context (periods + deposits + withdrawals + expenses + 14 more
+  // tables with retries up to 60s), a slow refresh left the "Guardar todo"
+  // button stuck in "Guardando..." state even though the real DB write had
+  // already succeeded. Users assumed the save failed and retried, stacking
+  // duplicate writes.
+  //
+  // New flow:
+  //   1. Run the main save (upsertX) — this is the only thing we await.
+  //   2. Show success + flip button state IMMEDIATELY.
+  //   3. Kick off refresh() in the background — the UI can afford to show
+  //      slightly stale numbers for a second while the context reloads.
+  //   4. Hard 25s safety timeout around the main save so network death
+  //      doesn't lock the button forever.
   const saveAll = async () => {
     if (!userCanAdd || !company) return;
     setSavingAll(true);
     const companyId = company.id;
     const periodId = selectedPeriodRef.current;
+
+    const SAVE_TIMEOUT_MS = 25_000;
+    const timedSave = async (work: () => Promise<void>, label: string) => {
+      await Promise.race([
+        work(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`${label} tardó demasiado (>25s). Reintenta.`)),
+            SAVE_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+    };
+
     try {
-      if (section === 'depositos') {
-        await upsertDeposits(companyId, periodId, deposits);
-        await upsertPropFirmSales(companyId, periodId, propFirmAmount);
-        if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
-      } else if (section === 'retiros') {
-        // Combine the four fixed aggregate rows (no description) with the
-        // free-form extras (each with its own description).
-        const combined = [
-          ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
-          ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
-        ];
-        await upsertWithdrawals(companyId, periodId, combined);
-        await upsertP2PTransfers(companyId, periodId, p2pAmount);
-        if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
-      } else if (section === 'egresos') {
-        await upsertExpenses(companyId, periodId, expenses);
-        if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
-      } else if (section === 'ingresos') {
-        await upsertOperatingIncome(companyId, periodId, income);
-        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
-      }
-      await refresh();
+      await timedSave(async () => {
+        if (section === 'depositos') {
+          await upsertDeposits(companyId, periodId, deposits);
+          await upsertPropFirmSales(companyId, periodId, propFirmAmount);
+          if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
+        } else if (section === 'retiros') {
+          const combined = [
+            ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
+            ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
+          ];
+          await upsertWithdrawals(companyId, periodId, combined);
+          await upsertP2PTransfers(companyId, periodId, p2pAmount);
+          if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
+        } else if (section === 'egresos') {
+          await upsertExpenses(companyId, periodId, expenses);
+          if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
+        } else if (section === 'ingresos') {
+          await upsertOperatingIncome(companyId, periodId, income);
+          if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
+        }
+      }, 'Guardar todo');
+
+      // Main save succeeded. Show success + unlock the button NOW.
       showSuccess('Todos los datos guardados correctamente');
+      setSavingAll(false);
+
+      // Refresh in the background — never blocks the button.
+      void refresh().catch((err) => {
+        console.warn('[saveAll] background refresh failed:', err);
+      });
     } catch (err) {
       showError(`Error al guardar: ${(err as Error).message}`);
-    } finally {
       setSavingAll(false);
     }
   };
