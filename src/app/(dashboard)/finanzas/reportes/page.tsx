@@ -302,7 +302,7 @@ export default function ReportesPage() {
         typeof window !== 'undefined'
           ? getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()
           : '';
-      downloadReportPDF({
+      void downloadReportPDF({
         data: data as unknown as import('@/lib/reports/data').ReportData,
         cadence: 'daily',
         companyName: company?.name ?? 'Smart Dashboard',
