@@ -16,6 +16,7 @@ import { CompanyForm, ALL_MODULES, type CompanyFormValues } from '../_form';
 const DEFAULT_VALUES: CompanyFormValues = {
   name: '',
   logo_url: '',
+  logo_url_white: '',
   color_primary: '#1E3A5F',
   color_secondary: '#3B82F6',
   // Reasonable default module set for a fresh tenant.

@@ -4,6 +4,9 @@ export interface Company {
   slug: string;
   subdomain: string;
   logo_url: string | null;
+  /** Optional white/monochrome logo for use on dark backgrounds (sidebar).
+   *  Falls back to logo_url when null. */
+  logo_url_white: string | null;
   color_primary: string;
   color_secondary: string;
   currency: string;

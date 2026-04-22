@@ -4,8 +4,14 @@ import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
 
 // ---------------------------------------------------------------------------
-// POST   /api/superadmin/companies/:id/logo   → upload a logo file
-// DELETE /api/superadmin/companies/:id/logo   → clear the logo
+// POST   /api/superadmin/companies/:id/logo?variant=color|white  → upload
+// DELETE /api/superadmin/companies/:id/logo?variant=color|white  → clear
+//
+// Two logo slots per tenant:
+//   · variant='color' (default) → companies.logo_url
+//     Used on light backgrounds (login, emails, PDFs).
+//   · variant='white'           → companies.logo_url_white
+//     Used on dark backgrounds (sidebar header, superadmin).
 //
 // Upload accepts PNG / SVG / JPG / WEBP, max 2MB. Content-type is verified
 // server-side by:
@@ -16,6 +22,15 @@ import { serverAuditLog } from '@/lib/server-audit';
 // The `company-logos` Storage bucket is created on first use with public
 // read + no anon write (writes go through this service-role route).
 // ---------------------------------------------------------------------------
+
+type LogoVariant = 'color' | 'white';
+function parseVariant(url: URL): LogoVariant {
+  const v = url.searchParams.get('variant');
+  return v === 'white' ? 'white' : 'color';
+}
+function columnFor(v: LogoVariant): 'logo_url' | 'logo_url_white' {
+  return v === 'white' ? 'logo_url_white' : 'logo_url';
+}
 
 const BUCKET = 'company-logos';
 const MAX_SIZE = 2 * 1024 * 1024; // 2 MB
@@ -95,6 +110,8 @@ export async function POST(
     const auth = await verifySuperadminAuth();
     if (auth instanceof NextResponse) return auth;
     const { id: companyId } = await params;
+    const variant = parseVariant(request.nextUrl);
+    const column = columnFor(variant);
 
     const formData = await request.formData();
     const file = formData.get('file') as File | null;
@@ -142,7 +159,7 @@ export async function POST(
     // Verify the company exists before uploading.
     const { data: company } = await admin
       .from('companies')
-      .select('id, name, logo_url')
+      .select('id, name, logo_url, logo_url_white')
       .eq('id', companyId)
       .maybeSingle();
     if (!company) {
@@ -154,7 +171,9 @@ export async function POST(
 
     await ensureBucket(admin);
 
-    const fileName = `${companyId}/${Date.now()}.${sniffed.ext}`;
+    // Prefix with the variant so the bucket stays tidy and we can see at a
+    // glance which file is which.
+    const fileName = `${companyId}/${variant}-${Date.now()}.${sniffed.ext}`;
     const { error: uploadErr } = await admin.storage
       .from(BUCKET)
       .upload(fileName, buf, {
@@ -172,8 +191,9 @@ export async function POST(
     const { data: urlData } = admin.storage.from(BUCKET).getPublicUrl(fileName);
     const publicUrl = urlData.publicUrl;
 
-    // Best-effort cleanup of the prior logo if it also lived in our bucket.
-    const prevUrl = company.logo_url as string | null;
+    // Best-effort cleanup of the prior logo for THIS variant if it also
+    // lived in our bucket. The other variant stays untouched.
+    const prevUrl = (company as Record<string, unknown>)[column] as string | null | undefined;
     if (prevUrl && prevUrl.includes(`/storage/v1/object/public/${BUCKET}/`)) {
       const prevPath = prevUrl.split(`/public/${BUCKET}/`)[1];
       if (prevPath) {
@@ -189,7 +209,7 @@ export async function POST(
 
     const { error: updateErr } = await admin
       .from('companies')
-      .update({ logo_url: publicUrl })
+      .update({ [column]: publicUrl })
       .eq('id', companyId);
     if (updateErr) {
       return NextResponse.json(
@@ -204,7 +224,7 @@ export async function POST(
       actorName: auth.name || auth.email,
       action: 'update',
       module: 'companies',
-      details: `Superadmin actualizó el logo de ${company.name} (${sniffed.ext.toUpperCase()}, ${(file.size / 1024).toFixed(1)} KB)`,
+      details: `Superadmin actualizó el logo ${variant === 'white' ? 'blanco' : 'color'} de ${company.name} (${sniffed.ext.toUpperCase()}, ${(file.size / 1024).toFixed(1)} KB)`,
     });
 
     return NextResponse.json({ success: true, url: publicUrl });
@@ -215,19 +235,21 @@ export async function POST(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
     const auth = await verifySuperadminAuth();
     if (auth instanceof NextResponse) return auth;
     const { id: companyId } = await params;
+    const variant = parseVariant(request.nextUrl);
+    const column = columnFor(variant);
 
     const admin = createAdminClient();
 
     const { data: company } = await admin
       .from('companies')
-      .select('id, name, logo_url')
+      .select('id, name, logo_url, logo_url_white')
       .eq('id', companyId)
       .maybeSingle();
     if (!company) {
@@ -237,7 +259,7 @@ export async function DELETE(
       );
     }
 
-    const prevUrl = company.logo_url as string | null;
+    const prevUrl = (company as Record<string, unknown>)[column] as string | null | undefined;
     if (prevUrl && prevUrl.includes(`/storage/v1/object/public/${BUCKET}/`)) {
       const prevPath = prevUrl.split(`/public/${BUCKET}/`)[1];
       if (prevPath) {
@@ -253,7 +275,7 @@ export async function DELETE(
 
     const { error: updateErr } = await admin
       .from('companies')
-      .update({ logo_url: null })
+      .update({ [column]: null })
       .eq('id', companyId);
     if (updateErr) {
       return NextResponse.json(
@@ -268,7 +290,7 @@ export async function DELETE(
       actorName: auth.name || auth.email,
       action: 'delete',
       module: 'companies',
-      details: `Superadmin eliminó el logo de ${company.name}`,
+      details: `Superadmin eliminó el logo ${variant === 'white' ? 'blanco' : 'color'} de ${company.name}`,
     });
 
     return NextResponse.json({ success: true });

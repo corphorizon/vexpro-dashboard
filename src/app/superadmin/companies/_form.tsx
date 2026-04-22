@@ -26,6 +26,10 @@ export const ALL_MODULES: { key: string; label: string }[] = [
 export interface CompanyFormValues {
   name: string;
   logo_url: string;
+  /** Second logo slot — the white/monochrome version used on dark
+   *  backgrounds (sidebar header, superadmin header, email footer).
+   *  When empty we fall back to logo_url. */
+  logo_url_white: string;
   color_primary: string;
   color_secondary: string;
   active_modules: string[];
@@ -90,15 +94,44 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
             />
           </Field>
         )}
-        <div className="md:col-span-2">
-          <span className="text-xs font-medium mb-1 inline-block">Logo</span>
-          <LogoUploader
-            companyId={companyId ?? null}
-            companyName={values.name || 'Organización'}
-            colorPrimary={values.color_primary}
-            logoUrl={values.logo_url || null}
-            onChange={(next) => setValues((v) => ({ ...v, logo_url: next ?? '' }))}
-          />
+        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Slot 1 — logo en color, para fondos claros. */}
+          <div>
+            <span className="text-xs font-medium mb-1 inline-block">
+              Logo — fondos claros
+            </span>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Se usa en login, reportes, emails y PDFs. PNG/SVG/JPG/WEBP, transparente.
+            </p>
+            <LogoUploader
+              companyId={companyId ?? null}
+              companyName={values.name || 'Organización'}
+              colorPrimary={values.color_primary}
+              logoUrl={values.logo_url || null}
+              onChange={(next) => setValues((v) => ({ ...v, logo_url: next ?? '' }))}
+              variant="color"
+              previewTone="light"
+            />
+          </div>
+
+          {/* Slot 2 — logo blanco, para fondos oscuros (sidebar, headers). */}
+          <div>
+            <span className="text-xs font-medium mb-1 inline-block">
+              Logo blanco — fondos oscuros
+            </span>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Versión monocromática blanca para el sidebar. Si no se sube, usa el logo color.
+            </p>
+            <LogoUploader
+              companyId={companyId ?? null}
+              companyName={values.name || 'Organización'}
+              colorPrimary={values.color_primary}
+              logoUrl={values.logo_url_white || null}
+              onChange={(next) => setValues((v) => ({ ...v, logo_url_white: next ?? '' }))}
+              variant="white"
+              previewTone="dark"
+            />
+          </div>
         </div>
         <Field label="Moneda">
           <input

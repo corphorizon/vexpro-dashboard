@@ -228,7 +228,9 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
       >
         {/* Logo — tenant-branded. Big, centered, no text. When no logo
             is configured we fall back to the company name as typography
-            so the header doesn't look broken. */}
+            so the header doesn't look broken.
+            Prefer logo_url_white (designed for dark backgrounds) and fall
+            back to logo_url when the tenant hasn't uploaded a white version. */}
         <div className="px-5 py-6 border-b border-slate-800">
           <Link
             href="/"
@@ -236,14 +238,14 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             className="flex items-center justify-center"
             aria-label={company?.name || 'Inicio'}
           >
-            {company?.logo_url ? (
+            {(company?.logo_url_white || company?.logo_url) ? (
               // Native <img> on purpose — tenant logos come from arbitrary
               // URLs and we don't want to force every domain into the
               // Next.js image allow-list.
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={company.logo_url}
-                alt={company.name}
+                src={company!.logo_url_white || company!.logo_url || ''}
+                alt={company!.name}
                 className="h-14 max-w-[180px] w-auto object-contain"
                 onError={(e) => {
                   // Fail gracefully: swap for name text if the URL 404s.

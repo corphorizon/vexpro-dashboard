@@ -22,7 +22,7 @@ export async function PATCH(
     const body = await request.json();
     const allowed: Record<string, unknown> = {};
     const FIELDS = [
-      'name', 'logo_url', 'color_primary', 'color_secondary',
+      'name', 'logo_url', 'logo_url_white', 'color_primary', 'color_secondary',
       'active_modules', 'reserve_pct', 'currency', 'status',
     ] as const;
     for (const f of FIELDS) {

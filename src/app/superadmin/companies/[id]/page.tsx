@@ -52,6 +52,7 @@ export default function EditCompanyPage() {
         name: data.name || '',
         slug: data.slug,
         logo_url: data.logo_url || '',
+        logo_url_white: data.logo_url_white || '',
         color_primary: data.color_primary || '#1E3A5F',
         color_secondary: data.color_secondary || '#3B82F6',
         active_modules: data.active_modules || [],

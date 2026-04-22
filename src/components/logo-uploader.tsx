@@ -25,9 +25,22 @@ interface Props {
   colorPrimary: string;
   logoUrl: string | null;
   onChange: (nextUrl: string | null) => void;
+  /** 'color' (default, for light backgrounds) or 'white' (for dark surfaces
+   *  like the sidebar). Controls which column the API writes to. */
+  variant?: 'color' | 'white';
+  /** Preview background — the white logo needs a dark preview to be visible. */
+  previewTone?: 'light' | 'dark';
 }
 
-export function LogoUploader({ companyId, companyName, colorPrimary, logoUrl, onChange }: Props) {
+export function LogoUploader({
+  companyId,
+  companyName,
+  colorPrimary,
+  logoUrl,
+  onChange,
+  variant = 'color',
+  previewTone = 'light',
+}: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -51,10 +64,10 @@ export function LogoUploader({ companyId, companyName, colorPrimary, logoUrl, on
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(`/api/superadmin/companies/${companyId}/logo`, {
-        method: 'POST',
-        body: fd,
-      });
+      const res = await fetch(
+        `/api/superadmin/companies/${companyId}/logo?variant=${variant}`,
+        { method: 'POST', body: fd },
+      );
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       onChange(json.url as string);
@@ -74,9 +87,10 @@ export function LogoUploader({ companyId, companyName, colorPrimary, logoUrl, on
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/superadmin/companies/${companyId}/logo`, {
-        method: 'DELETE',
-      });
+      const res = await fetch(
+        `/api/superadmin/companies/${companyId}/logo?variant=${variant}`,
+        { method: 'DELETE' },
+      );
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       onChange(null);
@@ -98,13 +112,28 @@ export function LogoUploader({ companyId, companyName, colorPrimary, logoUrl, on
     <div>
       <div className="flex items-start gap-4">
         <div className="shrink-0">
-          <CompanyLogo
-            name={companyName || '?'}
-            logoUrl={logoUrl}
-            colorPrimary={colorPrimary}
-            className="w-20 h-20"
-            initialsClassName="text-xl"
-          />
+          {previewTone === 'dark' ? (
+            // White logo preview — render on a dark surface so the logo is
+            // actually visible (otherwise white-on-white = blank square).
+            <div className="w-20 h-20 rounded-md bg-slate-900 flex items-center justify-center overflow-hidden p-2">
+              {logoUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={logoUrl} alt={companyName} className="w-full h-full object-contain" />
+              ) : (
+                <span className="text-white text-xs text-center opacity-60">
+                  Versión blanca
+                </span>
+              )}
+            </div>
+          ) : (
+            <CompanyLogo
+              name={companyName || '?'}
+              logoUrl={logoUrl}
+              colorPrimary={colorPrimary}
+              className="w-20 h-20"
+              initialsClassName="text-xl"
+            />
+          )}
         </div>
 
         <div className="flex-1 min-w-0">

@@ -14,6 +14,7 @@ export const DEMO_COMPANY: Company = {
   slug: 'vexprofx',
   subdomain: 'vexprofx',
   logo_url: null,
+  logo_url_white: null,
   color_primary: '#1E3A5F',
   color_secondary: '#3B82F6',
   currency: 'USD',
