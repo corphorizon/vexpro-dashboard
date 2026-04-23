@@ -12,6 +12,7 @@ import { formatCurrency, cn } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { generateCommissionPDF, generateIndividualPDF, generatePnlPDF } from '@/lib/pdf-export';
 import { useExport2FA } from '@/components/verify-2fa-modal';
+import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import {
   calculateCommission,
   calculateGroupSummary,
@@ -43,6 +44,28 @@ import {
   ChevronDown,
   Loader2,
 } from 'lucide-react';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `appearsInCommissions`
+//
+// Un perfil aparece en el calculador de comisiones cuando es:
+//   - activo, O
+//   - despedido (status='inactive' + termination_date seteado).
+//
+// NO aparecen los inactivos SIN termination_date (licencia/pausa — quedan
+// fuera del calculador por ahora). La distinción existe porque hay que
+// seguir cargando net deposits negativos post-despido contra el profile_id
+// del BDM despedido.
+//
+// Helper único: antes los 10 filtros del archivo usaban `status === 'active'`
+// y los despedidos desaparecían silenciosamente del calculador. Usar este
+// predicado evita que vuelva a pasar si cambian los criterios.
+// ─────────────────────────────────────────────────────────────────────────────
+function appearsInCommissions(p: { status: string; termination_date?: string | null }): boolean {
+  if (p.status === 'active') return true;
+  if (p.status === 'inactive' && p.termination_date) return true;
+  return false;
+}
 
 const ROLE_BADGE: Record<string, string> = {
   sales_manager: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
@@ -133,7 +156,7 @@ export default function ComisionesPage() {
       // load their PERSONAL ND from net_deposit_accumulated (not net_deposit_current)
       // net_deposit_current belongs to the parent group context
       const isCurrentHead = p.id === selectedHeadId;
-      const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === p.id && sub.status === 'active');
+      const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === p.id && appearsInCommissions(sub));
       if (isCurrentHead && hasOwnTeam && p.head_id) {
         // Buscar el registro del HEAD en su PROPIO grupo (head_id = selectedHeadId)
         // NO el del grupo padre
@@ -202,7 +225,7 @@ export default function ComisionesPage() {
     if (!selectedHeadId) return [];
     const head = commercialProfiles.find((p) => p.id === selectedHeadId);
     if (!head) return [];
-    const subs = getProfilesByHead(selectedHeadId).filter((p) => p.status === 'active' && p.id !== selectedHeadId);
+    const subs = getProfilesByHead(selectedHeadId).filter((p) => appearsInCommissions(p) && p.id !== selectedHeadId);
     return [head, ...subs];
   }, [selectedHeadId, commercialProfiles, getProfilesByHead]);
 
@@ -277,7 +300,7 @@ export default function ComisionesPage() {
       const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
       // Dynamic BDM pct tiers only apply to actual BDMs, not sub-HEADs
       const isSubHead = profile.role === 'head' || profile.role === 'sales_manager'
-        || commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active');
+        || commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
       const bdmOwnPct = isSubHead || profile.fixed_salary
         ? (profile.net_deposit_pct ?? 0)
         : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
@@ -366,7 +389,7 @@ export default function ComisionesPage() {
   // ═══════════════════════════════════════════════════════════
 
   const allBdms = useMemo(
-    () => commercialProfiles.filter((p) => p.role === 'bdm' && p.status === 'active'),
+    () => commercialProfiles.filter((p) => p.role === 'bdm' && appearsInCommissions(p)),
     [commercialProfiles],
   );
 
@@ -547,7 +570,7 @@ export default function ComisionesPage() {
           const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
           // HEAD/sub-HEADs keep profile pct; only actual BDMs use dynamic pct based on ND
           const isSubHead = !isHead && (profile.role === 'head' || profile.role === 'sales_manager'
-            || commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active'));
+            || commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub)));
           const pct = (isHead || isSubHead || profile.fixed_salary) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
           const calc = calculateCommission(nd, accIn, pct);
 
@@ -571,7 +594,7 @@ export default function ComisionesPage() {
           } else {
             // Sub-members with own team: preserve net_deposit_accumulated (-1 flag)
             // because that field stores their personal ND from their own group
-            const isSubWithTeam = !isHead && commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active');
+            const isSubWithTeam = !isHead && commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
             entries.push({
               profile_id: profile.id,
               net_deposit_current: nd,
@@ -695,7 +718,7 @@ export default function ComisionesPage() {
   const doExport = () => {
     if (tab === 'history') {
       // Export the full history table from saved DB data
-      const activeProfiles = commercialProfiles.filter((p) => p.status === 'active');
+      const activeProfiles = commercialProfiles.filter(appearsInCommissions);
       const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
       const headProfilesList = activeProfiles.filter((p) => p.role === 'head');
       const bdmProfilesList = activeProfiles.filter((p) => p.role === 'bdm');
@@ -761,7 +784,7 @@ export default function ComisionesPage() {
       const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.commission'), t('comm.realPayment'), 'Salario', 'Total'];
       const periodData = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
       const bdmProfilesSorted = [...commercialProfiles]
-        .filter((p) => p.status === 'active')
+        .filter(appearsInCommissions)
         .sort((a, b) => a.name.localeCompare(b.name));
       const rows: (string | number)[][] = [];
       for (const profile of bdmProfilesSorted) {
@@ -1017,11 +1040,14 @@ export default function ComisionesPage() {
                     {bdmCalcs.map((calc) => {
                       const profile = commercialProfiles.find((p) => p.id === calc.profileId);
                       if (!profile) return null;
-                      const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === profile.id && sub.status === 'active');
+                      const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
                       return (
                         <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
                           <td className="px-4 py-3">
-                            <span className="font-medium block">{profile.name}{hasOwnTeam && <span className="ml-1 text-[10px] text-violet-500">(equipo)</span>}</span>
+                            <span className={cn('font-medium block', firedNameClass(profile))}>
+                              {profile.name}{hasOwnTeam && <span className="ml-1 text-[10px] text-violet-500">(equipo)</span>}
+                              <FiredBadge profile={profile} />
+                            </span>
                             <span className="text-xs text-muted-foreground">{profile.email}</span>
                           </td>
                           <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[profile.role])}>{ROLE_LABEL[profile.role]}</span></td>
@@ -1109,7 +1135,7 @@ export default function ComisionesPage() {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
                         <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className="font-medium block">{profile.name}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
                             <input type="number" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1234,7 +1260,7 @@ export default function ComisionesPage() {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
                         <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className="font-medium block">{profile.name}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
                             <input type="number" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1376,7 +1402,7 @@ export default function ComisionesPage() {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
                         <tr key={profile.id} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className="font-medium block">{profile.name}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3 text-center text-xs font-medium">{formatCurrency(profile.commission_per_lot ?? 0)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground italic text-xs">—</td>
@@ -1394,7 +1420,7 @@ export default function ComisionesPage() {
       )}
       {/* ═══════════ TAB: HISTORY ═══════════ */}
       {tab === 'history' && (() => {
-        const activeProfiles = commercialProfiles.filter((p) => p.status === 'active');
+        const activeProfiles = commercialProfiles.filter(appearsInCommissions);
         const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
         const headProfiles = activeProfiles.filter((p) => p.role === 'head');
         const bdmProfiles = activeProfiles.filter((p) => p.role === 'bdm');
@@ -1484,7 +1510,7 @@ export default function ComisionesPage() {
                       const total = getProfileTotal(profile.id);
                       return (
                         <tr key={profile.id} className={cn('border-b border-border/50 hover:bg-muted/30', showSeparator && 'border-t-2 border-t-border')}>
-                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className="font-medium block">{profile.name}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-2 py-2.5">
                             <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', ROLE_BADGE[profile.role])}>
                               {ROLE_LABEL[profile.role]}

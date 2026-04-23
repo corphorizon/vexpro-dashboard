@@ -237,9 +237,20 @@ export interface CommercialProfile {
   benefits: string | null;
   comments: string | null;
   hire_date: string | null;
+  termination_date: string | null; // fecha de despido (null = no despedido)
+  termination_reason: string | null;   // texto libre con los detalles
+  termination_category: string | null; // 'performance' | 'misconduct' | 'voluntary' | 'restructuring' | 'other' | null
+  terminated_by: string | null;        // auth.users.id de quien ejecutó el despido
   birthday: string | null;
   status: 'active' | 'inactive';
 }
+
+// ─── Termination categories (CHECK constraint en DB) ───
+export type TerminationCategory = 'performance' | 'misconduct' | 'voluntary' | 'restructuring' | 'other';
+
+export const TERMINATION_CATEGORIES: TerminationCategory[] = [
+  'performance', 'misconduct', 'voluntary', 'restructuring', 'other',
+];
 
 export interface CommercialMonthlyResult {
   id: string;

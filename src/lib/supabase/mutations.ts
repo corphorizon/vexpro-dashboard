@@ -1,4 +1,5 @@
 import { createClient } from './client';
+import { withActiveCompany } from '@/lib/api-fetch';
 
 const supabase = createClient();
 
@@ -567,7 +568,7 @@ export async function upsertCommissionEntries(
   headId: string,
   entries: CommissionEntryRow[],
 ): Promise<void> {
-  const res = await fetch('/api/admin/commission-entries', {
+  const res = await fetch(withActiveCompany('/api/admin/commission-entries'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -598,12 +599,16 @@ export interface CommercialProfileInput {
   hire_date: string | null;
   birthday: string | null;
   status: string;
+  termination_date: string | null;
+  termination_reason: string | null;
+  termination_category: string | null;
+  terminated_by: string | null;
 }
 
 // ─── Commercial Profiles via API route (bypasses RLS with service role) ───
 
 async function profileApi(body: Record<string, unknown>) {
-  const res = await fetch('/api/admin/commercial-profiles', {
+  const res = await fetch(withActiveCompany('/api/admin/commercial-profiles'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -633,7 +638,7 @@ export async function deleteCommercialProfile(id: string): Promise<void> {
 }
 
 export async function deleteEmployee(id: string): Promise<void> {
-  const res = await fetch('/api/admin/employees', {
+  const res = await fetch(withActiveCompany('/api/admin/employees'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'delete', id }),

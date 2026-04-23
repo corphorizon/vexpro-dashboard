@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import { createClient } from '@/lib/supabase/client';
 import { logAction } from '@/lib/audit-log';
+import { withActiveCompany } from '@/lib/api-fetch';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole =
@@ -16,6 +17,13 @@ export type UserRole =
 
 export interface User {
   id: string;
+  /**
+   * `auth.users.id` — the Supabase Auth UUID. Needed when writing to tables
+   * that FK to `auth.users(id)` (e.g. `commercial_profiles.terminated_by`).
+   * Distinct from `id`, which is the `company_users.id` / `platform_users.id`
+   * PK depending on the login path.
+   */
+  auth_user_id: string;
   email: string;
   name: string;
   role: UserRole;
@@ -74,7 +82,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<LoginResult>;
   loginWith2fa: (email: string, password: string, pin: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
-  createUser: (user: Omit<User, 'id'>, password: string) => void;
+  createUser: (user: Omit<User, 'id' | 'auth_user_id'>, password: string) => void;
   updateUser: (id: string, updates: UserUpdate) => void;
   deleteUser: (id: string) => void;
   changePassword: (userId: string, currentPassword: string, newPassword: string) => Promise<boolean>;
@@ -127,6 +135,7 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
     const effective_role = await resolveEffectiveRole(cu.role, cu.company_id);
     return {
       id: cu.id,
+      auth_user_id: authUser.id,
       email: cu.email,
       name: cu.name,
       role: cu.role as UserRole,
@@ -153,6 +162,7 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
     // real cross-tenant reads are gated by RLS (`is_superadmin()` bypass).
     return {
       id: pu.id,
+      auth_user_id: authUser.id,
       email: pu.email,
       name: pu.name,
       role: 'superadmin',
@@ -204,6 +214,7 @@ async function fetchAllUsers(companyId: string | null): Promise<User[]> {
     const roleStr = u.role as string;
     return {
       id: u.id as string,
+      auth_user_id: u.user_id as string,
       email: u.email as string,
       name: u.name as string,
       role: roleStr as UserRole,
@@ -392,14 +403,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  const createUser = useCallback(async (newUser: Omit<User, 'id'>, password: string) => {
+  const createUser = useCallback(async (newUser: Omit<User, 'id' | 'auth_user_id'>, password: string) => {
     // Use server-side API route to create user without losing current admin session.
     // Add a 45s timeout so a hanging fetch never freezes the UI.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 45000);
 
     try {
-      const res = await fetch('/api/admin/create-user', {
+      const res = await fetch(withActiveCompany('/api/admin/create-user'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
@@ -463,7 +474,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     try {
-      const res = await fetch('/api/admin/update-auth-user', {
+      const res = await fetch(withActiveCompany('/api/admin/update-auth-user'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -561,7 +572,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Use server-side API to delete BOTH company_users AND auth.users.
     // Otherwise the email stays reserved in Supabase Auth and can't be reused.
     try {
-      const res = await fetch('/api/admin/delete-user', {
+      const res = await fetch(withActiveCompany('/api/admin/delete-user'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ companyUserId: id }),
@@ -616,7 +627,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const resetPassword = useCallback(async (userEmail: string, newPassword: string): Promise<boolean> => {
     try {
-      const res = await fetch('/api/admin/reset-password', {
+      const res = await fetch(withActiveCompany('/api/admin/reset-password'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: userEmail, newPassword }),

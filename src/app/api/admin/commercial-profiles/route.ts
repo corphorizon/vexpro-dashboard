@@ -12,6 +12,10 @@ const ALLOWED_FIELDS = [
   'name', 'role', 'head_id', 'net_deposit_pct', 'extra_pct', 'pnl_pct',
   'commission_per_lot', 'salary', 'fixed_salary', 'benefits', 'comments',
   'status', 'email', 'hire_date', 'birthday', 'contract_url',
+  'termination_date',
+  'termination_reason',
+  'termination_category',
+  'terminated_by',
 ] as const;
 
 function pickAllowed(obj: Record<string, unknown>) {
@@ -24,7 +28,7 @@ function pickAllowed(obj: Record<string, unknown>) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
@@ -48,12 +52,22 @@ export async function POST(request: NextRequest) {
     if (action === 'update') {
       if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
       const safe = pickAllowed(body);
-      const { error } = await admin
+      const { data, error } = await admin
         .from('commercial_profiles')
         .update(safe)
         .eq('id', id)
-        .eq('company_id', company_id); // scope to caller's company
+        .eq('company_id', company_id) // scope to caller's company
+        .select('id');
       if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      // Defensive: if neither id nor (id + company_id) matched, surface a 404
+      // rather than a misleading { success: true }. Silent 0-row updates make
+      // UI bugs invisible.
+      if (!data || data.length === 0) {
+        return NextResponse.json(
+          { error: 'No se encontró el perfil en esta empresa (id/company_id no matchean)' },
+          { status: 404 },
+        );
+      }
       return NextResponse.json({ success: true });
     }
 

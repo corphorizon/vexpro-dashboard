@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
@@ -11,11 +11,14 @@ import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
 import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee } from '@/lib/supabase/mutations';
+import { withActiveCompany } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search } from 'lucide-react';
+import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck } from 'lucide-react';
+import { FireModal } from '@/components/fire-modal';
+import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 
 type Tab = 'employees' | 'commercial' | 'negotiations';
 
@@ -23,12 +26,14 @@ const STATUS_BADGE_CLASSES: Record<string, string> = {
   active: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400',
   inactive: 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400',
   probation: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
+  fired: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400',
 };
 
 const STATUS_LABEL_KEYS: Record<string, string> = {
   active: 'hr.statusActive',
   inactive: 'hr.statusInactive',
   probation: 'hr.statusProbation',
+  fired: 'hr.statusFired',
 };
 
 const ROLE_BADGE_COLORS: Record<string, string> = {
@@ -153,6 +158,10 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
   const [comments, setComments] = useState(editing?.comments || '');
   const [hireDate, setHireDate] = useState(editing?.hire_date || '');
   const [birthday, setBirthday] = useState(editing?.birthday || '');
+  const [terminationDate, setTerminationDate] = useState(editing?.termination_date || '');
+  const [terminationReason, setTerminationReason] = useState(editing?.termination_reason || '');
+  const [terminationCategory, setTerminationCategory] = useState<string>(editing?.termination_category || '');
+  const { user: authUser } = useAuth();
   const [status, setStatus] = useState<'active' | 'inactive'>(editing?.status || 'active');
   const [contractUrl, setContractUrl] = useState(editing?.contract_url || '');
   const [contractFile, setContractFile] = useState<File | null>(null);
@@ -168,7 +177,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
     const formData = new FormData();
     formData.append('file', contractFile);
     formData.append('profile_id', profileId);
-    const res = await fetch('/api/admin/upload-contract', { method: 'POST', body: formData });
+    const res = await fetch(withActiveCompany('/api/admin/upload-contract'), { method: 'POST', body: formData });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Error subiendo contrato');
     setContractUrl(data.url);
@@ -181,6 +190,10 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
     setLocalSaving(true);
     setError('');
     try {
+      // Full payload — shared between create and update so both code paths
+      // persist the same set of editable fields. Previously the update path
+      // omitted commission_per_lot, benefits, comments, hire_date and
+      // birthday, so edits to those fields were silently dropped.
       const payload = {
         name, email, role,
         head_id: headId || null,
@@ -190,19 +203,24 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
         fixed_salary: fixedSalary,
         extra_pct: extraPct ? parseFloat(extraPct) : null,
         status,
+        commission_per_lot: commLot ? parseFloat(commLot) : null,
+        benefits: benefits || null,
+        comments: comments || null,
+        hire_date: hireDate || null,
+        birthday: birthday || null,
+        termination_date: terminationDate || null,
+        termination_reason: terminationReason || null,
+        termination_category: terminationCategory || null,
+        // `terminated_by` solo se setea desde FireModal (que conoce al
+        // usuario que ejecuta el despido). Este form NO lo sobreescribe
+        // — preservamos el valor original que ya hay en editing.
+        terminated_by: editing?.terminated_by || null,
       };
       let profileId = editing?.id;
       if (profileId) {
         await updateCommercialProfile(profileId, payload);
       } else {
-        profileId = await createCommercialProfile(companyId, {
-          ...payload,
-          commission_per_lot: commLot ? parseFloat(commLot) : null,
-          benefits: benefits || null,
-          comments: comments || null,
-          hire_date: hireDate || null,
-          birthday: birthday || null,
-        });
+        profileId = await createCommercialProfile(companyId, payload);
       }
       // Upload contract if a file was selected
       if (contractFile && profileId) {
@@ -289,6 +307,82 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.hireDatePlaceholder')}</label>
             <input type="date" value={hireDate} onChange={e => setHireDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.terminationDate')}</label>
+            <input type="date" value={terminationDate} onChange={e => setTerminationDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <p className="text-[10px] text-muted-foreground mt-1 leading-tight">
+              {t('hr.terminationDateHint')}
+            </p>
+          </div>
+
+          {/* Sección despido — visible siempre que haya termination_date o el
+              status esté en 'inactive'. Permite editar razón/categoría y, si
+              el caller es admin, reincorporar al empleado en un click. */}
+          {(terminationDate || status === 'inactive') && (
+            <div className="md:col-span-2 border-t border-border pt-3 mt-2">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
+                  {t('hr.terminationSection')}
+                </label>
+                {editing?.status === 'inactive' && editing?.termination_date && authUser?.effective_role === 'admin' && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!editing) return;
+                      if (!confirm(t('hr.reinstateMessage'))) return;
+                      try {
+                        await updateCommercialProfile(editing.id, {
+                          status: 'active',
+                          termination_date: null,
+                          termination_reason: null,
+                          termination_category: null,
+                          terminated_by: null,
+                        });
+                        onClose();
+                        // Consistente con el resto de ProfileForm, que usa
+                        // reload en success. El flujo del tab Empleados
+                        // (silent refresh) vive aparte en el componente
+                        // padre y pasa por handleReinstate/handleFireSuccess.
+                        window.location.reload();
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : t('hr.fireError'));
+                      }
+                    }}
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-emerald-300 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
+                  >
+                    {t('hr.reinstate')}
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.fireCategoryLabel')}</label>
+                  <select
+                    value={terminationCategory}
+                    onChange={e => setTerminationCategory(e.target.value)}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  >
+                    <option value="">—</option>
+                    <option value="performance">{t('hr.categoryPerformance')}</option>
+                    <option value="misconduct">{t('hr.categoryMisconduct')}</option>
+                    <option value="voluntary">{t('hr.categoryVoluntary')}</option>
+                    <option value="restructuring">{t('hr.categoryRestructuring')}</option>
+                    <option value="other">{t('hr.categoryOther')}</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.fireReasonLabel')}</label>
+                  <textarea
+                    value={terminationReason}
+                    onChange={e => setTerminationReason(e.target.value)}
+                    rows={2}
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm resize-none"
+                    placeholder={t('hr.fireReasonPlaceholder')}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.birthdayPlaceholder')}</label>
             <input type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -625,7 +719,7 @@ export default function RRHHPage() {
     if (!company?.id) return;
     setNegLoading(true);
     try {
-      const res = await fetch(`/api/admin/negotiations?company_id=${company.id}`);
+      const res = await fetch(withActiveCompany(`/api/admin/negotiations?company_id=${company.id}`));
       if (res.ok) {
         const data = await res.json();
         setNegotiations(data);
@@ -689,6 +783,133 @@ export default function RRHHPage() {
 
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  // ─── Fire / Reinstate state ───
+  // `firingProfile` opens the <FireModal />; `reinstatingProfile` enables
+  // the inline OK/No confirm next to the profile's row. Reinstating is
+  // admin-only both client-side (button is gated by user.effective_role)
+  // and server-side (ALLOWED_FIELDS + RLS). We use the silent refresh() of
+  // DataProvider after a fire/reinstate — NOT window.location.reload —
+  // so the user keeps scroll, tab, modals, etc.
+  const [firingProfile, setFiringProfile] = useState<CommercialProfile | null>(null);
+  const [reinstatingProfile, setReinstatingProfile] = useState<CommercialProfile | null>(null);
+  const [reinstating, setReinstating] = useState(false);
+
+  const handleFireSuccess = async () => {
+    // Cerramos el modal PRIMERO — refresh() del DataProvider recarga
+    // ~14 tablas y puede tardar varios segundos; si esperamos a que
+    // termine antes de cerrar, el usuario ve el botón "…" colgado y
+    // parece que se rompió. Cerramos y dejamos que refresh() corra por
+    // detrás: cuando termine, `commercialProfiles` se actualiza y la
+    // tabla muestra el badge "Despedido" en la fila correspondiente.
+    setFiringProfile(null);
+    await refresh();
+  };
+
+  const handleReinstate = async (profile: CommercialProfile) => {
+    if (user?.effective_role !== 'admin') return;
+    setReinstating(true);
+    try {
+      await updateCommercialProfile(profile.id, {
+        status: 'active',
+        termination_date: null,
+        termination_reason: null,
+        termination_category: null,
+        terminated_by: null,
+      });
+      // Igual que en handleFireSuccess: refrescar primero, después limpiar
+      // el estado del inline confirm. Evita flash de data stale.
+      await refresh();
+      setReinstatingProfile(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : t('hr.fireError'));
+    } finally {
+      setReinstating(false);
+    }
+  };
+
+  // ─── Empleados tab — unified list (employees + commercial_profiles) ───
+  //
+  // Merge visual de administrativos (tabla `employees`) + comerciales
+  // (tabla `commercial_profiles`) para que el admin vea toda su plantilla
+  // en un solo lugar. NO duplicamos datos en BD — los comerciales siguen
+  // viviendo solo en `commercial_profiles`; acá solo se PRESENTAN junto
+  // a los employees. El botón "Agregar" sigue creando administrativos;
+  // los comerciales se crean desde el tab Fuerza Comercial.
+  //
+  // Regla de despido: un commercial con status='inactive' y
+  // `termination_date` seteada se muestra con estado derivado 'fired'
+  // (badge gris y fila opaca). El registro NO se borra para que el
+  // calculador de comisiones siga pudiendo postear net deposits
+  // negativos post-despido vía `profile_id`.
+  type UnifiedEmployee = {
+    id: string;
+    name: string;
+    email: string;
+    position: string;
+    department: string;
+    start_date: string;
+    termination_date: string | null;
+    salary: number | null;
+    status: 'active' | 'inactive' | 'probation' | 'fired';
+    birthday: string | null;
+    supervisor: string | null;
+    source: 'employee' | 'commercial';
+    originalEmployee?: Employee;
+    originalProfile?: CommercialProfile;
+  };
+
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const unifiedEmployees = useMemo<UnifiedEmployee[]>(() => {
+    const fromEmployees: UnifiedEmployee[] = employees.map(e => ({
+      id: e.id,
+      name: e.name,
+      email: e.email,
+      position: e.position,
+      department: e.department,
+      start_date: e.start_date,
+      termination_date: null, // employees no tiene este campo aún
+      salary: e.salary,
+      status: e.status,
+      birthday: e.birthday,
+      supervisor: e.supervisor,
+      source: 'employee',
+      originalEmployee: e,
+    }));
+    const fromCommercial: UnifiedEmployee[] = commercialProfiles.map(p => {
+      // Estado derivado: inactive + termination_date = 'fired' (badge gris)
+      const derivedStatus: UnifiedEmployee['status'] =
+        p.status === 'inactive' && p.termination_date ? 'fired' : p.status;
+      return {
+        id: p.id,
+        name: p.name,
+        email: p.email,
+        position: ROLE_LABELS_HR[p.role] || p.role,
+        department: 'Comercial',
+        start_date: p.hire_date || '',
+        termination_date: p.termination_date,
+        salary: p.salary,
+        status: derivedStatus,
+        birthday: p.birthday,
+        supervisor: null,
+        source: 'commercial',
+        originalProfile: p,
+      };
+    });
+    return [...fromEmployees, ...fromCommercial];
+  }, [employees, commercialProfiles]);
+
+  const filteredUnifiedEmployees = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return unifiedEmployees;
+    return unifiedEmployees.filter(e =>
+      e.name.toLowerCase().includes(q) ||
+      e.email.toLowerCase().includes(q) ||
+      e.position.toLowerCase().includes(q) ||
+      e.department.toLowerCase().includes(q)
+    );
+  }, [unifiedEmployees, searchQuery]);
+
   const handleDeleteProfile = async (id: string) => {
     try {
       await deleteCommercialProfile(id);
@@ -718,8 +939,22 @@ export default function RRHHPage() {
   };
 
   const handleExportEmployees = () => verify2FA(() => {
-    const headers = [t('common.name'), t('common.email'), t('hr.position'), t('hr.department'), t('hr.startDate'), t('hr.salary'), t('hr.status')];
-    const rows = employees.map(e => [e.name, e.email, e.position, e.department, e.start_date, e.salary ?? 'N/A', t(STATUS_LABEL_KEYS[e.status])] as (string | number)[]);
+    // Exporta la lista unificada (administrativos + comerciales) con los
+    // filtros del buscador aplicados, para que el CSV matchee exactamente
+    // lo que el usuario tiene visible en pantalla.
+    const headers = [
+      t('common.name'), t('common.email'), t('hr.position'), t('hr.department'),
+      t('hr.type'), t('hr.hireDate'), t('hr.terminationDate'),
+      t('hr.salary'), t('hr.status'),
+    ];
+    const rows = filteredUnifiedEmployees.map(e => [
+      e.name, e.email, e.position, e.department,
+      e.source === 'commercial' ? t('hr.typeCommercial') : t('hr.typeAdmin'),
+      e.start_date || '',
+      e.termination_date || '',
+      e.salary ?? 'N/A',
+      t(STATUS_LABEL_KEYS[e.status]),
+    ] as (string | number)[]);
     downloadCSV('empleados.csv', headers, rows);
   });
 
@@ -771,7 +1006,7 @@ export default function RRHHPage() {
 
       // If creating a new profile first
       if (data.newProfile) {
-        const profileRes = await fetch('/api/admin/commercial-profiles', {
+        const profileRes = await fetch(withActiveCompany('/api/admin/commercial-profiles'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -794,7 +1029,7 @@ export default function RRHHPage() {
         const formData = new FormData();
         formData.append('file', data.contractFile);
         formData.append('profile_id', resolvedProfileId);
-        const uploadRes = await fetch('/api/admin/upload-contract', { method: 'POST', body: formData });
+        const uploadRes = await fetch(withActiveCompany('/api/admin/upload-contract'), { method: 'POST', body: formData });
         const uploadResult = await uploadRes.json();
         if (!uploadRes.ok || uploadResult.error) throw new Error(uploadResult.error || 'Error subiendo contrato');
       }
@@ -802,7 +1037,7 @@ export default function RRHHPage() {
       const body = editingNeg
         ? { action: 'update', id: editingNeg.id, title: data.title, description: data.description, status: data.status }
         : { action: 'create', company_id: company.id, profile_id: resolvedProfileId, title: data.title, description: data.description, status: data.status };
-      const res = await fetch('/api/admin/negotiations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await fetch(withActiveCompany('/api/admin/negotiations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const result = await res.json();
       if (!res.ok || result.error) throw new Error(result.error);
       setShowNegForm(false);
@@ -823,7 +1058,7 @@ export default function RRHHPage() {
   const handleDeleteNegotiation = async (id: string) => {
     if (!confirm(t('hr.confirmDelete'))) return;
     try {
-      const res = await fetch('/api/admin/negotiations', {
+      const res = await fetch(withActiveCompany('/api/admin/negotiations'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', id }),
@@ -866,9 +1101,16 @@ export default function RRHHPage() {
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <Link href={`/rrhh/perfil?id=${leader.id}`} className="text-base sm:text-lg font-semibold hover:text-[var(--color-primary)] transition-colors">
+                <Link
+                  href={`/rrhh/perfil?id=${leader.id}`}
+                  className={cn(
+                    'text-base sm:text-lg font-semibold hover:text-[var(--color-primary)] transition-colors',
+                    firedNameClass(leader),
+                  )}
+                >
                   {leader.name}
                 </Link>
+                <FiredBadge profile={leader} />
                 <button onClick={() => { setEditingProfile(leader); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
                   <Pencil className="w-3.5 h-3.5" />
                 </button>
@@ -919,7 +1161,10 @@ export default function RRHHPage() {
                   const bdmBonus = getFilteredBonus(bdm.id);
                   return (
                   <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className="py-2.5 font-medium">{bdm.name}</td>
+                    <td className={cn('py-2.5 font-medium', firedNameClass(bdm))}>
+                      {bdm.name}
+                      <FiredBadge profile={bdm} />
+                    </td>
                     <td className="py-2.5 text-muted-foreground text-xs hidden sm:table-cell">{bdm.email}</td>
                     <td className="py-2.5 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
                     <td className="py-2.5 text-right hidden sm:table-cell">{bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
@@ -1055,14 +1300,26 @@ export default function RRHHPage() {
       {/* ═══════════ EMPLOYEES TAB ═══════════ */}
       {tab === 'employees' && (
         <Card>
-          <div className="flex items-center justify-between mb-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
             <h2 className="text-lg font-semibold">{t('hr.employees')}</h2>
-            <button
-              onClick={() => { setEditingEmp(undefined); setShowEmpForm(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-            >
-              <Plus className="w-4 h-4" /> {t('hr.addEmployee')}
-            </button>
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1 sm:w-64">
+                <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder={t('hr.searchEmployees')}
+                  className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                />
+              </div>
+              <button
+                onClick={() => { setEditingEmp(undefined); setShowEmpForm(true); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 whitespace-nowrap"
+              >
+                <Plus className="w-4 h-4" /> {t('hr.addEmployee')}
+              </button>
+            </div>
           </div>
           {showEmpForm && company && (
             <EmployeeForm
@@ -1073,33 +1330,41 @@ export default function RRHHPage() {
             />
           )}
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <table className="w-full text-sm min-w-[600px]">
+            <table className="w-full text-sm min-w-[800px]">
               <thead>
                 <tr className="border-b border-border">
                   <th className="text-left py-2 text-muted-foreground font-medium">{t('common.name')}</th>
                   <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
                   <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.position')}</th>
                   <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.department')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.startDate')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden md:table-cell">{t('hr.type')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.hireDate')}</th>
+                  <th className="text-left py-2 text-muted-foreground font-medium hidden lg:table-cell">{t('hr.terminationDate')}</th>
                   <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.salary')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium hidden md:table-cell">{t('hr.birthday')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium hidden md:table-cell">{t('hr.supervisor')}</th>
                   <th className="text-left py-2 text-muted-foreground font-medium">{t('hr.status')}</th>
                   <th className="text-right py-2 text-muted-foreground font-medium"></th>
                 </tr>
               </thead>
               <tbody>
-                {employees.map(emp => {
+                {filteredUnifiedEmployees.map(emp => {
+                  const isFired = emp.status === 'fired';
                   return (
-                    <tr key={emp.id} className="border-b border-border/50">
+                    <tr key={`${emp.source}-${emp.id}`} className={cn('border-b border-border/50', isFired && 'opacity-60')}>
                       <td className="py-2.5 font-medium">{emp.name}</td>
                       <td className="py-2.5 text-muted-foreground hidden sm:table-cell">{emp.email}</td>
                       <td className="py-2.5">{emp.position}</td>
                       <td className="py-2.5 hidden sm:table-cell">{emp.department}</td>
-                      <td className="py-2.5 hidden sm:table-cell">{emp.start_date}</td>
+                      <td className="py-2.5 hidden md:table-cell">
+                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium',
+                          emp.source === 'commercial'
+                            ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400'
+                            : 'bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-400')}>
+                          {emp.source === 'commercial' ? t('hr.typeCommercial') : t('hr.typeAdmin')}
+                        </span>
+                      </td>
+                      <td className="py-2.5 hidden sm:table-cell">{emp.start_date || '-'}</td>
+                      <td className="py-2.5 hidden lg:table-cell text-muted-foreground">{emp.termination_date || '-'}</td>
                       <td className="py-2.5 text-right">{emp.salary != null ? formatCurrency(emp.salary) : 'N/A'}</td>
-                      <td className="py-2.5 text-muted-foreground text-xs hidden md:table-cell">{emp.birthday || '-'}</td>
-                      <td className="py-2.5 text-muted-foreground text-xs hidden md:table-cell">{emp.supervisor || '-'}</td>
                       <td className="py-2.5">
                         <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', STATUS_BADGE_CLASSES[emp.status])}>
                           {t(STATUS_LABEL_KEYS[emp.status])}
@@ -1107,18 +1372,81 @@ export default function RRHHPage() {
                       </td>
                       <td className="py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => { setEditingEmp(emp); setShowEmpForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
+                          {/* Despedir: solo comerciales activos. Los
+                              comerciales ya despedidos muestran UserCheck
+                              (reincorporar), los administrativos no tienen
+                              este flow. */}
+                          {emp.source === 'commercial' && emp.originalProfile && emp.status === 'active' && (
+                            <button
+                              onClick={() => setFiringProfile(emp.originalProfile!)}
+                              className="text-muted-foreground hover:text-red-600"
+                              aria-label={t('hr.fire')}
+                              title={t('hr.fire')}
+                            >
+                              <UserX className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+
+                          {/* Reincorporar: admin-only, y solo si está despedido. */}
+                          {emp.source === 'commercial' && emp.originalProfile && emp.status === 'fired' && user?.effective_role === 'admin' && (
+                            reinstatingProfile?.id === emp.originalProfile.id ? (
+                              <div className="flex items-center gap-1">
+                                <button
+                                  onClick={() => handleReinstate(emp.originalProfile!)}
+                                  disabled={reinstating}
+                                  className="px-2 py-0.5 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                                >
+                                  {reinstating ? '…' : 'OK'}
+                                </button>
+                                <button
+                                  onClick={() => setReinstatingProfile(null)}
+                                  disabled={reinstating}
+                                  className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted"
+                                >
+                                  No
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                onClick={() => setReinstatingProfile(emp.originalProfile!)}
+                                className="text-muted-foreground hover:text-emerald-600"
+                                aria-label={t('hr.reinstate')}
+                                title={t('hr.reinstate')}
+                              >
+                                <UserCheck className="w-3.5 h-3.5" />
+                              </button>
+                            )
+                          )}
+
+                          <button
+                            onClick={() => {
+                              if (emp.source === 'employee' && emp.originalEmployee) {
+                                setEditingEmp(emp.originalEmployee);
+                                setShowEmpForm(true);
+                              } else if (emp.source === 'commercial' && emp.originalProfile) {
+                                setEditingProfile(emp.originalProfile);
+                                setShowProfileForm(true);
+                              }
+                            }}
+                            className="text-muted-foreground hover:text-foreground"
+                            aria-label={t('common.edit')}
+                          >
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          {deletingId === emp.id ? (
-                            <div className="flex items-center gap-1">
-                              <button onClick={() => handleDeleteEmployee(emp.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
-                              <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
-                            </div>
-                          ) : (
-                            <button onClick={() => setDeletingId(emp.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                          {/* Delete button SOLO para administrativos. Los comerciales se
+                              despiden (status=inactive + termination_date), no se borran:
+                              borrar rompería commercial_monthly_results vía FK. */}
+                          {emp.source === 'employee' && (
+                            deletingId === emp.id ? (
+                              <div className="flex items-center gap-1">
+                                <button onClick={() => handleDeleteEmployee(emp.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
+                                <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
+                              </div>
+                            ) : (
+                              <button onClick={() => setDeletingId(emp.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            )
                           )}
                         </div>
                       </td>
@@ -1128,8 +1456,10 @@ export default function RRHHPage() {
               </tbody>
             </table>
           </div>
-          {employees.length === 0 && (
-            <p className="text-center text-muted-foreground py-8">{t('hr.noEmployees')}</p>
+          {filteredUnifiedEmployees.length === 0 && (
+            <p className="text-center text-muted-foreground py-8">
+              {searchQuery ? t('hr.noSearchResults') : t('hr.noEmployees')}
+            </p>
           )}
         </Card>
       )}
@@ -1195,7 +1525,10 @@ export default function RRHHPage() {
                       const bdmBonus = getFilteredBonus(bdm.id);
                       return (
                       <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                        <td className="py-2.5 font-medium">{bdm.name}</td>
+                        <td className={cn('py-2.5 font-medium', firedNameClass(bdm))}>
+                          {bdm.name}
+                          <FiredBadge profile={bdm} />
+                        </td>
                         <td className="py-2.5 text-muted-foreground text-xs">{bdm.email}</td>
                         <td className="py-2.5 text-right">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
                         <td className="py-2.5 text-right">{bdm.pnl_pct != null ? `${bdm.pnl_pct}%` : 'N/A'}</td>
@@ -1415,6 +1748,16 @@ export default function RRHHPage() {
             )}
           </Card>
         </div>
+      )}
+
+      {/* FireModal — montado a nivel de componente raíz para que el overlay
+          cubra toda la página y no quede dentro de un Card scrollable. */}
+      {firingProfile && (
+        <FireModal
+          profile={firingProfile}
+          onClose={() => setFiringProfile(null)}
+          onSuccess={handleFireSuccess}
+        />
       )}
     </div>
   );
