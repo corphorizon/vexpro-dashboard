@@ -18,7 +18,7 @@ import { clearAttempts } from '@/lib/rate-limit';
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json().catch(() => ({}));

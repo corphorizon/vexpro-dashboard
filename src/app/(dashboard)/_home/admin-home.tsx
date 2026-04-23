@@ -6,6 +6,7 @@ import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { formatCurrency } from '@/lib/utils';
+import { withActiveCompany } from '@/lib/api-fetch';
 import { QuickAccess } from './quick-access';
 import {
   ArrowDownCircle, ArrowUpCircle, Wallet, Receipt, TrendingUp,
@@ -124,7 +125,7 @@ export function AdminHome() {
     let cancelled = false;
     const load = async () => {
       try {
-        const res = await fetch('/api/balances/total-consolidado');
+        const res = await fetch(withActiveCompany('/api/balances/total-consolidado'));
         const json = await res.json();
         if (!cancelled && json.success) setTotalConsolidado(Number(json.total));
       } catch {

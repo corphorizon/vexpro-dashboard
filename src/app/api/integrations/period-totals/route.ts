@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -29,14 +29,13 @@ const ACCEPTED_STATUS: Record<string, string[]> = {
   unipayment: ['Completed'],
 };
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
-    const url = new URL(request.url);
-    const from = url.searchParams.get('from');
-    const to = url.searchParams.get('to');
+    const from = request.nextUrl.searchParams.get('from');
+    const to = request.nextUrl.searchParams.get('to');
 
     const admin = createAdminClient();
     let query = admin

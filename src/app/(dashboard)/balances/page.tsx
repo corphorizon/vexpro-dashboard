@@ -13,6 +13,7 @@ import { upsertChannelBalance, pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/
 import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
 import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
 import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
+import { withActiveCompany } from '@/lib/api-fetch';
 import {
   resolveChannels as resolveChannelConfigs,
   type ChannelConfigRow,
@@ -117,7 +118,7 @@ export default function BalancesPage() {
       const pad = (n: number) => String(n).padStart(2, '0');
       const from = `${start.getFullYear()}-${pad(start.getMonth() + 1)}-01`;
       const to = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate())}`;
-      const res = await fetch(`/api/integrations/period-totals?from=${from}&to=${to}`);
+      const res = await fetch(withActiveCompany(`/api/integrations/period-totals?from=${from}&to=${to}`));
       const json = await res.json();
       if (json.success) setApiMonthly(json.months ?? {});
     } catch {
@@ -249,7 +250,7 @@ export default function BalancesPage() {
     setWalletsLoading(true);
     setWalletsError(null);
     try {
-      const res = await fetch('/api/integrations/coinsbuy/wallets');
+      const res = await fetch(withActiveCompany('/api/integrations/coinsbuy/wallets'));
       const json = await res.json();
       if (!json.success) throw new Error(json.error ?? 'Error fetching wallets');
       setWallets(json.wallets ?? []);
@@ -365,7 +366,7 @@ export default function BalancesPage() {
     let cancelled = false;
     const fetchUniBalance = async () => {
       try {
-        const res = await fetch('/api/integrations/unipayment/balances');
+        const res = await fetch(withActiveCompany('/api/integrations/unipayment/balances'));
         const json = await res.json();
         if (!cancelled && json.success && Array.isArray(json.balances) && json.balances.length > 0) {
           // Sum all available balances (primary wallet)
@@ -402,7 +403,7 @@ export default function BalancesPage() {
   // A missing row for a built-in = "visible, default label" (see resolveChannels).
   const loadChannelConfigs = useCallback(async () => {
     try {
-      const res = await fetch('/api/admin/channel-configs');
+      const res = await fetch(withActiveCompany('/api/admin/channel-configs'));
       const json = (await res.json()) as { success: boolean; rows?: ChannelConfigRow[] };
       if (json.success) setChannelConfigRows(json.rows ?? []);
     } catch {

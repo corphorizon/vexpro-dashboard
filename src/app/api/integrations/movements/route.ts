@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import {
   fetchAggregatedMovements,
@@ -29,16 +29,15 @@ const VALID_SLUGS: ProviderSlug[] = [
   'unipayment',
 ];
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
-    const url = new URL(request.url);
-    const from = url.searchParams.get('from') ?? undefined;
-    const to = url.searchParams.get('to') ?? undefined;
-    const slug = url.searchParams.get('slug');
-    const walletId = url.searchParams.get('walletId') ?? undefined;
+    const from = request.nextUrl.searchParams.get('from') ?? undefined;
+    const to = request.nextUrl.searchParams.get('to') ?? undefined;
+    const slug = request.nextUrl.searchParams.get('slug');
+    const walletId = request.nextUrl.searchParams.get('walletId') ?? undefined;
 
     if (slug) {
       if (!VALID_SLUGS.includes(slug as ProviderSlug)) {

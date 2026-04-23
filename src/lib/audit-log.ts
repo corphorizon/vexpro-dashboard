@@ -1,3 +1,5 @@
+import { withActiveCompany } from '@/lib/api-fetch';
+
 export type AuditAction = 'create' | 'update' | 'delete' | 'login' | 'logout' | 'export' | 'view';
 
 export type AuditModule =
@@ -49,7 +51,7 @@ function saveEntries(entries: AuditEntry[]) {
  * Fire-and-forget — never blocks the UI.
  */
 function persistToServer(entry: AuditEntry): void {
-  fetch('/api/admin/audit-log', {
+  fetch(withActiveCompany('/api/admin/audit-log'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(entry),

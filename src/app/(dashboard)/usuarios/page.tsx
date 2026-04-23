@@ -7,6 +7,7 @@ import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_L
 import { useModuleAccess } from '@/lib/use-module-access';
 import { RolesPanel } from '@/components/settings/roles-panel';
 import { useI18n } from '@/lib/i18n';
+import { withActiveCompany } from '@/lib/api-fetch';
 // Shield icon removed with the Roles tab — keep ShieldOff for the 2FA badge.
 import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -61,7 +62,7 @@ export default function UsuariosPage() {
 
   useEffect(() => {
     // Fetch per-company custom roles — admin can assign them alongside built-ins.
-    fetch('/api/admin/custom-roles')
+    fetch(withActiveCompany('/api/admin/custom-roles'))
       .then(r => r.json())
       .then(data => { if (data.success) setCustomRoles(data.roles); })
       .catch(() => { /* non-fatal */ });
@@ -166,7 +167,7 @@ export default function UsuariosPage() {
     setReset2faLoading(true);
     setReset2faError(null);
     try {
-      const res = await fetch('/api/admin/reset-user-2fa', {
+      const res = await fetch(withActiveCompany('/api/admin/reset-user-2fa'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ userId: reset2faUser.id }),

@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { OrionCrmTotals } from './totals';
+import { withActiveCompany } from '@/lib/api-fetch';
 
 const EMPTY: OrionCrmTotals = {
   propFirmSales: 0,
@@ -47,7 +48,7 @@ export function useOrionCrmTotals(
     (async () => {
       try {
         const qs = new URLSearchParams({ from, to });
-        const res = await fetch(`/api/integrations/orion-crm/totals?${qs}`);
+        const res = await fetch(withActiveCompany(`/api/integrations/orion-crm/totals?${qs}`));
         const json = (await res.json()) as OrionCrmTotals;
         if (!cancelled) setTotals(json);
       } catch {

@@ -27,6 +27,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import type { ResolvedChannel, ChannelConfigRow } from '@/lib/channel-configs';
+import { withActiveCompany } from '@/lib/api-fetch';
 import { resolveChannels } from '@/lib/channel-configs';
 import { formatCurrency } from '@/lib/utils';
 
@@ -60,7 +61,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
     setLoading(true);
     (async () => {
       try {
-        const res = await fetch('/api/admin/channel-configs');
+        const res = await fetch(withActiveCompany('/api/admin/channel-configs'));
         const json = (await res.json()) as { success: boolean; rows?: ChannelConfigRow[] };
         if (json.success) setRows(json.rows ?? []);
         else throw new Error('No se pudo cargar la configuración');
@@ -75,7 +76,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
   const resolved: ResolvedChannel[] = resolveChannels(rows);
 
   async function refresh() {
-    const res = await fetch('/api/admin/channel-configs');
+    const res = await fetch(withActiveCompany('/api/admin/channel-configs'));
     const json = (await res.json()) as { success: boolean; rows?: ChannelConfigRow[] };
     if (json.success) setRows(json.rows ?? []);
     onChanged();
@@ -88,7 +89,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
     setSaving(channel_key);
     setStatus(null);
     try {
-      const res = await fetch('/api/admin/channel-configs', {
+      const res = await fetch(withActiveCompany('/api/admin/channel-configs'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'upsert', channel_key, ...patch }),
@@ -128,7 +129,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
     setStatus(null);
     try {
       const initial = parseFloat(newChannelBalance);
-      const res = await fetch('/api/admin/channel-configs', {
+      const res = await fetch(withActiveCompany('/api/admin/channel-configs'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -156,7 +157,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
     setSaving(ch.key);
     setStatus(null);
     try {
-      const res = await fetch('/api/admin/channel-configs', {
+      const res = await fetch(withActiveCompany('/api/admin/channel-configs'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', channel_key: ch.key }),

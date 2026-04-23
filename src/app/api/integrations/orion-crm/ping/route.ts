@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import {
   resolveOrionCrmConfig,
@@ -28,9 +28,9 @@ import { proxiedFetch } from '@/lib/api-integrations/proxy';
 
 const ENDPOINT_PING = '/v1/ping';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const config = await resolveOrionCrmConfig(auth.companyId);

@@ -24,6 +24,7 @@ export async function PATCH(
     const FIELDS = [
       'name', 'logo_url', 'logo_url_white', 'color_primary', 'color_secondary',
       'active_modules', 'reserve_pct', 'currency', 'status',
+      'default_wallet_id',
     ] as const;
     for (const f of FIELDS) {
       if (f in body) allowed[f] = (body as Record<string, unknown>)[f];

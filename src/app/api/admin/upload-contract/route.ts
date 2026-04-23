@@ -60,7 +60,7 @@ function sniffContract(bytes: Uint8Array): { ext: string; mime: string } | null 
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const formData = await request.formData();

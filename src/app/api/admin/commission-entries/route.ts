@@ -7,7 +7,7 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const { period_id, head_id, entries } = await request.json();

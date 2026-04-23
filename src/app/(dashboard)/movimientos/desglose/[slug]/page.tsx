@@ -18,6 +18,7 @@ import {
   AlertTriangle,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
+import { withActiveCompany } from '@/lib/api-fetch';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { computeProviderTotals, acceptedTransactions } from '@/lib/api-integrations/totals';
 import type {
@@ -97,7 +98,7 @@ export default function BreakdownPage({
       const qs = new URLSearchParams({ slug });
       if (from) qs.set('from', from);
       if (to) qs.set('to', to);
-      const res = await fetch(`/api/integrations/movements?${qs.toString()}`);
+      const res = await fetch(withActiveCompany(`/api/integrations/movements?${qs.toString()}`));
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error desconocido');
       setDataset(json.dataset ?? null);

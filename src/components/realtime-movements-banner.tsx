@@ -16,6 +16,7 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { computeProviderTotals } from '@/lib/api-integrations/totals';
+import { withActiveCompany } from '@/lib/api-fetch';
 import type {
   ProviderDataset,
   ProviderSlug,
@@ -154,7 +155,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
     if (!isAdmin) return; // Non-admins use the default wallet, no need to fetch
     (async () => {
       try {
-        const res = await fetch('/api/integrations/coinsbuy/wallets');
+        const res = await fetch(withActiveCompany('/api/integrations/coinsbuy/wallets'));
         const json = await res.json();
         if (json.success && Array.isArray(json.wallets)) {
           const options: WalletOption[] = json.wallets.map(
@@ -207,7 +208,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (from) qs.set('from', from);
       if (to) qs.set('to', to);
       if (walletId) qs.set('walletId', walletId);
-      const res = await fetch(`/api/integrations/persisted-movements?${qs.toString()}`);
+      const res = await fetch(withActiveCompany(`/api/integrations/persisted-movements?${qs.toString()}`));
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error cargando datos persistidos');
       setDatasets(json.datasets ?? []);
@@ -227,7 +228,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (from) qs.set('from', from);
       if (to) qs.set('to', to);
       if (walletId) qs.set('walletId', walletId);
-      const res = await fetch(`/api/integrations/movements?${qs.toString()}`);
+      const res = await fetch(withActiveCompany(`/api/integrations/movements?${qs.toString()}`));
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error desconocido');
       setDatasets(json.datasets ?? []);

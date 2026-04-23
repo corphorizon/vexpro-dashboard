@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchFairpayDeposits } from '@/lib/api-integrations/fairpay/transactions';
 
@@ -12,14 +12,13 @@ import { fetchFairpayDeposits } from '@/lib/api-integrations/fairpay/transaction
 // Server-side proxy — credentials never reach the browser.
 // ---------------------------------------------------------------------------
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
-    const url = new URL(request.url);
-    const from = url.searchParams.get('from') ?? undefined;
-    const to = url.searchParams.get('to') ?? undefined;
+    const from = request.nextUrl.searchParams.get('from') ?? undefined;
+    const to = request.nextUrl.searchParams.get('to') ?? undefined;
 
     const dataset = await fetchFairpayDeposits({ from, to, companyId: auth.companyId });
     return NextResponse.json({ success: true, dataset });

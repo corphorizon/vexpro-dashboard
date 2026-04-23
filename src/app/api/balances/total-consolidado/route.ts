@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
@@ -36,9 +36,9 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();

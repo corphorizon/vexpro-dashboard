@@ -15,8 +15,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
 
-export async function GET() {
-  const auth = await verifyAdminAuth();
+export async function GET(request: NextRequest) {
+  const auth = await verifyAdminAuth(request);
   if (auth instanceof NextResponse) return auth;
 
   const adminClient = createAdminClient();
@@ -34,7 +34,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await verifyAdminAuth();
+  const auth = await verifyAdminAuth(request);
   if (auth instanceof NextResponse) return auth;
 
   // Only company admins may manage roles (auditor / hr excluded).

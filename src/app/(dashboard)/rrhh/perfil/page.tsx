@@ -13,6 +13,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { updateCommercialProfile } from '@/lib/supabase/mutations';
+import { withActiveCompany } from '@/lib/api-fetch';
 import type { CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus } from '@/lib/types';
 import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X, FileText, Upload, ExternalLink, Handshake, Trash2 } from 'lucide-react';
 
@@ -81,7 +82,7 @@ export default function PerfilPage() {
     if (!profile) return;
     setNegLoading(true);
     try {
-      const res = await fetch(`/api/admin/negotiations?company_id=${profile.company_id}&profile_id=${profileId}`);
+      const res = await fetch(withActiveCompany(`/api/admin/negotiations?company_id=${profile.company_id}&profile_id=${profileId}`));
       if (res.ok) setNegotiations(await res.json());
     } catch { /* ignore */ }
     setNegLoading(false);
@@ -113,7 +114,7 @@ export default function PerfilPage() {
   const handleDeleteNegotiation = async (id: string) => {
     if (!confirm('Eliminar esta negociacion?')) return;
     try {
-      await fetch('/api/admin/negotiations', {
+      await fetch(withActiveCompany('/api/admin/negotiations'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', id }),
@@ -129,7 +130,7 @@ export default function PerfilPage() {
       const formData = new FormData();
       formData.append('file', contractFile);
       formData.append('profile_id', profileData!.id);
-      const res = await fetch('/api/admin/upload-contract', { method: 'POST', body: formData });
+      const res = await fetch(withActiveCompany('/api/admin/upload-contract'), { method: 'POST', body: formData });
       const data = await res.json();
       if (!res.ok || data.error) throw new Error(data.error);
       setProfileData({ ...profileData!, contract_url: data.url });

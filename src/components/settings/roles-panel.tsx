@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { MODULE_LABELS, ROLE_LABELS, BUILT_IN_ROLES } from '@/lib/auth-context';
+import { withActiveCompany } from '@/lib/api-fetch';
 import { Plus, Pencil, Trash2, X, Loader2 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,7 +41,7 @@ export function RolesPanel() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/admin/custom-roles');
+      const res = await fetch(withActiveCompany('/api/admin/custom-roles'));
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
       setRoles(data.roles);
@@ -56,7 +57,7 @@ export function RolesPanel() {
   const handleDelete = async (id: string) => {
     if (!confirm('¿Eliminar este rol? Solo se puede borrar si nadie lo tiene asignado.')) return;
     try {
-      const res = await fetch('/api/admin/custom-roles', {
+      const res = await fetch(withActiveCompany('/api/admin/custom-roles'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', id }),
@@ -186,7 +187,7 @@ function RoleForm({ editing, onClose, onSaved }: {
     setError(null);
     setSaving(true);
     try {
-      const res = await fetch('/api/admin/custom-roles', {
+      const res = await fetch(withActiveCompany('/api/admin/custom-roles'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

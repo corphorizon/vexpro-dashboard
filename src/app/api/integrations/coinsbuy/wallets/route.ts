@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { persistBalanceSnapshot } from '@/lib/api-integrations/persistence';
@@ -19,9 +19,9 @@ interface WalletRow {
   balancePending: number;
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     // Pass auth.companyId so per-tenant api_credentials win over env fallback.

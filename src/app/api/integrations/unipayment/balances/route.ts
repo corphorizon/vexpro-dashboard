@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
 
@@ -8,9 +8,9 @@ import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balan
 // Returns UniPayment wallet balances. No query params needed.
 // ---------------------------------------------------------------------------
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const result = await fetchUnipaymentBalances(auth.companyId);
