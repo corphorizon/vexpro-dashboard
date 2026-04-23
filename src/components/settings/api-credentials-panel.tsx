@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ApiCredentialsPanel — external API credentials for a tenant.
@@ -13,36 +14,55 @@ import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from '
 //     targets that specific tenant.
 //   · (Never embedded in the tenant UI after the refactor — superadmin-only.)
 //
+// Storage convention (enforced server-side in src/lib/api-integrations/credentials.ts):
+//   · coinsbuy    → encrypted_secret = JSON({ client_id, client_secret })
+//                   wallet_id lives in companies.default_wallet_id (not here)
+//   · unipayment  → encrypted_secret = JSON({ client_id, client_secret })
+//   · fairpay     → encrypted_secret = raw api_key
+//   · sendgrid    → encrypted_secret = raw api_key, extras: from_email/from_name
+//   · orion_crm   → encrypted_secret = raw api_key, extras: base_url
+//
 // When `companyId` is passed, requests append `?company_id=<id>` so the API
 // route knows which tenant to operate on (see /api/admin/api-credentials).
 // ─────────────────────────────────────────────────────────────────────────────
 
-// SendGrid is exposed again so tenants can brand the sender domain of
-// their automated reports (e.g. `dashboard@vexprofx.com`). When a tenant
-// has no sendgrid row, emailService falls back to the env defaults.
+type Provider = 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
+
 interface ApiCredential {
-  provider: 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
+  provider: Provider;
   last_four: string | null;
   extra_config: Record<string, unknown> | null;
   is_configured: boolean;
   updated_at: string;
 }
 
+// What each provider's form looks like. Rather than a generic
+// secret+extras pair we model the real shape per provider so users see the
+// correct labels (Client ID vs API Key) and we can build the payload the
+// resolver expects in credentials.ts.
+type FormKind =
+  | { kind: 'compound' }   // coinsbuy, unipayment → client_id + client_secret (secret = JSON of both)
+  | { kind: 'apiKey' }     // fairpay → raw api_key
+  | { kind: 'keyExtras' }; // sendgrid, orion_crm → api_key + extra_config fields
+
 interface ProviderMeta {
   label: string;
   description: string;
-  extraFields: Array<{ key: string; label: string; placeholder?: string }>;
-  /** When true, the card shows a "Probar conexión" button that pings the
-   *  provider's health endpoint. Only enabled for providers whose
-   *  /api/integrations/<provider>/ping route exists. */
+  form: FormKind;
+  /** Extra-config fields shown below the secret field (for keyExtras kind). */
+  extraFields?: Array<{ key: string; label: string; placeholder?: string }>;
+  /** Coinsbuy: also edits companies.default_wallet_id. */
+  editsCompanyWallet?: boolean;
+  /** Health-check button enabled. */
   supportsPing?: boolean;
 }
 
-const PROVIDER_META: Record<ApiCredential['provider'], ProviderMeta> = {
+const PROVIDER_META: Record<Provider, ProviderMeta> = {
   sendgrid: {
     label: 'SendGrid',
     description:
       'Envío de reportes automáticos. El dominio del "from_email" debe estar verificado en la cuenta SendGrid.',
+    form: { kind: 'keyExtras' },
     extraFields: [
       { key: 'from_email', label: 'From email', placeholder: 'dashboard@tuempresa.com' },
       { key: 'from_name', label: 'From name', placeholder: 'Tu Empresa' },
@@ -51,30 +71,23 @@ const PROVIDER_META: Record<ApiCredential['provider'], ProviderMeta> = {
   coinsbuy: {
     label: 'Coinsbuy',
     description: 'Procesador de pagos crypto.',
-    extraFields: [
-      { key: 'merchant_id', label: 'Merchant ID' },
-      { key: 'webhook_url', label: 'Webhook URL' },
-    ],
+    form: { kind: 'compound' },
+    editsCompanyWallet: true,
   },
   unipayment: {
     label: 'Unipayment',
     description: 'Procesador de pagos.',
-    extraFields: [
-      { key: 'app_id', label: 'App ID' },
-      { key: 'webhook_url', label: 'Webhook URL' },
-    ],
+    form: { kind: 'compound' },
   },
   fairpay: {
     label: 'Fairpay',
     description: 'Procesador de pagos.',
-    extraFields: [
-      { key: 'merchant_id', label: 'Merchant ID' },
-      { key: 'webhook_url', label: 'Webhook URL' },
-    ],
+    form: { kind: 'apiKey' },
   },
   orion_crm: {
     label: 'Orion CRM',
     description: 'CRM del broker — usuarios registrados, Broker P&L, ventas Prop Firm.',
+    form: { kind: 'keyExtras' },
     extraFields: [
       { key: 'base_url', label: 'Base URL', placeholder: 'https://api.orion-crm.example' },
     ],
@@ -84,7 +97,7 @@ const PROVIDER_META: Record<ApiCredential['provider'], ProviderMeta> = {
 
 // Rendering order — Orion CRM last so it groups with the business/data
 // section, separate from the three payment processors above.
-const PROVIDER_ORDER: ApiCredential['provider'][] = [
+const PROVIDER_ORDER: Provider[] = [
   'sendgrid',
   'coinsbuy',
   'unipayment',
@@ -105,17 +118,22 @@ interface PingResult {
   testedAt: string;
 }
 
+const supabase = createClient();
+
 export function ApiCredentialsPanel({ companyId }: Props) {
   const [creds, setCreds] = useState<ApiCredential[]>([]);
+  const [walletId, setWalletId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<ApiCredential['provider'] | null>(null);
+  const [editing, setEditing] = useState<Provider | null>(null);
   // Per-provider ping state. Only populated for providers in which
   // `supportsPing` is true and the user has clicked "Probar conexión".
-  const [pingResults, setPingResults] = useState<Partial<Record<ApiCredential['provider'], PingResult>>>({});
-  const [pingBusy, setPingBusy] = useState<ApiCredential['provider'] | null>(null);
+  const [pingResults, setPingResults] = useState<Partial<Record<Provider, PingResult>>>({});
+  const [pingBusy, setPingBusy] = useState<Provider | null>(null);
 
-  const handlePing = async (provider: ApiCredential['provider']) => {
+  const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+
+  const handlePing = async (provider: Provider) => {
     setPingBusy(provider);
     try {
       const res = await fetch(`/api/integrations/${provider.replace('_', '-')}/ping${qs}`);
@@ -139,29 +157,45 @@ export function ApiCredentialsPanel({ companyId }: Props) {
     }
   };
 
-  const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
-
   const reload = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
+      // Credentials list.
       const res = await fetch(`/api/admin/api-credentials${qs}`);
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
       setCreds(data.credentials);
+
+      // Company's default_wallet_id — needed for the Coinsbuy card. We
+      // read directly via the Supabase client because the PATCH endpoint
+      // is writable-only and RLS allows superadmin to SELECT companies.
+      if (companyId) {
+        const { data: companyRow, error: coErr } = await supabase
+          .from('companies')
+          .select('default_wallet_id')
+          .eq('id', companyId)
+          .maybeSingle();
+        if (coErr) {
+          // Non-fatal: the Coinsbuy card will just lack the wallet badge.
+          console.warn('[api-credentials-panel] could not load wallet_id:', coErr.message);
+          setWalletId(null);
+        } else {
+          setWalletId((companyRow?.default_wallet_id as string | null) ?? null);
+        }
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error cargando credenciales');
     } finally {
       setLoading(false);
     }
-  }, [qs]);
+  }, [qs, companyId]);
 
   useEffect(() => { reload(); }, [reload]);
 
-  const getCred = (provider: ApiCredential['provider']) =>
-    creds.find((c) => c.provider === provider);
+  const getCred = (provider: Provider) => creds.find((c) => c.provider === provider);
 
-  const handleDelete = async (provider: ApiCredential['provider']) => {
+  const handleDelete = async (provider: Provider) => {
     if (!confirm(`¿Eliminar las credenciales de ${PROVIDER_META[provider].label}?`)) return;
     try {
       const res = await fetch(`/api/admin/api-credentials${qs}`, {
@@ -231,26 +265,21 @@ export function ApiCredentialsPanel({ companyId }: Props) {
             ) : isEditing ? (
               <ApiCredentialForm
                 provider={provider}
+                meta={meta}
                 existingExtras={cred?.extra_config || {}}
+                currentWalletId={walletId}
                 companyId={companyId}
                 onSaved={() => { setEditing(null); reload(); }}
                 onCancel={() => setEditing(null)}
               />
             ) : cred?.is_configured ? (
               <div className="space-y-3">
-                <div className="flex items-center gap-2 text-sm">
-                  <span className="text-muted-foreground">API key:</span>
-                  <code className="px-2 py-0.5 rounded bg-muted font-mono">••••••••{cred.last_four}</code>
-                </div>
-                {cred.extra_config && Object.keys(cred.extra_config).length > 0 && (
-                  <div className="text-xs text-muted-foreground space-y-0.5">
-                    {Object.entries(cred.extra_config).map(([k, v]) => (
-                      <div key={k}>
-                        <span className="font-medium">{k}:</span> {String(v ?? '')}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                <ConfiguredView
+                  provider={provider}
+                  meta={meta}
+                  cred={cred}
+                  walletId={walletId}
+                />
                 <p className="text-xs text-muted-foreground">
                   Última actualización: {new Date(cred.updated_at).toLocaleString('es-ES')}
                 </p>
@@ -328,25 +357,97 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   );
 }
 
+// ─── Configured view ──────────────────────────────────────────────────────────
+//
+// Per-provider display of what's stored. We don't show the secret itself; we
+// show the last 4 chars of what was typed, plus any relevant extra-config or
+// per-tenant data (like Coinsbuy's wallet_id).
+
+function ConfiguredView({
+  provider,
+  meta,
+  cred,
+  walletId,
+}: {
+  provider: Provider;
+  meta: ProviderMeta;
+  cred: ApiCredential;
+  walletId: string | null;
+}) {
+  const secretLabel = (() => {
+    switch (meta.form.kind) {
+      case 'compound': return 'Client Secret';
+      case 'apiKey':
+      case 'keyExtras':
+        return provider === 'sendgrid' || provider === 'orion_crm' || provider === 'fairpay'
+          ? 'API key'
+          : 'Key';
+    }
+  })();
+
+  return (
+    <>
+      <div className="flex items-center gap-2 text-sm">
+        <span className="text-muted-foreground">{secretLabel}:</span>
+        <code className="px-2 py-0.5 rounded bg-muted font-mono">••••••••{cred.last_four}</code>
+      </div>
+
+      {/* Coinsbuy: show wallet_id read from companies.default_wallet_id. */}
+      {meta.editsCompanyWallet && walletId && (
+        <div className="flex items-center gap-2 text-sm">
+          <span className="text-muted-foreground">Wallet ID:</span>
+          <code className="px-2 py-0.5 rounded bg-muted font-mono">{walletId}</code>
+        </div>
+      )}
+
+      {/* Generic extra_config (sendgrid from_email/from_name, orion_crm base_url). */}
+      {cred.extra_config && Object.keys(cred.extra_config).length > 0 && (
+        <div className="text-xs text-muted-foreground space-y-0.5">
+          {Object.entries(cred.extra_config).map(([k, v]) => (
+            <div key={k}>
+              <span className="font-medium">{k}:</span> {String(v ?? '')}
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ─── Form ─────────────────────────────────────────────────────────────────────
+//
+// Picks the layout based on meta.form.kind. All paths ultimately POST to
+// /api/admin/api-credentials with action:'upsert'. Coinsbuy additionally
+// PATCHes /api/superadmin/companies/:id to update default_wallet_id.
+
 function ApiCredentialForm({
   provider,
+  meta,
   existingExtras,
+  currentWalletId,
   companyId,
   onSaved,
   onCancel,
 }: {
-  provider: ApiCredential['provider'];
+  provider: Provider;
+  meta: ProviderMeta;
   existingExtras: Record<string, unknown>;
+  currentWalletId: string | null;
   companyId?: string;
   onSaved: () => void;
   onCancel: () => void;
 }) {
-  const meta = PROVIDER_META[provider];
-  const [secret, setSecret] = useState('');
+  // Local form state — keep separate fields so each provider has its own
+  // shape. Unused fields stay empty strings; the handleSubmit only reads
+  // the ones that apply.
+  const [clientId, setClientId] = useState('');
+  const [clientSecret, setClientSecret] = useState('');
+  const [apiKey, setApiKey] = useState('');
+  const [walletInput, setWalletInput] = useState(currentWalletId ?? '');
   const [showSecret, setShowSecret] = useState(false);
   const [extras, setExtras] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
-    for (const f of meta.extraFields) init[f.key] = String(existingExtras[f.key] ?? '');
+    for (const f of meta.extraFields ?? []) init[f.key] = String(existingExtras[f.key] ?? '');
     return init;
   });
   const [saving, setSaving] = useState(false);
@@ -355,13 +456,41 @@ function ApiCredentialForm({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (secret.length < 8) {
-      setError('La llave debe tener al menos 8 caracteres.');
-      return;
+
+    // Per-kind validation + secret payload construction.
+    let secret: string;
+    let extra_config: Record<string, string> | null = null;
+
+    if (meta.form.kind === 'compound') {
+      if (!clientId.trim() || clientSecret.length < 8) {
+        setError('Ingresá Client ID y un Client Secret de al menos 8 caracteres.');
+        return;
+      }
+      secret = JSON.stringify({
+        client_id: clientId.trim(),
+        client_secret: clientSecret,
+      });
+    } else if (meta.form.kind === 'apiKey') {
+      if (apiKey.length < 8) {
+        setError('La API key debe tener al menos 8 caracteres.');
+        return;
+      }
+      secret = apiKey;
+    } else {
+      // keyExtras
+      if (apiKey.length < 8) {
+        setError('La API key debe tener al menos 8 caracteres.');
+        return;
+      }
+      secret = apiKey;
+      extra_config = extras;
     }
+
     setSaving(true);
     try {
       const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+
+      // Step 1 — upsert the credential.
       const res = await fetch(`/api/admin/api-credentials${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -369,12 +498,34 @@ function ApiCredentialForm({
           action: 'upsert',
           provider,
           secret,
-          extra_config: extras,
+          extra_config,
           company_id: companyId,
         }),
       });
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
+
+      // Step 2 — Coinsbuy only: push wallet_id to companies.default_wallet_id
+      // (separate endpoint because the wallet_id is a tenant-level setting,
+      // not a credential field). We run this after the credential save so a
+      // failure here doesn't leave the credential in a half-written state.
+      if (meta.editsCompanyWallet && companyId) {
+        const trimmed = walletInput.trim();
+        // Only PATCH if the value actually changed (avoid a useless audit
+        // entry on every save).
+        if (trimmed !== (currentWalletId ?? '')) {
+          const r2 = await fetch(`/api/superadmin/companies/${companyId}`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              default_wallet_id: trimmed === '' ? null : trimmed,
+            }),
+          });
+          const d2 = await r2.json();
+          if (!r2.ok || !d2.success) throw new Error(d2.error || `HTTP ${r2.status}`);
+        }
+      }
+
       onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error guardando');
@@ -385,44 +536,137 @@ function ApiCredentialForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3 mt-2 p-4 rounded-lg bg-muted/30 border border-border">
-      <div>
-        <label className="block text-sm font-medium mb-1.5">API Key / Secret</label>
-        <div className="relative">
-          <input
-            type={showSecret ? 'text' : 'password'}
-            value={secret}
-            onChange={(e) => setSecret(e.target.value)}
-            placeholder="Pega aquí la llave. Se guardará encriptada."
-            required
-            autoComplete="new-password"
-            className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
-          />
-          <button
-            type="button"
-            onClick={() => setShowSecret((v) => !v)}
-            className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-            aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
-          >
-            {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground mt-1">
-          Por seguridad la llave no se muestra después de guardar. Si la cambias, pégala completa.
-        </p>
-      </div>
+      {/* Compound: client_id + client_secret */}
+      {meta.form.kind === 'compound' && (
+        <>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Client ID</label>
+            <input
+              type="text"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              placeholder="Pega aquí el Client ID."
+              required
+              autoComplete="off"
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Client Secret</label>
+            <div className="relative">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                value={clientSecret}
+                onChange={(e) => setClientSecret(e.target.value)}
+                placeholder="Pega aquí el Client Secret. Se guardará encriptado."
+                required
+                autoComplete="new-password"
+                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
+              >
+                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Por seguridad el secret no se muestra después de guardar. Si lo cambiás, pegalo completo.
+            </p>
+          </div>
+          {meta.editsCompanyWallet && (
+            <div>
+              <label className="block text-sm font-medium mb-1.5">Wallet ID</label>
+              <input
+                type="text"
+                value={walletInput}
+                onChange={(e) => setWalletInput(e.target.value)}
+                placeholder="Ej: 1079"
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                ID de la wallet predeterminada. Se guarda a nivel empresa y es la que se
+                pre-selecciona en /movimientos.
+              </p>
+            </div>
+          )}
+        </>
+      )}
 
-      {meta.extraFields.map((f) => (
-        <div key={f.key}>
-          <label className="block text-sm font-medium mb-1.5">{f.label}</label>
-          <input
-            type="text"
-            value={extras[f.key] ?? ''}
-            onChange={(e) => setExtras((prev) => ({ ...prev, [f.key]: e.target.value }))}
-            placeholder={f.placeholder}
-            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-          />
+      {/* apiKey only (fairpay) */}
+      {meta.form.kind === 'apiKey' && (
+        <div>
+          <label className="block text-sm font-medium mb-1.5">API Key</label>
+          <div className="relative">
+            <input
+              type={showSecret ? 'text' : 'password'}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Pega aquí la API Key. Se guardará encriptada."
+              required
+              autoComplete="new-password"
+              className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+            />
+            <button
+              type="button"
+              onClick={() => setShowSecret((v) => !v)}
+              className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+              aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
+            >
+              {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Por seguridad la llave no se muestra después de guardar. Si la cambiás, pegala completa.
+          </p>
         </div>
-      ))}
+      )}
+
+      {/* keyExtras (sendgrid, orion_crm) — original UX */}
+      {meta.form.kind === 'keyExtras' && (
+        <>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">API Key / Secret</label>
+            <div className="relative">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Pega aquí la llave. Se guardará encriptada."
+                required
+                autoComplete="new-password"
+                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
+              >
+                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Por seguridad la llave no se muestra después de guardar. Si la cambiás, pegala completa.
+            </p>
+          </div>
+
+          {meta.extraFields?.map((f) => (
+            <div key={f.key}>
+              <label className="block text-sm font-medium mb-1.5">{f.label}</label>
+              <input
+                type="text"
+                value={extras[f.key] ?? ''}
+                onChange={(e) => setExtras((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                placeholder={f.placeholder}
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+              />
+            </div>
+          ))}
+        </>
+      )}
 
       {error && (
         <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 text-sm">
