@@ -83,17 +83,56 @@ export async function GET(request: NextRequest) {
     // Pass company.id so the fetcher picks up per-tenant credentials from
     // api_credentials (falling back to env when that tenant hasn't uploaded
     // its own). Same resolution the interactive endpoints use.
+    //
+    // We write TWO kinds of snapshot so the UI + email match the /balances
+    // page granularity:
+    //   1. Aggregate row `coinsbuy` with the sum of the PINNED wallets only
+    //      (not all wallets returned by the API — the page also scopes to
+    //      the pinned set). Keeps backwards compat for readers that only
+    //      care about the total.
+    //   2. One row per pinned wallet with channel_key `coinsbuy:<wallet_id>`
+    //      and the individual balance. The report builder reads these and
+    //      expands the `coinsbuy` channel into per-wallet rows.
     try {
       const cb = await fetchCoinsbuyWallets(company.id);
       if (cb.error) {
         entry.coinsbuy_error = cb.error;
       } else {
-        const total = (cb.wallets ?? []).reduce(
-          (s, w) => s + (w.balanceConfirmed || 0),
-          0,
-        );
-        await upsertChannelBalance(company.id, today, 'coinsbuy', total, 'api');
-        entry.coinsbuy = total;
+        // Load pinned wallet selection for this tenant.
+        const { data: pinned } = await admin
+          .from('pinned_coinsbuy_wallets')
+          .select('wallet_id, wallet_label')
+          .eq('company_id', company.id);
+        const pins = pinned ?? [];
+        const wallets = cb.wallets ?? [];
+
+        // Per-wallet snapshots (only for pinned ones).
+        let pinnedTotal = 0;
+        const perWallet: Record<string, number> = {};
+        for (const p of pins) {
+          const w = wallets.find((x) => x.id === p.wallet_id);
+          const amt = w?.balanceConfirmed ?? 0;
+          pinnedTotal += amt;
+          perWallet[p.wallet_id] = amt;
+          await upsertChannelBalance(
+            company.id,
+            today,
+            `coinsbuy:${p.wallet_id}`,
+            amt,
+            'api',
+          );
+        }
+
+        // Aggregate row. If no wallets are pinned, fall back to the sum of
+        // ALL wallets so tenants that haven't configured pinning still get
+        // a number in the report.
+        const totalForAggregate =
+          pins.length > 0
+            ? pinnedTotal
+            : wallets.reduce((s, w) => s + (w.balanceConfirmed || 0), 0);
+        await upsertChannelBalance(company.id, today, 'coinsbuy', totalForAggregate, 'api');
+        entry.coinsbuy = totalForAggregate;
+        entry.coinsbuy_pinned_wallets = perWallet;
       }
     } catch (err) {
       entry.coinsbuy_error = err instanceof Error ? err.message : 'Unknown error';

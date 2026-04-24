@@ -77,6 +77,7 @@ import { useI18n } from '@/lib/i18n';
 import { useConfirm } from '@/lib/use-confirm';
 import { FixedExpenseTemplatesPanel } from '@/components/fixed-expense-templates-panel';
 import { useApiTotals } from '@/components/realtime-movements-banner';
+import { useToasts } from '@/components/ui/toast';
 import {
   isDerivedBrokerPeriod,
   computeDerivedBroker,
@@ -224,6 +225,28 @@ export default function UploadPage() {
   const [selectedPeriod, setSelectedPeriod] = useState(periods[periods.length - 1]?.id || '');
   const [section, setSection] = useState<DataSection>('depositos');
 
+  // ── Dirty-state tracker for "Guardar Todo" sections ───────────────────
+  // Egresos / Depósitos / Retiros / Ingresos keep unsaved changes in local
+  // state until the user clicks "Guardar Todo". Users kept losing rows
+  // because there was no visual signal that an action (add/edit/delete)
+  // had not been persisted yet. This ref-based flag drives:
+  //   · a banner shown next to the save button,
+  //   · a guard that prevents the silent refresh sync-effect from wiping
+  //     unsaved local state.
+  const [dirtySection, setDirtySection] = useState<DataSection | null>(null);
+  const markDirty = useCallback((s: DataSection) => setDirtySection(s), []);
+
+  // Auto-pick the latest period once `periods` loads asynchronously. On a
+  // cold page hit the DataProvider is still fetching → `periods` is empty
+  // → `selectedPeriod` gets initialized as ''. Without this effect the
+  // <select> stays empty forever and the tables render blank, which the
+  // user perceives as "loading never ends".
+  useEffect(() => {
+    if (!selectedPeriod && periods.length > 0) {
+      setSelectedPeriod(periods[periods.length - 1].id);
+    }
+  }, [periods, selectedPeriod]);
+
   // --- Per-period data helpers (Supabase is source of truth) ---
   const loadDepositsForPeriod = useCallback((periodId: string): DepositRow[] => {
     const periodDeposits = allDeposits.filter(d => d.period_id === periodId);
@@ -315,8 +338,24 @@ export default function UploadPage() {
   const selectedPeriodRef = useRef(selectedPeriod);
   useEffect(() => { selectedPeriodRef.current = selectedPeriod; }, [selectedPeriod]);
 
-  // Reload data when period changes
+  // Reload data when the PERIOD changes. Intentionally depends only on
+  // `selectedPeriod` (and `dirtySection`). Earlier this effect also listed
+  // the `loadXForPeriod` callbacks + raw `allExpenses` etc. as deps — but
+  // those references change on every silent refresh of the DataProvider.
+  // That turned any background refresh into a surprise reset of local
+  // state: the user adds an egreso row, a refresh fires for an unrelated
+  // reason, this effect re-runs, and the unsaved row disappears.
+  //
+  // Now we re-sync local state only when the user explicitly switches
+  // period (or when leaving a dirty section — the save handler resets
+  // `dirtySection` to null, which triggers a clean re-sync from the new
+  // DB state).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
+    // Don't clobber unsaved work. The only way to overwrite a dirty
+    // section here is via the save handler, which itself sets
+    // dirtySection=null right before.
+    if (dirtySection) return;
     setDepositsRaw(loadDepositsForPeriod(selectedPeriod));
     setWithdrawalsRaw(loadWithdrawalsForPeriod(selectedPeriod));
     setWithdrawalExtras(loadWithdrawalExtrasForPeriod(selectedPeriod));
@@ -324,20 +363,27 @@ export default function UploadPage() {
     setIncomeRaw(loadIncomeForPeriod(selectedPeriod));
     setPropFirmAmount(allPropFirmSales.find(p => p.period_id === selectedPeriod)?.amount || 0);
     setP2PAmount(allP2PTransfers.find(p => p.period_id === selectedPeriod)?.amount || 0);
-  }, [selectedPeriod, loadDepositsForPeriod, loadWithdrawalsForPeriod, loadWithdrawalExtrasForPeriod, loadExpensesForPeriod, loadIncomeForPeriod, allPropFirmSales, allP2PTransfers]);
+  }, [selectedPeriod, dirtySection]);
 
+  // Wrapped setters — every user-driven mutation also flags the section as
+  // dirty. The sync effect bypasses these wrappers and calls the Raw
+  // setters directly, so the initial hydration doesn't flip the flag.
   const setDeposits = useCallback((updater: DepositRow[] | ((prev: DepositRow[]) => DepositRow[])) => {
     setDepositsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
-  }, []);
+    markDirty('depositos');
+  }, [markDirty]);
   const setWithdrawals = useCallback((updater: WithdrawalRow[] | ((prev: WithdrawalRow[]) => WithdrawalRow[])) => {
     setWithdrawalsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
-  }, []);
+    markDirty('retiros');
+  }, [markDirty]);
   const setExpenses = useCallback((updater: ExpenseRow[] | ((prev: ExpenseRow[]) => ExpenseRow[])) => {
     setExpensesRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
-  }, []);
+    markDirty('egresos');
+  }, [markDirty]);
   const setIncome = useCallback((updater: IncomeRow | ((prev: IncomeRow) => IncomeRow)) => {
     setIncomeRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
-  }, []);
+    markDirty('ingresos');
+  }, [markDirty]);
   const setDocs = useCallback((updater: DocRow[] | ((prev: DocRow[]) => DocRow[])) => {
     setDocsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
   }, []);
@@ -420,8 +466,6 @@ export default function UploadPage() {
   const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
   const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
-  const [successMsg, setSuccessMsg] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const [savingAll, setSavingAll] = useState(false);
 
@@ -518,17 +562,12 @@ export default function UploadPage() {
 
   const periodLabel = periods.find(p => p.id === selectedPeriod)?.label || '';
 
-  const showSuccess = (msg: string) => {
-    setErrorMsg('');
-    setSuccessMsg(msg);
-    setTimeout(() => setSuccessMsg(''), 3000);
-  };
-
-  const showError = (msg: string) => {
-    setSuccessMsg('');
-    setErrorMsg(msg);
-    setTimeout(() => setErrorMsg(''), 6000);
-  };
+  // Feedback via floating bottom-right toasts. Visible regardless of scroll
+  // position — replaces the older inline div rendered below the <h1>, which
+  // was invisible to users working deep in the Egresos / Liquidez tables.
+  const { toast, ToastHost } = useToasts();
+  const showSuccess = (msg: string) => toast.success(msg);
+  const showError = (msg: string) => toast.error(msg);
 
   // Back-compat alias so existing call sites keep working. Every remaining
   // usage is a destructive delete — pass `tone: 'danger'` uniformly.
@@ -971,6 +1010,7 @@ export default function UploadPage() {
       is_fixed: newExpense.is_fixed,
       category: cat,
     }]);
+    markDirty('egresos');
     setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
     addConceptToHistory(newExpense.concept);
     if (cat) addCategoryToHistory(cat);
@@ -991,6 +1031,7 @@ export default function UploadPage() {
     const pn = parseFloat(editExpense.pending) || amt - pd;
     const cat = editExpense.category.trim() || null;
     setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e));
+    markDirty('egresos');
     if (cat) addCategoryToHistory(cat);
     setEditingExpenseId(null);
     showSuccess(t('upload.expenseUpdated'));
@@ -1006,6 +1047,7 @@ export default function UploadPage() {
     const exp = expenses.find(e => e.id === id);
     askConfirmation(`Eliminar egreso "${exp?.concept}"?`, () => {
       setExpenses(prev => prev.filter(e => e.id !== id));
+      markDirty('egresos');
       showSuccess(t('upload.expenseDeleted'));
     });
   };
@@ -1017,6 +1059,7 @@ export default function UploadPage() {
       try {
         await upsertOperatingIncome(company.id, selectedPeriodRef.current, income);
 
+        setDirtySection(null);
         await refresh();
         if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
         showSuccess(t('upload.incomeSaved'));
@@ -1064,12 +1107,19 @@ export default function UploadPage() {
       ]);
     };
 
+    // Build an informative success message tied to what was saved.
+    // "3 egresos guardados correctamente" is far more useful than a
+    // generic "Guardado OK" — users can sanity-check that the count
+    // matches what they see in the table.
+    let successMsg = 'Datos guardados correctamente';
     try {
       await timedSave(async () => {
         if (section === 'depositos') {
           await upsertDeposits(companyId, periodId, deposits);
           await upsertPropFirmSales(companyId, periodId, propFirmAmount);
           if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
+          const nonZero = deposits.filter(d => d.amount !== 0).length;
+          successMsg = `${nonZero} depósito${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
         } else if (section === 'retiros') {
           const combined = [
             ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
@@ -1078,17 +1128,24 @@ export default function UploadPage() {
           await upsertWithdrawals(companyId, periodId, combined);
           await upsertP2PTransfers(companyId, periodId, p2pAmount);
           if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
+          const nonZero = withdrawals.filter(w => w.amount !== 0).length + withdrawalExtras.length;
+          successMsg = `${nonZero} retiro${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
         } else if (section === 'egresos') {
           await upsertExpenses(companyId, periodId, expenses);
           if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
+          const count = expenses.length;
+          successMsg = `${count} egreso${count === 1 ? '' : 's'} guardado${count === 1 ? '' : 's'} correctamente`;
         } else if (section === 'ingresos') {
           await upsertOperatingIncome(companyId, periodId, income);
           if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
+          successMsg = 'Ingresos operativos guardados correctamente';
         }
       }, 'Guardar todo');
 
       // Main save succeeded. Show success + unlock the button NOW.
-      showSuccess('Todos los datos guardados correctamente');
+      showSuccess(successMsg);
+      // Clear the "unsaved changes" banner — the local state now matches DB.
+      setDirtySection(null);
       setSavingAll(false);
 
       // Refresh in the background — never blocks the button.
@@ -1162,21 +1219,8 @@ export default function UploadPage() {
         <p className="text-muted-foreground text-sm mt-1">{t('upload.subtitle')}</p>
       </div>
 
-      {/* Success message */}
-      {successMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">
-          <Check className="w-4 h-4" />
-          {successMsg}
-        </div>
-      )}
-
-      {/* Error message */}
-      {errorMsg && (
-        <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm font-medium" role="alert" aria-live="assertive">
-          <X className="w-4 h-4 mt-0.5 shrink-0" />
-          <span>{errorMsg}</span>
-        </div>
-      )}
+      {/* Feedback lives in the floating ToastHost at bottom-right. Rendered
+          at the end of this component so it sits above everything else. */}
 
       {/* Section tabs */}
       <div className="flex gap-1 border-b border-border pb-0 overflow-x-auto">
@@ -2301,18 +2345,31 @@ export default function UploadPage() {
           </select>
         </div>
         {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && (
-          <button
-            onClick={saveAll}
-            disabled={savingAll}
-            className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
-          >
-            <Save className="w-4 h-4" />
-            {savingAll ? 'Guardando...' : 'Guardar Todo'}
-          </button>
+          <div className="flex items-center gap-3">
+            {dirtySection === section && !savingAll && (
+              <span
+                className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap"
+                aria-live="polite"
+                title="Hay cambios sin guardar en esta sección"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
+                Cambios sin guardar
+              </span>
+            )}
+            <button
+              onClick={saveAll}
+              disabled={savingAll}
+              className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+            >
+              <Save className="w-4 h-4" />
+              {savingAll ? 'Guardando...' : 'Guardar Todo'}
+            </button>
+          </div>
         )}
       </div>
 
       {ConfirmModal}
+      {ToastHost}
     </div>
   );
 }

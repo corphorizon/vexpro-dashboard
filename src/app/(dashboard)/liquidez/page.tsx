@@ -156,7 +156,7 @@ export default function LiquidezPage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
           label={t('liquidity.currentBalance')}
           value={formatCurrency(lastBalance)}
@@ -174,14 +174,6 @@ export default function LiquidezPage() {
           label="Salida"
           value={formatCurrency(totalWithdrawals)}
           tone="negative"
-        />
-        {/* Profit = Ingreso − Salida en el rango filtrado. Útil para ver
-            rápidamente si el período fue positivo o negativo. */}
-        <StatCard
-          label="Profit"
-          value={formatCurrency(totalDeposits - totalWithdrawals)}
-          tone={totalDeposits - totalWithdrawals >= 0 ? 'positive' : 'negative'}
-          hint="Ingreso − Salida del rango filtrado"
         />
       </div>
 
