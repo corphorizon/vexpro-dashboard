@@ -16,7 +16,7 @@ import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { Users, Briefcase, Download, ChevronRight, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck } from 'lucide-react';
+import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound } from 'lucide-react';
 import { FireModal } from '@/components/fire-modal';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 
@@ -153,6 +153,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
   const [commLot, setCommLot] = useState(editing?.commission_per_lot?.toString() || '');
   const [salary, setSalary] = useState(editing?.salary?.toString() || '');
   const [fixedSalary, setFixedSalary] = useState(editing?.fixed_salary ?? false);
+  const [pnlSpecialMode, setPnlSpecialMode] = useState(!!editing?.pnl_special_mode);
   const [extraPct, setExtraPct] = useState(editing?.extra_pct?.toString() || '');
   const [benefits, setBenefits] = useState(editing?.benefits || '');
   const [comments, setComments] = useState(editing?.comments || '');
@@ -199,6 +200,9 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
         head_id: headId || null,
         net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
         pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
+        // Force pnl_special_mode off when pct is empty — avoids stale flags
+        // from a previous config (profile lost its pct but the flag lingered).
+        pnl_special_mode: pnlPct ? pnlSpecialMode : false,
         salary: salary ? parseFloat(salary) : null,
         fixed_salary: fixedSalary,
         extra_pct: extraPct ? parseFloat(extraPct) : null,
@@ -275,6 +279,28 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pnlPctPlaceholder')}</label>
             <input type="number" value={pnlPct} onChange={e => setPnlPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
+
+          {/* Modo PnL Especial — solo visible cuando hay pnl_pct configurado.
+              Cuando está activo, el perfil usa la fórmula simplificada
+              (pnl × pct − lotes) y aparece en una sección separada en
+              /comisiones. */}
+          {pnlPct && (
+            <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+              <input
+                id="pnl-special-mode"
+                type="checkbox"
+                checked={pnlSpecialMode}
+                onChange={(e) => setPnlSpecialMode(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-border text-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-secondary)]"
+              />
+              <label htmlFor="pnl-special-mode" className="flex-1 cursor-pointer">
+                <span className="block text-sm font-medium">{t('hr.pnlSpecialMode')}</span>
+                <span className="block text-[11px] text-muted-foreground mt-0.5 leading-tight">
+                  {t('hr.pnlSpecialModeHint')}
+                </span>
+              </label>
+            </div>
+          )}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.commLotPlaceholder')}</label>
             <input type="number" value={commLot} onChange={e => setCommLot(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1187,8 +1213,13 @@ export default function RRHHPage() {
                             <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         )}
-                        <Link href={`/rrhh/perfil?id=${bdm.id}`} className="text-muted-foreground hover:text-foreground">
-                          <ChevronRight className="w-4 h-4" />
+                        <Link
+                          href={`/rrhh/perfil?id=${bdm.id}`}
+                          className="text-muted-foreground hover:text-foreground"
+                          aria-label={t('hr.viewProfile')}
+                          title={t('hr.viewProfile')}
+                        >
+                          <UserRound className="w-4 h-4" />
                         </Link>
                       </div>
                     </td>
@@ -1372,6 +1403,34 @@ export default function RRHHPage() {
                       </td>
                       <td className="py-2.5 text-right">
                         <div className="flex items-center justify-end gap-1">
+                          {/* Ver perfil: comerciales → /rrhh/perfil?id=...,
+                              administrativos → abren el EmployeeForm en modo
+                              edición (no hay página /rrhh/perfil para
+                              employees todavía). Primer botón del grupo para
+                              que sea la acción más visible. */}
+                          {emp.source === 'commercial' && emp.originalProfile ? (
+                            <Link
+                              href={`/rrhh/perfil?id=${emp.originalProfile.id}`}
+                              className="text-muted-foreground hover:text-foreground"
+                              aria-label={t('hr.viewProfile')}
+                              title={t('hr.viewProfile')}
+                            >
+                              <UserRound className="w-3.5 h-3.5" />
+                            </Link>
+                          ) : emp.source === 'employee' && emp.originalEmployee ? (
+                            <button
+                              onClick={() => {
+                                setEditingEmp(emp.originalEmployee!);
+                                setShowEmpForm(true);
+                              }}
+                              className="text-muted-foreground hover:text-foreground"
+                              aria-label={t('hr.viewProfile')}
+                              title={t('hr.viewProfile')}
+                            >
+                              <UserRound className="w-3.5 h-3.5" />
+                            </button>
+                          ) : null}
+
                           {/* Despedir: solo comerciales activos. Los
                               comerciales ya despedidos muestran UserCheck
                               (reincorporar), los administrativos no tienen
@@ -1541,8 +1600,13 @@ export default function RRHHPage() {
                           <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
                             <Pencil className="w-3.5 h-3.5" />
                           </button>
-                          <Link href={`/rrhh/perfil?id=${bdm.id}`} className="text-muted-foreground hover:text-foreground">
-                            <ChevronRight className="w-4 h-4" />
+                          <Link
+                            href={`/rrhh/perfil?id=${bdm.id}`}
+                            className="text-muted-foreground hover:text-foreground"
+                            aria-label={t('hr.viewProfile')}
+                            title={t('hr.viewProfile')}
+                          >
+                            <UserRound className="w-4 h-4" />
                           </Link>
                         </td>
                       </tr>

@@ -20,6 +20,7 @@ import {
   calculateHeadSalaryFromND,
   calculateBdmPctFromND,
   getAccumulatedIn,
+  calculatePnlSpecial,
   SALARY_TIERS,
   HEAD_SALARY_TIERS,
   BDM_PCT_TIERS,
@@ -43,6 +44,8 @@ import {
   FileSpreadsheet,
   ChevronDown,
   Loader2,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -411,7 +414,19 @@ export default function ComisionesPage() {
 
   // Filtered BDM lists by commission type
   const ndBdms = useMemo(() => allBdms.filter((p) => p.net_deposit_pct != null), [allBdms]);
-  const pnlBdms = useMemo(() => allBdms.filter((p) => p.pnl_pct != null), [allBdms]);
+  // PnL normal: perfiles con pct pero SIN modo especial
+  const pnlBdms = useMemo(
+    () => allBdms.filter((p) => p.pnl_pct != null && !p.pnl_special_mode),
+    [allBdms],
+  );
+
+  // PnL Especial: perfiles con pct Y modo especial activo — renderizan en
+  // una sección aparte con su propia lógica de cálculo (no dividida, sin
+  // acumulado). Ver sección "PnL Especial" más abajo.
+  const pnlSpecialBdms = useMemo(
+    () => allBdms.filter((p) => p.pnl_pct != null && !!p.pnl_special_mode),
+    [allBdms],
+  );
   const lotBdms = useMemo(() => allBdms.filter((p) => p.commission_per_lot != null), [allBdms]);
 
   // PnL calculations — same formula as ND but using pnl_pct, no salary tiers
@@ -429,6 +444,33 @@ export default function ComisionesPage() {
 
   const pnlSummary = useMemo(() => calculateGroupSummary(pnlCalcs), [pnlCalcs]);
 
+  // ─── PnL Especial calculations ───
+  // Fórmula: commission = pnl × pct (sin división, sin accumulated).
+  // Los lotes se restan al calcular real_payment. Ver calculatePnlSpecial
+  // en commission-calculator.ts — está aislada de calculateCommission.
+  const pnlSpecialCalcs = useMemo(() => {
+    return pnlSpecialBdms.map((profile) => {
+      const pnl = ndInputs.get(profile.id) ?? 0;
+      const lotComm = lotInputs.get(profile.id) ?? 0;
+      const pct = profile.pnl_pct ?? 0;
+      const specialSalary = profile.fixed_salary ? (profile.salary ?? 0) : 0;
+      const calc = calculatePnlSpecial(pnl, pct, lotComm, specialSalary);
+      return { profileId: profile.id, ...calc };
+    });
+  }, [pnlSpecialBdms, ndInputs, lotInputs]);
+
+  const pnlSpecialSummary = useMemo(() => {
+    const totalRealPayment = pnlSpecialCalcs.reduce((s, c) => s + c.realPayment, 0);
+    const totalSalary = pnlSpecialCalcs.reduce((s, c) => s + c.salary, 0);
+    const totalCommission = pnlSpecialCalcs.reduce((s, c) => s + c.commission, 0);
+    return {
+      totalRealPayment: Math.round(totalRealPayment * 100) / 100,
+      totalSalary: Math.round(totalSalary * 100) / 100,
+      totalWithSalary: Math.round((totalRealPayment + totalSalary) * 100) / 100,
+      totalCommission: Math.round(totalCommission * 100) / 100,
+    };
+  }, [pnlSpecialCalcs]);
+
   // ─── History filter (últimos 7 meses por defecto) ───
   const [historyFrom, setHistoryFrom] = useState(Math.max(0, sortedPeriods.length - 7));
   const [historyTo, setHistoryTo] = useState(sortedPeriods.length - 1);
@@ -441,7 +483,7 @@ export default function ComisionesPage() {
   const [saving, setSaving] = useState(false);
   const [savingBdm, setSavingBdm] = useState<Set<string>>(new Set());
 
-  const handleSaveBdm = useCallback(async (profileId: string, isNd: boolean) => {
+  const handleSaveBdm = useCallback(async (profileId: string, mode: 'nd' | 'pnl' | 'pnlSpecial') => {
     if (!selectedPeriod || !company) return;
 
     setSavingBdm((prev) => new Set(prev).add(profileId));
@@ -453,7 +495,7 @@ export default function ComisionesPage() {
 
       let entry: CommissionEntryRow;
 
-      if (isNd) {
+      if (mode === 'nd') {
         // ND BDM
         const calc = indCalcs.find((c) => c.profileId === profileId);
         if (!calc) return;
@@ -474,7 +516,7 @@ export default function ComisionesPage() {
           total_earned: finalTotalEarned,
           bonus: debtOut,
         };
-      } else {
+      } else if (mode === 'pnl') {
         // PnL BDM
         const calc = pnlCalcs.find((c) => c.profileId === profileId);
         if (!calc) return;
@@ -494,6 +536,28 @@ export default function ComisionesPage() {
           real_payment: adjustedReal,
           pnl_current: lotComm,
           accumulated_out: calc.accumulatedOut,
+          salary_paid: calc.salary,
+          total_earned: finalTotalEarned,
+          bonus: debtOut,
+        };
+      } else {
+        // PnL ESPECIAL — sin división ni acumulado
+        const calc = pnlSpecialCalcs.find((c) => c.profileId === profileId);
+        if (!calc) return;
+        const prevDebt = getPrevDebtAll(profileId);
+        const rawTE = calc.realPayment + calc.salary;
+        const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
+        entry = {
+          profile_id: profileId,
+          head_id: headId,
+          net_deposit_current: calc.pnl,           // PnL ingresado
+          net_deposit_accumulated: 0,              // sin acumulado
+          division: 0,                             // sin división
+          base_amount: 0,
+          commissions_earned: calc.commission,     // pnl × pct
+          real_payment: calc.realPayment,          // ya viene con lotes restados
+          pnl_current: calc.lotCommissions,        // guardar lotes (misma convención que PnL normal)
+          accumulated_out: 0,                      // nunca lleva al siguiente mes
           salary_paid: calc.salary,
           total_earned: finalTotalEarned,
           bonus: debtOut,
@@ -540,7 +604,102 @@ export default function ComisionesPage() {
     } finally {
       setSavingBdm((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
     }
-  }, [selectedPeriod, company, commercialProfiles, ndInputs, indCalcs, pnlCalcs, lotInputs, getPrevDebtAll, applyTotalEarnedDebt, patchMonthlyResults]);
+  }, [selectedPeriod, company, commercialProfiles, ndInputs, indCalcs, pnlCalcs, pnlSpecialCalcs, lotInputs, getPrevDebtAll, applyTotalEarnedDebt, patchMonthlyResults]);
+
+  // ─── Recalcular histórico de perfiles en PnL Especial (admin-only) ───
+  //
+  // Lee `commercial_monthly_results` existentes de perfiles con
+  // pnl_special_mode=true y reescribe los valores usando la nueva fórmula:
+  //   commission      = pnl × pct
+  //   real_payment    = commission − com_lotes
+  //   accumulated_out = 0
+  //   division        = 0
+  //   net_deposit_accumulated = 0
+  //
+  // No reprocesa la lógica de deuda entre meses (se usa prevDebt=0). Ajustar
+  // esas cascadas históricas es peligroso y no se pidió explícitamente; si
+  // luego se quiere, se hace aparte.
+  const [recalcInProgress, setRecalcInProgress] = useState(false);
+
+  const handleRecalcHistory = useCallback(async () => {
+    if (user?.effective_role !== 'admin') {
+      setToast({ type: 'error', msg: t('comm.recalcHistoryAdminOnly') });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+    if (pnlSpecialBdms.length === 0) {
+      setToast({ type: 'error', msg: t('comm.recalcHistoryNoProfiles') });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+    if (!confirm(t('comm.recalcHistoryMessage'))) return;
+    if (!company) return;
+
+    setRecalcInProgress(true);
+    try {
+      const specialProfileIds = new Set(pnlSpecialBdms.map((p) => p.id));
+      const affected = monthlyResults.filter((r) => specialProfileIds.has(r.profile_id));
+
+      // Agrupar por (head_id, period_id) porque upsertCommissionEntries
+      // trabaja por grupo — un solo call por (period, head).
+      const grouped = new Map<string, { headId: string; periodId: string; entries: CommissionEntryRow[] }>();
+
+      for (const r of affected) {
+        const profile = pnlSpecialBdms.find((p) => p.id === r.profile_id);
+        if (!profile) continue;
+        const pnl = r.net_deposit_current ?? 0;       // PnL se guarda en net_deposit_current
+        const lotComm = r.pnl_current ?? 0;           // lotes se guardan en pnl_current
+        const pct = profile.pnl_pct ?? 0;
+        const salary = r.salary_paid ?? 0;
+        const calc = calculatePnlSpecial(pnl, pct, lotComm, salary);
+
+        // Sin cascada de deudas: para el recálculo histórico usamos deuda 0.
+        const prevDebt = 0;
+        const rawTE = calc.realPayment + calc.salary;
+        const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
+
+        const headId = r.head_id ?? profile.head_id ?? profile.id;
+        const key = `${headId}::${r.period_id}`;
+        if (!grouped.has(key)) grouped.set(key, { headId, periodId: r.period_id, entries: [] });
+        grouped.get(key)!.entries.push({
+          profile_id: r.profile_id,
+          head_id: headId,
+          net_deposit_current: calc.pnl,
+          net_deposit_accumulated: 0,
+          division: 0,
+          base_amount: 0,
+          commissions_earned: calc.commission,
+          real_payment: calc.realPayment,
+          pnl_current: calc.lotCommissions,
+          accumulated_out: 0,
+          salary_paid: calc.salary,
+          total_earned: finalTotalEarned,
+          bonus: debtOut,
+        });
+      }
+
+      if (grouped.size === 0) {
+        setToast({ type: 'error', msg: t('comm.recalcHistoryNoProfiles') });
+        setTimeout(() => setToast(null), 4000);
+        return;
+      }
+
+      // Secuencial — simpler + safer que Promise.all si un tenant tiene
+      // muchos meses y la DB lockea a nivel de fila.
+      for (const { headId, periodId, entries } of grouped.values()) {
+        await upsertCommissionEntries(company.id, periodId, headId, entries);
+      }
+
+      await refresh();
+      setToast({ type: 'success', msg: t('comm.recalcHistoryDone') });
+      setTimeout(() => setToast(null), 4000);
+    } catch (err) {
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error' });
+      setTimeout(() => setToast(null), 5000);
+    } finally {
+      setRecalcInProgress(false);
+    }
+  }, [user, pnlSpecialBdms, monthlyResults, company, refresh, t]);
 
   const handleSave = async () => {
     if (!selectedPeriod || !company) return;
@@ -1165,7 +1324,7 @@ export default function ComisionesPage() {
                           <td className="px-2 py-3">
                             <div className="flex items-center gap-1 justify-center">
                               <button
-                                onClick={() => handleSaveBdm(calc.profileId, true)}
+                                onClick={() => handleSaveBdm(calc.profileId, 'nd')}
                                 disabled={savingBdm.has(calc.profileId)}
                                 className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
                                 title="Guardar este BDM"
@@ -1316,7 +1475,7 @@ export default function ComisionesPage() {
                           <td className="px-2 py-3">
                             <div className="flex items-center gap-1 justify-center">
                               <button
-                                onClick={() => handleSaveBdm(calc.profileId, false)}
+                                onClick={() => handleSaveBdm(calc.profileId, 'pnl')}
                                 disabled={savingBdm.has(calc.profileId)}
                                 className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
                                 title="Guardar este BDM"
@@ -1377,6 +1536,179 @@ export default function ComisionesPage() {
             </Card>
           ) : (
             <Card><p className="text-center text-muted-foreground py-8">{t('comm.noBdmsInSection')}</p></Card>
+          )}
+
+          {/* ── Section: PnL Especial ── */}
+          {/* Solo se renderiza si hay al menos un perfil con pnl_special_mode=true.
+              Columnas reducidas (sin División, Acumulado, Acc→Sig), badge violeta
+              "Especial" junto al nombre, botón admin-only de "Recalcular histórico". */}
+          {pnlSpecialBdms.length > 0 && (
+            <>
+              <div className="flex items-center justify-between mt-6 gap-2 flex-wrap">
+                <h3 className="text-base font-semibold flex items-center gap-2">
+                  <Sparkles className="w-4 h-4 text-violet-600" />
+                  {t('comm.sectionPnLSpecial')}
+                  <span className="text-xs text-muted-foreground font-normal">({pnlSpecialBdms.length})</span>
+                </h3>
+                {user?.effective_role === 'admin' && (
+                  <button
+                    onClick={() => handleRecalcHistory()}
+                    disabled={recalcInProgress}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-400 text-xs font-medium hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-50"
+                    title={t('comm.recalcHistoryTitle')}
+                  >
+                    {recalcInProgress ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    {recalcInProgress ? t('comm.recalcHistoryInProgress') : t('comm.recalcHistoryButton')}
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground -mt-1 mb-2">{t('comm.sectionPnLSpecialHint')}</p>
+              <Card className="p-0 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm min-w-[800px]">
+                    <thead>
+                      <tr className="border-b border-border bg-muted/50">
+                        <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
+                        <th className="text-left px-3 py-3 font-medium">HEAD</th>
+                        <th className="text-right px-3 py-3 font-medium">PnL</th>
+                        <th className="text-right px-3 py-3 font-medium">Com. Lotes</th>
+                        <th className="text-center px-3 py-3 font-medium">%</th>
+                        <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
+                        <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
+                        <th className="text-right px-3 py-3 font-medium">Total</th>
+                        <th className="px-2 py-3"></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pnlSpecialCalcs.map((calc) => {
+                        const profile = commercialProfiles.find((p) => p.id === calc.profileId);
+                        if (!profile) return null;
+                        const headName = profile.head_id
+                          ? commercialProfiles.find((p) => p.id === profile.head_id)?.name
+                          : '—';
+                        const prevDebt = getPrevDebtAll(calc.profileId);
+                        const rawTE = calc.realPayment + calc.salary;
+                        const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
+                        return (
+                          <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
+                            <td className="px-4 py-3">
+                              <span className={cn('font-medium block', firedNameClass(profile))}>
+                                {profile.name}
+                                <FiredBadge profile={profile} />
+                                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 align-middle">
+                                  {t('comm.specialBadge')}
+                                </span>
+                              </span>
+                              <span className="text-xs text-muted-foreground">{profile.email}</span>
+                            </td>
+                            <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
+                            <td className="px-3 py-3">
+                              <input
+                                type="number"
+                                value={getNdDisplay(calc.profileId)}
+                                onChange={(e) => handleNdChange(calc.profileId, e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                              />
+                            </td>
+                            <td className="px-3 py-3">
+                              <input
+                                type="number"
+                                value={getLotDisplay(calc.profileId)}
+                                onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
+                                onFocus={(e) => e.target.select()}
+                                placeholder="0"
+                                className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                              />
+                            </td>
+                            <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
+                            <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                              {formatCurrency(calc.commission)}
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold">
+                              <span className={calc.realPayment >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+                                {formatCurrency(calc.realPayment)}
+                                {calc.lotCommissions > 0 && (
+                                  <span className="block text-[10px] text-muted-foreground">
+                                    {formatCurrency(calc.commission)} − {formatCurrency(calc.lotCommissions)} lotes
+                                  </span>
+                                )}
+                              </span>
+                            </td>
+                            <td className="px-3 py-3 text-right font-semibold">
+                              <span className={prevDebt < 0 ? 'text-orange-600' : ''}>
+                                {formatCurrency(finalTotalEarned)}
+                                {prevDebt < 0 && (
+                                  <span className="block text-[10px] text-orange-500">deuda: {formatCurrency(prevDebt)}</span>
+                                )}
+                              </span>
+                            </td>
+                            <td className="px-2 py-3">
+                              <div className="flex items-center gap-1 justify-center">
+                                <button
+                                  onClick={() => handleSaveBdm(calc.profileId, 'pnlSpecial')}
+                                  disabled={savingBdm.has(calc.profileId)}
+                                  className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                  title="Guardar este BDM"
+                                >
+                                  {savingBdm.has(calc.profileId)
+                                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                                    : <Save className="w-4 h-4" />}
+                                </button>
+                                {/* PDF: mismo reporte que PnL normal, pero con los valores
+                                    del modo Especial — accumulatedIn=0, division=0,
+                                    accumulatedOut=0 reflejan la regla "no hay acumulado". */}
+                                <button
+                                  onClick={() => verify2FA(() => {
+                                    if (!selectedPeriod) return;
+                                    const headP = profile.head_id
+                                      ? commercialProfiles.find(p => p.id === profile.head_id)
+                                      : null;
+                                    generatePnlPDF({
+                                      companyName: company?.name ?? 'Smart Dashboard',
+                                      periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+                                      name: profile.name,
+                                      email: profile.email,
+                                      role: ROLE_LABEL[profile.role] || profile.role,
+                                      headName: headP?.name ?? '—',
+                                      pct: calc.commissionPct,
+                                      pnl: calc.pnl,
+                                      accumulatedIn: 0,
+                                      division: 0,
+                                      commission: calc.commission,
+                                      lotCommissions: calc.lotCommissions,
+                                      realPayment: calc.realPayment,
+                                      accumulatedOut: 0,
+                                      salary: calc.salary,
+                                      total: calc.realPayment + calc.salary,
+                                      mode: 'special',
+                                    });
+                                  })}
+                                  className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                                  title="Descargar PDF"
+                                >
+                                  <FileText className="w-4 h-4" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-muted/50 font-semibold">
+                        <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
+                        <td className="px-3 py-3 text-right">{formatCurrency(pnlSpecialCalcs.reduce((s, c) => s + c.pnl, 0))}</td>
+                        <td className="px-3 py-3" colSpan={3}></td>
+                        <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(pnlSpecialSummary.totalRealPayment)}</td>
+                        <td className="px-3 py-3 text-right font-semibold">{formatCurrency(pnlSpecialSummary.totalWithSalary)}</td>
+                        <td className="px-2 py-3"></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </Card>
+            </>
           )}
 
           {/* ── Section: Commission per Lot ── */}
@@ -1510,7 +1842,7 @@ export default function ComisionesPage() {
                       const total = getProfileTotal(profile.id);
                       return (
                         <tr key={profile.id} className={cn('border-b border-border/50 hover:bg-muted/30', showSeparator && 'border-t-2 border-t-border')}>
-                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} />{profile.pnl_special_mode && (<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 align-middle">{t('comm.specialBadge')}</span>)}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-2 py-2.5">
                             <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', ROLE_BADGE[profile.role])}>
                               {ROLE_LABEL[profile.role]}

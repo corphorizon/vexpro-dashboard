@@ -232,6 +232,7 @@ export interface CommercialProfile {
   commission_per_lot: number | null; // USD per lot, null = N/A
   salary: number | null; // monthly USD, null = N/A
   fixed_salary?: boolean; // true = salary fijo (no depende de ND), false = auto por tiers
+  pnl_special_mode?: boolean; // true = modo PnL alternativo (sin división ni acumulado, pero con resta de lotes)
   contract_url?: string | null; // URL del contrato firmado en Supabase Storage
   extra_pct: number | null; // extra differential % for HEAD when head_pct == bdm_pct
   benefits: string | null;

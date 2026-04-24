@@ -390,9 +390,19 @@ interface PdfPnlData {
   accumulatedOut: number;
   salary: number;
   total: number;
+  /**
+   * Modo de cálculo:
+   *   - 'normal'  → reporte tradicional con División, Acumulado previo,
+   *                 Acumulado→Siguiente (default).
+   *   - 'special' → modo PnL Especial: commission = pnl × pct sin división
+   *                 ni acumulado. El reporte oculta las 3 filas que no
+   *                 aplican y cambia el label de la fórmula.
+   */
+  mode?: 'normal' | 'special';
 }
 
 export function generatePnlPDF(data: PdfPnlData) {
+  const isSpecial = data.mode === 'special';
   const doc = new jsPDF('portrait', 'mm', 'a4');
   const pageWidth = doc.internal.pageSize.getWidth();
 
@@ -402,7 +412,7 @@ export function generatePnlPDF(data: PdfPnlData) {
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(16);
   doc.setFont('helvetica', 'bold');
-  doc.text('Informe Individual de Comisiones - PnL', 14, 14);
+  doc.text(isSpecial ? 'Informe Individual de Comisiones - PnL Especial' : 'Informe Individual de Comisiones - PnL', 14, 14);
   doc.setFontSize(10);
   doc.setFont('helvetica', 'normal');
   doc.text(data.companyName, 14, 22);
@@ -455,16 +465,27 @@ export function generatePnlPDF(data: PdfPnlData) {
   doc.text('Detalle del Calculo', 14, y);
   y += 3;
 
-  const detailRows: string[][] = [
-    ['Porcentaje de comision', `${data.pct}%`],
-    ['PnL Mes Actual', `$${fmt(data.pnl)}`],
-    ['Acumulado del mes anterior', `$${fmt(data.accumulatedIn)}`],
-    ['Division (PnL / 2)', `$${fmt(data.division)}`],
-    ['Comision ((Division + Acumulado) x %)', `$${fmt(data.commission)}`],
-    ['Comisiones ganadas por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
-    ['Pago Real (Comision - Com. Lotes)', `$${fmt(data.realPayment)}`],
-    ['Acumulado -> Siguiente mes', `$${fmt(data.accumulatedOut)}`],
-  ];
+  // Detalle del cálculo — en modo Especial se omiten las 3 filas que no
+  // aplican (Acumulado previo, División, Acumulado siguiente) y se ajusta
+  // el label de la comisión a la fórmula real del modo.
+  const detailRows: string[][] = isSpecial
+    ? [
+        ['Porcentaje de comision', `${data.pct}%`],
+        ['PnL Mes Actual', `$${fmt(data.pnl)}`],
+        ['Comision (PnL x %)', `$${fmt(data.commission)}`],
+        ['Comisiones ganadas por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
+        ['Pago Real (Comision - Com. Lotes)', `$${fmt(data.realPayment)}`],
+      ]
+    : [
+        ['Porcentaje de comision', `${data.pct}%`],
+        ['PnL Mes Actual', `$${fmt(data.pnl)}`],
+        ['Acumulado del mes anterior', `$${fmt(data.accumulatedIn)}`],
+        ['Division (PnL / 2)', `$${fmt(data.division)}`],
+        ['Comision ((Division + Acumulado) x %)', `$${fmt(data.commission)}`],
+        ['Comisiones ganadas por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
+        ['Pago Real (Comision - Com. Lotes)', `$${fmt(data.realPayment)}`],
+        ['Acumulado -> Siguiente mes', `$${fmt(data.accumulatedOut)}`],
+      ];
 
   autoTable(doc, {
     startY: y,
@@ -475,12 +496,17 @@ export function generatePnlPDF(data: PdfPnlData) {
     headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 250, 252] },
     didParseCell: (hookData) => {
+      // Índices dependen del modo — en especial hay 3 filas menos.
+      //   Normal : 0=pct 1=pnl 2=accIn 3=div 4=commission 5=lots 6=realPayment 7=accOut
+      //   Special: 0=pct 1=pnl                 2=commission 3=lots 4=realPayment
+      const lotsRowIdx = isSpecial ? 3 : 5;
+      const realPaymentRowIdx = isSpecial ? 4 : 6;
       // Resaltar fila de descuento lotes en ámbar
-      if (hookData.section === 'body' && hookData.row.index === 5) {
+      if (hookData.section === 'body' && hookData.row.index === lotsRowIdx) {
         hookData.cell.styles.textColor = [180, 83, 9];
       }
       // Resaltar Pago Real en verde/rojo
-      if (hookData.section === 'body' && hookData.row.index === 6) {
+      if (hookData.section === 'body' && hookData.row.index === realPaymentRowIdx) {
         hookData.cell.styles.fontStyle = 'bold';
         hookData.cell.styles.textColor = data.realPayment >= 0 ? [0, 130, 0] : [180, 0, 0];
       }
@@ -528,6 +554,6 @@ export function generatePnlPDF(data: PdfPnlData) {
   doc.setTextColor(160, 174, 192);
   doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
 
-  const fileName = `ComisionPnL_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
+  const fileName = `${isSpecial ? 'ComisionPnLEspecial' : 'ComisionPnL'}_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
   doc.save(fileName);
 }

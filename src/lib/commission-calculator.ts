@@ -340,3 +340,54 @@ export function applyTotalEarnedDebt(
     return { finalTotalEarned: afterDebt, debtOut: afterDebt };
   }
 }
+
+// ---------------------------------------------------------------------------
+// PnL SPECIAL MODE
+// ---------------------------------------------------------------------------
+//
+// Cálculo alternativo para perfiles con `pnl_special_mode = true`:
+//
+//   commission      = pnl × pnl_pct                ← sin dividir entre 2
+//   real_payment    = commission − com_lotes
+//   accumulated_out = 0                            ← no lleva acumulado
+//
+// La resta de Com. Lotes (lotCommissions) SÍ se aplica, igual que en PnL
+// normal. Las diferencias clave son:
+//   1. No se divide el PnL entre 2
+//   2. No se considera `accumulated_in` del mes anterior
+//   3. No se pasa `accumulated_out` al siguiente mes
+//
+// Esta función es INDEPENDIENTE de `calculateCommission`. Mantenerlas
+// aisladas protege el cálculo normal de efectos colaterales por cambios
+// futuros en el modo Especial.
+// ---------------------------------------------------------------------------
+
+export interface PnlSpecialCalcResult {
+  profileId: string;
+  pnl: number;              // PnL de entrada (lo que pusimos en el input)
+  commissionPct: number;    // % del perfil
+  commission: number;       // pnl × pct
+  lotCommissions: number;   // Com. Lotes restadas
+  realPayment: number;      // commission − lotCommissions
+  accumulatedOut: number;   // SIEMPRE 0 en modo Especial
+  salary: number;           // salario fijo si aplica; sin tiers
+}
+
+export function calculatePnlSpecial(
+  pnl: number,
+  pnlPct: number,
+  lotCommissions: number,
+  salary: number = 0,
+): Omit<PnlSpecialCalcResult, 'profileId'> {
+  const commission = round2(pnl * (pnlPct / 100));
+  const realPayment = round2(commission - lotCommissions);
+  return {
+    pnl,
+    commissionPct: pnlPct,
+    commission,
+    lotCommissions,
+    realPayment,
+    accumulatedOut: 0,
+    salary,
+  };
+}

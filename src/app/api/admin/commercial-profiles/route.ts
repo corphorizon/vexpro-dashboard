@@ -10,7 +10,9 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 // Must match actual DB columns — no 'phone' (doesn't exist in table).
 const ALLOWED_FIELDS = [
   'name', 'role', 'head_id', 'net_deposit_pct', 'extra_pct', 'pnl_pct',
-  'commission_per_lot', 'salary', 'fixed_salary', 'benefits', 'comments',
+  'commission_per_lot', 'salary', 'fixed_salary',
+  'pnl_special_mode',
+  'benefits', 'comments',
   'status', 'email', 'hire_date', 'birthday', 'contract_url',
   'termination_date',
   'termination_reason',

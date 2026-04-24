@@ -603,6 +603,7 @@ export interface CommercialProfileInput {
   termination_reason: string | null;
   termination_category: string | null;
   terminated_by: string | null;
+  pnl_special_mode?: boolean;
 }
 
 // ─── Commercial Profiles via API route (bypasses RLS with service role) ───
