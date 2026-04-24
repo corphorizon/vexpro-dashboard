@@ -16,7 +16,6 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { resolveChannels, type ChannelConfigRow, type ResolvedChannel } from '@/lib/channel-configs';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
-import { upsertChannelBalance } from '@/lib/supabase/mutations';
 
 export interface ReportChannelBalanceRow {
   key: string;
@@ -40,6 +39,27 @@ export async function buildBalancesByChannel(
   asOf: string = new Date().toISOString().slice(0, 10),
 ): Promise<ReportBalancesByChannel> {
   const admin = createAdminClient();
+
+  // Write to channel_balances using the service-role admin client — the
+  // table has RLS and the shared `upsertChannelBalance` mutation helper
+  // goes through the anon client which fails in a server-side/cron
+  // context where there's no user cookie.
+  const upsertSnapshot = async (
+    channelKey: string,
+    amount: number,
+    source: 'manual' | 'api' | 'derived',
+  ) => {
+    await admin.from('channel_balances').upsert(
+      {
+        company_id: companyId,
+        snapshot_date: asOf,
+        channel_key: channelKey,
+        amount,
+        source,
+      },
+      { onConflict: 'company_id,snapshot_date,channel_key' },
+    );
+  };
 
   try {
     // 1. Resolve the per-company channel list (respects visibility).
@@ -113,16 +133,10 @@ export async function buildBalancesByChannel(
               const w = wallets.find((x) => x.id === pw.wallet_id);
               const amt = w?.balanceConfirmed ?? 0;
               pinnedTotal += amt;
-              await upsertChannelBalance(
-                companyId,
-                asOf,
-                `coinsbuy:${pw.wallet_id}`,
-                amt,
-                'api',
-              );
+              await upsertSnapshot(`coinsbuy:${pw.wallet_id}`, amt, 'api');
               latestSnap.set(`coinsbuy:${pw.wallet_id}`, { amount: amt, source: 'api' });
             }
-            await upsertChannelBalance(companyId, asOf, 'coinsbuy', pinnedTotal, 'api');
+            await upsertSnapshot('coinsbuy', pinnedTotal, 'api');
             latestSnap.set('coinsbuy', { amount: pinnedTotal, source: 'api' });
           }
         } catch {
@@ -140,7 +154,7 @@ export async function buildBalancesByChannel(
             (s, b: { availableBalance?: number }) => s + (b.availableBalance ?? 0),
             0,
           );
-          await upsertChannelBalance(companyId, asOf, 'unipayment', total, 'api');
+          await upsertSnapshot('unipayment', total, 'api');
           latestSnap.set('unipayment', { amount: total, source: 'api' });
         }
       } catch {

@@ -2,7 +2,32 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
-import { upsertChannelBalance } from '@/lib/supabase/mutations';
+
+// The channel_balances table has RLS enabled; writes from the cron can't
+// pass through the normal `supabase` client (no cookie → no user). This
+// helper uses the service-role admin client directly.
+async function adminUpsertChannelBalance(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  snapshotDate: string,
+  channelKey: string,
+  amount: number,
+  source: 'manual' | 'api' | 'derived',
+) {
+  const { error } = await admin
+    .from('channel_balances')
+    .upsert(
+      {
+        company_id: companyId,
+        snapshot_date: snapshotDate,
+        channel_key: channelKey,
+        amount,
+        source,
+      },
+      { onConflict: 'company_id,snapshot_date,channel_key' },
+    );
+  if (error) throw new Error(error.message);
+}
 
 // ---------------------------------------------------------------------------
 // GET /api/cron/daily-balance-snapshot
@@ -114,7 +139,7 @@ export async function GET(request: NextRequest) {
           const amt = w?.balanceConfirmed ?? 0;
           pinnedTotal += amt;
           perWallet[p.wallet_id] = amt;
-          await upsertChannelBalance(
+          await adminUpsertChannelBalance(admin, 
             company.id,
             today,
             `coinsbuy:${p.wallet_id}`,
@@ -130,7 +155,7 @@ export async function GET(request: NextRequest) {
           pins.length > 0
             ? pinnedTotal
             : wallets.reduce((s, w) => s + (w.balanceConfirmed || 0), 0);
-        await upsertChannelBalance(company.id, today, 'coinsbuy', totalForAggregate, 'api');
+        await adminUpsertChannelBalance(admin, company.id, today, 'coinsbuy', totalForAggregate, 'api');
         entry.coinsbuy = totalForAggregate;
         entry.coinsbuy_pinned_wallets = perWallet;
       }
@@ -148,7 +173,7 @@ export async function GET(request: NextRequest) {
           (s, b: { availableBalance?: number }) => s + (b.availableBalance ?? 0),
           0,
         );
-        await upsertChannelBalance(company.id, today, 'unipayment', total, 'api');
+        await adminUpsertChannelBalance(admin, company.id, today, 'unipayment', total, 'api');
         entry.unipayment = total;
       }
     } catch (err) {
