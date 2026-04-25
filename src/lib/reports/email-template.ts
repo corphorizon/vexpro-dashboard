@@ -407,6 +407,25 @@ export interface RenderReportEmailParams {
    *  accents. Falls back to the Horizon navy. */
   primaryColor?: string | null;
   sections?: ReportSectionToggles;
+  /** ISO timestamp of the most recent external-API sync. When present,
+   *  rendered as a small footer line so the recipient knows how fresh
+   *  the numbers are. */
+  lastSyncedAt?: string | null;
+}
+
+/** Format an ISO timestamp as "DD MMM YYYY · HH:MM UTC". Used in the
+ *  email footer to convey data freshness. Returns empty string if input
+ *  is null / unparseable so the footer simply omits the line. */
+function formatSyncTimestamp(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const day = d.getUTCDate();
+  const month = MONTHS_ES[d.getUTCMonth()] ?? '';
+  const year = d.getUTCFullYear();
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${day} ${month} ${year} · ${hh}:${mm} UTC`;
 }
 
 export function renderReportEmail(params: RenderReportEmailParams): string {
@@ -414,6 +433,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   const sections = params.sections ?? ALL_SECTIONS_ON;
   const primary = normalizeHex(params.primaryColor) ?? '#1E3A5F';
   const title = reportTitle(cadence);
+  const syncStamp = formatSyncTimestamp(params.lastSyncedAt);
   const rangeLabel =
     cadence === 'daily'
       ? formatDateEs(data.range.from)
@@ -492,6 +512,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
               <br />
               Reporte generado automáticamente por
               <a href="${DASHBOARD_URL}" style="color:#93C5FD;text-decoration:none;">Smart Dashboard</a>.
+              ${syncStamp ? `<br /><span style="color:#94A3B8;font-size:10px;">Datos actualizados: ${escapeHtml(syncStamp)}</span>` : ''}
               <br />
               <span style="color:#94A3B8;font-size:10px;">Para dejar de recibir este reporte, contacta a tu administrador.</span>
             </td>

@@ -2,6 +2,22 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "crons": [
     {
+      "path": "/api/cron/sync-external-apis",
+      "schedule": "55 23 * * *"
+    },
+    {
+      "path": "/api/cron/sync-external-apis",
+      "schedule": "55 5 * * *"
+    },
+    {
+      "path": "/api/cron/sync-external-apis",
+      "schedule": "55 11 * * *"
+    },
+    {
+      "path": "/api/cron/sync-external-apis",
+      "schedule": "55 17 * * *"
+    },
+    {
       "path": "/api/cron/daily-balance-snapshot",
       "schedule": "0 0 * * *"
     },
