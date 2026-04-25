@@ -6,6 +6,13 @@ import {
   previousMonthRange,
 } from './send';
 import type { ReportCadence } from './email-template';
+import { getLastSyncAt, runExternalApiSync } from '@/lib/integrations-sync';
+
+// If the last successful sync of external APIs is older than this many
+// minutes, the report cron triggers a fresh sync before sending. Keeps
+// the email from going out with 30-hour-old data when the periodic 23:55
+// UTC sync has been broken for any reason.
+const SYNC_FRESHNESS_MINUTES = 15;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared handler for the three report crons.
@@ -61,17 +68,50 @@ export async function handleReportCron(
       ? { from: fromOverride, to: toOverride }
       : RANGE_FN[cadence]();
 
+  // ── Safety net: ensure data is fresh before sending the report ──────
+  // For the daily cadence (which runs 5 minutes after the periodic sync
+  // at 23:55 UTC) we verify the most recent sync ran within the last
+  // SYNC_FRESHNESS_MINUTES. If not, run one inline now. Weekly / monthly
+  // are scheduled on different cadences and benefit from the same check.
+  let syncInfo: { lastSyncedAt: string | null; ranInlineSync: boolean } = {
+    lastSyncedAt: null,
+    ranInlineSync: false,
+  };
+  try {
+    const lastSyncAt = await getLastSyncAt();
+    const stale =
+      !lastSyncAt ||
+      Date.now() - new Date(lastSyncAt).getTime() > SYNC_FRESHNESS_MINUTES * 60 * 1000;
+    if (stale) {
+      console.log(
+        `[cron/${cadence}-financial-report] last sync ${lastSyncAt ?? 'never'} is stale, running inline sync`,
+      );
+      const summary = await runExternalApiSync({ onlyCompanyId });
+      syncInfo = { lastSyncedAt: summary.ranAt, ranInlineSync: true };
+    } else {
+      syncInfo = { lastSyncedAt: lastSyncAt, ranInlineSync: false };
+    }
+  } catch (err) {
+    // Sync failure is logged but never blocks the report — better to send
+    // with slightly stale data than to skip the day entirely.
+    console.warn(
+      `[cron/${cadence}-financial-report] safety-net sync failed:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+
   try {
     const result = await sendReportsForCadence(cadence, range, {
       dryRun,
       onlyCompanyId,
+      lastSyncedAt: syncInfo.lastSyncedAt,
     });
-    return NextResponse.json({ success: true, ...result, dryRun });
+    return NextResponse.json({ success: true, ...result, dryRun, syncInfo });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error(`[cron/${cadence}-financial-report]`, msg);
     return NextResponse.json(
-      { success: false, error: msg, cadence, range },
+      { success: false, error: msg, cadence, range, syncInfo },
       { status: 500 },
     );
   }

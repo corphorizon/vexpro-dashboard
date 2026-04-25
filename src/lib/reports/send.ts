@@ -128,7 +128,14 @@ export function previousMonthRange(referenceDate: Date = new Date()): {
 export async function sendReportsForCadence(
   cadence: ReportCadence,
   range: { from: string; to: string },
-  options: { dryRun?: boolean; onlyCompanyId?: string } = {},
+  options: {
+    dryRun?: boolean;
+    onlyCompanyId?: string;
+    /** ISO timestamp of the last successful external-API sync. Rendered
+     *  as a small footer note in the email so readers can see how fresh
+     *  the data is. */
+    lastSyncedAt?: string | null;
+  } = {},
 ): Promise<SendReportsResult> {
   const admin = createAdminClient();
 
@@ -213,6 +220,7 @@ export async function sendReportsForCadence(
         companyLogoUrl: company.logo_url,
         primaryColor: company.color_primary,
         sections: cfg.sections,
+        lastSyncedAt: options.lastSyncedAt ?? null,
       });
       const text = renderReportEmailText({
         data,
