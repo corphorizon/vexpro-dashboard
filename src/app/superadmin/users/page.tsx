@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ArrowLeft, Plus, Trash2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Plus, Trash2, Loader2, Mail } from 'lucide-react';
 import { ALL_MODULES } from '../companies/_form';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,6 +28,8 @@ interface UserRow {
   role: string;
   allowed_modules: string[] | null;
   twofa_enabled: boolean;
+  must_change_password: boolean;
+  last_login_at: string | null;
   created_at: string;
   companies: { name: string; slug: string; status: string } | null;
 }
@@ -86,6 +88,26 @@ export default function SuperadminUsersPage() {
       load();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Error de red');
+    }
+  };
+
+  const [resendingId, setResendingId] = useState<string | null>(null);
+
+  const resendInvite = async (id: string, email: string) => {
+    if (!confirm(`Reenviar invitación a ${email}?`)) return;
+    setResendingId(id);
+    try {
+      const res = await fetch(`/api/superadmin/users/${id}/resend-invite`, { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        alert(json.error || 'Error reenviando invitación');
+        return;
+      }
+      alert(`Invitación reenviada a ${email}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error de red');
+    } finally {
+      setResendingId(null);
     }
   };
 
@@ -214,12 +236,29 @@ export default function SuperadminUsersPage() {
                     </span>
                   </td>
                   <td className="p-3 text-right">
-                    <button
-                      onClick={() => deleteUser(u.id, u.email)}
-                      className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-red-300 text-red-600 text-xs hover:bg-red-50 dark:hover:bg-red-950/40"
-                    >
-                      <Trash2 className="w-3 h-3" /> Quitar
-                    </button>
+                    <div className="inline-flex items-center gap-2 justify-end">
+                      {/* Reenviar invitación: solo si el usuario aún no ha
+                          activado su cuenta (must_change_password=true). */}
+                      {u.must_change_password && (
+                        <button
+                          onClick={() => resendInvite(u.id, u.email)}
+                          disabled={resendingId === u.id}
+                          title="Reenviar invitación (el usuario aún no creó contraseña)"
+                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-blue-300 text-blue-600 text-xs hover:bg-blue-50 dark:hover:bg-blue-950/40 disabled:opacity-50"
+                        >
+                          {resendingId === u.id
+                            ? <Loader2 className="w-3 h-3 animate-spin" />
+                            : <Mail className="w-3 h-3" />}
+                          Reenviar
+                        </button>
+                      )}
+                      <button
+                        onClick={() => deleteUser(u.id, u.email)}
+                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-red-300 text-red-600 text-xs hover:bg-red-50 dark:hover:bg-red-950/40"
+                      >
+                        <Trash2 className="w-3 h-3" /> Quitar
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

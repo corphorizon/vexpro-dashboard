@@ -11,8 +11,10 @@ import { withActiveCompany } from '@/lib/api-fetch';
 // Shield icon removed with the Roles tab — keep ShieldOff for the 2FA badge.
 import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+// Single source of truth for the module catalog — same list and order the
+// superadmin form uses, so /usuarios and /superadmin/users stay in sync.
+import { ALL_MODULES } from '@/app/superadmin/companies/_form';
 
-const ALL_MODULES = Object.keys(MODULE_LABELS);
 const ALL_ROLES: Array<User['role']> = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
 
 interface CustomRoleOption {
@@ -26,7 +28,6 @@ interface CustomRoleOption {
 interface UserForm {
   name: string;
   email: string;
-  password: string;
   role: User['role'];
   allowed_modules: string[];
 }
@@ -34,7 +35,6 @@ interface UserForm {
 const emptyForm: UserForm = {
   name: '',
   email: '',
-  password: '',
   role: 'socio',
   allowed_modules: ROLE_DEFAULT_MODULES['socio'],
 };
@@ -87,7 +87,6 @@ export default function UsuariosPage() {
     setForm({
       name: u.name,
       email: u.email,
-      password: '',
       role: u.role,
       allowed_modules: [...u.allowed_modules],
     });
@@ -111,22 +110,19 @@ export default function UsuariosPage() {
         // to themselves; custom roles resolve via their base_role.
         const custom = customRoles.find(c => c.name === form.role);
         const effectiveRole = (custom?.base_role ?? form.role) as User['role'];
-        await createUser(
-          {
-            name: form.name,
-            email: form.email,
-            role: form.role,
-            effective_role: effectiveRole,
-            company_id: user?.company_id || '',
-            allowed_modules: form.allowed_modules,
-            twofa_enabled: false,
-            // Created via the in-company flow — never a superadmin.
-            is_superadmin: false,
-            force_2fa_setup: true,      // new users must set up 2FA on first login
-            must_change_password: false,
-          },
-          form.password
-        );
+        await createUser({
+          name: form.name,
+          email: form.email,
+          role: form.role,
+          effective_role: effectiveRole,
+          company_id: user?.company_id || '',
+          allowed_modules: form.allowed_modules,
+          twofa_enabled: false,
+          // Created via the in-company flow — never a superadmin.
+          is_superadmin: false,
+          force_2fa_setup: true,         // new users must set up 2FA on first login
+          must_change_password: true,    // server enforces this anyway; mantenemos consistencia
+        });
       }
       setShowForm(false);
       setEditingId(null);
@@ -159,6 +155,31 @@ export default function UsuariosPage() {
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Error eliminando usuario');
       setDeleteConfirm(null);
+    }
+  };
+
+  // Reenviar invitación: regenera el token y manda el correo de
+  // nuevo. Solo aplica a usuarios con must_change_password=true (todavía
+  // no activaron su cuenta) y que no son admin.
+  const [resendingId, setResendingId] = useState<string | null>(null);
+
+  const handleResendInvite = async (u: User) => {
+    if (!confirm(`Reenviar invitación a ${u.email}?`)) return;
+    setResendingId(u.id);
+    try {
+      const res = await fetch(withActiveCompany(`/api/admin/users/${u.id}/resend-invite`), {
+        method: 'POST',
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        alert(json.error || 'Error reenviando invitación');
+        return;
+      }
+      alert(`Invitación reenviada a ${u.email}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Error de red');
+    } finally {
+      setResendingId(null);
     }
   };
 
@@ -252,6 +273,11 @@ export default function UsuariosPage() {
               <X className="w-4 h-4" />
             </button>
           </div>
+          {!editingId && (
+            <p className="text-xs text-muted-foreground mb-3">
+              Al enviar la invitación, el usuario recibirá un correo con un link para crear su contraseña. El enlace expira en 24 horas.
+            </p>
+          )}
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
@@ -274,18 +300,10 @@ export default function UsuariosPage() {
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
               </div>
-              {!editingId && (
-                <div>
-                  <label className="block text-sm font-medium mb-1">{t('users.password')}</label>
-                  <input
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => setForm(prev => ({ ...prev, password: e.target.value }))}
-                    required={!editingId}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                  />
-                </div>
-              )}
+              {/* Sin campo Contraseña — el flujo nuevo manda invitación
+                  por email. El usuario crea su propia contraseña en
+                  /reset-password?token=...&mode=setup tras click en el
+                  link. Aviso al admin debajo del título del form. */}
               <div>
                 <label className="block text-sm font-medium mb-1">{t('users.role')}</label>
                 <select
@@ -310,7 +328,11 @@ export default function UsuariosPage() {
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 >
                   <optgroup label="Roles del sistema">
-                    {ALL_ROLES.map(role => (
+                    {/* `admin` se excluye: solo el superadmin puede crear
+                        usuarios con rol admin (vía /superadmin/users). El
+                        endpoint /api/admin/create-user también lo bloquea
+                        server-side con 403, esto es defensa en profundidad. */}
+                    {ALL_ROLES.filter(role => role !== 'admin').map(role => (
                       <option key={role} value={role}>{ROLE_LABELS[role]}</option>
                     ))}
                   </optgroup>
@@ -332,20 +354,17 @@ export default function UsuariosPage() {
 
             <div>
               <label className="block text-sm font-medium mb-2">{t('users.modules')}</label>
-              <div className="flex flex-wrap gap-2">
-                {ALL_MODULES.map(mod => (
-                  <button
-                    key={mod}
-                    type="button"
-                    onClick={() => toggleModule(mod)}
-                    className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
-                      form.allowed_modules.includes(mod)
-                        ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                        : 'border-border hover:bg-muted'
-                    }`}
-                  >
-                    {MODULE_LABELS[mod]}
-                  </button>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 rounded-lg border border-border">
+                {ALL_MODULES.map((m) => (
+                  <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={form.allowed_modules.includes(m.key)}
+                      onChange={() => toggleModule(m.key)}
+                      className="rounded border-border"
+                    />
+                    <span>{m.label}</span>
+                  </label>
                 ))}
               </div>
             </div>
@@ -362,7 +381,7 @@ export default function UsuariosPage() {
                 disabled={saving}
                 className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
               >
-                {saving ? 'Guardando...' : (editingId ? t('users.save') : t('users.create'))}
+                {saving ? 'Guardando...' : (editingId ? t('users.save') : t('users.sendInvite'))}
               </button>
               <button
                 type="button"
@@ -393,6 +412,7 @@ export default function UsuariosPage() {
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('users.email')}</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('users.role')}</th>
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('users.modules')}</th>
+                <th className="text-left py-2 px-3 text-muted-foreground font-medium">2FA</th>
                 <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>
               </tr>
             </thead>
@@ -420,8 +440,34 @@ export default function UsuariosPage() {
                       )}
                     </div>
                   </td>
+                  <td className="py-3 px-3">
+                    <span className={u.twofa_enabled
+                      ? 'inline-flex px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
+                      : 'inline-flex px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                    }>
+                      {u.twofa_enabled ? 'Activo' : 'No activo'}
+                    </span>
+                  </td>
                   <td className="py-3 px-3 text-right">
+                    {/* Para usuarios con role='admin', el admin de empresa
+                        no puede gestionarlos — solo el superadmin. Mostramos
+                        un guion en vez de los botones. */}
+                    {u.role === 'admin' ? (
+                      <span className="text-xs text-muted-foreground" title="Solo el superadmin gestiona admins">—</span>
+                    ) : (
                     <div className="flex items-center justify-end gap-1">
+                      {/* Reenviar invitación: solo si todavía no creó su contraseña. */}
+                      {u.must_change_password && (
+                        <button
+                          onClick={() => handleResendInvite(u)}
+                          disabled={resendingId === u.id}
+                          className="px-2 py-1 text-[11px] rounded border border-blue-300 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 disabled:opacity-50"
+                          title={t('users.resendInvite')}
+                          aria-label={t('users.resendInvite')}
+                        >
+                          {resendingId === u.id ? '…' : 'Reenviar'}
+                        </button>
+                      )}
                       <button
                         onClick={() => handleEdit(u)}
                         className="p-1.5 rounded hover:bg-muted transition-colors"
@@ -476,6 +522,7 @@ export default function UsuariosPage() {
                         )
                       )}
                     </div>
+                    )}
                   </td>
                 </tr>
               ))}

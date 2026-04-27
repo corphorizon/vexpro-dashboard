@@ -333,3 +333,83 @@ export async function sendLoginNotificationEmail(
 
   return sendEmail(to, subject, html, text, companyId);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// sendInviteEmail
+//
+// Invitación de usuario nuevo. Reemplaza al `inviteUserByEmail` de Supabase
+// (que mandaba un template genérico apuntando a /login sin password). Acá
+// el link va a /reset-password?token=...&mode=setup, donde la página ya
+// soporta el flujo de "primera contraseña" tras el flag mode=setup.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function sendInviteEmail(
+  to: string,
+  setupLink: string,
+  inviterName: string,
+  companyName: string,
+  recipientName: string,
+  expiresInHours: number = 24,
+  companyId?: string,
+): Promise<SendEmailResponse> {
+  const subject = `Te han invitado a ${companyName} — Smart Dashboard`;
+  const safeRecipient = escapeHtml(recipientName);
+  const safeInviter = escapeHtml(inviterName);
+  const safeCompany = escapeHtml(companyName);
+  const safeLink = escapeHtml(setupLink);
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9fafb; padding: 20px;">
+      <div style="background-color: #1a1a2e; padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
+        <h1 style="color: #ffffff; margin: 0; font-size: 22px;">Bienvenido a ${safeCompany}</h1>
+        <p style="color: #a0aec0; margin: 6px 0 0; font-size: 13px;">Smart Dashboard · Horizon Consulting</p>
+      </div>
+
+      <div style="background-color: #ffffff; padding: 32px 24px; border-radius: 0 0 8px 8px;">
+        <p style="font-size: 16px; color: #1a1a2e;">Hola <strong>${safeRecipient}</strong>,</p>
+        <p style="font-size: 14px; color: #4a5568; line-height: 1.6;">
+          ${safeInviter} te ha invitado a unirte a <strong>${safeCompany}</strong> en Smart Dashboard. Para completar tu registro, crea una contraseña haciendo click en el botón:
+        </p>
+
+        <p style="text-align: center; margin: 32px 0;">
+          <a href="${safeLink}"
+             style="background-color: #1a1a2e; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 15px; display: inline-block;">
+            Crear mi contraseña
+          </a>
+        </p>
+
+        <div style="background-color: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 18px; margin: 24px 0;">
+          <p style="margin: 0; font-size: 13px; color: #4a5568; line-height: 1.5;">
+            <strong>📌 Importante:</strong> Este enlace expira en ${expiresInHours} horas. Si no lo usas a tiempo, pídele a tu administrador que te reenvíe la invitación.
+          </p>
+        </div>
+
+        <p style="font-size: 12px; color: #a0aec0; line-height: 1.6;">
+          Si no esperabas esta invitación o no conoces a ${safeInviter}, puedes ignorar este correo de manera segura.
+        </p>
+
+        <p style="font-size: 12px; color: #a0aec0; word-break: break-all;">
+          Si el botón no funciona, copia este enlace en tu navegador:<br/>
+          ${safeLink}
+        </p>
+      </div>
+
+      <p style="color: #a0aec0; font-size: 11px; text-align: center; margin-top: 16px;">
+        &copy; Horizon Consulting — Smart Dashboard
+      </p>
+    </div>
+  `;
+
+  const text = [
+    `Hola ${recipientName},`,
+    ``,
+    `${inviterName} te ha invitado a unirte a ${companyName} en Smart Dashboard.`,
+    ``,
+    `Para crear tu contraseña, visita: ${setupLink}`,
+    ``,
+    `Este enlace expira en ${expiresInHours} horas.`,
+    ``,
+    `— Horizon Consulting`,
+  ].join('\n');
+
+  return sendEmail(to, subject, html, text, companyId);
+}

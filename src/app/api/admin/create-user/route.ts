@@ -1,63 +1,37 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { randomBytes } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
-import type { SupabaseClient } from '@supabase/supabase-js';
-
-// Redact personal data before logging. Vercel server logs are visible to
-// anyone with project access, so we avoid leaking full email addresses:
-// the local-part becomes '***' and only the domain is kept, enough to
-// diagnose provider-specific issues (gmail SMTP, corporate MX, etc.).
-function redactEmail(email: string | null | undefined): string {
-  if (!email) return '(no email)';
-  const at = email.indexOf('@');
-  if (at <= 0) return '(redacted)';
-  return `***@${email.slice(at + 1)}`;
-}
+import {
+  generateAndSendInvite,
+  resolveInviterName,
+  originFromRequest,
+  ipFromRequest,
+} from '@/lib/invite-user';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/create-user
 //
-// Creates a new Supabase Auth user + matching company_users record.
-// Uses service_role key so the calling admin's session is not disrupted.
+// Tenant admin creates a user in their OWN company by sending an
+// invitation. Mirrors the superadmin flow but locked to caller.companyId
+// (cannot create users in other tenants).
 //
-// Robustness:
-//   - Tries createUser directly. If it fails with "already registered",
-//     paginates through auth.users to locate the orphan, verifies it has
-//     no profile in company_users, removes it, and retries the creation.
+// Security:
+//   - Requires admin role on the caller's company (verifyAdminAuth).
+//   - role !== 'admin' enforced server-side (only superadmin makes admins).
+//   - company_id is taken from the auth context, NOT body — so even a
+//     forged body cannot create users in a different tenant.
+//
+// Flow:
+//   1. Reuse existing auth.users id if email is already registered
+//      (e.g. user belongs to another tenant), else create new with a
+//      throwaway random password.
+//   2. Insert company_users membership with must_change_password=true.
+//   3. Generate invite token + email via @/lib/invite-user (shared helper).
+//
+// On error inserting the membership, the auth user is rolled back ONLY
+// when WE created it (not pre-existing).
 // ---------------------------------------------------------------------------
-
-// Look up an auth user by email by paginating through admin.listUsers().
-// listUsers() returns at most ~50 entries per page, so we must paginate.
-async function findAuthUserByEmail(adminClient: SupabaseClient, email: string) {
-  const target = email.toLowerCase().trim();
-  for (let page = 1; page <= 20; page++) {
-    const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw error;
-    const found = data?.users?.find(u => (u.email || '').toLowerCase().trim() === target);
-    if (found) return found;
-    if (!data?.users || data.users.length < 200) return null; // last page
-  }
-  return null;
-}
-
-async function insertProfile(
-  adminClient: SupabaseClient,
-  authUserId: string,
-  email: string,
-  name: string,
-  role: string,
-  company_id: string,
-  allowed_modules: string[] | undefined,
-) {
-  return adminClient.from('company_users').insert({
-    user_id: authUserId,
-    company_id,
-    name,
-    email,
-    role,
-    allowed_modules: allowed_modules || ['summary'],
-  });
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -65,131 +39,154 @@ export async function POST(request: NextRequest) {
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
-    const { email, password, name, role, allowed_modules } = body as {
+    const { email, name, role, allowed_modules } = body as {
       email?: string;
-      password?: string;
       name?: string;
       role?: string;
       allowed_modules?: string[];
     };
 
-    // Always use the caller's verified company
+    // Always use the caller's verified company — admins cannot create
+    // memberships in other tenants.
     const company_id = auth.companyId;
 
-    if (!email || !password || !name || !role) {
+    if (!email || !name || !role) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields: email, password, name, role' },
+        { success: false, error: 'Missing required fields: email, name, role' },
         { status: 400 },
       );
     }
 
+    // SECURITY: tenant admins cannot create users with role 'admin'.
+    // Only superadmins do that (via /api/superadmin/users).
+    if (role === 'admin') {
+      return NextResponse.json(
+        { success: false, error: 'No tienes permisos para crear usuarios con rol admin. Contacta al superadmin.' },
+        { status: 403 },
+      );
+    }
+
+    const normalizedEmail = email.trim().toLowerCase();
     const adminClient = createAdminClient();
 
-    // 1. Try to create the auth user directly
+    // Get company name (used in the email body as "Bienvenido a {empresa}").
+    const { data: companyRow } = await adminClient
+      .from('companies')
+      .select('name')
+      .eq('id', company_id)
+      .maybeSingle();
+    const companyName = companyRow?.name || 'la empresa';
+
+    // Guard against duplicate membership in the same company.
+    const { data: dupe } = await adminClient
+      .from('company_users')
+      .select('id')
+      .eq('company_id', company_id)
+      .ilike('email', normalizedEmail)
+      .maybeSingle();
+    if (dupe) {
+      return NextResponse.json(
+        { success: false, error: `Ya existe un usuario con el email ${email} en esta empresa` },
+        { status: 409 },
+      );
+    }
+
+    // ─── Resolve auth.users id ───────────────────────────────────────
     let authUserId: string | null = null;
-    const { data: authData, error: authError } = await adminClient.auth.admin.createUser({
-      email,
-      password,
-      email_confirm: true,
-    });
+    let createdNewAuthUser = false;
 
-    if (authError) {
-      // Detect "already registered" — message varies between Supabase versions
-      const msg = (authError.message || '').toLowerCase();
-      const isAlreadyRegistered =
-        msg.includes('already registered') ||
-        msg.includes('already been registered') ||
-        msg.includes('already exists') ||
-        msg.includes('duplicate');
-
-      if (!isAlreadyRegistered) {
-        console.error('[AdminAPI] Error creating auth user:', authError.message);
-        return NextResponse.json({ success: false, error: authError.message }, { status: 500 });
+    {
+      const target = normalizedEmail;
+      for (let page = 1; page <= 20; page++) {
+        const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
+        if (error) break;
+        const found = data?.users?.find((u) => (u.email || '').toLowerCase() === target);
+        if (found) {
+          authUserId = found.id;
+          break;
+        }
+        if (!data?.users || data.users.length < 200) break;
       }
-
-      // Email is reserved. Try to locate the orphan and clean it up.
-      console.log(`[AdminAPI] Email ${redactEmail(email)} already registered — checking for orphan`);
-      const existing = await findAuthUserByEmail(adminClient, email);
-      if (!existing) {
-        return NextResponse.json(
-          { success: false, error: `El email ${email} está reservado pero no se pudo localizar el usuario huérfano. Contacta soporte.` },
-          { status: 409 },
-        );
-      }
-
-      // Check if there's an active profile for this auth user
-      const { data: existingProfile } = await adminClient
-        .from('company_users')
-        .select('id')
-        .eq('user_id', existing.id)
-        .maybeSingle();
-
-      if (existingProfile) {
-        return NextResponse.json(
-          { success: false, error: `Ya existe un usuario activo con el email ${email}` },
-          { status: 409 },
-        );
-      }
-
-      // Orphan — remove it and retry
-      console.log(`[AdminAPI] Cleaning up orphaned auth user ${existing.id} for ${redactEmail(email)}`);
-      const { error: deleteOrphanError } = await adminClient.auth.admin.deleteUser(existing.id);
-      if (deleteOrphanError) {
-        console.error('[AdminAPI] Failed to delete orphan:', deleteOrphanError.message);
-        return NextResponse.json(
-          { success: false, error: `No se pudo limpiar el usuario huérfano: ${deleteOrphanError.message}` },
-          { status: 500 },
-        );
-      }
-
-      // Retry creation
-      const retry = await adminClient.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-      });
-      if (retry.error || !retry.data?.user) {
-        console.error('[AdminAPI] Retry create failed:', retry.error?.message);
-        return NextResponse.json(
-          { success: false, error: retry.error?.message || 'Retry create failed' },
-          { status: 500 },
-        );
-      }
-      authUserId = retry.data.user.id;
-    } else {
-      authUserId = authData.user.id;
     }
 
     if (!authUserId) {
-      return NextResponse.json({ success: false, error: 'No auth user id returned' }, { status: 500 });
+      const placeholderPwd = randomBytes(32).toString('base64url');
+      const { data: created, error: createErr } = await adminClient.auth.admin.createUser({
+        email: normalizedEmail,
+        password: placeholderPwd,
+        email_confirm: true,
+      });
+      if (createErr || !created?.user?.id) {
+        console.error('[admin/create-user] createUser failed:', createErr?.message);
+        return NextResponse.json(
+          { success: false, error: createErr?.message || 'No se pudo crear el usuario auth' },
+          { status: 500 },
+        );
+      }
+      authUserId = created.user.id;
+      createdNewAuthUser = true;
     }
 
-    // 2. Insert the company_users profile
-    const { error: profileError } = await insertProfile(
-      adminClient,
-      authUserId,
-      email,
-      name,
-      role,
-      company_id,
-      allowed_modules,
-    );
+    // ─── Insert company_users membership ─────────────────────────────
+    const { data: membership, error: memErr } = await adminClient
+      .from('company_users')
+      .insert({
+        user_id: authUserId,
+        company_id,
+        email: normalizedEmail,
+        name: name.trim(),
+        role,
+        allowed_modules: allowed_modules || ['summary'],
+        must_change_password: true,
+      })
+      .select()
+      .single();
 
-    if (profileError) {
-      console.error('[AdminAPI] Error creating company_users record:', profileError.message);
-      // Roll back the auth user since profile creation failed
-      await adminClient.auth.admin.deleteUser(authUserId);
+    if (memErr) {
+      if (createdNewAuthUser && authUserId) {
+        await adminClient.auth.admin.deleteUser(authUserId).catch(() => {});
+      }
+      console.error('[admin/create-user] membership insert failed:', memErr.message);
       return NextResponse.json(
-        { success: false, error: `Profile creation failed: ${profileError.message}` },
+        { success: false, error: `No se pudo crear el perfil: ${memErr.message}` },
         { status: 500 },
       );
     }
 
-    console.log(`[AdminAPI] User created: ${redactEmail(email)} (auth: ${authUserId})`);
-    return NextResponse.json({ success: true, userId: authUserId });
+    // ─── Send invite via shared helper ───────────────────────────────
+    const inviterName = await resolveInviterName(adminClient, auth.userId);
+    const inviteResult = await generateAndSendInvite({
+      admin: adminClient,
+      authUserId,
+      recipientEmail: normalizedEmail,
+      recipientName: name.trim(),
+      inviterName,
+      companyId: company_id,
+      companyName,
+      origin: originFromRequest(request),
+      createdIp: ipFromRequest(request),
+    });
+
+    if (!inviteResult.success) {
+      // Membership already created — return success with warning so the
+      // admin can retry via "Reenviar invitación" later.
+      return NextResponse.json({
+        success: true,
+        userId: authUserId,
+        membershipId: membership.id,
+        warning: inviteResult.error || 'Usuario creado pero no se pudo enviar la invitación',
+      });
+    }
+
+    console.log(`[admin/create-user] User invited: ***@${normalizedEmail.split('@')[1]} (auth: ${authUserId})`);
+    return NextResponse.json({
+      success: true,
+      userId: authUserId,
+      membershipId: membership.id,
+    });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
-    console.error('[AdminAPI] Unhandled error:', message);
+    console.error('[admin/create-user] Unhandled error:', message);
     return NextResponse.json({ success: false, error: message }, { status: 500 });
   }
 }

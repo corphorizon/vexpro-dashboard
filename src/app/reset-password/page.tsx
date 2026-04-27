@@ -31,6 +31,10 @@ function ResetPasswordInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const customToken = searchParams.get('token') || '';
+  // mode=setup viene del flujo de invitación de superadmin: el usuario
+  // nunca tuvo contraseña, está creando la primera. Cambiamos el copy para
+  // que se sienta "bienvenido" en vez de "olvidé mi contraseña".
+  const setupMode = searchParams.get('mode') === 'setup';
 
   const [mode, setMode] = useState<Mode>('pending');
   const [inviteType, setInviteType] = useState<string>('invite'); // "invite" | "recovery" | "signup"
@@ -190,12 +194,23 @@ function ResetPasswordInner() {
 
   // ── Form ─────────────────────────────────────────────────────────────
   const isInvite = mode === 'supabase-invite';
+  // custom-reset con ?mode=setup viene del flujo de invitación nuevo (el
+  // superadmin invita y manda email vía SendGrid). Es estructuralmente
+  // igual al reset, pero el usuario nunca tuvo password — el copy
+  // "Restablece tu contraseña" sería raro. Le damos el mismo trato de
+  // bienvenida que tiene el supabase-invite.
+  const isCustomSetup = mode === 'custom-reset' && setupMode;
+
   const title = isInvite
     ? (inviteType === 'recovery' ? 'Define tu nueva contraseña' : 'Bienvenido — define tu contraseña')
-    : 'Restablece tu contraseña';
+    : isCustomSetup
+      ? 'Bienvenido — crea tu contraseña'
+      : 'Restablece tu contraseña';
   const subtitle = isInvite
     ? 'Elige una contraseña para tu cuenta. Después entras directo al dashboard.'
-    : 'Elige una nueva contraseña. Si tu cuenta estaba bloqueada, se desbloquea aquí.';
+    : isCustomSetup
+      ? 'Crea una contraseña para activar tu cuenta. Después podrás iniciar sesión.'
+      : 'Elige una nueva contraseña. Si tu cuenta estaba bloqueada, se desbloquea aquí.';
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
@@ -260,7 +275,7 @@ function ResetPasswordInner() {
             >
               {loading
                 ? <><Loader2 className="w-4 h-4 animate-spin" />Guardando…</>
-                : (isInvite ? 'Activar cuenta' : 'Actualizar contraseña')}
+                : (isInvite || isCustomSetup ? 'Activar cuenta' : 'Actualizar contraseña')}
             </button>
           </form>
 

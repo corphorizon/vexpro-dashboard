@@ -4,6 +4,7 @@ import { createContext, useContext, useState, useCallback, useEffect, useRef, ty
 import { createClient } from '@/lib/supabase/client';
 import { logAction } from '@/lib/audit-log';
 import { withActiveCompany } from '@/lib/api-fetch';
+import { getActiveCompanyId, subscribeActiveCompanyId } from '@/lib/active-company';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole =
@@ -82,7 +83,7 @@ interface AuthState {
   login: (email: string, password: string) => Promise<LoginResult>;
   loginWith2fa: (email: string, password: string, pin: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
-  createUser: (user: Omit<User, 'id' | 'auth_user_id'>, password: string) => void;
+  createUser: (user: Omit<User, 'id' | 'auth_user_id'>) => void;
   updateUser: (id: string, updates: UserUpdate) => void;
   deleteUser: (id: string) => void;
   changePassword: (userId: string, currentPassword: string, newPassword: string) => Promise<boolean>;
@@ -183,50 +184,47 @@ async function fetchUserProfile(authUser: SupabaseUser): Promise<User | null> {
   return null;
 }
 
+/**
+ * Returns the company_id that the current auth user is operating in.
+ * For regular users that's their own company_id from `company_users`. For
+ * superadmins (`platform_users`, company_id = null), it falls back to the
+ * "viewing as" company stored in localStorage by /superadmin/companies/*.
+ *
+ * Returns null only when a superadmin hasn't entered any company yet.
+ */
+function effectiveCompanyIdFor(profile: User | null): string | null {
+  if (!profile) return null;
+  if (profile.company_id) return profile.company_id;
+  // Platform user (superadmin) — fall back to active "viewing as" company.
+  return getActiveCompanyId();
+}
+
 // Fetch all company_users for the same company — never include twofa_secret.
-// Returns empty array when called with null (superadmin context).
+// Returns empty array when called with null (superadmin context with no
+// active company yet).
+//
+// Goes through /api/admin/list-company-users instead of querying Supabase
+// directly so platform superadmins in "viewing-as" mode bypass RLS — they
+// don't have a row in the target tenant's company_users and a direct
+// browser query would silently return [].
 async function fetchAllUsers(companyId: string | null): Promise<User[]> {
   if (!companyId) return [];
-  const { data, error } = await supabase
-    .from('company_users')
-    .select('id, email, name, role, company_id, allowed_modules, twofa_enabled, force_2fa_setup, must_change_password')
-    .eq('company_id', companyId);
-
-  if (error || !data) {
-    console.error('Error fetching users:', error?.message);
+  try {
+    const res = await fetch(withActiveCompany('/api/admin/list-company-users'));
+    if (!res.ok) {
+      console.error('Error fetching users:', res.status, res.statusText);
+      return [];
+    }
+    const json = await res.json();
+    if (!json.success) {
+      console.error('Error fetching users:', json.error);
+      return [];
+    }
+    return json.users as User[];
+  } catch (err) {
+    console.error('Error fetching users:', err);
     return [];
   }
-
-  // Batch resolve custom roles once for the whole company
-  const { data: customRoles } = await supabase
-    .from('custom_roles')
-    .select('name, base_role')
-    .eq('company_id', companyId);
-  const customMap = new Map<string, string>(
-    (customRoles || []).map((r) => [r.name, r.base_role]),
-  );
-  const resolve = (role: string): UserRole => {
-    if (BUILT_IN_ROLES.includes(role as typeof BUILT_IN_ROLES[number])) return role as UserRole;
-    return (customMap.get(role) as UserRole) ?? 'invitado';
-  };
-
-  return data.map((u: Record<string, unknown>) => {
-    const roleStr = u.role as string;
-    return {
-      id: u.id as string,
-      auth_user_id: u.user_id as string,
-      email: u.email as string,
-      name: u.name as string,
-      role: roleStr as UserRole,
-      effective_role: resolve(roleStr),
-      company_id: u.company_id as string,
-      allowed_modules: (u.allowed_modules as string[]) || [],
-      twofa_enabled: (u.twofa_enabled as boolean) || false,
-      force_2fa_setup: (u.force_2fa_setup as boolean) ?? true,
-      must_change_password: (u.must_change_password as boolean) ?? false,
-      is_superadmin: false,
-    };
-  });
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -245,7 +243,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const profile = await fetchUserProfile(session.user);
           if (profile) {
             setUser(profile);
-            const allUsers = await fetchAllUsers(profile.company_id);
+            const allUsers = await fetchAllUsers(effectiveCompanyIdFor(profile));
             setUsers(allUsers);
           }
         }
@@ -267,13 +265,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const profile = await fetchUserProfile(session.user);
         if (profile) {
           setUser(profile);
-          const allUsers = await fetchAllUsers(profile.company_id);
+          const allUsers = await fetchAllUsers(effectiveCompanyIdFor(profile));
           setUsers(allUsers);
         }
       }
     });
 
-    return () => subscription.unsubscribe();
+    // Re-fetch the user list when the superadmin switches "viewing-as"
+    // company. Tenant admins have a fixed company_id and ignore this — only
+    // platform users (company_id = null) react to the localStorage change.
+    const unsubscribeCompany = subscribeActiveCompanyId(async (next) => {
+      const current = userRef.current;
+      if (!current || current.company_id) return;
+      const allUsers = await fetchAllUsers(next);
+      setUsers(allUsers);
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      unsubscribeCompany();
+    };
   }, []);
 
   // Refresh user profile from DB (e.g., after enabling 2FA)
@@ -283,7 +294,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const profile = await fetchUserProfile(session.user);
       if (profile) {
         setUser(profile);
-        const allUsers = await fetchAllUsers(profile.company_id);
+        const allUsers = await fetchAllUsers(effectiveCompanyIdFor(profile));
         setUsers(allUsers);
       }
     }
@@ -327,7 +338,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     setUser(profile);
-    const allUsers = await fetchAllUsers(profile.company_id);
+    const allUsers = await fetchAllUsers(effectiveCompanyIdFor(profile));
     setUsers(allUsers);
     logAction(profile.id, profile.name, 'login', 'auth', `Inicio de sesión: ${profile.email}`);
     return { success: true, needs2fa: false };
@@ -368,7 +379,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       setUser(profile);
-      const allUsers = await fetchAllUsers(profile.company_id);
+      const allUsers = await fetchAllUsers(effectiveCompanyIdFor(profile));
       setUsers(allUsers);
       logAction(profile.id, profile.name, 'login', 'auth', `Inicio de sesión con 2FA: ${profile.email}`);
       return { success: true };
@@ -403,9 +414,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  const createUser = useCallback(async (newUser: Omit<User, 'id' | 'auth_user_id'>, password: string) => {
-    // Use server-side API route to create user without losing current admin session.
-    // Add a 45s timeout so a hanging fetch never freezes the UI.
+  const createUser = useCallback(async (newUser: Omit<User, 'id' | 'auth_user_id'>) => {
+    // Use server-side API route — sends an invitation email instead of
+    // accepting a fixed password. The user creates their own credential
+    // via /reset-password?token=...&mode=setup.
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 45000);
 
@@ -416,7 +428,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         signal: controller.signal,
         body: JSON.stringify({
           email: newUser.email,
-          password,
           name: newUser.name,
           role: newUser.role,
           company_id: newUser.company_id,
@@ -448,7 +459,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const current = userRef.current;
     if (current) {
       try {
-        const allUsers = await fetchAllUsers(current.company_id);
+        const allUsers = await fetchAllUsers(effectiveCompanyIdFor(current));
         setUsers(allUsers);
       } catch (refreshErr) {
         console.error('User created but list refresh failed:', refreshErr);
@@ -525,7 +536,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Refresh users list
     const current = userRef.current;
     if (current) {
-      const allUsers = await fetchAllUsers(current.company_id);
+      const allUsers = await fetchAllUsers(effectiveCompanyIdFor(current));
       setUsers(allUsers);
       // If updating current user, refresh their state
       if (current.id === id) {
@@ -557,7 +568,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const current = userRef.current;
     if (current) {
-      const allUsers = await fetchAllUsers(current.company_id);
+      const allUsers = await fetchAllUsers(effectiveCompanyIdFor(current));
       setUsers(allUsers);
       if (current.id === id) {
         const updated = allUsers.find(u => u.id === id);
@@ -594,7 +605,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const current = userRef.current;
     if (current) {
-      const allUsers = await fetchAllUsers(current.company_id);
+      const allUsers = await fetchAllUsers(effectiveCompanyIdFor(current));
       setUsers(allUsers);
       if (targetUser) {
         logAction(current.id, current.name, 'delete', 'users', `Usuario eliminado: ${targetUser.name} (${targetUser.email})`);
