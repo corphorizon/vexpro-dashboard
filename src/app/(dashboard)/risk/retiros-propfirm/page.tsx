@@ -11,6 +11,8 @@ import { formatDate } from '@/lib/dates';
 import { parseTradeReport, type ParseResult } from '@/lib/risk/parser';
 import { analyzeReport } from '@/lib/risk/rules';
 import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode } from '@/lib/risk/types';
+import { computeDurationDistribution } from '@/lib/risk/duration-distribution';
+import { DurationDistributionTable } from '@/components/risk/duration-distribution-table';
 import {
   Upload,
   Settings,
@@ -175,6 +177,17 @@ export default function RetirosPropFirmPage() {
             } : null,
           })),
         })),
+        // Guardamos el array completo de trades (con fechas serializadas)
+        // para que la Distribución por Duración pueda calcularse al vuelo
+        // cuando se cargue el informe del Historial. Sin esto, la tabla
+        // del PDF histórico sería parcial (solo trades con violación).
+        // Snapshots viejos sin este campo siguen funcionando: el código
+        // tiene un fallback que reconstruye desde violations.
+        trades: analysis.trades.map((t) => ({
+          ...t,
+          openTime: t.openTime instanceof Date ? t.openTime.toISOString() : t.openTime,
+          closeTime: t.closeTime instanceof Date ? t.closeTime.toISOString() : t.closeTime,
+        })),
       }),
     };
 
@@ -191,34 +204,50 @@ export default function RetirosPropFirmPage() {
     try {
       const snapshot = JSON.parse(rec.resultSnapshot);
 
-      // Reconstruir trades desde los datos guardados en violations
-      const tradesMap = new Map<number, Trade>();
-      for (const rr of snapshot.ruleResults) {
-        for (const v of rr.violations ?? []) {
-          if (v.tradeData && !tradesMap.has(v.tradeIndex)) {
-            tradesMap.set(v.tradeIndex, {
-              index: v.tradeIndex,
-              position: v.tradeData.position,
-              symbol: v.tradeData.symbol,
-              type: v.tradeData.type,
-              volume: v.tradeData.volume,
-              profit: v.tradeData.profit,
-              durationMinutes: v.tradeData.durationMinutes,
-              openTime: new Date(v.tradeData.openTime),
-              closeTime: new Date(v.tradeData.openTime), // aproximado
-              openPrice: 0,
-              closePrice: 0,
-              sl: null,
-              tp: null,
-              commission: 0,
-              swap: 0,
-            } as Trade);
+      // Path 1: snapshots nuevos guardan el array `trades` completo con
+      // fechas serializadas como ISO strings. Lo preferimos cuando existe
+      // porque permite que la Distribución por Duración cubra TODOS los
+      // trades, no solo los que violaron alguna regla.
+      let trades: Trade[];
+      if (Array.isArray(snapshot.trades) && snapshot.trades.length > 0) {
+        trades = snapshot.trades.map((t: Omit<Trade, 'openTime' | 'closeTime'> & { openTime: string; closeTime: string }) => ({
+          ...t,
+          openTime: new Date(t.openTime),
+          closeTime: new Date(t.closeTime),
+        }));
+      } else {
+        // Path 2 (fallback): snapshots viejos solo tienen tradeData dentro de
+        // violations. Reconstruimos lo que podemos — es un set parcial pero
+        // suficiente para no romper el restore.
+        const tradesMap = new Map<number, Trade>();
+        for (const rr of snapshot.ruleResults) {
+          for (const v of rr.violations ?? []) {
+            if (v.tradeData && !tradesMap.has(v.tradeIndex)) {
+              tradesMap.set(v.tradeIndex, {
+                index: v.tradeIndex,
+                position: v.tradeData.position,
+                symbol: v.tradeData.symbol,
+                type: v.tradeData.type,
+                volume: v.tradeData.volume,
+                profit: v.tradeData.profit,
+                durationMinutes: v.tradeData.durationMinutes,
+                openTime: new Date(v.tradeData.openTime),
+                closeTime: new Date(v.tradeData.openTime), // aproximado
+                openPrice: 0,
+                closePrice: 0,
+                sl: null,
+                tp: null,
+                commission: 0,
+                swap: 0,
+              } as Trade);
+            }
           }
         }
+        trades = Array.from(tradesMap.values());
       }
 
       const restored: AnalysisResult = {
-        trades: Array.from(tradesMap.values()),
+        trades,
         metadata: snapshot.metadata,
         ruleResults: snapshot.ruleResults,
       };
@@ -330,6 +359,95 @@ export default function RetirosPropFirmPage() {
         bodyStyles: { fontSize: 7, fillColor: [255, 235, 235], textColor: [150, 0, 0] },
       });
 
+      // Distribución por Duración para el PDF histórico. La calculamos al
+      // vuelo desde los trades disponibles. Path preferido: snapshot nuevo
+      // con `trades` en raíz. Fallback: reconstruir desde violations
+      // (snapshots viejos) — la tabla quedará parcial pero mejor algo que
+      // nada. En el PDF histórico siempre incluimos la tabla (no hay
+      // checkbox) porque es una acción puntual del usuario.
+      const snap = snapshot as {
+        metadata?: unknown;
+        ruleResults?: { violations?: { tradeIndex: number; tradeData?: Partial<Trade> & { openTime?: string | Date } }[] }[];
+        trades?: (Omit<Trade, 'openTime' | 'closeTime'> & { openTime: string; closeTime: string })[];
+      };
+      let tradesForDist: Trade[] = [];
+      if (Array.isArray(snap.trades) && snap.trades.length > 0) {
+        tradesForDist = snap.trades.map((t) => ({
+          ...t,
+          openTime: new Date(t.openTime),
+          closeTime: new Date(t.closeTime),
+        })) as Trade[];
+      } else {
+        const seenIdx = new Set<number>();
+        for (const rr of snap.ruleResults ?? []) {
+          for (const v of rr.violations ?? []) {
+            if (seenIdx.has(v.tradeIndex)) continue;
+            seenIdx.add(v.tradeIndex);
+            if (!v.tradeData) continue;
+            const td = v.tradeData;
+            tradesForDist.push({
+              index: v.tradeIndex,
+              position: td.position ?? 0,
+              symbol: td.symbol ?? '',
+              type: td.type ?? 'buy',
+              volume: td.volume ?? 0,
+              openPrice: 0,
+              closePrice: 0,
+              sl: null,
+              tp: null,
+              openTime: td.openTime ? new Date(td.openTime as unknown as string) : new Date(0),
+              closeTime: new Date(0),
+              commission: 0,
+              swap: 0,
+              profit: td.profit ?? 0,
+              durationMinutes: td.durationMinutes ?? 0,
+            });
+          }
+        }
+      }
+
+      if (tradesForDist.length > 0) {
+        const dist = computeDurationDistribution(tradesForDist);
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const afterTradesHist = ((doc as any).lastAutoTable?.finalY ?? 200) + 8;
+        doc.setFontSize(10);
+        doc.setFont('helvetica', 'bold');
+        doc.text('Distribución por Duración', 14, afterTradesHist);
+
+        const distRowsHist = dist.buckets.map((b) => [
+          b.label,
+          String(b.count),
+          b.profitTotal.toFixed(2),
+        ]);
+        distRowsHist.push(['Total:', String(dist.totalCount), dist.totalProfit.toFixed(2)]);
+
+        autoTable(doc, {
+          startY: afterTradesHist + 3,
+          head: [['Rango de duración', 'Cantidad de trades', 'Profit total']],
+          body: distRowsHist,
+          theme: 'grid',
+          headStyles: { fillColor: [22, 101, 52], textColor: 255, fontSize: 9 },
+          bodyStyles: { fontSize: 8 },
+          columnStyles: {
+            0: { halign: 'center' },
+            1: { halign: 'center' },
+            2: { halign: 'center', fontStyle: 'bold' },
+          },
+          didParseCell: (data) => {
+            if (data.row.index === distRowsHist.length - 1 && data.section === 'body') {
+              data.cell.styles.fillColor = [22, 101, 52];
+              data.cell.styles.textColor = 255;
+              data.cell.styles.fontStyle = 'bold';
+            }
+            if (data.column.index === 2 && data.section === 'body' && data.row.index < distRowsHist.length - 1) {
+              const val = parseFloat(String(data.cell.raw));
+              if (val > 0) data.cell.styles.textColor = [0, 130, 0];
+              else if (val < 0) data.cell.styles.textColor = [180, 0, 0];
+            }
+          },
+        });
+      }
+
       const fileNamePdf = `RevisionPropFirm_${meta.accountNumber}_${meta.period?.replace(/[^a-zA-Z0-9]/g, '_') ?? 'periodo'}.pdf`;
       doc.save(fileNamePdf);
     } catch (err) {
@@ -398,6 +516,21 @@ export default function RetirosPropFirmPage() {
   }, [result, config, saveToHistory, fileName]);
 
   // ─── Computed data ───
+
+  // Distribución de trades por rangos de duración. Se recalcula cuando
+  // cambia `result`, así que cubre tanto subir un Excel nuevo como cargar
+  // un informe del Historial. Es información puramente visual: no afecta
+  // el verdict ni el cálculo de reglas.
+  const durationDistribution = useMemo(() => {
+    if (!result) return null;
+    return computeDurationDistribution(result.trades);
+  }, [result]);
+
+  // Cuando se descarga el PDF de un análisis nuevo, controla si incluir la
+  // tabla de distribución por duración. Default `true`. No persiste — cada
+  // descarga el usuario decide. (En el PDF del Historial no hay checkbox:
+  // se incluye siempre porque es una acción puntual.)
+  const [includeDurationInPDF, setIncludeDurationInPDF] = useState(true);
 
   const violatedTradeIndices = useMemo(() => {
     if (!result) return new Set<number>();
@@ -653,9 +786,58 @@ export default function RetirosPropFirmPage() {
       },
     });
 
+    // Distribución por Duración (opcional, controlada por checkbox)
+    if (includeDurationInPDF && durationDistribution) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const afterTrades = ((doc as any).lastAutoTable?.finalY ?? 200) + 8;
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Distribución por Duración', 14, afterTrades);
+
+      const distRows = durationDistribution.buckets.map((b) => [
+        b.label,
+        String(b.count),
+        b.profitTotal.toFixed(2),
+      ]);
+      // Fila Total al final
+      distRows.push([
+        'Total:',
+        String(durationDistribution.totalCount),
+        durationDistribution.totalProfit.toFixed(2),
+      ]);
+
+      autoTable(doc, {
+        startY: afterTrades + 3,
+        head: [['Rango de duración', 'Cantidad de trades', 'Profit total']],
+        body: distRows,
+        theme: 'grid',
+        headStyles: { fillColor: [22, 101, 52], textColor: 255, fontSize: 9 }, // emerald-700
+        bodyStyles: { fontSize: 8 },
+        columnStyles: {
+          0: { halign: 'center' },
+          1: { halign: 'center' },
+          2: { halign: 'center', fontStyle: 'bold' },
+        },
+        didParseCell: (data) => {
+          // Última fila = Total → estilo verde igual al header
+          if (data.row.index === distRows.length - 1 && data.section === 'body') {
+            data.cell.styles.fillColor = [22, 101, 52];
+            data.cell.styles.textColor = 255;
+            data.cell.styles.fontStyle = 'bold';
+          }
+          // Profit con color (excepto fila Total que ya es blanca)
+          if (data.column.index === 2 && data.section === 'body' && data.row.index < distRows.length - 1) {
+            const val = parseFloat(String(data.cell.raw));
+            if (val > 0) data.cell.styles.textColor = [0, 130, 0];
+            else if (val < 0) data.cell.styles.textColor = [180, 0, 0];
+          }
+        },
+      });
+    }
+
     const fileName = `RevisionPropFirm_${meta.accountNumber}_${meta.period.replace(/[^a-zA-Z0-9]/g, '_')}.pdf`;
     doc.save(fileName);
-  }, [result, verdict, tradeRuleMap, violatedTradeIndices]);
+  }, [result, verdict, tradeRuleMap, violatedTradeIndices, includeDurationInPDF, durationDistribution]);
 
   // ─── Render ───
 
@@ -1012,6 +1194,15 @@ export default function RetirosPropFirmPage() {
               {fileName}
             </p>
             <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={includeDurationInPDF}
+                  onChange={(e) => setIncludeDurationInPDF(e.target.checked)}
+                  className="h-3.5 w-3.5 rounded border-border accent-[var(--color-primary)]"
+                />
+                Incluir tabla de duración
+              </label>
               <button
                 onClick={downloadPDF}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
@@ -1084,6 +1275,31 @@ export default function RetirosPropFirmPage() {
                 <p className="text-xs text-muted-foreground">{verdict.msg}</p>
               </div>
             </div>
+          )}
+
+          {/* Distribución por Duración — siempre visible cuando hay un
+              `result` cargado (analisis nuevo o restaurado del Historial).
+              Click en cualquier fila con count>0 abre modal con los trades
+              del rango. Calculada al vuelo desde `result.trades`. */}
+          {durationDistribution && (
+            <Card className="overflow-hidden">
+              <div className="px-5 py-3 border-b border-border">
+                <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                  <FileSearch className="w-4 h-4 text-emerald-600" />
+                  Distribución por Duración
+                </h2>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Click sobre un rango para ver los trades incluidos.
+                </p>
+              </div>
+              <div className="p-5">
+                <DurationDistributionTable
+                  buckets={durationDistribution.buckets}
+                  totalCount={durationDistribution.totalCount}
+                  totalProfit={durationDistribution.totalProfit}
+                />
+              </div>
+            </Card>
           )}
 
           {/* Violations Table */}

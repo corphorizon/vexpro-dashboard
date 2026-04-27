@@ -1,4 +1,5 @@
 import ExcelJS from 'exceljs';
+import JSZip from 'jszip';
 import type { Trade, ReportMetadata } from './types';
 
 // NOTE: We migrated off `xlsx` (sheetJS) because it has two unpatched
@@ -95,12 +96,26 @@ function sheetToMatrix(ws: ExcelJS.Worksheet): (string | null)[][] {
     const last = row.cellCount;
     for (let c = 1; c <= last; c++) {
       const cell = row.getCell(c);
-      // cell.text already applies number format / formula result / rich text.
-      // Coerce defensively (rich-text cells can return non-string objects)
-      // and normalise empty strings to null so `!row[0]` matches the old
-      // xlsx behaviour.
-      const t = cell.text;
-      const s = t == null ? null : String(t);
+      // cell.text aplica number format / formula result / rich text.
+      //
+      // Tolerancia a celdas merged vacías: en algunos exports nuevos de
+      // Excel/MT5, las celdas merged tienen master con `value = null`.
+      // Cuando exceljs resuelve `cell.text` para esas celdas, internamente
+      // hace `null.toString()` y crashea con "Cannot read properties of
+      // null (reading 'toString')". Tratamos esos casos como celda vacía
+      // (igual que el resto de celdas vacías) en lugar de dejar morir el
+      // parser entero. El check previo de `cell.value` evita la mayoría
+      // de los casos; el try/catch es un cinturón extra contra otras
+      // formas de crash que pueda introducir exceljs en el futuro.
+      let s: string | null = null;
+      try {
+        if (cell.value !== null && cell.value !== undefined) {
+          const t = cell.text;
+          s = t == null ? null : String(t);
+        }
+      } catch {
+        s = null;
+      }
       arr.push(s === '' ? null : s);
     }
     rows.push(arr);
@@ -108,9 +123,78 @@ function sheetToMatrix(ws: ExcelJS.Worksheet): (string | null)[][] {
   return rows;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// sanitizeUtf16Xlsx
+//
+// Algunas versiones nuevas de Excel (y exports recientes de MetaTrader 5)
+// guardan los XMLs internos del .xlsx — sheet1.xml, sharedStrings.xml,
+// styles.xml, workbook.xml, etc. — codificados en UTF-16 LE en vez de
+// UTF-8, violando el spec OOXML. El header XML no declara encoding="UTF-16",
+// así que exceljs intenta leerlos como UTF-8, se topa con bytes 0x00 y
+// tira un error tipo "X:Y: disallowed character".
+//
+// Este sanitizador detecta el BOM UTF-16 LE (0xFF 0xFE) en cada XML interno
+// del ZIP, lo decodifica, lo re-encode a UTF-8 y devuelve un buffer .xlsx
+// limpio que sí entiende exceljs.
+//
+// Si el .xlsx ya tiene los XMLs en UTF-8 (caso normal), la función devuelve
+// el buffer original sin tocarlo — cero overhead para archivos buenos.
+// ─────────────────────────────────────────────────────────────────────────────
+async function sanitizeUtf16Xlsx(buffer: ArrayBuffer): Promise<ArrayBuffer> {
+  let zip: JSZip;
+  try {
+    zip = await JSZip.loadAsync(buffer);
+  } catch {
+    // No es un ZIP válido — dejamos pasar el buffer; el wb.xlsx.load del
+    // siguiente paso dará un error más significativo al usuario.
+    return buffer;
+  }
+
+  let convertedAny = false;
+
+  for (const [name, file] of Object.entries(zip.files)) {
+    if (file.dir) continue;
+    // Solo procesamos archivos XML/rels (los binarios como imágenes no aplican)
+    if (!name.endsWith('.xml') && !name.endsWith('.rels')) continue;
+
+    const data = await file.async('uint8array');
+    if (data.length < 2) continue;
+
+    // BOM UTF-16 LE: 0xFF 0xFE
+    const isUtf16Le = data[0] === 0xFF && data[1] === 0xFE;
+    if (!isUtf16Le) continue;
+
+    // Decodificar UTF-16 LE → string (saltamos los 2 bytes del BOM)
+    const decoder = new TextDecoder('utf-16le');
+    let text = decoder.decode(data.subarray(2));
+    // Si quedó un BOM como caracter al inicio (\uFEFF), removerlo
+    if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+
+    // Re-encode a UTF-8 y reescribir en el ZIP en memoria
+    const utf8 = new TextEncoder().encode(text);
+    zip.file(name, utf8);
+    convertedAny = true;
+  }
+
+  if (!convertedAny) return buffer;
+
+  // Generar el nuevo .xlsx como ArrayBuffer
+  const out = await zip.generateAsync({
+    type: 'arraybuffer',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+  return out;
+}
+
 export async function parseTradeReport(buffer: ArrayBuffer): Promise<ParseResult> {
+  // Pre-pasada: sanitizar XMLs internos en UTF-16 (exports nuevos de Excel y
+  // MT5 los guardan así). Si el .xlsx ya está en UTF-8, devuelve el buffer
+  // original sin overhead.
+  const sanitizedBuffer = await sanitizeUtf16Xlsx(buffer);
+
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.load(buffer);
+  await wb.xlsx.load(sanitizedBuffer);
   const ws = wb.worksheets[0];
   if (!ws) {
     throw new Error('El archivo no contiene hojas de cálculo');
