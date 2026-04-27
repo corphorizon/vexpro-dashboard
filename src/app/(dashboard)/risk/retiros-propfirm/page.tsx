@@ -13,6 +13,7 @@ import { analyzeReport } from '@/lib/risk/rules';
 import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode } from '@/lib/risk/types';
 import { computeDurationDistribution } from '@/lib/risk/duration-distribution';
 import { DurationDistributionTable } from '@/components/risk/duration-distribution-table';
+import { withActiveCompany } from '@/lib/api-fetch';
 import {
   Upload,
   Settings,
@@ -57,7 +58,11 @@ function fmtDate(d: Date): string {
   });
 }
 
-// ─── History persistence (localStorage) ───
+// ─── History persistence (Supabase via /api/risk/revisions) ───
+// Cada HistoryRecord se guarda en la tabla `risk_revisions` (jsonb), scopeado
+// por company_id. Antes vivía en localStorage con la key
+// 'risk_propfirm_history' — se quitó porque (1) se perdía al cerrar sesión,
+// (2) no era cross-user dentro de la empresa y (3) no era multi-dispositivo.
 
 interface HistoryRecord {
   id: string;
@@ -76,7 +81,6 @@ interface HistoryRecord {
   resultSnapshot: string; // JSON.stringify(AnalysisResult) sin los trades completos
 }
 
-const HISTORY_KEY = 'risk_propfirm_history';
 const MAX_HISTORY = 50;
 
 // ─── Page ───
@@ -109,17 +113,11 @@ export default function RetirosPropFirmPage() {
   const [fileName, setFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // History state (lazy-init from localStorage)
+  // History state — vacío al montar; se llena con el fetch del useEffect
+  // siguiente (y cuando cambia la empresa activa para superadmins en
+  // viewing-as).
   const [showHistory, setShowHistory] = useState(false);
-  const [history, setHistory] = useState<HistoryRecord[]>(() => {
-    if (typeof window === 'undefined') return [];
-    try {
-      const raw = localStorage.getItem(HISTORY_KEY);
-      return raw ? (JSON.parse(raw) as HistoryRecord[]) : [];
-    } catch {
-      return [];
-    }
-  });
+  const [history, setHistory] = useState<HistoryRecord[]>([]);
   const [historyLoading, setHistoryLoading] = useState<string | null>(null);
 
   // Table state
@@ -134,7 +132,45 @@ export default function RetirosPropFirmPage() {
   // Drag & drop
   const [dragOver, setDragOver] = useState(false);
 
-  // ─── Save analysis to history (localStorage) ───
+  // ─── Fetch del historial al montar / al cambiar empresa activa ───
+  // Replicamos las dependencias del módulo /usuarios: cuando un superadmin
+  // cambia de empresa "viewing-as", el provider de auth refetchea su lista,
+  // pero esta página vive su propio history → se suscribe directamente al
+  // user (cambia de identidad) + access flag. El listener de
+  // active-company adicional lo da el helper withActiveCompany al armar
+  // la URL del fetch (no necesitamos suscribirnos acá).
+  useEffect(() => {
+    if (user === null) return;       // auth aún cargando
+    if (!hasRiskAccess) return;      // sin permisos → no cargar
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(withActiveCompany('/api/risk/revisions'));
+        const data = await res.json();
+        if (cancelled) return;
+        if (res.ok && data.success && Array.isArray(data.revisions)) {
+          // Cada row: { id, payload, created_at }. Reconstruimos el array
+          // de HistoryRecord con el id REAL de BD (sobrescribe el id local
+          // generado en su día con Date.now+random) para que el delete
+          // pegue contra el endpoint correcto.
+          const records: HistoryRecord[] = data.revisions.map(
+            (r: { id: string; payload: HistoryRecord }) => ({
+              ...r.payload,
+              id: r.id,
+            }),
+          );
+          setHistory(records);
+        } else {
+          console.warn('[risk/revisions] load failed:', data?.error);
+        }
+      } catch (err) {
+        console.error('[risk/revisions] fetch error:', err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, hasRiskAccess]);
+
+  // ─── Save analysis to history (Supabase) ───
 
   const saveToHistory = useCallback((
     analysis: AnalysisResult,
@@ -191,11 +227,40 @@ export default function RetirosPropFirmPage() {
       }),
     };
 
-    setHistory((prev) => {
-      const next = [record, ...prev].slice(0, MAX_HISTORY);
-      try { localStorage.setItem(HISTORY_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
+    // Optimistic UI: agregamos al state local enseguida para que el usuario
+    // lo vea sin esperar el round-trip. Si el POST falla, queda solo en
+    // memoria y el próximo fetch lo "limpia" — no bloqueamos UX por error
+    // de red.
+    setHistory((prev) => [record, ...prev].slice(0, MAX_HISTORY));
+
+    (async () => {
+      try {
+        const res = await fetch(withActiveCompany('/api/risk/revisions'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payload: record }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+          console.error('[risk/revisions] save failed:', data?.error);
+          return;
+        }
+        // Reconciliamos: reemplazamos el record local (id local) por el de
+        // BD (id real) para que un delete posterior pegue contra el
+        // endpoint correcto. Identificamos por savedAt+fileName, que es
+        // único en la práctica (mismo segundo + mismo archivo).
+        const saved = data.revision as { id: string; payload: HistoryRecord; created_at: string };
+        setHistory((prev) =>
+          prev.map((r) =>
+            r.savedAt === record.savedAt && r.fileName === record.fileName
+              ? { ...saved.payload, id: saved.id }
+              : r,
+          ),
+        );
+      } catch (err) {
+        console.error('[risk/revisions] save error:', err);
+      }
+    })();
   }, []);
 
   // ─── Restore an analysis from history ───
@@ -1035,10 +1100,22 @@ export default function RetirosPropFirmPage() {
             </h3>
             {history.length > 0 && (
               <button
-                onClick={() => {
-                  if (confirm('¿Eliminar todo el historial?')) {
-                    setHistory([]);
-                    localStorage.removeItem(HISTORY_KEY);
+                onClick={async () => {
+                  if (!confirm('¿Eliminar todo el historial?')) return;
+                  // Optimistic UI: vaciamos local, luego borramos en BD en
+                  // paralelo. Si una falla, el próximo fetch reconcilia.
+                  const idsToDelete = history.map((r) => r.id);
+                  setHistory([]);
+                  try {
+                    await Promise.all(
+                      idsToDelete.map((id) =>
+                        fetch(withActiveCompany(`/api/risk/revisions/${id}`), {
+                          method: 'DELETE',
+                        }).catch(() => null),
+                      ),
+                    );
+                  } catch (err) {
+                    console.error('[risk/revisions] clear all error:', err);
                   }
                 }}
                 className="text-xs text-red-500 hover:text-red-600 transition-colors"
