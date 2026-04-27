@@ -156,15 +156,37 @@ export default function BalancesPage() {
       // Base net deposit from manual entries in /upload.
       let netDeposit = summary.netDeposit;
 
-      // For derived-broker periods, add the API-persisted net (deposits − withdrawals)
-      // for that calendar month, so the hero shows a real number on day 1
-      // without waiting for someone to load /upload. The value matches the
-      // coexistence rule used in /movimientos: API + manual.
+      // For derived-broker periods (Abr 2026+), the broker-withdrawal column
+      // is no longer entered manually — it's derived from the Coinsbuy API
+      // payouts minus the other manual withdrawal categories. Replicate the
+      // EXACT same coexistence rule that /movimientos uses, otherwise this
+      // hero number drifts from what the rest of the app shows.
+      //
+      // Movimientos formula:
+      //   displayTotalDeposits    = api.deposits + summary.totalDeposits
+      //   derivedBroker           = max(0, api.withdrawals − ib − prop − other)
+      //   displayTotalWithdrawals = ib + prop + other + storedBroker + derivedBroker
+      //   displayNetDeposit       = displayTotalDeposits − displayTotalWithdrawals
+      //
+      // The previous implementation here naively did:
+      //   netDeposit = summary.netDeposit + (api.deposits − api.withdrawals)
+      // which double-subtracted (ib + prop + other) because those categories
+      // are NOT part of api.withdrawals (Coinsbuy-payouts only) but ARE part
+      // of summary.totalWithdrawals. For Apr 2026 that meant the hero was
+      // ~$74k short.
       if (isDerivedBrokerPeriod({ year: p.year, month: p.month })) {
         const ymKey = `${p.year}-${String(p.month).padStart(2, '0')}`;
         const api = apiMonthly[ymKey];
         if (api) {
-          netDeposit += api.deposits - api.withdrawals;
+          const ib = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
+          const prop = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
+          const other = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
+          const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
+
+          const derivedBroker = Math.max(0, api.withdrawals - ib - prop - other);
+          const totalDeposits = api.deposits + summary.totalDeposits;
+          const totalWithdrawals = ib + prop + other + storedBroker + derivedBroker;
+          netDeposit = totalDeposits - totalWithdrawals;
         }
       }
 

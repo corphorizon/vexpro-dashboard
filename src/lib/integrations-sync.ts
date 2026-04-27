@@ -336,10 +336,24 @@ export async function runExternalApiSync(opts: {
 }
 
 /**
- * Returns the timestamp of the most recent successful sync run, or null
- * if no run is recorded yet. Reads from audit_logs.
+ * Returns the most recent sync run summary (or null), with a hint about
+ * whether all providers succeeded for the given company. Used by the
+ * report safety-net to decide if it should run an inline re-sync — a
+ * "successful" sync where one provider 403'd is NOT good enough.
  */
-export async function getLastSyncAt(): Promise<string | null> {
+export interface LastSyncStatus {
+  /** ISO timestamp of when the sync ran. */
+  ranAt: string;
+  /** True iff every provider that's NOT 'skipped' reported status='ok'.
+   *  When false, the safety-net should re-run the sync. */
+  allOk: boolean;
+  /** Per-tenant tally so callers can decide more precisely. */
+  perCompanyFailed: Record<string, string[]>;
+}
+
+export async function getLastSyncStatus(
+  onlyCompanyId?: string | null,
+): Promise<LastSyncStatus | null> {
   const admin = createAdminClient();
   const { data } = await admin
     .from('audit_logs')
@@ -350,14 +364,34 @@ export async function getLastSyncAt(): Promise<string | null> {
     .limit(1)
     .maybeSingle();
   if (!data) return null;
-  // Prefer the embedded `ranAt` (more accurate than the audit row's
-  // created_at, though they match within milliseconds).
+
+  let parsed: { ranAt?: string; results?: SyncProviderResult[] } | null = null;
   try {
-    const parsed =
-      typeof data.details === 'string' ? JSON.parse(data.details) : data.details;
-    if (parsed?.ranAt) return parsed.ranAt as string;
+    parsed = typeof data.details === 'string' ? JSON.parse(data.details) : data.details;
   } catch {
-    /* fallthrough */
+    return { ranAt: data.created_at, allOk: false, perCompanyFailed: {} };
   }
-  return data.created_at;
+
+  const ranAt = parsed?.ranAt ?? data.created_at;
+  const results = parsed?.results ?? [];
+  const perCompanyFailed: Record<string, string[]> = {};
+  let allOk = true;
+
+  for (const r of results) {
+    if (r.status === 'error') {
+      // Filter out tenants we don't care about for this safety-net check.
+      if (onlyCompanyId && r.company_id !== onlyCompanyId) continue;
+      perCompanyFailed[r.company_id] = perCompanyFailed[r.company_id] ?? [];
+      perCompanyFailed[r.company_id].push(r.provider);
+      allOk = false;
+    }
+  }
+
+  return { ranAt, allOk, perCompanyFailed };
+}
+
+/** Backwards-compat shim — returns just the timestamp. */
+export async function getLastSyncAt(): Promise<string | null> {
+  const s = await getLastSyncStatus();
+  return s?.ranAt ?? null;
 }

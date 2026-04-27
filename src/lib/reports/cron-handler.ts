@@ -6,7 +6,7 @@ import {
   previousMonthRange,
 } from './send';
 import type { ReportCadence } from './email-template';
-import { getLastSyncAt, runExternalApiSync } from '@/lib/integrations-sync';
+import { getLastSyncStatus, runExternalApiSync } from '@/lib/integrations-sync';
 
 // If the last successful sync of external APIs is older than this many
 // minutes, the report cron triggers a fresh sync before sending. Keeps
@@ -68,28 +68,49 @@ export async function handleReportCron(
       ? { from: fromOverride, to: toOverride }
       : RANGE_FN[cadence]();
 
-  // ── Safety net: ensure data is fresh before sending the report ──────
-  // For the daily cadence (which runs 5 minutes after the periodic sync
-  // at 23:55 UTC) we verify the most recent sync ran within the last
-  // SYNC_FRESHNESS_MINUTES. If not, run one inline now. Weekly / monthly
-  // are scheduled on different cadences and benefit from the same check.
-  let syncInfo: { lastSyncedAt: string | null; ranInlineSync: boolean } = {
+  // ── Safety net: ensure data is fresh AND complete before sending ─────
+  // We re-run the sync inline when ANY of the following is true:
+  //   1. No sync has ever run (lastSyncedAt is null).
+  //   2. Last sync is older than SYNC_FRESHNESS_MINUTES.
+  //   3. Last sync is fresh BUT some provider failed (e.g. UniPayment 403).
+  //      A "successful" sync that silently dropped one provider would have
+  //      otherwise let a stale email go out — exactly the bug that caused
+  //      reports to show $61K instead of the real $260K on Apr 27.
+  let syncInfo: {
+    lastSyncedAt: string | null;
+    ranInlineSync: boolean;
+    failedProviders: string[];
+  } = {
     lastSyncedAt: null,
     ranInlineSync: false,
+    failedProviders: [],
   };
   try {
-    const lastSyncAt = await getLastSyncAt();
-    const stale =
+    const status = await getLastSyncStatus(onlyCompanyId);
+    const lastSyncAt = status?.ranAt ?? null;
+    const tooOld =
       !lastSyncAt ||
       Date.now() - new Date(lastSyncAt).getTime() > SYNC_FRESHNESS_MINUTES * 60 * 1000;
+    const incomplete = !!status && !status.allOk;
+    const stale = tooOld || incomplete;
+
     if (stale) {
+      const reason = tooOld
+        ? `older than ${SYNC_FRESHNESS_MINUTES} min (last: ${lastSyncAt ?? 'never'})`
+        : `previous sync had failures: ${JSON.stringify(status?.perCompanyFailed)}`;
       console.log(
-        `[cron/${cadence}-financial-report] last sync ${lastSyncAt ?? 'never'} is stale, running inline sync`,
+        `[cron/${cadence}-financial-report] running inline sync — ${reason}`,
       );
       const summary = await runExternalApiSync({ onlyCompanyId });
-      syncInfo = { lastSyncedAt: summary.ranAt, ranInlineSync: true };
+      syncInfo = {
+        lastSyncedAt: summary.ranAt,
+        ranInlineSync: true,
+        failedProviders: summary.details
+          .filter((d) => d.status === 'error')
+          .map((d) => `${d.company_name}/${d.provider}`),
+      };
     } else {
-      syncInfo = { lastSyncedAt: lastSyncAt, ranInlineSync: false };
+      syncInfo = { lastSyncedAt: lastSyncAt, ranInlineSync: false, failedProviders: [] };
     }
   } catch (err) {
     // Sync failure is logged but never blocks the report — better to send
