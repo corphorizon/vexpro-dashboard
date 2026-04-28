@@ -233,6 +233,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const userRef = useRef<User | null>(null);
   useEffect(() => { userRef.current = user; }, [user]);
+  // Mirror del state `users` accesible desde callbacks. Necesario para
+  // poder leer `auth_user_id` (y otros campos) del usuario que se está
+  // editando sin tener que re-querear `company_users` desde el browser
+  // — esa query queda bloqueada por RLS cuando un superadmin edita en
+  // modo viewing-as.
+  const usersRef = useRef<User[]>([]);
+  useEffect(() => { usersRef.current = users; }, [users]);
 
   // Initialize: check for existing Supabase session
   useEffect(() => {
@@ -468,19 +475,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Sync email/password changes to Supabase Auth via server API
-  const syncAuthUser = async (companyUserId: string, updates: { email?: string; password?: string }) => {
+  // Sync email/password changes to Supabase Auth via server API.
+  //
+  // `authUserIdHint` permite que el caller pase el `auth_user_id` ya
+  // resuelto (típicamente desde `usersRef.current`) — evita la query
+  // browser-side que RLS bloquea para superadmins en modo viewing-as.
+  // Si no se provee, intentamos resolverlo desde el state como primer
+  // fallback; recién en último caso vamos por `company_users`.
+  const syncAuthUser = async (
+    companyUserId: string,
+    updates: { email?: string; password?: string },
+    authUserIdHint?: string | null,
+  ) => {
     if (!updates.email && !updates.password) return;
 
-    // Get the auth user_id from company_users
-    const { data } = await supabase
-      .from('company_users')
-      .select('user_id')
-      .eq('id', companyUserId)
-      .single();
+    let authUserId: string | null | undefined = authUserIdHint;
+    if (!authUserId) {
+      const fromState = usersRef.current.find((u) => u.id === companyUserId);
+      authUserId = fromState?.auth_user_id;
+    }
+    if (!authUserId) {
+      const { data } = await supabase
+        .from('company_users')
+        .select('user_id')
+        .eq('id', companyUserId)
+        .maybeSingle();
+      authUserId = data?.user_id ?? null;
+    }
 
-    if (!data?.user_id) {
-      console.error('Could not find auth user_id for company_user:', companyUserId);
+    if (!authUserId) {
+      // El company_user no tiene auth.user asociado (legacy / aún no
+      // activado / RLS lo ocultó). Salida silenciosa: no hay nada que
+      // sincronizar — el UPDATE de profile ya se hizo arriba.
       return;
     }
 
@@ -489,7 +515,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          authUserId: data.user_id,
+          authUserId,
           ...(updates.email && { email: updates.email }),
           ...(updates.password && { password: updates.password }),
         }),
@@ -511,26 +537,50 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const updateUser = useCallback(async (id: string, updates: UserUpdate) => {
-    const { error } = await supabase
-      .from('company_users')
-      .update({
-        ...(updates.name !== undefined && { name: updates.name }),
-        ...(updates.email !== undefined && { email: updates.email }),
-        ...(updates.role !== undefined && { role: updates.role }),
-        ...(updates.allowed_modules !== undefined && { allowed_modules: updates.allowed_modules }),
-        ...(updates.twofa_enabled !== undefined && { twofa_enabled: updates.twofa_enabled }),
-        ...(updates.twofa_secret !== undefined && { twofa_secret: updates.twofa_secret }),
-      })
-      .eq('id', id);
+    // Snapshot del user antes del UPDATE para comparar email y resolver
+    // auth_user_id sin re-querear el browser.
+    const targetBefore = usersRef.current.find((u) => u.id === id);
 
-    if (error) {
-      console.error('Error updating user:', error.message);
+    // Vamos por el endpoint admin (createAdminClient bypassa RLS) en vez
+    // del UPDATE browser-side: cuando un superadmin opera en modo
+    // viewing-as una empresa donde no es miembro, RLS filtra silencio-
+    // samente la escritura — la query "succeed-ea" pero no escribe nada,
+    // así que la UI decía "guardado" y el cambio nunca llegaba a BD.
+    try {
+      const payload: Record<string, unknown> = { companyUserId: id };
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.email !== undefined) payload.email = updates.email;
+      if (updates.role !== undefined) payload.role = updates.role;
+      if (updates.allowed_modules !== undefined) payload.allowed_modules = updates.allowed_modules;
+      if (updates.twofa_enabled !== undefined) payload.twofa_enabled = updates.twofa_enabled;
+      if (updates.twofa_secret !== undefined) payload.twofa_secret = updates.twofa_secret;
+
+      const res = await fetch(withActiveCompany('/api/admin/update-company-user'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        let errorMsg = 'Error desconocido';
+        try {
+          const err = await res.json();
+          errorMsg = err.error || errorMsg;
+        } catch { /* non-JSON response */ }
+        console.error('Error updating user:', errorMsg);
+        return;
+      }
+    } catch (err) {
+      console.error('Failed to update user:', err);
       return;
     }
 
-    // Sync email change to Supabase Auth
-    if (updates.email) {
-      await syncAuthUser(id, { email: updates.email });
+    // Sync a Supabase Auth solo si el email REALMENTE cambió. El form de
+    // /usuarios siempre incluye `email` en el payload aunque el admin
+    // sólo haya tocado los módulos — sin esta comparación dispararíamos
+    // el sync (y su query a company_users) en cada edit innecesariamente.
+    if (updates.email && targetBefore && updates.email !== targetBefore.email) {
+      await syncAuthUser(id, { email: updates.email }, targetBefore.auth_user_id);
     }
 
     // Refresh users list
@@ -550,20 +600,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const updateUserDirect = useCallback(async (id: string, updates: Partial<User & { password?: string }>) => {
+    const targetBefore = usersRef.current.find((u) => u.id === id);
     const { password, ...profileUpdates } = updates;
+    // Mismo motivo que updateUser: vamos por el endpoint admin para que
+    // RLS no nos coma la escritura cuando el caller es superadmin
+    // viewing-as.
     if (Object.keys(profileUpdates).length > 0) {
-      await supabase
-        .from('company_users')
-        .update(profileUpdates)
-        .eq('id', id);
+      try {
+        const res = await fetch(withActiveCompany('/api/admin/update-company-user'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ companyUserId: id, ...profileUpdates }),
+        });
+        if (!res.ok) {
+          let errorMsg = 'Error desconocido';
+          try {
+            const err = await res.json();
+            errorMsg = err.error || errorMsg;
+          } catch { /* non-JSON response */ }
+          console.error('Error updating user (direct):', errorMsg);
+        }
+      } catch (err) {
+        console.error('Failed to update user (direct):', err);
+      }
     }
 
-    // Sync email and/or password changes to Supabase Auth
-    if (updates.email || password) {
+    // Mismo criterio que updateUser: solo sync si el email cambió de
+    // verdad (o si llega password). Pasamos el auth_user_id desde el
+    // state para no depender de query browser-side.
+    const emailChanged = !!updates.email && !!targetBefore && updates.email !== targetBefore.email;
+    if (emailChanged || password) {
       await syncAuthUser(id, {
-        ...(updates.email && { email: updates.email }),
+        ...(emailChanged && { email: updates.email }),
         ...(password && { password }),
-      });
+      }, targetBefore?.auth_user_id);
     }
 
     const current = userRef.current;
@@ -871,5 +941,6 @@ export const MODULE_LABELS: Record<string, string> = {
   upload: 'Carga de Datos',
   periods: 'Períodos',
   users: 'Usuarios',
+  ib_rebates: 'Configuración IBs',
   // audit + settings intentionally omitted — see comment above ALL_MODULES.
 };

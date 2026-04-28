@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
@@ -59,6 +59,22 @@ export default function UsuariosPage() {
   const [reset2faLoading, setReset2faLoading] = useState(false);
   const [reset2faError, setReset2faError] = useState<string | null>(null);
   const [customRoles, setCustomRoles] = useState<CustomRoleOption[]>([]);
+
+  // Ref al Card del form de creación/edición. Cuando un admin hace click
+  // en "Editar" desde una fila al fondo de la tabla, el form se monta
+  // arriba de la lista — sin este scroll, el cambio era invisible y
+  // parecía que el botón no hacía nada.
+  const formCardRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (showForm) {
+      // requestAnimationFrame asegura que el Card ya esté en el DOM
+      // (mountado por el conditional render) antes de scrollear.
+      requestAnimationFrame(() => {
+        formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, [showForm]);
 
   useEffect(() => {
     // Fetch per-company custom roles — admin can assign them alongside built-ins.
@@ -262,8 +278,10 @@ export default function UsuariosPage() {
       {/* Roles tab body still wired for future re-enable — never shown today. */}
       {activeTab === 'roles' && <RolesPanel />}
 
-      {/* Form */}
+      {/* Form — envuelto en div para anclar el ref de scroll-into-view
+          (Card no expone forwardRef). */}
       {activeTab === 'users' && showForm && (
+        <div ref={formCardRef}>
         <Card>
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold">
@@ -393,6 +411,7 @@ export default function UsuariosPage() {
             </div>
           </form>
         </Card>
+        </div>
       )}
 
       {/* Users Table */}
