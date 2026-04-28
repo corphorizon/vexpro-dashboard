@@ -16,11 +16,12 @@ import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound } from 'lucide-react';
+import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt } from 'lucide-react';
 import { FireModal } from '@/components/fire-modal';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
+import { IbRebatesTab } from './_components/ib-rebates-tab';
 
-type Tab = 'employees' | 'commercial' | 'negotiations';
+type Tab = 'employees' | 'commercial' | 'negotiations' | 'ib_rebates';
 
 const STATUS_BADGE_CLASSES: Record<string, string> = {
   active: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400',
@@ -721,6 +722,10 @@ export default function RRHHPage() {
   // active_modules could navigate directly to /rrhh and see employees.
   // Superadmin bypass is baked into hasModuleAccess inside the hook.
   const canAccess = useModuleAccess('hr');
+  // Sub-módulo independiente — solo se muestra el tab si el usuario tiene
+  // 'ib_rebates' en allowed_modules. Comparte el módulo padre 'hr' para
+  // poder vivir bajo /rrhh sin abrir un módulo top-level nuevo.
+  const hasIbRebatesAccess = useModuleAccess('ib_rebates');
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const [tab, setTab] = useState<Tab>('commercial');
   const [employees, setEmployees] = useState<Employee[]>(dataEmployees);
@@ -1326,7 +1331,22 @@ export default function RRHHPage() {
           <Handshake className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.negotiations')}
         </button>
+        {hasIbRebatesAccess && (
+          <button
+            onClick={() => setTab('ib_rebates')}
+            className={cn(
+              'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
+              tab === 'ib_rebates' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Receipt className="w-4 h-4 inline mr-1 sm:mr-2" />
+            Configuración IBs
+          </button>
+        )}
       </div>
+
+      {/* ═══════════ IB REBATES TAB ═══════════ */}
+      {tab === 'ib_rebates' && hasIbRebatesAccess && <IbRebatesTab />}
 
       {/* ═══════════ EMPLOYEES TAB ═══════════ */}
       {tab === 'employees' && (
