@@ -647,3 +647,34 @@ export async function deleteEmployee(id: string): Promise<void> {
   const data = await res.json().catch(() => ({}));
   if (!res.ok || data.error) throw new Error(data.error || `Request failed: ${res.status}`);
 }
+
+// ─── Employees create / update ───
+// Antes el form del tab Empleados en /rrhh sólo tocaba state local. Estos
+// helpers hacen el round-trip a BD vía /api/admin/employees (admin client,
+// bypassea RLS para superadmin viewing-as).
+
+import type { Employee } from '@/lib/types';
+
+type EmployeeWritable = Omit<Employee, 'id' | 'company_id'>;
+
+export async function createEmployee(employee: EmployeeWritable): Promise<Employee> {
+  const res = await fetch(withActiveCompany('/api/admin/employees'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'create', employee }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data.employee as Employee;
+}
+
+export async function updateEmployee(id: string, employee: Partial<EmployeeWritable>): Promise<Employee> {
+  const res = await fetch(withActiveCompany('/api/admin/employees'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'update', id, employee }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.error) throw new Error(data.error || `Request failed: ${res.status}`);
+  return data.employee as Employee;
+}

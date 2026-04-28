@@ -10,7 +10,7 @@ import { formatDate } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
-import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee } from '@/lib/supabase/mutations';
+import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee, createEmployee, updateEmployee } from '@/lib/supabase/mutations';
 import { withActiveCompany } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
@@ -798,13 +798,51 @@ export default function RRHHPage() {
   const activeProfiles = profiles.filter(p => p.status === 'active').length;
 
   // CRUD handlers
-  const handleSaveEmployee = (emp: Employee) => {
-    setEmployees(prev => {
-      const idx = prev.findIndex(e => e.id === emp.id);
-      if (idx >= 0) { const next = [...prev]; next[idx] = emp; return next; }
-      return [...prev, emp];
-    });
-    setEditingEmp(undefined);
+  // Persistir el empleado contra BD vía /api/admin/employees (admin
+  // client, bypassea RLS). Antes este handler solo tocaba state local
+  // y al refrescar/cambiar de tab los empleados nuevos desaparecían.
+  // Después de la mutación llamamos `refresh()` del DataProvider para
+  // que `dataEmployees` traiga el snapshot real de BD (incluyendo el
+  // id UUID asignado por Postgres en lugar del id local `emp-…`).
+  const handleSaveEmployee = async (emp: Employee) => {
+    try {
+      // Distinguimos create vs update por el state `editingEmp` (no por
+      // el id del payload — en create el form arma un id local que no
+      // existe en BD).
+      const writable = {
+        name: emp.name,
+        email: emp.email,
+        position: emp.position,
+        department: emp.department,
+        start_date: emp.start_date,
+        salary: emp.salary,
+        status: emp.status,
+        phone: emp.phone,
+        country: emp.country,
+        notes: emp.notes,
+        birthday: emp.birthday,
+        supervisor: emp.supervisor,
+        comments: emp.comments,
+      };
+      if (editingEmp) {
+        const saved = await updateEmployee(editingEmp.id, writable);
+        setEmployees((prev) =>
+          prev.map((e) => (e.id === editingEmp.id ? saved : e)),
+        );
+      } else {
+        const created = await createEmployee(writable);
+        setEmployees((prev) => [...prev, created]);
+      }
+      await refresh();
+      setToast({ type: 'success', msg: editingEmp ? 'Empleado actualizado' : 'Empleado creado' });
+    } catch (err) {
+      setToast({
+        type: 'error',
+        msg: err instanceof Error ? err.message : 'Error guardando empleado',
+      });
+    } finally {
+      setEditingEmp(undefined);
+    }
   };
 
   const closeProfileForm = () => {
