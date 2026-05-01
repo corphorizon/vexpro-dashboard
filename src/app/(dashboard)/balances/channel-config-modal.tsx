@@ -66,7 +66,12 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
         if (json.success) setRows(json.rows ?? []);
         else throw new Error('No se pudo cargar la configuración');
       } catch (err) {
-        setStatus({ kind: 'err', msg: err instanceof Error ? err.message : 'Error' });
+        setStatus({
+          kind: 'err',
+          msg: err instanceof Error
+            ? err.message
+            : 'No se pudo cargar la configuración de canales',
+        });
       } finally {
         setLoading(false);
       }
@@ -95,10 +100,15 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
         body: JSON.stringify({ action: 'upsert', channel_key, ...patch }),
       });
       const json = (await res.json()) as { success: boolean; error?: string };
-      if (!json.success) throw new Error(json.error ?? 'Error');
+      if (!json.success) throw new Error(json.error ?? 'No se pudo guardar el canal');
       await refresh();
     } catch (err) {
-      setStatus({ kind: 'err', msg: err instanceof Error ? err.message : 'Error' });
+      setStatus({
+        kind: 'err',
+        msg: err instanceof Error
+          ? err.message
+          : 'Error guardando configuración de canal',
+      });
     } finally {
       setSaving(null);
     }
@@ -139,13 +149,18 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
         }),
       });
       const json = (await res.json()) as { success: boolean; error?: string };
-      if (!json.success) throw new Error(json.error ?? 'Error');
+      if (!json.success) throw new Error(json.error ?? 'No se pudo crear el canal');
       setNewChannelName('');
       setNewChannelBalance('');
       setStatus({ kind: 'ok', msg: 'Canal creado' });
       await refresh();
     } catch (err) {
-      setStatus({ kind: 'err', msg: err instanceof Error ? err.message : 'Error' });
+      setStatus({
+        kind: 'err',
+        msg: err instanceof Error
+          ? err.message
+          : 'Error creando canal personalizado',
+      });
     } finally {
       setCreating(false);
     }
@@ -163,10 +178,15 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
         body: JSON.stringify({ action: 'delete', channel_key: ch.key }),
       });
       const json = (await res.json()) as { success: boolean; error?: string };
-      if (!json.success) throw new Error(json.error ?? 'Error');
+      if (!json.success) throw new Error(json.error ?? 'No se pudo eliminar el canal');
       await refresh();
     } catch (err) {
-      setStatus({ kind: 'err', msg: err instanceof Error ? err.message : 'Error' });
+      setStatus({
+        kind: 'err',
+        msg: err instanceof Error
+          ? err.message
+          : 'Error eliminando canal personalizado',
+      });
     } finally {
       setSaving(null);
     }

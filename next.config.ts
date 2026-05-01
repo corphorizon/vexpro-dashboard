@@ -12,9 +12,17 @@ import { withSentryConfig } from "@sentry/nextjs";
 //   · `'unsafe-inline'` on script-src + style-src is unfortunate but
 //     currently required by Next.js App Router (hydration script, font
 //     injection, theme bootstrap). Moving to nonces would require a full
-//     middleware overhaul — out of scope for this fix.
-//   · `'unsafe-eval'` kept because speakeasy / QR generation use Function
-//     constructors under the hood in some code paths.
+//     middleware overhaul — tracked as separate work, out of scope for the
+//     2026-05-01 audit.
+//   · `'unsafe-eval'` was REMOVED on 2026-05-01 after verifying that:
+//       - speakeasy (TOTP) is imported only in /api/auth/* routes — server
+//         side; never reaches the browser bundle.
+//       - jspdf's main bundle has no eval() / new Function() usage (the
+//         polyfills.es.js variant uses them but the primary build does not
+//         and tree-shaking strips it for modern browsers).
+//       - QR code generation uses 'qrcode' which doesn't eval.
+//     `'wasm-unsafe-eval'` is kept so WebAssembly modules (potential future
+//     dep) still load without flipping the broader switch.
 //   · connect-src lists only the origins the BROWSER talks to directly.
 //     Server-side calls (Coinsbuy / UniPayment / FairPay APIs) run inside
 //     /api/** routes and never cross the CSP boundary.
@@ -22,10 +30,14 @@ import { withSentryConfig } from "@sentry/nextjs";
 //     emit them, and https: because tenant logos come from any public bucket.
 //   · frame-ancestors 'none' duplicates X-Frame-Options DENY but newer
 //     browsers prefer the CSP form. Belt-and-suspenders is fine.
+//
+// Rollback: if Sentry starts reporting "CSP: script-src" violations from
+// real users post-deploy, restore `'unsafe-eval'` to the script-src line
+// while we trace the offending dep.
 // ─────────────────────────────────────────────────────────────────────────────
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",

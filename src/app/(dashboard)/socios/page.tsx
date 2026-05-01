@@ -14,6 +14,7 @@ import { formatCurrency, formatPercent } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { useConfirm } from '@/lib/use-confirm';
+import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
 import {
   createPartner,
   updatePartner,
@@ -43,8 +44,8 @@ export default function SociosPage() {
   const [formEmail, setFormEmail] = useState('');
   const [formPercentage, setFormPercentage] = useState('');
   const [saving, setSaving] = useState(false);
-  const [successMsg, setSuccessMsg] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, showSuccessRaw] = useAutoClearMessage(3000);
+  const [errorMsg, showErrorRaw] = useAutoClearMessage(5000);
   // `deleteConfirm` kept for legacy pattern compatibility in the two rows that
   // still reference it (they open the shared useConfirm modal via setter).
   const { confirm, Modal: ConfirmModal } = useConfirm();
@@ -215,16 +216,10 @@ export default function SociosPage() {
   };
 
   // ─── Flash messages ───
-  const showSuccess = (msg: string) => {
-    setSuccessMsg(msg);
-    setErrorMsg('');
-    setTimeout(() => setSuccessMsg(''), 3000);
-  };
-  const showError = (msg: string) => {
-    setErrorMsg(msg);
-    setSuccessMsg('');
-    setTimeout(() => setErrorMsg(''), 5000);
-  };
+  // Mutually exclusive: success clears any error and vice-versa, so the UI
+  // never shows both panels at once.
+  const showSuccess = (msg: string) => { showErrorRaw(''); showSuccessRaw(msg); };
+  const showError = (msg: string) => { showSuccessRaw(''); showErrorRaw(msg); };
 
   // ─── Partner CRUD handlers ───
   const handleAddPartner = () => {

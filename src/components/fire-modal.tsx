@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { X, AlertTriangle } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { updateCommercialProfile } from '@/lib/supabase/mutations';
@@ -44,6 +44,17 @@ export function FireModal({ profile, onClose, onSuccess }: FireModalProps) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
+  // Track mounted state so we can safely call setSaving(false) in the
+  // finally block — if `onSuccess()` unmounts the modal (the typical
+  // success path) the setState would otherwise log a React warning.
+  const mountedRef = useRef(true);
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
   const handleConfirm = async () => {
     if (!category || !reason.trim()) {
       setError(t('hr.fireValidationRequired'));
@@ -69,10 +80,16 @@ export function FireModal({ profile, onClose, onSuccess }: FireModalProps) {
       // con data stale del DataProvider y el usuario vería "no pasó nada".
       await onSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('hr.fireError'));
-      // Sólo limpiamos `saving` en el path de error: si onSuccess tuvo
-      // éxito el componente está desmontado y setState tiraría warning.
-      setSaving(false);
+      if (mountedRef.current) {
+        setError(err instanceof Error ? err.message : t('hr.fireError'));
+      }
+    } finally {
+      // Always reset the spinner — guarded so an unmounted parent doesn't
+      // emit a React warning. Replaces the previous "only on error" reset
+      // which left the button stuck if `onSuccess` rejected late.
+      if (mountedRef.current) {
+        setSaving(false);
+      }
     }
   };
 

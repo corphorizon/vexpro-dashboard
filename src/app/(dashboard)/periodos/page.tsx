@@ -9,6 +9,7 @@ import type { Period } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
 import { updatePeriodStatus } from '@/lib/supabase/mutations';
 import { useConfirm } from '@/lib/use-confirm';
+import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
 import { Calendar, Lock, Unlock, Clock, Check } from 'lucide-react';
 
 type PeriodStatus = 'closed' | 'open' | 'in_progress';
@@ -77,18 +78,14 @@ export default function PeríodosPage() {
   }, [dataPeriods]);
 
   const { confirm, Modal: ConfirmModal } = useConfirm();
-  const [successMsg, setSuccessMsg] = useState('');
-  const [errorMsg, setErrorMsg] = useState('');
+  const [successMsg, showSuccessRaw] = useAutoClearMessage(3000);
+  const [errorMsg, showErrorRaw] = useAutoClearMessage(4500);
   const [updating, setUpdating] = useState<string | null>(null);
 
-  const showSuccess = (msg: string) => {
-    setSuccessMsg(msg);
-    setTimeout(() => setSuccessMsg(''), 3000);
-  };
-  const showError = (msg: string) => {
-    setErrorMsg(msg);
-    setTimeout(() => setErrorMsg(''), 4500);
-  };
+  // Mutually-exclusive surfacing: showing a success clears any error and
+  // vice-versa, so the UI never displays both at once.
+  const showSuccess = (msg: string) => { showErrorRaw(''); showSuccessRaw(msg); };
+  const showError = (msg: string) => { showSuccessRaw(''); showErrorRaw(msg); };
 
   const changeStatus = (id: string, newStatus: PeriodStatus) => {
     const period = managedPeriods.find(p => p.id === id);

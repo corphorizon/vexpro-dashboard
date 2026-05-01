@@ -41,7 +41,9 @@ export async function GET(request: NextRequest) {
     let query = admin
       .from('api_transactions')
       .select('provider, amount, status, transaction_date')
-      .eq('company_id', auth.companyId);
+      .eq('company_id', auth.companyId)
+      // Defensive cap — see persisted-movements for rationale.
+      .limit(10000);
 
     if (from) query = query.gte('transaction_date', `${from}T00:00:00.000Z`);
     if (to) query = query.lte('transaction_date', `${to}T23:59:59.999Z`);

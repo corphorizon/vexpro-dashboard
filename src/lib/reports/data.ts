@@ -324,19 +324,22 @@ export async function buildReportData(
       .select('provider, amount, status, transaction_date')
       .eq('company_id', companyId)
       .gte('transaction_date', `${from}T00:00:00.000Z`)
-      .lte('transaction_date', `${to}T23:59:59.999Z`),
+      .lte('transaction_date', `${to}T23:59:59.999Z`)
+      .limit(10000),
     admin
       .from('api_transactions')
       .select('provider, amount, status, transaction_date')
       .eq('company_id', companyId)
       .gte('transaction_date', `${thisMonth.from}T00:00:00.000Z`)
-      .lte('transaction_date', `${thisMonth.to}T23:59:59.999Z`),
+      .lte('transaction_date', `${thisMonth.to}T23:59:59.999Z`)
+      .limit(10000),
     admin
       .from('api_transactions')
       .select('provider, amount, status, transaction_date')
       .eq('company_id', companyId)
       .gte('transaction_date', `${prevMonth.from}T00:00:00.000Z`)
-      .lte('transaction_date', `${prevMonth.to}T23:59:59.999Z`),
+      .lte('transaction_date', `${prevMonth.to}T23:59:59.999Z`)
+      .limit(10000),
     fetchOrionCrmUsers(companyId, from, to),
     fetchOrionCrmBrokerPnl(companyId, from, to),
     fetchOrionCrmPropTrading(companyId, from, to),

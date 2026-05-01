@@ -15,6 +15,7 @@ import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { upsertExpenses } from '@/lib/supabase/mutations';
 import { logAction } from '@/lib/audit-log';
+import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
 import { useConfirm } from '@/lib/use-confirm';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download, Receipt } from 'lucide-react';
@@ -54,13 +55,8 @@ export default function EgresosPage() {
   // helper. Same semantics, centralized styling.
   const { confirm, Modal: ConfirmModal } = useConfirm();
 
-  // Success message
-  const [successMsg, setSuccessMsg] = useState('');
-
-  const showSuccess = (msg: string) => {
-    setSuccessMsg(msg);
-    setTimeout(() => setSuccessMsg(''), 3000);
-  };
+  // Success message — auto-clears, cleanup-safe (see use-auto-clear-message).
+  const [successMsg, showSuccess] = useAutoClearMessage(3000);
 
   // Get summary based on period mode
   const summary = mode === 'consolidated'
@@ -119,12 +115,8 @@ export default function EgresosPage() {
 
   // Error banner (red) — kept separate from the success (green) one so the
   // user knows at a glance whether a save worked.
-  const [errorMsg, setErrorMsg] = useState('');
+  const [errorMsg, showError] = useAutoClearMessage(4500);
   const [saving, setSaving] = useState(false);
-  const showError = (msg: string) => {
-    setErrorMsg(msg);
-    setTimeout(() => setErrorMsg(''), 4500);
-  };
 
   // Editing mutations ONLY make sense for a single period. In consolidated
   // mode we don't know which period the edit belongs to, so we disable the

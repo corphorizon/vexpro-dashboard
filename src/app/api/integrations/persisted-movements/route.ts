@@ -53,7 +53,11 @@ export async function GET(request: NextRequest) {
       .from('api_transactions')
       .select('provider, external_id, amount, fee, currency, status, transaction_date, wallet_id, raw')
       .eq('company_id', auth.companyId)
-      .order('transaction_date', { ascending: false });
+      .order('transaction_date', { ascending: false })
+      // Defensive cap. With ~5K tx/month per tenant a 35-day window stays
+      // well under this; if a future caller asks for a multi-year range
+      // we fail loud instead of silently shipping 100K rows over the wire.
+      .limit(10000);
 
     if (from) query = query.gte('transaction_date', `${from}T00:00:00.000Z`);
     if (to) query = query.lte('transaction_date', `${to}T23:59:59.999Z`);

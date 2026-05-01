@@ -158,7 +158,10 @@ export async function loadPersistedTotals(
     .select('provider, amount, status, transaction_date, wallet_id')
     .eq('company_id', companyId)
     .gte('transaction_date', fromISO)
-    .lte('transaction_date', toISO);
+    .lte('transaction_date', toISO)
+    // Defensive cap — typical month is <10K rows; this protects against a
+    // pathological multi-year range silently consuming memory.
+    .limit(10000);
 
   if (walletId) {
     // Only apply filter for rows that have a wallet_id — others (fairpay/uni)
