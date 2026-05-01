@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getCoinsbuyToken, isCoinsbuyV3Enabled, getCoinsbuyBaseUrl } from './auth';
+import { fetchCoinsbuyWallets } from './wallets';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import { generateCoinsbuyDeposits } from '../mocks';
@@ -126,6 +127,22 @@ export async function fetchCoinsbuyTransfers(
     const depositTxs: CoinsbuyDepositTx[] = [];
     const payoutTxs: CoinsbuyWithdrawalTx[] = [];
 
+    // Wallet label lookup: pull the wallet list ONCE up front and build a
+    // Map<walletId, label>. Each transfer carries `relationships.wallet.data.id`
+    // but no label — without this map the breakdown would show raw numeric
+    // wallet IDs ("1079") instead of "VexPro Main Wallet". Failing softly on
+    // this lookup is fine — if the wallets endpoint errors we just persist
+    // wallet_id without label and the UI falls back to the raw id.
+    const walletLabelById = new Map<string, string>();
+    try {
+      const walletsRes = await fetchCoinsbuyWallets(companyId);
+      for (const w of walletsRes.wallets ?? []) {
+        if (w.id) walletLabelById.set(String(w.id), w.label ?? '');
+      }
+    } catch {
+      // Silent — wallet labels are best-effort enrichment.
+    }
+
     let page = 1;
     let totalPages = 1;
 
@@ -162,15 +179,20 @@ export async function fetchCoinsbuyTransfers(
         // Only confirmed transfers
         if (attrs.status !== 2) continue;
 
+        const walletRelId = transfer.relationships?.wallet?.data?.id ?? undefined;
+
         // Optional wallet filter
         if (options.walletId) {
-          const walletRelId = transfer.relationships?.wallet?.data?.id;
           if (walletRelId !== options.walletId) continue;
         }
 
         // Optional date range filter
         if (options.from && attrs.created_at < `${options.from}T00:00:00`) continue;
         if (options.to && attrs.created_at > `${options.to}T23:59:59`) continue;
+
+        const walletLabel = walletRelId
+          ? walletLabelById.get(walletRelId) || undefined
+          : undefined;
 
         if (attrs.op_type === 1) {
           // Deposit
@@ -188,6 +210,8 @@ export async function fetchCoinsbuyTransfers(
             amountTarget,
             currency: 'USD',
             status: 'Confirmed',
+            walletId: walletRelId,
+            walletLabel,
           });
         } else if (attrs.op_type === 2) {
           // Payout
@@ -207,6 +231,8 @@ export async function fetchCoinsbuyTransfers(
             commission,
             currency: 'USD',
             status: 'Approved',
+            walletId: walletRelId,
+            walletLabel,
           });
         }
       }

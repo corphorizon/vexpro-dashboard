@@ -21,6 +21,7 @@ import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { Deposit, Withdrawal } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
+import { withActiveCompany } from '@/lib/api-fetch';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
@@ -73,6 +74,23 @@ export default function MovimientosPage() {
   const [coinsbuyWalletId, setCoinsbuyWalletId] = useState<string>(
     company?.default_wallet_id ?? DEFAULT_WALLET_ID,
   );
+
+  // When the user changes wallet from the banner dropdown, persist it to
+  // companies.default_wallet_id so it survives reloads. Empty string ("")
+  // means "Todas las wallets" — the endpoint normalises to null. The
+  // setState happens immediately so the UI reacts; the API call is
+  // fire-and-forget (best-effort persistence; if it fails the local change
+  // still applies for this session).
+  const handleWalletChange = (next: string) => {
+    setCoinsbuyWalletId(next);
+    fetch(withActiveCompany('/api/admin/wallet-preference'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ walletId: next || null }),
+    }).catch((err) => {
+      console.warn('[movimientos] wallet preference persist failed:', err);
+    });
+  };
   // Bumped by the banner after a live sync finishes — forces useApiTotals to
   // re-read from the persisted cache so the tables reflect the fresh data.
   const [apiRefreshKey, setApiRefreshKey] = useState(0);
@@ -258,7 +276,7 @@ export default function MovimientosPage() {
       {/* ─── Upper section: APIs en tiempo real (owns its own filter) ─── */}
       <RealTimeMovementsBanner
         walletId={coinsbuyWalletId}
-        onWalletChange={setCoinsbuyWalletId}
+        onWalletChange={handleWalletChange}
         onAfterLiveSync={() => setApiRefreshKey((k) => k + 1)}
       />
 

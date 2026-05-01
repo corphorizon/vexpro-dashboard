@@ -254,13 +254,17 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   }, [loadFromCache]);
 
   // Query-string carried over into the breakdown page link so the breakdown
-  // starts on the same range (it has its own filter afterwards).
+  // starts on the same range AND the same wallet filter the cards used.
+  // Passing walletId here is the difference that closes the "tarjetas vs
+  // desglose" discrepancy Kevin reported on 2026-05-01 — without this the
+  // breakdown defaulted to all wallets.
   const linkQs = useMemo(() => {
     const p = new URLSearchParams();
     if (from) p.set('from', from);
     if (to) p.set('to', to);
+    if (walletId) p.set('walletId', walletId);
     return p.toString();
-  }, [from, to]);
+  }, [from, to, walletId]);
 
   return (
     <Card>

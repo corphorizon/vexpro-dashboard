@@ -43,20 +43,17 @@ interface ResolvedConfig {
 }
 
 async function resolveConfig(companyId: string | null | undefined): Promise<ResolvedConfig | null> {
-  if (companyId) {
-    const perTenant = await resolveUnipaymentCredentials(companyId);
-    if (perTenant) {
-      return {
-        clientId: perTenant.clientId,
-        clientSecret: perTenant.clientSecret,
-        baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
-      };
-    }
-  }
-  const envId = process.env.UNIPAYMENT_CLIENT_ID;
-  const envSecret = process.env.UNIPAYMENT_CLIENT_SECRET;
-  if (!envId || envId === 'mock' || !envSecret) return null;
-  return { clientId: envId, clientSecret: envSecret, baseUrl: ENV_BASE_URL };
+  // Env fallback removed 2026-05-01 — tenants without per-tenant
+  // api_credentials get an empty error dataset instead of someone else's
+  // UniPayment data. See coinsbuy/auth.ts for the full rationale.
+  if (!companyId) return null;
+  const perTenant = await resolveUnipaymentCredentials(companyId);
+  if (!perTenant) return null;
+  return {
+    clientId: perTenant.clientId,
+    clientSecret: perTenant.clientSecret,
+    baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
+  };
 }
 
 /**

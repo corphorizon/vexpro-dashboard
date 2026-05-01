@@ -59,25 +59,28 @@ interface ResolvedConfig {
 }
 
 /**
- * Loads per-tenant credentials from api_credentials, falling back to env.
- * Returns null when neither path has a client_id — caller treats as
- * "not configured" and produces empty/mock data.
+ * Loads per-tenant credentials from api_credentials.
+ *
+ * Returns null when the tenant has no row — caller treats that as
+ * "not configured" and produces an empty error dataset.
+ *
+ * NOTE (2026-05-01): the env fallback was REMOVED. Investigation found that
+ * the cron iterated every active company and, for tenants without their own
+ * api_credentials row, fell through to env vars and pulled the same Coinsbuy
+ * data into multiple `company_id`s — a cross-tenant data leak. With the
+ * fallback gone, tenants that don't configure their own credentials simply
+ * get empty datasets, which is the correct behaviour. A `companyId` is now
+ * required; the legacy "no companyId → use env" path returns null too.
  */
 async function resolveConfig(companyId: string | null | undefined): Promise<ResolvedConfig | null> {
-  if (companyId) {
-    const perTenant = await resolveCoinsbuyCredentials(companyId);
-    if (perTenant) {
-      return {
-        clientId: perTenant.clientId,
-        clientSecret: perTenant.clientSecret,
-        baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
-      };
-    }
-  }
-  const envId = process.env.COINSBUY_CLIENT_ID;
-  const envSecret = process.env.COINSBUY_CLIENT_SECRET;
-  if (!envId || envId === 'mock' || !envSecret) return null;
-  return { clientId: envId, clientSecret: envSecret, baseUrl: ENV_BASE_URL };
+  if (!companyId) return null;
+  const perTenant = await resolveCoinsbuyCredentials(companyId);
+  if (!perTenant) return null;
+  return {
+    clientId: perTenant.clientId,
+    clientSecret: perTenant.clientSecret,
+    baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
+  };
 }
 
 /**
