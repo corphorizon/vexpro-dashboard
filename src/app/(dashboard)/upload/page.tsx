@@ -1053,15 +1053,44 @@ export default function UploadPage() {
   };
 
   // Income handler
+  //
+  // Saves three things in one click — they share a tab in the UI so users
+  // expect "Guardar Ingresos" to persist everything visible:
+  //   1. operating_income (broker_pnl, other) — the historical pair.
+  //   2. prop_firm_sales — single roll-up amount per period; the Prop Firm
+  //      "ventas" input was added 2026-05-01 so the net (sales − retiros)
+  //      can flow into Total Ingresos without leaving the page.
+  //   3. withdrawals — the Prop Firm "retiros" share state with the
+  //      Retiros tab. We persist the FULL withdrawals payload (4 aggregates
+  //      + extras) the same way `saveAll('retiros')` does so editing the
+  //      prop_firm row from Ingresos doesn't wipe other categories or any
+  //      manual extras the user already added.
   const saveIncome = () => {
     if (!userCanAdd || !company) return;
     (async () => {
       try {
-        await upsertOperatingIncome(company.id, selectedPeriodRef.current, income);
+        const periodId = selectedPeriodRef.current;
+        const combinedWithdrawals = [
+          ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
+          ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
+        ];
+        await upsertOperatingIncome(company.id, periodId, income);
+        await upsertPropFirmSales(company.id, periodId, propFirmAmount);
+        await upsertWithdrawals(company.id, periodId, combinedWithdrawals);
 
         setDirtySection(null);
         await refresh();
-        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}`);
+        if (user) {
+          const propFirmWdr = withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+          const propFirmNet = propFirmAmount - propFirmWdr;
+          logAction(
+            user.id,
+            user.name,
+            'update',
+            'income',
+            `Ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}, Prop Firm net $${propFirmNet.toLocaleString()}`,
+          );
+        }
         showSuccess(t('upload.incomeSaved'));
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
@@ -1136,7 +1165,16 @@ export default function UploadPage() {
           const count = expenses.length;
           successMsg = `${count} egreso${count === 1 ? '' : 's'} guardado${count === 1 ? '' : 's'} correctamente`;
         } else if (section === 'ingresos') {
+          // Same payload as saveIncome (above) — the Ingresos tab now also
+          // owns Prop Firm ventas + retiros. See saveIncome's comment for
+          // why we persist the full withdrawals shape, not just prop_firm.
+          const combinedWithdrawals = [
+            ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
+            ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
+          ];
           await upsertOperatingIncome(companyId, periodId, income);
+          await upsertPropFirmSales(companyId, periodId, propFirmAmount);
+          await upsertWithdrawals(companyId, periodId, combinedWithdrawals);
           if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
           successMsg = 'Ingresos operativos guardados correctamente';
         }
@@ -1819,7 +1857,19 @@ export default function UploadPage() {
       )}
 
       {/* INGRESOS OPERATIVOS */}
-      {section === 'ingresos' && (
+      {section === 'ingresos' && (() => {
+        // Prop Firm fields share state with the Depósitos and Retiros tabs:
+        //   · ventas → `propFirmAmount` (writes to prop_firm_sales table)
+        //   · retiros → withdrawals row with category='prop_firm'
+        // Editing here updates the same source — when the Orion CRM API goes
+        // live the inputs become read-only / API-driven without changing the
+        // schema, since `summary.propFirmNetIncome` already feeds resumen-
+        // general and admin-home off the same fields.
+        const propFirmWithdrawal =
+          withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+        const propFirmNet = propFirmAmount - propFirmWithdrawal;
+        const totalIngresos = income.broker_pnl + income.other + propFirmNet;
+        return (
         <Card>
           <h2 className="text-lg font-semibold mb-4">Ingresos Operativos — {periodLabel}</h2>
           <div className="space-y-4">
@@ -1853,10 +1903,75 @@ export default function UploadPage() {
                 )}
               </div>
             </div>
+
+            {/* Prop Firm — manual entry while the Orion CRM endpoint is not
+                yet live. Net flows into Total Ingresos below. Mirror of the
+                same fields visible in Depósitos (ventas) and Retiros
+                (retiros), wired to the same state. */}
+            <div className="pt-3 border-t border-border">
+              <div className="flex items-center justify-between mb-2">
+                <h3 className="text-sm font-semibold">Prop Firm</h3>
+                <span className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/50 px-2 py-0.5 rounded">
+                  manual · pendiente Orion CRM
+                </span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">Ventas Prop Firm</label>
+                  {userCanAdd ? (
+                    <input
+                      type="number" step="0.01"
+                      value={propFirmAmount || ''}
+                      onChange={e => {
+                        setPropFirmAmount(parseFloat(e.target.value) || 0);
+                        markDirty('ingresos');
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      placeholder="0.00"
+                    />
+                  ) : (
+                    <p className="text-lg font-bold">{formatCurrency(propFirmAmount)}</p>
+                  )}
+                </div>
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">Retiros Prop Firm</label>
+                  {userCanAdd ? (
+                    <input
+                      type="number" step="0.01"
+                      value={propFirmWithdrawal || ''}
+                      onChange={e => {
+                        const v = parseFloat(e.target.value) || 0;
+                        // setWithdrawals also marks 'retiros' dirty internally;
+                        // we override to 'ingresos' below so the unsaved-banner
+                        // shows in this tab where the user is actually working.
+                        setWithdrawals(prev => prev.map(w =>
+                          w.category === 'prop_firm' ? { ...w, amount: v } : w,
+                        ));
+                        markDirty('ingresos');
+                      }}
+                      className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      placeholder="0.00"
+                    />
+                  ) : (
+                    <p className="text-lg font-bold">{formatCurrency(propFirmWithdrawal)}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center justify-end mt-2 text-sm">
+                <span className="text-muted-foreground mr-2">Resultado Prop Firm:</span>
+                <span className={`font-semibold ${propFirmNet < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                  {formatCurrency(propFirmNet)}
+                </span>
+              </div>
+            </div>
+
             <div className="flex items-center justify-between pt-4 border-t border-border">
               <div>
                 <p className="text-sm text-muted-foreground">Total Ingresos</p>
-                <p className="text-xl font-bold">{formatCurrency(income.broker_pnl + income.other)}</p>
+                <p className="text-xl font-bold">{formatCurrency(totalIngresos)}</p>
+                <p className="text-[11px] text-muted-foreground mt-0.5">
+                  Broker P&amp;L + Otros + (Ventas Prop Firm − Retiros Prop Firm)
+                </p>
               </div>
               {userCanAdd && (
                 <button
@@ -1870,7 +1985,8 @@ export default function UploadPage() {
             </div>
           </div>
         </Card>
-      )}
+        );
+      })()}
 
       {/* LIQUIDEZ */}
       {section === 'liquidez' && (
