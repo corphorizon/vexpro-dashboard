@@ -470,14 +470,22 @@ export default function BalancesPage() {
   // Helper: get value for a channel for the selected date.
   //
   // Resolution order per channel:
-  //   1. Snapshot stored in channel_balances for the selected date
-  //      (written by the daily cron at 00:00 UTC or by manual edits).
-  //   2. Live API value (coinsbuy/unipayment) — only sensible when viewing
-  //      TODAY, since live always represents "right now".
+  //   1. If viewing TODAY → prefer LIVE API value. The 00:00 UTC snapshot
+  //      becomes stale within minutes once deposits/withdrawals start
+  //      flowing — using it would show numbers that disagree with the
+  //      per-wallet detail rendered below from the same live API call
+  //      (Audit 2026-05-01: aggregate showed $94,774 vs per-wallet sum
+  //      $51,893 because snapshot fired at 00:00 UTC and ~$43K of
+  //      withdrawals happened between then and the user's view).
+  //   2. If viewing a PAST DATE → use the channel_balances snapshot
+  //      (written by the daily cron at 00:00 UTC of the next day, or by
+  //      manual edits for non-API channels).
   //   3. Zero as last resort.
   //
   // For liquidez/inversiones, we can always reconstruct the balance from
   // the movements table on the fly, so we use that directly.
+  const isToday = selectedDate === todayISO();
+
   const getChannelValue = (key: string): number => {
     if (key === 'liquidez') return liquidityBalance;
     if (key === 'inversiones') return investmentsBalance;
@@ -485,19 +493,18 @@ export default function BalancesPage() {
     const snap = snapshots.find((s) => s.channel_key === key);
 
     if (key === 'coinsbuy') {
-      // Past date with snapshot → show historical value.
+      // Today → live aggregate (sum of pinned wallets right now).
+      if (isToday) return pinnedWalletsTotal;
+      // Past date → historical snapshot, or 0 if none.
       if (snap && snap.source) return snap.amount;
-      // Today / no snapshot → live API total.
-      return pinnedWalletsTotal;
+      return 0;
     }
     if (key === 'unipayment') {
       // UniPayment is API-only. Manual snapshots are no longer accepted
-      // (any legacy rows are filtered out below). Resolution:
-      //   · Past date: API-source snapshot stored by the cron, or 0 if missing.
-      //   · Today: live API value (unipaymentBalance) when available,
-      //     else the most recent api snapshot, else 0.
+      // (any legacy rows are filtered out below).
+      // Today → live; past → snapshot.
+      if (isToday) return unipaymentBalance;
       if (snap && snap.source === 'api') return snap.amount;
-      if (unipaymentBalance > 0) return unipaymentBalance;
       return 0;
     }
     return snap?.amount ?? 0;
