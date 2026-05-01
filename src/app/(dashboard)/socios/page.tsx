@@ -98,19 +98,26 @@ export default function SociosPage() {
       const debtIn = carryDebt;
 
       if (pSaldo <= 0) {
-        // Negative month: no reserve, reserve absorbs loss
+        // Negative month: savings-account model — accumulated reserve is
+        // NEVER auto-consumed by losses. The loss + any prior debt simply
+        // becomes the new debt carry, and reserve stays as it was at the
+        // close of the previous positive month.
+        //
+        // Why the change (Kevin, 2026-05-01): "cada mes debe mostrarse ese
+        // dato y sumarse lo del nuevo mes y arrastrar el dato final al
+        // siguiente mes". Reserve must show the running historical balance,
+        // not be silently drained when a bad month hits — the team prefers
+        // to see savings + outstanding debt as TWO separate numbers and
+        // decide manually whether to apply reserve against debt.
+        //
+        // Old behaviour absorbed losses from accReserve, which displayed
+        // $0 in months with big losses and obscured the actual savings.
+        // Future positive months still pay off carryDebt FIRST before
+        // adding to reserve (see positive branch below) — so the reserve
+        // grows monotonically and debt is the moving piece.
         const loss = Math.abs(pSaldo);
-        const totalLoss = loss + carryDebt;
-
-        if (accReserve >= totalLoss) {
-          // Reserve covers everything
-          accReserve -= totalLoss;
-          carryDebt = 0;
-        } else {
-          // Reserve doesn't cover all — remainder becomes carried debt
-          carryDebt = totalLoss - accReserve;
-          accReserve = 0;
-        }
+        carryDebt = debtIn + loss;
+        // accReserve unchanged.
 
         chain.set(period.id, {
           ingresosNetos: pIncome,
