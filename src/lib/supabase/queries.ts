@@ -437,17 +437,22 @@ export async function fetchCommercialMonthlyResults(
   companyId: string,
   periodIds?: string[]
 ): Promise<CommercialMonthlyResult[]> {
-  // Commercial monthly results reference profile_id rather than company_id directly,
-  // so we first fetch the profile IDs for the company, then query results.
-  const profiles = await fetchCommercialProfiles(companyId);
-  if (profiles.length === 0) return [];
-
-  const profileIds = profiles.map((p) => p.id);
-
+  // Filter by `company_id` directly (column added by migration 006). The old
+  // implementation fetched all commercial_profiles first, extracted IDs, then
+  // queried with `IN [...]` — that ran in parallel with the same
+  // `fetchCommercialProfiles` call from data-context's loadAllData(), causing
+  // a redundant double-fetch on every cold load AND on every silent refresh
+  // after a save. With 49 profiles + 262 monthly_results rows that's not
+  // huge today but it scales linearly and was a measurable contributor to
+  // the "Cargando..." hang Kevin reported on 2026-05-01.
+  //
+  // Defensive .limit(10000) — typical month has <100 rows, so 10K covers
+  // ~8 years of growth before we'd need pagination.
   let query = supabase
     .from('commercial_monthly_results')
     .select('*')
-    .in('profile_id', profileIds);
+    .eq('company_id', companyId)
+    .limit(10000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);

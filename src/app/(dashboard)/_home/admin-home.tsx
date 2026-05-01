@@ -91,7 +91,9 @@ export function AdminHome() {
 
     const ingresosNetos = (summary.operatingIncome
       ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
-      : 0) + summary.propFirmNetIncome;
+      : 0)
+      + summary.propFirmNetIncome
+      + summary.investmentProfits;
     const balance = ingresosNetos - summary.totalExpenses;
 
     return { deposits, withdrawals, netDeposit, balance };

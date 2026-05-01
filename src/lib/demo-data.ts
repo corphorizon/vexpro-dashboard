@@ -647,6 +647,7 @@ export function getPeriodSummary(periodId: string): PeriodSummary | null {
     netDeposit: totalDeposits - totalWithdrawals,
     propFirmSales,
     propFirmNetIncome,
+    investmentProfits: 0, // demo data has no investments — live mode computes
     brokerDeposits: totalDeposits - propFirmSales,
     p2pTransfer: p2p,
     totalExpenses: expenses.reduce((sum, e) => sum + e.amount, 0),
@@ -757,6 +758,7 @@ export function getConsolidatedSummary(periodIds: string[]): PeriodSummary | nul
     netDeposit: totalDeposits - totalWithdrawals,
     propFirmSales,
     propFirmNetIncome,
+    investmentProfits: 0, // demo data has no investments
     brokerDeposits: totalDeposits - propFirmSales,
     p2pTransfer: p2p,
     totalExpenses: allExpenses.reduce((s, e) => s + e.amount, 0),

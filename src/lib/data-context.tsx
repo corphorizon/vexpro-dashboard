@@ -470,6 +470,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const propFirmWithdrawal = periodWithdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
       const propFirmNetIncome = pfs - propFirmWithdrawal;
 
+      // Investment profits this month — sum `profit` of investments rows
+      // whose `date` is within the period's calendar month. The investments
+      // table is date-keyed (not period_id-keyed) so we match on year/month.
+      const investmentProfits = investments.reduce((sum, inv) => {
+        if (!inv.date) return sum;
+        const [y, m] = String(inv.date).split('-').map(Number);
+        if (y !== period.year || m !== period.month) return sum;
+        return sum + (Number(inv.profit) || 0);
+      }, 0);
+
       return {
         period,
         totalDeposits,
@@ -477,6 +487,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         netDeposit: totalDeposits - totalWithdrawals,
         propFirmSales: pfs,
         propFirmNetIncome,
+        investmentProfits,
         brokerDeposits: totalDeposits - pfs,
         p2pTransfer: p2p,
         totalExpenses: periodExpenses.reduce((sum, e) => sum + e.amount, 0),
@@ -490,7 +501,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         expenses: periodExpenses,
       };
     },
-    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus]
+    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus, investments]
   );
 
   // ─── Consolidated summary ───
@@ -598,6 +609,17 @@ export function DataProvider({ children }: { children: ReactNode }) {
         reserve_pct: 0.10,
       };
 
+      // Investment profits across all selected periods — sum `profit` for
+      // investments whose date falls in any of the matched periods'
+      // year/month. Same logic as single-period summary, expanded.
+      const matchedYM = new Set(matchedPeriods.map(p => `${p.year}-${p.month}`));
+      const investmentProfits = investments.reduce((sum, inv) => {
+        if (!inv.date) return sum;
+        const [y, m] = String(inv.date).split('-').map(Number);
+        if (!matchedYM.has(`${y}-${m}`)) return sum;
+        return sum + (Number(inv.profit) || 0);
+      }, 0);
+
       return {
         period: consolidatedPeriod,
         totalDeposits,
@@ -605,6 +627,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         netDeposit: totalDeposits - totalWithdrawals,
         propFirmSales: pfs,
         propFirmNetIncome,
+        investmentProfits,
         brokerDeposits: totalDeposits - pfs,
         p2pTransfer: p2p,
         totalExpenses: allExps.reduce((s, e) => s + e.amount, 0),
@@ -618,7 +641,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         expenses: allExps,
       };
     },
-    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus, getPeriodSummary]
+    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus, getPeriodSummary, investments]
   );
 
   // ─── Liquidity and investments getters ───
