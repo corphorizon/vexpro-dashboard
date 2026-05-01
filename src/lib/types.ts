@@ -186,6 +186,13 @@ export interface PeriodSummary {
   netDeposit: number;
   propFirmSales: number;
   propFirmNetIncome: number;
+  /**
+   * Sum of `investments.profit` for rows whose `date` falls in this period's
+   * calendar month. Added to Ingresos Operativos by Resumen General /
+   * Socios / admin-home — investments generated this month count toward
+   * operating income.
+   */
+  investmentProfits: number;
   brokerDeposits: number;
   p2pTransfer: number;
   totalExpenses: number;

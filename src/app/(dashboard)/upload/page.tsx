@@ -953,15 +953,23 @@ export default function UploadPage() {
     if (!userCanAdd || !company) return;
     // Skip confirmation modal — the inline input onBlur/save is already a
     // deliberate action. Toast feedback + undo-via-re-edit is faster UX.
+    //
+    // refresh() runs in BACKGROUND (no await) — the previous version
+    // awaited it, which delayed the success toast by 2-5s while
+    // DataProvider re-fetched 18 datasets. Users perceived "no muestra
+    // nada" and hard-refreshed the browser, landing on the LoadingScreen.
+    // Same pattern saveAll already uses (see 2026-04-22 fix in egresos).
     (async () => {
       try {
         const updated = deposits.map(d => d.id === id ? { ...d, amount } : d);
         setDepositsRaw(updated);
         await upsertDeposits(company.id, selectedPeriodRef.current, updated);
 
-        await refresh();
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.depositRegistered'));
+        void refresh().catch((err) => {
+          console.warn('[updateDeposit] background refresh failed:', err);
+        });
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
@@ -974,6 +982,8 @@ export default function UploadPage() {
     // Skip confirmation modal — the inline input commit (blur / enter) is
     // the deliberate action. Toast feedback gives the user a fast signal
     // without the extra click.
+    //
+    // refresh() in background — same rationale as updateDeposit above.
     (async () => {
       try {
         const updated = withdrawals.map(w => w.id === id ? { ...w, amount } : w);
@@ -985,9 +995,11 @@ export default function UploadPage() {
         ];
         await upsertWithdrawals(company.id, selectedPeriodRef.current, combined);
 
-        await refresh();
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.withdrawalRegistered'));
+        void refresh().catch((err) => {
+          console.warn('[updateWithdrawal] background refresh failed:', err);
+        });
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
@@ -1079,7 +1091,6 @@ export default function UploadPage() {
         await upsertWithdrawals(company.id, periodId, combinedWithdrawals);
 
         setDirtySection(null);
-        await refresh();
         if (user) {
           const propFirmWdr = withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
           const propFirmNet = propFirmAmount - propFirmWdr;
@@ -1092,6 +1103,13 @@ export default function UploadPage() {
           );
         }
         showSuccess(t('upload.incomeSaved'));
+        // Background refresh — same pattern as updateDeposit / saveAll. The
+        // previous `await refresh()` here delayed the toast by the full
+        // DataProvider reload (~2-5s on warm cache, longer with the old
+        // unbounded commercial_monthly_results query).
+        void refresh().catch((err) => {
+          console.warn('[saveIncome] background refresh failed:', err);
+        });
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }

@@ -63,7 +63,9 @@ export default function SociosPage() {
   const summary = mode === 'single' ? getPeriodSummary(selectedPeriodId) : null;
   const ingresosNetos = (summary?.operatingIncome
     ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
-    : 0) + (summary?.propFirmNetIncome || 0);
+    : 0)
+    + (summary?.propFirmNetIncome || 0)
+    + (summary?.investmentProfits || 0);
   const egresosNetos = summary?.totalExpenses || 0;
 
   // Saldo a Favor = Ingresos Netos - Egresos Netos
@@ -90,7 +92,9 @@ export default function SociosPage() {
       const pSum = getPeriodSummary(period.id);
       const pIncome = (pSum?.operatingIncome
         ? pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other
-        : 0) + (pSum?.propFirmNetIncome || 0);
+        : 0)
+        + (pSum?.propFirmNetIncome || 0)
+        + (pSum?.investmentProfits || 0);
       const pExpenses = pSum?.totalExpenses || 0;
       const pSaldo = pIncome - pExpenses;
       const pReservePct = period.reserve_pct ?? 0.10;

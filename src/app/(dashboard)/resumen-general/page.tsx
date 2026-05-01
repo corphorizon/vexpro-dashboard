@@ -107,7 +107,9 @@ export default function ResumenPage() {
   const income = summary.operatingIncome;
   const totalIncome = (income
     ? income.broker_pnl + income.other
-    : 0) + summary.propFirmNetIncome;
+    : 0)
+    + summary.propFirmNetIncome
+    + summary.investmentProfits;
   const balanceDisponible = totalIncome - summary.totalExpenses;
 
   const exportHeaders = ['Metrica', 'Valor'];
@@ -250,6 +252,12 @@ export default function ResumenPage() {
               <div className="flex justify-between">
                 <span>Balance Prop Firm</span>
                 <span>{formatCurrency(summary.propFirmNetIncome)}</span>
+              </div>
+            )}
+            {summary.investmentProfits !== 0 && (
+              <div className="flex justify-between">
+                <span>Profits Inversiones</span>
+                <span>{formatCurrency(summary.investmentProfits)}</span>
               </div>
             )}
             {income && (
