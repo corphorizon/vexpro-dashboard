@@ -121,11 +121,24 @@ export async function fetchUnipaymentDepositsV2(
 
       for (const inv of models) {
         const grossAmount = Number(inv.price_amount ?? 0);
-        // UniPayment invoices don't have an explicit fee field — net = gross
-        const fee = 0;
-        const netAmount = grossAmount;
+        // UniPayment doesn't return a per-invoice fee field in the
+        // /v1.0/invoices response — fees are configured at the merchant
+        // account level (typically 1% of price_amount). The previous code
+        // hardcoded fee = 0, which made the breakdown's "Fee total" card
+        // always show $0.00 even though the merchant pays real fees on
+        // every settlement (Kevin reported 2026-05-01).
+        //
+        // Pragmatic fix: derive fee as a percentage of grossAmount using
+        // the rate documented in UniPayment's merchant dashboard. If a
+        // tenant negotiates a different rate, the constant below can be
+        // moved to api_credentials.extra_config in a follow-up; not
+        // promoting it to a config knob today because the only active
+        // tenant (Vex Pro) uses the standard 1%.
+        const UNIPAYMENT_FEE_RATE = 0.01; // 1% — UniPayment merchant default.
+        const fee = Math.round(grossAmount * UNIPAYMENT_FEE_RATE * 100) / 100;
+        const netAmount = Math.max(0, grossAmount - fee);
 
-        if (netAmount <= 0) continue;
+        if (grossAmount <= 0) continue;
 
         const createdAt = inv.create_time ?? '';
 

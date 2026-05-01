@@ -57,19 +57,31 @@ export async function persistDataset(
 
   const admin = createAdminClient();
 
-  const rows = dataset.transactions.map((tx) => ({
-    company_id: companyId,
-    provider: dataset.slug,
-    external_id: tx.id,
-    amount: canonicalAmount(tx),
-    fee: canonicalFee(tx),
-    currency: tx.currency ?? null,
-    status: tx.status ?? null,
-    transaction_date: tx.createdAt,
-    wallet_id: null, // coinsbuy wallet_id isn't on the transaction row today
-    raw: tx as unknown as Record<string, unknown>,
-    synced_at: new Date().toISOString(),
-  }));
+  const rows = dataset.transactions.map((tx) => {
+    // Coinsbuy txs carry walletId + walletLabel after the 2026-05-01 fetcher
+    // change. FairPay / UniPayment txs don't have wallet semantics so we
+    // leave both fields null for those providers.
+    const walletId =
+      'walletId' in tx && typeof tx.walletId === 'string' ? tx.walletId : null;
+    const walletLabel =
+      'walletLabel' in tx && typeof tx.walletLabel === 'string'
+        ? tx.walletLabel
+        : null;
+    return {
+      company_id: companyId,
+      provider: dataset.slug,
+      external_id: tx.id,
+      amount: canonicalAmount(tx),
+      fee: canonicalFee(tx),
+      currency: tx.currency ?? null,
+      status: tx.status ?? null,
+      transaction_date: tx.createdAt,
+      wallet_id: walletId,
+      wallet_label: walletLabel,
+      raw: tx as unknown as Record<string, unknown>,
+      synced_at: new Date().toISOString(),
+    };
+  });
 
   const { error } = await admin
     .from('api_transactions')

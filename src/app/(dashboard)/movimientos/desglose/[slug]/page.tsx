@@ -83,12 +83,18 @@ export default function BreakdownPage({
 
   const initialFrom = typeof initialQuery.from === 'string' ? initialQuery.from : '';
   const initialTo = typeof initialQuery.to === 'string' ? initialQuery.to : '';
+  // walletId carried over from /movimientos via the breakdown link so the
+  // breakdown filters by the same wallet the cards used. Empty / 'all' = no
+  // filter (Todas las wallets).
+  const initialWalletId =
+    typeof initialQuery.walletId === 'string' ? initialQuery.walletId : '';
 
   const [from, setFrom] = useState(initialFrom);
   const [to, setTo] = useState(initialTo);
   const [dataset, setDataset] = useState<ProviderDataset | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   const load = async () => {
@@ -98,10 +104,22 @@ export default function BreakdownPage({
       const qs = new URLSearchParams({ slug });
       if (from) qs.set('from', from);
       if (to) qs.set('to', to);
-      const res = await fetch(withActiveCompany(`/api/integrations/movements?${qs.toString()}`));
+      if (initialWalletId) qs.set('walletId', initialWalletId);
+      // Read from Supabase (api_transactions), not the live external API.
+      // Two reasons:
+      //   1. The live endpoint hangs when UniPayment 403s or Coinsbuy is
+      //      slow (12s timeouts × retries). Persisted reads stay under 1s.
+      //   2. Tarjetas (banner) and breakdown now share the same source —
+      //      whatever the card shows, the breakdown shows the same.
+      // To pull fresh data the user clicks "Refrescar desde APIs" on the
+      // banner up on /movimientos; that endpoint hits live + write-throughs.
+      const res = await fetch(
+        withActiveCompany(`/api/integrations/persisted-movements?${qs.toString()}`),
+      );
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error desconocido');
       setDataset(json.dataset ?? null);
+      setFetchedAt(json.fetchedAt ?? null);
       setPage(1);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Error de red');
@@ -114,7 +132,16 @@ export default function BreakdownPage({
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug, from, to]);
+  }, [slug, from, to, initialWalletId]);
+
+  // Show a stale-data hint when the most recent sync for this provider was
+  // more than 6 hours ago. The breakdown stays usable — the user can click
+  // "Refrescar desde APIs" on the parent /movimientos to trigger a re-sync.
+  const dataAgeHours = useMemo(() => {
+    if (!fetchedAt) return null;
+    const ms = Date.now() - new Date(fetchedAt).getTime();
+    return ms / (1000 * 60 * 60);
+  }, [fetchedAt]);
 
   const totals = useMemo(
     () => (dataset ? computeProviderTotals(dataset) : null),
@@ -157,8 +184,23 @@ export default function BreakdownPage({
             <span className="font-medium text-foreground">
               {totals?.acceptedStatus || '—'}
             </span>
+            {initialWalletId ? (
+              <>
+                {' '}· wallet <span className="font-medium text-foreground">{initialWalletId}</span>
+              </>
+            ) : (
+              <>
+                {' '}· todas las wallets
+              </>
+            )}
             .
           </p>
+          {dataAgeHours !== null && dataAgeHours > 6 && (
+            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 inline-flex items-center gap-1">
+              <AlertTriangle className="w-3 h-3" />
+              Datos del último sync hace {Math.round(dataAgeHours)}h. Volvé a /movimientos y clickeá &quot;Refrescar desde APIs&quot; para datos actualizados.
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <button

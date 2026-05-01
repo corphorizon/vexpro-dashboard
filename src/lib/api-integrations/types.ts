@@ -33,6 +33,16 @@ export interface CoinsbuyDepositTx {
   amountTarget: number;    // net amount credited (what we sum for totals)
   currency: string;
   status: 'Confirmed' | 'Pending' | 'Failed';
+  /** Coinsbuy wallet ID this transfer belongs to (e.g. "1079"). Extracted
+   *  from `relationships.wallet.data.id`. Required for the wallet filter
+   *  on /movimientos and /movimientos/desglose to work — without it the
+   *  filter shows all wallets across the Coinsbuy account. */
+  walletId?: string;
+  /** Human-readable label resolved from the Coinsbuy /wallet/<id> endpoint
+   *  or the tenant's pinned_coinsbuy_wallets row. Persisted alongside
+   *  wallet_id so the breakdown table can render "VexPro Main Wallet"
+   *  without joining at read time. */
+  walletLabel?: string;
 }
 
 export interface CoinsbuyWithdrawalTx {
@@ -47,6 +57,9 @@ export interface CoinsbuyWithdrawalTx {
   commission: number;      // chargedAmount - amount (precomputed)
   currency: string;
   status: 'Approved' | 'Pending' | 'Rejected';
+  /** See CoinsbuyDepositTx.walletId — same field, same purpose. */
+  walletId?: string;
+  walletLabel?: string;
 }
 
 // ── FairPay ──
