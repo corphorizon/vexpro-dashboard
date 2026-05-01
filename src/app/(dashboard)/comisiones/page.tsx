@@ -1897,7 +1897,15 @@ export default function ComisionesPage() {
             {toast.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}{toast.msg}
           </div>
         )}
-        <button onClick={handleSave} disabled={saving} className="flex items-center gap-2 px-6 py-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 shadow-lg">
+        {/* Disable while EITHER the master save OR any per-row save is in
+            flight. Skipping the per-row check let users hit Guardar mid-save
+            of a single BDM, which races the two updates and can leave one
+            with stale data. */}
+        <button
+          onClick={handleSave}
+          disabled={saving || savingBdm.size > 0}
+          className="flex items-center gap-2 px-6 py-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 shadow-lg"
+        >
           <Save className="w-5 h-5" />{saving ? t('comm.saving') : t('comm.save')}
         </button>
       </div>

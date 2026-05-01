@@ -9,11 +9,12 @@ import { useAuth, canAdd } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
-import { upsertChannelBalance, pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
+import { pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
 import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
 import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
 import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
 import { withActiveCompany } from '@/lib/api-fetch';
+import { withTimeout, TimeoutError } from '@/lib/promise-utils';
 import {
   resolveChannels as resolveChannelConfigs,
   type ChannelConfigRow,
@@ -517,17 +518,56 @@ export default function BalancesPage() {
   const saveEdit = async (key: string) => {
     if (!company) return;
     const raw = editing[key] ?? '';
-    const value = parseFloat(raw) || 0;
+    const value = parseFloat(raw);
+    // Reject NaN / Infinity explicitly — `|| 0` would silently turn a bad
+    // input into a real save of "0", which is data corruption.
+    if (!Number.isFinite(value)) {
+      setErrMsg('El valor ingresado no es un número válido');
+      return;
+    }
     setSavingKey(key);
     setErrMsg(null);
     try {
-      await upsertChannelBalance(company.id, selectedDate, key, value, 'manual');
-      setOkMsg('Balance guardado');
-      setTimeout(() => setOkMsg(null), 2000);
+      // Server-side write via the admin endpoint (service-role + audit log).
+      // 10s timeout on each leg so a stalled Supabase / network hang surfaces
+      // as a TimeoutError instead of leaving the spinner up forever.
+      const res = await withTimeout(
+        fetch(withActiveCompany('/api/admin/channel-balances'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            channel_key: key,
+            snapshot_date: selectedDate,
+            amount: value,
+            source: 'manual',
+          }),
+        }),
+        10_000,
+        'Guardar balance',
+      );
+      const json = (await res.json()) as { success: boolean; error?: string };
+      if (!res.ok || !json.success) {
+        throw new Error(json.error ?? `Error guardando (HTTP ${res.status})`);
+      }
+      // Refresh BEFORE collapsing the editor so the displayed value reflects
+      // what's actually persisted. If the refresh itself stalls we still show
+      // success — the write was confirmed by the 200 above.
+      try {
+        await withTimeout(loadSnapshots(), 10_000, 'Recargar balances');
+      } catch (refreshErr) {
+        console.warn('[balances] refresh after save failed:', refreshErr);
+      }
       cancelEdit(key);
-      await loadSnapshots();
+      setOkMsg(`Balance guardado correctamente`);
+      setTimeout(() => setOkMsg(null), 4000);
     } catch (err) {
-      setErrMsg(err instanceof Error ? err.message : 'Error guardando balance');
+      const msg =
+        err instanceof TimeoutError
+          ? `${err.message}. Tu cambio puede no haberse guardado — verificá y reintentá.`
+          : err instanceof Error
+            ? err.message
+            : 'Error guardando balance';
+      setErrMsg(msg);
     } finally {
       setSavingKey(null);
     }

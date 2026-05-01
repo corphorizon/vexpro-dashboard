@@ -21,6 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ReportData } from './data';
+import { formatCurrency } from '@/lib/utils';
 
 const DASHBOARD_URL =
   process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.horizonconsulting.ai';
@@ -68,14 +69,8 @@ function escapeHtml(s: string): string {
   }[ch]!));
 }
 
-function formatCurrency(n: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
+// formatCurrency lives in @/lib/utils — imported above. Kept this comment
+// as a breadcrumb because the previous local copy diverged silently.
 
 function formatDateEs(iso: string): string {
   const [y, m, d] = iso.split('-').map(Number);
