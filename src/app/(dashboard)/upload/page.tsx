@@ -1090,7 +1090,6 @@ export default function UploadPage() {
         await upsertPropFirmSales(company.id, periodId, propFirmAmount);
         await upsertWithdrawals(company.id, periodId, combinedWithdrawals);
 
-        setDirtySection(null);
         if (user) {
           const propFirmWdr = withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
           const propFirmNet = propFirmAmount - propFirmWdr;
@@ -1103,13 +1102,17 @@ export default function UploadPage() {
           );
         }
         showSuccess(t('upload.incomeSaved'));
-        // Background refresh — same pattern as updateDeposit / saveAll. The
-        // previous `await refresh()` here delayed the toast by the full
-        // DataProvider reload (~2-5s on warm cache, longer with the old
-        // unbounded commercial_monthly_results query).
-        void refresh().catch((err) => {
-          console.warn('[saveIncome] background refresh failed:', err);
-        });
+        // Refresh + THEN clear dirty (see saveAll's comment for full
+        // rationale). Same race that bit /upload Egresos on 2026-05-02
+        // applies here: clearing dirty before refresh re-reads
+        // DataProvider into local state with stale rows.
+        refresh()
+          .catch((err) => {
+            console.warn('[saveIncome] background refresh failed:', err);
+          })
+          .finally(() => {
+            setDirtySection(null);
+          });
       } catch (err) {
         showError(`Error: ${(err as Error).message}`);
       }
@@ -1200,14 +1203,35 @@ export default function UploadPage() {
 
       // Main save succeeded. Show success + unlock the button NOW.
       showSuccess(successMsg);
-      // Clear the "unsaved changes" banner — the local state now matches DB.
-      setDirtySection(null);
       setSavingAll(false);
 
-      // Refresh in the background — never blocks the button.
-      void refresh().catch((err) => {
-        console.warn('[saveAll] background refresh failed:', err);
-      });
+      // Refresh + THEN clear the dirty flag. The order matters.
+      //
+      // Bug fixed 2026-05-02: clearing dirty BEFORE refresh completed
+      // raced with the sync effect at line ~354 (deps `[selectedPeriod,
+      // dirtySection]`). When dirty flipped 'egresos' → null, the effect
+      // ran `setExpensesRaw(loadExpensesForPeriod(...))` which read
+      // `allExpenses` from the DataProvider — still pre-save because
+      // refresh is async and hadn't propagated yet. Local state was
+      // overwritten with stale DB rows, dropping the just-saved
+      // additions. User saw "no quedaron guardados" even though the
+      // upsert succeeded; next save then persisted the stale view,
+      // permanently wiping the additions from DB.
+      //
+      // By awaiting refresh first, the DataProvider has the fresh rows
+      // by the time the sync effect re-reads from it. Trade-off: the
+      // unsaved banner stays up an extra ~1-2s while refresh runs —
+      // acceptable for data correctness. If the user re-edits during
+      // that window the `.finally()` still clears dirty (single-value
+      // flag has no way to distinguish), but their next edit re-marks
+      // it; nothing is lost beyond a brief banner flicker.
+      refresh()
+        .catch((err) => {
+          console.warn('[saveAll] background refresh failed:', err);
+        })
+        .finally(() => {
+          setDirtySection(null);
+        });
     } catch (err) {
       showError(`Error al guardar: ${(err as Error).message}`);
       setSavingAll(false);
