@@ -244,8 +244,15 @@ export default function MovimientosPage() {
   const displayTotalDeposits = useDerivedBroker
     ? apiDepositsTotal + otherDeposits
     : summary.totalDeposits;
+  // Retiros Totales — Kevin (2026-05-02): solo cuentan la salida real de
+  // efectivo, que es la API de Coinsbuy + cualquier "Otros" manual que
+  // representa retiros no-Coinsbuy. Las categorías Broker / Comisiones IB /
+  // Prop Firm son etiquetas DE qué tipo fue el retiro (ya capturado por la
+  // API), no flujos adicionales — antes se sumaban encima del API y
+  // duplicaban. Las filas de la tabla siguen mostrándolas con su monto
+  // como información, pero NO entran al total.
   const displayTotalWithdrawals = useDerivedBroker
-    ? ibCommissions + brokerDisplay + propFirmWithdrawal + otherWithdrawal
+    ? apiWithdrawalsTotal + otherWithdrawal
     : summary.totalWithdrawals;
   const displayNetDeposit = useDerivedBroker
     ? displayTotalDeposits - displayTotalWithdrawals
