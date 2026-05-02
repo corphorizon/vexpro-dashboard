@@ -69,29 +69,46 @@ export async function GET(request: NextRequest) {
 
     const admin = createAdminClient();
 
-    let query = admin
-      .from('api_transactions')
-      .select(
-        'provider, external_id, amount, fee, currency, status, transaction_date, wallet_id, wallet_label, raw',
-      )
-      .eq('company_id', auth.companyId)
-      .order('transaction_date', { ascending: false })
-      // Defensive cap. With ~5K tx/month per tenant a 35-day window stays
-      // well under this; if a future caller asks for a multi-year range
-      // we fail loud instead of silently shipping 100K rows over the wire.
-      .limit(10000);
+    // ── Why per-slug queries? ─────────────────────────────────────────────
+    // Supabase / PostgREST caps responses at `db_max_rows` (default 1000)
+    // even when `.limit()` requests more. A single April for an active
+    // tenant has ~1800 rows across the 4 providers; the old "one query for
+    // all providers" approach hit the cap and silently returned the most
+    // recent 1000, distributed proportionally across slugs. That's exactly
+    // what produced the banner ≠ desglose discrepancy Kevin reported on
+    // 2026-05-02 (368 vs 559 for coinsbuy-deposits, etc).
+    //
+    // Splitting into 4 parallel per-slug queries keeps each well under
+    // the 1000-row cap (largest slug = unipayment ~600). The per-row
+    // filter logic stays identical via `runOne` below.
+    const runOne = async (slug: ProviderSlug) => {
+      let q = admin
+        .from('api_transactions')
+        .select(
+          'provider, external_id, amount, fee, currency, status, transaction_date, wallet_id, wallet_label, raw',
+        )
+        .eq('company_id', auth.companyId)
+        .eq('provider', slug)
+        .order('transaction_date', { ascending: false })
+        .limit(10000);
+      if (from) q = q.gte('transaction_date', `${from}T00:00:00.000Z`);
+      if (to) q = q.lte('transaction_date', `${to}T23:59:59.999Z`);
+      const { data, error } = await q;
+      if (error) {
+        console.error(
+          `[persisted-movements] ${slug} query failed:`,
+          error.message,
+        );
+        return [] as NonNullable<typeof data>;
+      }
+      return data ?? [];
+    };
 
-    if (requestedSlug) query = query.eq('provider', requestedSlug);
-    if (from) query = query.gte('transaction_date', `${from}T00:00:00.000Z`);
-    if (to) query = query.lte('transaction_date', `${to}T23:59:59.999Z`);
+    const slugsToFetch: ProviderSlug[] = requestedSlug ? [requestedSlug] : [...SLUGS];
+    const perSlugRows = await Promise.all(slugsToFetch.map(runOne));
 
-    const { data: rows, error } = await query;
-    if (error) {
-      return NextResponse.json(
-        { success: false, error: error.message, datasets: [], fetchedAt: null },
-        { status: 500 },
-      );
-    }
+    // Flatten — `buildDataset` filters to its own slug below.
+    const rows = perSlugRows.flat();
 
     // Last sync timestamp — when slug is requested, scope to that provider so
     // the breakdown page can show "datos del último sync hace Xh" precisely.
