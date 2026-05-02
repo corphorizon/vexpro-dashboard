@@ -1,0 +1,52 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migration 042 — Record of UniPayment Excel backfill (2026-05-02)
+--
+-- This file is a HISTORICAL RECORD, not re-runnable migration. The actual
+-- 687 UPDATE statements were applied via the Supabase MCP execute_sql in
+-- 3 batches on 2026-05-02 from /tmp/up_batch_{1,2,3}.sql, derived from the
+-- merchant export `invoice_20260331_20260501 2.xlsx` (see chat).
+--
+-- Why: UniPayment's `/v1.0/invoices` API endpoint does NOT include a
+-- per-invoice commission/fee. Verified via `_originalResponse` capture in
+-- raw column — only price_amount/paid_amount/pay_amount/status are present.
+-- The merchant-dashboard Excel export DOES include SettledAmount, Commission,
+-- NetAmount, CommissionRate, CommissionType from a different (currently
+-- unmapped) UniPayment endpoint. Until that endpoint is plumbed in, periodic
+-- Excel re-imports keep the data accurate.
+--
+-- Field mapping (Excel → api_transactions):
+--   SettledAmount        → raw.grossAmount  (= invoice.price_amount; same value)
+--   Commission           → raw.fee + columns.fee
+--   NetAmount            → raw.netAmount + columns.amount
+--   CommissionRate       → raw._settledCommissionRate
+--   CommissionType       → raw._settledCommissionType
+--
+-- Plus two protection markers added in a follow-up UPDATE:
+--   raw._backfilled       → true  (read by persistence.ts to skip overwrite)
+--   raw._backfillSource   → "merchant_export_invoice_20260331_20260501.xlsx"
+--
+-- Verification (post-backfill):
+--   today_excel_backfill (687 rows): $14,339.37 commission / $141,332.98 net
+--     ↑ matches Excel totals exactly.
+--   all_backfilled (842 rows incl. 155 prior): $14,633.50 / $170,746.02
+--   all_unipayment_vex_pro (1019 rows): $21,325.41 / $241,304.81
+--   The 177 non-backfilled rows are post-export (1-2 May) or pre-Mar
+--   and still carry the parser's 9% empirical estimate. They auto-correct
+--   on the next Excel import.
+--
+-- Workflow for future Excel imports:
+--   1. Generate the merchant export from the UniPayment dashboard.
+--   2. Build a similar VALUES clause (see /tmp generated SQL files —
+--      Python helper at /tmp scripts kept for reference).
+--   3. Apply via Supabase SQL Editor or MCP execute_sql.
+--   4. Set raw._backfilled = true for all updated rows so the cron's
+--      `persistDataset` (src/lib/api-integrations/persistence.ts:60-81)
+--      preserves the values on subsequent syncs.
+--
+-- No-op DDL — this file is informational only. The ALTER added in
+-- migration 041 (wallet_label) already supported the backfill columns.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Sentinel SELECT so the file isn't completely empty if someone tries to
+-- re-apply it through tooling that requires at least one statement.
+SELECT 'Migration 042 is a historical record only — see file comment'::text AS note;
