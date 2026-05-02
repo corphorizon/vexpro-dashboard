@@ -57,39 +57,72 @@ export async function persistDataset(
 
   const admin = createAdminClient();
 
-  const rows = dataset.transactions.map((tx) => {
-    // Coinsbuy txs carry walletId + walletLabel after the 2026-05-01 fetcher
-    // change. FairPay / UniPayment txs don't have wallet semantics so we
-    // leave both fields null for those providers.
-    const walletId =
-      'walletId' in tx && typeof tx.walletId === 'string' ? tx.walletId : null;
-    const walletLabel =
-      'walletLabel' in tx && typeof tx.walletLabel === 'string'
-        ? tx.walletLabel
-        : null;
-    return {
-      company_id: companyId,
-      provider: dataset.slug,
-      external_id: tx.id,
-      amount: canonicalAmount(tx),
-      fee: canonicalFee(tx),
-      currency: tx.currency ?? null,
-      status: tx.status ?? null,
-      transaction_date: tx.createdAt,
-      wallet_id: walletId,
-      wallet_label: walletLabel,
-      raw: tx as unknown as Record<string, unknown>,
-      synced_at: new Date().toISOString(),
-    };
-  });
+  // Pre-fetch external_ids that have already been backfilled with
+  // authoritative fee/amount data from a merchant export. The cron's
+  // upsert would otherwise replace those values with the fetcher's
+  // empirical estimate. Marker is `raw->'_backfilled'` (set when the
+  // /tmp backfill SQL ran on 2026-05-02 for UniPayment). Rows with that
+  // marker are skipped on upsert so the Excel-sourced fees stay intact.
+  const externalIds = dataset.transactions.map((tx) => tx.id);
+  const backfilledIds = new Set<string>();
+  if (externalIds.length > 0) {
+    const { data: existing } = await admin
+      .from('api_transactions')
+      .select('external_id, raw')
+      .eq('company_id', companyId)
+      .eq('provider', dataset.slug)
+      .in('external_id', externalIds);
+    for (const r of existing ?? []) {
+      const raw = r.raw as Record<string, unknown> | null;
+      if (raw && raw._backfilled) {
+        backfilledIds.add(r.external_id as string);
+      }
+    }
+  }
 
-  const { error } = await admin
-    .from('api_transactions')
-    .upsert(rows, { onConflict: 'company_id,provider,external_id' });
+  const rows = dataset.transactions
+    .filter((tx) => !backfilledIds.has(tx.id))
+    .map((tx) => {
+      // Coinsbuy txs carry walletId + walletLabel after the 2026-05-01 fetcher
+      // change. FairPay / UniPayment txs don't have wallet semantics so we
+      // leave both fields null for those providers.
+      const walletId =
+        'walletId' in tx && typeof tx.walletId === 'string' ? tx.walletId : null;
+      const walletLabel =
+        'walletLabel' in tx && typeof tx.walletLabel === 'string'
+          ? tx.walletLabel
+          : null;
+      return {
+        company_id: companyId,
+        provider: dataset.slug,
+        external_id: tx.id,
+        amount: canonicalAmount(tx),
+        fee: canonicalFee(tx),
+        currency: tx.currency ?? null,
+        status: tx.status ?? null,
+        transaction_date: tx.createdAt,
+        wallet_id: walletId,
+        wallet_label: walletLabel,
+        raw: tx as unknown as Record<string, unknown>,
+        synced_at: new Date().toISOString(),
+      };
+    });
 
-  if (error) {
-    console.error(`[persistDataset] ${dataset.slug} upsert failed:`, error.message);
-    return;
+  if (rows.length > 0) {
+    const { error } = await admin
+      .from('api_transactions')
+      .upsert(rows, { onConflict: 'company_id,provider,external_id' });
+
+    if (error) {
+      console.error(`[persistDataset] ${dataset.slug} upsert failed:`, error.message);
+      return;
+    }
+  }
+
+  if (backfilledIds.size > 0) {
+    console.log(
+      `[persistDataset] ${dataset.slug}: preserved ${backfilledIds.size} backfilled rows from overwrite`,
+    );
   }
 
   await logSync(companyId, dataset.slug, rows.length, opts);
