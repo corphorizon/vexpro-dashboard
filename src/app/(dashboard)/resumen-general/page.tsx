@@ -48,7 +48,12 @@ export default function ResumenPage() {
     const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
     return periods.filter((p) => ids.includes(p.id));
   }, [mode, selectedPeriodId, selectedPeriodIds, periods]);
-  const coexist = useApiCoexistence(activePeriods);
+  // Pass the tenant's preferred wallet so the API totals match what
+  // /movimientos shows. Without this, useApiCoexistence defaulted to
+  // "all wallets" — which inflated Retiros for tenants that have multiple
+  // Coinsbuy wallets (e.g. Vex Pro: wallets 1079 + 1087 + 1076). Bug
+  // reported by Kevin 2026-05-02.
+  const coexist = useApiCoexistence(activePeriods, company?.default_wallet_id ?? '');
   const useDerivedBroker = coexist.useDerivedBroker;
 
   // Skeleton while the data-context hasn't produced a summary yet. A blank
@@ -85,7 +90,13 @@ export default function ResumenPage() {
     ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
     : summary.totalDeposits;
 
-  // Withdrawals: broker = derived-from-API + manual, others are manual-only.
+  // Withdrawals — Kevin's mental model (2026-05-02): only Coinsbuy API
+  // outflow + manual "Otros" represent real cash leaving the company.
+  // Broker / Comisiones IB / Prop Firm are CATEGORIZATIONS of the same
+  // outflow already captured by the Coinsbuy API; adding them on top
+  // double-counted (Vex Pro April: $290K API + $163K manual broker
+  // showed $453K Broker, inflating Retiros Totales). The breakdown
+  // table below still surfaces these as informational rows.
   const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
   const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
   const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
@@ -95,11 +106,12 @@ export default function ResumenPage() {
     propFirmWithdrawal,
     otherWithdrawal,
   );
+  // Kept for the informational "Broker" line in the breakdown card.
   const brokerConsolidated = useDerivedBroker
     ? derivedBrokerFromApi + storedBroker
     : storedBroker;
   const consolidatedWithdrawals = useDerivedBroker
-    ? brokerConsolidated + ibCommissions + propFirmWithdrawal + otherWithdrawal
+    ? coexist.apiWithdrawalsTotal + otherWithdrawal
     : summary.totalWithdrawals;
 
   const consolidatedNetDeposit = consolidatedDeposits - consolidatedWithdrawals;

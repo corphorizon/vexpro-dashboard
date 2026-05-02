@@ -59,8 +59,12 @@ export function AdminHome() {
   // Mirrors /resumen-general and /movimientos so the home matches what
   // the user sees on those pages. Without this, post Apr-2026 periods
   // showed only the manual subset (often $0) and looked broken.
-  const currentCoexist = useApiCoexistence(currentPeriod ? [currentPeriod] : []);
-  const prevCoexist = useApiCoexistence(prevPeriod ? [prevPeriod] : []);
+  // Pass tenant's default_wallet_id so we don't sum across all wallets
+  // (Vex Pro has multiple Coinsbuy wallets — the others belong to
+  // separate sub-business units, not this dashboard's flow).
+  const walletPref = company?.default_wallet_id ?? '';
+  const currentCoexist = useApiCoexistence(currentPeriod ? [currentPeriod] : [], walletPref);
+  const prevCoexist = useApiCoexistence(prevPeriod ? [prevPeriod] : [], walletPref);
 
   const consolidate = (
     summary: typeof currentSummary,
@@ -77,14 +81,15 @@ export function AdminHome() {
       ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
       : summary.totalDeposits;
 
-    const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount ?? 0;
-    const propFirmW = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount ?? 0;
     const otherW = summary.withdrawals.find((w) => w.category === 'other')?.amount ?? 0;
-    const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;
-    const derivedBrokerFromApi = coexist.derivedBrokerFromApi(ibCommissions, propFirmW, otherW);
-    const brokerConsolidated = useDerivedBroker ? derivedBrokerFromApi + storedBroker : storedBroker;
+    // Withdrawals = Coinsbuy API outflow + manual "Otros" only. Broker /
+    // Comisiones IB / Prop Firm are categorizations of the same Coinsbuy
+    // outflow already captured by the API — adding them on top inflates
+    // the number (Vex Pro May: $115K with all categories vs $70K with
+    // API+Otros, matching /movimientos). Same logic mirrored across
+    // /resumen-general so all three views agree.
     const withdrawals = useDerivedBroker
-      ? brokerConsolidated + ibCommissions + propFirmW + otherW
+      ? coexist.apiWithdrawalsTotal + otherW
       : summary.totalWithdrawals;
 
     const netDeposit = deposits - withdrawals;
