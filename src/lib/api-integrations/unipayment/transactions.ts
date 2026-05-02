@@ -162,13 +162,24 @@ export async function fetchUnipaymentDepositsV2(
 
       for (const inv of models) {
         const grossAmount = Number(inv.price_amount ?? 0);
-        // Two-stage fee resolution (Kevin 2026-05-02): try the actual
-        // UniPayment response first, fall back to a flat percentage. The
-        // first run after this deploy will populate `raw` with the full
-        // invoice payload, so we can inspect post-sync which field name
-        // UniPayment actually uses for that merchant and tighten this up.
+        // Fee resolution. The /v1.0/invoices endpoint does NOT include
+        // a per-invoice commission field — verified 2026-05-02 by capturing
+        // _originalResponse in api_transactions.raw and inspecting:
+        // {price_amount, paid_amount, pay_amount, status, ...} but no fee.
+        // The merchant-dashboard Excel export DOES carry SettledAmount /
+        // Commission / NetAmount via a different (currently unmapped)
+        // endpoint. Until that endpoint is plumbed in, we fall back to an
+        // empirically-calibrated rate.
+        //
+        // Calibration (Kevin 2026-05-02 export): 687 invoices Mar-Apr,
+        // total commission = $14,339.37 / total settled = $155,672.35
+        // → effective 9.21%. Bumped from the previous 1% guess which
+        // understated fees by ~9x.
+        //
+        // The pickFee fallback chain (fee_amount, service_fee, etc.)
+        // remains in case UniPayment ever ships a per-invoice fee field.
         const realFee = pickFee(inv);
-        const UNIPAYMENT_DEFAULT_FEE_RATE = 0.01; // 1% fallback.
+        const UNIPAYMENT_DEFAULT_FEE_RATE = 0.09; // 9% empirical aggregate.
         const fee =
           realFee !== null
             ? Math.round(realFee * 100) / 100
