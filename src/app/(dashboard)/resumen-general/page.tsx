@@ -90,13 +90,11 @@ export default function ResumenPage() {
     ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
     : summary.totalDeposits;
 
-  // Withdrawals — Kevin's mental model (2026-05-02): only Coinsbuy API
-  // outflow + manual "Otros" represent real cash leaving the company.
-  // Broker / Comisiones IB / Prop Firm are CATEGORIZATIONS of the same
-  // outflow already captured by the Coinsbuy API; adding them on top
-  // double-counted (Vex Pro April: $290K API + $163K manual broker
-  // showed $453K Broker, inflating Retiros Totales). The breakdown
-  // table below still surfaces these as informational rows.
+  // Withdrawals — Kevin (2026-05-02, corregido): los retiros reales son los
+  // datos de Coinsbuy. Eso incluye tanto la API de Coinsbuy como el manual
+  // "Broker" (suplemento manual de Coinsbuy cuando la API no reporta un
+  // movimiento). Las demás categorías manuales (Comisiones IB, Prop Firm,
+  // Otros) son meramente informativas y NO entran en el total.
   const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
   const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
   const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
@@ -111,7 +109,7 @@ export default function ResumenPage() {
     ? derivedBrokerFromApi + storedBroker
     : storedBroker;
   const consolidatedWithdrawals = useDerivedBroker
-    ? coexist.apiWithdrawalsTotal + otherWithdrawal
+    ? coexist.apiWithdrawalsTotal + storedBroker
     : summary.totalWithdrawals;
 
   const consolidatedNetDeposit = consolidatedDeposits - consolidatedWithdrawals;

@@ -81,15 +81,15 @@ export function AdminHome() {
       ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
       : summary.totalDeposits;
 
-    const otherW = summary.withdrawals.find((w) => w.category === 'other')?.amount ?? 0;
-    // Withdrawals = Coinsbuy API outflow + manual "Otros" only. Broker /
-    // Comisiones IB / Prop Firm are categorizations of the same Coinsbuy
-    // outflow already captured by the API — adding them on top inflates
-    // the number (Vex Pro May: $115K with all categories vs $70K with
-    // API+Otros, matching /movimientos). Same logic mirrored across
-    // /resumen-general so all three views agree.
+    const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;
+    // Withdrawals — Kevin (2026-05-02, corregido): los retiros reales son
+    // los datos de Coinsbuy: API + manual "Broker" (suplemento manual de
+    // Coinsbuy). Las demás categorías manuales (Comisiones IB, Prop Firm,
+    // Otros) son meramente informativas y NO entran en el total. Misma
+    // lógica replicada en /movimientos y /resumen-general para que las
+    // tres vistas coincidan.
     const withdrawals = useDerivedBroker
-      ? coexist.apiWithdrawalsTotal + otherW
+      ? coexist.apiWithdrawalsTotal + storedBroker
       : summary.totalWithdrawals;
 
     const netDeposit = deposits - withdrawals;
