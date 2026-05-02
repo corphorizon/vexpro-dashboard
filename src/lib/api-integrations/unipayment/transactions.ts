@@ -41,6 +41,47 @@ interface InvoiceResource {
   create_time: string;        // ISO datetime
   expiration_time?: string;
   confirm_speed?: string;
+  // Possible fee fields — UniPayment's invoices API doesn't have a single
+  // documented fee field, but their response sometimes includes one of the
+  // names below depending on app config / merchant settings. We try them
+  // all in order and use the first non-zero value (see `pickFee` below).
+  // The hardcoded 1% fallback was the previous behaviour — kept as a last
+  // resort so the fee column never lands as zero on a real invoice.
+  fee?: number | string;
+  fee_amount?: number | string;
+  service_fee?: number | string;
+  processing_fee?: number | string;
+  merchant_fee?: number | string;
+  network_fee?: number | string;
+  mdr?: number | string;
+  // Catch-all: keep ANY other field UniPayment returns so we can inspect
+  // the real shape via the persisted `raw` column post-sync. This is how
+  // we'll discover the actual fee field name without another deploy.
+  [key: string]: unknown;
+}
+
+/**
+ * UniPayment doesn't ship per-invoice fee info under a single, documented
+ * field name across all merchant accounts. Try the most common candidates
+ * and use the first one that has a positive numeric value. If none match,
+ * the caller falls back to the platform default (1%).
+ */
+function pickFee(inv: InvoiceResource): number | null {
+  const candidates: Array<unknown> = [
+    inv.fee_amount,
+    inv.service_fee,
+    inv.processing_fee,
+    inv.merchant_fee,
+    inv.fee,
+    inv.network_fee,
+    inv.mdr,
+  ];
+  for (const c of candidates) {
+    if (c == null) continue;
+    const n = Number(c);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
 }
 
 interface InvoicesResponse {
@@ -121,21 +162,17 @@ export async function fetchUnipaymentDepositsV2(
 
       for (const inv of models) {
         const grossAmount = Number(inv.price_amount ?? 0);
-        // UniPayment doesn't return a per-invoice fee field in the
-        // /v1.0/invoices response — fees are configured at the merchant
-        // account level (typically 1% of price_amount). The previous code
-        // hardcoded fee = 0, which made the breakdown's "Fee total" card
-        // always show $0.00 even though the merchant pays real fees on
-        // every settlement (Kevin reported 2026-05-01).
-        //
-        // Pragmatic fix: derive fee as a percentage of grossAmount using
-        // the rate documented in UniPayment's merchant dashboard. If a
-        // tenant negotiates a different rate, the constant below can be
-        // moved to api_credentials.extra_config in a follow-up; not
-        // promoting it to a config knob today because the only active
-        // tenant (Vex Pro) uses the standard 1%.
-        const UNIPAYMENT_FEE_RATE = 0.01; // 1% — UniPayment merchant default.
-        const fee = Math.round(grossAmount * UNIPAYMENT_FEE_RATE * 100) / 100;
+        // Two-stage fee resolution (Kevin 2026-05-02): try the actual
+        // UniPayment response first, fall back to a flat percentage. The
+        // first run after this deploy will populate `raw` with the full
+        // invoice payload, so we can inspect post-sync which field name
+        // UniPayment actually uses for that merchant and tighten this up.
+        const realFee = pickFee(inv);
+        const UNIPAYMENT_DEFAULT_FEE_RATE = 0.01; // 1% fallback.
+        const fee =
+          realFee !== null
+            ? Math.round(realFee * 100) / 100
+            : Math.round(grossAmount * UNIPAYMENT_DEFAULT_FEE_RATE * 100) / 100;
         const netAmount = Math.max(0, grossAmount - fee);
 
         if (grossAmount <= 0) continue;
@@ -158,6 +195,11 @@ export async function fetchUnipaymentDepositsV2(
           netAmount,
           currency: inv.price_currency ?? 'USD',
           status: 'Completed',
+          // Capture the FULL UniPayment response so we can discover the
+          // real fee field name from the persisted `raw` column post-sync.
+          // Once we confirm which field carries the fee, `pickFee()` can
+          // be narrowed and this can be removed.
+          _originalResponse: inv as unknown as Record<string, unknown>,
         });
       }
 

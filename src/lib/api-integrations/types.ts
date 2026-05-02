@@ -91,6 +91,14 @@ export interface UnipaymentDepositTx {
   netAmount: number;       // what we sum for totals
   currency: string;
   status: 'Completed' | 'Pending' | 'Expired';
+  /** Full original UniPayment invoice payload, persisted into
+   *  api_transactions.raw alongside the processed shape. Used to discover
+   *  which fee field name UniPayment actually returns for this merchant
+   *  (the fee field name is undocumented / varies by app config). Once a
+   *  field is confirmed, `pickFee()` in transactions.ts can be tightened.
+   *  Underscore prefix marks it as a debug/inspection field — never
+   *  rendered in the UI. */
+  _originalResponse?: Record<string, unknown>;
 }
 
 // ── Union + dataset ──
