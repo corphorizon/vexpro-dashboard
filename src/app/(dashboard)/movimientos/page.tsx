@@ -199,15 +199,12 @@ export default function MovimientosPage() {
   // historical periods it reduces to the stored broker value.
   const apiWithdrawalsTotal = useDerivedBroker ? coexist.apiWithdrawalsTotal : storedBroker;
 
-  // Broker display = API-derived amount + any manual override the user
-  // typed in Carga de Datos. They coexist; the user can use the manual
-  // column to reflect adjustments the API doesn't know about.
-  const derivedBrokerFromApi = coexist.derivedBrokerFromApi(
-    ibCommissions,
-    propFirmWithdrawal,
-    otherWithdrawal,
-  );
-  const brokerDisplay = useDerivedBroker ? derivedBrokerFromApi + storedBroker : storedBroker;
+  // Broker display — Kevin (2026-05-03): Broker es información manual
+  // estrictamente informativa; no se mezcla con la API porque los retiros
+  // reales ya están capturados en Retiros Totales (API + Otros). Aquí solo
+  // se muestra lo que el usuario cargó en Carga de Datos. Para periodos
+  // legacy (sin useDerivedBroker) se sigue mostrando el valor histórico.
+  const brokerDisplay = storedBroker;
 
   // ─── Broker CRM coexistence (Prop Firm sales + P2P) ───
   // Same coexistence rule as Coinsbuy/FairPay/Unipayment: the manual value
@@ -244,14 +241,14 @@ export default function MovimientosPage() {
   const displayTotalDeposits = useDerivedBroker
     ? apiDepositsTotal + otherDeposits
     : summary.totalDeposits;
-  // Retiros Totales — Kevin (2026-05-02, corregido): los retiros reales son
-  // los datos de Coinsbuy, y eso incluye tanto los que llegan por la API
-  // como los que se cargan manualmente como "Broker" cuando la API no
-  // alcanza a reportarlos (suplemento manual de Coinsbuy). Las otras
-  // categorías manuales (Comisiones IB, Prop Firm, Otros) son meramente
-  // informativas y NO entran en el total.
+  // Retiros Totales — Kevin (2026-05-03): el total de retiros es la salida
+  // real de efectivo: API de Coinsbuy + "Otros" manuales (retiros que no
+  // pasan por Coinsbuy). Las categorías Broker / Comisiones IB / Prop Firm
+  // son meramente informativas — el usuario las carga en Carga de Datos
+  // pero NO se suman al total para evitar doble conteo (los retiros que
+  // sí salieron por Coinsbuy ya vienen en la API).
   const displayTotalWithdrawals = useDerivedBroker
-    ? apiWithdrawalsTotal + storedBroker
+    ? apiWithdrawalsTotal + otherWithdrawal
     : summary.totalWithdrawals;
   const displayNetDeposit = useDerivedBroker
     ? displayTotalDeposits - displayTotalWithdrawals
@@ -439,34 +436,23 @@ export default function MovimientosPage() {
             </thead>
             <tbody>
               {fullWithdrawals.map((w) => {
-                // Broker = derived-from-API + manual override. Other
-                // categories are manual-only.
+                // Broker — Kevin (2026-05-03): es informativo manual,
+                // siempre se muestra solo lo cargado en Carga de Datos.
+                // Las demás categorías (Comisiones IB, Prop Firm, Otros)
+                // también son manuales. Ninguna lleva splitting API+MANUAL
+                // porque los retiros reales viven en "Retiros Totales".
                 const displayAmount =
                   w.category === 'broker' ? brokerDisplay : w.amount;
-                const isBroker = w.category === 'broker';
-                const hasBothSources =
-                  isBroker && useDerivedBroker && derivedBrokerFromApi > 0 && storedBroker > 0;
                 return (
                   <tr key={w.id} className="border-b border-border/50">
                     <td className="py-2.5">
                       {WITHDRAWAL_LABELS[w.category]}
-                      {isBroker && useDerivedBroker ? (
-                        <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
-                          api+manual
-                        </span>
-                      ) : (
-                        <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                          manual
-                        </span>
-                      )}
+                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                        manual
+                      </span>
                     </td>
                     <td className="py-2.5 text-right font-medium">
                       {formatCurrency(displayAmount)}
-                      {hasBothSources && (
-                        <span className="block text-[10px] text-muted-foreground">
-                          {formatCurrency(derivedBrokerFromApi)} API + {formatCurrency(storedBroker)} manual
-                        </span>
-                      )}
                     </td>
                   </tr>
                 );
@@ -474,9 +460,9 @@ export default function MovimientosPage() {
             </tbody>
             <tfoot>
               <tr className="font-bold">
-                <td className="py-3">Retiros Totales (API)</td>
+                <td className="py-3">Retiros Totales</td>
                 <td className="py-3 text-right text-red-600">
-                  {formatCurrency(apiWithdrawalsTotal)}
+                  {formatCurrency(displayTotalWithdrawals)}
                 </td>
               </tr>
               <tr className="text-muted-foreground">
