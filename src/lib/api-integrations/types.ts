@@ -43,6 +43,13 @@ export interface CoinsbuyDepositTx {
    *  wallet_id so the breakdown table can render "VexPro Main Wallet"
    *  without joining at read time. */
   walletLabel?: string;
+  /** Si true, el admin marcó esta transacción como externa (fondeo manual,
+   *  swap interno, etc). NO se cuenta en totales y NO se muestra por
+   *  defecto en /movimientos. Toggle "Mostrar excluidas" la revela. */
+  excluded?: boolean;
+  excludedReason?: string;
+  excludedByName?: string;
+  excludedAt?: string;
 }
 
 export interface CoinsbuyWithdrawalTx {

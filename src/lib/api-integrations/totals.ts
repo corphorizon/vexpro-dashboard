@@ -47,8 +47,11 @@ export function acceptedTransactions<T extends ProviderTransaction>(
 export function computeProviderTotals(dataset: ProviderDataset): ProviderTotals {
   switch (dataset.slug) {
     case 'coinsbuy-deposits': {
+      // Excluimos también las marcadas manualmente como externas (fondeos
+      // operativos / swaps) — el admin las flagea desde /movimientos/desglose
+      // y no deben contar para los totales del dashboard.
       const rows = (dataset.transactions as CoinsbuyDepositTx[]).filter(
-        (t) => t.status === 'Confirmed'
+        (t) => t.status === 'Confirmed' && t.excluded !== true
       );
       return {
         total: rows.reduce((s, t) => s + t.amountTarget, 0),

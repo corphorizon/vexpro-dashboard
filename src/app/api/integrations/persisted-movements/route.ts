@@ -69,6 +69,27 @@ export async function GET(request: NextRequest) {
 
     const admin = createAdminClient();
 
+    // ── Mapa de exclusiones manuales (provider:external_id → metadata) ───
+    // Solo aplica a coinsbuy-deposits hoy. Se usa para enriquecer las
+    // transactions con `excluded`, `excludedReason`, `excludedByName`,
+    // `excludedAt`. La UI las oculta por defecto y `computeProviderTotals`
+    // las descuenta del total.
+    const { data: excludedRows } = await admin
+      .from('excluded_transactions')
+      .select('external_id, reason, excluded_by_name, excluded_at, provider')
+      .eq('company_id', auth.companyId);
+    const excludedMap = new Map<
+      string,
+      { reason: string; excludedByName: string | null; excludedAt: string }
+    >();
+    for (const r of excludedRows ?? []) {
+      excludedMap.set(`${r.provider}:${r.external_id}`, {
+        reason: r.reason,
+        excludedByName: r.excluded_by_name,
+        excludedAt: r.excluded_at,
+      });
+    }
+
     // ── Why per-slug queries? ─────────────────────────────────────────────
     // Supabase / PostgREST caps responses at `db_max_rows` (default 1000)
     // even when `.limit()` requests more. A single April for an active
@@ -162,6 +183,14 @@ export async function GET(request: NextRequest) {
         // the new fields too once a re-sync runs.
         if (r.wallet_id) (base as Record<string, unknown>).walletId = r.wallet_id;
         if (r.wallet_label) (base as Record<string, unknown>).walletLabel = r.wallet_label;
+        // Enriquecer con info de exclusión manual (solo coinsbuy-deposits hoy).
+        const excludedInfo = excludedMap.get(`${slug}:${r.external_id}`);
+        if (excludedInfo) {
+          (base as Record<string, unknown>).excluded = true;
+          (base as Record<string, unknown>).excludedReason = excludedInfo.reason;
+          (base as Record<string, unknown>).excludedByName = excludedInfo.excludedByName;
+          (base as Record<string, unknown>).excludedAt = excludedInfo.excludedAt;
+        }
         return base;
       });
 

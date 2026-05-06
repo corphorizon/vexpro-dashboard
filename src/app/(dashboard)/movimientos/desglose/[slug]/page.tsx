@@ -21,6 +21,7 @@ import { useAuth } from '@/lib/auth-context';
 import { withActiveCompany } from '@/lib/api-fetch';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { computeProviderTotals, acceptedTransactions } from '@/lib/api-integrations/totals';
+import { ExcludeToggleButton } from './_components/exclude-toggle-button';
 import type {
   ProviderDataset,
   ProviderSlug,
@@ -96,6 +97,10 @@ export default function BreakdownPage({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [page, setPage] = useState(1);
+  // Toggle para mostrar las transacciones marcadas como excluidas. Por
+  // defecto se ocultan; el botón "Mostrar excluidas" del header las revela
+  // (con strikethrough y opacity para que sea visible que no cuentan).
+  const [showExcluded, setShowExcluded] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -152,8 +157,27 @@ export default function BreakdownPage({
     [dataset]
   );
 
-  const totalPages = Math.max(1, Math.ceil(accepted.length / PAGE_SIZE));
-  const pageRows = accepted.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  // Filtrar excluidas a nivel UI (solo coinsbuy-deposits hoy). El total
+  // que muestra la card grande ya las descuenta en computeProviderTotals;
+  // acá controlamos solo qué filas se ven en la tabla.
+  const visibleRows = useMemo(() => {
+    if (slug !== 'coinsbuy-deposits' || showExcluded) return accepted;
+    return (accepted as (CoinsbuyDepositTx & { excluded?: boolean })[]).filter(
+      (t) => !t.excluded,
+    );
+  }, [accepted, slug, showExcluded]);
+
+  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
+  const pageRows = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Cantidad de excluidas que existen actualmente — para mostrar contador
+  // en el botón del toggle solo en coinsbuy-deposits.
+  const excludedCount = useMemo(() => {
+    if (slug !== 'coinsbuy-deposits') return 0;
+    return (accepted as (CoinsbuyDepositTx & { excluded?: boolean })[]).filter(
+      (t) => t.excluded === true,
+    ).length;
+  }, [accepted, slug]);
 
   const handleExport = () => verify2FA(() => {
     if (!dataset) return;
@@ -203,6 +227,20 @@ export default function BreakdownPage({
           )}
         </div>
         <div className="flex items-center gap-2">
+          {slug === 'coinsbuy-deposits' && (
+            <button
+              onClick={() => setShowExcluded((v) => !v)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+              title="Las excluidas son fondeos manuales / swaps marcados como externos. No cuentan en totales."
+            >
+              {showExcluded ? '👁️ Ocultar excluidas' : '👁️‍🗨️ Mostrar excluidas'}
+              {excludedCount > 0 && (
+                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
+                  {excludedCount}
+                </span>
+              )}
+            </button>
+          )}
           <button
             onClick={load}
             disabled={loading}
@@ -304,15 +342,15 @@ export default function BreakdownPage({
       {/* Transactions table */}
       <Card>
         <div className="overflow-x-auto">
-          <BreakdownTable slug={slug} rows={pageRows} />
+          <BreakdownTable slug={slug} rows={pageRows} onExclusionChanged={load} />
         </div>
 
         {/* Pagination */}
-        {accepted.length > 0 && (
+        {visibleRows.length > 0 && (
           <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
             <p className="text-xs text-muted-foreground">
               Mostrando {(page - 1) * PAGE_SIZE + 1}–
-              {Math.min(page * PAGE_SIZE, accepted.length)} de {accepted.length}
+              {Math.min(page * PAGE_SIZE, visibleRows.length)} de {visibleRows.length}
             </p>
             <div className="flex items-center gap-2">
               <button
@@ -336,7 +374,7 @@ export default function BreakdownPage({
           </div>
         )}
 
-        {accepted.length === 0 && !loading && (
+        {visibleRows.length === 0 && !loading && (
           <p className="text-sm text-muted-foreground text-center py-8">
             No hay transacciones en el rango seleccionado.
           </p>
@@ -352,9 +390,13 @@ export default function BreakdownPage({
 function BreakdownTable({
   slug,
   rows,
+  onExclusionChanged,
 }: {
   slug: ProviderSlug;
   rows: unknown[];
+  /** Solo lo usa la tabla de coinsbuy-deposits para refrescar después de
+   *  marcar / desmarcar una exclusión. */
+  onExclusionChanged?: () => void;
 }) {
   const thCls =
     'text-left py-2 px-2 text-muted-foreground font-medium border-b border-border';
@@ -372,23 +414,35 @@ function BreakdownTable({
             <th className={`${thCls} text-right`}>Commission</th>
             <th className={`${thCls} text-right`}>Amount Target</th>
             <th className={thCls}>Status</th>
+            <th className={thCls}>Acciones</th>
           </tr>
         </thead>
         <tbody>
-          {r.map((t) => (
-            <tr key={t.id}>
-              <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-              <td className={tdCls}>{t.label}</td>
-              <td className={`${tdCls} font-mono`}>{t.trackingId}</td>
-              <td className={`${tdCls} text-right`}>{formatCurrency(t.commission)}</td>
-              <td className={`${tdCls} text-right font-medium`}>
-                {formatCurrency(t.amountTarget)}
-              </td>
-              <td className={tdCls}>
-                <StatusBadge value={t.status} />
-              </td>
-            </tr>
-          ))}
+          {r.map((t) => {
+            const isExcluded = t.excluded === true;
+            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : '';
+            return (
+              <tr key={t.id} className={rowCls}>
+                <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
+                <td className={tdCls}>{t.label}</td>
+                <td className={`${tdCls} font-mono`}>{t.trackingId}</td>
+                <td className={`${tdCls} text-right`}>{formatCurrency(t.commission)}</td>
+                <td className={`${tdCls} text-right font-medium`}>
+                  {formatCurrency(t.amountTarget)}
+                </td>
+                <td className={tdCls}>
+                  <StatusBadge value={t.status} />
+                </td>
+                <td className={`${tdCls} no-underline`} style={{ textDecoration: 'none' }}>
+                  <ExcludeToggleButton
+                    tx={t}
+                    provider="coinsbuy-deposits"
+                    onChange={() => onExclusionChanged?.()}
+                  />
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     );
