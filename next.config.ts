@@ -23,6 +23,12 @@ import { withSentryConfig } from "@sentry/nextjs";
 //       - QR code generation uses 'qrcode' which doesn't eval.
 //     `'wasm-unsafe-eval'` is kept so WebAssembly modules (potential future
 //     dep) still load without flipping the broader switch.
+//
+//     ⚠ Excepción dev: `next dev` usa HMR (`react-refresh-utils/dist/runtime`)
+//     que llama a eval() para recompilar componentes en caliente. Sin eso
+//     el bundle del browser se rompe en localhost (login form deja de
+//     responder, todo el árbol React queda muerto). En production NO se
+//     incluye, así que la postura de seguridad post-deploy queda igual.
 //   · connect-src lists only the origins the BROWSER talks to directly.
 //     Server-side calls (Coinsbuy / UniPayment / FairPay APIs) run inside
 //     /api/** routes and never cross the CSP boundary.
@@ -35,9 +41,13 @@ import { withSentryConfig } from "@sentry/nextjs";
 // real users post-deploy, restore `'unsafe-eval'` to the script-src line
 // while we trace the offending dep.
 // ─────────────────────────────────────────────────────────────────────────────
+const isDev = process.env.NODE_ENV !== 'production';
+
 const CSP_DIRECTIVES = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'",
+  // 'unsafe-eval' se inyecta SOLO en dev — necesario para el HMR de Next.
+  // En production queda fuera, igual que el lockdown del 2026-05-01.
+  `script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'${isDev ? " 'unsafe-eval'" : ''}`,
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "font-src 'self' data:",
