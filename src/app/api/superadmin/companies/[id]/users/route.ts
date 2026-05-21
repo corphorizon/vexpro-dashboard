@@ -3,7 +3,13 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
-import { BUILT_IN_ROLES } from '@/lib/auth-context';
+
+// Roles inlined here (not imported from @/lib/auth-context, which is a
+// 'use client' module). Cross-runtime imports of client modules into
+// server routes have surfaced as `undefined` in production bundles —
+// causing things like `L.includes is not a function` from the minified
+// `undefined.includes(...)`. See PATCH route comment for context.
+const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
 
 // ---------------------------------------------------------------------------
 // GET /api/superadmin/companies/:id/users

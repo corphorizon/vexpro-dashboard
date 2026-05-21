@@ -2,7 +2,6 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
-import { BUILT_IN_ROLES } from '@/lib/auth-context';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/superadmin/companies/:id/users/:userId
@@ -17,11 +16,16 @@ import { BUILT_IN_ROLES } from '@/lib/auth-context';
 //     diff so platform admins can see "who changed what and when".
 //
 // The :userId here is `company_users.id` (not auth.users.id).
+//
+// IMPORTANT: BUILT_IN_ROLES used to be imported from `@/lib/auth-context`
+// (a `'use client'` module). In production server bundles that import
+// sometimes resolved to `undefined`, making the validation crash with
+// "L.includes is not a function" (the minified `undefined.includes(...)`).
+// Inlining the list here removes the cross-runtime hazard entirely.
 // ---------------------------------------------------------------------------
 
-// Import roles list instead of duplicating — single source of truth in auth-context.
-const ALLOWED_ROLES = BUILT_IN_ROLES;
-const ALLOWED_STATUSES = ['active', 'inactive'];
+const ALLOWED_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
+const ALLOWED_STATUSES = ['active', 'inactive'] as const;
 
 export async function PATCH(
   request: NextRequest,
@@ -69,7 +73,7 @@ export async function PATCH(
       update.role = body.role;
     }
     if (typeof body.status === 'string') {
-      if (!ALLOWED_STATUSES.includes(body.status)) {
+      if (!(ALLOWED_STATUSES as readonly string[]).includes(body.status)) {
         return NextResponse.json(
           { success: false, error: 'status debe ser active o inactive' },
           { status: 400 },
