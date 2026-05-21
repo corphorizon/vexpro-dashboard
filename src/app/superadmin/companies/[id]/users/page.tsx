@@ -3,9 +3,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Users, Settings2, Loader2 } from 'lucide-react';
+import { ArrowLeft, Users, Settings2, Loader2, UserPlus } from 'lucide-react';
 import { formatDateRelative } from '@/lib/dates';
 import { ManageUserPanel } from './_manage-panel';
+import { CreateUserModal } from './_create-modal';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/companies/[id]/users
@@ -64,6 +65,7 @@ export default function CompanyUsersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CompanyUser | null>(null);
+  const [createOpen, setCreateOpen] = useState(false);
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -102,13 +104,23 @@ export default function CompanyUsersPage() {
         </Link>
       </div>
 
-      <div>
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <Users className="w-6 h-6" /> Usuarios {company?.name ? `— ${company.name}` : ''}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Gestiona roles, accesos por módulo, seguridad y auditoría de cada usuario de la organización.
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2">
+            <Users className="w-6 h-6" /> Usuarios {company?.name ? `— ${company.name}` : ''}
+          </h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Gestiona roles, accesos por módulo, seguridad y auditoría de cada usuario de la organización.
+          </p>
+        </div>
+        <button
+          onClick={() => setCreateOpen(true)}
+          disabled={!company}
+          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+        >
+          <UserPlus className="w-4 h-4" />
+          Agregar usuario
+        </button>
       </div>
 
       {error && (
@@ -208,6 +220,20 @@ export default function CompanyUsersPage() {
           companyActiveModules={company.active_modules}
           onClose={() => setSelected(null)}
           onUpdated={handleUpdated}
+        />
+      )}
+
+      {company && (
+        <CreateUserModal
+          companyId={company.id}
+          companyActiveModules={company.active_modules}
+          open={createOpen}
+          onClose={() => setCreateOpen(false)}
+          onCreated={(u) => {
+            // Prepend optimistically and re-load to capture server-side defaults.
+            setUsers((prev) => [u, ...prev]);
+            void load();
+          }}
         />
       )}
     </div>
