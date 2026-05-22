@@ -110,3 +110,21 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({ success: true });
 }
+
+// Other methods: verify auth first so unauthenticated probes get 401
+// (consistent with every other /api/admin/* route), and only THEN tell
+// the caller the method is wrong. Without this, GET/PUT/DELETE/PATCH
+// returned a Next.js default 405 that leaked endpoint existence to
+// unauthenticated callers.
+async function reject(request: NextRequest) {
+  const auth = await verifyAdminAuth(request);
+  if (auth instanceof NextResponse) return auth;
+  return NextResponse.json(
+    { success: false, error: 'Método no permitido' },
+    { status: 405 },
+  );
+}
+export const GET = reject;
+export const PUT = reject;
+export const DELETE = reject;
+export const PATCH = reject;

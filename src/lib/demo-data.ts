@@ -532,19 +532,29 @@ export function computeSaldoChain(): Map<string, SaldoInfo> {
 // ============================================================
 // PERSISTED DATA HELPERS (localStorage with DEMO fallback)
 // ============================================================
+// Stored-shape types for what localStorage may have written. These are
+// intentionally loose (everything optional) because the data is
+// user-touched JSON that may pre-date schema changes. The mapping
+// callbacks below normalise every row to the strict DB type.
+type StoredDeposit = Partial<Pick<Deposit, 'id' | 'channel' | 'amount'>>;
+type StoredWithdrawal = Partial<Pick<Withdrawal, 'id' | 'category' | 'amount'>>;
+type StoredExpense = Partial<
+  Pick<Expense, 'id' | 'concept' | 'amount' | 'paid' | 'pending' | 'category' | 'sort_order'>
+>;
+
 function getPersistedDeposits(periodId: string): Deposit[] {
   if (typeof window === 'undefined') return DEMO_DEPOSITS.filter(d => d.period_id === periodId);
   const key = `fd_data_deposits_${periodId}`;
   try {
     const stored = localStorage.getItem(key);
     if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed.map((d: any) => ({
-        id: d.id,
+      const parsed = JSON.parse(stored) as StoredDeposit[];
+      return parsed.map((d) => ({
+        id: d.id ?? '',
         period_id: periodId,
         company_id: 'vexpro-001',
-        channel: d.channel,
-        amount: d.amount,
+        channel: (d.channel ?? 'other') as Deposit['channel'],
+        amount: d.amount ?? 0,
         notes: null,
       }));
     }
@@ -558,13 +568,13 @@ function getPersistedWithdrawals(periodId: string): Withdrawal[] {
   try {
     const stored = localStorage.getItem(key);
     if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed.map((w: any) => ({
-        id: w.id,
+      const parsed = JSON.parse(stored) as StoredWithdrawal[];
+      return parsed.map((w) => ({
+        id: w.id ?? '',
         period_id: periodId,
         company_id: 'vexpro-001',
-        category: w.category,
-        amount: w.amount,
+        category: (w.category ?? 'other') as Withdrawal['category'],
+        amount: w.amount ?? 0,
         notes: null,
       }));
     }
@@ -578,17 +588,17 @@ function getPersistedExpenses(periodId: string): Expense[] {
   try {
     const stored = localStorage.getItem(key);
     if (stored) {
-      const parsed = JSON.parse(stored);
-      return parsed.map((e: any, i: number) => ({
+      const parsed = JSON.parse(stored) as StoredExpense[];
+      return parsed.map((e, i) => ({
         id: e.id || `exp-${i}`,
         period_id: periodId,
         company_id: 'vexpro-001',
-        concept: e.concept,
-        amount: e.amount,
-        paid: e.paid,
-        pending: e.pending,
-        category: e.category || null,
-        sort_order: e.sort_order || i + 1,
+        concept: e.concept ?? '',
+        amount: e.amount ?? 0,
+        paid: e.paid ?? 0,
+        pending: e.pending ?? 0,
+        category: e.category ?? null,
+        sort_order: e.sort_order ?? i + 1,
       }));
     }
   } catch { /* fall through */ }
