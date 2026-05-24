@@ -478,10 +478,18 @@ export default function UploadPage() {
   const [savingLiq, setSavingLiq] = useState(false);
   const [savingInv, setSavingInv] = useState(false);
 
-  // 10-second hard ceiling around each row-level mutation. If the request
-  // doesn't resolve in time we surface a clear error instead of letting
-  // the UI hang indefinitely.
-  const withRowTimeout = <T,>(p: Promise<T>, label: string, ms = 10_000): Promise<T> =>
+  // 25-second hard ceiling around each row-level mutation. The DB itself
+  // is fast (~6 ms for a single INSERT), but in real-world conditions the
+  // total wall-time can stretch when:
+  //   · the user is on flaky wifi / mobile data,
+  //   · the Supabase JS client transparently retries an auth-refreshed
+  //     request (it gives up around ~20s),
+  //   · the user has just woken the laptop and the WebSocket is rebuilding.
+  // 10 s was too aggressive — it surfaced false-positive timeouts on
+  // perfectly healthy writes. 25 s mirrors `SAVE_TIMEOUT_MS` used by the
+  // saveAll path; if we hit even that, something is genuinely wrong and
+  // we want the user to know rather than spin forever.
+  const withRowTimeout = <T,>(p: Promise<T>, label: string, ms = 25_000): Promise<T> =>
     Promise.race([
       p,
       new Promise<T>((_, reject) =>
