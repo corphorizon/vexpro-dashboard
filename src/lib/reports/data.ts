@@ -27,6 +27,7 @@ type ApiTx = {
   amount: number | string;
   status?: string;
   transaction_date: string;
+  wallet_id?: string | null;
 };
 
 // Accepted-status whitelist — matches /balances and
@@ -172,13 +173,35 @@ function groupRows<T extends { amount: number | string }>(
   return Array.from(map, ([key, v]) => ({ key, ...v }));
 }
 
-function groupApiTx(rows: ApiTx[]) {
+function groupApiTx(
+  rows: ApiTx[],
+  /** Set of Coinsbuy wallet_id strings the user has pinned. Coinsbuy rows
+   *  whose wallet_id is not in this set are SKIPPED. When the set is
+   *  null we count every Coinsbuy row (the tenant hasn't pinned any
+   *  wallet yet, so showing the full picture is the only sensible
+   *  fallback). FairPay / UniPayment ignore this set — they don't carry
+   *  wallet semantics in the same way. */
+  pinnedCoinsbuyIds: Set<string> | null = null,
+) {
   const depositsByChannel = new Map<string, { count: number; amount: number }>();
   const withdrawals = { count: 0, amount: 0 };
   for (const r of rows) {
     const accepted = ACCEPTED_STATUS[r.provider];
     if (!accepted) continue;
     if (r.status && !accepted.includes(r.status)) continue;
+
+    // Wallet scoping for Coinsbuy. The user expects reports to reflect
+    // ONLY their pinned wallets — historically this rolled up every
+    // wallet the API returned (including orphan / closed / test
+    // accounts), inflating both deposits and withdrawals.
+    if (
+      pinnedCoinsbuyIds &&
+      (r.provider === 'coinsbuy-deposits' || r.provider === 'coinsbuy-withdrawals')
+    ) {
+      const wid = r.wallet_id ? String(r.wallet_id) : null;
+      if (!wid || !pinnedCoinsbuyIds.has(wid)) continue;
+    }
+
     const amt = Number(r.amount) || 0;
     if (r.provider === 'coinsbuy-withdrawals') {
       withdrawals.count += 1;
@@ -321,21 +344,21 @@ export async function buildReportData(
       .eq('periods.month', prevMonthDate.getUTCMonth() + 1),
     admin
       .from('api_transactions')
-      .select('provider, amount, status, transaction_date')
+      .select('provider, amount, status, transaction_date, wallet_id')
       .eq('company_id', companyId)
       .gte('transaction_date', `${from}T00:00:00.000Z`)
       .lte('transaction_date', `${to}T23:59:59.999Z`)
       .limit(10000),
     admin
       .from('api_transactions')
-      .select('provider, amount, status, transaction_date')
+      .select('provider, amount, status, transaction_date, wallet_id')
       .eq('company_id', companyId)
       .gte('transaction_date', `${thisMonth.from}T00:00:00.000Z`)
       .lte('transaction_date', `${thisMonth.to}T23:59:59.999Z`)
       .limit(10000),
     admin
       .from('api_transactions')
-      .select('provider, amount, status, transaction_date')
+      .select('provider, amount, status, transaction_date, wallet_id')
       .eq('company_id', companyId)
       .gte('transaction_date', `${prevMonth.from}T00:00:00.000Z`)
       .lte('transaction_date', `${prevMonth.to}T23:59:59.999Z`)
@@ -375,9 +398,22 @@ export async function buildReportData(
   const manualDepPrev = groupRows(safeData<DepositRow>(manualDepositsPrevMonth), (r) => r.channel);
   const manualWdrPrev = groupRows(safeData<WithdrawalRow>(manualWithdrawalsPrevMonth), (r) => r.category);
 
-  const apiRange = groupApiTx(safeData<ApiTx>(apiTransactionsRange));
-  const apiMonth = groupApiTx(safeData<ApiTx>(apiTransactionsMonth));
-  const apiPrev = groupApiTx(safeData<ApiTx>(apiTransactionsPrevMonth));
+  // Scope every Coinsbuy aggregation to the wallets the tenant has
+  // explicitly pinned (same set surfaced by /balances). If nothing is
+  // pinned we fall back to "count every wallet" so a tenant who never
+  // configured pinning still sees real numbers.
+  const { data: pinnedRows } = await admin
+    .from('pinned_coinsbuy_wallets')
+    .select('wallet_id')
+    .eq('company_id', companyId);
+  const pinnedCoinsbuyIds =
+    pinnedRows && pinnedRows.length > 0
+      ? new Set((pinnedRows as Array<{ wallet_id: string }>).map((r) => String(r.wallet_id)))
+      : null;
+
+  const apiRange = groupApiTx(safeData<ApiTx>(apiTransactionsRange), pinnedCoinsbuyIds);
+  const apiMonth = groupApiTx(safeData<ApiTx>(apiTransactionsMonth), pinnedCoinsbuyIds);
+  const apiPrev = groupApiTx(safeData<ApiTx>(apiTransactionsPrevMonth), pinnedCoinsbuyIds);
 
   const depositsRange = mergeDeposits(manualDepRange, apiRange.depositsByChannel);
   const depositsMonth = mergeDeposits(manualDepMonth, apiMonth.depositsByChannel);

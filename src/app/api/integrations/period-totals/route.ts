@@ -38,9 +38,24 @@ export async function GET(request: NextRequest) {
     const to = request.nextUrl.searchParams.get('to');
 
     const admin = createAdminClient();
+
+    // Pinned Coinsbuy wallets — same scoping rule used by
+    // buildReportData. Coinsbuy rows from wallets the tenant has not
+    // pinned are excluded so /balances and the email report match the
+    // wallets surfaced in the UI. No pinned list = include everything
+    // (legacy fallback).
+    const { data: pinnedRows } = await admin
+      .from('pinned_coinsbuy_wallets')
+      .select('wallet_id')
+      .eq('company_id', auth.companyId);
+    const pinnedCoinsbuyIds =
+      pinnedRows && pinnedRows.length > 0
+        ? new Set((pinnedRows as Array<{ wallet_id: string }>).map((r) => String(r.wallet_id)))
+        : null;
+
     let query = admin
       .from('api_transactions')
-      .select('provider, amount, status, transaction_date')
+      .select('provider, amount, status, transaction_date, wallet_id')
       .eq('company_id', auth.companyId)
       // Defensive cap — see persisted-movements for rationale.
       .limit(10000);
@@ -61,6 +76,15 @@ export async function GET(request: NextRequest) {
       const accepted = ACCEPTED_STATUS[row.provider];
       if (!accepted) continue;
       if (row.status && !accepted.includes(row.status)) continue;
+
+      // Wallet scoping for Coinsbuy rows.
+      if (
+        pinnedCoinsbuyIds &&
+        (row.provider === 'coinsbuy-deposits' || row.provider === 'coinsbuy-withdrawals')
+      ) {
+        const wid = row.wallet_id ? String(row.wallet_id) : null;
+        if (!wid || !pinnedCoinsbuyIds.has(wid)) continue;
+      }
 
       // Bucket by YYYY-MM of transaction_date (UTC).
       const key = String(row.transaction_date).slice(0, 7);
