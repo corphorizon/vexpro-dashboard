@@ -97,6 +97,7 @@ import {
   upsertPropFirmSales,
   upsertP2PTransfers,
 } from '@/lib/supabase/mutations';
+import * as Sentry from '@sentry/nextjs';
 
 type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones' | 'documentos';
 
@@ -233,8 +234,42 @@ export default function UploadPage() {
   //   · a banner shown next to the save button,
   //   · a guard that prevents the silent refresh sync-effect from wiping
   //     unsaved local state.
-  const [dirtySection, setDirtySection] = useState<DataSection | null>(null);
-  const markDirty = useCallback((s: DataSection) => setDirtySection(s), []);
+  // Dirty tracking — multi-section.
+  //
+  // Originally `dirtySection: DataSection | null` (one slot). That had a
+  // CRITICAL bug Kevin reported on 2026-05-13: if `saveAll('egresos')`
+  // failed mid-batch, the catch surfaced a toast but never cleared the
+  // dirty flag. The sync effect at line ~360 — guarded by
+  // `if (dirtySection) return` — then refused to re-hydrate ANY section
+  // (deposits, withdrawals, ingresos) from the DataProvider, since they
+  // all shared the same flag. A failed save in Egresos froze the entire
+  // page until a hard reload.
+  //
+  // Now: a Set of dirty sections. Each section's sync is gated only by
+  // its OWN dirty entry, so a failure in Egresos doesn't block Deposits
+  // from refreshing on period change. And on save success we clear ONLY
+  // the section that was saved — preserving any cross-section work-in-
+  // progress the user may have started before clicking "Guardar todo".
+  const [dirtySections, setDirtySectionsRaw] = useState<Set<DataSection>>(() => new Set());
+  const markDirty = useCallback((s: DataSection) => {
+    setDirtySectionsRaw(prev => {
+      if (prev.has(s)) return prev;
+      const next = new Set(prev);
+      next.add(s);
+      return next;
+    });
+  }, []);
+  const clearDirty = useCallback((s: DataSection) => {
+    setDirtySectionsRaw(prev => {
+      if (!prev.has(s)) return prev;
+      const next = new Set(prev);
+      next.delete(s);
+      return next;
+    });
+  }, []);
+  // Back-compat: most of the existing code only checks "is anything
+  // dirty?" — keep a derived helper so we don't have to touch every site.
+  const hasDirty = dirtySections.size > 0;
 
   // Auto-pick the latest period once `periods` loads asynchronously. On a
   // cold page hit the DataProvider is still fetching → `periods` is empty
@@ -352,18 +387,27 @@ export default function UploadPage() {
   // DB state).
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-    // Don't clobber unsaved work. The only way to overwrite a dirty
-    // section here is via the save handler, which itself sets
-    // dirtySection=null right before.
-    if (dirtySection) return;
-    setDepositsRaw(loadDepositsForPeriod(selectedPeriod));
-    setWithdrawalsRaw(loadWithdrawalsForPeriod(selectedPeriod));
-    setWithdrawalExtras(loadWithdrawalExtrasForPeriod(selectedPeriod));
-    setExpensesRaw(loadExpensesForPeriod(selectedPeriod));
-    setIncomeRaw(loadIncomeForPeriod(selectedPeriod));
-    setPropFirmAmount(allPropFirmSales.find(p => p.period_id === selectedPeriod)?.amount || 0);
-    setP2PAmount(allP2PTransfers.find(p => p.period_id === selectedPeriod)?.amount || 0);
-  }, [selectedPeriod, dirtySection]);
+    // Per-section guard. A failed save in one tab doesn't block re-sync
+    // in the others (see dirtySections rationale above). Each block also
+    // independently re-syncs when the user switches period.
+    if (!dirtySections.has('depositos')) {
+      setDepositsRaw(loadDepositsForPeriod(selectedPeriod));
+    }
+    if (!dirtySections.has('retiros')) {
+      setWithdrawalsRaw(loadWithdrawalsForPeriod(selectedPeriod));
+      setWithdrawalExtras(loadWithdrawalExtrasForPeriod(selectedPeriod));
+      // P2P transfer lives in the Retiros tab — share its dirty bucket.
+      setP2PAmount(allP2PTransfers.find(p => p.period_id === selectedPeriod)?.amount || 0);
+    }
+    if (!dirtySections.has('egresos')) {
+      setExpensesRaw(loadExpensesForPeriod(selectedPeriod));
+    }
+    if (!dirtySections.has('ingresos')) {
+      setIncomeRaw(loadIncomeForPeriod(selectedPeriod));
+      // Prop Firm sales sit in the Ingresos tab — share its dirty bucket.
+      setPropFirmAmount(allPropFirmSales.find(p => p.period_id === selectedPeriod)?.amount || 0);
+    }
+  }, [selectedPeriod, dirtySections]);
 
   // Wrapped setters — every user-driven mutation also flags the section as
   // dirty. The sync effect bypasses these wrappers and calls the Raw
@@ -477,6 +521,33 @@ export default function UploadPage() {
   // lock that disables the relevant buttons while in-flight.
   const [savingLiq, setSavingLiq] = useState(false);
   const [savingInv, setSavingInv] = useState(false);
+
+  // Per-row saving locks for Depósitos / Retiros inline edits.
+  // Kevin reported (2026-05-13) that updateDeposit/updateWithdrawal had no
+  // visible feedback while the upsert was in flight — users assumed the
+  // save hadn't happened and hard-refreshed mid-write. The Set keys are
+  // the deposit-row / withdrawal-row IDs, so we can disable the input
+  // for just the row being saved (the rest of the table stays editable).
+  const [savingDepositIds, setSavingDepositIds] = useState<Set<string>>(() => new Set());
+  const [savingWithdrawalIds, setSavingWithdrawalIds] = useState<Set<string>>(() => new Set());
+
+  // beforeunload guard — warn the user before they close the tab / hit
+  // back / hard-reload while there are unsaved edits in the local state.
+  // The browser shows its own native prompt; we only need to set
+  // `returnValue` on the event (modern browsers ignore the custom string
+  // and show their own copy). The handler is detached when nothing is
+  // dirty so the user can leave freely in the common case.
+  useEffect(() => {
+    if (!hasDirty && !savingAll) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      // Required for Chrome — must set returnValue to a truthy string.
+      e.returnValue = '';
+      return '';
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, [hasDirty, savingAll]);
 
   // 25-second hard ceiling around each row-level mutation. The DB itself
   // is fast (~6 ms for a single INSERT), but in real-world conditions the
@@ -959,27 +1030,58 @@ export default function UploadPage() {
   // wiped on save. Today only fixed channels exist so the array is complete.
   const updateDeposit = (id: string, amount: number) => {
     if (!userCanAdd || !company) return;
+    if (savingDepositIds.has(id)) return; // already in flight for this row
     // Skip confirmation modal — the inline input onBlur/save is already a
     // deliberate action. Toast feedback + undo-via-re-edit is faster UX.
     //
-    // refresh() runs in BACKGROUND (no await) — the previous version
-    // awaited it, which delayed the success toast by 2-5s while
-    // DataProvider re-fetched 18 datasets. Users perceived "no muestra
-    // nada" and hard-refreshed the browser, landing on the LoadingScreen.
-    // Same pattern saveAll already uses (see 2026-04-22 fix in egresos).
+    // Optimistic update: apply the change locally immediately, then upsert.
+    // On failure, roll back to the pre-edit snapshot AND surface the toast,
+    // so the user can see exactly what didn't persist instead of guessing.
+    const previousDeposits = deposits;
+    const updated = deposits.map(d => d.id === id ? { ...d, amount } : d);
+    setDepositsRaw(updated);
+    setSavingDepositIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     (async () => {
+      Sentry.addBreadcrumb({
+        category: 'upload.save',
+        message: 'updateDeposit:start',
+        data: { id, amount, periodId: selectedPeriodRef.current },
+      });
       try {
-        const updated = deposits.map(d => d.id === id ? { ...d, amount } : d);
-        setDepositsRaw(updated);
-        await upsertDeposits(company.id, selectedPeriodRef.current, updated);
+        await withRowTimeout(
+          upsertDeposits(company.id, selectedPeriodRef.current, updated),
+          'Guardar depósito',
+        );
 
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.depositRegistered'));
-        void refresh().catch((err) => {
-          console.warn('[updateDeposit] background refresh failed:', err);
-        });
+
+        // Await refresh so callers see fresh data — but surface the
+        // boolean so the user knows when the screen may be stale.
+        const ok = await refresh();
+        if (!ok) {
+          showError('Depósito guardado, pero no se pudo recargar el estado. Refresca la página para verificar.');
+        }
       } catch (err) {
-        showError(`Error: ${(err as Error).message}`);
+        // Rollback the optimistic update so the cell reverts to what
+        // was actually in DB before we touched it.
+        setDepositsRaw(previousDeposits);
+        Sentry.captureException(err, {
+          tags: { area: 'upload.updateDeposit' },
+          extra: { id, amount, periodId: selectedPeriodRef.current },
+        });
+        showError(`Error al guardar depósito: ${(err as Error).message}`);
+      } finally {
+        setSavingDepositIds(prev => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       }
     })();
   };
@@ -987,29 +1089,56 @@ export default function UploadPage() {
   // Withdrawal handlers
   const updateWithdrawal = (id: string, amount: number) => {
     if (!userCanAdd || !company) return;
+    if (savingWithdrawalIds.has(id)) return;
     // Skip confirmation modal — the inline input commit (blur / enter) is
     // the deliberate action. Toast feedback gives the user a fast signal
-    // without the extra click.
-    //
-    // refresh() in background — same rationale as updateDeposit above.
+    // without the extra click. Optimistic + rollback mirrors updateDeposit.
+    const previousWithdrawals = withdrawals;
+    const updated = withdrawals.map(w => w.id === id ? { ...w, amount } : w);
+    setWithdrawalsRaw(updated);
+    setSavingWithdrawalIds(prev => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
     (async () => {
+      Sentry.addBreadcrumb({
+        category: 'upload.save',
+        message: 'updateWithdrawal:start',
+        data: { id, amount, periodId: selectedPeriodRef.current },
+      });
       try {
-        const updated = withdrawals.map(w => w.id === id ? { ...w, amount } : w);
-        setWithdrawalsRaw(updated);
         // Combine fixed withdrawals with extras so upsert (delete+reinsert) doesn't wipe extras
         const combined = [
           ...updated.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
           ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
         ];
-        await upsertWithdrawals(company.id, selectedPeriodRef.current, combined);
+        await withRowTimeout(
+          upsertWithdrawals(company.id, selectedPeriodRef.current, combined),
+          'Guardar retiro',
+        );
 
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.withdrawalRegistered'));
-        void refresh().catch((err) => {
-          console.warn('[updateWithdrawal] background refresh failed:', err);
-        });
+
+        const ok = await refresh();
+        if (!ok) {
+          showError('Retiro guardado, pero no se pudo recargar el estado. Refresca la página para verificar.');
+        }
       } catch (err) {
-        showError(`Error: ${(err as Error).message}`);
+        setWithdrawalsRaw(previousWithdrawals);
+        Sentry.captureException(err, {
+          tags: { area: 'upload.updateWithdrawal' },
+          extra: { id, amount, periodId: selectedPeriodRef.current },
+        });
+        showError(`Error al guardar retiro: ${(err as Error).message}`);
+      } finally {
+        setSavingWithdrawalIds(prev => {
+          if (!prev.has(id)) return prev;
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       }
     })();
   };
@@ -1088,6 +1217,11 @@ export default function UploadPage() {
   const saveIncome = () => {
     if (!userCanAdd || !company) return;
     (async () => {
+      Sentry.addBreadcrumb({
+        category: 'upload.save',
+        message: 'saveIncome:start',
+        data: { periodId: selectedPeriodRef.current },
+      });
       try {
         const periodId = selectedPeriodRef.current;
         const combinedWithdrawals = [
@@ -1110,19 +1244,34 @@ export default function UploadPage() {
           );
         }
         showSuccess(t('upload.incomeSaved'));
-        // Refresh + THEN clear dirty (see saveAll's comment for full
-        // rationale). Same race that bit /upload Egresos on 2026-05-02
-        // applies here: clearing dirty before refresh re-reads
-        // DataProvider into local state with stale rows.
-        refresh()
-          .catch((err) => {
-            console.warn('[saveIncome] background refresh failed:', err);
-          })
-          .finally(() => {
-            setDirtySection(null);
-          });
+        Sentry.addBreadcrumb({
+          category: 'upload.save',
+          message: 'saveIncome:success',
+          data: { periodId },
+        });
+        // Refresh + THEN clear dirty for the saved sections only.
+        // saveIncome persists `operating_income` + `prop_firm_sales` (own
+        // dirty bucket: 'ingresos') AND `withdrawals` (which lives in
+        // 'retiros'). Clear both so the sync effect can re-hydrate from
+        // the fresh DataProvider state without stomping on any other
+        // section the user may still be editing.
+        const ok = await refresh();
+        if (!ok) {
+          showError('Los ingresos se guardaron, pero no se pudieron recargar los datos. Refresca la página para ver el estado actualizado.');
+        }
+        clearDirty('ingresos');
+        clearDirty('retiros');
       } catch (err) {
-        showError(`Error: ${(err as Error).message}`);
+        const message = (err as Error).message;
+        Sentry.captureException(err, {
+          tags: { area: 'upload.saveIncome' },
+          extra: { periodId: selectedPeriodRef.current, companyId: company.id },
+        });
+        showError(`Error: ${message}`);
+        // dirty is intentionally NOT cleared on error — the user's
+        // unsaved edits stay protected from the sync effect overwriting
+        // them, so they can fix the network / validation issue and retry
+        // without re-entering everything.
       }
     })();
   };
@@ -1212,37 +1361,47 @@ export default function UploadPage() {
       // Main save succeeded. Show success + unlock the button NOW.
       showSuccess(successMsg);
       setSavingAll(false);
+      Sentry.addBreadcrumb({
+        category: 'upload.save',
+        message: 'saveAll:success',
+        data: { section, periodId },
+      });
 
-      // Refresh + THEN clear the dirty flag. The order matters.
+      // Refresh + THEN clear the dirty flag for the saved section.
       //
       // Bug fixed 2026-05-02: clearing dirty BEFORE refresh completed
-      // raced with the sync effect at line ~354 (deps `[selectedPeriod,
-      // dirtySection]`). When dirty flipped 'egresos' → null, the effect
-      // ran `setExpensesRaw(loadExpensesForPeriod(...))` which read
-      // `allExpenses` from the DataProvider — still pre-save because
-      // refresh is async and hadn't propagated yet. Local state was
-      // overwritten with stale DB rows, dropping the just-saved
-      // additions. User saw "no quedaron guardados" even though the
-      // upsert succeeded; next save then persisted the stale view,
-      // permanently wiping the additions from DB.
+      // raced with the sync effect. When dirty flipped to null, the
+      // effect ran `setExpensesRaw(loadExpensesForPeriod(...))` which
+      // read `allExpenses` from the DataProvider — still pre-save
+      // because refresh is async and hadn't propagated yet. Local state
+      // was overwritten with stale DB rows, dropping the just-saved
+      // additions. The user saw "no quedaron guardados" even though the
+      // upsert succeeded.
       //
-      // By awaiting refresh first, the DataProvider has the fresh rows
-      // by the time the sync effect re-reads from it. Trade-off: the
-      // unsaved banner stays up an extra ~1-2s while refresh runs —
-      // acceptable for data correctness. If the user re-edits during
-      // that window the `.finally()` still clears dirty (single-value
-      // flag has no way to distinguish), but their next edit re-marks
-      // it; nothing is lost beyond a brief banner flicker.
-      refresh()
-        .catch((err) => {
-          console.warn('[saveAll] background refresh failed:', err);
-        })
-        .finally(() => {
-          setDirtySection(null);
-        });
+      // Updated 2026-05-13: clearDirty is now scoped to the section
+      // we just saved, so editing in a DIFFERENT section concurrently
+      // is no longer wiped on refresh. Ingresos also clears 'retiros'
+      // because that's what its payload upserts.
+      const ok = await refresh();
+      if (!ok) {
+        showError('Datos guardados, pero no se pudo recargar el estado. Refresca la página manualmente para verificar.');
+      }
+      clearDirty(section);
+      if (section === 'ingresos') {
+        clearDirty('retiros');
+      }
     } catch (err) {
-      showError(`Error al guardar: ${(err as Error).message}`);
+      const message = (err as Error).message;
+      Sentry.captureException(err, {
+        tags: { area: 'upload.saveAll', section },
+        extra: { periodId, companyId, periodLabel },
+      });
+      showError(`Error al guardar: ${message}`);
       setSavingAll(false);
+      // dirty is intentionally NOT cleared on error — the user's
+      // in-progress edits stay protected so they can retry without
+      // re-entering everything. The granular dirty Set means this no
+      // longer blocks other sections from re-syncing.
     }
   };
 
@@ -1349,8 +1508,9 @@ export default function UploadPage() {
                         type="number"
                         step="0.01"
                         value={d.amount || ''}
+                        disabled={savingDepositIds.has(d.id)}
                         onChange={(e) => setDeposits(prev => prev.map(dd => dd.id === d.id ? { ...dd, amount: parseFloat(e.target.value) || 0 } : dd))}
-                        className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                        className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-progress"
                         placeholder="0.00"
                       />
                     ) : (
@@ -1361,10 +1521,12 @@ export default function UploadPage() {
                     <td className="py-3 px-3 text-center">
                       <button
                         onClick={() => updateDeposit(d.id, d.amount)}
-                        className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                        title={t('common.save')}
+                        disabled={savingDepositIds.has(d.id)}
+                        className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
+                        title={savingDepositIds.has(d.id) ? 'Guardando...' : t('common.save')}
+                        aria-busy={savingDepositIds.has(d.id)}
                       >
-                        <Save className="w-4 h-4" />
+                        <Save className={`w-4 h-4 ${savingDepositIds.has(d.id) ? 'animate-pulse' : ''}`} />
                       </button>
                     </td>
                   )}
@@ -1442,8 +1604,9 @@ export default function UploadPage() {
                             type="number"
                             step="0.01"
                             value={w.amount || ''}
+                            disabled={savingWithdrawalIds.has(w.id)}
                             onChange={(e) => setWithdrawals(prev => prev.map(ww => ww.id === w.id ? { ...ww, amount: parseFloat(e.target.value) || 0 } : ww))}
-                            className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                            className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-progress"
                             placeholder="0.00"
                           />
                           {/* When broker row is in derived-logic period, show
@@ -1464,10 +1627,12 @@ export default function UploadPage() {
                       <td className="py-3 px-3 text-center">
                         <button
                           onClick={() => updateWithdrawal(w.id, w.amount)}
-                          className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors"
-                          title={t('common.save')}
+                          disabled={savingWithdrawalIds.has(w.id)}
+                          className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
+                          title={savingWithdrawalIds.has(w.id) ? 'Guardando...' : t('common.save')}
+                          aria-busy={savingWithdrawalIds.has(w.id)}
                         >
-                          <Save className="w-4 h-4" />
+                          <Save className={`w-4 h-4 ${savingWithdrawalIds.has(w.id) ? 'animate-pulse' : ''}`} />
                         </button>
                       </td>
                     )}
@@ -2512,7 +2677,7 @@ export default function UploadPage() {
         </div>
         {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && (
           <div className="flex items-center gap-3">
-            {dirtySection === section && !savingAll && (
+            {dirtySections.has(section) && !savingAll && (
               <span
                 className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap"
                 aria-live="polite"

@@ -64,7 +64,13 @@ import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 
 // Max time we'll wait for the initial data load before showing an error
 // with a retry button. Prevents the UI from getting stuck "loading..." forever.
-const LOAD_TIMEOUT_MS = 60000;
+//
+// Lowered from 60s → 15s on 2026-05-13 after Kevin reported that the splash
+// felt indistinguishable from a permanent hang. 60s × 2 retries = up to 123s
+// of opaque "Cargando…" before the error screen even appeared. LoadingScreen
+// now surfaces a "Reintentar ahora" button after 5s anyway, so a tighter
+// per-attempt cap just makes a slow Supabase fail fast.
+const LOAD_TIMEOUT_MS = 15000;
 const MAX_RETRIES = 2; // total attempts (1 initial + 1 retry)
 
 // ─── Saldo Info (replicated from demo-data.ts) ───
@@ -121,7 +127,12 @@ export interface DataContextValue {
   getPreviousPeriodResults: (periodId: string) => CommercialMonthlyResult[];
 
   // Refresh functions
-  refresh: () => Promise<void>;
+  // `refresh()` returns `true` on success, `false` if the silent reload
+  // failed (timeout, network error, RLS rejection). Callers can surface a
+  // toast or fall back to a manual page reload prompt. Existing code that
+  // doesn't care about the result can keep `void refresh()` — the boolean
+  // is just informational, not thrown.
+  refresh: () => Promise<boolean>;
   refreshCommissions: () => Promise<void>;
   patchMonthlyResults: (updates: CommercialMonthlyResult[]) => void;
 }
@@ -186,7 +197,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Fetches everything. If `silent` is true, the UI stays mounted and we
   // only update state in place — used for post-mutation refreshes so the
   // user doesn't lose scroll position, tab selection, or any local state.
-  const loadAllData = useCallback(async (options?: { silent?: boolean }) => {
+  const loadAllData = useCallback(async (options?: { silent?: boolean }): Promise<boolean> => {
     const silent = options?.silent ?? false;
     // Bump the generation so any still-in-flight previous call's results
     // get discarded when they eventually resolve.
@@ -283,7 +294,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     let lastError: unknown = null;
     let comp: { id: string } | null = null;
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      if (isStale()) return;
+      if (isStale()) return false;
 
       let timeoutId: ReturnType<typeof setTimeout> | null = null;
       const timeoutPromise = new Promise<never>((_, reject) => {
@@ -299,7 +310,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         break;
       } catch (err) {
         lastError = err;
-        if (isStale()) return;
+        if (isStale()) return false;
         console.warn(`Data load attempt ${attempt}/${MAX_RETRIES} failed:`, err);
         if (attempt < MAX_RETRIES) {
           await new Promise((r) => setTimeout(r, 1500));
@@ -315,7 +326,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     }
 
     if (lastError) {
-      if (isStale()) return;
+      if (isStale()) return false;
       console.error('Error loading data after retries:', lastError);
       const msg =
         lastError instanceof Error ? lastError.message : 'Error desconocido al cargar datos';
@@ -324,17 +335,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
       } else {
         console.warn('Silent refresh failed, keeping existing data:', msg);
       }
-      return;
+      return false;
     }
 
     // Load remaining data in background (no timeout)
     if (comp) {
       fetchRest(comp);
     }
+    return true;
   }, [effectiveCompanyId]);
 
   useEffect(() => {
-    loadAllData();
+    // Initial load — ignore the boolean return (success/failure already
+    // surfaced via `loading` / `error` state above).
+    void loadAllData();
   }, [loadAllData]);
 
   // Whenever `company` changes, push its brand colors into the live CSS
@@ -750,6 +764,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // `refresh` is silent by default: it re-fetches in the background
       // without unmounting children, so callers keep their scroll position,
       // active tab, open modals, etc.
+      //
+      // Returns `true` on success, `false` if the silent reload failed
+      // (timeout, network error, RLS rejection). Callers that care about
+      // post-mutation freshness (e.g. /upload save handlers) can surface a
+      // toast when the refresh fails so the user knows the screen may show
+      // stale data; otherwise the boolean can be safely ignored.
       refresh: () => loadAllData({ silent: true }),
 
       // Lightweight refresh — only reloads commission-related tables (no timeout)
@@ -828,7 +848,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   if (loading) {
     return (
       <DataContext.Provider value={value}>
-        <LoadingScreen />
+        <LoadingScreen onRetry={() => void loadAllData()} />
       </DataContext.Provider>
     );
   }
@@ -836,7 +856,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   if (error) {
     return (
       <DataContext.Provider value={value}>
-        <LoadingError message={error} onRetry={() => loadAllData()} />
+        <LoadingError message={error} onRetry={() => void loadAllData()} />
       </DataContext.Provider>
     );
   }
