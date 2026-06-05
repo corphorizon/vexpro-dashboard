@@ -1,7 +1,25 @@
 'use client';
 
+import { useEffect, useState } from 'react';
+
 interface LoadingScreenProps {
   message?: string;
+  /**
+   * Optional retry callback. When provided AND the loader has been visible
+   * for more than `slowHintAfterMs` (default 5000ms), a "Está tardando…"
+   * hint + a "Reintentar ahora" button are rendered below the spinner.
+   *
+   * Without this, a slow Supabase response or a stalled fetch leaves the
+   * user staring at the splash with no way out until the DataProvider's
+   * 15-second timeout fires.
+   */
+  onRetry?: () => void;
+  /**
+   * How long to wait before surfacing the slow hint + retry button.
+   * Default: 5000ms (5 seconds). Kevin reported (2026-05-13) that the
+   * default 60s timeout felt indistinguishable from a hang.
+   */
+  slowHintAfterMs?: number;
 }
 
 /**
@@ -11,7 +29,18 @@ interface LoadingScreenProps {
  * superadmin navigation (no tenant context yet) or during the initial
  * data load, so using a tenant logo here would be wrong.
  */
-export function LoadingScreen({ message }: LoadingScreenProps) {
+export function LoadingScreen({
+  message,
+  onRetry,
+  slowHintAfterMs = 5000,
+}: LoadingScreenProps) {
+  const [slow, setSlow] = useState(false);
+
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), slowHintAfterMs);
+    return () => clearTimeout(t);
+  }, [slowHintAfterMs]);
+
   return (
     <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
       <div className="flex flex-col items-center gap-6">
@@ -38,6 +67,22 @@ export function LoadingScreen({ message }: LoadingScreenProps) {
         </div>
         {message && (
           <p className="text-xs text-muted-foreground">{message}</p>
+        )}
+        {slow && (
+          <div className="mt-2 flex flex-col items-center gap-2 text-center max-w-xs">
+            <p className="text-xs text-muted-foreground">
+              Está tardando más de lo normal. Verifica tu conexión.
+            </p>
+            {onRetry && (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
+              >
+                Reintentar ahora
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
