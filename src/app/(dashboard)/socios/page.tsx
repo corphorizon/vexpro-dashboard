@@ -215,8 +215,16 @@ export default function SociosPage() {
       });
 
   const totalDistributed = effectiveDistributions.reduce((sum, d) => sum + d.amount, 0);
-  const totalPercentage = effectiveDistributions.reduce((sum, d) => sum + d.percentage, 0);
-  const percentageMismatch = Math.abs(totalPercentage - 1) > 0.001;
+  // Kevin (2026-06-06): el warning antiguo sumaba percentages de
+  // `effectiveDistributions` (tabla partner_distributions atada al
+  // período seleccionado). Si el período no tenía rows guardados (caso
+  // común para meses recientes) el total daba 0 y el banner salía
+  // diciendo "los porcentajes suman 0.0%" aunque la tabla Distribución
+  // por Socio mostraba 100% claro. La UI siempre muestra
+  // `partners[].percentage` — el warning debe leer la MISMA fuente.
+  const totalPercentage = partners.reduce((sum, p) => sum + p.percentage, 0);
+  const percentageMismatch =
+    partners.length > 0 && Math.abs(totalPercentage - 1) > 0.001;
 
   // ─── Available percentage for new/edit partner ───
   const usedPercentage = partners.reduce((sum, p) => sum + p.percentage, 0);

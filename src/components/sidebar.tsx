@@ -36,6 +36,7 @@ import {
   FileSearch,
   Briefcase,
   FileText,
+  Table,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -84,6 +85,10 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
       { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },
       { href: '/finanzas/reportes', i18nKey: 'nav.reports', icon: FileText, module: 'reports' },
+      // Kevin 2026-06-06: tabla mes-a-mes con todos los indicadores,
+      // columnas y meses ocultables, totales al pie. Misma puerta de
+      // módulo que reports (ambos son vistas ejecutivas).
+      { href: '/finanzas/consolidado', i18nKey: 'nav.consolidado', icon: Table, module: 'reports' },
     ],
   },
 
