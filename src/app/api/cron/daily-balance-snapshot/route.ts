@@ -163,6 +163,26 @@ export async function GET(request: NextRequest) {
       entry.coinsbuy_error = err instanceof Error ? err.message : 'Unknown error';
     }
 
+    // ── FairPay ──
+    // TODO (Kevin 2026-06-06): los reportes no incluyen el balance de
+    // FairPay porque este cron nunca lo registra. La API de FairPay no
+    // tiene un endpoint /balances todavía expuesto en
+    // src/lib/api-integrations/fairpay/ — solo transactions/auth.
+    // Cuando se agregue `fetchFairpayBalances(companyId)`, descomentar:
+    //
+    //   try {
+    //     const fp = await fetchFairpayBalances(company.id);
+    //     if (fp.error) entry.fairpay_error = fp.error;
+    //     else {
+    //       const total = (fp.balances ?? []).reduce(
+    //         (s, b: { availableBalance?: number }) => s + (b.availableBalance ?? 0), 0);
+    //       await adminUpsertChannelBalance(admin, company.id, today, 'fairpay', total, 'api');
+    //       entry.fairpay = total;
+    //     }
+    //   } catch (err) {
+    //     entry.fairpay_error = err instanceof Error ? err.message : 'Unknown error';
+    //   }
+
     // ── UniPayment ──
     try {
       const up = await fetchUnipaymentBalances(company.id);

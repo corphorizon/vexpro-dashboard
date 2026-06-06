@@ -399,17 +399,39 @@ export async function buildReportData(
   const manualWdrPrev = groupRows(safeData<WithdrawalRow>(manualWithdrawalsPrevMonth), (r) => r.category);
 
   // Scope every Coinsbuy aggregation to the wallets the tenant has
-  // explicitly pinned (same set surfaced by /balances). If nothing is
-  // pinned we fall back to "count every wallet" so a tenant who never
-  // configured pinning still sees real numbers.
+  // explicitly pinned (same set surfaced by /balances).
+  //
+  // Kevin (2026-06-06): "los informes están mandando también los depósitos
+  // y retiros de otra wallet". El fallback antiguo era "si no hay pinned,
+  // contar TODAS las wallets" — y eso filtraba datos cross-tenant a los
+  // reportes. Nuevo orden de fallback:
+  //   1. pinned_coinsbuy_wallets si tiene filas → usar ese set
+  //   2. companies.default_wallet_id si está seteado → usar solo esa wallet
+  //   3. null (todas las wallets) → único caso legacy donde no hay nada
+  //      configurado, advertimos por logs.
   const { data: pinnedRows } = await admin
     .from('pinned_coinsbuy_wallets')
     .select('wallet_id')
     .eq('company_id', companyId);
-  const pinnedCoinsbuyIds =
-    pinnedRows && pinnedRows.length > 0
-      ? new Set((pinnedRows as Array<{ wallet_id: string }>).map((r) => String(r.wallet_id)))
-      : null;
+  let pinnedCoinsbuyIds: Set<string> | null = null;
+  if (pinnedRows && pinnedRows.length > 0) {
+    pinnedCoinsbuyIds = new Set(
+      (pinnedRows as Array<{ wallet_id: string }>).map((r) => String(r.wallet_id)),
+    );
+  } else {
+    const { data: companyRow } = await admin
+      .from('companies')
+      .select('default_wallet_id')
+      .eq('id', companyId)
+      .maybeSingle();
+    if (companyRow?.default_wallet_id) {
+      pinnedCoinsbuyIds = new Set([String(companyRow.default_wallet_id)]);
+    } else {
+      console.warn(
+        `[reports] company ${companyId} has no pinned_coinsbuy_wallets and no default_wallet_id — falling back to count-all (legacy behaviour, configure one of the two to scope reports correctly)`,
+      );
+    }
+  }
 
   const apiRange = groupApiTx(safeData<ApiTx>(apiTransactionsRange), pinnedCoinsbuyIds);
   const apiMonth = groupApiTx(safeData<ApiTx>(apiTransactionsMonth), pinnedCoinsbuyIds);
