@@ -241,14 +241,18 @@ export default function MovimientosPage() {
   const displayTotalDeposits = useDerivedBroker
     ? apiDepositsTotal + otherDeposits
     : summary.totalDeposits;
-  // Retiros Totales — Kevin (2026-05-03): el total de retiros es la salida
-  // real de efectivo: API de Coinsbuy + "Otros" manuales (retiros que no
-  // pasan por Coinsbuy). Las categorías Broker / Comisiones IB / Prop Firm
-  // son meramente informativas — el usuario las carga en Carga de Datos
-  // pero NO se suman al total para evitar doble conteo (los retiros que
-  // sí salieron por Coinsbuy ya vienen en la API).
+  // Retiros Totales — Kevin (2026-06-06, decisión final): el total son los
+  // datos de Coinsbuy: la API + el manual de la categoría Broker (que
+  // representa retiros Coinsbuy que la API no alcanzó a reportar). Las
+  // categorías Comisiones IB / Prop Firm / Otros son meramente informativas
+  // — el usuario las carga en Carga de Datos pero NO se suman al total.
+  //
+  // Historial: PR #15 (2026-05-02) introdujo esta misma fórmula. PR #16
+  // (mismo día) la cambió a `+ otherWithdrawal`. Tras probar varios
+  // meses Kevin confirmó (2026-06-06) que el manual Broker SÍ debe sumar,
+  // porque representa Coinsbuy supplement; volvemos al patrón original.
   const displayTotalWithdrawals = useDerivedBroker
-    ? apiWithdrawalsTotal + otherWithdrawal
+    ? apiWithdrawalsTotal + storedBroker
     : summary.totalWithdrawals;
   const displayNetDeposit = useDerivedBroker
     ? displayTotalDeposits - displayTotalWithdrawals

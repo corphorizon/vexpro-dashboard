@@ -81,15 +81,15 @@ export function AdminHome() {
       ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
       : summary.totalDeposits;
 
-    const otherW = summary.withdrawals.find((w) => w.category === 'other')?.amount ?? 0;
-    // Withdrawals — Kevin (2026-05-03): el total de retiros es la salida
-    // real de efectivo: API de Coinsbuy + "Otros" manuales. Broker /
-    // Comisiones IB / Prop Firm son manuales informativos y NO entran
-    // en el total (los retiros que pasaron por Coinsbuy ya están en la
-    // API; sumar manual encima los duplicaría). Misma lógica en
-    // /movimientos y /resumen-general para que las tres vistas coincidan.
+    const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;
+    // Withdrawals — Kevin (2026-06-06, decisión final): los retiros reales
+    // son los datos de Coinsbuy = API + manual Broker (suplemento Coinsbuy
+    // cuando la API no alcanza a reportar). Comisiones IB / Prop Firm /
+    // Otros son meramente informativos y NO entran al total.
+    // Misma lógica en /movimientos y /resumen-general para que las tres
+    // vistas coincidan.
     const withdrawals = useDerivedBroker
-      ? coexist.apiWithdrawalsTotal + otherW
+      ? coexist.apiWithdrawalsTotal + storedBroker
       : summary.totalWithdrawals;
 
     const netDeposit = deposits - withdrawals;
