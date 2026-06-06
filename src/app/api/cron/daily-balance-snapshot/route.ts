@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
+import { fetchFairpayBalances } from '@/lib/api-integrations/fairpay/balances';
 
 // The channel_balances table has RLS enabled; writes from the cron can't
 // pass through the normal `supabase` client (no cookie → no user). This
@@ -164,24 +165,37 @@ export async function GET(request: NextRequest) {
     }
 
     // ── FairPay ──
-    // TODO (Kevin 2026-06-06): los reportes no incluyen el balance de
-    // FairPay porque este cron nunca lo registra. La API de FairPay no
-    // tiene un endpoint /balances todavía expuesto en
-    // src/lib/api-integrations/fairpay/ — solo transactions/auth.
-    // Cuando se agregue `fetchFairpayBalances(companyId)`, descomentar:
-    //
-    //   try {
-    //     const fp = await fetchFairpayBalances(company.id);
-    //     if (fp.error) entry.fairpay_error = fp.error;
-    //     else {
-    //       const total = (fp.balances ?? []).reduce(
-    //         (s, b: { availableBalance?: number }) => s + (b.availableBalance ?? 0), 0);
-    //       await adminUpsertChannelBalance(admin, company.id, today, 'fairpay', total, 'api');
-    //       entry.fairpay = total;
-    //     }
-    //   } catch (err) {
-    //     entry.fairpay_error = err instanceof Error ? err.message : 'Unknown error';
-    //   }
+    // Activado 2026-06-06. `fetchFairpayBalances` es defensivo: si FairPay
+    // no expone /api/v1/getBalance (404 / shape no reconocida) devuelve
+    // `error` sin throw → registramos el error en entry.fairpay_error y
+    // continuamos con el resto del snapshot.
+    try {
+      const fp = await fetchFairpayBalances(company.id);
+      if (fp.error) {
+        entry.fairpay_error = fp.error;
+        if (fp.endpointMissing) {
+          // Endpoint todavía desconocido — capturar a Sentry una sola vez
+          // por día por tenant para que el operador lo vea sin spamearse.
+          try {
+            const Sentry = await import('@sentry/nextjs');
+            Sentry.captureMessage('FairPay balance endpoint not yet wired', {
+              level: 'warning',
+              tags: { area: 'cron.daily-balance', provider: 'fairpay' },
+              extra: { companyId: company.id },
+            });
+          } catch { /* sentry optional */ }
+        }
+      } else if (fp.balances.length > 0) {
+        const total = fp.balances.reduce(
+          (s, b) => s + (b.availableBalance ?? 0),
+          0,
+        );
+        await adminUpsertChannelBalance(admin, company.id, today, 'fairpay', total, 'api');
+        entry.fairpay = total;
+      }
+    } catch (err) {
+      entry.fairpay_error = err instanceof Error ? err.message : 'Unknown error';
+    }
 
     // ── UniPayment ──
     try {

@@ -32,8 +32,6 @@ export interface ReportBalancesByChannel {
   asOf: string; // YYYY-MM-DD — the snapshot date requested
 }
 
-const AUTO_COMPUTED = new Set(['liquidez', 'inversiones']);
-
 export async function buildBalancesByChannel(
   companyId: string,
   asOf: string = new Date().toISOString().slice(0, 10),

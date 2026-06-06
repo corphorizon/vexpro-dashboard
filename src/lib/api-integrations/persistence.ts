@@ -1,8 +1,8 @@
 import { createAdminClient } from '@/lib/supabase/admin';
+import { canonicalAmount, canonicalFee } from './canonical';
 import type {
   ProviderDataset,
   ProviderSlug,
-  ProviderTransaction,
 } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -15,26 +15,11 @@ import type {
 //
 // Failures are logged but never thrown — persistence must not break the
 // realtime user-facing response.
+//
+// `canonicalAmount` and `canonicalFee` were extracted to
+// `src/lib/api-integrations/canonical.ts` so they can be unit-tested and
+// reused by the totals layer without duplicating provider-specific logic.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/**
- * Extract the canonical amount for a provider transaction — matches what
- * computeProviderTotals sums up in totals.ts.
- */
-function canonicalAmount(tx: ProviderTransaction): number {
-  if ('amountTarget' in tx) return tx.amountTarget ?? 0;       // coinsbuy deposit
-  if ('chargedAmount' in tx) return tx.chargedAmount ?? 0;     // coinsbuy withdrawal
-  if ('net' in tx) return tx.net ?? 0;                          // fairpay
-  if ('netAmount' in tx) return tx.netAmount ?? 0;              // unipayment
-  return 0;
-}
-
-function canonicalFee(tx: ProviderTransaction): number {
-  if ('commission' in tx) return tx.commission ?? 0;
-  if ('mdr' in tx) return tx.mdr ?? 0;
-  if ('fee' in tx) return tx.fee ?? 0;
-  return 0;
-}
 
 /**
  * Persist a single ProviderDataset. Upserts all transactions keyed on

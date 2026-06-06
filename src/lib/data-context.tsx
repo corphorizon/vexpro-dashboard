@@ -61,28 +61,11 @@ import {
 } from './supabase/queries';
 import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 import * as Sentry from '@sentry/nextjs';
+import { LOAD_TIMEOUT_MS, LOAD_WATCHDOG_MS, LOAD_MAX_RETRIES } from '@/lib/config';
 
-// Max time we'll wait for the initial data load before showing an error
-// with a retry button. Prevents the UI from getting stuck "loading..." forever.
-//
-// Lowered from 60s → 15s on 2026-05-13 after Kevin reported that the splash
-// felt indistinguishable from a permanent hang. 60s × 2 retries = up to 123s
-// of opaque "Cargando…" before the error screen even appeared. LoadingScreen
-// now surfaces a "Reintentar ahora" button after 5s anyway, so a tighter
-// per-attempt cap just makes a slow Supabase fail fast.
-const LOAD_TIMEOUT_MS = 15000;
-const MAX_RETRIES = 2; // total attempts (1 initial + 1 retry)
-
-// Absolute watchdog ceiling. If for ANY reason the loading flag stays
-// true past this deadline (orphan lock, stuck fetch, JS exception in
-// an unexpected path, generation race we didn't anticipate), force
-// loading=false and surface an error screen with a Retry button.
-//
-// Kevin 2026-06-06: tras borrar cache reportó otra vez "se queda
-// cargando". Aunque los fixes anteriores cubren los paths conocidos,
-// este watchdog garantiza que NUNCA pasamos de 35 s viendo el splash
-// sin opción para reintentar — independientemente del bug raíz.
-const LOAD_WATCHDOG_MS = 35000;
+// Magic numbers centralized in src/lib/config.ts (Sprint 3 quick win
+// 2026-06-06). Tuning them no longer means grepping the codebase.
+const MAX_RETRIES = LOAD_MAX_RETRIES;
 
 // ─── Saldo Info (replicated from demo-data.ts) ───
 
