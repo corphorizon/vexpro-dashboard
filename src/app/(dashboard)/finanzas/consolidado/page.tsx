@@ -435,7 +435,7 @@ export default function ConsolidadoPage() {
                     className="py-8 text-center text-muted-foreground"
                   >
                     Sin meses visibles. Activa al menos uno desde el panel de
-                    "Columnas y meses".
+                    &quot;Columnas y meses&quot;.
                   </td>
                 </tr>
               )}
@@ -498,7 +498,7 @@ export default function ConsolidadoPage() {
 
       <p className="text-xs text-muted-foreground">
         El total al pie suma los meses visibles. Para columnas como
-        "Reserva Acumulada" usamos el valor del último mes visible
+        &quot;Reserva Acumulada&quot; usamos el valor del último mes visible
         (no la suma) porque acumula período tras período.
       </p>
     </div>
