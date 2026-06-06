@@ -61,6 +61,7 @@ import {
   fetchCommercialMonthlyResults,
 } from './supabase/queries';
 import { LoadingScreen, LoadingError } from '@/components/loading-screen';
+import * as Sentry from '@sentry/nextjs';
 
 // Max time we'll wait for the initial data load before showing an error
 // with a retry button. Prevents the UI from getting stuck "loading..." forever.
@@ -72,6 +73,17 @@ import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 // per-attempt cap just makes a slow Supabase fail fast.
 const LOAD_TIMEOUT_MS = 15000;
 const MAX_RETRIES = 2; // total attempts (1 initial + 1 retry)
+
+// Absolute watchdog ceiling. If for ANY reason the loading flag stays
+// true past this deadline (orphan lock, stuck fetch, JS exception in
+// an unexpected path, generation race we didn't anticipate), force
+// loading=false and surface an error screen with a Retry button.
+//
+// Kevin 2026-06-06: tras borrar cache reportó otra vez "se queda
+// cargando". Aunque los fixes anteriores cubren los paths conocidos,
+// este watchdog garantiza que NUNCA pasamos de 35 s viendo el splash
+// sin opción para reintentar — independientemente del bug raíz.
+const LOAD_WATCHDOG_MS = 35000;
 
 // ─── Saldo Info (replicated from demo-data.ts) ───
 
@@ -204,9 +216,35 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const generation = ++loadGenerationRef.current;
     const isStale = () => loadGenerationRef.current !== generation;
 
+    Sentry.addBreadcrumb({
+      category: 'data-context.load',
+      message: 'loadAllData:start',
+      data: { generation, silent, effectiveCompanyId },
+    });
+
     if (!silent) {
       setLoading(true);
       setError(null);
+    }
+
+    // Watchdog — guaranteed escape hatch. If for ANY reason we don't
+    // flip loading=false within LOAD_WATCHDOG_MS, do it ourselves and
+    // surface an error so the user can retry. Covers paths we haven't
+    // anticipated (orphan locks, stalled Supabase fetch, exceptions
+    // outside the try/finally, etc.). Cleared on normal completion.
+    let watchdogId: ReturnType<typeof setTimeout> | null = null;
+    if (!silent) {
+      watchdogId = setTimeout(() => {
+        if (isStale()) return; // newer call will handle it
+        console.error('[data-context] Watchdog fired — forcing loading=false');
+        Sentry.captureMessage('data-context watchdog fired', {
+          level: 'error',
+          tags: { area: 'data-context.watchdog' },
+          extra: { generation, effectiveCompanyId },
+        });
+        setError('La carga tardó más de lo esperado. Verifica tu conexión y vuelve a intentar.');
+        setLoading(false);
+      }, LOAD_WATCHDOG_MS);
     }
 
     // ── Stage 1: critical data (with timeout) ──
@@ -346,6 +384,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (!silent && !isStale()) {
         setLoading(false);
       }
+      // Cancel the watchdog — we're done one way or another.
+      if (watchdogId) clearTimeout(watchdogId);
+      Sentry.addBreadcrumb({
+        category: 'data-context.load',
+        message: 'loadAllData:end',
+        data: { generation, silent, stale: isStale(), hasError: !!lastError },
+      });
     }
 
     // Stale: a newer loadAllData() is in flight and will produce the
