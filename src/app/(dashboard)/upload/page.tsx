@@ -331,7 +331,31 @@ export default function UploadPage() {
       }));
     }
 
-    // Otherwise, pre-load active fixed expense templates as starting rows
+    // Otherwise, pre-load active fixed expense templates as starting rows.
+    //
+    // Kevin (2026-06-06): los gastos fijos al pasar al mes siguiente deben
+    // CONSERVAR la categoría que tenían el mes anterior — antes se cargaban
+    // con category=null y había que re-asignar manualmente cada mes.
+    //
+    // Estrategia sin migration: para cada template, buscar el expense más
+    // reciente con el MISMO concept (en cualquier período anterior) y
+    // heredar su category. Cadena natural: si en mayo asignaste
+    // "Office Rent - Mexico" → "Operating Expense", junio la hereda
+    // automáticamente; si en junio la cambias a "Rent", julio hereda esa.
+    const conceptCategoryMap = new Map<string, string | null>();
+    const sortedExpenses = [...allExpenses].sort((a, b) => {
+      const pa = periods.find(p => p.id === a.period_id);
+      const pb = periods.find(p => p.id === b.period_id);
+      if (!pa || !pb) return 0;
+      if (pa.year !== pb.year) return pb.year - pa.year;
+      return pb.month - pa.month;
+    });
+    for (const e of sortedExpenses) {
+      if (!conceptCategoryMap.has(e.concept)) {
+        conceptCategoryMap.set(e.concept, e.category ?? null);
+      }
+    }
+
     const activeTemplates = expenseTemplates.filter(tpl => tpl.active);
     return activeTemplates.map((tpl, i) => ({
       id: `tpl-${tpl.id}-${i}`,
@@ -340,9 +364,9 @@ export default function UploadPage() {
       paid: 0,
       pending: tpl.amount,
       is_fixed: true,
-      category: null,
+      category: conceptCategoryMap.get(tpl.concept) ?? null,
     }));
-  }, [allExpenses, expenseTemplates]);
+  }, [allExpenses, expenseTemplates, periods]);
 
   const loadIncomeForPeriod = useCallback((periodId: string): IncomeRow => {
     const periodIncome = allOperatingIncome.find(oi => oi.period_id === periodId);
@@ -461,7 +485,16 @@ export default function UploadPage() {
     };
   }, [brokerIsDerived, currentPeriodObj]);
 
-  const brokerApiTotals = useApiTotals(brokerApiFrom, brokerApiTo);
+  // Kevin (2026-06-06): pasamos default_wallet_id para que el cálculo
+  // del "broker derivado" considere SOLO la wallet principal (en Vex Pro
+  // = 1079 VexPro Main Wallet) y no incluya retiros de wallets ajenas
+  // (Exura Prime, AP MARKETS, Savings) que también aparecen en
+  // api_transactions del tenant. Sin este filtro el broker se inflaba.
+  const brokerApiTotals = useApiTotals(
+    brokerApiFrom,
+    brokerApiTo,
+    company?.default_wallet_id ?? '',
+  );
 
   // Live-computed broker. Re-runs as the user edits IB / Prop Firm / Otros.
   const derivedBrokerAmount = useMemo(() => {
