@@ -290,43 +290,72 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     };
 
-    // Retry loop with timeout — only for critical stage
+    // Retry loop with timeout — only for critical stage.
+    //
+    // Stale handling (Kevin reported 2026-06-06): the previous version
+    // returned `false` whenever it detected `isStale()` and left
+    // `setLoading(false)` un-called in that path. Two consecutive saves
+    // (each triggering refresh()) bumped generation twice; the first
+    // refresh ran to "stale → return false" and the caller showed a
+    // bogus "no se pudo recargar" toast even though the second refresh
+    // succeeded. Worse, on cold load a quick `effectiveCompanyId`
+    // change (auth-context resolving null → uuid) made the initial
+    // load go stale before it could flip loading=false, freezing the
+    // splash forever.
+    //
+    // Fixed by treating stale as "not a failure — a newer call will
+    // settle the UI". Stale returns `true` so callers don't surface
+    // false negatives, and the final loading/error flip lives in a
+    // single finally block that runs only for the latest generation.
     let lastError: unknown = null;
     let comp: { id: string } | null = null;
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-      if (isStale()) return false;
+    let staleEarly = false;
 
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error('La carga tardó demasiado. Verifica tu conexión e intenta de nuevo.')),
-          LOAD_TIMEOUT_MS
-        );
-      });
+    try {
+      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        if (isStale()) { staleEarly = true; break; }
 
-      try {
-        comp = await Promise.race([fetchCritical(), timeoutPromise]);
-        lastError = null;
-        break;
-      } catch (err) {
-        lastError = err;
-        if (isStale()) return false;
-        console.warn(`Data load attempt ${attempt}/${MAX_RETRIES} failed:`, err);
-        if (attempt < MAX_RETRIES) {
-          await new Promise((r) => setTimeout(r, 1500));
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(
+            () => reject(new Error('La carga tardó demasiado. Verifica tu conexión e intenta de nuevo.')),
+            LOAD_TIMEOUT_MS
+          );
+        });
+
+        try {
+          comp = await Promise.race([fetchCritical(), timeoutPromise]);
+          lastError = null;
+          break;
+        } catch (err) {
+          lastError = err;
+          if (isStale()) { staleEarly = true; break; }
+          console.warn(`Data load attempt ${attempt}/${MAX_RETRIES} failed:`, err);
+          if (attempt < MAX_RETRIES) {
+            await new Promise((r) => setTimeout(r, 1500));
+          }
+        } finally {
+          if (timeoutId) clearTimeout(timeoutId);
         }
-      } finally {
-        if (timeoutId) clearTimeout(timeoutId);
+      }
+    } finally {
+      // Single source of truth for the loading/error flip. Runs for
+      // EVERY exit path of the retry loop (success, error, stale,
+      // unexpected throw). Only the latest generation gets to touch
+      // visible state — stale generations bow out silently.
+      if (!silent && !isStale()) {
+        setLoading(false);
       }
     }
 
-    // Critical stage done — show UI immediately
-    if (!silent && !isStale()) {
-      setLoading(false);
+    // Stale: a newer loadAllData() is in flight and will produce the
+    // final result. Don't show false-negative errors to callers.
+    if (staleEarly) {
+      return true;
     }
 
     if (lastError) {
-      if (isStale()) return false;
+      if (isStale()) return true;
       console.error('Error loading data after retries:', lastError);
       const msg =
         lastError instanceof Error ? lastError.message : 'Error desconocido al cargar datos';

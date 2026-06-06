@@ -1060,12 +1060,14 @@ export default function UploadPage() {
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.depositRegistered'));
 
-        // Await refresh so callers see fresh data — but surface the
-        // boolean so the user knows when the screen may be stale.
-        const ok = await refresh();
-        if (!ok) {
-          showError('Depósito guardado, pero no se pudo recargar el estado. Refresca la página para verificar.');
-        }
+        // Await refresh so callers see fresh data. We do NOT show a
+        // toast if refresh returns false: stale generations (a second
+        // save firing while this one is still refreshing) are common
+        // and benign — the local optimistic update already shows the
+        // correct value, and the latest refresh will settle the
+        // DataProvider. Only a true network failure / timeout matters,
+        // and that surfaces through the regular catch below.
+        await refresh();
       } catch (err) {
         // Rollback the optimistic update so the cell reverts to what
         // was actually in DB before we touched it.
@@ -1121,10 +1123,11 @@ export default function UploadPage() {
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
         showSuccess(t('upload.withdrawalRegistered'));
 
-        const ok = await refresh();
-        if (!ok) {
-          showError('Retiro guardado, pero no se pudo recargar el estado. Refresca la página para verificar.');
-        }
+        // Same rationale as updateDeposit: skip false-positive toast on
+        // stale refresh (common when user clicks Save on a second row
+        // before the first refresh resolves). Real failures still
+        // surface via catch.
+        await refresh();
       } catch (err) {
         setWithdrawalsRaw(previousWithdrawals);
         Sentry.captureException(err, {
@@ -1255,12 +1258,23 @@ export default function UploadPage() {
         // 'retiros'). Clear both so the sync effect can re-hydrate from
         // the fresh DataProvider state without stomping on any other
         // section the user may still be editing.
+        //
+        // Critical (Kevin 2026-06-06): only clear dirty when refresh
+        // REALLY succeeded. If refresh returned false because of a true
+        // failure (timeout, RLS, network), the DataProvider still holds
+        // stale rows. Clearing dirty would let the sync effect
+        // overwrite the user's just-saved local edit with the stale
+        // DB read. Now stale-races return `true` from refresh (handled
+        // in data-context.tsx), so `false` is reserved for real
+        // failures — and in those we keep dirty marked so the next
+        // save attempt re-pushes the data once the network recovers.
         const ok = await refresh();
-        if (!ok) {
-          showError('Los ingresos se guardaron, pero no se pudieron recargar los datos. Refresca la página para ver el estado actualizado.');
+        if (ok) {
+          clearDirty('ingresos');
+          clearDirty('retiros');
+        } else {
+          showError('Los ingresos se guardaron pero no se pudieron recargar. Puedes seguir editando, el indicador "cambios sin guardar" se limpiará en la próxima recarga.');
         }
-        clearDirty('ingresos');
-        clearDirty('retiros');
       } catch (err) {
         const message = (err as Error).message;
         Sentry.captureException(err, {
@@ -1382,13 +1396,25 @@ export default function UploadPage() {
       // we just saved, so editing in a DIFFERENT section concurrently
       // is no longer wiped on refresh. Ingresos also clears 'retiros'
       // because that's what its payload upserts.
+      //
+      // Updated 2026-06-06 (regression fix): only clearDirty when the
+      // refresh REALLY succeeded. Previously, on refresh failure we
+      // still cleared dirty + showed a toast — but the sync effect
+      // would then re-hydrate local state from the stale DataProvider,
+      // wiping the user's just-saved row from view. The user's next
+      // edit + save would then re-upsert with the (now-overwritten)
+      // stale array and erase what was originally persisted. With this
+      // guard, on a real refresh failure the dirty stays marked, the
+      // banner stays up, and the next save attempt re-pushes the
+      // current local view (which is correct).
       const ok = await refresh();
-      if (!ok) {
-        showError('Datos guardados, pero no se pudo recargar el estado. Refresca la página manualmente para verificar.');
-      }
-      clearDirty(section);
-      if (section === 'ingresos') {
-        clearDirty('retiros');
+      if (ok) {
+        clearDirty(section);
+        if (section === 'ingresos') {
+          clearDirty('retiros');
+        }
+      } else {
+        showError('Datos guardados pero no se pudo recargar. Puedes seguir editando — el indicador "cambios sin guardar" se limpiará al próximo save exitoso.');
       }
     } catch (err) {
       const message = (err as Error).message;
