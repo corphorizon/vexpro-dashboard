@@ -46,7 +46,7 @@ export async function GET(request: NextRequest) {
           { status: 400 },
         );
       }
-      const dataset = await fetchProviderBySlug(slug as ProviderSlug, { from, to, walletId });
+      const dataset = await fetchProviderBySlug(slug as ProviderSlug, { from, to, walletId, companyId: auth.companyId });
       // Fire-and-forget write-through to api_transactions + api_sync_log.
       persistDataset(auth.companyId, dataset, { from, to }).catch((err) =>
         console.error('[movements] persistDataset (single) failed:', err),
@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, dataset });
     }
 
-    const data = await fetchAggregatedMovements({ from, to, walletId });
+    const data = await fetchAggregatedMovements({ from, to, walletId, companyId: auth.companyId });
 
     // Fire-and-forget persistence for every fresh dataset. Never blocks the
     // user response — an API fetch should always return even if Supabase is

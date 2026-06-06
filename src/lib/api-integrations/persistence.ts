@@ -80,6 +80,52 @@ export async function persistDataset(
     }
   }
 
+  // Wallet ownership scope — Kevin (2026-06-06 code review).
+  //
+  // Causa raíz: Vex Pro tenía datos de AP MARKETS y Exura Prime en
+  // api_transactions porque la cuenta Coinsbuy del tenant exponía
+  // múltiples wallets y el cron persistía TODAS las que la API
+  // devolvía. La limpieza ya borró las cross-tenant rows existentes;
+  // este check evita que vuelvan a entrar. Set de wallet IDs
+  // autorizadas = pinned_coinsbuy_wallets ∪ {default_wallet_id}. Si
+  // está vacío (tenant nuevo sin configurar), permitimos pero
+  // capturamos a Sentry para que el operador lo arregle.
+  let allowedWalletIds: Set<string> | null = null;
+  if (dataset.slug === 'coinsbuy-deposits' || dataset.slug === 'coinsbuy-withdrawals') {
+    const [pinnedRes, companyRes] = await Promise.all([
+      admin
+        .from('pinned_coinsbuy_wallets')
+        .select('wallet_id')
+        .eq('company_id', companyId),
+      admin
+        .from('companies')
+        .select('default_wallet_id')
+        .eq('id', companyId)
+        .maybeSingle(),
+    ]);
+    const ids = new Set<string>();
+    for (const r of pinnedRes.data ?? []) ids.add(String(r.wallet_id));
+    if (companyRes.data?.default_wallet_id) {
+      ids.add(String(companyRes.data.default_wallet_id));
+    }
+    if (ids.size > 0) {
+      allowedWalletIds = ids;
+    } else {
+      try {
+        const Sentry = await import('@sentry/nextjs');
+        Sentry.captureMessage('persistDataset: no wallet scope configured', {
+          level: 'warning',
+          tags: { area: 'persistence', companyId, provider: dataset.slug },
+        });
+      } catch {
+        console.warn(
+          `[persistDataset] ${dataset.slug} company ${companyId} has no pinned_coinsbuy_wallets and no default_wallet_id — accepting all wallet IDs (legacy). Configure to prevent cross-tenant data.`,
+        );
+      }
+    }
+  }
+
+  let rejectedCount = 0;
   const rows = dataset.transactions
     .filter((tx) => !backfilledIds.has(tx.id))
     .map((tx) => {
@@ -106,7 +152,29 @@ export async function persistDataset(
         raw: tx as unknown as Record<string, unknown>,
         synced_at: new Date().toISOString(),
       };
+    })
+    .filter((row) => {
+      if (!allowedWalletIds) return true;
+      if (!row.wallet_id) return true; // non-coinsbuy rows (shouldn't happen here)
+      if (allowedWalletIds.has(String(row.wallet_id))) return true;
+      rejectedCount++;
+      return false;
     });
+
+  if (rejectedCount > 0) {
+    try {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.captureMessage('persistDataset: rejected wallet rows', {
+        level: 'warning',
+        tags: { area: 'persistence.wallet_scope', companyId, provider: dataset.slug },
+        extra: { rejectedCount, allowed: Array.from(allowedWalletIds ?? []) },
+      });
+    } catch {
+      console.warn(
+        `[persistDataset] ${dataset.slug} rejected ${rejectedCount} rows with wallet_id outside the tenant's authorized set`,
+      );
+    }
+  }
 
   if (rows.length > 0) {
     const { error } = await admin

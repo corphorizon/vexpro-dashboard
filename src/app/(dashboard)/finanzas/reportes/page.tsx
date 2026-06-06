@@ -23,7 +23,11 @@ import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { downloadCSV } from '@/lib/csv-export';
-import { downloadReportPDF } from '@/lib/reports/pdf';
+// Lazy-loaded (Kevin 2026-06-06 code review): jspdf + jspdf-autotable
+// pesan ~700KB del bundle de /finanzas/reportes aunque solo se usen al
+// hacer click en "Descargar PDF". Dynamic-import los carga al primer
+// click — el resto de la página queda más liviana.
+// import { downloadReportPDF } from '@/lib/reports/pdf';
 import { ReportsConfigPanel } from './config-panel';
 import { SendReportModal } from './send-modal';
 
@@ -302,13 +306,16 @@ export default function ReportesPage() {
         typeof window !== 'undefined'
           ? getComputedStyle(document.documentElement).getPropertyValue('--color-primary').trim()
           : '';
-      void downloadReportPDF({
-        data: data as unknown as import('@/lib/reports/data').ReportData,
-        cadence: 'daily',
-        companyName: company?.name ?? 'Smart Dashboard',
-        companyLogoDataUrl: null, // logos served via URL, not inlined
-        primaryColor: cssPrimary || null,
-      });
+      void (async () => {
+        const { downloadReportPDF } = await import('@/lib/reports/pdf');
+        await downloadReportPDF({
+          data: data as unknown as import('@/lib/reports/data').ReportData,
+          cadence: 'daily',
+          companyName: company?.name ?? 'Smart Dashboard',
+          companyLogoDataUrl: null, // logos served via URL, not inlined
+          primaryColor: cssPrimary || null,
+        });
+      })();
     });
 
   // ── Render ─────────────────────────────────────────────────────────

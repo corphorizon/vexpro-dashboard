@@ -427,9 +427,27 @@ export async function buildReportData(
     if (companyRow?.default_wallet_id) {
       pinnedCoinsbuyIds = new Set([String(companyRow.default_wallet_id)]);
     } else {
-      console.warn(
-        `[reports] company ${companyId} has no pinned_coinsbuy_wallets and no default_wallet_id — falling back to count-all (legacy behaviour, configure one of the two to scope reports correctly)`,
-      );
+      // Hardened (Kevin 2026-06-06 code review): el fallback antiguo era
+      // "count-all" silencioso, que filtraba data cross-wallet a los
+      // reportes y solo se notaba via console.warn. Ahora bloqueamos
+      // todas las wallets Coinsbuy (Set vacío → filter exige match
+      // estricto, nada pasa) y elevamos a Sentry para que el operador
+      // configure pinned o default_wallet_id explícitamente.
+      pinnedCoinsbuyIds = new Set();
+      try {
+        const Sentry = await import('@sentry/nextjs');
+        Sentry.captureMessage('Report wallet scope missing', {
+          level: 'warning',
+          tags: { area: 'reports.data', kind: 'no-wallet-scope' },
+          extra: { companyId },
+        });
+      } catch {
+        // Sentry not available — fall back to console.error so it
+        // still ends up in Vercel logs.
+        console.error(
+          `[reports] company ${companyId} has no pinned_coinsbuy_wallets and no default_wallet_id — Coinsbuy totals will be 0 until one is set. Refusing to count all wallets to prevent cross-tenant data in reports.`,
+        );
+      }
     }
   }
 

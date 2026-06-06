@@ -17,6 +17,16 @@ export interface FetchOptions {
   from?: string;
   to?: string;
   walletId?: string;
+  /**
+   * Tenant whose API credentials should be used to authenticate against
+   * the upstream provider. REQUIRED for production calls — without it,
+   * resolveConfig() correctly refuses to fall back to env credentials
+   * (which would leak cross-tenant). Was missing here from the start of
+   * the multi-tenant migration and made the live "Refrescar" button in
+   * /movimientos always return `status='error', errorMessage='not
+   * configured'` (Kevin caught it in the 2026-06-06 code review).
+   */
+  companyId?: string | null;
 }
 
 export interface AggregatedMovements {

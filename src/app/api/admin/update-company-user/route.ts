@@ -28,6 +28,45 @@ const ALLOWED_FIELDS = [
   'must_change_password',
 ] as const;
 
+// Whitelist of company-level roles. `superadmin` lives in `platform_users`
+// and is NEVER assignable through this endpoint. `owner` and any other
+// string outside this set is rejected (defense against payload tampering
+// to escalate privileges). Custom roles created via /api/admin/custom-roles
+// are also accepted by prefix `custom:` so the existing UI keeps working.
+const ALLOWED_ROLES: ReadonlySet<string> = new Set([
+  'admin',
+  'auditor',
+  'hr',
+  'viewer',
+]);
+function isAllowedRole(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  if (ALLOWED_ROLES.has(value)) return true;
+  // Custom roles are namespaced. Empty namespace not allowed.
+  return value.startsWith('custom:') && value.length > 'custom:'.length;
+}
+
+// Whitelist of module keys (mirrors `companies.active_modules` defaults).
+// Anything outside this list is silently dropped from allowed_modules so
+// a tampered payload can't grant access to internal/unknown routes.
+const VALID_MODULE_KEYS: ReadonlySet<string> = new Set([
+  'summary',
+  'movements',
+  'expenses',
+  'liquidity',
+  'investments',
+  'balances',
+  'partners',
+  'upload',
+  'periods',
+  'commissions',
+  'risk',
+  'hr',
+  'reports',
+  'users',
+  'settings',
+]);
+
 export async function POST(request: NextRequest) {
   try {
     const auth = await verifyAdminAuth(request);
@@ -76,12 +115,35 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Si se cambia el rol, prohibir crear admins desde este path:
-    // sólo el superadmin puede asignar 'admin' (vía /api/superadmin/users).
-    if ('role' in update && update.role === 'admin' && !auth.isSuperadmin) {
-      return NextResponse.json(
-        { success: false, error: 'No tienes permisos para asignar el rol admin' },
-        { status: 403 },
+    // Hardened (2026-06-06 code review): whitelist explícito + bloqueo
+    // anti-escalation. Anteriormente solo bloqueábamos role==='admin'
+    // para no-superadmins, pero cualquier string distinto pasaba (ej.
+    // 'superadmin', 'owner', 'platform_admin') y se persistía en la
+    // tabla. La tabla company_users no enforcea el enum, así que la
+    // app comparaba contra valores arbitrarios para gates de UI.
+    if ('role' in update) {
+      if (!isAllowedRole(update.role)) {
+        return NextResponse.json(
+          { success: false, error: `Rol no válido: ${String(update.role)}` },
+          { status: 400 },
+        );
+      }
+      // Solo superadmin puede asignar 'admin' (mantiene el guard
+      // original; un admin de empresa no puede crear otro admin).
+      if (update.role === 'admin' && !auth.isSuperadmin) {
+        return NextResponse.json(
+          { success: false, error: 'No tienes permisos para asignar el rol admin' },
+          { status: 403 },
+        );
+      }
+    }
+
+    // Hardened: sanitizar allowed_modules contra una whitelist conocida
+    // para evitar que un payload tampered grant acceso a /superadmin
+    // o módulos internos.
+    if ('allowed_modules' in update && Array.isArray(update.allowed_modules)) {
+      update.allowed_modules = (update.allowed_modules as unknown[]).filter(
+        (m): m is string => typeof m === 'string' && VALID_MODULE_KEYS.has(m),
       );
     }
 
