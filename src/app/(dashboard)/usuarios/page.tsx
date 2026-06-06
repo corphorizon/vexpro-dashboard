@@ -49,6 +49,10 @@ export default function UsuariosPage() {
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
+  // Movido aquí desde justo antes de handleResendInvite (estaba después del
+  // early-return `if (!canAccess)`, lo que disparaba react-hooks/rules-of-hooks
+  // en CI 2026-06-06). Los hooks deben declararse antes de cualquier exit.
+  const [resendingId, setResendingId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [resetPwUser, setResetPwUser] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
@@ -174,11 +178,10 @@ export default function UsuariosPage() {
     }
   };
 
-  // Reenviar invitación: regenera el token y manda el correo de
-  // nuevo. Solo aplica a usuarios con must_change_password=true (todavía
-  // no activaron su cuenta) y que no son admin.
-  const [resendingId, setResendingId] = useState<string | null>(null);
-
+  // Reenviar invitación: regenera el token y manda el correo de nuevo.
+  // Solo aplica a usuarios con must_change_password=true (todavía no
+  // activaron su cuenta) y que no son admin. El useState se declara
+  // arriba con los demás (rules-of-hooks).
   const handleResendInvite = async (u: User) => {
     if (!confirm(`Reenviar invitación a ${u.email}?`)) return;
     setResendingId(u.id);
