@@ -10,7 +10,13 @@ import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
-import { generateCommissionPDF, generateIndividualPDF, generatePnlPDF } from '@/lib/pdf-export';
+// Lazy-loaded (Kevin 2026-06-06 code review): jspdf + jspdf-autotable
+// se cargan solo al hacer click en cualquier botón "Exportar PDF". Antes
+// estaban static-imported y se incluían en el bundle de /comisiones (~700KB).
+// Llama a `loadPdfExports()` antes de invocar generateCommissionPDF, etc.
+async function loadPdfExports() {
+  return import('@/lib/pdf-export');
+}
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import {
@@ -971,13 +977,14 @@ export default function ComisionesPage() {
   };
   const handleExport = () => verify2FA(doExport);
 
-  const doExportPDF = () => {
+  const doExportPDF = async () => {
     if (!selectedPeriod || !headProfile) return;
     const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
 
     // Build salary tier label
     const tierLabels = HEAD_SALARY_TIERS.map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
 
+    const { generateCommissionPDF } = await loadPdfExports();
     generateCommissionPDF({
       companyName: company?.name ?? 'Smart Dashboard',
       headName: headProfile.name,
@@ -1334,9 +1341,10 @@ export default function ComisionesPage() {
                                   : <Save className="w-4 h-4" />}
                               </button>
                               <button
-                                onClick={() => verify2FA(() => {
+                                onClick={() => verify2FA(async () => {
                                   if (!selectedPeriod) return;
                                   const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
+                                  const { generateIndividualPDF } = await loadPdfExports();
                                   generateIndividualPDF({
                                     companyName: company?.name ?? 'Smart Dashboard',
                                     periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
@@ -1485,11 +1493,12 @@ export default function ComisionesPage() {
                                   : <Save className="w-4 h-4" />}
                               </button>
                               <button
-                                onClick={() => verify2FA(() => {
+                                onClick={() => verify2FA(async () => {
                                   if (!selectedPeriod) return;
                                   const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
                                   const lotComm = lotInputs.get(calc.profileId) ?? 0;
                                   const adjustedReal = calc.realPayment - lotComm;
+                                  const { generatePnlPDF } = await loadPdfExports();
                                   generatePnlPDF({
                                     companyName: company?.name ?? 'Smart Dashboard',
                                     periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
@@ -1659,11 +1668,12 @@ export default function ComisionesPage() {
                                     del modo Especial — accumulatedIn=0, division=0,
                                     accumulatedOut=0 reflejan la regla "no hay acumulado". */}
                                 <button
-                                  onClick={() => verify2FA(() => {
+                                  onClick={() => verify2FA(async () => {
                                     if (!selectedPeriod) return;
                                     const headP = profile.head_id
                                       ? commercialProfiles.find(p => p.id === profile.head_id)
                                       : null;
+                                    const { generatePnlPDF } = await loadPdfExports();
                                     generatePnlPDF({
                                       companyName: company?.name ?? 'Smart Dashboard',
                                       periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,

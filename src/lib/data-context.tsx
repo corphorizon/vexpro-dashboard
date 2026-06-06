@@ -39,7 +39,6 @@ import type {
   CommercialMonthlyResult,
 } from './types';
 import {
-  fetchCompany,
   fetchCompanyById,
   fetchPeriods,
   fetchDeposits,
