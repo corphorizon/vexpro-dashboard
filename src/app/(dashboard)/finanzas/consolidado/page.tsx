@@ -33,6 +33,7 @@ import { useAuth } from '@/lib/auth-context';
 import { hasModuleAccess } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
+import { withActiveCompany } from '@/lib/api-fetch';
 import {
   Table,
   Download,
@@ -166,10 +167,16 @@ export default function ConsolidadoPage() {
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch(
+        // withActiveCompany: cuando un superadmin entra viewing-as un
+        // tenant, el endpoint verifyAuth() leería el cookie session
+        // (superadmin) y devolvería los datos de su company, NO los
+        // del tenant que está viewing. withActiveCompany inyecta el
+        // header X-Active-Company que el server respeta — mismo patrón
+        // que MonthlyChart en /resumen-general ya usaba.
+        const url = withActiveCompany(
           `/api/integrations/period-totals?from=${from}&to=${to}`,
-          { signal: controller.signal },
         );
+        const res = await fetch(url, { signal: controller.signal });
         const json = await res.json();
         if (json?.success && json.months) {
           setApiMonths(json.months);
