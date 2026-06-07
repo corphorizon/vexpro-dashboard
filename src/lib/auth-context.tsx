@@ -884,18 +884,32 @@ export function hasModuleAccess(
   return true;
 }
 
+// Superadmin bypass (Kevin 2026-06-07): cuando un superadmin entra
+// viewing-as un tenant, su `effective_role` queda como 'superadmin'
+// (ver auth-context resolveUserProfile). Las funciones antiguas solo
+// chequeaban 'admin'/'auditor', así que un superadmin no podía editar
+// ni eliminar nada en /upload, /comisiones, etc. — Kevin lo reportó
+// intentando borrar y editar egresos de Mayo.
+//
+// Mismo patrón que hasModuleAccess ya usa: superadmin tiene acceso
+// pleno conceptualmente; el filtrado real cross-tenant lo enforcea
+// RLS via `is_superadmin()` bypass + el header X-Active-Company.
+
 export function canAdd(user: User | null): boolean {
   if (!user) return false;
+  if (user.is_superadmin) return true;
   return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
 export function canEdit(user: User | null): boolean {
   if (!user) return false;
+  if (user.is_superadmin) return true;
   return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
 export function canDelete(user: User | null): boolean {
   if (!user) return false;
+  if (user.is_superadmin) return true;
   return user.effective_role === 'admin';
 }
 
