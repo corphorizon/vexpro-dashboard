@@ -30,16 +30,19 @@ function hasModuleAccess(
 
 function canAdd(user: User | null): boolean {
   if (!user) return false;
+  if (user.is_superadmin) return true;
   return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
 function canEdit(user: User | null): boolean {
   if (!user) return false;
+  if (user.is_superadmin) return true;
   return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
 function canDelete(user: User | null): boolean {
   if (!user) return false;
+  if (user.is_superadmin) return true;
   return user.effective_role === 'admin';
 }
 
@@ -119,5 +122,16 @@ describe('canAdd / canEdit / canDelete', () => {
       expect(canEdit(u)).toBe(false);
       expect(canDelete(u)).toBe(false);
     }
+  });
+
+  it('superadmin can add/edit/delete (regression Kevin 2026-06-07)', () => {
+    // Cuando un superadmin entra viewing-as un tenant, effective_role
+    // queda como "superadmin" (no admin). Las versiones antiguas de
+    // canAdd/canEdit/canDelete rechazaban porque el switch solo
+    // contemplaba "admin"/"auditor". Bug visible en /upload Egresos.
+    const u = make({ effective_role: 'superadmin', is_superadmin: true });
+    expect(canAdd(u)).toBe(true);
+    expect(canEdit(u)).toBe(true);
+    expect(canDelete(u)).toBe(true);
   });
 });
