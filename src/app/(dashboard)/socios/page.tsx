@@ -201,18 +201,41 @@ export default function SociosPage() {
   //
   // This keeps historical consolidated months (Mar-2026 and older) coherent
   // with single-period views without rewriting the stored rows.
-  const effectiveDistributions = mode === 'single'
-    ? distributions.map(d => ({
-        ...d,
-        amount: totalToDistribute > 0 ? totalToDistribute * d.percentage : 0,
-      }))
-    : distributions.map(d => {
-        const recomputed = selectedPeriodIds.reduce((sum, pid) => {
-          const md = periodChain.get(pid)?.montoDistribuir ?? 0;
-          return sum + (md > 0 ? md * d.percentage : 0);
-        }, 0);
-        return { ...d, amount: recomputed };
-      });
+  //
+  // Kevin (2026-06-06, screenshot Mayo): hay meses como Mayo donde
+  // todavía NO se han guardado rows en partner_distributions (la primera
+  // vez que se calcula la distribución). El código antiguo iteraba solo
+  // sobre `distributions` (filtered de DB) → array vacío para esos meses
+  // → la tabla mostraba 4 filas vía un fallback con amount "—". El total
+  // daba $0.00 aunque el card "Monto a Distribuir" mostraba $4,580.71.
+  //
+  // Nueva lógica: siempre construir UNA fila por partner usando
+  // partners[].percentage como fuente de verdad para el percentage de
+  // hoy. Si hay row guardada, respetamos SU percentage (puede diferir
+  // si se editó la distribución de un mes pasado). El amount se DERIVA
+  // siempre de totalToDistribute × pct — nunca confiamos en el `amount`
+  // persistido (queda stale al cambiar reserve_pct o partner.percentage).
+  const effectiveDistributions = partners.map((p) => {
+    const saved = distributions.find((d) => d.partner_id === p.id);
+    const pct = saved?.percentage ?? p.percentage;
+    const amount =
+      mode === 'single'
+        ? totalToDistribute > 0
+          ? totalToDistribute * pct
+          : 0
+        : selectedPeriodIds.reduce((sum, pid) => {
+            const md = periodChain.get(pid)?.montoDistribuir ?? 0;
+            return sum + (md > 0 ? md * pct : 0);
+          }, 0);
+    return {
+      id: saved?.id ?? `derived-${p.id}`,
+      partner_id: p.id,
+      period_id: saved?.period_id ?? selectedPeriodId,
+      company_id: p.company_id,
+      percentage: pct,
+      amount,
+    };
+  });
 
   const totalDistributed = effectiveDistributions.reduce((sum, d) => sum + d.amount, 0);
   // Kevin (2026-06-06): el warning antiguo sumaba percentages de
@@ -551,53 +574,11 @@ export default function SociosPage() {
                   </tr>
                 );
               })}
-              {/* Show partners not in distributions */}
-              {partners
-                .filter(p => !effectiveDistributions.some(d => d.partner_id === p.id))
-                .map((partner, i) => (
-                  <tr key={partner.id} className="border-b border-border/50 hover:bg-muted/50 opacity-60">
-                    <td className="py-3 px-2 sm:px-3">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: COLORS[(effectiveDistributions.length + i) % COLORS.length] }}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium truncate block">{partner.name}</span>
-                          {partner.email && (
-                            <span className="text-xs text-muted-foreground hidden sm:block truncate">{partner.email}</span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-3 px-2 sm:px-3 text-right font-medium whitespace-nowrap">{formatPercent(partner.percentage)}</td>
-                    <td className="py-3 px-2 sm:px-3 text-right font-bold">—</td>
-                    {isAdmin && (
-                      <td className="py-3 px-1 sm:px-3 text-center">
-                        <div className="flex justify-center gap-0.5 sm:gap-1">
-                          <button
-                            onClick={() => handleEditPartner(partner.id)}
-                            className="p-1 rounded hover:bg-muted transition-colors"
-                            title={t('partners.editPartner')}
-                          >
-                            <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                          </button>
-                          <button
-                            onClick={() => confirm(
-                              t('partners.deleteConfirm', { name: partner.name }),
-                              () => handleDeletePartner(partner.id),
-                              { tone: 'danger', title: t('partners.deletePartner'), confirmLabel: t('partners.deletePartner') },
-                            )}
-                            className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
-                            title={t('partners.deletePartner')}
-                          >
-                            <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                          </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                ))}
+              {/* Fallback removido (2026-06-06): effectiveDistributions
+                  ahora siempre incluye una fila por cada partner, con
+                  el amount derivado de partner.percentage × monto a
+                  distribuir. Ya no necesitamos el render alterno con
+                  amount "—". */}
             </tbody>
             <tfoot>
               <tr className="font-bold bg-muted/50">
