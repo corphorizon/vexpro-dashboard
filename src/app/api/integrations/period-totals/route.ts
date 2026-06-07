@@ -22,12 +22,17 @@ import { createAdminClient } from '@/lib/supabase/admin';
 //   }
 // ---------------------------------------------------------------------------
 
-const ACCEPTED_STATUS: Record<string, string[]> = {
-  'coinsbuy-deposits': ['Confirmed'],
-  'coinsbuy-withdrawals': ['Approved'],
-  fairpay: ['Completed'],
-  unipayment: ['Completed'],
-};
+// Kevin (2026-06-07): el código antiguo de este endpoint cargaba ALL
+// `api_transactions` rows del tenant y agregaba en JS. PostgREST aplica
+// un default row cap (~1000) que truncaba para tenants con muchas
+// transacciones — Vex Pro tiene 5576 rows entre Mar-Jun 2026, así que
+// Mayo y Junio quedaban completamente fuera del response y el gráfico
+// "Evolución Mensual" mostraba ~$0 para esos meses aunque la API
+// tuviera $578K + $573K reales.
+//
+// Reemplazado por una RPC `get_period_totals_by_month` que hace TODO el
+// filtrado (status + pinned wallets) y agregado en SQL puro. Una sola
+// query, sin row caps, sin paginación. Migración inline el 2026-06-07.
 
 export async function GET(request: NextRequest) {
   try {
@@ -39,31 +44,12 @@ export async function GET(request: NextRequest) {
 
     const admin = createAdminClient();
 
-    // Pinned Coinsbuy wallets — same scoping rule used by
-    // buildReportData. Coinsbuy rows from wallets the tenant has not
-    // pinned are excluded so /balances and the email report match the
-    // wallets surfaced in the UI. No pinned list = include everything
-    // (legacy fallback).
-    const { data: pinnedRows } = await admin
-      .from('pinned_coinsbuy_wallets')
-      .select('wallet_id')
-      .eq('company_id', auth.companyId);
-    const pinnedCoinsbuyIds =
-      pinnedRows && pinnedRows.length > 0
-        ? new Set((pinnedRows as Array<{ wallet_id: string }>).map((r) => String(r.wallet_id)))
-        : null;
+    const { data, error } = await admin.rpc('get_period_totals_by_month', {
+      p_company_id: auth.companyId,
+      p_from: from ? `${from}T00:00:00.000Z` : '1970-01-01T00:00:00.000Z',
+      p_to: to ? `${to}T23:59:59.999Z` : '2099-12-31T23:59:59.999Z',
+    });
 
-    let query = admin
-      .from('api_transactions')
-      .select('provider, amount, status, transaction_date, wallet_id')
-      .eq('company_id', auth.companyId)
-      // Defensive cap — see persisted-movements for rationale.
-      .limit(10000);
-
-    if (from) query = query.gte('transaction_date', `${from}T00:00:00.000Z`);
-    if (to) query = query.lte('transaction_date', `${to}T23:59:59.999Z`);
-
-    const { data, error } = await query;
     if (error) {
       return NextResponse.json(
         { success: false, error: error.message, months: {} },
@@ -72,30 +58,15 @@ export async function GET(request: NextRequest) {
     }
 
     const months: Record<string, { deposits: number; withdrawals: number }> = {};
-    for (const row of data ?? []) {
-      const accepted = ACCEPTED_STATUS[row.provider];
-      if (!accepted) continue;
-      if (row.status && !accepted.includes(row.status)) continue;
-
-      // Wallet scoping for Coinsbuy rows.
-      if (
-        pinnedCoinsbuyIds &&
-        (row.provider === 'coinsbuy-deposits' || row.provider === 'coinsbuy-withdrawals')
-      ) {
-        const wid = row.wallet_id ? String(row.wallet_id) : null;
-        if (!wid || !pinnedCoinsbuyIds.has(wid)) continue;
-      }
-
-      // Bucket by YYYY-MM of transaction_date (UTC).
-      const key = String(row.transaction_date).slice(0, 7);
-      if (!months[key]) months[key] = { deposits: 0, withdrawals: 0 };
-
-      const amount = Number(row.amount) || 0;
-      if (row.provider === 'coinsbuy-withdrawals') {
-        months[key].withdrawals += amount;
-      } else {
-        months[key].deposits += amount;
-      }
+    for (const row of (data ?? []) as Array<{
+      month: string;
+      deposits: number | string;
+      withdrawals: number | string;
+    }>) {
+      months[row.month] = {
+        deposits: Number(row.deposits) || 0,
+        withdrawals: Number(row.withdrawals) || 0,
+      };
     }
 
     return NextResponse.json({ success: true, months });
