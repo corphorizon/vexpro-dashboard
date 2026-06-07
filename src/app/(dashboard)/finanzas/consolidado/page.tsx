@@ -53,6 +53,12 @@ interface PeriodRowContext {
   // datos pre-calculados para evitar repetir el getPeriodSummary
   summary: ReturnType<ReturnType<typeof useData>['getPeriodSummary']>;
   saldoInfo: { reservaPeriodo: number; reservaAcumulada: number; montoDistribuir: number } | null;
+  // API totales del mes (Coinsbuy + FairPay + UniPayment). Llenado desde
+  // /api/integrations/period-totals que ya respeta pinned_coinsbuy_wallets.
+  // Sumado a `summary.totalDeposits` (manual) para mostrar el monto real.
+  // Antes la tabla solo leía manuales y Mayo/Junio aparecían como $0.
+  apiDeposits: number;
+  apiWithdrawals: number;
 }
 
 interface ColumnDef {
@@ -135,6 +141,46 @@ export default function ConsolidadoPage() {
 
   const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
 
+  // ─── API totales por período ─────────────────────────────────────────────
+  //
+  // /api/integrations/period-totals devuelve un objeto
+  // `months: { '2026-04': { deposits, withdrawals } }` aplicando el filtrado
+  // por pinned_coinsbuy_wallets que ya teníamos. Lo cargamos una sola vez
+  // (al cambiar de empresa) y lo guardamos en estado para que cada fila
+  // de la tabla sume API + manual.
+  const [apiMonths, setApiMonths] = useState<
+    Record<string, { deposits: number; withdrawals: number }>
+  >({});
+
+  useEffect(() => {
+    if (!company || periods.length === 0) return;
+    const sorted = [...periods].sort((a, b) =>
+      a.year !== b.year ? a.year - b.year : a.month - b.month,
+    );
+    const first = sorted[0];
+    const last = sorted[sorted.length - 1];
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const lastDay = new Date(last.year, last.month, 0).getDate();
+    const from = `${first.year}-${pad(first.month)}-01`;
+    const to = `${last.year}-${pad(last.month)}-${pad(lastDay)}`;
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/integrations/period-totals?from=${from}&to=${to}`,
+          { signal: controller.signal },
+        );
+        const json = await res.json();
+        if (json?.success && json.months) {
+          setApiMonths(json.months);
+        }
+      } catch {
+        // Silent — fallback es 0 y aún se ven los datos manuales.
+      }
+    })();
+    return () => controller.abort();
+  }, [company, periods]);
+
   const periodContexts: PeriodRowContext[] = useMemo(() => {
     return periods.map((p) => {
       const summary = getPeriodSummary(p.id);
@@ -146,14 +192,18 @@ export default function ConsolidadoPage() {
             montoDistribuir: saldoEntry.totalDistribuir,
           }
         : null;
+      const key = `${p.year}-${String(p.month).padStart(2, '0')}`;
+      const api = apiMonths[key] ?? { deposits: 0, withdrawals: 0 };
       return {
         periodId: p.id,
-        periodLabel: p.label ?? `${p.year}-${String(p.month).padStart(2, '0')}`,
+        periodLabel: p.label ?? key,
         summary,
         saldoInfo,
+        apiDeposits: api.deposits,
+        apiWithdrawals: api.withdrawals,
       };
     });
-  }, [periods, getPeriodSummary, saldoChain]);
+  }, [periods, getPeriodSummary, saldoChain, apiMonths]);
 
   // Definición de columnas. Orden = orden de aparición en la tabla.
   const columns: ColumnDef[] = useMemo(
@@ -161,21 +211,37 @@ export default function ConsolidadoPage() {
       {
         key: 'totalDeposits',
         label: 'Depósitos',
-        compute: (c) => c.summary?.totalDeposits ?? 0,
+        // API (Coinsbuy + FairPay + UniPayment) + manual. Antes solo
+        // se mostraba el manual (`summary.totalDeposits`) y los meses
+        // sin entrada manual aparecían como $0 aunque la API tuviera
+        // cientos de miles. Coincide con la fórmula de /movimientos.
+        compute: (c) => c.apiDeposits + (c.summary?.totalDeposits ?? 0),
         total: 'sum',
         kind: 'pos',
       },
       {
         key: 'totalWithdrawals',
         label: 'Retiros',
-        compute: (c) => c.summary?.totalWithdrawals ?? 0,
+        // API + manual (broker como Coinsbuy supplement). Misma lógica
+        // que el card "Retiros Totales" en /movimientos.
+        compute: (c) => {
+          const manualBroker =
+            c.summary?.withdrawals?.find((w) => w.category === 'broker')?.amount ?? 0;
+          return c.apiWithdrawals + manualBroker;
+        },
         total: 'sum',
         kind: 'neg',
       },
       {
         key: 'netDeposit',
         label: 'Net Deposit',
-        compute: (c) => c.summary?.netDeposit ?? 0,
+        compute: (c) => {
+          const deposits = c.apiDeposits + (c.summary?.totalDeposits ?? 0);
+          const manualBroker =
+            c.summary?.withdrawals?.find((w) => w.category === 'broker')?.amount ?? 0;
+          const withdrawals = c.apiWithdrawals + manualBroker;
+          return deposits - withdrawals;
+        },
         total: 'sum',
         kind: 'neutral',
       },
@@ -331,7 +397,7 @@ export default function ConsolidadoPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Consolidado por mes"
+        title="Consolidados"
         subtitle="Indicadores financieros mes a mes, columnas y meses ocultables, total final automático."
         icon={Table}
         actions={
