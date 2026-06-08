@@ -67,6 +67,13 @@ export interface CoinsbuyWithdrawalTx {
   /** See CoinsbuyDepositTx.walletId — same field, same purpose. */
   walletId?: string;
   walletLabel?: string;
+  /** Si true, el admin marcó esta transacción como externa (retiro
+   *  procesado fuera del flow del CRM, swap interno, etc). NO se cuenta
+   *  en totales y NO se muestra por defecto en /movimientos. */
+  excluded?: boolean;
+  excludedReason?: string;
+  excludedByName?: string;
+  excludedAt?: string;
 }
 
 // ── FairPay ──

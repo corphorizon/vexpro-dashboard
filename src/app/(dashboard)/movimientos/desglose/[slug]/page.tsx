@@ -16,6 +16,7 @@ import {
   Calendar,
   CheckCircle2,
   AlertTriangle,
+  Search,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { withActiveCompany } from '@/lib/api-fetch';
@@ -81,6 +82,12 @@ export default function BreakdownPage({
     notFound();
   }
   const slug = rawSlug as ProviderSlug;
+  // Providers que soportan exclusión manual (mismo set que la whitelist del
+  // endpoint POST /api/integrations/excluded-transactions). Para estos se
+  // muestra la columna "Acciones", el toggle "Mostrar excluidas" y el filtro
+  // de filas. El resto de providers se renderiza sin nada de eso.
+  const supportsExclusion =
+    slug === 'coinsbuy-deposits' || slug === 'coinsbuy-withdrawals';
 
   const initialFrom = typeof initialQuery.from === 'string' ? initialQuery.from : '';
   const initialTo = typeof initialQuery.to === 'string' ? initialQuery.to : '';
@@ -101,6 +108,11 @@ export default function BreakdownPage({
   // defecto se ocultan; el botón "Mostrar excluidas" del header las revela
   // (con strikethrough y opacity para que sea visible que no cuentan).
   const [showExcluded, setShowExcluded] = useState(false);
+  // Buscador libre client-side (solo en las tablas de Coinsbuy). Filtra las
+  // filas visibles sin tocar los totales de arriba ni el CSV export.
+  const [searchQuery, setSearchQuery] = useState('');
+  const supportsSearch =
+    slug === 'coinsbuy-deposits' || slug === 'coinsbuy-withdrawals';
 
   const load = async () => {
     setLoading(true);
@@ -157,27 +169,42 @@ export default function BreakdownPage({
     [dataset]
   );
 
-  // Filtrar excluidas a nivel UI (solo coinsbuy-deposits hoy). El total
-  // que muestra la card grande ya las descuenta en computeProviderTotals;
-  // acá controlamos solo qué filas se ven en la tabla.
+  // Filtrar excluidas a nivel UI (coinsbuy-deposits y coinsbuy-withdrawals).
+  // El total que muestra la card grande ya las descuenta en
+  // computeProviderTotals; acá controlamos solo qué filas se ven en la tabla.
+  // baseRows = filas tras aplicar el toggle de excluidas, ANTES del buscador.
+  // Sirve de denominador para el contador "Mostrando X de Y".
+  const baseRows = useMemo(() => {
+    if (!supportsExclusion || showExcluded) return accepted;
+    return accepted.filter((t) => !(t as { excluded?: boolean }).excluded);
+  }, [accepted, supportsExclusion, showExcluded]);
+
+  // visibleRows = baseRows tras aplicar el buscador libre (solo Coinsbuy).
+  // El buscador es puramente client-side y NO afecta totales ni CSV.
   const visibleRows = useMemo(() => {
-    if (slug !== 'coinsbuy-deposits' || showExcluded) return accepted;
-    return (accepted as (CoinsbuyDepositTx & { excluded?: boolean })[]).filter(
-      (t) => !t.excluded,
+    if (!supportsSearch || !searchQuery.trim()) return baseRows;
+    return baseRows.filter((t) =>
+      matchesSearchQuery(t as unknown as Record<string, unknown>, searchQuery),
     );
-  }, [accepted, slug, showExcluded]);
+  }, [baseRows, supportsSearch, searchQuery]);
+
+  // Resetear a la página 1 cuando cambia el query — si no, el usuario podría
+  // quedar en una página vacía tras filtrar (visibleRows se achica).
+  useEffect(() => {
+    setPage(1);
+  }, [searchQuery]);
 
   const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
   const pageRows = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Cantidad de excluidas que existen actualmente — para mostrar contador
-  // en el botón del toggle solo en coinsbuy-deposits.
+  // en el botón del toggle (coinsbuy-deposits y coinsbuy-withdrawals).
   const excludedCount = useMemo(() => {
-    if (slug !== 'coinsbuy-deposits') return 0;
-    return (accepted as (CoinsbuyDepositTx & { excluded?: boolean })[]).filter(
-      (t) => t.excluded === true,
+    if (!supportsExclusion) return 0;
+    return accepted.filter(
+      (t) => (t as { excluded?: boolean }).excluded === true,
     ).length;
-  }, [accepted, slug]);
+  }, [accepted, supportsExclusion]);
 
   const handleExport = () => verify2FA(() => {
     if (!dataset) return;
@@ -227,7 +254,35 @@ export default function BreakdownPage({
           )}
         </div>
         <div className="flex items-center gap-2">
-          {slug === 'coinsbuy-deposits' && (
+          {supportsSearch && (
+            <div className="flex flex-col">
+              <div className="relative flex items-center">
+                <Search className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Buscar por label, tracking, monto..."
+                  className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 text-muted-foreground hover:text-foreground"
+                    aria-label="Limpiar búsqueda"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+              {searchQuery && (
+                <p className="text-xs text-muted-foreground mt-1">
+                  Mostrando {visibleRows.length} de {baseRows.length} transacciones
+                </p>
+              )}
+            </div>
+          )}
+          {supportsExclusion && (
             <button
               onClick={() => setShowExcluded((v) => !v)}
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
@@ -394,8 +449,8 @@ function BreakdownTable({
 }: {
   slug: ProviderSlug;
   rows: unknown[];
-  /** Solo lo usa la tabla de coinsbuy-deposits para refrescar después de
-   *  marcar / desmarcar una exclusión. */
+  /** Lo usan las tablas de coinsbuy-deposits y coinsbuy-withdrawals para
+   *  refrescar después de marcar / desmarcar una exclusión. */
   onExclusionChanged?: () => void;
 }) {
   const thCls =
@@ -461,24 +516,36 @@ function BreakdownTable({
             <th className={`${thCls} text-right`}>Charged Amount</th>
             <th className={`${thCls} text-right`}>Commission</th>
             <th className={thCls}>Status</th>
+            <th className={thCls}>Acciones</th>
           </tr>
         </thead>
         <tbody>
-          {r.map((t) => (
-            <tr key={t.id}>
-              <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-              <td className={tdCls}>{t.label}</td>
-              <td className={`${tdCls} font-mono`}>{t.trackingId}</td>
-              <td className={`${tdCls} text-right`}>{formatCurrency(t.amount)}</td>
-              <td className={`${tdCls} text-right font-medium`}>
-                {formatCurrency(t.chargedAmount)}
-              </td>
-              <td className={`${tdCls} text-right`}>{formatCurrency(t.commission)}</td>
-              <td className={tdCls}>
-                <StatusBadge value={t.status} />
-              </td>
-            </tr>
-          ))}
+          {r.map((t) => {
+            const isExcluded = t.excluded === true;
+            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : '';
+            return (
+              <tr key={t.id} className={rowCls}>
+                <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
+                <td className={tdCls}>{t.label}</td>
+                <td className={`${tdCls} font-mono`}>{t.trackingId}</td>
+                <td className={`${tdCls} text-right`}>{formatCurrency(t.amount)}</td>
+                <td className={`${tdCls} text-right font-medium`}>
+                  {formatCurrency(t.chargedAmount)}
+                </td>
+                <td className={`${tdCls} text-right`}>{formatCurrency(t.commission)}</td>
+                <td className={tdCls}>
+                  <StatusBadge value={t.status} />
+                </td>
+                <td className={`${tdCls} no-underline`} style={{ textDecoration: 'none' }}>
+                  <ExcludeToggleButton
+                    tx={t}
+                    provider="coinsbuy-withdrawals"
+                    onChange={() => onExclusionChanged?.()}
+                  />
+                </td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     );
@@ -554,6 +621,42 @@ function BreakdownTable({
       </tbody>
     </table>
   );
+}
+
+/**
+ * Decide si una transacción matchea el query de búsqueda. Búsqueda libre
+ * case-insensitive sobre todos los campos visibles: label, tracking, monto,
+ * comisión, status, fecha.
+ *
+ * Acepta tanto CoinsbuyDepositTx como CoinsbuyWithdrawalTx. Si el query
+ * está vacío, retorna true (no filtra).
+ */
+function matchesSearchQuery(
+  tx: Record<string, unknown>,
+  query: string,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+
+  // Campos posibles según provider. Convertimos todo a string y concatenamos.
+  const haystack = [
+    tx.label,
+    tx.trackingId,
+    tx.status,
+    tx.createdAt,
+    // Para deposit: amountTarget. Para withdrawal: amount, chargedAmount.
+    tx.amountTarget,
+    tx.amount,
+    tx.chargedAmount,
+    tx.commission,
+    // ID interno (por si el usuario copia el "Withdraw #225246" sin el #)
+    tx.id,
+  ]
+    .filter((v) => v !== undefined && v !== null)
+    .map((v) => String(v).toLowerCase())
+    .join(' ');
+
+  return haystack.includes(q);
 }
 
 function StatusBadge({ value }: { value: string }) {
