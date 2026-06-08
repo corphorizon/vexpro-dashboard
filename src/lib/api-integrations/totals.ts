@@ -61,8 +61,11 @@ export function computeProviderTotals(dataset: ProviderDataset): ProviderTotals 
       };
     }
     case 'coinsbuy-withdrawals': {
+      // Igual que deposits: excluimos las marcadas manualmente como externas
+      // (retiros fuera del flow del CRM / swaps) — el admin las flagea desde
+      // /movimientos/desglose y no deben contar para los totales.
       const rows = (dataset.transactions as CoinsbuyWithdrawalTx[]).filter(
-        (t) => t.status === 'Approved'
+        (t) => t.status === 'Approved' && t.excluded !== true
       );
       return {
         total: rows.reduce((s, t) => s + t.chargedAmount, 0),

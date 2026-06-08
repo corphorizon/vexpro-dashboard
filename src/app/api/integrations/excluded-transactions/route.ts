@@ -72,8 +72,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Whitelist de providers — hoy solo CoinsBuy deposits está soportado.
-    if (provider !== 'coinsbuy-deposits') {
+    // Whitelist de providers soportados para exclusión manual.
+    const SUPPORTED_PROVIDERS = ['coinsbuy-deposits', 'coinsbuy-withdrawals'];
+    if (!SUPPORTED_PROVIDERS.includes(provider)) {
       return NextResponse.json(
         { success: false, error: 'Provider no soportado para exclusión' },
         { status: 400 },
