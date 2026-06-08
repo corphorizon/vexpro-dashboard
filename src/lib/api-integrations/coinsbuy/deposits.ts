@@ -17,6 +17,7 @@ import { withRetry } from '../retry';
 import { generateCoinsbuyDeposits } from '../mocks';
 import { filterByDateRange } from '../totals';
 import type { CoinsbuyDepositTx, ProviderDataset } from '../types';
+import { createAdminClient } from '@/lib/supabase/admin';
 
 // Per-tenant base URL is resolved at call time via getCoinsbuyBaseUrl().
 // A module-level const would freeze to env at import time and break
@@ -24,7 +25,21 @@ import type { CoinsbuyDepositTx, ProviderDataset } from '../types';
 
 const PROVIDER = 'coinsbuy' as const;
 const PAGE_SIZE = 100;
-const MAX_PAGES = 20; // safety cap
+// Antes era 20 (= cap de 2000 transfers). VexPro a junio 2026 ya tiene >2000
+// transfers totales, lo que cortaba el sync en transfers viejos. Subiendo a
+// 200 (= cap de 20k transfers) damos margen amplio para el crecimiento; el
+// sync incremental (ver INCREMENTAL_SYNC_OVERLAP_HOURS) hace que normalmente
+// no se pagine ni 5 páginas por sync.
+const MAX_PAGES = 200;
+
+// Ventana de overlap para sync incremental: el cron sincroniza N veces al día,
+// y para no perder transacciones que CoinsBuy procesó "tarde" o que están en
+// estado pending durante el sync anterior, el sync trae 24h hacia atrás del
+// timestamp del último sync persistido. El caller puede pasar `since`
+// explícito; si no, el helper recupera el último sync de api_sync_log y
+// resta 24h. Si nunca se sincronizó (primera vez), trae TODO el histórico
+// sin ventana (paginando hasta agotar).
+const INCREMENTAL_SYNC_OVERLAP_HOURS = 24;
 
 // ── JSON:API response shapes ────────────────────────────────────────────────
 
@@ -92,6 +107,37 @@ export async function fetchCoinsbuyDepositsV3(
     const baseUrl = await getCoinsbuyBaseUrl(companyId);
     const allTransactions: CoinsbuyDepositTx[] = [];
 
+    // Resolver ventana de sync incremental. Si el caller pasó `options.from`
+    // explícito, usar ese. Si no, leer último sync de api_sync_log y restar
+    // INCREMENTAL_SYNC_OVERLAP_HOURS. Si nunca se sincronizó, trae todo.
+    let incrementalSince: string | null = null;
+    if (!options.from && companyId) {
+      try {
+        const admin = createAdminClient();
+        const { data: syncRow } = await admin
+          .from('api_sync_log')
+          .select('last_synced_at')
+          .eq('company_id', companyId)
+          .eq('provider', 'coinsbuy-deposits')
+          .order('last_synced_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (syncRow?.last_synced_at) {
+          const lastSync = new Date(syncRow.last_synced_at);
+          lastSync.setHours(lastSync.getHours() - INCREMENTAL_SYNC_OVERLAP_HOURS);
+          incrementalSince = lastSync.toISOString();
+          console.log(
+            `[coinsbuy/deposits] sync incremental desde ${incrementalSince} ` +
+              `(último sync: ${syncRow.last_synced_at}, overlap: ${INCREMENTAL_SYNC_OVERLAP_HOURS}h)`,
+          );
+        } else {
+          console.log('[coinsbuy/deposits] sin sync previo, trayendo histórico completo');
+        }
+      } catch (err) {
+        console.warn('[coinsbuy/deposits] no se pudo leer api_sync_log, fallback a histórico completo:', err);
+      }
+    }
+
     let page = 1;
     let totalPages = 1;
 
@@ -129,6 +175,15 @@ export async function fetchCoinsbuyDepositsV3(
         // Only deposits (op_type 1) that are confirmed (status 2)
         if (attrs.op_type !== 1) continue;
         if (attrs.status !== 2) continue;
+
+        // Optimización: la API devuelve ordenado por -created_at. Si ya
+        // estamos en transfers más viejos que la ventana incremental,
+        // podemos cortar la paginación entera (no solo este item).
+        if (incrementalSince && attrs.created_at < incrementalSince) {
+          // Marcar para terminar el loop externo (do/while)
+          page = totalPages + 1;
+          break;
+        }
 
         // Optional wallet filter
         if (options.walletId) {

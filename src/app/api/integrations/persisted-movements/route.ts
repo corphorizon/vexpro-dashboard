@@ -103,26 +103,61 @@ export async function GET(request: NextRequest) {
     // the 1000-row cap (largest slug = unipayment ~600). The per-row
     // filter logic stays identical via `runOne` below.
     const runOne = async (slug: ProviderSlug) => {
-      let q = admin
-        .from('api_transactions')
-        .select(
-          'provider, external_id, amount, fee, currency, status, transaction_date, wallet_id, wallet_label, raw',
-        )
-        .eq('company_id', auth.companyId)
-        .eq('provider', slug)
-        .order('transaction_date', { ascending: false })
-        .limit(10000);
-      if (from) q = q.gte('transaction_date', `${from}T00:00:00.000Z`);
-      if (to) q = q.lte('transaction_date', `${to}T23:59:59.999Z`);
-      const { data, error } = await q;
-      if (error) {
-        console.error(
-          `[persisted-movements] ${slug} query failed:`,
-          error.message,
-        );
-        return [] as NonNullable<typeof data>;
+      // PostgREST tiene un cap silencioso de db_max_rows (default 1000) que
+      // ignora el .limit() que se pase. Para tenants con volumen alto
+      // (coinsbuy-deposits tiene 2078 filas para VexPro a junio 2026), una
+      // sola query devolvía solo los 1000 más nuevos y la UI mostraba "desde
+      // 6 mayo" en vez de todo el histórico. La fix es paginar con .range()
+      // en bloques de 1000 hasta agotar el dataset. Cap de seguridad en 20
+      // páginas (= 20k filas por slug por query) para evitar loops infinitos
+      // en escenarios patológicos.
+      const PAGE_SIZE = 1000;
+      const MAX_PAGES = 20;
+      // Capturar companyId acá: dentro de la función anidada fetchPage TS
+      // pierde el narrowing de `auth` (instanceof NextResponse) hecho arriba.
+      const companyId = auth.companyId;
+      let accumulated: Awaited<ReturnType<typeof fetchPage>> = [];
+      let page = 0;
+      let lastPageSize = PAGE_SIZE;
+
+      async function fetchPage(p: number) {
+        let q = admin
+          .from('api_transactions')
+          .select(
+            'provider, external_id, amount, fee, currency, status, transaction_date, wallet_id, wallet_label, raw',
+          )
+          .eq('company_id', companyId)
+          .eq('provider', slug)
+          .order('transaction_date', { ascending: false })
+          .range(p * PAGE_SIZE, (p + 1) * PAGE_SIZE - 1);
+        if (from) q = q.gte('transaction_date', `${from}T00:00:00.000Z`);
+        if (to) q = q.lte('transaction_date', `${to}T23:59:59.999Z`);
+        const { data, error } = await q;
+        if (error) {
+          console.error(
+            `[persisted-movements] ${slug} page ${p} query failed:`,
+            error.message,
+          );
+          return [] as NonNullable<typeof data>;
+        }
+        return data ?? [];
       }
-      return data ?? [];
+
+      while (lastPageSize === PAGE_SIZE && page < MAX_PAGES) {
+        const rows = await fetchPage(page);
+        accumulated = accumulated.concat(rows);
+        lastPageSize = rows.length;
+        page++;
+      }
+
+      if (page === MAX_PAGES && lastPageSize === PAGE_SIZE) {
+        console.warn(
+          `[persisted-movements] ${slug}: hit MAX_PAGES=${MAX_PAGES} cap, posible truncamiento. ` +
+            `Filas leídas: ${accumulated.length}. Revisar volumen del slug.`,
+        );
+      }
+
+      return accumulated;
     };
 
     const slugsToFetch: ProviderSlug[] = requestedSlug ? [requestedSlug] : [...SLUGS];
