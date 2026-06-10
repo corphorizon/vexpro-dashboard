@@ -171,7 +171,17 @@ export async function upsertWithdrawals(
 //   3. A hard 20s timeout on the main save so a stuck network never
 //      locks the UI button in a "Guardando..." state.
 
-const MAIN_SAVE_TIMEOUT_MS = 20_000;
+// 30s — intentionally LONGER than the page-level SAVE_TIMEOUT_MS (25s)
+// in /upload. The outer page-level timeout is the single source of truth
+// for "the save is stuck" — it surfaces a user-friendly toast with the
+// correct context ("Guardar Todo tardó demasiado") and ties the dirty
+// banner state correctly. This inner ceiling exists ONLY as a guardrail
+// for callers that don't wrap upsertExpenses in their own timeout. Used
+// to be 20s, which fired before the outer 25s and leaked the internal
+// mutation name into the user-facing toast ("upsertExpenses tardó
+// demasiado >20s") — confusing and unactionable. 6 ms is the actual DB
+// time for ~40 rows; 30s is a sky-high cap for catastrophic stalls only.
+const MAIN_SAVE_TIMEOUT_MS = 30_000;
 
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
