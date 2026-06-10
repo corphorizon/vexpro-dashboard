@@ -214,6 +214,38 @@ function saveToStorage<T>(key: string, value: T) {
   }
 }
 
+/** Small "Guardado hace Xs" indicator. Re-renders itself every 10 s so
+ *  the label stays fresh without the parent owning a clock. Drops out
+ *  silently after 5 min — at that point the user already moved on. */
+function SavedRecentlyBadge({ at }: { at: Date }) {
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setTick((t) => t + 1), 10_000);
+    return () => clearInterval(id);
+  }, []);
+  // Force the effect to read `tick` so React keeps the interval alive
+  // even though we don't render it directly.
+  void tick;
+  const secs = Math.floor((Date.now() - at.getTime()) / 1000);
+  if (secs > 300) return null; // > 5 min — stop bragging.
+  const label =
+    secs < 5
+      ? 'Guardado'
+      : secs < 60
+        ? `Guardado hace ${secs} s`
+        : `Guardado hace ${Math.floor(secs / 60)} min`;
+  return (
+    <span
+      className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 whitespace-nowrap"
+      aria-live="polite"
+      title="Última vez que se guardó esta sección"
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+      {label}
+    </span>
+  );
+}
+
 export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
@@ -581,6 +613,50 @@ export default function UploadPage() {
     window.addEventListener('beforeunload', handler);
     return () => window.removeEventListener('beforeunload', handler);
   }, [hasDirty, savingAll]);
+
+  // ── Auto-save (debounced) ─────────────────────────────────────────────
+  //
+  // Kevin (2026-06-07): "sería bueno que cada vez que haga un cambio vaya
+  // guardando así evitamos eso" — after losing the "Guardar Todo" race
+  // twice in a row.
+  //
+  // Design:
+  //   · Watch the dirty set + current section. When the current section
+  //     is dirty, start a 3-second debounce timer.
+  //   · Any further edit restarts the timer (debounce). So a user typing
+  //     continuously triggers ONE save, not one-per-keystroke.
+  //   · If a save is already in flight (`savingAll`), the timer is held
+  //     off — the existing save will flush whatever's dirty when it
+  //     finishes; if edits happened during it, this effect re-fires.
+  //   · Cleanup on unmount or section change so we don't fire a save for
+  //     a section that isn't visible.
+  //
+  // The "Guardar Todo" button stays — explicit save is still available
+  // for users who want it. Autosave is additive: the button just becomes
+  // the manual override.
+  const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
+  const AUTOSAVE_DEBOUNCE_MS = 3000;
+
+  useEffect(() => {
+    // Only autosave the section the user is looking at — saving a
+    // different tab's dirty rows from underneath them would be jarring.
+    if (!dirtySections.has(section)) return;
+    if (savingAll) return; // queue up: re-fires when savingAll flips false
+    const t = setTimeout(() => {
+      // saveAll handles the savingAll lock + error surfacing internally.
+      // Fire-and-forget: any error becomes the same toast the manual
+      // button produces, so the user sees identical feedback.
+      void saveAll();
+    }, AUTOSAVE_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+    // saveAll is intentionally NOT in deps — it's recreated on every
+    // render and would defeat the debounce. The function captures
+    // `section`/`dirtySections` through the closure, which is fine
+    // because both ARE in the deps list and will retrigger this effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dirtySections, section, savingAll]);
+
+  // ── End auto-save ─────────────────────────────────────────────────────
 
   // 25-second hard ceiling around each row-level mutation. The DB itself
   // is fast (~6 ms for a single INSERT), but in real-world conditions the
@@ -1408,6 +1484,7 @@ export default function UploadPage() {
       // Main save succeeded. Show success + unlock the button NOW.
       showSuccess(successMsg);
       setSavingAll(false);
+      setLastSavedAt(new Date());
       Sentry.addBreadcrumb({
         category: 'upload.save',
         message: 'saveAll:success',
@@ -2736,23 +2813,35 @@ export default function UploadPage() {
         </div>
         {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && (
           <div className="flex items-center gap-3">
-            {dirtySections.has(section) && !savingAll && (
+            {savingAll ? (
               <span
-                className="inline-flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-400 whitespace-nowrap"
                 aria-live="polite"
-                title="Hay cambios sin guardar en esta sección"
+                title="Guardando automáticamente"
+              >
+                <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
+                Guardando…
+              </span>
+            ) : dirtySections.has(section) ? (
+              <span
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap"
+                aria-live="polite"
+                title="Hay cambios sin guardar — se guardarán automáticamente en 3 segundos"
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                Cambios sin guardar
+                Guardando en 3 s…
               </span>
-            )}
+            ) : lastSavedAt ? (
+              <SavedRecentlyBadge at={lastSavedAt} />
+            ) : null}
             <button
               onClick={saveAll}
               disabled={savingAll}
               className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
+              title="Guardar ahora sin esperar al auto-save"
             >
               <Save className="w-4 h-4" />
-              {savingAll ? 'Guardando...' : 'Guardar Todo'}
+              {savingAll ? 'Guardando…' : 'Guardar ahora'}
             </button>
           </div>
         )}
