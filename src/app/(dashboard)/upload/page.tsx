@@ -1996,9 +1996,9 @@ export default function UploadPage() {
                     <>
                       <td className="py-2 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
                       <td className="py-2 px-3">
-                        <input value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
+                        <input aria-label="Concepto del gasto" value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
                         <label className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground cursor-pointer">
-                          <input type="checkbox" checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
+                          <input type="checkbox" aria-label="Gasto fijo" checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
                           {t('expenses.fixed')} ({t('expenses.fixedHint')})
                         </label>
                       </td>
@@ -2029,9 +2029,9 @@ export default function UploadPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2 px-3"><input type="number" step="0.01" value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Monto del gasto" value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Pagado" value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Pendiente" value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                       <td></td>
                       <td className="py-2 px-3 text-center">
                         <div className="flex justify-center gap-1">
@@ -2420,11 +2420,11 @@ export default function UploadPage() {
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
                     {editingLiqId === row.id ? (
                       <>
-                        <td className="py-2 px-3"><input type="date" value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input type="date" aria-label="Fecha" value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input aria-label="Usuario" value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input aria-label="Cuenta MT" value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2 px-3 text-center">
                           <div className="flex justify-center gap-1">
@@ -2607,12 +2607,12 @@ export default function UploadPage() {
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
                     {editingInvId === row.id ? (
                       <>
-                        <td className="py-2 px-3"><input type="date" value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input type="date" aria-label="Fecha" value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input aria-label="Concepto" value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input aria-label="Responsable" value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Ganancia" value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2 px-3 text-center">
                           <div className="flex justify-center gap-1">
@@ -2740,7 +2740,7 @@ export default function UploadPage() {
                 Subir Documento
               </button>
             )}
-            <input ref={fileRef} type="file" onChange={handleDocUpload} className="hidden" />
+            <input ref={fileRef} type="file" aria-label="Subir documento" onChange={handleDocUpload} className="hidden" />
           </div>
 
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">

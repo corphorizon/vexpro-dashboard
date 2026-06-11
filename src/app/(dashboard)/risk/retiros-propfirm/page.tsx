@@ -1600,7 +1600,7 @@ function ConfigCard({ title, enabled, onToggle, children }: {
       <div className="flex items-center justify-between">
         <h4 className="text-xs font-semibold text-foreground">{title}</h4>
         <label className="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" checked={enabled} onChange={(e) => onToggle(e.target.checked)} className="sr-only peer" />
+          <input type="checkbox" aria-label={title} checked={enabled} onChange={(e) => onToggle(e.target.checked)} className="sr-only peer" />
           <div className="w-8 h-4 bg-muted rounded-full peer peer-checked:bg-[var(--color-primary)] after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4" />
         </label>
       </div>

@@ -363,15 +363,15 @@ export default function PerfilPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('common.name')}</label>
-              <input value={editName} onChange={e => setEditName(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('common.name')} value={editName} onChange={e => setEditName(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('common.email')}</label>
-              <input value={editEmail} onChange={e => setEditEmail(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('common.email')} value={editEmail} onChange={e => setEditEmail(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.role')}</label>
-              <select value={editRole} onChange={e => setEditRole(e.target.value as CommercialProfile['role'])} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
+              <select aria-label={t('hr.role')} value={editRole} onChange={e => setEditRole(e.target.value as CommercialProfile['role'])} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
                 <option value="sales_manager">Sales Manager</option>
                 <option value="head">HEAD</option>
                 <option value="bdm">BDM</option>
@@ -380,7 +380,7 @@ export default function PerfilPage() {
             {editRole === 'bdm' && (
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.supervisor')}</label>
-                <select value={editHeadId} onChange={e => setEditHeadId(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
+                <select aria-label={t('hr.supervisor')} value={editHeadId} onChange={e => setEditHeadId(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
                   <option value="">{t('hr.noSupervisor')}</option>
                   {possibleHeads.map(h => (
                     <option key={h.id} value={h.id}>{h.name} ({ROLE_LABELS_HR[h.role]})</option>
@@ -390,39 +390,39 @@ export default function PerfilPage() {
             )}
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.netDepPct')}</label>
-              <input type="number" value={editNdPct} onChange={e => setEditNdPct(e.target.value)} placeholder={t('hr.ndPctPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.ndPctPlaceholder')} type="number" value={editNdPct} onChange={e => setEditNdPct(e.target.value)} placeholder={t('hr.ndPctPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.pnlPct')}</label>
-              <input type="number" value={editPnlPct} onChange={e => setEditPnlPct(e.target.value)} placeholder={t('hr.pnlPctPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.pnlPctPlaceholder')} type="number" value={editPnlPct} onChange={e => setEditPnlPct(e.target.value)} placeholder={t('hr.pnlPctPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.commissionPerLot')}</label>
-              <input type="number" value={editCommLot} onChange={e => setEditCommLot(e.target.value)} placeholder={t('hr.commLotPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.commLotPlaceholder')} type="number" value={editCommLot} onChange={e => setEditCommLot(e.target.value)} placeholder={t('hr.commLotPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.fixedSalary')}</label>
-              <input type="number" value={editSalary} onChange={e => setEditSalary(e.target.value)} placeholder={t('hr.salaryUsdPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.salaryUsdPlaceholder')} type="number" value={editSalary} onChange={e => setEditSalary(e.target.value)} placeholder={t('hr.salaryUsdPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.benefits')}</label>
-              <input value={editBenefits} onChange={e => setEditBenefits(e.target.value)} placeholder={t('hr.benefitsPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.benefitsPlaceholder')} value={editBenefits} onChange={e => setEditBenefits(e.target.value)} placeholder={t('hr.benefitsPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.comments')}</label>
-              <input value={editComments} onChange={e => setEditComments(e.target.value)} placeholder={t('hr.commentsPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.commentsPlaceholder')} value={editComments} onChange={e => setEditComments(e.target.value)} placeholder={t('hr.commentsPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.hireDate')}</label>
-              <input type="date" value={editHireDate} onChange={e => setEditHireDate(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.hireDate')} type="date" value={editHireDate} onChange={e => setEditHireDate(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.birthday')}</label>
-              <input type="date" value={editBirthday} onChange={e => setEditBirthday(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+              <input aria-label={t('hr.birthday')} type="date" value={editBirthday} onChange={e => setEditBirthday(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
             </div>
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.status')}</label>
-              <select value={editStatus} onChange={e => setEditStatus(e.target.value as 'active' | 'inactive')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
+              <select aria-label={t('hr.status')} value={editStatus} onChange={e => setEditStatus(e.target.value as 'active' | 'inactive')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
                 <option value="active">{t('hr.statusActive')}</option>
                 <option value="inactive">{t('hr.statusInactive')}</option>
               </select>
@@ -595,7 +595,7 @@ export default function PerfilPage() {
             <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.selectPeriod')}</label>
-                <select value={formPeriod} onChange={e => setFormPeriod(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
+                <select aria-label={t('hr.selectPeriod')} value={formPeriod} onChange={e => setFormPeriod(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
                   {periods.map(p => (
                     <option key={p.id} value={p.id}>{p.label}</option>
                   ))}
@@ -603,43 +603,43 @@ export default function PerfilPage() {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.netDepActual')}</label>
-                <input type="number" value={formNetDepCurrent} onChange={e => setFormNetDepCurrent(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.netDepActual')} type="number" value={formNetDepCurrent} onChange={e => setFormNetDepCurrent(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.netDepAcumulado')}</label>
-                <input type="number" value={formNetDepAccum} onChange={e => setFormNetDepAccum(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.netDepAcumulado')} type="number" value={formNetDepAccum} onChange={e => setFormNetDepAccum(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.netDepTotal')}</label>
-                <input type="number" value={formNetDepTotal} onChange={e => setFormNetDepTotal(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.netDepTotal')} type="number" value={formNetDepTotal} onChange={e => setFormNetDepTotal(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.pnlCurrent')}</label>
-                <input type="number" value={formPnlCurrent} onChange={e => setFormPnlCurrent(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.pnlCurrent')} type="number" value={formPnlCurrent} onChange={e => setFormPnlCurrent(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.pnlAccumulated')}</label>
-                <input type="number" value={formPnlAccum} onChange={e => setFormPnlAccum(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.pnlAccumulated')} type="number" value={formPnlAccum} onChange={e => setFormPnlAccum(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.pnlTotal')}</label>
-                <input type="number" value={formPnlTotal} onChange={e => setFormPnlTotal(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.pnlTotal')} type="number" value={formPnlTotal} onChange={e => setFormPnlTotal(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.comisiones')}</label>
-                <input type="number" value={formCommissions} onChange={e => setFormCommissions(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.comisiones')} type="number" value={formCommissions} onChange={e => setFormCommissions(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.bonus')}</label>
-                <input type="number" value={formBonus} onChange={e => setFormBonus(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.bonus')} type="number" value={formBonus} onChange={e => setFormBonus(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.salarioLabel')}</label>
-                <input type="number" value={formSalary} onChange={e => setFormSalary(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+                <input aria-label={t('hr.salarioLabel')} type="number" value={formSalary} onChange={e => setFormSalary(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-xs text-muted-foreground">{t('hr.totalEarned')} ({t('hr.totalEarnedAuto')})</label>
-                <input type="text" value={formatCurrency(formTotalEarned)} readOnly className="px-3 py-2 rounded-lg border border-border bg-muted text-sm font-medium" />
+                <input aria-label={t('hr.totalEarned')} type="text" value={formatCurrency(formTotalEarned)} readOnly className="px-3 py-2 rounded-lg border border-border bg-muted text-sm font-medium" />
               </div>
             </div>
             <div className="mt-4 flex justify-end">
