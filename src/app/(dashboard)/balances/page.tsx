@@ -157,36 +157,35 @@ export default function BalancesPage() {
       // Base net deposit from manual entries in /upload.
       let netDeposit = summary.netDeposit;
 
-      // For derived-broker periods (Abr 2026+), the broker-withdrawal column
-      // is no longer entered manually — it's derived from the Coinsbuy API
-      // payouts minus the other manual withdrawal categories. Replicate the
-      // EXACT same coexistence rule that /movimientos uses, otherwise this
-      // hero number drifts from what the rest of the app shows.
+      // For derived-broker periods (Abr 2026+), replicate the EXACT formula
+      // that /movimientos uses — la fuente de verdad. Si esto diverge, el
+      // hero number de Balances (que alimenta el Monto a Distribuir a socios)
+      // se desincroniza de lo que el usuario ve en Movimientos.
       //
-      // Movimientos formula:
+      // Decisión final de Kevin (2026-06-06, /movimientos:254):
       //   displayTotalDeposits    = api.deposits + summary.totalDeposits
-      //   derivedBroker           = max(0, api.withdrawals − ib − prop − other)
-      //   displayTotalWithdrawals = ib + prop + other + storedBroker + derivedBroker
-      //   displayNetDeposit       = displayTotalDeposits − displayTotalWithdrawals
+      //   displayTotalWithdrawals = api.withdrawals + storedBroker
+      //   displayNetDeposit       = deposits − withdrawals
       //
-      // The previous implementation here naively did:
-      //   netDeposit = summary.netDeposit + (api.deposits − api.withdrawals)
-      // which double-subtracted (ib + prop + other) because those categories
-      // are NOT part of api.withdrawals (Coinsbuy-payouts only) but ARE part
-      // of summary.totalWithdrawals. For Apr 2026 that meant the hero was
-      // ~$74k short.
+      // Las categorías manuales Comisiones IB / Prop Firm / Otros son
+      // estrictamente INFORMATIVAS — el usuario las carga en /upload pero NO
+      // se suman al total de retiros (los retiros reales ya están en
+      // Coinsbuy API + el manual Broker, que representa retiros Coinsbuy que
+      // la API no alcanzó a reportar).
+      //
+      // La implementación anterior usaba la fórmula vieja (derivedBroker =
+      // max(0, api.withdrawals − ib − prop − other) y sumaba ib+prop+other),
+      // que inflaba los retiros cuando esas categorías eran > 0 — produciendo
+      // un Net Deposit menor en Balances que en Movimientos. Para VexPro
+      // (ib=prop=other=0) ambas daban igual, pero era un bug latente que
+      // afectaba el Monto a Distribuir apenas alguien cargara esas categorías.
       if (isDerivedBrokerPeriod({ year: p.year, month: p.month })) {
         const ymKey = `${p.year}-${String(p.month).padStart(2, '0')}`;
         const api = apiMonthly[ymKey];
         if (api) {
-          const ib = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
-          const prop = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
-          const other = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
           const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-
-          const derivedBroker = Math.max(0, api.withdrawals - ib - prop - other);
           const totalDeposits = api.deposits + summary.totalDeposits;
-          const totalWithdrawals = ib + prop + other + storedBroker + derivedBroker;
+          const totalWithdrawals = api.withdrawals + storedBroker;
           netDeposit = totalDeposits - totalWithdrawals;
         }
       }
