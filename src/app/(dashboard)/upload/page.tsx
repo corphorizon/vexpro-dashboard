@@ -83,6 +83,10 @@ import {
   computeDerivedBroker,
 } from '@/lib/broker-logic';
 import {
+  parseAmount,
+  computeExpensePending,
+} from '@/lib/upload-calculations';
+import {
   upsertDeposits,
   upsertWithdrawals,
   upsertExpenses,
@@ -921,8 +925,8 @@ export default function UploadPage() {
   const addLiquidityRow = () => {
     if (!userCanAdd || !company || !newLiq.date || !newLiq.user_email) return;
     if (savingLiq) return;
-    const dep = parseFloat(newLiq.deposit) || 0;
-    const wth = parseFloat(newLiq.withdrawal) || 0;
+    const dep = parseAmount(newLiq.deposit);
+    const wth = parseAmount(newLiq.withdrawal);
     (async () => {
       setSavingLiq(true);
       try {
@@ -967,8 +971,8 @@ export default function UploadPage() {
   const saveEditLiq = () => {
     if (!editingLiqId) return;
     if (savingLiq) return;
-    const dep = parseFloat(editLiq.deposit) || 0;
-    const wth = parseFloat(editLiq.withdrawal) || 0;
+    const dep = parseAmount(editLiq.deposit);
+    const wth = parseAmount(editLiq.withdrawal);
     (async () => {
       setSavingLiq(true);
       try {
@@ -1030,9 +1034,9 @@ export default function UploadPage() {
   const addInvestmentRow = () => {
     if (!userCanAdd || !company || !newInv.date) return;
     if (savingInv) return;
-    const dep = parseFloat(newInv.deposit) || 0;
-    const wth = parseFloat(newInv.withdrawal) || 0;
-    const prf = parseFloat(newInv.profit) || 0;
+    const dep = parseAmount(newInv.deposit);
+    const wth = parseAmount(newInv.withdrawal);
+    const prf = parseAmount(newInv.profit);
     (async () => {
       setSavingInv(true);
       try {
@@ -1078,9 +1082,9 @@ export default function UploadPage() {
   const saveEditInv = () => {
     if (!editingInvId) return;
     if (savingInv) return;
-    const dep = parseFloat(editInv.deposit) || 0;
-    const wth = parseFloat(editInv.withdrawal) || 0;
-    const prf = parseFloat(editInv.profit) || 0;
+    const dep = parseAmount(editInv.deposit);
+    const wth = parseAmount(editInv.withdrawal);
+    const prf = parseAmount(editInv.profit);
     (async () => {
       setSavingInv(true);
       try {
@@ -1258,9 +1262,9 @@ export default function UploadPage() {
   // Expense handlers
   const addExpense = () => {
     if (!userCanAdd || !newExpense.concept || !newExpense.amount) return;
-    const amt = parseFloat(newExpense.amount) || 0;
-    const pd = parseFloat(newExpense.paid) || 0;
-    const pn = parseFloat(newExpense.pending) || amt - pd;
+    const amt = parseAmount(newExpense.amount);
+    const pd = parseAmount(newExpense.paid);
+    const pn = computeExpensePending(newExpense.amount, newExpense.paid, newExpense.pending);
     const cat = newExpense.category.trim() || null;
     setExpenses(prev => [...prev, {
       id: `exp-${Date.now()}`,
@@ -1287,9 +1291,9 @@ export default function UploadPage() {
 
   const saveEditExpense = () => {
     if (!editingExpenseId) return;
-    const amt = parseFloat(editExpense.amount) || 0;
-    const pd = parseFloat(editExpense.paid) || 0;
-    const pn = parseFloat(editExpense.pending) || amt - pd;
+    const amt = parseAmount(editExpense.amount);
+    const pd = parseAmount(editExpense.paid);
+    const pn = computeExpensePending(editExpense.amount, editExpense.paid, editExpense.pending);
     const cat = editExpense.category.trim() || null;
     setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e));
     markDirty('egresos');
