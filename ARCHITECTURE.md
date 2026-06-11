@@ -144,12 +144,13 @@ Heurística sobre 83 componentes `.tsx`:
 | `<img>` sin `alt` | ✅ 0 |
 | `lang` en `<html>` | ✅ presente (`es` — hardcodeado; ver deuda) |
 | Uso de `aria-*` / `role` | ✅ 148 ocurrencias, 33 componentes con `aria-label` |
-| `<input>` sin `id`/`aria-label` programático | ⚠️ **~71** — dependen de label visual/placeholder |
+| `<input>` sin `id`/`aria-label` programático | ✅ **resuelto** (2026-06-11) — se agregó `aria-label` a ~73 controles |
 
 **Deuda priorizada:**
-1. **Inputs sin etiqueta programática (~71)** — un lector de pantalla no anuncia
-   el campo. Fix: agregar `id` + `<label htmlFor>` o `aria-label`. Alto impacto,
-   mecánico. Es el item #1 de accesibilidad.
+1. ~~Inputs sin etiqueta programática~~ — ✅ **hecho**. Se agregó `aria-label`
+   (reusando la key i18n del placeholder/label) a inputs/selects/textarea de
+   `rrhh`, `rrhh/perfil`, `upload`, `comisiones` y `risk`. Los checkbox/file ya
+   envueltos en `<label>` (asociación implícita) se dejaron intactos.
 2. **`lang="es"` hardcodeado** — la app es ES/EN; el `lang` debería seguir al
    idioma activo de i18n para pronunciación correcta del lector de pantalla.
 3. Verificar contraste de color en estados de tema oscuro (no auditado acá).
