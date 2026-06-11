@@ -3,6 +3,7 @@ import {
   isDerivedBrokerPeriod,
   allPeriodsUseDerivedBroker,
   computeDerivedBroker,
+  computeDerivedNetDeposit,
   BROKER_DERIVED_FROM_YEAR,
   BROKER_DERIVED_FROM_MONTH,
 } from './broker-logic';
@@ -103,5 +104,64 @@ describe('computeDerivedBroker', () => {
         other: 0,
       }),
     ).toBe(225_779.41);
+  });
+});
+
+describe('computeDerivedNetDeposit (fórmula canónica compartida)', () => {
+  it('Net Deposit = (api+manual deps) − (api wdr + manual broker)', () => {
+    const r = computeDerivedNetDeposit({
+      apiDeposits: 300_000,
+      manualDepositsTotal: 200_000,
+      apiWithdrawals: 180_000,
+      manualBroker: 20_000,
+    });
+    expect(r.totalDeposits).toBe(500_000);
+    expect(r.totalWithdrawals).toBe(200_000);
+    expect(r.netDeposit).toBe(300_000);
+  });
+
+  it('ib/prop/other NO entran — son informativos (regresión del bug 2026-06-07)', () => {
+    // Este es el escenario exacto que rompía /balances: cuando el manual de
+    // ib/prop/other era > 0, la fórmula vieja los sumaba a los retiros e
+    // inflaba el total. La fórmula canónica NO los recibe siquiera — solo
+    // api withdrawals + broker. El resultado debe ser independiente de ellos.
+    const r = computeDerivedNetDeposit({
+      apiDeposits: 100_000,
+      manualDepositsTotal: 0,
+      apiWithdrawals: 50_000,
+      manualBroker: 0,
+    });
+    // retiros = 50k (api) + 0 (broker) = 50k, sin importar cuánto ib/prop/other haya
+    expect(r.totalWithdrawals).toBe(50_000);
+    expect(r.netDeposit).toBe(50_000);
+  });
+
+  it('VexPro May 2026 (solo wallet Main pinneada) — números reales', () => {
+    // Verificado contra la DB de producción: con solo VexPro Main pinneada,
+    // depósitos API = 539,655.92 (cb) + 9,547 (fp) + 29,408.18 (up),
+    // retiros API Coinsbuy = 573,908.00, manuales = 0.
+    const apiDeposits = 539_655.92 + 9_547 + 29_408.18;
+    const r = computeDerivedNetDeposit({
+      apiDeposits,
+      manualDepositsTotal: 0,
+      apiWithdrawals: 573_908.0,
+      manualBroker: 0,
+    });
+    expect(r.totalDeposits).toBeCloseTo(578_611.1, 2);
+    expect(r.netDeposit).toBeCloseTo(4_703.1, 2);
+  });
+
+  it('coincide entre /movimientos y /balances para los mismos inputs (anti-divergencia)', () => {
+    // El punto entero de extraer esto: ambas páginas llaman la MISMA función
+    // con los mismos componentes → no pueden divergir nunca más.
+    const input = {
+      apiDeposits: 296_495.49,
+      manualDepositsTotal: 218_518.35,
+      apiWithdrawals: 191_905.89,
+      manualBroker: 163_808,
+    };
+    const movimientos = computeDerivedNetDeposit(input);
+    const balances = computeDerivedNetDeposit(input);
+    expect(movimientos.netDeposit).toBe(balances.netDeposit);
   });
 });

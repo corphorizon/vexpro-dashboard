@@ -829,7 +829,6 @@ export default function ComisionesPage() {
         const pnlOnly = pnlEntries.filter((pe) => !ndEntries.some((ne) => ne.profile_id === pe.profile_id));
         entries = [...ndEntries, ...pnlOnly];
       }
-      console.log('[SAVE] entries:', entries.length, entries.map(e => ({ id: e.profile_id, nd: e.net_deposit_current })));
       if (entries.length === 0) {
         setSaving(false);
         setToast({ type: 'error', msg: 'No hay datos para guardar' });

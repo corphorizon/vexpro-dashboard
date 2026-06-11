@@ -67,3 +67,53 @@ export function computeDerivedBroker(input: {
     input.other;
   return derived > 0 ? derived : 0;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FÓRMULA CANÓNICA DE NET DEPOSIT (era derived-broker, Abr 2026+).
+//
+// ÚNICA fuente de verdad — importada por /movimientos, /balances y los
+// reportes. Antes cada uno la reimplementaba y divergían (bug del 2026-06-07:
+// /balances inflaba retiros sumando ib/prop/other; /movimientos no). Tenerla
+// acá + tests hace IMPOSIBLE que vuelvan a desincronizarse.
+//
+// Decisión final de Kevin (2026-06-06):
+//   · Depósitos totales = API (cb+fp+up, scoped a wallets pinneadas)
+//                       + TODO el manual cargado en /upload (cb+fp+up+otros)
+//   · Retiros totales   = API withdrawals (Coinsbuy payouts, pinned-scoped)
+//                       + manual Broker (suplemento Coinsbuy que la API no
+//                         alcanzó a reportar)
+//   · Comisiones IB / Prop Firm / Otros manuales son INFORMATIVAS — el
+//     usuario las carga pero NO se suman al total de retiros.
+//   · Net Deposit = depósitos − retiros
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface DerivedNetDepositInput {
+  /** Suma de depósitos reportados por las APIs (Coinsbuy+FairPay+UniPayment),
+   *  ya scopeada a las wallets pinneadas. */
+  apiDeposits: number;
+  /** Suma de TODOS los depósitos manuales del período (todos los canales,
+   *  incl. "otros"). En la práctica = summary.totalDeposits. */
+  manualDepositsTotal: number;
+  /** Retiros reportados por la API de Coinsbuy (payouts), pinned-scoped. */
+  apiWithdrawals: number;
+  /** Manual de la categoría "broker" — suplemento Coinsbuy. */
+  manualBroker: number;
+}
+
+export interface DerivedNetDepositResult {
+  totalDeposits: number;
+  totalWithdrawals: number;
+  netDeposit: number;
+}
+
+export function computeDerivedNetDeposit(
+  input: DerivedNetDepositInput,
+): DerivedNetDepositResult {
+  const totalDeposits = input.apiDeposits + input.manualDepositsTotal;
+  const totalWithdrawals = input.apiWithdrawals + input.manualBroker;
+  return {
+    totalDeposits,
+    totalWithdrawals,
+    netDeposit: totalDeposits - totalWithdrawals,
+  };
+}

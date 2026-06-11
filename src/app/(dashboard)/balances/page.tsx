@@ -12,7 +12,7 @@ import { formatCurrency } from '@/lib/utils';
 import { pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
 import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
 import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
-import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
+import { isDerivedBrokerPeriod, computeDerivedNetDeposit } from '@/lib/broker-logic';
 import { withActiveCompany } from '@/lib/api-fetch';
 import { withTimeout, TimeoutError } from '@/lib/promise-utils';
 import {
@@ -184,9 +184,13 @@ export default function BalancesPage() {
         const api = apiMonthly[ymKey];
         if (api) {
           const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-          const totalDeposits = api.deposits + summary.totalDeposits;
-          const totalWithdrawals = api.withdrawals + storedBroker;
-          netDeposit = totalDeposits - totalWithdrawals;
+          // Fórmula canónica compartida — misma que usa /movimientos.
+          netDeposit = computeDerivedNetDeposit({
+            apiDeposits: api.deposits,
+            manualDepositsTotal: summary.totalDeposits,
+            apiWithdrawals: api.withdrawals,
+            manualBroker: storedBroker,
+          }).netDeposit;
         }
       }
 

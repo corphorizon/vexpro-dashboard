@@ -9,6 +9,7 @@ import {
   DEFAULT_WALLET_ID,
 } from '@/components/realtime-movements-banner';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { computeDerivedNetDeposit } from '@/lib/broker-logic';
 import { useOrionCrmTotals } from '@/lib/api-integrations/orion-crm/client';
 import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -251,11 +252,24 @@ export default function MovimientosPage() {
   // (mismo día) la cambió a `+ otherWithdrawal`. Tras probar varios
   // meses Kevin confirmó (2026-06-06) que el manual Broker SÍ debe sumar,
   // porque representa Coinsbuy supplement; volvemos al patrón original.
+  // Fórmula canónica compartida con /balances y los reportes — definida en
+  // broker-logic.ts (computeDerivedNetDeposit). Antes cada página la
+  // reimplementaba y divergían (bug 2026-06-07). Pasamos los componentes
+  // económicos crudos (API pura + manual puro) para que la fórmula viva en
+  // UN solo lugar.
+  const _derived = useDerivedBroker
+    ? computeDerivedNetDeposit({
+        apiDeposits: apiCoinsbuy + apiFairpay + apiUnipayment,
+        manualDepositsTotal: manualCoinsbuy + manualFairpay + manualUnipayment + otherDeposits,
+        apiWithdrawals: apiWithdrawalsTotal,
+        manualBroker: storedBroker,
+      })
+    : null;
   const displayTotalWithdrawals = useDerivedBroker
-    ? apiWithdrawalsTotal + storedBroker
+    ? _derived!.totalWithdrawals
     : summary.totalWithdrawals;
   const displayNetDeposit = useDerivedBroker
-    ? displayTotalDeposits - displayTotalWithdrawals
+    ? _derived!.netDeposit
     : summary.netDeposit;
 
   return (
