@@ -324,7 +324,7 @@ export default function PerfilPage() {
             <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50"><DollarSign className="w-5 h-5 text-amber-500" /></div>
             <CardTitle>{t('hr.fixedSalary')}</CardTitle>
           </div>
-          <CardValue>{profileData.salary != null ? formatCurrency(profileData.salary) : 'N/A'}</CardValue>
+          <CardValue>{profileData.fixed_salary && profileData.salary != null ? formatCurrency(profileData.salary) : 'N/A'}</CardValue>
         </Card>
         <Card>
           <div className="flex items-center gap-3 mb-2">
@@ -462,7 +462,7 @@ export default function PerfilPage() {
             </div>
             <div>
               <span className="text-muted-foreground">{t('hr.fixedSalary')}:</span>{' '}
-              <span className="font-medium">{profileData.salary != null ? formatCurrency(profileData.salary) : 'N/A'}</span>
+              <span className="font-medium">{profileData.fixed_salary && profileData.salary != null ? formatCurrency(profileData.salary) : 'N/A'}</span>
             </div>
             <div>
               <span className="text-muted-foreground">{t('hr.benefits')}:</span>{' '}

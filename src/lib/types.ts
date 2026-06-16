@@ -207,7 +207,7 @@ export interface PeriodSummary {
 }
 
 // HR Types
-export type CommercialRole = 'sales_manager' | 'head' | 'bdm' | (string & {});
+export type CommercialRole = 'sales_manager' | 'head' | 'bdm' | 'bdm_global' | (string & {});
 
 export interface Employee {
   id: string;
@@ -242,6 +242,15 @@ export interface CommercialProfile {
   pnl_special_mode?: boolean; // true = modo PnL alternativo (sin división ni acumulado, pero con resta de lotes)
   contract_url?: string | null; // URL del contrato firmado en Supabase Storage
   extra_pct: number | null; // extra differential % for HEAD when head_pct == bdm_pct
+  // ── BDM GLOBAL — campos extra del HEAD/Sales Manager ──
+  // % que el HEAD cobra sobre el ND de cada BDM GLOBAL en su estructura.
+  pct_sobre_bdm_global?: number;
+  // % que el HEAD cobra sobre la suma de ND de los BDMs de un HEAD bajo su
+  // estructura que tiene salario fijo (ver apply_pct_extra_to_head_without_salary).
+  pct_extra_sobre_head?: number;
+  // Si true, aplica pct_extra_sobre_head también a HEADs bajo su estructura
+  // que NO tienen salario fijo.
+  apply_pct_extra_to_head_without_salary?: boolean;
   benefits: string | null;
   comments: string | null;
   hire_date: string | null;

@@ -222,15 +222,17 @@ function saveToStorage<T>(key: string, value: T) {
  *  the label stays fresh without the parent owning a clock. Drops out
  *  silently after 5 min — at that point the user already moved on. */
 function SavedRecentlyBadge({ at }: { at: Date }) {
-  const [tick, setTick] = useState(0);
+  // secs se calcula DENTRO del effect (no en render): la regla react-compiler
+  // prohíbe llamar funciones impuras como Date.now() durante el render.
+  // `atMs` es estable (getTime es puro), así el effect corre una sola vez.
+  const atMs = at.getTime();
+  const [secs, setSecs] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 10_000);
+    const update = () => setSecs(Math.floor((Date.now() - atMs) / 1000));
+    update();
+    const id = setInterval(update, 10_000);
     return () => clearInterval(id);
-  }, []);
-  // Force the effect to read `tick` so React keeps the interval alive
-  // even though we don't render it directly.
-  void tick;
-  const secs = Math.floor((Date.now() - at.getTime()) / 1000);
+  }, [atMs]);
   if (secs > 300) return null; // > 5 min — stop bragging.
   const label =
     secs < 5
