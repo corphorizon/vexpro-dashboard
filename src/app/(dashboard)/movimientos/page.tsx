@@ -130,40 +130,41 @@ export default function MovimientosPage() {
     );
   });
 
-  // Ensure all channels/categories always appear, even with $0
-  const fullDeposits: Deposit[] = useMemo(() => {
-    if (!summary) return [];
-    return ALL_CHANNELS.map((ch) => {
-      const existing = summary.deposits.find((d) => d.channel === ch);
-      return (
-        existing || {
-          id: `empty-d-${ch}`,
-          period_id: '',
-          company_id: '',
-          channel: ch,
-          amount: 0,
-          notes: null,
-        }
-      );
-    });
-  }, [summary]);
+  // Ensure all channels/categories always appear, even with $0.
+  // Sin useMemo manual: el React Compiler memoiza automáticamente. El useMemo
+  // explícito sobre `summary` no podía preservarse (regla react-compiler), y
+  // estos valores solo se usan en el render (no como deps de efectos).
+  const fullDeposits: Deposit[] = !summary
+    ? []
+    : ALL_CHANNELS.map((ch) => {
+        const existing = summary.deposits.find((d) => d.channel === ch);
+        return (
+          existing || {
+            id: `empty-d-${ch}`,
+            period_id: '',
+            company_id: '',
+            channel: ch,
+            amount: 0,
+            notes: null,
+          }
+        );
+      });
 
-  const fullWithdrawals: Withdrawal[] = useMemo(() => {
-    if (!summary) return [];
-    return ALL_CATEGORIES.map((cat) => {
-      const existing = summary.withdrawals.find((w) => w.category === cat);
-      return (
-        existing || {
-          id: `empty-w-${cat}`,
-          period_id: '',
-          company_id: '',
-          category: cat,
-          amount: 0,
-          notes: null,
-        }
-      );
-    });
-  }, [summary]);
+  const fullWithdrawals: Withdrawal[] = !summary
+    ? []
+    : ALL_CATEGORIES.map((cat) => {
+        const existing = summary.withdrawals.find((w) => w.category === cat);
+        return (
+          existing || {
+            id: `empty-w-${cat}`,
+            period_id: '',
+            company_id: '',
+            category: cat,
+            amount: 0,
+            notes: null,
+          }
+        );
+      });
 
   if (!summary) return null;
 
