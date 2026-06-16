@@ -31,6 +31,7 @@ import {
   HEAD_SALARY_TIERS,
   BDM_PCT_TIERS,
   applyTotalEarnedDebt,
+  calculateExtraOverHeadCommission,
   type CommissionCalcResult,
 } from '@/lib/commission-calculator';
 import { upsertCommissionEntries, type CommissionEntryRow } from '@/lib/supabase/mutations';
@@ -80,14 +81,68 @@ const ROLE_BADGE: Record<string, string> = {
   sales_manager: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
   head: 'bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
   bdm: 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400',
+  bdm_global: 'bg-purple-100 dark:bg-purple-950/50 text-purple-800 dark:text-purple-300 border border-purple-300',
 };
-const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', head: 'HEAD', bdm: 'BDM' };
+const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', head: 'HEAD', bdm: 'BDM', bdm_global: 'BDM GLOBAL' };
 
 type Tab = 'teams' | 'individual' | 'history';
 
 // ═══════════════════════════════════════════════════════════
 // MAIN PAGE
 // ═══════════════════════════════════════════════════════════
+
+/**
+ * Decide si una fila matchea el query de búsqueda. Búsqueda libre
+ * case-insensitive sobre nombre, email, head/rol asignado, y cualquier
+ * monto numérico que esté como propiedad del objeto.
+ *
+ * Acepta cualquier objeto con shape de comercial calculado (con .profileId
+ * o nombre/email directos). Hace lookup del nombre/email/head del profile
+ * usando los mapas disponibles, ya que muchas estructuras solo tienen
+ * profileId. Si el query está vacío, retorna true (no filtra).
+ */
+function matchesCommissionSearch(
+  row: Record<string, unknown>,
+  query: string,
+  profileLookup?: Map<string, { name?: string; email?: string; head_id?: string | null; role?: string }>,
+  headLookup?: Map<string, { name?: string }>,
+): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+
+  const parts: string[] = [];
+
+  // Si row es un profile directo (tab History — usa allProfiles)
+  if (typeof row.name === 'string') parts.push(row.name);
+  if (typeof row.email === 'string') parts.push(row.email);
+  if (typeof row.role === 'string') parts.push(row.role);
+
+  // Si row es un cálculo (tab Teams / Individual — usa bdmCalcs etc)
+  const profileId = row.profileId as string | undefined;
+  if (profileId && profileLookup) {
+    const profile = profileLookup.get(profileId);
+    if (profile?.name) parts.push(profile.name);
+    if (profile?.email) parts.push(profile.email);
+    if (profile?.role) parts.push(profile.role);
+    if (profile?.head_id && headLookup) {
+      const head = headLookup.get(profile.head_id);
+      if (head?.name) parts.push(head.name);
+    }
+  }
+
+  // Montos numéricos del row (cualquier propiedad number), un nivel de anidación
+  for (const [, value] of Object.entries(row)) {
+    if (typeof value === 'number') parts.push(String(value));
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      for (const [, sub] of Object.entries(value as Record<string, unknown>)) {
+        if (typeof sub === 'number') parts.push(String(sub));
+        if (typeof sub === 'string') parts.push(sub);
+      }
+    }
+  }
+
+  return parts.join(' ').toLowerCase().includes(q);
+}
 
 export default function ComisionesPage() {
   const { t } = useI18n();
@@ -108,6 +163,13 @@ export default function ComisionesPage() {
   const searchParams = useSearchParams();
   const [tab, setTab] = useState<Tab>((searchParams.get('tab') as Tab) || 'teams');
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+
+  // Buscadores independientes por tab. Filtran solo las filas que se muestran
+  // en cada tabla — los totales y contadores siguen reflejando el dataset
+  // completo del período.
+  const [teamsSearch, setTeamsSearch] = useState('');
+  const [individualSearch, setIndividualSearch] = useState('');
+  const [historySearch, setHistorySearch] = useState('');
 
   // ─── Shared: Periods ───
   const sortedPeriods = useMemo(
@@ -139,6 +201,25 @@ export default function ComisionesPage() {
     const roleOrder: Record<string, number> = { sales_manager: 0, head: 1, bdm: 2 };
     return list.sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
   }, [commercialProfiles]);
+
+  // Lookup maps para que el buscador resuelva nombre/email/head a partir de
+  // profileId (los cálculos de Teams/Individual solo tienen profileId). Se
+  // reconstruyen solo cuando cambian las listas base.
+  const profileLookup = useMemo(() => {
+    const map = new Map<string, { name?: string; email?: string; head_id?: string | null; role?: string }>();
+    for (const p of commercialProfiles ?? []) {
+      map.set(p.id, { name: p.name, email: p.email, head_id: p.head_id, role: p.role });
+    }
+    return map;
+  }, [commercialProfiles]);
+
+  const headLookup = useMemo(() => {
+    const map = new Map<string, { name?: string }>();
+    for (const h of heads ?? []) {
+      map.set(h.id, { name: h.name });
+    }
+    return map;
+  }, [heads]);
 
   const savedHeadId = searchParams.get('head');
   const [selectedHeadId, setSelectedHeadId] = useState<string>(savedHeadId || (heads[0]?.id ?? ''));
@@ -302,25 +383,72 @@ export default function ComisionesPage() {
   }, [headProfile, ndInputs, previousResults, headPct, headHasParent]);
 
   // BDM rows — commission calculated at the DIFFERENTIAL rate (what HEAD earns from each BDM)
+  //
+  // BDM GLOBAL: MISMA lógica de diferencial que un BDM normal — lo único que
+  // cambia es la REFERENCIA del HEAD: en vez de su net_deposit_pct, usa
+  // pct_sobre_bdm_global. O sea, diferencial = (pct_sobre_bdm_global − %_propio_BDM).
+  // HEAD intermedio (rol head/sales_manager bajo este HEAD): si tiene salario
+  // fijo — o si este HEAD activó apply_pct_extra_to_head_without_salary — el
+  // HEAD cobra pct_extra_sobre_head sobre la suma de ND de los BDMs de ese
+  // HEAD intermedio. Si no aplica, se mantiene el diferencial de siempre.
   const bdmCalcs = useMemo((): (CommissionCalcResult & { bdmOwnPct: number; diffPct: number })[] => {
     const bdms = teamProfiles.filter((_, i) => i > 0);
+    const pctSobreBdmGlobal = headProfile?.pct_sobre_bdm_global ?? 0;
+    const pctExtraSobreHead = headProfile?.pct_extra_sobre_head ?? 0;
+    const applyExtraNoSalary = headProfile?.apply_pct_extra_to_head_without_salary ?? false;
     return bdms.map((profile) => {
       const nd = ndInputs.get(profile.id) ?? 0;
       const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
+
+      // ── (c)/(d) HEAD intermedio bajo este HEAD ──
+      const isIntermediateHead = profile.role === 'head' || profile.role === 'sales_manager';
+      if (isIntermediateHead) {
+        const sumNdBdms = commercialProfiles
+          .filter((s) => s.head_id === profile.id && (s.role === 'bdm' || s.role === 'bdm_global') && appearsInCommissions(s))
+          .reduce((sum, s) => sum + (ndInputs.get(s.id) ?? 0), 0);
+        const e = calculateExtraOverHeadCommission(
+          pctExtraSobreHead,
+          applyExtraNoSalary,
+          [{ profileId: profile.id, name: profile.name, hasFixedSalary: !!profile.fixed_salary, sumNdBdms, accumulatedIn: accIn }],
+        );
+        if (e.details.length > 0) {
+          const d = e.details[0];
+          return {
+            profileId: profile.id,
+            commissionPct: pctExtraSobreHead,
+            bdmOwnPct: profile.net_deposit_pct ?? 0,
+            diffPct: pctExtraSobreHead,
+            salary: profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd),
+            totalEarnedDebt: 0,
+            netDepositCurrent: sumNdBdms,
+            accumulatedIn: accIn,
+            division: d.division,
+            commission: d.commission,
+            realPayment: d.realPayment,
+            accumulatedOut: d.accumulatedOut,
+          };
+        }
+        // skipped → cae al diferencial de siempre (abajo)
+      }
+
+      // ── (a) BDM normal (y BDM GLOBAL): diferencial actual ──
       // Dynamic BDM pct tiers only apply to actual BDMs, not sub-HEADs
       const isSubHead = profile.role === 'head' || profile.role === 'sales_manager'
         || commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
       const bdmOwnPct = isSubHead || profile.fixed_salary
         ? (profile.net_deposit_pct ?? 0)
         : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
-      const naturalDiff = headPct - bdmOwnPct;
+      // BDM GLOBAL: el HEAD usa pct_sobre_bdm_global como su % de referencia en
+      // vez de su net_deposit_pct. El resto del cálculo es idéntico al normal.
+      const refPct = profile.role === 'bdm_global' ? pctSobreBdmGlobal : headPct;
+      const naturalDiff = refPct - bdmOwnPct;
       // Extra % only applies when natural differential is 0 (same percentage)
       const diffPct = naturalDiff === 0 ? extraPct : naturalDiff;
       const calc = calculateCommission(nd, accIn, diffPct);
       const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct]);
+  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles]);
 
   // HEAD differential total (sum of all BDM differential commissions)
   const headDiff = useMemo(() => {
@@ -1166,6 +1294,33 @@ export default function ComisionesPage() {
             </div>
           )}
 
+          {/* Buscador libre — filtra solo las filas mostradas, no los totales */}
+          <div className="relative flex items-center mb-3">
+            <svg className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              value={teamsSearch}
+              onChange={(e) => setTeamsSearch(e.target.value)}
+              placeholder="Buscar por nombre, email, monto..."
+              className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            {teamsSearch && (
+              <button
+                onClick={() => setTeamsSearch('')}
+                className="absolute right-2 text-muted-foreground hover:text-foreground"
+                aria-label="Limpiar búsqueda"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {teamsSearch && (
+            <p className="text-xs text-muted-foreground mb-2">Mostrando filtrado por &quot;{teamsSearch}&quot;</p>
+          )}
+
           {/* BDM Commission Table */}
           {bdmCalcs.length > 0 ? (
             <Card className="p-0 overflow-hidden">
@@ -1202,7 +1357,7 @@ export default function ComisionesPage() {
                       </tr>
                     )}
                     {/* BDM rows */}
-                    {bdmCalcs.map((calc) => {
+                    {bdmCalcs.filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, teamsSearch, profileLookup, headLookup)).map((calc) => {
                       const profile = commercialProfiles.find((p) => p.id === calc.profileId);
                       if (!profile) return null;
                       const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
@@ -1211,6 +1366,9 @@ export default function ComisionesPage() {
                           <td className="px-4 py-3">
                             <span className={cn('font-medium block', firedNameClass(profile))}>
                               {profile.name}{hasOwnTeam && <span className="ml-1 text-[10px] text-violet-500">(equipo)</span>}
+                              {profile.role === 'bdm_global' && (
+                                <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
+                              )}
                               <FiredBadge profile={profile} />
                             </span>
                             <span className="text-xs text-muted-foreground">{profile.email}</span>
@@ -1267,6 +1425,33 @@ export default function ComisionesPage() {
             <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.allBdms')} — {allBdms.length} BDMs</span>
           </div>
 
+          {/* Buscador libre — filtra las 4 sub-tablas a la vez, no los totales */}
+          <div className="relative flex items-center mt-2">
+            <svg className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <input
+              type="text"
+              value={individualSearch}
+              onChange={(e) => setIndividualSearch(e.target.value)}
+              placeholder="Buscar por nombre, email, monto..."
+              className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            />
+            {individualSearch && (
+              <button
+                onClick={() => setIndividualSearch('')}
+                className="absolute right-2 text-muted-foreground hover:text-foreground"
+                aria-label="Limpiar búsqueda"
+              >
+                ✕
+              </button>
+            )}
+          </div>
+          {individualSearch && (
+            <p className="text-xs text-muted-foreground">Mostrando filtrado por &quot;{individualSearch}&quot;</p>
+          )}
+
           {/* ── Section: Net Deposit ── */}
           <h3 className="text-base font-semibold flex items-center gap-2 mt-2">
             <Calculator className="w-4 h-4 text-emerald-600" />
@@ -1294,7 +1479,7 @@ export default function ComisionesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).map((calc) => {
+                    {indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((calc) => {
                       const profile = commercialProfiles.find((p) => p.id === calc.profileId);
                       if (!profile) return null;
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
@@ -1420,7 +1605,7 @@ export default function ComisionesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {pnlCalcs.map((calc) => {
+                    {pnlCalcs.filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((calc) => {
                       const profile = commercialProfiles.find((p) => p.id === calc.profileId);
                       if (!profile) return null;
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
@@ -1588,7 +1773,7 @@ export default function ComisionesPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {pnlSpecialCalcs.map((calc) => {
+                      {pnlSpecialCalcs.filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((calc) => {
                         const profile = commercialProfiles.find((p) => p.id === calc.profileId);
                         if (!profile) return null;
                         const headName = profile.head_id
@@ -1739,7 +1924,7 @@ export default function ComisionesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {lotBdms.map((profile) => {
+                    {lotBdms.filter((profile) => matchesCommissionSearch(profile as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((profile) => {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
                         <tr key={profile.id} className="border-b border-border hover:bg-muted/30">
@@ -1829,6 +2014,33 @@ export default function ComisionesPage() {
               </div>
             </Card>
 
+            {/* Buscador libre — filtra solo las filas, no el footer de totales */}
+            <div className="relative flex items-center">
+              <svg className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="11" cy="11" r="8" />
+                <line x1="21" y1="21" x2="16.65" y2="16.65" />
+              </svg>
+              <input
+                type="text"
+                value={historySearch}
+                onChange={(e) => setHistorySearch(e.target.value)}
+                placeholder="Buscar por nombre, email, monto..."
+                className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+              />
+              {historySearch && (
+                <button
+                  onClick={() => setHistorySearch('')}
+                  className="absolute right-2 text-muted-foreground hover:text-foreground"
+                  aria-label="Limpiar búsqueda"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {historySearch && (
+              <p className="text-xs text-muted-foreground">Mostrando filtrado por &quot;{historySearch}&quot;</p>
+            )}
+
             <Card className="p-0 overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -1845,7 +2057,7 @@ export default function ComisionesPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {allProfiles.map((profile, idx) => {
+                    {allProfiles.filter((profile) => matchesCommissionSearch(profile as unknown as Record<string, unknown>, historySearch, profileLookup, headLookup)).map((profile, idx) => {
                       const prevRole = idx > 0 ? allProfiles[idx - 1].role : null;
                       const showSeparator = prevRole && prevRole !== profile.role;
                       const total = getProfileTotal(profile.id);

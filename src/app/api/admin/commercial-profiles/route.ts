@@ -12,6 +12,8 @@ const ALLOWED_FIELDS = [
   'name', 'role', 'head_id', 'net_deposit_pct', 'extra_pct', 'pnl_pct',
   'commission_per_lot', 'salary', 'fixed_salary',
   'pnl_special_mode',
+  // BDM GLOBAL — campos extra del HEAD/Sales Manager
+  'pct_sobre_bdm_global', 'pct_extra_sobre_head', 'apply_pct_extra_to_head_without_salary',
   'benefits', 'comments',
   'status', 'email', 'hire_date', 'birthday', 'contract_url',
   'termination_date',

@@ -391,3 +391,92 @@ export function calculatePnlSpecial(
     salary,
   };
 }
+
+// NOTA: el BDM GLOBAL NO usa una función aparte. Por definición del negocio,
+// el HEAD le aplica el MISMO cálculo de diferencial que a un BDM normal —
+// lo único que cambia es la referencia: usa pct_sobre_bdm_global en lugar de
+// su net_deposit_pct. Esa lógica vive en bdmCalcs (comisiones/page.tsx), no acá.
+
+// ---------------------------------------------------------------------------
+// EXTRA SOBRE HEAD — Cálculo del HEAD/Sales Manager superior sobre HEAD intermedio
+//
+// Cuando el HEAD/Sales Manager tiene OTRO HEAD bajo su estructura:
+//   - Si ese HEAD intermedio tiene salario fijo:
+//       commission = (suma_ND_BDMs_del_HEAD / 2 + acum_in) × (pct_extra_sobre_head / 100)
+//   - Si ese HEAD intermedio NO tiene salario fijo:
+//       - Si el HEAD superior tiene apply_pct_extra_to_head_without_salary = true:
+//           usar la misma fórmula
+//       - Si NO: usar el cálculo de diferencial normal (calculateHeadDifferential existente)
+//
+// La función decide cuándo aplicar y cuándo NO basándose en los flags del HEAD intermedio
+// y del HEAD superior.
+// ---------------------------------------------------------------------------
+
+export interface ExtraOverHeadCommissionResult {
+  headIntermediateProfileId: string;
+  headIntermediateName: string;
+  hasFixedSalary: boolean;
+  sumNdBdms: number;
+  accumulatedIn: number;
+  pctApplied: number;
+  division: number;
+  commission: number;
+  realPayment: number;
+  accumulatedOut: number;
+}
+
+export function calculateExtraOverHeadCommission(
+  pctExtraSobreHead: number,
+  applyPctExtraWithoutSalary: boolean,
+  headIntermediateResults: {
+    profileId: string;
+    name: string;
+    hasFixedSalary: boolean;
+    sumNdBdms: number;
+    accumulatedIn: number;
+  }[],
+): {
+  totalCommission: number;
+  totalRealPayment: number;
+  details: ExtraOverHeadCommissionResult[];
+  skipped: { profileId: string; name: string; reason: string }[];
+} {
+  const details: ExtraOverHeadCommissionResult[] = [];
+  const skipped: { profileId: string; name: string; reason: string }[] = [];
+
+  for (const h of headIntermediateResults) {
+    // Decidir si aplica la nueva regla o se salta
+    const shouldApply = h.hasFixedSalary || applyPctExtraWithoutSalary;
+    if (!shouldApply) {
+      skipped.push({
+        profileId: h.profileId,
+        name: h.name,
+        reason: 'HEAD sin salario fijo y flag apply_pct_extra_to_head_without_salary=false',
+      });
+      continue;
+    }
+
+    const division = round2(h.sumNdBdms / 2);
+    const commission = round2((division + h.accumulatedIn) * (pctExtraSobreHead / 100));
+    const realPayment = round2(Math.max(0, commission));
+    const accumulatedOut = division;
+
+    details.push({
+      headIntermediateProfileId: h.profileId,
+      headIntermediateName: h.name,
+      hasFixedSalary: h.hasFixedSalary,
+      sumNdBdms: h.sumNdBdms,
+      accumulatedIn: h.accumulatedIn,
+      pctApplied: pctExtraSobreHead,
+      division,
+      commission,
+      realPayment,
+      accumulatedOut,
+    });
+  }
+
+  const totalCommission = round2(details.reduce((s, d) => s + d.commission, 0));
+  const totalRealPayment = round2(details.reduce((s, d) => s + d.realPayment, 0));
+
+  return { totalCommission, totalRealPayment, details, skipped };
+}

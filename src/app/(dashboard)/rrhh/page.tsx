@@ -16,7 +16,7 @@ import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt } from 'lucide-react';
+import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt, ChevronDown, ChevronRight } from 'lucide-react';
 import { FireModal } from '@/components/fire-modal';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import { IbRebatesTab } from './_components/ib-rebates-tab';
@@ -156,6 +156,12 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
   const [fixedSalary, setFixedSalary] = useState(editing?.fixed_salary ?? false);
   const [pnlSpecialMode, setPnlSpecialMode] = useState(!!editing?.pnl_special_mode);
   const [extraPct, setExtraPct] = useState(editing?.extra_pct?.toString() || '');
+  // BDM GLOBAL — campos extra del HEAD/Sales Manager
+  const [pctSobreBdmGlobal, setPctSobreBdmGlobal] = useState(editing?.pct_sobre_bdm_global ?? 0);
+  const [pctExtraSobreHead, setPctExtraSobreHead] = useState(editing?.pct_extra_sobre_head ?? 0);
+  const [applyPctExtraToHeadWithoutSalary, setApplyPctExtraToHeadWithoutSalary] = useState(
+    editing?.apply_pct_extra_to_head_without_salary ?? false,
+  );
   const [benefits, setBenefits] = useState(editing?.benefits || '');
   const [comments, setComments] = useState(editing?.comments || '');
   const [hireDate, setHireDate] = useState(editing?.hire_date || '');
@@ -204,9 +210,18 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
         // Force pnl_special_mode off when pct is empty — avoids stale flags
         // from a previous config (profile lost its pct but the flag lingered).
         pnl_special_mode: pnlPct ? pnlSpecialMode : false,
-        salary: salary ? parseFloat(salary) : null,
+        // Solo persistir el salario cuando "Salario fijo" está activo. Si el
+        // checkbox está destildado, el salario lo determina el auto-tier por ND
+        // (ver /comisiones), así que guardamos null para no dejar un valor
+        // huérfano que la UI mostraría como "Salario Fijo" aunque el cálculo
+        // de comisiones lo ignore.
+        salary: fixedSalary && salary ? parseFloat(salary) : null,
         fixed_salary: fixedSalary,
         extra_pct: extraPct ? parseFloat(extraPct) : null,
+        // BDM GLOBAL — campos extra del HEAD/Sales Manager
+        pct_sobre_bdm_global: pctSobreBdmGlobal,
+        pct_extra_sobre_head: pctExtraSobreHead,
+        apply_pct_extra_to_head_without_salary: applyPctExtraToHeadWithoutSalary,
         status,
         commission_per_lot: commLot ? parseFloat(commLot) : null,
         benefits: benefits || null,
@@ -257,10 +272,12 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.role')}</label>
-            <select aria-label={t('hr.role')} value={role} onChange={e => setRole(e.target.value as 'sales_manager' | 'head' | 'bdm')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+            <select aria-label={t('hr.role')} value={role} onChange={e => setRole(e.target.value as 'sales_manager' | 'head' | 'bdm' | 'bdm_global')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+
               <option value="sales_manager">Sales Manager</option>
               <option value="head">HEAD</option>
               <option value="bdm">BDM</option>
+              <option value="bdm_global">BDM GLOBAL</option>
             </select>
           </div>
           <div>
@@ -321,6 +338,47 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
               <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.extraPct')}</label>
               <input aria-label={t('hr.extraPct')} type="number" step="0.01" value={extraPct} onChange={e => setExtraPct(e.target.value)} placeholder="0" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
             </div>
+          )}
+          {/* BDM GLOBAL — campos extra del HEAD/Sales Manager */}
+          {(role === 'head' || role === 'sales_manager') && (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">% sobre BDM Globales</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={pctSobreBdmGlobal}
+                  onChange={e => setPctSobreBdmGlobal(parseFloat(e.target.value) || 0)}
+                  placeholder="0"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">% que cobra este HEAD sobre el ND de cada BDM GLOBAL en su estructura</p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">% Extra sobre HEAD bajo su estructura</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={pctExtraSobreHead}
+                  onChange={e => setPctExtraSobreHead(parseFloat(e.target.value) || 0)}
+                  placeholder="0"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                />
+                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">% sobre la suma de ND de los BDMs de cada HEAD con salario fijo bajo su estructura</p>
+              </div>
+              <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800">
+                <input
+                  id="apply-pct-extra-no-salary"
+                  type="checkbox"
+                  checked={applyPctExtraToHeadWithoutSalary}
+                  onChange={e => setApplyPctExtraToHeadWithoutSalary(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-border"
+                />
+                <label htmlFor="apply-pct-extra-no-salary" className="flex-1 cursor-pointer text-sm">
+                  Aplicar el % Extra sobre HEAD también cuando no tienen salario fijo
+                </label>
+              </div>
+            </>
           )}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.benefitsPlaceholder')}</label>
@@ -731,6 +789,22 @@ export default function RRHHPage() {
   const hasIbRebatesAccess = useModuleAccess('ib_rebates');
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const [tab, setTab] = useState<Tab>('commercial');
+  // Restaurar la pestaña activa después de un reload disparado por una acción
+  // (ej. despedir, que recarga la página). Flag de un solo uso: se lee y se
+  // borra, así una navegación normal a /rrhh sigue cayendo en 'commercial'.
+  useEffect(() => {
+    try {
+      const restore = sessionStorage.getItem('rrhh-restore-tab');
+      if (restore) {
+        if (restore === 'employees' || restore === 'commercial' || restore === 'negotiations' || restore === 'ib_rebates') {
+          setTab(restore);
+        }
+        sessionStorage.removeItem('rrhh-restore-tab');
+      }
+    } catch {
+      // sessionStorage puede no estar disponible (SSR / modo privado) — no pasa nada
+    }
+  }, []);
   const [employees, setEmployees] = useState<Employee[]>(dataEmployees);
   const profiles = commercialProfiles; // always use fresh data from context
   const monthlyResults = dataMonthlyResults;
@@ -796,6 +870,32 @@ export default function RRHHPage() {
   const salesManagers = profiles.filter(p => p.role === 'sales_manager');
   const heads = profiles.filter(p => p.role === 'head');
   const independentBdms = profiles.filter(p => p.role === 'bdm' && !p.head_id);
+
+  // ─── Fuerza Comercial: buscador + colapsar equipos ───
+  // Buscador libre por encargado (HEAD/Sales Manager) o por BDM/usuario.
+  // collapsedTeams guarda los ids de líderes con su equipo contraído.
+  const [commercialSearch, setCommercialSearch] = useState('');
+  const [collapsedTeams, setCollapsedTeams] = useState<Set<string>>(new Set());
+  const toggleTeamCollapsed = (leaderId: string) => {
+    setCollapsedTeams((prev) => {
+      const next = new Set(prev);
+      if (next.has(leaderId)) next.delete(leaderId); else next.add(leaderId);
+      return next;
+    });
+  };
+  const matchesCommercial = (p: CommercialProfile, q: string) =>
+    !q ||
+    p.name.toLowerCase().includes(q) ||
+    p.email.toLowerCase().includes(q) ||
+    (ROLE_LABELS_HR[p.role] || '').toLowerCase().includes(q);
+  const commercialQ = commercialSearch.trim().toLowerCase();
+  // Un equipo se muestra si matchea el líder O algún BDM bajo su estructura.
+  const teamHasMatch = (leader: CommercialProfile) =>
+    matchesCommercial(leader, commercialQ) ||
+    profiles.some((p) => p.head_id === leader.id && matchesCommercial(p, commercialQ));
+  const visibleSalesManagers = salesManagers.filter(teamHasMatch);
+  const visibleHeads = heads.filter(teamHasMatch);
+  const visibleIndependentBdms = independentBdms.filter((b) => matchesCommercial(b, commercialQ));
 
   const totalCommissionsFiltered = filteredResults.reduce((sum, r) => sum + r.total_earned, 0);
   const activeProfiles = profiles.filter(p => p.status === 'active').length;
@@ -867,14 +967,18 @@ export default function RRHHPage() {
   const [reinstating, setReinstating] = useState(false);
 
   const handleFireSuccess = async () => {
-    // Cerramos el modal PRIMERO — refresh() del DataProvider recarga
-    // ~14 tablas y puede tardar varios segundos; si esperamos a que
-    // termine antes de cerrar, el usuario ve el botón "…" colgado y
-    // parece que se rompió. Cerramos y dejamos que refresh() corra por
-    // detrás: cuando termine, `commercialProfiles` se actualiza y la
-    // tabla muestra el badge "Despedido" en la fila correspondiente.
+    // El refresh() silencioso del DataProvider no refleja de forma fiable el
+    // status recién persistido (la fila seguía mostrando "Activo" hasta que
+    // el usuario recargaba a mano). Usamos el mismo window.location.reload()
+    // que ya usan editar (ProfileForm) y eliminar (handleDeleteProfile) en
+    // este módulo — es el patrón confiable acá: garantiza que la fila muestre
+    // "Despedido" sin recarga manual. Cerramos el modal primero por prolijidad.
     setFiringProfile(null);
-    await refresh();
+    // Recordar la pestaña actual para volver a ella tras el reload (si no, la
+    // página vuelve a 'commercial' y el usuario aparece en "Fuerza Comercial"
+    // en vez de quedarse en la pestaña donde estaba, ej. "Empleados").
+    try { sessionStorage.setItem('rrhh-restore-tab', tab); } catch {}
+    window.location.reload();
   };
 
   const handleReinstate = async (profile: CommercialProfile) => {
@@ -1037,7 +1141,7 @@ export default function RRHHPage() {
       p.net_deposit_pct != null ? `${p.net_deposit_pct}%` : 'N/A',
       p.pnl_pct != null ? `${p.pnl_pct}%` : 'N/A',
       p.commission_per_lot != null ? p.commission_per_lot : 'N/A',
-      p.salary != null ? p.salary : 'N/A',
+      p.fixed_salary && p.salary != null ? p.salary : 'N/A',
       getFilteredTotal(p.id),
     ] as (string | number)[]);
     downloadCSV('fuerza_comercial.csv', headers, rows);
@@ -1160,7 +1264,12 @@ export default function RRHHPage() {
 
   // Render a team card (for sales_manager or head)
   const renderTeamCard = (leader: CommercialProfile) => {
-    const bdms = profiles.filter(p => p.head_id === leader.id);
+    const allBdms = profiles.filter(p => p.head_id === leader.id);
+    const leaderMatches = matchesCommercial(leader, commercialQ);
+    // Al buscar: si el líder NO matchea, mostrar solo los BDMs que matchean.
+    const bdms = (!commercialQ || leaderMatches) ? allBdms : allBdms.filter(b => matchesCommercial(b, commercialQ));
+    // Colapsar se ignora mientras hay búsqueda activa (siempre expandido).
+    const isCollapsed = !commercialQ && collapsedTeams.has(leader.id);
     const leaderTotal = getFilteredTotal(leader.id);
     const roleBadge = getRoleBadge(leader.role);
 
@@ -1168,6 +1277,14 @@ export default function RRHHPage() {
       <Card key={leader.id}>
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => toggleTeamCollapsed(leader.id)}
+              className="text-muted-foreground hover:text-foreground shrink-0"
+              aria-label={isCollapsed ? 'Expandir equipo' : 'Contraer equipo'}
+              title={isCollapsed ? 'Expandir equipo' : 'Contraer equipo'}
+            >
+              {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+            </button>
             <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center shrink-0">
               <UserCircle className="w-6 h-6 text-violet-600" />
             </div>
@@ -1211,7 +1328,7 @@ export default function RRHHPage() {
           </div>
         </div>
 
-        {bdms.length > 0 && (
+        {!isCollapsed && bdms.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[500px]">
               <thead>
@@ -1235,11 +1352,14 @@ export default function RRHHPage() {
                   <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     <td className={cn('py-2.5 font-medium', firedNameClass(bdm))}>
                       {bdm.name}
+                      {bdm.role === 'bdm_global' && (
+                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
+                      )}
                       <FiredBadge profile={bdm} />
                     </td>
                     <td className="py-2.5 text-muted-foreground text-xs hidden sm:table-cell">{bdm.email}</td>
                     <td className="py-2.5 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
-                    <td className="py-2.5 text-right hidden sm:table-cell">{bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
+                    <td className="py-2.5 text-right hidden sm:table-cell">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 text-right hidden sm:table-cell">{bdmPnl > 0 ? formatCurrency(bdmPnl) : '-'}</td>
                     <td className="py-2.5 text-right">{formatCurrency(getFilteredCommissions(bdm.id))}</td>
                     <td className="py-2.5 text-right hidden sm:table-cell">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>
@@ -1420,6 +1540,17 @@ export default function RRHHPage() {
               companyId={company.id}
               onClose={() => { setShowEmpForm(false); setEditingEmp(undefined); }}
               onSave={handleSaveEmployee}
+            />
+          )}
+          {/* ProfileForm también acá: la fila comercial en Empleados tiene un
+              botón de editar (lápiz) que abre este modal. Sin montarlo en esta
+              pestaña, el botón seteaba showProfileForm pero el modal no existía
+              (solo estaba en Fuerza Comercial) y "no hacía nada". */}
+          {showProfileForm && (
+            <ProfileForm
+              editing={editingProfile}
+              onClose={closeProfileForm}
+              companyId={company?.id || ''}
             />
           )}
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
@@ -1614,14 +1745,60 @@ export default function RRHHPage() {
             />
           )}
 
+          {/* Buscador (por encargado HEAD/SM o por BDM) + colapsar/expandir todo */}
+          <Card>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="relative flex items-center flex-1 min-w-[220px]">
+                <Search className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" />
+                <input
+                  type="text"
+                  value={commercialSearch}
+                  onChange={(e) => setCommercialSearch(e.target.value)}
+                  placeholder="Buscar por encargado (HEAD/SM) o por BDM / usuario..."
+                  className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                />
+                {commercialSearch && (
+                  <button onClick={() => setCommercialSearch('')} className="absolute right-2 text-muted-foreground hover:text-foreground" aria-label="Limpiar búsqueda">✕</button>
+                )}
+              </div>
+              {!commercialQ && (
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setCollapsedTeams(new Set([...salesManagers, ...heads].map((l) => l.id)))}
+                    className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted"
+                  >
+                    Contraer todos
+                  </button>
+                  <button
+                    onClick={() => setCollapsedTeams(new Set())}
+                    className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted"
+                  >
+                    Expandir todos
+                  </button>
+                </div>
+              )}
+            </div>
+            {commercialQ && (
+              <p className="text-xs text-muted-foreground mt-2">
+                Mostrando {visibleSalesManagers.length + visibleHeads.length} equipo(s)
+                {visibleIndependentBdms.length > 0 ? ` y ${visibleIndependentBdms.length} BDM(s) independiente(s)` : ''} para &quot;{commercialSearch}&quot;.
+              </p>
+            )}
+          </Card>
+
           {/* Sales Managers */}
-          {salesManagers.map(sm => renderTeamCard(sm))}
+          {visibleSalesManagers.map(sm => renderTeamCard(sm))}
 
           {/* HEADs */}
-          {heads.map(head => renderTeamCard(head))}
+          {visibleHeads.map(head => renderTeamCard(head))}
+
+          {/* Sin resultados de búsqueda */}
+          {commercialQ && visibleSalesManagers.length === 0 && visibleHeads.length === 0 && visibleIndependentBdms.length === 0 && (
+            <Card><p className="text-center text-muted-foreground py-8">Sin resultados para &quot;{commercialSearch}&quot;.</p></Card>
+          )}
 
           {/* Independent BDMs */}
-          {independentBdms.length > 0 && (
+          {visibleIndependentBdms.length > 0 && (
             <Card>
               <h2 className="text-lg font-semibold mb-4">{t('hr.independentBdms')}</h2>
               <div className="overflow-x-auto">
@@ -1641,19 +1818,22 @@ export default function RRHHPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {independentBdms.map(bdm => {
+                    {visibleIndependentBdms.map(bdm => {
                       const bdmPnl = getFilteredPnl(bdm.id);
                       const bdmBonus = getFilteredBonus(bdm.id);
                       return (
                       <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                         <td className={cn('py-2.5 font-medium', firedNameClass(bdm))}>
                           {bdm.name}
+                          {bdm.role === 'bdm_global' && (
+                            <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
+                          )}
                           <FiredBadge profile={bdm} />
                         </td>
                         <td className="py-2.5 text-muted-foreground text-xs">{bdm.email}</td>
                         <td className="py-2.5 text-right">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
                         <td className="py-2.5 text-right">{bdm.pnl_pct != null ? `${bdm.pnl_pct}%` : 'N/A'}</td>
-                        <td className="py-2.5 text-right">{bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
+                        <td className="py-2.5 text-right">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                         <td className="py-2.5 text-right">{bdmPnl > 0 ? formatCurrency(bdmPnl) : '-'}</td>
                         <td className="py-2.5 text-right">{formatCurrency(getFilteredCommissions(bdm.id))}</td>
                         <td className="py-2.5 text-right">{bdmBonus > 0 ? formatCurrency(bdmBonus) : '-'}</td>

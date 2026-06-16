@@ -235,6 +235,7 @@ const ROLE_LABELS_MAP: Record<string, string> = {
   sales_manager: 'Sales Manager',
   head: 'HEAD',
   bdm: 'BDM',
+  bdm_global: 'BDM GLOBAL',
 };
 
 // Returns the label for known roles, or the role string capitalized as fallback
