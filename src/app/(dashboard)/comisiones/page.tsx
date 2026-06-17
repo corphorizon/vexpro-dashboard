@@ -525,8 +525,11 @@ export default function ComisionesPage() {
   // TAB: INDIVIDUAL (all BDMs)
   // ═══════════════════════════════════════════════════════════
 
+  // Incluye BDM GLOBAL: en el tab Individual cobran su comisión propia igual
+  // que un BDM normal (el aspecto "global" solo cambia lo que el HEAD cobra
+  // sobre ellos en el tab Equipos, no su comisión individual).
   const allBdms = useMemo(
-    () => commercialProfiles.filter((p) => p.role === 'bdm' && appearsInCommissions(p)),
+    () => commercialProfiles.filter((p) => (p.role === 'bdm' || p.role === 'bdm_global') && appearsInCommissions(p)),
     [commercialProfiles],
   );
 
@@ -1485,7 +1488,7 @@ export default function ComisionesPage() {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
                         <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
                             <input type="number" aria-label="Net Deposit del comercial" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1611,7 +1614,7 @@ export default function ComisionesPage() {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
                         <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
                             <input type="number" aria-label="Net Deposit del comercial" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1928,7 +1931,7 @@ export default function ComisionesPage() {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
                         <tr key={profile.id} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3 text-center text-xs font-medium">{formatCurrency(profile.commission_per_lot ?? 0)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground italic text-xs">—</td>
@@ -1949,7 +1952,7 @@ export default function ComisionesPage() {
         const activeProfiles = commercialProfiles.filter(appearsInCommissions);
         const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
         const headProfiles = activeProfiles.filter((p) => p.role === 'head');
-        const bdmProfiles = activeProfiles.filter((p) => p.role === 'bdm');
+        const bdmProfiles = activeProfiles.filter((p) => p.role === 'bdm' || p.role === 'bdm_global');
         const allProfiles = [...smProfiles, ...headProfiles, ...bdmProfiles];
 
         const getTotal = (profileId: string, periodId: string) => {
@@ -2063,7 +2066,7 @@ export default function ComisionesPage() {
                       const total = getProfileTotal(profile.id);
                       return (
                         <tr key={profile.id} className={cn('border-b border-border/50 hover:bg-muted/30', showSeparator && 'border-t-2 border-t-border')}>
-                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}<FiredBadge profile={profile} />{profile.pnl_special_mode && (<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 align-middle">{t('comm.specialBadge')}</span>)}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} />{profile.pnl_special_mode && (<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 align-middle">{t('comm.specialBadge')}</span>)}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-2 py-2.5">
                             <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', ROLE_BADGE[profile.role])}>
                               {ROLE_LABEL[profile.role]}
