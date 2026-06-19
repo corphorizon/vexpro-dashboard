@@ -218,31 +218,27 @@ export async function upsertExpenses(
   periodId: string,
   expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null }[]
 ): Promise<void> {
+  // Reemplazo ATÓMICO vía RPC (migración atomic_replace_period_expenses).
+  // Antes esto era un DELETE seguido de un INSERT en dos llamadas HTTP
+  // separadas: si el INSERT fallaba o time-outeaba tras un DELETE exitoso, el
+  // período quedaba VACÍO (así se perdió VexPro May 2026). La función plpgsql
+  // corre todo en una sola transacción → o se guarda completo o no se toca nada.
   const mainSave = (async () => {
-    const { error: delError } = await supabase
-      .from('expenses')
-      .delete()
-      .eq('company_id', companyId)
-      .eq('period_id', periodId);
+    const rows = expenses.map((e) => ({
+      concept: e.concept,
+      amount: e.amount,
+      paid: e.paid,
+      pending: e.pending,
+      is_fixed: !!e.is_fixed,
+      category: e.category ?? null,
+    }));
 
-    if (delError) throw new Error(`Error borrando egresos: ${delError.message}`);
-
-    if (expenses.length > 0) {
-      const rows = expenses.map((e, i) => ({
-        company_id: companyId,
-        period_id: periodId,
-        concept: e.concept,
-        amount: e.amount,
-        paid: e.paid,
-        pending: e.pending,
-        is_fixed: !!e.is_fixed,
-        category: e.category ?? null,
-        sort_order: i + 1,
-      }));
-
-      const { error: insError } = await supabase.from('expenses').insert(rows);
-      if (insError) throw new Error(`Error guardando egresos: ${insError.message}`);
-    }
+    const { error } = await supabase.rpc('replace_period_expenses', {
+      p_company_id: companyId,
+      p_period_id: periodId,
+      p_rows: rows,
+    });
+    if (error) throw new Error(`Error guardando egresos: ${error.message}`);
   })();
 
   await withTimeout(mainSave, MAIN_SAVE_TIMEOUT_MS, 'upsertExpenses');
