@@ -437,12 +437,7 @@ export async function updateLiquidityMovement(
   id: string,
   updates: { date: string; user_email: string | null; mt_account: string | null; deposit: number; withdrawal: number; balance: number }
 ): Promise<void> {
-  const { error } = await supabase
-    .from('liquidity_movements')
-    .update(updates)
-    .eq('id', id);
-
-  if (error) throw new Error(`Error actualizando movimiento de liquidez: ${error.message}`);
+  await updateWithAbort('liquidity_movements', id, updates, 'Actualizar liquidez');
 }
 
 export async function deleteLiquidityMovement(id: string): Promise<void> {
@@ -473,16 +468,81 @@ export async function insertInvestment(
   return data.id;
 }
 
+// Stiven (2026-06-19): updateInvestment / updateLiquidityMovement se colgaban
+// 25s sin avisar nada útil. Causa raíz: el cliente JS de Supabase puede
+// quedarse esperando un auth-refresh atascado ANTES de salir la petición HTTP,
+// así que ni un `.abortSignal()` ni un `withRowTimeout` externo del caller
+// llegan a interrumpir el bloqueo — la promesa nunca avanza.
+//
+// Defensa en 3 capas para que el usuario vea SIEMPRE un error útil en <15s:
+//   1. Check de sesión con timeout de 5s. Si auth está bloqueado, falla rápido
+//      con "sesión expirada — recarga la página".
+//   2. Mutación con AbortSignal de 12s — cancela la HTTP request si llega a
+//      salir y se cuelga del lado del servidor.
+//   3. Promise.race con timeout de 13s como red de seguridad — por si el
+//      abort signal no se honra (Supabase a veces ignora abort si la respuesta
+//      ya está streamando).
+//   + `.select('id')` para confirmar que el UPDATE afectó una fila (cazaría
+//     denegaciones silenciosas por RLS).
+async function updateWithAbort<T extends Record<string, unknown>>(
+  table: string,
+  id: string,
+  updates: T,
+  errLabel: string,
+): Promise<void> {
+  // Capa 1: verificar que la sesión está viva — sin esto, una sesión vencida
+  // hace que el primer `.from()` se cuelgue en el lock de refresh hasta el
+  // timeout del wrapper externo (25s).
+  const sessionRace = await Promise.race([
+    supabase.auth.getSession(),
+    new Promise<{ data: { session: null } }>((_, reject) =>
+      setTimeout(() => reject(new Error(`${errLabel}: el cliente de autenticación está bloqueado (>5s). Recarga la página con Ctrl+Shift+R.`)), 5_000),
+    ),
+  ]);
+  if (!sessionRace.data?.session) {
+    throw new Error(`${errLabel}: tu sesión expiró. Cierra sesión y vuelve a iniciar.`);
+  }
+
+  // Capa 2 + 3: mutación con abort interno + race externo
+  const ctrl = new AbortController();
+  const start = Date.now();
+  const abortTid = setTimeout(() => ctrl.abort(), 12_000);
+
+  const mutationPromise = supabase
+    .from(table)
+    .update(updates)
+    .eq('id', id)
+    .select('id')
+    .abortSignal(ctrl.signal);
+
+  const safetyTimeout = new Promise<never>((_, reject) =>
+    setTimeout(() => {
+      ctrl.abort();
+      reject(new Error(`${errLabel}: la petición no respondió en 13s. Tu sesión puede estar caducando — recarga la página (Ctrl+Shift+R).`));
+    }, 13_000),
+  );
+
+  try {
+    const { data, error } = await Promise.race([mutationPromise, safetyTimeout]);
+    if (error) {
+      if (error.message.toLowerCase().includes('abort')) {
+        throw new Error(`${errLabel}: petición cancelada tras ${Math.round((Date.now() - start) / 1000)}s. Sesión posiblemente expirada.`);
+      }
+      throw new Error(`${errLabel}: ${error.message}`);
+    }
+    if (!data || data.length === 0) {
+      throw new Error(`${errLabel}: no se actualizó ninguna fila. Posible causa: permisos RLS o ID inexistente.`);
+    }
+  } finally {
+    clearTimeout(abortTid);
+  }
+}
+
 export async function updateInvestment(
   id: string,
   updates: { date: string; concept: string | null; responsible: string | null; deposit: number; withdrawal: number; profit: number; balance: number }
 ): Promise<void> {
-  const { error } = await supabase
-    .from('investments')
-    .update(updates)
-    .eq('id', id);
-
-  if (error) throw new Error(`Error actualizando inversión: ${error.message}`);
+  await updateWithAbort('investments', id, updates, 'Actualizar inversión');
 }
 
 export async function deleteInvestment(id: string): Promise<void> {

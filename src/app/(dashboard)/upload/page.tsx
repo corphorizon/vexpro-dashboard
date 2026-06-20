@@ -576,6 +576,34 @@ export default function UploadPage() {
   const [editInv, setEditInv] = useState({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
   const [newInv, setNewInv] = useState({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
 
+  // Stiven (2026-06-19): Bug "tabs vacíos en Carga de Datos".
+  //
+  // El useState lazy-init de `liquidityRows` / `investmentRows` solo corre en
+  // el MOUNT. Si DataContext aún estaba cargando cuando esta página renderizó,
+  // los arrays quedaban en [] para siempre — la tabla salía vacía aunque la
+  // BD tuviera datos. Cualquier edit/save subsiguiente sí hacía
+  // `setInvestmentRowsRaw([...getInvestmentsData()])`, así que la página
+  // "se arreglaba sola" con una interacción — eso explica la intermitencia.
+  //
+  // Solución: sincronizar desde DataContext con un useEffect cuando llegue
+  // data nueva, PERO solo si el usuario no está editando una fila (para no
+  // pisarle el formulario en medio de una edición).
+  const investmentsFromCtx = getInvestmentsData();
+  useEffect(() => {
+    if (editingInvId === null) {
+      setInvestmentRowsRaw([...investmentsFromCtx]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [investmentsFromCtx.length, editingInvId]);
+
+  const liquidityFromCtx = getLiquidityData();
+  useEffect(() => {
+    if (editingLiqId === null) {
+      setLiquidityRowsRaw([...liquidityFromCtx]);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liquidityFromCtx.length, editingLiqId]);
+
   // UI state — shared confirmation dialog for destructive deletes.
   const { confirm, Modal: ConfirmModal } = useConfirm();
   const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
