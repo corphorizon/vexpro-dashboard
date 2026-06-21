@@ -1016,7 +1016,10 @@ export default function ComisionesPage() {
       const activeProfiles = commercialProfiles.filter(appearsInCommissions);
       const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
       const headProfilesList = activeProfiles.filter((p) => p.role === 'head');
-      const bdmProfilesList = activeProfiles.filter((p) => p.role === 'bdm');
+      // Stiven (2026-06-19): Bug — el CSV no incluía los BDM Global porque
+      // solo filtraba `p.role === 'bdm'`. La tabla visual ya los muestra
+      // correctamente con `role === 'bdm' || role === 'bdm_global'`.
+      const bdmProfilesList = activeProfiles.filter((p) => p.role === 'bdm' || p.role === 'bdm_global');
       const allHistoryProfiles = [...smProfiles, ...headProfilesList, ...bdmProfilesList];
 
       const periodLabels = historyPeriods.map((p) => p.label || `${p.year}-${String(p.month).padStart(2, '0')}`);
