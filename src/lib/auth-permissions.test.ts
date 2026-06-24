@@ -135,3 +135,31 @@ describe('canAdd / canEdit / canDelete', () => {
     expect(canDelete(u)).toBe(true);
   });
 });
+
+// Mirror of WRITE_CAPABLE_ROLES / roleCanWrite in auth-context.tsx +
+// ADMIN_ROLES in api-auth.ts. If you change those, mirror here.
+const WRITE_CAPABLE_ROLES = new Set(['admin', 'auditor', 'hr']);
+function roleCanWrite(role: string): boolean {
+  return WRITE_CAPABLE_ROLES.has(role);
+}
+
+describe('roleCanWrite (banner de rol solo-lectura, Kevin 2026-06-24)', () => {
+  it('admin / auditor / hr pueden escribir', () => {
+    expect(roleCanWrite('admin')).toBe(true);
+    expect(roleCanWrite('auditor')).toBe(true);
+    expect(roleCanWrite('hr')).toBe(true);
+  });
+
+  it('socio / soporte / invitado / viewer son solo lectura', () => {
+    for (const role of ['socio', 'soporte', 'invitado', 'viewer']) {
+      expect(roleCanWrite(role)).toBe(false);
+    }
+  });
+
+  it('espeja exactamente ADMIN_ROLES del server (anti-divergencia)', () => {
+    // Si el server acepta un rol en /api/admin/* pero el banner dice
+    // "solo lectura" (o viceversa), el usuario queda confundido. Estos
+    // tres deben ser idénticos a ADMIN_ROLES en api-auth.ts.
+    expect([...WRITE_CAPABLE_ROLES].sort()).toEqual(['admin', 'auditor', 'hr']);
+  });
+});
