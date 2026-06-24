@@ -907,6 +907,22 @@ export function canEdit(user: User | null): boolean {
   return user.effective_role === 'admin' || user.effective_role === 'auditor';
 }
 
+// Roles que SÍ pueden ejecutar acciones de escritura. Espejo de
+// ADMIN_ROLES en src/lib/api-auth.ts (el server rechaza con 403 a los
+// demás). Cualquier rol fuera de este set es "solo lectura": los
+// allowed_modules únicamente controlan QUÉ VE, nunca qué puede cambiar.
+//
+// Kevin (2026-06-24): la UI de "Editar Usuario" muestra checkboxes de
+// módulos que daban la impresión de otorgar permisos completos. Un
+// usuario con rol `socio` y todos los módulos marcados seguía recibiendo
+// "Permiso insuficiente — se requiere rol admin, auditor o hr" porque
+// los módulos ≠ permisos. Este helper alimenta un banner explicativo.
+export const WRITE_CAPABLE_ROLES = new Set(['admin', 'auditor', 'hr']);
+
+export function roleCanWrite(role: string): boolean {
+  return WRITE_CAPABLE_ROLES.has(role);
+}
+
 export function canDelete(user: User | null): boolean {
   if (!user) return false;
   if (user.is_superadmin) return true;

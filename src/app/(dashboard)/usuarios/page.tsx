@@ -3,13 +3,13 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, type User } from '@/lib/auth-context';
+import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, roleCanWrite, type User } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { RolesPanel } from '@/components/settings/roles-panel';
 import { useI18n } from '@/lib/i18n';
 import { withActiveCompany } from '@/lib/api-fetch';
 // Shield icon removed with the Roles tab — keep ShieldOff for the 2FA badge.
-import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff } from 'lucide-react';
+import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff, AlertTriangle, Eye } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 // Single source of truth for the module catalog — same list and order the
 // superadmin form uses, so /usuarios and /superadmin/users stay in sync.
@@ -373,8 +373,45 @@ export default function UsuariosPage() {
               </div>
             </div>
 
+            {/* Banner de rol solo-lectura. roleCanWrite refleja ADMIN_ROLES
+                del server: admin / auditor / hr pueden escribir; el resto
+                (socio, soporte, invitado, y custom roles basados en ellos)
+                solo VEN. Sin esto el usuario marcaba todos los módulos y
+                creía haber dado permisos completos — Kevin 2026-06-24. */}
+            {(() => {
+              const custom = customRoles.find(c => c.name === form.role);
+              const effectiveRole = custom?.base_role ?? form.role;
+              if (roleCanWrite(effectiveRole)) return null;
+              return (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm">
+                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                  <span>
+                    <strong>{ROLE_LABELS[effectiveRole] ?? form.role}</strong> es un rol de
+                    {' '}<strong>solo lectura</strong>. Podrá <strong>ver</strong> los módulos
+                    marcados abajo y descargar reportes, pero <strong>no podrá agregar,
+                    editar ni eliminar</strong> nada. Para que pueda hacer cambios elige el
+                    rol <strong>Admin</strong> (acceso total), <strong>Auditor</strong> (agregar/editar)
+                    o <strong>HR</strong> (gestión de Recursos Humanos).
+                  </span>
+                </div>
+              );
+            })()}
+
             <div>
               <label className="block text-sm font-medium mb-2">{t('users.modules')}</label>
+              {(() => {
+                const custom = customRoles.find(c => c.name === form.role);
+                const effectiveRole = custom?.base_role ?? form.role;
+                const writes = roleCanWrite(effectiveRole);
+                return (
+                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
+                    <Eye className="w-3.5 h-3.5 flex-shrink-0" />
+                    {writes
+                      ? 'Controla a qué módulos tiene acceso este usuario.'
+                      : 'Estos módulos controlan únicamente QUÉ VE este usuario — no otorgan permisos de edición.'}
+                  </p>
+                );
+              })()}
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 rounded-lg border border-border">
                 {ALL_MODULES.map((m) => (
                   <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer">
