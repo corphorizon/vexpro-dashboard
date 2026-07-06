@@ -63,6 +63,7 @@ type PerCompanyResult = {
   period_id?: string;
   emailed?: number;
   email_failures?: number;
+  fixed_expenses_materialized?: number;
   error?: string;
 };
 
@@ -183,6 +184,28 @@ export async function GET(request: NextRequest) {
         throw new Error(insertError?.message ?? 'insert failed without error');
       }
 
+      // 3b. Materializar los egresos fijos activos en el período recién
+      //     creado. Antes los fijos solo existían como preview en /upload y
+      //     había que guardarlos a mano cada mes; el mes nuevo salía vacío en
+      //     /egresos, reportes y socios. La función es idempotente (no
+      //     duplica si ya hay egresos) y corre como service_role (omite el
+      //     check auth_can_edit). Best-effort: si falla, el período igual
+      //     queda creado y el usuario puede cargar desde /upload.
+      let fixedMaterialized = 0;
+      try {
+        const { data: matCount, error: matError } = await admin.rpc(
+          'materialize_fixed_expenses',
+          { p_company_id: c.id, p_period_id: inserted.id },
+        );
+        if (matError) throw new Error(matError.message);
+        fixedMaterialized = (matCount as number) ?? 0;
+      } catch (matErr) {
+        console.error(
+          `[cron/create-new-period] materialize_fixed_expenses falló para ${c.name}:`,
+          matErr,
+        );
+      }
+
       // 4. Audit. Best-effort.
       await admin.from('audit_logs').insert({
         company_id: c.id,
@@ -196,6 +219,7 @@ export async function GET(request: NextRequest) {
           month: targetMonth,
           label,
           source: 'create-new-period cron',
+          fixed_expenses_materialized: fixedMaterialized,
         }),
       });
 
@@ -239,6 +263,7 @@ export async function GET(request: NextRequest) {
         period_id: inserted.id as string,
         emailed,
         email_failures: emailFailures,
+        fixed_expenses_materialized: fixedMaterialized,
       });
     } catch (err) {
       results.push({
