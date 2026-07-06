@@ -37,23 +37,72 @@ let cachedClient: SupabaseClient | undefined;
 // basado en Promise chaining hace exactamente lo mismo (serializar
 // acceso al refresh token DENTRO de esta pestaña) sin ningún estado
 // persistente que pueda quedar huérfano entre sesiones.
+// Fix 2026-06-20 — el lock anterior tenía un modo de fallo fatal: si la
+// operación de auth (típicamente el refresh del token) NUNCA resolvía
+// (fetch colgado por red muerta, wake de laptop, cambio de wifi — fetch en
+// browser no tiene timeout por defecto), el `finally` nunca corría, el lock
+// nunca se liberaba y TODAS las llamadas a Supabase de la pestaña quedaban
+// encoladas para siempre. Síntoma visible: "Guardar todo tardó demasiado
+// (>25s)" en cadena hasta recargar la página, con la DB respondiendo en
+// <1s. Tres guardas nuevas:
+//   1. TIMEOUT DURO alrededor de fn(): un refresh colgado ahora falla a los
+//      15s (error recuperable — gotrue reintenta) en vez de colgar todo.
+//   2. Espera acotada del lock: si el holder anterior no libera en 10s,
+//      robamos el lock (mismo espíritu que el "forcefully acquiring" de
+//      gotrue con navigator.locks). Peor caso: dos refresh en paralelo —
+//      inocuo; el último token escrito gana.
+//   3. GC arreglado: la versión anterior comparaba contra una promesa
+//      RECIÉN creada (`previous.then(...)` genera un objeto nuevo), así
+//      que la condición era siempre false y el map nunca se limpiaba.
 type LockFn = <R>(name: string, acquireTimeout: number, fn: () => Promise<R>) => Promise<R>;
 const memoryLockMap = new Map<string, Promise<unknown>>();
-const memoryLock: LockFn = async (name, _acquireTimeout, fn) => {
+const LOCK_HOLD_CEILING_MS = 15_000; // máximo que una operación de auth puede retener el lock
+const LOCK_ACQUIRE_CEILING_MS = 10_000; // máximo que esperamos por el holder anterior
+
+const memoryLock: LockFn = async (name, acquireTimeout, fn) => {
   const previous = memoryLockMap.get(name) ?? Promise.resolve();
   let release: () => void = () => {};
-  const next = new Promise<void>((resolve) => {
+  const current = new Promise<void>((resolve) => {
     release = resolve;
   });
-  memoryLockMap.set(name, previous.then(() => next));
-  await previous; // wait for the previous holder of this name
+  const chained = previous.then(() => current);
+  memoryLockMap.set(name, chained);
+
+  // Espera al holder anterior, pero NUNCA indefinidamente. acquireTimeout
+  // negativo en gotrue significa "espera infinita" — lo acotamos igual:
+  // preferimos un refresh duplicado antes que una pestaña muerta.
+  const waitMs =
+    acquireTimeout >= 0
+      ? Math.min(acquireTimeout || LOCK_ACQUIRE_CEILING_MS, LOCK_ACQUIRE_CEILING_MS)
+      : LOCK_ACQUIRE_CEILING_MS;
+  let acquireTimer: ReturnType<typeof setTimeout> | undefined;
+  await Promise.race([
+    previous,
+    new Promise<void>((resolve) => {
+      acquireTimer = setTimeout(resolve, waitMs);
+    }),
+  ]).finally(() => clearTimeout(acquireTimer));
+
+  let holdTimer: ReturnType<typeof setTimeout> | undefined;
   try {
-    return await fn();
+    return await Promise.race([
+      fn(),
+      new Promise<never>((_, reject) => {
+        holdTimer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Auth lock "${name}" superó ${LOCK_HOLD_CEILING_MS / 1000}s — liberado para no bloquear la pestaña`,
+              ),
+            ),
+          LOCK_HOLD_CEILING_MS,
+        );
+      }),
+    ]);
   } finally {
+    clearTimeout(holdTimer);
     release();
-    // GC the map entry if this was the last one (avoid leaks across
-    // long-lived sessions).
-    if (memoryLockMap.get(name) === previous.then(() => next)) {
+    if (memoryLockMap.get(name) === chained) {
       memoryLockMap.delete(name);
     }
   }

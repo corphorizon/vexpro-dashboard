@@ -255,7 +255,7 @@ function SavedRecentlyBadge({ at }: { at: Date }) {
 export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const { periods, allDeposits, allWithdrawals, allExpenses, expenseTemplates, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh } = useData();
+  const { periods, allDeposits, allWithdrawals, allExpenses, expenseTemplates, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh, refreshSections } = useData();
   const isAdmin = user?.role === 'admin';
   const userCanAdd = canAdd(user);
   const userCanEdit = canEdit(user);
@@ -972,7 +972,7 @@ export default function UploadPage() {
           'Guardar liquidez',
         );
         setNewLiq({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
-        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['liquidez']), 'Recargar datos').catch(() => {
           // Silent refresh failure shouldn't invalidate the successful save.
           console.warn('[liquidez] refresh after add failed');
         });
@@ -1018,7 +1018,7 @@ export default function UploadPage() {
           'Actualizar liquidez',
         );
         setEditingLiqId(null);
-        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['liquidez']), 'Recargar datos').catch(() => {
           console.warn('[liquidez] refresh after edit failed');
         });
         setLiquidityRowsRaw([...getLiquidityData()]);
@@ -1038,7 +1038,7 @@ export default function UploadPage() {
       setSavingLiq(true);
       try {
         await withRowTimeout(deleteLiqMutation(id), 'Eliminar liquidez');
-        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['liquidez']), 'Recargar datos').catch(() => {
           console.warn('[liquidez] refresh after delete failed');
         });
         setLiquidityRowsRaw([...getLiquidityData()]);
@@ -1083,7 +1083,7 @@ export default function UploadPage() {
           'Guardar inversión',
         );
         setNewInv({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
-        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['inversiones']), 'Recargar datos').catch(() => {
           console.warn('[inversiones] refresh after add failed');
         });
         setInvestmentRowsRaw([...getInvestmentsData()]);
@@ -1131,7 +1131,7 @@ export default function UploadPage() {
           'Actualizar inversión',
         );
         setEditingInvId(null);
-        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['inversiones']), 'Recargar datos').catch(() => {
           console.warn('[inversiones] refresh after edit failed');
         });
         setInvestmentRowsRaw([...getInvestmentsData()]);
@@ -1151,7 +1151,7 @@ export default function UploadPage() {
       setSavingInv(true);
       try {
         await withRowTimeout(deleteInvMutation(id), 'Eliminar inversión');
-        await withRowTimeout(refresh(), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['inversiones']), 'Recargar datos').catch(() => {
           console.warn('[inversiones] refresh after delete failed');
         });
         setInvestmentRowsRaw([...getInvestmentsData()]);
@@ -1210,7 +1210,7 @@ export default function UploadPage() {
         // correct value, and the latest refresh will settle the
         // DataProvider. Only a true network failure / timeout matters,
         // and that surfaces through the regular catch below.
-        await refresh();
+        await refreshSections(['depositos']);
       } catch (err) {
         // Rollback the optimistic update so the cell reverts to what
         // was actually in DB before we touched it.
@@ -1270,7 +1270,7 @@ export default function UploadPage() {
         // stale refresh (common when user clicks Save on a second row
         // before the first refresh resolves). Real failures still
         // surface via catch.
-        await refresh();
+        await refreshSections(['retiros']);
       } catch (err) {
         setWithdrawalsRaw(previousWithdrawals);
         Sentry.captureException(err, {
@@ -1411,7 +1411,7 @@ export default function UploadPage() {
         // in data-context.tsx), so `false` is reserved for real
         // failures — and in those we keep dirty marked so the next
         // save attempt re-pushes the data once the network recovers.
-        const ok = await refresh();
+        const ok = await refreshSections(['ingresos']);
         if (ok) {
           clearDirty('ingresos');
           clearDirty('retiros');
@@ -1452,8 +1452,17 @@ export default function UploadPage() {
   //      slightly stale numbers for a second while the context reloads.
   //   4. Hard 25s safety timeout around the main save so network death
   //      doesn't lock the button forever.
+  // Candado re-entrante (fix 2026-06-20): el gate `if (savingAll)` del
+  // autosave lee el STATE de React, que se actualiza async — si el timer del
+  // autosave y el click en "Guardar Todo" caen en la misma ventana de render,
+  // ambos veían savingAll=false y corrían DOS saveAll en paralelo (dos
+  // reemplazos del período compitiendo). El ref es síncrono: el segundo
+  // entrante sale inmediatamente.
+  const saveAllInFlightRef = useRef(false);
   const saveAll = async () => {
     if (!userCanAdd || !company) return;
+    if (saveAllInFlightRef.current) return;
+    saveAllInFlightRef.current = true;
     setSavingAll(true);
     const companyId = company.id;
     const periodId = selectedPeriodRef.current;
@@ -1517,6 +1526,7 @@ export default function UploadPage() {
 
       // Main save succeeded. Show success + unlock the button NOW.
       showSuccess(successMsg);
+      saveAllInFlightRef.current = false;
       setSavingAll(false);
       setLastSavedAt(new Date());
       Sentry.addBreadcrumb({
@@ -1551,7 +1561,9 @@ export default function UploadPage() {
       // guard, on a real refresh failure the dirty stays marked, the
       // banner stays up, and the next save attempt re-pushes the
       // current local view (which is correct).
-      const ok = await refresh();
+      // B1: refresh selectivo — solo las tablas de la sección guardada
+      // (2-3 queries) en vez de recargar toda la empresa (~19 queries).
+      const ok = await refreshSections([section as 'depositos' | 'retiros' | 'egresos' | 'ingresos']);
       if (ok) {
         clearDirty(section);
         if (section === 'ingresos') {
@@ -1567,6 +1579,7 @@ export default function UploadPage() {
         extra: { periodId, companyId, periodLabel },
       });
       showError(`Error al guardar: ${message}`);
+      saveAllInFlightRef.current = false;
       setSavingAll(false);
       // dirty is intentionally NOT cleared on error — the user's
       // in-progress edits stay protected so they can retry without

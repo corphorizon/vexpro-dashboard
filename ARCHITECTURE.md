@@ -127,6 +127,26 @@ Tablas clave: `periods`, `deposits`, `withdrawals`, `expenses`,
 `liquidity_movements`, `investments`, `commercial_profiles`,
 `commercial_monthly_results`, `api_transactions`, `pinned_coinsbuy_wallets`.
 
+**Guardado atómico (migraciones 043-044, 2026-06-20):** TODO lo que se
+persiste por período (expenses, deposits, withdrawals) va por RPCs plpgsql
+transaccionales (`replace_period_*`); los single-row (operating_income,
+prop_firm_sales, p2p_transfers, channel_balances) usan upsert nativo
+`ON CONFLICT`. Prohibido volver al patrón "2 llamadas HTTP" (DELETE→INSERT
+o SELECT→UPDATE/INSERT): un timeout entre ambas deja el período vacío
+(así se perdieron los egresos de VexPro May 2026).
+
+**Auth lock (src/lib/supabase/client.ts):** el lock in-memory que serializa
+el refresh del token tiene timeout duro (15s hold / 10s acquire). NO quitar
+esos límites: un refresh colgado sin timeout encolaba TODAS las llamadas de
+la pestaña para siempre (síntoma: "Guardar todo tardó demasiado (>25s)" en
+cadena hasta recargar).
+
+**Refresh selectivo (data-context `refreshSections`):** tras guardar, las
+páginas recargan SOLO las tablas de la sección tocada (2-3 queries), no el
+`refresh()` completo (~19 queries). Con la DB en eu-west-2 y usuarios en
+Dubai/LatAm (Londres es el punto medio elegido a propósito — NO migrar de
+región sin decisión de Kevin), cada query extra pesa.
+
 **Notas operativas:**
 - Las queries grandes (`api_transactions`) llevan `.limit(10000)` defensivo y
   están scopeadas por `company_id` + rango de fecha. El mes pico real (VexPro

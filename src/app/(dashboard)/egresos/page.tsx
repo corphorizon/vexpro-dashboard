@@ -34,7 +34,7 @@ export default function EgresosPage() {
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
-  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, company, refresh } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, company, refreshSections } = useData();
   const userCanEdit = canEdit(user);
   const userCanDelete = canDelete(user);
 
@@ -151,7 +151,8 @@ export default function EgresosPage() {
       });
       // Background refresh — the caller doesn't wait on the full context
       // reload. If it fails we log but the save itself already succeeded.
-      void refresh().catch((err) => {
+      // B1: refresh selectivo — solo egresos (2 queries), no toda la empresa.
+      void refreshSections(['egresos']).catch((err) => {
         console.warn('[persistExpenses] background refresh failed:', err);
       });
     } finally {
@@ -200,6 +201,26 @@ export default function EgresosPage() {
 
   const cancelEdit = () => {
     setEditingId(null);
+  };
+
+  // --- Marcar como pagado (un click, sin abrir edición) ---
+  // Pedido de Kevin 2026-06-20: pagar un egreso era abrir el modo edición,
+  // copiar el monto al campo pagado y guardar. Esto lo hace en un click:
+  // paid = amount, pending = 0. Reusa persistExpenses (optimista + atómico).
+  const markAsPaid = async (expense: Expense) => {
+    if (!userCanEdit || editingDisabled) return;
+    if (expense.pending <= 0) return; // ya está pagado
+    const nextList = currentExpenses.map(e => e.id === expense.id
+      ? { ...e, paid: e.amount, pending: 0 }
+      : e
+    );
+    try {
+      await persistExpenses(nextList);
+      if (user) logAction(user.id, user.name, 'update', 'expenses', `Egreso marcado como pagado: ${expense.concept} ($${expense.amount.toLocaleString()})`);
+      showSuccess(`"${expense.concept}" marcado como pagado`);
+    } catch (err) {
+      showError(`Error marcando como pagado: ${(err as Error).message}`);
+    }
   };
 
   // --- Delete expense ---
@@ -501,6 +522,17 @@ export default function EgresosPage() {
                           {(userCanEdit || userCanDelete) && (
                             <td className="py-2.5 px-3 text-center">
                               <div className="flex justify-center gap-1">
+                                {userCanEdit && expense.pending > 0 && (
+                                  <button
+                                    onClick={() => markAsPaid(expense)}
+                                    disabled={editingDisabled}
+                                    className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed"
+                                    title={editingDisabled ? 'Selecciona un solo mes' : 'Marcar como pagado'}
+                                    aria-label={`Marcar ${expense.concept} como pagado`}
+                                  >
+                                    <Check className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
                                 {userCanEdit && (
                                   <button
                                     onClick={() => startEdit(expense)}

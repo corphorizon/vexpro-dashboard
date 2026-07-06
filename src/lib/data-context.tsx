@@ -128,6 +128,14 @@ export interface DataContextValue {
   // is just informational, not thrown.
   refresh: () => Promise<boolean>;
   refreshCommissions: () => Promise<void>;
+  // Refresh selectivo (B1, 2026-06-20): recarga SOLO las tablas de las
+  // secciones indicadas en vez de las ~19 queries del refresh() completo.
+  // Tras guardar egresos no hay razón para re-traer liquidez, inversiones,
+  // socios, RRHH, etc. — con la DB en eu-west-2 (Dubai↔LatAm) eso era el
+  // grueso de la espera percibida después de cada save/autosave.
+  refreshSections: (
+    sections: Array<'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones'>,
+  ) => Promise<boolean>;
   patchMonthlyResults: (updates: CommercialMonthlyResult[]) => void;
 }
 
@@ -838,6 +846,48 @@ export function DataProvider({ children }: { children: ReactNode }) {
           setMonthlyResults(mResults);
         } catch (err) {
           console.warn('Error refreshing commissions:', err);
+        }
+      },
+
+      // Refresh selectivo — ver comentario en la interface. Cada sección
+      // recarga solo sus tablas; 2-3 queries en vez de ~19. Devuelve el
+      // mismo boolean-contrato que refresh() para que los callers de
+      // /upload puedan mantener su manejo de errores intacto.
+      refreshSections: async (sections) => {
+        try {
+          const comp = company;
+          if (!comp) return false;
+          const s = new Set(sections);
+          const tasks: Promise<unknown>[] = [];
+          if (s.has('depositos')) {
+            tasks.push(fetchDeposits(comp.id).then(setDeposits));
+            tasks.push(fetchPropFirmSales(comp.id).then(setPropFirmSales));
+          }
+          // 'ingresos' también persiste retiros (ver saveAll en /upload),
+          // así que ambos refrescan withdrawals + p2p.
+          if (s.has('retiros') || s.has('ingresos')) {
+            tasks.push(fetchWithdrawals(comp.id).then(setWithdrawals));
+            tasks.push(fetchP2PTransfers(comp.id).then(setP2PTransfers));
+          }
+          if (s.has('egresos')) {
+            tasks.push(fetchExpenses(comp.id).then(setExpenses));
+            tasks.push(fetchExpenseTemplates(comp.id).then(setExpenseTemplates));
+          }
+          if (s.has('ingresos')) {
+            tasks.push(fetchOperatingIncome(comp.id).then(setOperatingIncome));
+            tasks.push(fetchPropFirmSales(comp.id).then(setPropFirmSales));
+          }
+          if (s.has('liquidez')) {
+            tasks.push(fetchLiquidityMovements(comp.id).then(setLiquidityMovements));
+          }
+          if (s.has('inversiones')) {
+            tasks.push(fetchInvestments(comp.id).then(setInvestments));
+          }
+          await Promise.all(tasks);
+          return true;
+        } catch (err) {
+          console.warn('Error en refresh selectivo:', err);
+          return false;
         }
       },
 

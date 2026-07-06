@@ -92,65 +92,40 @@ export async function deletePartner(id: string): Promise<void> {
 
 // ─── Deposits (delete + reinsert for the period) ───
 
+// ATÓMICO vía RPC (migración 044). Antes era DELETE + INSERT en dos llamadas
+// HTTP: un fallo/timeout entre ambas dejaba el período sin depósitos (misma
+// clase de bug que vació los egresos de VexPro May 2026). El filtro de
+// montos = 0 vive en la función SQL.
 export async function upsertDeposits(
   companyId: string,
   periodId: string,
   deposits: { channel: string; amount: number }[]
 ): Promise<void> {
-  // Delete existing deposits for this period
-  const { error: delError } = await supabase
-    .from('deposits')
-    .delete()
-    .eq('company_id', companyId)
-    .eq('period_id', periodId);
-
-  if (delError) throw new Error(`Error borrando depósitos: ${delError.message}`);
-
-  // Insert new rows (skip zero amounts)
-  const rows = deposits
-    .filter(d => d.amount > 0)
-    .map(d => ({
-      company_id: companyId,
-      period_id: periodId,
-      channel: d.channel,
-      amount: d.amount,
-    }));
-
-  if (rows.length > 0) {
-    const { error: insError } = await supabase.from('deposits').insert(rows);
-    if (insError) throw new Error(`Error guardando depósitos: ${insError.message}`);
-  }
+  const { error } = await supabase.rpc('replace_period_deposits', {
+    p_company_id: companyId,
+    p_period_id: periodId,
+    p_rows: deposits.map(d => ({ channel: d.channel, amount: d.amount })),
+  });
+  if (error) throw new Error(`Error guardando depósitos: ${error.message}`);
 }
 
-// ─── Withdrawals (delete + reinsert for the period) ───
+// ─── Withdrawals (reemplazo atómico del período vía RPC, migración 044) ───
 
 export async function upsertWithdrawals(
   companyId: string,
   periodId: string,
   withdrawals: { category: string; amount: number; description?: string | null }[]
 ): Promise<void> {
-  const { error: delError } = await supabase
-    .from('withdrawals')
-    .delete()
-    .eq('company_id', companyId)
-    .eq('period_id', periodId);
-
-  if (delError) throw new Error(`Error borrando retiros: ${delError.message}`);
-
-  const rows = withdrawals
-    .filter(w => w.amount > 0)
-    .map(w => ({
-      company_id: companyId,
-      period_id: periodId,
+  const { error } = await supabase.rpc('replace_period_withdrawals', {
+    p_company_id: companyId,
+    p_period_id: periodId,
+    p_rows: withdrawals.map(w => ({
       category: w.category,
       amount: w.amount,
       description: w.description ?? null,
-    }));
-
-  if (rows.length > 0) {
-    const { error: insError } = await supabase.from('withdrawals').insert(rows);
-    if (insError) throw new Error(`Error guardando retiros: ${insError.message}`);
-  }
+    })),
+  });
+  if (error) throw new Error(`Error guardando retiros: ${error.message}`);
 }
 
 // ─── Expenses (delete + reinsert for the period) ───
@@ -309,6 +284,8 @@ export async function deleteExpenseTemplate(id: string): Promise<void> {
 
 // ─── Channel Balances (snapshots por dia) ───
 
+// Upsert nativo en UNA llamada (ON CONFLICT sobre el UNIQUE existente).
+// Antes: SELECT + (UPDATE|INSERT) en dos llamadas — no atómico.
 export async function upsertChannelBalance(
   companyId: string,
   snapshotDate: string,
@@ -316,32 +293,19 @@ export async function upsertChannelBalance(
   amount: number,
   source: 'manual' | 'api' | 'derived' = 'manual'
 ): Promise<void> {
-  const { data: existing } = await supabase
+  const { error } = await supabase
     .from('channel_balances')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('snapshot_date', snapshotDate)
-    .eq('channel_key', channelKey)
-    .maybeSingle();
-
-  if (existing) {
-    const { error } = await supabase
-      .from('channel_balances')
-      .update({ amount, source })
-      .eq('id', existing.id);
-    if (error) throw new Error(`Error actualizando balance del canal: ${error.message}`);
-  } else {
-    const { error } = await supabase
-      .from('channel_balances')
-      .insert({
+    .upsert(
+      {
         company_id: companyId,
         snapshot_date: snapshotDate,
         channel_key: channelKey,
         amount,
         source,
-      });
-    if (error) throw new Error(`Error guardando balance del canal: ${error.message}`);
-  }
+      },
+      { onConflict: 'company_id,snapshot_date,channel_key' },
+    );
+  if (error) throw new Error(`Error guardando balance del canal: ${error.message}`);
 }
 
 // ─── Pinned Coinsbuy Wallets ───
@@ -374,39 +338,26 @@ export async function unpinCoinsbuyWallet(
 
 // ─── Operating Income (upsert single row per period) ───
 
+// Upsert nativo en UNA llamada (ON CONFLICT sobre UNIQUE company_id+period_id).
+// Antes: SELECT + (UPDATE|INSERT) en dos llamadas — no atómico.
 export async function upsertOperatingIncome(
   companyId: string,
   periodId: string,
   income: { prop_firm: number; broker_pnl: number; other: number }
 ): Promise<void> {
-  // Check if row exists. `maybeSingle()` returns null without erroring when
-  // there's no match — `single()` would raise PGRST116 on an empty table and
-  // the swallowed error path made first-time saves flaky.
-  const { data: existing } = await supabase
+  const { error } = await supabase
     .from('operating_income')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('period_id', periodId)
-    .maybeSingle();
-
-  if (existing) {
-    const { error } = await supabase
-      .from('operating_income')
-      .update({ prop_firm: income.prop_firm, broker_pnl: income.broker_pnl, other: income.other })
-      .eq('id', existing.id);
-    if (error) throw new Error(`Error actualizando ingresos: ${error.message}`);
-  } else {
-    const { error } = await supabase
-      .from('operating_income')
-      .insert({
+    .upsert(
+      {
         company_id: companyId,
         period_id: periodId,
         prop_firm: income.prop_firm,
         broker_pnl: income.broker_pnl,
         other: income.other,
-      });
-    if (error) throw new Error(`Error guardando ingresos: ${error.message}`);
-  }
+      },
+      { onConflict: 'company_id,period_id' },
+    );
+  if (error) throw new Error(`Error guardando ingresos: ${error.message}`);
 }
 
 // ─── Liquidity Movements ───
@@ -556,58 +507,36 @@ export async function deleteInvestment(id: string): Promise<void> {
 
 // ─── Prop Firm Sales (upsert single row per period) ───
 
+// Upsert nativo en UNA llamada (UNIQUE company_id+period_id — migración 044).
 export async function upsertPropFirmSales(
   companyId: string,
   periodId: string,
   amount: number
 ): Promise<void> {
-  const { data: existing } = await supabase
+  const { error } = await supabase
     .from('prop_firm_sales')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('period_id', periodId)
-    .maybeSingle();
-
-  if (existing) {
-    const { error } = await supabase
-      .from('prop_firm_sales')
-      .update({ amount })
-      .eq('id', existing.id);
-    if (error) throw new Error(`Error actualizando ventas prop firm: ${error.message}`);
-  } else {
-    const { error } = await supabase
-      .from('prop_firm_sales')
-      .insert({ company_id: companyId, period_id: periodId, amount });
-    if (error) throw new Error(`Error guardando ventas prop firm: ${error.message}`);
-  }
+    .upsert(
+      { company_id: companyId, period_id: periodId, amount },
+      { onConflict: 'company_id,period_id' },
+    );
+  if (error) throw new Error(`Error guardando ventas prop firm: ${error.message}`);
 }
 
 // ─── P2P Transfers (upsert single row per period) ───
 
+// Upsert nativo en UNA llamada (UNIQUE company_id+period_id — migración 044).
 export async function upsertP2PTransfers(
   companyId: string,
   periodId: string,
   amount: number
 ): Promise<void> {
-  const { data: existing } = await supabase
+  const { error } = await supabase
     .from('p2p_transfers')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('period_id', periodId)
-    .maybeSingle();
-
-  if (existing) {
-    const { error } = await supabase
-      .from('p2p_transfers')
-      .update({ amount })
-      .eq('id', existing.id);
-    if (error) throw new Error(`Error actualizando P2P: ${error.message}`);
-  } else {
-    const { error } = await supabase
-      .from('p2p_transfers')
-      .insert({ company_id: companyId, period_id: periodId, amount });
-    if (error) throw new Error(`Error guardando P2P: ${error.message}`);
-  }
+    .upsert(
+      { company_id: companyId, period_id: periodId, amount },
+      { onConflict: 'company_id,period_id' },
+    );
+  if (error) throw new Error(`Error guardando P2P: ${error.message}`);
 }
 
 // ─── Commission Entries ───
