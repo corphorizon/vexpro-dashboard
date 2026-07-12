@@ -21,6 +21,7 @@ import {
   BUILTIN_CHANNELS,
   type ChannelType,
 } from '@/lib/channel-configs';
+import { apiError } from '@/lib/api-error';
 
 const BUILTIN_KEYS = new Set(BUILTIN_CHANNELS.map((c) => c.key));
 
@@ -56,7 +57,7 @@ export async function GET(request: NextRequest) {
     .order('sort_order', { ascending: true });
 
   if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiError('admin/channel-configs', error, { status: 500 });
   }
   return NextResponse.json({ success: true, rows: data ?? [] });
 }
@@ -114,7 +115,7 @@ export async function POST(request: NextRequest) {
       .from('channel_configs')
       .upsert(payload, { onConflict: 'company_id,channel_key' });
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/channel-configs', error, { status: 500 });
     }
     await admin.from('audit_logs').insert({
       company_id: ctx.companyId,
@@ -149,7 +150,7 @@ export async function POST(request: NextRequest) {
       sort_order: 200,
     });
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/channel-configs', error, { status: 500 });
     }
 
     // Optional initial balance snapshot.
@@ -199,7 +200,7 @@ export async function POST(request: NextRequest) {
       .eq('channel_key', channel_key)
       .eq('is_custom', true);
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/channel-configs', error, { status: 500 });
     }
     // Also clean up any stored balances for this key so they don't linger.
     await admin

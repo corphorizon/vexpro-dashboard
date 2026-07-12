@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import type { ProviderDataset, ProviderSlug } from '@/lib/api-integrations/types';
@@ -259,7 +260,7 @@ export async function GET(request: NextRequest) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[persisted-movements] Unhandled error:', message);
     return NextResponse.json(
-      { success: false, error: message, datasets: [], fetchedAt: null },
+      { success: false, error: friendlyDbMessage(err), datasets: [], fetchedAt: null },
       { status: 500 },
     );
   }

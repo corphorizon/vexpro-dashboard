@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // /api/admin/employees — CRUD del recurso `employees`.
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
       const { error } = await admin.from('employees').delete()
         .eq('id', id)
         .eq('company_id', company_id);
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return apiError('admin/employees', error, { status: 400, withSuccessFlag: false });
       return NextResponse.json({ success: true });
     }
 
@@ -73,7 +74,7 @@ export async function POST(request: NextRequest) {
         .insert({ ...payload, company_id })
         .select()
         .single();
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return apiError('admin/employees', error, { status: 400, withSuccessFlag: false });
       return NextResponse.json({ success: true, employee: data });
     }
 
@@ -100,13 +101,13 @@ export async function POST(request: NextRequest) {
         .eq('company_id', company_id)
         .select()
         .single();
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return apiError('admin/employees', error, { status: 400, withSuccessFlag: false });
       return NextResponse.json({ success: true, employee: data });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError('admin/employees', err, { status: 500, withSuccessFlag: false });
   }
 }

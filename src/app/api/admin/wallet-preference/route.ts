@@ -15,6 +15,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { apiError } from '@/lib/api-error';
 
 export async function POST(request: NextRequest) {
   const auth = await verifyAdminAuth(request);
@@ -42,10 +43,7 @@ export async function POST(request: NextRequest) {
     .eq('id', auth.companyId);
 
   if (error) {
-    return NextResponse.json(
-      { success: false, error: `Error guardando wallet: ${error.message}` },
-      { status: 500 },
-    );
+    return apiError('admin/wallet-preference', error, { status: 500, clientMessage: 'Error guardando wallet' });
   }
 
   // Audit best-effort.

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/superadmin/companies/:id
@@ -53,15 +54,11 @@ export async function PATCH(
       .single();
 
     if (error || !data) {
-      return NextResponse.json(
-        { success: false, error: error?.message || 'No se encontró la entidad' },
-        { status: 404 },
-      );
+      return apiError('superadmin/companies/[id]', error, { status: 404, clientMessage: 'No se encontró la entidad' });
     }
 
     return NextResponse.json({ success: true, company: data });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]', err, { status: 500 });
   }
 }

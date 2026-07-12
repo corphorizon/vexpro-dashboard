@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { clearAttempts } from '@/lib/rate-limit';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/reset-user-2fa
@@ -75,6 +76,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[reset-user-2fa] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('admin/reset-user-2fa', err, { status: 500 });
   }
 }

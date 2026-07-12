@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendPasswordResetEmail } from '@/services/emailService';
 import { checkRateLimit, recordFailure } from '@/lib/rate-limit';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/forgot-password
@@ -121,6 +122,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[forgot-password] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('auth/forgot-password', err, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // POST — upsert commission entries { period_id, head_id, entries[] }
 // Uses individual upserts to avoid accidentally deleting entries not in the batch
@@ -77,7 +78,7 @@ export async function POST(request: NextRequest) {
           .update(row)
           .eq('id', existing.id)
           .eq('company_id', company_id); // defensa en profundidad: nunca tocar filas de otra empresa
-        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        if (error) return apiError('admin/commission-entries', error, { status: 400, withSuccessFlag: false });
       } else {
         // For new inserts, replace null flags with 0
         if (row.net_deposit_current === null) row.net_deposit_current = 0;
@@ -89,13 +90,13 @@ export async function POST(request: NextRequest) {
         const { error } = await admin
           .from('commercial_monthly_results')
           .insert(row);
-        if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+        if (error) return apiError('admin/commission-entries', error, { status: 400, withSuccessFlag: false });
       }
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError('admin/commission-entries', err, { status: 500, withSuccessFlag: false });
   }
 }

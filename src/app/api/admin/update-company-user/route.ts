@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/update-company-user
@@ -156,14 +157,11 @@ export async function POST(request: NextRequest) {
 
     if (error) {
       console.error('[admin/update-company-user]', error.message);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/update-company-user', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true, user: updated });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/update-company-user', err, { status: 500 });
   }
 }

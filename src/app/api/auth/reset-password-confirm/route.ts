@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { clearAttempts } from '@/lib/rate-limit';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/reset-password-confirm
@@ -113,6 +114,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[reset-password-confirm] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('auth/reset-password-confirm', err, { status: 500 });
   }
 }

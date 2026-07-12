@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/update-auth-user
@@ -114,6 +115,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[AdminAPI] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('admin/update-auth-user', err, { status: 500 });
   }
 }

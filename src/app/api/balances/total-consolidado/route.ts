@@ -3,6 +3,7 @@ import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // GET /api/balances/total-consolidado
@@ -174,7 +175,6 @@ export async function GET(request: NextRequest) {
       },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('balances/total-consolidado', err, { status: 500 });
   }
 }

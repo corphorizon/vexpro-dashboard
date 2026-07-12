@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { logIbRebateHistory } from '../_history';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/admin/ib-rebates/[id]
@@ -86,10 +87,7 @@ export async function PATCH(
       .single();
 
     if (updateErr || !updated) {
-      return NextResponse.json(
-        { success: false, error: updateErr?.message || 'Error al actualizar' },
-        { status: 500 },
-      );
+      return apiError('admin/ib-rebates/[id]', updateErr, { status: 500, clientMessage: 'Error al actualizar' });
     }
 
     await logIbRebateHistory(admin, {
@@ -103,10 +101,7 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, config: updated });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates/[id]', err, { status: 500 });
   }
 }
 
@@ -134,14 +129,11 @@ export async function DELETE(
 
     const { error } = await admin.from('ib_rebate_configs').delete().eq('id', id);
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/ib-rebates/[id]', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates/[id]', err, { status: 500 });
   }
 }

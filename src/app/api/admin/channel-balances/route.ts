@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { apiError } from '@/lib/api-error';
 
 type Body = {
   channel_key?: string;
@@ -93,10 +94,7 @@ export async function POST(request: NextRequest) {
     );
 
   if (error) {
-    return NextResponse.json(
-      { success: false, error: `Error guardando balance: ${error.message}` },
-      { status: 500 },
-    );
+    return apiError('admin/channel-balances', error, { status: 500, clientMessage: 'Error guardando balance' });
   }
 
   // Audit. Best-effort — don't fail the response if audit insert errors.

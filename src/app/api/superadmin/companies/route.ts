@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { sanitizeDbError } from '@/lib/errors';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/superadmin/companies
@@ -164,7 +165,6 @@ export async function GET() {
 
     return NextResponse.json({ success: true, companies: enriched });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies', err, { status: 500 });
   }
 }

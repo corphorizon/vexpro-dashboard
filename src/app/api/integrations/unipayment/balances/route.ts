@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
 import { persistBalanceSnapshot } from '@/lib/api-integrations/persistence';
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[UniPayment Balances] Error:', message);
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: friendlyDbMessage(err) },
       { status: 500 },
     );
   }

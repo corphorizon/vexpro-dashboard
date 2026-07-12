@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { checkRateLimit, recordFailure, clearAttempts } from '@/lib/rate-limit';
 import speakeasy from 'speakeasy';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/verify-pin
@@ -116,7 +117,6 @@ export async function POST(request: NextRequest) {
     await clearAttempts(adminClient, rlOpts);
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Internal server error';
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('auth/verify-pin', err, { status: 500 });
   }
 }

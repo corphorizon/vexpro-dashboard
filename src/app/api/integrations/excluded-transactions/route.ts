@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // /api/integrations/excluded-transactions
@@ -30,15 +31,12 @@ export async function GET(request: NextRequest) {
       .order('excluded_at', { ascending: false });
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('integrations/excluded-transactions', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true, excluded: data ?? [] });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('integrations/excluded-transactions', err, { status: 500 });
   }
 }
 
@@ -117,17 +115,11 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (error || !created) {
-      return NextResponse.json(
-        { success: false, error: error?.message || 'No se pudo guardar' },
-        { status: 500 },
-      );
+      return apiError('integrations/excluded-transactions', error, { status: 500, clientMessage: 'No se pudo guardar' });
     }
 
     return NextResponse.json({ success: true, excluded: created });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('integrations/excluded-transactions', err, { status: 500 });
   }
 }

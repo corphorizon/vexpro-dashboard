@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/setup-2fa
@@ -324,6 +325,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[setup-2fa] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('auth/setup-2fa', err, { status: 500 });
   }
 }

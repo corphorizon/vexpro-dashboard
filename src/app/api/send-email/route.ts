@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import type {
   SendEmailRequest,
@@ -154,7 +155,7 @@ export async function POST(request: NextRequest) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[API /send-email] Unhandled error:', message);
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: friendlyDbMessage(err) },
       { status: 500 },
     );
   }

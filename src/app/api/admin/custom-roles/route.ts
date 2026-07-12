@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // /api/admin/custom-roles — CRUD for per-company role definitions
@@ -27,7 +28,7 @@ export async function GET(request: NextRequest) {
     .order('name');
 
   if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiError('admin/custom-roles', error, { status: 500 });
   }
 
   return NextResponse.json({ success: true, roles: data || [] });
@@ -95,7 +96,7 @@ export async function POST(request: NextRequest) {
         .select()
         .single();
       if (error) {
-        return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+        return apiError('admin/custom-roles', error, { status: 400 });
       }
       return NextResponse.json({ success: true, role: data });
     }
@@ -112,7 +113,7 @@ export async function POST(request: NextRequest) {
       .select()
       .single();
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+      return apiError('admin/custom-roles', error, { status: 400 });
     }
     return NextResponse.json({ success: true, role: data });
   }
@@ -157,7 +158,7 @@ export async function POST(request: NextRequest) {
       .eq('id', id)
       .eq('company_id', auth.companyId);
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 400 });
+      return apiError('admin/custom-roles', error, { status: 400 });
     }
     return NextResponse.json({ success: true });
   }

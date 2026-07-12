@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // DELETE /api/risk/revisions/[id]
@@ -47,12 +48,11 @@ export async function DELETE(
 
     if (error) {
       console.error('[risk/revisions DELETE]', error.message);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('risk/revisions/[id]', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('risk/revisions/[id]', err, { status: 500 });
   }
 }

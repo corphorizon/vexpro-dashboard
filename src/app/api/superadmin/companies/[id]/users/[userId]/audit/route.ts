@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // GET /api/superadmin/companies/:id/users/:userId/audit?limit=5
@@ -50,12 +51,11 @@ export async function GET(
       .limit(limit);
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('superadmin/companies/[id]/users/[userId]/audit', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true, entries: data ?? [] });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/users/[userId]/audit', err, { status: 500 });
   }
 }

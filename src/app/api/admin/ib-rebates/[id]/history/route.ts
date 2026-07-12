@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // GET /api/admin/ib-rebates/[id]/history
@@ -39,14 +40,11 @@ export async function GET(
       .order('created_at', { ascending: false });
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/ib-rebates/[id]/history', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true, history: data ?? [] });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates/[id]/history', err, { status: 500 });
   }
 }

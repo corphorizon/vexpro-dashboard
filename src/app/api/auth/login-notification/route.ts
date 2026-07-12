@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendLoginNotificationEmail } from '@/services/emailService';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // User-Agent parser (simple regex, no external dependency)
@@ -139,6 +140,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[LoginNotification] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('auth/login-notification', err, { status: 500 });
   }
 }

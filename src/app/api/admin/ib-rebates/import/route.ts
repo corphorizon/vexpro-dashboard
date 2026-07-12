@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/ib-rebates/import — bulk insert/update desde Excel.
@@ -153,9 +154,6 @@ export async function POST(request: NextRequest) {
       total: rows.length,
     });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates/import', err, { status: 500 });
   }
 }

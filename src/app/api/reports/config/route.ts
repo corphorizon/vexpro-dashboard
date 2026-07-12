@@ -20,6 +20,7 @@ import {
   type CadenceDisabledUsers,
 } from '@/lib/reports/config';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { apiError } from '@/lib/api-error';
 
 async function resolveCompanyAndAuth(
   explicitCompanyId: string | null,
@@ -125,9 +126,6 @@ export async function PUT(request: NextRequest) {
 
     return NextResponse.json({ success: true, config });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('reports/config', err, { status: 500 });
   }
 }

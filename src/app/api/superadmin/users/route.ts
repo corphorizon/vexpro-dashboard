@@ -9,6 +9,7 @@ import {
   originFromRequest,
   ipFromRequest,
 } from '@/lib/invite-user';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // GET /api/superadmin/users?company_id=<uuid>
@@ -43,8 +44,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({ success: true, users: data ?? [] });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/users', err, { status: 500 });
   }
 }
 
@@ -135,10 +135,7 @@ export async function POST(request: NextRequest) {
       });
       if (createErr || !created?.user?.id) {
         console.error('[superadmin/users:invite] createUser failed:', createErr?.message);
-        return NextResponse.json(
-          { success: false, error: createErr?.message || 'No se pudo crear el usuario auth' },
-          { status: 500 },
-        );
+        return apiError('superadmin/users', createErr, { status: 500, clientMessage: 'No se pudo crear el usuario auth' });
       }
       authUserId = created.user.id;
       createdNewAuthUser = true;
@@ -200,7 +197,6 @@ export async function POST(request: NextRequest) {
       invited_new_auth_user: createdNewAuthUser,
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/users', err, { status: 500 });
   }
 }

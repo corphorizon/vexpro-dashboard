@@ -12,6 +12,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { apiError } from '@/lib/api-error';
 
 export async function GET(request: NextRequest) {
   const explicit = request.nextUrl.searchParams.get('company_id');
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
     .eq('company_id', companyId);
 
   if (error) {
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return apiError('reports/recipients', error, { status: 500 });
   }
 
   const rows = (data ?? []) as Array<{

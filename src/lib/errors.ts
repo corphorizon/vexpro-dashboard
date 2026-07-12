@@ -67,6 +67,22 @@ const POSTGRES_ERROR_MAP: Record<string, string> = {
  * returning directly from an API route. Always logs the underlying error
  * to stderr with a stable prefix `[db-error]` so operators can correlate.
  */
+/**
+ * Mensaje SEGURO para el cliente a partir de un error de DB: mapea el código
+ * Postgres a copy amistoso en español, o el genérico. NUNCA devuelve
+ * err.message (ahí filtran nombres de tabla/constraint). Fuente única del
+ * mapeo — la usan sanitizeDbError y apiError (@/lib/api-error).
+ */
+export function friendlyDbMessage(err: UnknownError): string {
+  if (err && typeof err === 'object') {
+    const pg = err as PostgresLikeError;
+    if (pg.code && POSTGRES_ERROR_MAP[pg.code]) {
+      return POSTGRES_ERROR_MAP[pg.code];
+    }
+  }
+  return GENERIC_MESSAGE;
+}
+
 export function sanitizeDbError(
   err: UnknownError,
   context?: string,
@@ -74,18 +90,7 @@ export function sanitizeDbError(
   // Always log the real error — stderr is private to the server.
   const prefix = context ? `[db-error ${context}]` : '[db-error]';
   console.error(prefix, err);
-
-  if (err && typeof err === 'object') {
-    const pg = err as PostgresLikeError;
-    if (pg.code && POSTGRES_ERROR_MAP[pg.code]) {
-      return { success: false, error: POSTGRES_ERROR_MAP[pg.code] };
-    }
-    // Well-formed Error instances without a pg code get a neutral string
-    // too — never return err.message because that's where table/constraint
-    // names leak.
-  }
-
-  return { success: false, error: GENERIC_MESSAGE };
+  return { success: false, error: friendlyDbMessage(err) };
 }
 
 /**

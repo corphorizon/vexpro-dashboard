@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { logIbRebateHistory } from './_history';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // /api/admin/ib-rebates — listado y creación de configs IB scopeadas por
@@ -23,15 +24,12 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error('[ib-rebates GET]', error.message);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/ib-rebates', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true, configs: data ?? [] });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates', err, { status: 500 });
   }
 }
 
@@ -102,10 +100,7 @@ export async function POST(request: NextRequest) {
 
     if (insertErr || !created) {
       console.error('[ib-rebates POST]', insertErr?.message);
-      return NextResponse.json(
-        { success: false, error: insertErr?.message || 'Error al crear' },
-        { status: 500 },
-      );
+      return apiError('admin/ib-rebates', insertErr, { status: 500, clientMessage: 'Error al crear' });
     }
 
     await logIbRebateHistory(admin, {
@@ -118,9 +113,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, config: created });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates', err, { status: 500 });
   }
 }

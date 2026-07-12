@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST   /api/superadmin/companies/:id/logo?variant=color|white  → upload
@@ -182,10 +183,7 @@ export async function POST(
       });
 
     if (uploadErr) {
-      return NextResponse.json(
-        { success: false, error: `No se pudo subir el archivo: ${uploadErr.message}` },
-        { status: 500 },
-      );
+      return apiError('superadmin/companies/[id]/logo', uploadErr, { status: 500, clientMessage: 'No se pudo subir el archivo' });
     }
 
     const { data: urlData } = admin.storage.from(BUCKET).getPublicUrl(fileName);
@@ -212,10 +210,7 @@ export async function POST(
       .update({ [column]: publicUrl })
       .eq('id', companyId);
     if (updateErr) {
-      return NextResponse.json(
-        { success: false, error: updateErr.message },
-        { status: 500 },
-      );
+      return apiError('superadmin/companies/[id]/logo', updateErr, { status: 500 });
     }
 
     await serverAuditLog(admin, {
@@ -229,8 +224,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, url: publicUrl });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/logo', err, { status: 500 });
   }
 }
 
@@ -278,10 +272,7 @@ export async function DELETE(
       .update({ [column]: null })
       .eq('id', companyId);
     if (updateErr) {
-      return NextResponse.json(
-        { success: false, error: updateErr.message },
-        { status: 500 },
-      );
+      return apiError('superadmin/companies/[id]/logo', updateErr, { status: 500 });
     }
 
     await serverAuditLog(admin, {
@@ -295,7 +286,6 @@ export async function DELETE(
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/logo', err, { status: 500 });
   }
 }

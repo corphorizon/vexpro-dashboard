@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/superadmin/companies/:id/users/:userId/disable-2fa
@@ -48,7 +49,7 @@ export async function POST(
       .eq('company_id', companyId);
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('superadmin/companies/[id]/users/[userId]/disable-2fa', error, { status: 500 });
     }
 
     await serverAuditLog(admin, {
@@ -64,7 +65,6 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/users/[userId]/disable-2fa', err, { status: 500 });
   }
 }

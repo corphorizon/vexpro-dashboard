@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { fetchCoinsbuyPayoutsV3 } from '@/lib/api-integrations/coinsbuy/payouts';
 
@@ -31,7 +32,7 @@ export async function GET(request: Request) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[Coinsbuy Payouts] Error:', message);
     return NextResponse.json(
-      { success: false, error: message },
+      { success: false, error: friendlyDbMessage(err) },
       { status: 500 },
     );
   }

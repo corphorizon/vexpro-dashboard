@@ -8,6 +8,7 @@ import {
   originFromRequest,
   ipFromRequest,
 } from '@/lib/invite-user';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/create-user
@@ -118,10 +119,7 @@ export async function POST(request: NextRequest) {
       });
       if (createErr || !created?.user?.id) {
         console.error('[admin/create-user] createUser failed:', createErr?.message);
-        return NextResponse.json(
-          { success: false, error: createErr?.message || 'No se pudo crear el usuario auth' },
-          { status: 500 },
-        );
+        return apiError('admin/create-user', createErr, { status: 500, clientMessage: 'No se pudo crear el usuario auth' });
       }
       authUserId = created.user.id;
       createdNewAuthUser = true;
@@ -147,10 +145,7 @@ export async function POST(request: NextRequest) {
         await adminClient.auth.admin.deleteUser(authUserId).catch(() => {});
       }
       console.error('[admin/create-user] membership insert failed:', memErr.message);
-      return NextResponse.json(
-        { success: false, error: `No se pudo crear el perfil: ${memErr.message}` },
-        { status: 500 },
-      );
+      return apiError('admin/create-user', memErr, { status: 500, clientMessage: 'No se pudo crear el perfil' });
     }
 
     // ─── Send invite via shared helper ───────────────────────────────
@@ -187,6 +182,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[admin/create-user] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('admin/create-user', err, { status: 500 });
   }
 }

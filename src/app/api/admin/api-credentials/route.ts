@@ -3,6 +3,7 @@ import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { encryptSecret, lastChars } from '@/lib/crypto';
 import { sanitizeDbError } from '@/lib/errors';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // /api/admin/api-credentials
@@ -116,7 +117,7 @@ export async function POST(request: NextRequest) {
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Error de encriptación';
       console.error('[api-credentials] encrypt error:', msg);
-      return NextResponse.json({ success: false, error: msg }, { status: 500 });
+      return apiError('admin/api-credentials', err, { status: 500 });
     }
 
     const payload = {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/superadmin/companies/:id/users/:userId/reset-password
@@ -46,10 +47,7 @@ export async function POST(
     });
 
     if (error) {
-      return NextResponse.json(
-        { success: false, error: `No se pudo generar el enlace: ${error.message}` },
-        { status: 500 },
-      );
+      return apiError('superadmin/companies/[id]/users/[userId]/reset-password', error, { status: 500, clientMessage: 'No se pudo generar el enlace' });
     }
 
     // Also clear lockout so the user can log in after resetting.
@@ -69,7 +67,6 @@ export async function POST(
 
     return NextResponse.json({ success: true, sent_to: membership.email });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/users/[userId]/reset-password', err, { status: 500 });
   }
 }

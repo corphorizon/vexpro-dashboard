@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/superadmin/companies/:id/users/:userId
@@ -113,10 +114,7 @@ export async function PATCH(
       .single();
 
     if (error || !after) {
-      return NextResponse.json(
-        { success: false, error: error?.message || 'No se pudo actualizar' },
-        { status: 500 },
-      );
+      return apiError('superadmin/companies/[id]/users/[userId]', error, { status: 500, clientMessage: 'No se pudo actualizar' });
     }
 
     if (emailChanged) {
@@ -138,10 +136,7 @@ export async function PATCH(
             { userId, before: before.email, attempted: update.email, rollbackErr: rollbackErr.message },
           );
         }
-        return NextResponse.json(
-          { success: false, error: `No pude actualizar el email en auth: ${authErr.message}` },
-          { status: 500 },
-        );
+        return apiError('superadmin/companies/[id]/users/[userId]', authErr, { status: 500, clientMessage: 'No pude actualizar el email en auth' });
       }
     }
 
@@ -170,7 +165,6 @@ export async function PATCH(
 
     return NextResponse.json({ success: true, user: after });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/users/[userId]', err, { status: 500 });
   }
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // POST   — create profile   { action: 'create', ...fields }
 // PATCH  — update profile   { action: 'update', id, ...fields }
@@ -49,7 +50,7 @@ export async function POST(request: NextRequest) {
         .insert({ company_id, ...safe, status: (safe.status as string) || 'active' })
         .select('id')
         .single();
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return apiError('admin/commercial-profiles', error, { status: 400, withSuccessFlag: false });
       return NextResponse.json({ success: true, id: data.id });
     }
 
@@ -62,7 +63,7 @@ export async function POST(request: NextRequest) {
         .eq('id', id)
         .eq('company_id', company_id) // scope to caller's company
         .select('id');
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return apiError('admin/commercial-profiles', error, { status: 400, withSuccessFlag: false });
       // Defensive: if neither id nor (id + company_id) matched, surface a 404
       // rather than a misleading { success: true }. Silent 0-row updates make
       // UI bugs invisible.
@@ -83,13 +84,13 @@ export async function POST(request: NextRequest) {
       const { error } = await admin.from('commercial_profiles').delete()
         .eq('id', id)
         .eq('company_id', company_id); // scope to caller's company
-      if (error) return NextResponse.json({ error: error.message }, { status: 400 });
+      if (error) return apiError('admin/commercial-profiles', error, { status: 400, withSuccessFlag: false });
       return NextResponse.json({ success: true });
     }
 
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError('admin/commercial-profiles', err, { status: 500, withSuccessFlag: false });
   }
 }

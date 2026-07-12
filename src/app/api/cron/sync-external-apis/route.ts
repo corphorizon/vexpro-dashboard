@@ -17,6 +17,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { runExternalApiSync } from '@/lib/integrations-sync';
+import { apiError } from '@/lib/api-error';
 
 export const maxDuration = 300; // up to 5 min: external APIs can be slow
 
@@ -48,6 +49,6 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Unknown error';
     console.error('[cron/sync-external-apis]', msg);
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('cron/sync-external-apis', err, { status: 500 });
   }
 }

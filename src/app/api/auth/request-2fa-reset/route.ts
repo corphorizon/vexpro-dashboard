@@ -3,6 +3,7 @@ import { createHash, randomInt } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { sendTwofaResetCodeEmail } from '@/services/emailService';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/request-2fa-reset
@@ -94,6 +95,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[request-2fa-reset] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('auth/request-2fa-reset', err, { status: 500 });
   }
 }

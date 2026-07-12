@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
+import { apiError } from '@/lib/api-error';
 
 // Roles inlined here (not imported from @/lib/auth-context, which is a
 // 'use client' module). Cross-runtime imports of client modules into
@@ -106,7 +107,7 @@ export async function POST(
       const alreadyRegistered =
         msg.includes('already') || msg.includes('exists') || msg.includes('duplicate');
       if (!alreadyRegistered) {
-        return NextResponse.json({ success: false, error: createErr.message }, { status: 500 });
+        return apiError('superadmin/companies/[id]/users', createErr, { status: 500 });
       }
       const existing = await findAuthByEmail(admin, email);
       if (!existing) {
@@ -156,10 +157,7 @@ export async function POST(
       if (created?.user?.id) {
         await admin.auth.admin.deleteUser(created.user.id).catch(() => undefined);
       }
-      return NextResponse.json(
-        { success: false, error: profileErr?.message ?? 'No se pudo crear el perfil' },
-        { status: 500 },
-      );
+      return apiError('superadmin/companies/[id]/users', profileErr, { status: 500, clientMessage: 'No se pudo crear el perfil' });
     }
 
     await serverAuditLog(admin, {
@@ -173,8 +171,7 @@ export async function POST(
 
     return NextResponse.json({ success: true, user: profile });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/users', err, { status: 500 });
   }
 }
 
@@ -210,7 +207,7 @@ export async function GET(
       .order('created_at', { ascending: false });
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('superadmin/companies/[id]/users', error, { status: 500 });
     }
 
     return NextResponse.json({
@@ -219,7 +216,6 @@ export async function GET(
       company: { id: company.id, name: company.name, active_modules: company.active_modules ?? [] },
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/companies/[id]/users', err, { status: 500 });
   }
 }

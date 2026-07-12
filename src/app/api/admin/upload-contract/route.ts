@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 const BUCKET = 'contracts';
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
@@ -146,12 +147,12 @@ export async function POST(request: NextRequest) {
       .eq('company_id', auth.companyId);
 
     if (updateError) {
-      return NextResponse.json({ error: updateError.message }, { status: 400 });
+      return apiError('admin/upload-contract', updateError, { status: 400, withSuccessFlag: false });
     }
 
     return NextResponse.json({ success: true, url: contractUrl });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal error';
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return apiError('admin/upload-contract', err, { status: 500, withSuccessFlag: false });
   }
 }

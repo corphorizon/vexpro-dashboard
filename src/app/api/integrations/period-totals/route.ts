@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 
@@ -51,8 +52,9 @@ export async function GET(request: NextRequest) {
     });
 
     if (error) {
+      console.error('[api:integrations/period-totals]', error);
       return NextResponse.json(
-        { success: false, error: error.message, months: {} },
+        { success: false, error: friendlyDbMessage(error), months: {} },
         { status: 500 },
       );
     }
@@ -74,7 +76,7 @@ export async function GET(request: NextRequest) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[period-totals] Unhandled error:', message);
     return NextResponse.json(
-      { success: false, error: message, months: {} },
+      { success: false, error: friendlyDbMessage(err), months: {} },
       { status: 500 },
     );
   }

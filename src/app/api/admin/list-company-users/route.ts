@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // GET /api/admin/list-company-users
@@ -33,7 +34,7 @@ export async function GET(request: NextRequest) {
 
   if (uErr) {
     console.error('[admin/list-company-users] users query failed:', uErr.message);
-    return NextResponse.json({ success: false, error: uErr.message }, { status: 500 });
+    return apiError('admin/list-company-users', uErr, { status: 500 });
   }
 
   const { data: customRoles } = await admin

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import {
   fetchAggregatedMovements,
@@ -70,7 +71,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(
       {
         success: false,
-        error: message,
+        error: friendlyDbMessage(err),
         datasets: [],
         fetchedAt: new Date().toISOString(),
       },

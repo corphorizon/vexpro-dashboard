@@ -7,6 +7,7 @@ import {
   originFromRequest,
   ipFromRequest,
 } from '@/lib/invite-user';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/superadmin/users/[id]/resend-invite
@@ -75,7 +76,6 @@ export async function POST(
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('superadmin/users/[id]/resend-invite', err, { status: 500 });
   }
 }

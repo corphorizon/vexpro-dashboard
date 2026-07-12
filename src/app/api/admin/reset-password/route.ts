@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/reset-password
@@ -60,10 +61,7 @@ export async function POST(request: NextRequest) {
 
     if (updateError) {
       console.error('[AdminAPI] Error resetting password:', updateError.message);
-      return NextResponse.json(
-        { success: false, error: updateError.message },
-        { status: 500 },
-      );
+      return apiError('admin/reset-password', updateError, { status: 500 });
     }
 
     console.log(`[AdminAPI] Password reset for user_id: ${companyUser.user_id}`);
@@ -71,6 +69,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[AdminAPI] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('admin/reset-password', err, { status: 500 });
   }
 }

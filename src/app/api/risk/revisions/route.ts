@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // /api/risk/revisions — historial persistente de Revisión Retiros PropFirm.
@@ -30,13 +31,12 @@ export async function GET(request: NextRequest) {
 
     if (error) {
       console.error('[risk/revisions GET]', error.message);
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('risk/revisions', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true, revisions: data ?? [] });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('risk/revisions', err, { status: 500 });
   }
 }
 
@@ -69,10 +69,7 @@ export async function POST(request: NextRequest) {
 
     if (insertErr || !inserted) {
       console.error('[risk/revisions POST]', insertErr?.message);
-      return NextResponse.json(
-        { success: false, error: insertErr?.message || 'No se pudo guardar' },
-        { status: 500 },
-      );
+      return apiError('risk/revisions', insertErr, { status: 500, clientMessage: 'No se pudo guardar' });
     }
 
     // Cap al historial: borrar lo que sobrepase MAX_REVISIONS por empresa.
@@ -92,7 +89,6 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ success: true, revision: inserted });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : 'Unexpected error';
-    return NextResponse.json({ success: false, error: msg }, { status: 500 });
+    return apiError('risk/revisions', err, { status: 500 });
   }
 }

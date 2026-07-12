@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { DEFAULT_THRESHOLDS } from '@/lib/ib-rebates/types';
+import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
 // /api/admin/ib-rebates/thresholds — umbrales de alerta por empresa.
@@ -31,10 +32,7 @@ export async function GET(request: NextRequest) {
       thresholds: { company_id: auth.companyId, ...DEFAULT_THRESHOLDS },
     });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates/thresholds', err, { status: 500 });
   }
 }
 
@@ -97,14 +95,11 @@ export async function PUT(request: NextRequest) {
       .single();
 
     if (error) {
-      return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+      return apiError('admin/ib-rebates/thresholds', error, { status: 500 });
     }
 
     return NextResponse.json({ success: true, thresholds: data });
   } catch (err) {
-    return NextResponse.json(
-      { success: false, error: err instanceof Error ? err.message : 'Error' },
-      { status: 500 },
-    );
+    return apiError('admin/ib-rebates/thresholds', err, { status: 500 });
   }
 }

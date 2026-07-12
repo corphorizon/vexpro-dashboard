@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { apiError } from '@/lib/api-error';
 
 // Redact emails before logging — server logs are visible in Vercel dashboard.
 function redactEmail(email: string | null | undefined): string {
@@ -45,10 +46,7 @@ export async function POST(request: NextRequest) {
 
     if (lookupError) {
       console.error('[AdminAPI] Error looking up company_user:', lookupError.message);
-      return NextResponse.json(
-        { success: false, error: lookupError.message },
-        { status: 500 },
-      );
+      return apiError('admin/delete-user', lookupError, { status: 500 });
     }
 
     // If the profile doesn't exist anymore (already deleted in another tab/refresh),
@@ -67,10 +65,7 @@ export async function POST(request: NextRequest) {
 
     if (deleteProfileError) {
       console.error('[AdminAPI] Error deleting company_users record:', deleteProfileError.message);
-      return NextResponse.json(
-        { success: false, error: deleteProfileError.message },
-        { status: 500 },
-      );
+      return apiError('admin/delete-user', deleteProfileError, { status: 500 });
     }
 
     // 3. Delete the auth user so the email can be reused.
@@ -97,6 +92,6 @@ export async function POST(request: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[AdminAPI] Unhandled error:', message);
-    return NextResponse.json({ success: false, error: message }, { status: 500 });
+    return apiError('admin/delete-user', err, { status: 500 });
   }
 }
