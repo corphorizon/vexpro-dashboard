@@ -25,7 +25,7 @@ La aplicación está en **buen estado estructural**. La arquitectura de autoriza
 
 ---
 
-**BUG-01 — Fórmula de "Monto a Distribuir" / "Balance Disponible" divergente entre /balances y /socios**
+**BUG-01 — Fórmula de "Monto a Distribuir" / "Balance Disponible" divergente entre /balances y /socios** ✅ **RESUELTO (2026-07-12, commit 88d3163)** — extraída fórmula canónica única a `src/lib/distribution.ts` (10 tests); la usan /socios, /balances y /finanzas. Decisión de Kevin: investmentProfits SÍ entra en la base distribuible.
 `src/lib/data-context.tsx:467-526` (computeSaldoChain, consumido por /balances) vs `src/app/(dashboard)/socios/page.tsx:86-169` (periodChain, el reparto real). *Verificado adversarialmente: CONFIRMADO.*
 
 Evidencia — ambas producen un card idéntico "Monto a Distribuir" para el mismo período, con fórmulas independientes:
