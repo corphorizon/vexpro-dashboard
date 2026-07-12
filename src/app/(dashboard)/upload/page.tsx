@@ -672,6 +672,11 @@ export default function UploadPage() {
   const AUTOSAVE_DEBOUNCE_MS = 3000;
 
   useEffect(() => {
+    // Egresos ya persiste POR ACCIÓN (ver persistExpenses) — no participa del
+    // autosave batch. Durante su guardado se marca 'egresos' dirty como mutex
+    // del sync-effect; si el autosave batch también corriera, dispararía un
+    // saveAll redundante. Lo excluimos explícitamente.
+    if (section === 'egresos') return;
     // Only autosave the section the user is looking at — saving a
     // different tab's dirty rows from underneath them would be jarring.
     if (!dirtySections.has(section)) return;
@@ -1289,14 +1294,61 @@ export default function UploadPage() {
     })();
   };
 
-  // Expense handlers
+  // Expense handlers — persistencia POR ACCIÓN (2026-07-12).
+  //
+  // Antes los egresos se acumulaban en estado local y dependían de "Guardar
+  // Todo" (un batch grande que, si el request de red se estancaba, colgaba
+  // 25s y fallaba entero — el bug que Kevin reportó repetidamente). Ahora
+  // cada agregar/editar/borrar/fijar persiste al instante, igual que
+  // depósitos y retiros: optimista en pantalla + upsert atómico resiliente
+  // (timeout 12s + reintento en la capa de mutación) + rollback si falla. No
+  // se pierde nada aunque el usuario cierre la pestaña.
+  //
+  // Se marca 'egresos' dirty MIENTRAS guarda para que el sync-effect no
+  // rehidrate la tabla desde una lectura a medio-camino; al terminar se
+  // limpia el dirty, disparando un re-sync limpio desde la DB (con ids
+  // reales, reemplazando el id temporal optimista).
+  const [savingExpenses, setSavingExpenses] = useState(false);
+
+  const persistExpenses = async (
+    nextList: ExpenseRow[],
+    previousList: ExpenseRow[],
+    opts: { toast: string; audit?: { action: 'create' | 'update' | 'delete'; details: string } },
+  ) => {
+    if (!company) return;
+    markDirty('egresos');
+    setSavingExpenses(true);
+    try {
+      await withRowTimeout(
+        upsertExpenses(company.id, selectedPeriodRef.current, nextList),
+        'Guardar egreso',
+      );
+      if (user && opts.audit) {
+        logAction(user.id, user.name, opts.audit.action, 'expenses', opts.audit.details);
+      }
+      showSuccess(opts.toast);
+      await refreshSections(['egresos']);
+    } catch (err) {
+      setExpensesRaw(previousList); // rollback al estado previo (= lo que hay en DB)
+      Sentry.captureException(err, {
+        tags: { area: 'upload.persistExpenses' },
+        extra: { periodId: selectedPeriodRef.current },
+      });
+      showError(`Error al guardar egreso: ${(err as Error).message}`);
+    } finally {
+      setSavingExpenses(false);
+      clearDirty('egresos'); // re-sync desde DB (ids reales) o limpia tras rollback
+    }
+  };
+
   const addExpense = () => {
-    if (!userCanAdd || !newExpense.concept || !newExpense.amount) return;
+    if (!userCanAdd || !company || !newExpense.concept || !newExpense.amount) return;
     const amt = parseAmount(newExpense.amount);
     const pd = parseAmount(newExpense.paid);
     const pn = computeExpensePending(newExpense.amount, newExpense.paid, newExpense.pending);
     const cat = newExpense.category.trim() || null;
-    setExpenses(prev => [...prev, {
+    const previous = expenses;
+    const next: ExpenseRow[] = [...expenses, {
       id: `exp-${Date.now()}`,
       concept: newExpense.concept,
       amount: amt,
@@ -1304,13 +1356,15 @@ export default function UploadPage() {
       pending: pn,
       is_fixed: newExpense.is_fixed,
       category: cat,
-    }]);
-    markDirty('egresos');
+    }];
+    setExpensesRaw(next); // optimista
     setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
     addConceptToHistory(newExpense.concept);
     if (cat) addCategoryToHistory(cat);
-    if (user) logAction(user.id, user.name, 'create', 'expenses', `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}`);
-    showSuccess(t('upload.expenseAdded'));
+    void persistExpenses(next, previous, {
+      toast: t('upload.expenseAdded'),
+      audit: { action: 'create', details: `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}` },
+    });
   };
 
   const startEditExpense = (exp: ExpenseRow) => {
@@ -1325,25 +1379,41 @@ export default function UploadPage() {
     const pd = parseAmount(editExpense.paid);
     const pn = computeExpensePending(editExpense.amount, editExpense.paid, editExpense.pending);
     const cat = editExpense.category.trim() || null;
-    setExpenses(prev => prev.map(e => e.id === editingExpenseId ? { ...e, concept: editExpense.concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e));
-    markDirty('egresos');
+    const previous = expenses;
+    const concept = editExpense.concept;
+    const next = expenses.map(e => e.id === editingExpenseId ? { ...e, concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e);
+    setExpensesRaw(next); // optimista
     if (cat) addCategoryToHistory(cat);
     setEditingExpenseId(null);
-    showSuccess(t('upload.expenseUpdated'));
+    void persistExpenses(next, previous, {
+      toast: t('upload.expenseUpdated'),
+      audit: { action: 'update', details: `Egreso ${concept}: $${amt.toLocaleString()}` },
+    });
   };
 
   const toggleExpenseFixed = (id: string) => {
     if (!userCanEdit) return;
-    setExpenses(prev => prev.map(e => e.id === id ? { ...e, is_fixed: !e.is_fixed } : e));
+    const previous = expenses;
+    const target = expenses.find(e => e.id === id);
+    const next = expenses.map(e => e.id === id ? { ...e, is_fixed: !e.is_fixed } : e);
+    setExpensesRaw(next); // optimista
+    void persistExpenses(next, previous, {
+      toast: 'Egreso actualizado',
+      audit: { action: 'update', details: `Egreso ${target?.concept ?? ''} marcado ${target?.is_fixed ? 'no fijo' : 'fijo'}` },
+    });
   };
 
   const deleteExpense = (id: string) => {
     if (!userCanDelete) return;
     const exp = expenses.find(e => e.id === id);
     askConfirmation(`Eliminar egreso "${exp?.concept}"?`, () => {
-      setExpenses(prev => prev.filter(e => e.id !== id));
-      markDirty('egresos');
-      showSuccess(t('upload.expenseDeleted'));
+      const previous = expenses;
+      const next = expenses.filter(e => e.id !== id);
+      setExpensesRaw(next); // optimista
+      void persistExpenses(next, previous, {
+        toast: t('upload.expenseDeleted'),
+        audit: { action: 'delete', details: `Egreso eliminado: ${exp?.concept ?? ''}` },
+      });
     });
   };
 
@@ -2228,10 +2298,10 @@ export default function UploadPage() {
                 />
                 <button
                   onClick={addExpense}
-                  disabled={!newExpense.concept || !newExpense.amount}
+                  disabled={!newExpense.concept || !newExpense.amount || savingExpenses}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
-                  {t('common.add')}
+                  {savingExpenses ? 'Guardando…' : t('common.add')}
                 </button>
               </div>
               <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">

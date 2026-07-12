@@ -101,12 +101,14 @@ export async function upsertDeposits(
   periodId: string,
   deposits: { channel: string; amount: number }[]
 ): Promise<void> {
-  const { error } = await supabase.rpc('replace_period_deposits', {
-    p_company_id: companyId,
-    p_period_id: periodId,
-    p_rows: deposits.map(d => ({ channel: d.channel, amount: d.amount })),
-  });
-  if (error) throw new Error(`Error guardando depósitos: ${error.message}`);
+  await resilientWrite(async () => {
+    const { error } = await supabase.rpc('replace_period_deposits', {
+      p_company_id: companyId,
+      p_period_id: periodId,
+      p_rows: deposits.map(d => ({ channel: d.channel, amount: d.amount })),
+    });
+    if (error) throw new Error(`Error guardando depósitos: ${error.message}`);
+  }, 'Guardar depósitos');
 }
 
 // ─── Withdrawals (reemplazo atómico del período vía RPC, migración 044) ───
@@ -116,16 +118,18 @@ export async function upsertWithdrawals(
   periodId: string,
   withdrawals: { category: string; amount: number; description?: string | null }[]
 ): Promise<void> {
-  const { error } = await supabase.rpc('replace_period_withdrawals', {
-    p_company_id: companyId,
-    p_period_id: periodId,
-    p_rows: withdrawals.map(w => ({
-      category: w.category,
-      amount: w.amount,
-      description: w.description ?? null,
-    })),
-  });
-  if (error) throw new Error(`Error guardando retiros: ${error.message}`);
+  await resilientWrite(async () => {
+    const { error } = await supabase.rpc('replace_period_withdrawals', {
+      p_company_id: companyId,
+      p_period_id: periodId,
+      p_rows: withdrawals.map(w => ({
+        category: w.category,
+        amount: w.amount,
+        description: w.description ?? null,
+      })),
+    });
+    if (error) throw new Error(`Error guardando retiros: ${error.message}`);
+  }, 'Guardar retiros');
 }
 
 // ─── Expenses (delete + reinsert for the period) ───
@@ -146,25 +150,46 @@ export async function upsertWithdrawals(
 //   3. A hard 20s timeout on the main save so a stuck network never
 //      locks the UI button in a "Guardando..." state.
 
-// 30s — intentionally LONGER than the page-level SAVE_TIMEOUT_MS (25s)
-// in /upload. The outer page-level timeout is the single source of truth
-// for "the save is stuck" — it surfaces a user-friendly toast with the
-// correct context ("Guardar Todo tardó demasiado") and ties the dirty
-// banner state correctly. This inner ceiling exists ONLY as a guardrail
-// for callers that don't wrap upsertExpenses in their own timeout. Used
-// to be 20s, which fired before the outer 25s and leaked the internal
-// mutation name into the user-facing toast ("upsertExpenses tardó
-// demasiado >20s") — confusing and unactionable. 6 ms is the actual DB
-// time for ~40 rows; 30s is a sky-high cap for catastrophic stalls only.
-const MAIN_SAVE_TIMEOUT_MS = 30_000;
+// ─── Escritura resiliente (timeout corto + reintento) ───
+//
+// CAUSA RAÍZ del cuelgue ">25s" (2026-07-12, diagnosticado con datos): la DB
+// responde estos writes en <100ms (medido en pg_stat_statements: RPC
+// replace_period_expenses 13.9ms avg / 82.7ms max sobre 63 llamadas). El
+// cuelgue era 100% del cliente: el request de supabase-js se estancaba (red
+// dormida, wifi cambiante, socket muerto que el browser no detecta) y el
+// fetch NO tiene timeout por defecto → colgaba hasta el ceiling de 25s.
+//
+// FIX: cada intento tiene un timeout CORTO (12s). Si se estanca, reintentamos
+// UNA vez. Esto es 100% seguro porque TODAS las mutaciones que usan este
+// wrapper son idempotentes: los `replace_period_*` reemplazan el período
+// entero (mismo input → mismo resultado) y los upsert usan ON CONFLICT. Un
+// request estancado falla en 12s y el reintento — un fetch nuevo — resuelve
+// al instante, en vez de que el usuario espere 25s y vea un error.
+const WRITE_TIMEOUT_MS = 12_000;
+const WRITE_RETRIES = 1;
 
-function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label} tardó demasiado (>${ms / 1000}s)`)), ms),
-    ),
-  ]);
+async function resilientWrite<T>(op: () => Promise<T>, label: string): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= WRITE_RETRIES; attempt++) {
+    try {
+      return await Promise.race([
+        op(),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error(`${label} tardó demasiado (>${WRITE_TIMEOUT_MS / 1000}s)`)),
+            WRITE_TIMEOUT_MS,
+          ),
+        ),
+      ]);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < WRITE_RETRIES) {
+        // Pequeño backoff antes del reintento (deja que un blip de red pase).
+        await new Promise((r) => setTimeout(r, 400));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 async function syncExpenseTemplates(
@@ -198,25 +223,23 @@ export async function upsertExpenses(
   // separadas: si el INSERT fallaba o time-outeaba tras un DELETE exitoso, el
   // período quedaba VACÍO (así se perdió VexPro May 2026). La función plpgsql
   // corre todo en una sola transacción → o se guarda completo o no se toca nada.
-  const mainSave = (async () => {
-    const rows = expenses.map((e) => ({
-      concept: e.concept,
-      amount: e.amount,
-      paid: e.paid,
-      pending: e.pending,
-      is_fixed: !!e.is_fixed,
-      category: e.category ?? null,
-    }));
+  const rows = expenses.map((e) => ({
+    concept: e.concept,
+    amount: e.amount,
+    paid: e.paid,
+    pending: e.pending,
+    is_fixed: !!e.is_fixed,
+    category: e.category ?? null,
+  }));
 
+  await resilientWrite(async () => {
     const { error } = await supabase.rpc('replace_period_expenses', {
       p_company_id: companyId,
       p_period_id: periodId,
       p_rows: rows,
     });
     if (error) throw new Error(`Error guardando egresos: ${error.message}`);
-  })();
-
-  await withTimeout(mainSave, MAIN_SAVE_TIMEOUT_MS, 'upsertExpenses');
+  }, 'Guardar egresos');
 
   // Fire-and-forget template sync — never blocks the return. If it fails
   // we log and move on; the user still sees a successful save, and next
@@ -345,19 +368,21 @@ export async function upsertOperatingIncome(
   periodId: string,
   income: { prop_firm: number; broker_pnl: number; other: number }
 ): Promise<void> {
-  const { error } = await supabase
-    .from('operating_income')
-    .upsert(
-      {
-        company_id: companyId,
-        period_id: periodId,
-        prop_firm: income.prop_firm,
-        broker_pnl: income.broker_pnl,
-        other: income.other,
-      },
-      { onConflict: 'company_id,period_id' },
-    );
-  if (error) throw new Error(`Error guardando ingresos: ${error.message}`);
+  await resilientWrite(async () => {
+    const { error } = await supabase
+      .from('operating_income')
+      .upsert(
+        {
+          company_id: companyId,
+          period_id: periodId,
+          prop_firm: income.prop_firm,
+          broker_pnl: income.broker_pnl,
+          other: income.other,
+        },
+        { onConflict: 'company_id,period_id' },
+      );
+    if (error) throw new Error(`Error guardando ingresos: ${error.message}`);
+  }, 'Guardar ingresos');
 }
 
 // ─── Liquidity Movements ───
@@ -513,13 +538,15 @@ export async function upsertPropFirmSales(
   periodId: string,
   amount: number
 ): Promise<void> {
-  const { error } = await supabase
-    .from('prop_firm_sales')
-    .upsert(
-      { company_id: companyId, period_id: periodId, amount },
-      { onConflict: 'company_id,period_id' },
-    );
-  if (error) throw new Error(`Error guardando ventas prop firm: ${error.message}`);
+  await resilientWrite(async () => {
+    const { error } = await supabase
+      .from('prop_firm_sales')
+      .upsert(
+        { company_id: companyId, period_id: periodId, amount },
+        { onConflict: 'company_id,period_id' },
+      );
+    if (error) throw new Error(`Error guardando ventas prop firm: ${error.message}`);
+  }, 'Guardar ventas prop firm');
 }
 
 // ─── P2P Transfers (upsert single row per period) ───
@@ -530,13 +557,15 @@ export async function upsertP2PTransfers(
   periodId: string,
   amount: number
 ): Promise<void> {
-  const { error } = await supabase
-    .from('p2p_transfers')
-    .upsert(
-      { company_id: companyId, period_id: periodId, amount },
-      { onConflict: 'company_id,period_id' },
-    );
-  if (error) throw new Error(`Error guardando P2P: ${error.message}`);
+  await resilientWrite(async () => {
+    const { error } = await supabase
+      .from('p2p_transfers')
+      .upsert(
+        { company_id: companyId, period_id: periodId, amount },
+        { onConflict: 'company_id,period_id' },
+      );
+    if (error) throw new Error(`Error guardando P2P: ${error.message}`);
+  }, 'Guardar P2P');
 }
 
 // ─── Commission Entries ───
