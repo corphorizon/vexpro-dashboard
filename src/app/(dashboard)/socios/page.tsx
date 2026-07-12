@@ -10,7 +10,7 @@ import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { formatCurrency, formatPercent } from '@/lib/utils';
+import { formatCurrency, formatPercent, round2 } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { useConfirm } from '@/lib/use-confirm';
@@ -218,7 +218,10 @@ export default function SociosPage() {
   const effectiveDistributions = partners.map((p) => {
     const saved = distributions.find((d) => d.partner_id === p.id);
     const pct = saved?.percentage ?? p.percentage;
-    const amount =
+    // round2 en cada monto: es plata que se paga a socios. Sin redondear, el
+    // producto float (totalToDistribute × pct) y su suma acumulan centavos de
+    // drift → el total repartido no cuadra con el "Monto a Distribuir" (BUG-02).
+    const amount = round2(
       mode === 'single'
         ? totalToDistribute > 0
           ? totalToDistribute * pct
@@ -226,7 +229,8 @@ export default function SociosPage() {
         : selectedPeriodIds.reduce((sum, pid) => {
             const md = periodChain.get(pid)?.montoDistribuir ?? 0;
             return sum + (md > 0 ? md * pct : 0);
-          }, 0);
+          }, 0),
+    );
     return {
       id: saved?.id ?? `derived-${p.id}`,
       partner_id: p.id,
@@ -237,7 +241,7 @@ export default function SociosPage() {
     };
   });
 
-  const totalDistributed = effectiveDistributions.reduce((sum, d) => sum + d.amount, 0);
+  const totalDistributed = round2(effectiveDistributions.reduce((sum, d) => sum + d.amount, 0));
   // Kevin (2026-06-06): el warning antiguo sumaba percentages de
   // `effectiveDistributions` (tabla partner_distributions atada al
   // período seleccionado). Si el período no tenía rows guardados (caso

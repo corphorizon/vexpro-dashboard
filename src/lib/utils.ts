@@ -4,6 +4,15 @@ export function cn(...inputs: ClassValue[]) {
   return clsx(inputs);
 }
 
+/**
+ * Redondea a 2 decimales (centavos). Canónico para TODO monto que se muestra
+ * o se paga — evita el drift de float al multiplicar/sumar dinero. El
+ * `+ Number.EPSILON` corrige casos de coma flotante como 1.005 → 1.00.
+ */
+export function round2(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100;
+}
+
 export function formatCurrency(value: number, currency = 'USD'): string {
   return new Intl.NumberFormat('en-US', {
     style: 'currency',
