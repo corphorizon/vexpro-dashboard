@@ -93,7 +93,7 @@ El auditor de seguridad reportó como ALTO que `password_reset_tokens`, `twofa_r
 
 ---
 
-**SEC-03 — Fuga de `error.message` crudo de Postgres/Supabase al cliente**
+**SEC-03 — Fuga de `error.message` crudo de Postgres/Supabase al cliente** ✅ **RESUELTO (2026-07-12, commit d781767)** — 62 rutas convertidas al helper `apiError` (loguea real server-side, devuelve genérico); reconciliado con `sanitizeDbError` vía `friendlyDbMessage` compartido. 0 leaks restantes.
 ~24 rutas, muestra: `admin/channel-balances/route.ts:97`, `admin/ib-rebates/route.ts:26`, `superadmin/companies/[id]/users/route.ts:109,213`, `[id]/logo/route.ts:186,216,282`.
 ```ts
 return NextResponse.json({ success: false, error: error.message }, { status: 500 });
