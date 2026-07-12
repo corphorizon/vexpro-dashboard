@@ -83,7 +83,7 @@ A diferencia de `commission-calculator.ts` (que redondea con `round2` en cada pa
 
 ---
 
-**SEC-02 — Drift entre migraciones y DB: el hardening de RLS de tablas de auth no está en un archivo de migración**
+**SEC-02 — Drift entre migraciones y DB: el hardening de RLS de tablas de auth no está en un archivo de migración** ✅ **RESUELTO (2026-07-12)** — migración 047 (aplicada + versionada) captura ENABLE RLS + REVOKE de anon en las 3 tablas.
 `supabase/migration-014-*.sql:41`, `migration-015-*.sql:53,74`. *Reclasificado desde el falso positivo SEC "RLS deshabilitado".*
 
 El auditor de seguridad reportó como ALTO que `password_reset_tokens`, `twofa_reset_codes` y `twofa_attempts` tienen RLS deshabilitado (leyendo los `.sql`). **Verifiqué contra producción y es falso positivo**: las 3 tablas tienen hoy `rls = true`, 0 policies (deny-all) y sin grants a `anon`/`authenticated`. El fix ya se aplicó (Fase 1, vía MCP). **El hallazgo real es el drift:** esas migraciones committeadas todavía dicen `DISABLE ROW LEVEL SECURITY`.
@@ -103,7 +103,7 @@ return NextResponse.json({ success: false, error: error.message }, { status: 500
 
 ---
 
-**SEC-04 — Dependencias con vulnerabilidades HIGH (transitivas)**
+**SEC-04 — Dependencias con vulnerabilidades HIGH (transitivas)** ✅ **RESUELTO (2026-07-12, commit bf50595)** — `npm audit fix`: undici→6.27.0, form-data→4.0.6. 0 HIGH restantes (quedan 4 moderate que exigen `--force`/breaking).
 `npm audit --omit=dev`: `undici` (HTTP header injection vía Set-Cookie, response queue poisoning, WS DoS) y `form-data` (CRLF injection). 14 vulnerabilidades en prod (2 high, 11 moderate, 1 low). *Confirmado ejecutando npm audit.*
 - **Impacto:** transitivas (Next/Supabase/http libs). Explotabilidad directa **baja** en este app (las llamadas salientes van a APIs propias/de confianza), pero son advisories HIGH vigentes.
 - **Solución:** `npm audit fix`; revisar `npm ls undici form-data`. Actualizar `exceljs` resuelve además el `uuid` moderate. **Esfuerzo: S.**
