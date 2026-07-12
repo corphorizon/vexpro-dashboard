@@ -391,22 +391,28 @@ export async function insertLiquidityMovement(
   companyId: string,
   movement: { date: string; user_email: string | null; mt_account: string | null; deposit: number; withdrawal: number; balance: number }
 ): Promise<string> {
-  const { data, error } = await supabase
-    .from('liquidity_movements')
-    .insert({
-      company_id: companyId,
-      date: movement.date,
-      user_email: movement.user_email,
-      mt_account: movement.mt_account,
-      deposit: movement.deposit,
-      withdrawal: movement.withdrawal,
-      balance: movement.balance,
-    })
-    .select('id')
-    .single();
-
-  if (error) throw new Error(`Error guardando movimiento de liquidez: ${error.message}`);
-  return data.id;
+  // id generado en el cliente → INSERT idempotente y reintentable (ver
+  // insertInvestment / resilientWrite). Un reintento con el mismo id choca
+  // con la PK (23505) y se trata como éxito: sin duplicados, sin cuelgue 25s.
+  const id = crypto.randomUUID();
+  await resilientWrite(async () => {
+    const { error } = await supabase
+      .from('liquidity_movements')
+      .insert({
+        id,
+        company_id: companyId,
+        date: movement.date,
+        user_email: movement.user_email,
+        mt_account: movement.mt_account,
+        deposit: movement.deposit,
+        withdrawal: movement.withdrawal,
+        balance: movement.balance,
+      });
+    if (error && error.code !== '23505') {
+      throw new Error(`Error guardando movimiento de liquidez: ${error.message}`);
+    }
+  }, 'Guardar movimiento de liquidez');
+  return id;
 }
 
 export async function updateLiquidityMovement(
@@ -431,17 +437,20 @@ export async function insertInvestment(
   companyId: string,
   investment: { date: string; concept: string | null; responsible: string | null; deposit: number; withdrawal: number; profit: number; balance: number }
 ): Promise<string> {
-  const { data, error } = await supabase
-    .from('investments')
-    .insert({
-      company_id: companyId,
-      ...investment,
-    })
-    .select('id')
-    .single();
-
-  if (error) throw new Error(`Error guardando inversión: ${error.message}`);
-  return data.id;
+  // id generado en el cliente para volver el INSERT idempotente y por lo tanto
+  // reintentable (ver resilientWrite): si un intento se estanca en la red y se
+  // reintenta, el segundo insert con el MISMO id choca con la PK (código 23505)
+  // y lo tratamos como éxito → nunca se duplica la fila y ya no cuelga 25s.
+  const id = crypto.randomUUID();
+  await resilientWrite(async () => {
+    const { error } = await supabase
+      .from('investments')
+      .insert({ id, company_id: companyId, ...investment });
+    if (error && error.code !== '23505') {
+      throw new Error(`Error guardando inversión: ${error.message}`);
+    }
+  }, 'Guardar inversión');
+  return id;
 }
 
 // Stiven (2026-06-19): updateInvestment / updateLiquidityMovement se colgaban
