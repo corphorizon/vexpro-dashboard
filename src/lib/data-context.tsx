@@ -62,6 +62,7 @@ import {
 import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 import * as Sentry from '@sentry/nextjs';
 import { LOAD_TIMEOUT_MS, LOAD_WATCHDOG_MS, LOAD_MAX_RETRIES } from '@/lib/config';
+import { computeDistributionChain, type PeriodDistInput } from '@/lib/distribution';
 
 // Magic numbers centralized in src/lib/config.ts (Sprint 3 quick win
 // 2026-06-06). Tuning them no longer means grepping the codebase.
@@ -69,11 +70,20 @@ const MAX_RETRIES = LOAD_MAX_RETRIES;
 
 // ─── Saldo Info (replicated from demo-data.ts) ───
 
+// Deriva de la fórmula canónica compartida (src/lib/distribution.ts). Antes
+// tenía un modelo divergente (saldoAnterior/saldoUsado/saldoNuevo con drenaje
+// de acumulado) que contradecía a /socios — ver BUG-01. Ahora expone los
+// campos canónicos (reserva-ahorro + deuda arrastrada + montoDistribuir).
 export interface SaldoInfo {
+  ingresosNetos: number;
   egresosNetos: number;
-  saldoAnterior: number;
-  saldoUsado: number;
-  saldoNuevo: number;
+  saldoAFavor: number;
+  deudaArrastradaEntrada: number;
+  reserveThisPeriod: number;
+  reserveAccumulated: number;
+  deudaArrastradaSalida: number;
+  montoDistribuir: number;
+  /** Alias retro-compat = montoDistribuir (consumidores viejos). */
   totalDistribuir: number;
 }
 
@@ -465,65 +475,54 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // ─── Saldo chain computation ───
 
   const computeSaldoChain = useCallback((): Map<string, SaldoInfo> => {
-    const chain = new Map<string, SaldoInfo>();
-    let saldoAcumulado = 0;
-
-    // Pre-index for O(1) lookups
+    // Índices O(1) de las primitivas por período.
     const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
-    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p]));
+    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p.amount]));
     const pfwIndex = new Map<string, number>();
     for (const w of withdrawals) {
       if (w.category === 'prop_firm') pfwIndex.set(w.period_id, w.amount);
     }
-    // Pre-index expenses totals per period
     const expIndex = new Map<string, number>();
     for (const e of expenses) {
       expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + e.amount);
     }
-
-    for (const period of periods) {
-      if (!isPeriodAfterSaldoStart(period.id)) continue;
-
-      const oi = oiIndex.get(period.id);
-      const egresosNetos = expIndex.get(period.id) || 0;
-      // Prop Firm net income = sales - withdrawals
-      const pfs = pfsIndex.get(period.id)?.amount || 0;
-      const pfW = pfwIndex.get(period.id) || 0;
-      const propFirmNet = pfs - pfW;
-      const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
-
-      // Net balance: income minus expenses
-      const netBalance = ingresosNetos - egresosNetos;
-
-      const saldoAnterior = saldoAcumulado;
-      let saldoUsado = 0;
-      let totalDistribuir = ingresosNetos;
-
-      if (netBalance < 0) {
-        const deficit = Math.abs(netBalance);
-        if (saldoAnterior >= deficit) {
-          saldoUsado = deficit;
-        } else {
-          saldoUsado = saldoAnterior;
-          const remaining = deficit - saldoAnterior;
-          totalDistribuir = ingresosNetos - remaining;
-        }
-        saldoAcumulado = saldoAnterior - saldoUsado;
-      } else if (netBalance > 0) {
-        saldoAcumulado = saldoAnterior + netBalance;
-      }
-
-      chain.set(period.id, {
-        egresosNetos,
-        saldoAnterior,
-        saldoUsado,
-        saldoNuevo: saldoAcumulado,
-        totalDistribuir,
-      });
+    // investmentProfits por período — las inversiones son date-keyed (no
+    // period_id): se asignan al período cuyo año/mes coincide con inv.date.
+    // Misma lógica que getPeriodSummary.investmentProfits.
+    const invIndex = new Map<string, number>();
+    for (const inv of investments) {
+      if (!inv.date) continue;
+      const [y, m] = String(inv.date).split('-').map(Number);
+      const per = periods.find(p => p.year === y && p.month === m);
+      if (per) invIndex.set(per.id, (invIndex.get(per.id) || 0) + (Number(inv.profit) || 0));
     }
 
+    // Construir inputs canónicos EN ORDEN sobre TODOS los períodos y delegar
+    // en la fórmula única compartida (src/lib/distribution.ts). Correr la
+    // cadena completa (no filtrada por saldoStart) garantiza que el arrastre
+    // de deuda/reserva coincida con /socios.
+    const inputs: PeriodDistInput[] = periods.map(period => {
+      const oi = oiIndex.get(period.id);
+      const pfs = pfsIndex.get(period.id) || 0;
+      const pfW = pfwIndex.get(period.id) || 0;
+      return {
+        periodId: period.id,
+        brokerPnl: oi?.broker_pnl || 0,
+        other: oi?.other || 0,
+        propFirmNetIncome: pfs - pfW,
+        investmentProfits: invIndex.get(period.id) || 0,
+        totalExpenses: expIndex.get(period.id) || 0,
+        reservePct: period.reserve_pct,
+      };
+    });
+
+    const canonical = computeDistributionChain(inputs);
+    const chain = new Map<string, SaldoInfo>();
+    for (const [pid, r] of canonical) {
+      chain.set(pid, { ...r, totalDistribuir: r.montoDistribuir });
+    }
     return chain;
-  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, isPeriodAfterSaldoStart]);
+  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
 
   // ─── Period summary (single) ───
 

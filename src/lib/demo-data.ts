@@ -4,6 +4,7 @@ import type {
   FinancialStatus, Partner, PartnerDistribution, LiquidityMovement, Investment,
   PeriodSummary,
 } from './types';
+import { computeDistributionChain, type PeriodDistInput } from './distribution';
 
 // ============================================================
 // COMPANY
@@ -474,12 +475,17 @@ export const DEMO_INVESTMENTS: Investment[] = [
 // ============================================================
 const SALDO_START_PERIOD = 'p-oct-25';
 
+// Alineado con la fórmula canónica (src/lib/distribution.ts) — ver BUG-01.
 export interface SaldoInfo {
+  ingresosNetos: number;
   egresosNetos: number;
-  saldoAnterior: number;
-  saldoUsado: number;
-  saldoNuevo: number;
-  totalDistribuir: number;
+  saldoAFavor: number;
+  deudaArrastradaEntrada: number;
+  reserveThisPeriod: number;
+  reserveAccumulated: number;
+  deudaArrastradaSalida: number;
+  montoDistribuir: number;
+  totalDistribuir: number; // alias retro-compat = montoDistribuir
 }
 
 export function isPeriodAfterSaldoStart(periodId: string): boolean {
@@ -489,43 +495,35 @@ export function isPeriodAfterSaldoStart(periodId: string): boolean {
 }
 
 export function computeSaldoChain(): Map<string, SaldoInfo> {
-  const chain = new Map<string, SaldoInfo>();
-  let saldoAcumulado = 0;
-
-  for (const period of DEMO_PERIODS) {
-    if (!isPeriodAfterSaldoStart(period.id)) continue;
-
-    const oi = DEMO_OPERATING_INCOME.find(o => o.period_id === period.id);
-    const egresosNetos = DEMO_EXPENSES.filter(e => e.period_id === period.id).reduce((s, e) => s + e.amount, 0);
-    // Prop Firm net income = sales - withdrawals
-    const pfs = DEMO_PROP_FIRM_SALES.find(p => p.period_id === period.id)?.amount || 0;
-    const pfW = DEMO_WITHDRAWALS.find(w => w.period_id === period.id && w.category === 'prop_firm')?.amount || 0;
-    const propFirmNet = pfs - pfW;
-    const ingresosNetos = (oi ? oi.broker_pnl + oi.other : 0) + propFirmNet;
-
-    const netBalance = ingresosNetos - egresosNetos;
-
-    const saldoAnterior = saldoAcumulado;
-    let saldoUsado = 0;
-    let totalDistribuir = ingresosNetos;
-
-    if (netBalance < 0) {
-      const deficit = Math.abs(netBalance);
-      if (saldoAnterior >= deficit) {
-        saldoUsado = deficit;
-      } else {
-        saldoUsado = saldoAnterior;
-        const remaining = deficit - saldoAnterior;
-        totalDistribuir = ingresosNetos - remaining;
-      }
-      saldoAcumulado = saldoAnterior - saldoUsado;
-    } else if (netBalance > 0) {
-      saldoAcumulado = saldoAnterior + netBalance;
-    }
-
-    chain.set(period.id, { egresosNetos, saldoAnterior, saldoUsado, saldoNuevo: saldoAcumulado, totalDistribuir });
+  // Usa la fórmula canónica compartida (BUG-01), igual que producción.
+  const invByPeriod = new Map<string, number>();
+  for (const inv of DEMO_INVESTMENTS) {
+    if (!inv.date) continue;
+    const [y, m] = String(inv.date).split('-').map(Number);
+    const per = DEMO_PERIODS.find(p => p.year === y && p.month === m);
+    if (per) invByPeriod.set(per.id, (invByPeriod.get(per.id) || 0) + (Number(inv.profit) || 0));
   }
 
+  const inputs: PeriodDistInput[] = DEMO_PERIODS.map(period => {
+    const oi = DEMO_OPERATING_INCOME.find(o => o.period_id === period.id);
+    const pfs = DEMO_PROP_FIRM_SALES.find(p => p.period_id === period.id)?.amount || 0;
+    const pfW = DEMO_WITHDRAWALS.find(w => w.period_id === period.id && w.category === 'prop_firm')?.amount || 0;
+    return {
+      periodId: period.id,
+      brokerPnl: oi?.broker_pnl || 0,
+      other: oi?.other || 0,
+      propFirmNetIncome: pfs - pfW,
+      investmentProfits: invByPeriod.get(period.id) || 0,
+      totalExpenses: DEMO_EXPENSES.filter(e => e.period_id === period.id).reduce((s, e) => s + e.amount, 0),
+      reservePct: period.reserve_pct,
+    };
+  });
+
+  const canonical = computeDistributionChain(inputs);
+  const chain = new Map<string, SaldoInfo>();
+  for (const [pid, r] of canonical) {
+    chain.set(pid, { ...r, totalDistribuir: r.montoDistribuir });
+  }
   return chain;
 }
 

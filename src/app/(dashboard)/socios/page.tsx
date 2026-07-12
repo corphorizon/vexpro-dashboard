@@ -11,6 +11,7 @@ import { useData } from '@/lib/data-context';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { formatCurrency, formatPercent, round2 } from '@/lib/utils';
+import { computeDistributionChain, type PeriodDistInput } from '@/lib/distribution';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { useConfirm } from '@/lib/use-confirm';
@@ -71,101 +72,25 @@ export default function SociosPage() {
   // Saldo a Favor = Ingresos Netos - Egresos Netos
   const saldoAFavor = ingresosNetos - egresosNetos;
 
-  // ─── Chain calculation: reserve, debt carry, distribution per period ───
-  interface PeriodChain {
-    ingresosNetos: number;
-    egresosNetos: number;
-    saldoAFavor: number;
-    deudaArrastradaEntrada: number; // debt coming IN from previous month
-    reserveThisPeriod: number;
-    reserveAccumulated: number;
-    deudaArrastradaSalida: number;  // debt going OUT to next month
-    montoDistribuir: number;        // actual amount to distribute to partners
-  }
-
+  // ─── Distribución por período — FÓRMULA CANÓNICA COMPARTIDA (BUG-01) ───
+  // Antes esta lógica vivía inline acá y una versión DIVERGENTE en
+  // data-context.computeSaldoChain (/balances). Ahora ambas usan
+  // computeDistributionChain (src/lib/distribution.ts, con tests). El
+  // reparto real a socios (más abajo) sale de este chain.
   const periodChain = useMemo(() => {
-    const chain = new Map<string, PeriodChain>();
-    let accReserve = 0;
-    let carryDebt = 0; // positive number representing outstanding debt
-
-    for (const period of periods) {
+    const inputs: PeriodDistInput[] = periods.map((period) => {
       const pSum = getPeriodSummary(period.id);
-      const pIncome = (pSum?.operatingIncome
-        ? pSum.operatingIncome.broker_pnl + pSum.operatingIncome.other
-        : 0)
-        + (pSum?.propFirmNetIncome || 0)
-        + (pSum?.investmentProfits || 0);
-      const pExpenses = pSum?.totalExpenses || 0;
-      const pSaldo = pIncome - pExpenses;
-      const pReservePct = period.reserve_pct ?? 0.10;
-
-      const debtIn = carryDebt;
-
-      if (pSaldo <= 0) {
-        // Negative month: savings-account model — accumulated reserve is
-        // NEVER auto-consumed by losses. The loss + any prior debt simply
-        // becomes the new debt carry, and reserve stays as it was at the
-        // close of the previous positive month.
-        //
-        // Why the change (Kevin, 2026-05-01): "cada mes debe mostrarse ese
-        // dato y sumarse lo del nuevo mes y arrastrar el dato final al
-        // siguiente mes". Reserve must show the running historical balance,
-        // not be silently drained when a bad month hits — the team prefers
-        // to see savings + outstanding debt as TWO separate numbers and
-        // decide manually whether to apply reserve against debt.
-        //
-        // Old behaviour absorbed losses from accReserve, which displayed
-        // $0 in months with big losses and obscured the actual savings.
-        // Future positive months still pay off carryDebt FIRST before
-        // adding to reserve (see positive branch below) — so the reserve
-        // grows monotonically and debt is the moving piece.
-        const loss = Math.abs(pSaldo);
-        carryDebt = debtIn + loss;
-        // accReserve unchanged.
-
-        chain.set(period.id, {
-          ingresosNetos: pIncome,
-          egresosNetos: pExpenses,
-          saldoAFavor: pSaldo,
-          deudaArrastradaEntrada: debtIn,
-          reserveThisPeriod: 0,
-          reserveAccumulated: accReserve,
-          deudaArrastradaSalida: carryDebt,
-          montoDistribuir: 0, // no distribution in negative months
-        });
-      } else {
-        // Positive month: first cover any carried debt
-        let available = pSaldo;
-
-        if (carryDebt > 0) {
-          if (available >= carryDebt) {
-            available -= carryDebt;
-            carryDebt = 0;
-          } else {
-            carryDebt -= available;
-            available = 0;
-          }
-        }
-
-        // From the remaining, calculate reserve and distribution
-        const reserve = available > 0 ? available * pReservePct : 0;
-        accReserve += reserve;
-        const distributable = available > 0 ? available - reserve : 0;
-
-        chain.set(period.id, {
-          ingresosNetos: pIncome,
-          egresosNetos: pExpenses,
-          saldoAFavor: pSaldo,
-          deudaArrastradaEntrada: debtIn,
-          reserveThisPeriod: reserve,
-          reserveAccumulated: accReserve,
-          deudaArrastradaSalida: carryDebt,
-          montoDistribuir: distributable,
-        });
-      }
-    }
-
-    return chain;
+      return {
+        periodId: period.id,
+        brokerPnl: pSum?.operatingIncome?.broker_pnl || 0,
+        other: pSum?.operatingIncome?.other || 0,
+        propFirmNetIncome: pSum?.propFirmNetIncome || 0,
+        investmentProfits: pSum?.investmentProfits || 0,
+        totalExpenses: pSum?.totalExpenses || 0,
+        reservePct: period.reserve_pct,
+      };
+    });
+    return computeDistributionChain(inputs);
   }, [periods, getPeriodSummary]);
 
   // Get current period's chain data

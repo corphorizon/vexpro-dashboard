@@ -192,11 +192,14 @@ export default function ConsolidadoPage() {
     return periods.map((p) => {
       const summary = getPeriodSummary(p.id);
       const saldoEntry = saldoChain.get(p.id);
+      // Campos canónicos de la fórmula única de distribución (BUG-01). Antes
+      // se derivaban de forma retorcida del modelo viejo (saldoNuevo/Anterior/
+      // Usado); ahora se leen directo de la cadena canónica.
       const saldoInfo = saldoEntry
         ? {
-            reservaPeriodo: Math.max(0, saldoEntry.totalDistribuir - saldoEntry.saldoNuevo + saldoEntry.saldoAnterior - saldoEntry.saldoUsado),
-            reservaAcumulada: saldoEntry.saldoNuevo,
-            montoDistribuir: saldoEntry.totalDistribuir,
+            reservaPeriodo: saldoEntry.reserveThisPeriod,
+            reservaAcumulada: saldoEntry.reserveAccumulated,
+            montoDistribuir: saldoEntry.montoDistribuir,
           }
         : null;
       const key = `${p.year}-${String(p.month).padStart(2, '0')}`;
