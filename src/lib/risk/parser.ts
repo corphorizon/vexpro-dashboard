@@ -1,5 +1,9 @@
-import ExcelJS from 'exceljs';
-import JSZip from 'jszip';
+// PERF-01: exceljs (~1MB) y jszip (~100KB) se cargan con dynamic import DENTRO
+// de las funciones que los usan, no estáticamente — así NO entran al bundle
+// inicial de la página client /risk/retiros-propfirm (solo se necesitan al
+// subir un archivo). Los imports acá son SOLO de tipos (se borran en compilación).
+import type ExcelJS from 'exceljs';
+import type JSZip from 'jszip';
 import type { Trade, ReportMetadata } from './types';
 
 // NOTE: We migrated off `xlsx` (sheetJS) because it has two unpatched
@@ -141,9 +145,10 @@ function sheetToMatrix(ws: ExcelJS.Worksheet): (string | null)[][] {
 // el buffer original sin tocarlo — cero overhead para archivos buenos.
 // ─────────────────────────────────────────────────────────────────────────────
 async function sanitizeUtf16Xlsx(buffer: ArrayBuffer): Promise<ArrayBuffer> {
+  const { default: JSZipMod } = await import('jszip');
   let zip: JSZip;
   try {
-    zip = await JSZip.loadAsync(buffer);
+    zip = await JSZipMod.loadAsync(buffer);
   } catch {
     // No es un ZIP válido — dejamos pasar el buffer; el wb.xlsx.load del
     // siguiente paso dará un error más significativo al usuario.
@@ -193,7 +198,8 @@ export async function parseTradeReport(buffer: ArrayBuffer): Promise<ParseResult
   // original sin overhead.
   const sanitizedBuffer = await sanitizeUtf16Xlsx(buffer);
 
-  const wb = new ExcelJS.Workbook();
+  const { default: ExcelJSMod } = await import('exceljs');
+  const wb = new ExcelJSMod.Workbook();
   await wb.xlsx.load(sanitizedBuffer);
   const ws = wb.worksheets[0];
   if (!ws) {
