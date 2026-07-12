@@ -42,10 +42,15 @@ export async function POST(request: NextRequest) {
         bonus: entry.bonus ?? 0,
       };
 
-      // Upsert: check if exists, then update or insert
+      // Upsert: check if exists, then update or insert.
+      // SEC: scope por company_id. Sin este filtro, un admin de la empresa A
+      // que envíe profile_id/period_id/head_id de la empresa B resolvía la
+      // fila de B (el UNIQUE es global y el admin client bypassa RLS) y el
+      // UPDATE de abajo la sobrescribía/reasignaba a A (IDOR cross-tenant).
       const { data: existing } = await admin
         .from('commercial_monthly_results')
         .select('id')
+        .eq('company_id', company_id)
         .eq('profile_id', entry.profile_id)
         .eq('period_id', period_id)
         .eq('head_id', entryHeadId)
@@ -70,7 +75,8 @@ export async function POST(request: NextRequest) {
         const { error } = await admin
           .from('commercial_monthly_results')
           .update(row)
-          .eq('id', existing.id);
+          .eq('id', existing.id)
+          .eq('company_id', company_id); // defensa en profundidad: nunca tocar filas de otra empresa
         if (error) return NextResponse.json({ error: error.message }, { status: 400 });
       } else {
         // For new inserts, replace null flags with 0
