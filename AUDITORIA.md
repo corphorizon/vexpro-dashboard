@@ -44,7 +44,7 @@ La definición canónica (`glossary.ts:28`: *"Monto a Distribuir = Saldo disponi
 
 ---
 
-**SEC-01 — IDOR / escritura cross-tenant en commission-entries (falta scope por company_id)**
+**SEC-01 — IDOR / escritura cross-tenant en commission-entries (falta scope por company_id)** ✅ **RESUELTO (2026-07-12, commit 83d8366)** — `.eq('company_id', ...)` agregado al SELECT y al UPDATE.
 `src/app/api/admin/commission-entries/route.ts:46-52` (SELECT) y `:70-73` (UPDATE). *Verificado adversarialmente: CONFIRMADO.*
 
 ```ts
@@ -64,7 +64,7 @@ Usa `createAdminClient()` (bypass RLS). El `UNIQUE(profile_id, period_id)` es gl
 
 ---
 
-**BUG-02 — Distribución a socios calculada en float sin round2**
+**BUG-02 — Distribución a socios calculada en float sin round2** ✅ **RESUELTO (2026-07-12, commit 42e9680)** — `round2` canónico exportado desde utils.ts, aplicado a cada monto y al total.
 `src/app/(dashboard)/socios/page.tsx:221-229, 240`. *Reportado por el auditor de lógica; consistente con la evidencia del código.*
 
 ```ts
