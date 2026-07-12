@@ -110,7 +110,7 @@ return NextResponse.json({ success: false, error: error.message }, { status: 500
 
 ---
 
-**PERF-01 — ExcelJS (~1MB) entra estático al bundle cliente de /risk/retiros-propfirm**
+**PERF-01 — ExcelJS (~1MB) entra estático al bundle cliente de /risk/retiros-propfirm** ✅ **RESUELTO (2026-07-12, commit 309f5d0)** — exceljs + jszip pasados a `import type` + `await import()`; exceljs quedó en un chunk async (~912K) fuera del initial load.
 `src/lib/risk/parser.ts:1` (`import ExcelJS from 'exceljs'`) importado por la página `'use client'` en `retiros-propfirm/page.tsx:11`. *Verificado adversarialmente: CONFIRMADO* (sin `server-only`, sin externalización en next.config; único importador es la página client).
 - **Impacto:** ExcelJS se descarga en el bundle inicial de esa página aunque solo se use al subir un archivo. Irónicamente la misma página SÍ hace lazy de jspdf (`await import('jspdf')`, `:337`).
 - **Solución:** `const ExcelJS = (await import('exceljs')).default` dentro de `parseTradeReport`, disparado solo al procesar el archivo. **Esfuerzo: S.**
