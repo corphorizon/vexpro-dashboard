@@ -193,137 +193,96 @@ interface PdfCommissionData {
 
 export function generateCommissionPDF(data: PdfCommissionData) {
   const doc = new jsPDF('landscape', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
 
-  // ─── Header ───
-  doc.setFillColor(30, 41, 59); // slate-800
-  doc.rect(0, 0, pageWidth, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Informe de Comisiones', 14, 14);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(data.companyName, 14, 22);
-  doc.text(data.periodLabel, pageWidth - 14, 14, { align: 'right' });
-  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
-
-  // ─── HEAD Info ───
-  doc.setTextColor(30, 41, 59);
-  let y = 36;
-
-  doc.setFontSize(13);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`${data.headName}`, 14, y);
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
-  doc.text(`${data.headRole}  |  ${data.headEmail}`, 14, y + 5);
-
-  // ─── Summary cards ───
-  y += 14;
-  const cardW = 62;
-  const cardGap = 6;
-  const cards = [
-    { label: 'ND Total del Equipo', value: `$${fmt(data.teamTotalND)}` },
-    { label: 'Salario Base (auto)', value: `$${fmt(data.autoSalary)}` },
-    { label: 'Comision Propia', value: `$${fmt(data.headOwnCalc?.commission ?? 0)}` },
-    { label: 'Total + Salario', value: `$${fmt(data.teamSummary.totalWithSalary)}` },
-  ];
-
-  cards.forEach((card, i) => {
-    const x = 14 + i * (cardW + cardGap);
-    doc.setFillColor(248, 250, 252); // slate-50
-    doc.roundedRect(x, y, cardW, 18, 2, 2, 'F');
-    doc.setDrawColor(226, 232, 240); // slate-200
-    doc.roundedRect(x, y, cardW, 18, 2, 2, 'S');
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139);
-    doc.setFont('helvetica', 'normal');
-    doc.text(card.label, x + 4, y + 6);
-    doc.setFontSize(12);
-    doc.setTextColor(30, 41, 59);
-    doc.setFont('helvetica', 'bold');
-    doc.text(card.value, x + 4, y + 14);
+  let y = pdfHeader(doc, {
+    title: 'Informe de Comisiones',
+    company: data.companyName,
+    right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
   });
 
-  // ─── HEAD Own Commission Table ───
-  y += 26;
-  doc.setFontSize(11);
-  doc.setTextColor(30, 41, 59);
+  // ─── HEAD Info ───
+  doc.setFontSize(13);
   doc.setFont('helvetica', 'bold');
-  doc.text('Comision Propia del HEAD', 14, y);
-  y += 2;
+  doc.setTextColor(...C.ink);
+  doc.text(data.headName, 14, y);
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...C.muted);
+  doc.text(`${data.headRole}  |  ${data.headEmail}`, 14, y + 5);
+  y += 11;
 
+  // ─── KPIs ───
+  y = pdfCards(doc, y, [
+    { label: 'ND Total del Equipo', value: money(data.teamTotalND), tone: 'primary' },
+    { label: 'Salario Base (auto)', value: money(data.autoSalary), tone: 'ink' },
+    { label: 'Comision Propia', value: money(data.headOwnCalc?.commission ?? 0), tone: 'accent' },
+    { label: 'Total + Salario', value: money(data.teamSummary.totalWithSalary), tone: 'positive' },
+  ]);
+
+  // ─── HEAD Own Commission Table ───
   if (data.headOwnCalc) {
+    y = pdfSection(doc, 'Comision Propia del HEAD', y + 2);
     autoTable(doc, {
       startY: y,
-      head: [['ND Mes Actual', 'Acumulado', 'Division', '%', 'Comision', 'Pago Real', 'Acc → Sig.']],
+      head: [['ND Mes Actual', 'Acumulado', 'Division', '%', 'Comision', 'Pago Real', 'Acc -> Sig.']],
       body: [[
-        `$${fmt(data.headOwnCalc.netDepositCurrent)}`,
-        `$${fmt(data.headOwnCalc.accumulatedIn)}`,
-        `$${fmt(data.headOwnCalc.division)}`,
+        money(data.headOwnCalc.netDepositCurrent),
+        money(data.headOwnCalc.accumulatedIn),
+        money(data.headOwnCalc.division),
         `${data.headOwnCalc.commissionPct}%`,
-        `$${fmt(data.headOwnCalc.commission)}`,
-        `$${fmt(data.headOwnCalc.realPayment)}`,
-        `$${fmt(data.headOwnCalc.accumulatedOut)}`,
+        money(data.headOwnCalc.commission),
+        money(data.headOwnCalc.realPayment),
+        money(data.headOwnCalc.accumulatedOut),
       ]],
       theme: 'grid',
       styles: { fontSize: 8, cellPadding: 2.5 },
-      headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
+      headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
       margin: { left: 14, right: 14 },
     });
+    y = getLastTableY(doc, y + 20);
+  } else {
+    y += 4;
   }
 
   // ─── BDM Table ───
-  y = getLastTableY(doc, y + 20);
-  doc.setFontSize(11);
-  doc.setTextColor(30, 41, 59);
-  doc.setFont('helvetica', 'bold');
-  doc.text(`Miembros del Equipo (${data.bdms.length})`, 14, y);
-  y += 2;
-
+  y = pdfSection(doc, `Miembros del Equipo (${data.bdms.length})`, y);
   autoTable(doc, {
     startY: y,
-    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Division', 'Comision', 'Pago Real', 'Acc → Sig.', 'Sueldo']],
+    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Division', 'Comision', 'Pago Real', 'Acc -> Sig.', 'Sueldo']],
     body: data.bdms.map(b => [
       b.name,
       b.email,
       `${b.pct}%`,
       `${b.diffPct}%`,
-      `$${fmt(b.nd)}`,
-      `$${fmt(b.division)}`,
-      `$${fmt(b.commission)}`,
-      `$${fmt(b.realPayment)}`,
-      `$${fmt(b.accOut)}`,
-      `$${fmt(b.salary)}`,
+      money(b.nd),
+      money(b.division),
+      money(b.commission),
+      money(b.realPayment),
+      money(b.accOut),
+      money(b.salary),
     ]),
     theme: 'striped',
     styles: { fontSize: 7.5, cellPadding: 2 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold', fontSize: 7 },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    alternateRowStyles: { fillColor: C.surface },
     margin: { left: 14, right: 14 },
   });
 
   // ─── Totals Summary ───
   y = getLastTableY(doc, y + 20);
-  doc.setFontSize(11);
-  doc.setFont('helvetica', 'bold');
-  doc.setTextColor(30, 41, 59);
-  doc.text('Resumen de Pagos', 14, y);
-  y += 2;
+  y = pdfSection(doc, 'Resumen de Pagos', y);
 
   const summaryRows: string[][] = [
-    ['Comision propia del HEAD', `$${fmt(data.teamSummary.headOwnPayment)}`],
-    ['Diferencial de BDMs', `$${fmt(data.teamSummary.diffTotal)}`],
-    ['Total comisiones', `$${fmt(data.teamSummary.totalPayment)}`],
-    ['Salario base', `$${fmt(data.autoSalary)}`],
+    ['Comision propia del HEAD', money(data.teamSummary.headOwnPayment)],
+    ['Diferencial de BDMs', money(data.teamSummary.diffTotal)],
+    ['Total comisiones', money(data.teamSummary.totalPayment)],
+    ['Salario base', money(data.autoSalary)],
   ];
   if (data.teamSummary.prevDebt < 0) {
-    summaryRows.push(['Subtotal antes de deuda', `$${fmt(data.teamSummary.rawTotalWithSalary)}`]);
-    summaryRows.push(['Deuda mes anterior', `$${fmt(data.teamSummary.prevDebt)}`]);
+    summaryRows.push(['Subtotal antes de deuda', money(data.teamSummary.rawTotalWithSalary)]);
+    summaryRows.push(['Deuda mes anterior', money(data.teamSummary.prevDebt)]);
   }
-  summaryRows.push(['TOTAL A PAGAR', `$${fmt(data.teamSummary.totalWithSalary)}`]);
+  summaryRows.push(['TOTAL A PAGAR', money(data.teamSummary.totalWithSalary)]);
   const totalRowIndex = summaryRows.length - 1;
 
   autoTable(doc, {
@@ -332,34 +291,24 @@ export function generateCommissionPDF(data: PdfCommissionData) {
     body: summaryRows,
     theme: 'grid',
     styles: { fontSize: 9, cellPadding: 3 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
-    bodyStyles: { textColor: [30, 41, 59] },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    bodyStyles: { textColor: C.ink },
     didParseCell: (hookData) => {
       if (hookData.section === 'body' && hookData.row.index === totalRowIndex) {
         hookData.cell.styles.fontStyle = 'bold';
-        hookData.cell.styles.fillColor = [234, 245, 255];
+        hookData.cell.styles.fillColor = [234, 241, 250];
+        hookData.cell.styles.textColor = C.primary;
       }
-      // Highlight debt row in amber
+      // Resaltar fila de deuda en ámbar
       if (hookData.section === 'body' && data.teamSummary.prevDebt < 0 && hookData.row.index === totalRowIndex - 1) {
-        hookData.cell.styles.textColor = [180, 83, 9]; // amber-700
+        hookData.cell.styles.textColor = C.warning;
       }
     },
     columnStyles: { 0: { cellWidth: 80 }, 1: { halign: 'right' } },
     margin: { left: 14, right: 14 },
   });
 
-  // ─── Footer ───
-  const pageCount = doc.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    const pageH = doc.internal.pageSize.getHeight();
-    doc.setFontSize(7);
-    doc.setTextColor(160, 174, 192);
-    doc.text(`Pagina ${i} de ${pageCount}`, pageWidth / 2, pageH - 6, { align: 'center' });
-    doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 3, { align: 'center' });
-  }
-
-  // Save
+  pdfFooter(doc);
   const fileName = `Comisiones_${data.headName.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
   doc.save(fileName);
 }
@@ -388,123 +337,81 @@ interface PdfIndividualData {
 
 export function generateIndividualPDF(data: PdfIndividualData) {
   const doc = new jsPDF('portrait', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
 
-  // ─── Header ───
-  doc.setFillColor(30, 41, 59);
-  doc.rect(0, 0, pageWidth, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Informe Individual de Comisiones', 14, 14);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(data.companyName, 14, 22);
-  doc.text(data.periodLabel, pageWidth - 14, 14, { align: 'right' });
-  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
+  let y = pdfHeader(doc, {
+    title: 'Informe Individual de Comisiones',
+    company: data.companyName,
+    right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
+  });
 
   // ─── Profile Info ───
-  let y = 38;
-  doc.setTextColor(30, 41, 59);
-  doc.setFontSize(16);
+  doc.setTextColor(...C.ink);
+  doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
   doc.text(data.name, 14, y);
   y += 6;
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
+  doc.setTextColor(...C.muted);
   doc.text(`${data.role}  |  ${data.email}  |  HEAD: ${data.headName}`, 14, y);
+  y += 8;
 
-  // ─── Summary cards ───
-  y += 12;
-  const cardW = 55;
-  const cardGap = 6;
-  const cards = [
-    { label: 'ND Mes Actual', value: `$${fmt(data.nd)}` },
-    { label: 'Comision', value: `$${fmt(data.commission)}` },
-    { label: 'Salario', value: `$${fmt(data.salary)}` },
-  ];
-
-  cards.forEach((card, i) => {
-    const x = 14 + i * (cardW + cardGap);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(x, y, cardW, 20, 2, 2, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(x, y, cardW, 20, 2, 2, 'S');
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139);
-    doc.setFont('helvetica', 'normal');
-    doc.text(card.label, x + 4, y + 7);
-    doc.setFontSize(13);
-    doc.setTextColor(30, 41, 59);
-    doc.setFont('helvetica', 'bold');
-    doc.text(card.value, x + 4, y + 16);
-  });
+  // ─── KPIs ───
+  y = pdfCards(doc, y, [
+    { label: 'ND Mes Actual', value: money(data.nd), tone: 'primary' },
+    { label: 'Comision', value: money(data.commission), tone: 'accent' },
+    { label: 'Salario', value: money(data.salary), tone: 'ink' },
+  ]);
 
   // ─── Calculation detail table ───
-  y += 30;
-  doc.setFontSize(12);
-  doc.setTextColor(30, 41, 59);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Detalle del Calculo', 14, y);
-  y += 3;
-
+  y = pdfSection(doc, 'Detalle del Calculo', y + 2);
   autoTable(doc, {
     startY: y,
     head: [['Concepto', 'Valor']],
     body: [
       ['Porcentaje de comision', `${data.pct}%`],
-      ['ND Mes Actual', `$${fmt(data.nd)}`],
-      ['Acumulado del mes anterior', `$${fmt(data.accumulatedIn)}`],
-      ['Division (ND / 2)', `$${fmt(data.division)}`],
-      ['Comision ((Division + Acumulado) x %)', `$${fmt(data.commission)}`],
-      ['Pago Real', `$${fmt(data.realPayment)}`],
-      ['Acumulado → Siguiente mes', `$${fmt(data.accumulatedOut)}`],
+      ['ND Mes Actual', money(data.nd)],
+      ['Acumulado del mes anterior', money(data.accumulatedIn)],
+      ['Division (ND / 2)', money(data.division)],
+      ['Comision ((Division + Acumulado) x %)', money(data.commission)],
+      ['Pago Real', money(data.realPayment)],
+      ['Acumulado -> Siguiente mes', money(data.accumulatedOut)],
     ],
     theme: 'striped',
     styles: { fontSize: 9.5, cellPadding: 4 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
     columnStyles: { 0: { cellWidth: 100 }, 1: { halign: 'right', fontStyle: 'bold' } },
     margin: { left: 14, right: 14 },
   });
 
   // ─── Total box ───
   y = getLastTableY(doc, y + 60, 10);
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Resumen de Pago', 14, y);
-  y += 3;
-
+  y = pdfSection(doc, 'Resumen de Pago', y);
   autoTable(doc, {
     startY: y,
     head: [['Concepto', 'Monto']],
     body: [
-      ['Comision (Pago Real)', `$${fmt(data.realPayment)}`],
-      ['Salario', `$${fmt(data.salary)}`],
-      ['TOTAL A PAGAR', `$${fmt(data.total)}`],
+      ['Comision (Pago Real)', money(data.realPayment)],
+      ['Salario', money(data.salary)],
+      ['TOTAL A PAGAR', money(data.total)],
     ],
     theme: 'grid',
     styles: { fontSize: 10, cellPadding: 4 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
-    bodyStyles: { textColor: [30, 41, 59] },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    bodyStyles: { textColor: C.ink },
     didParseCell: (hookData) => {
       if (hookData.section === 'body' && hookData.row.index === 2) {
         hookData.cell.styles.fontStyle = 'bold';
-        hookData.cell.styles.fillColor = [234, 245, 255];
+        hookData.cell.styles.fillColor = [234, 241, 250];
+        hookData.cell.styles.textColor = C.primary;
       }
     },
     columnStyles: { 0: { cellWidth: 100 }, 1: { halign: 'right' } },
     margin: { left: 14, right: 14 },
   });
 
-  // ─── Footer ───
-  const pageH = doc.internal.pageSize.getHeight();
-  doc.setFontSize(7);
-  doc.setTextColor(160, 174, 192);
-  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
-
-  // Save
+  pdfFooter(doc);
   const fileName = `Comision_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
   doc.save(fileName);
 }
@@ -544,66 +451,35 @@ interface PdfPnlData {
 export function generatePnlPDF(data: PdfPnlData) {
   const isSpecial = data.mode === 'special';
   const doc = new jsPDF('portrait', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
 
-  // Header
-  doc.setFillColor(30, 41, 59);
-  doc.rect(0, 0, pageWidth, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(16);
-  doc.setFont('helvetica', 'bold');
-  doc.text(isSpecial ? 'Informe Individual de Comisiones - PnL Especial' : 'Informe Individual de Comisiones - PnL', 14, 14);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(data.companyName, 14, 22);
-  doc.text(data.periodLabel, pageWidth - 14, 14, { align: 'right' });
-  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
+  let y = pdfHeader(doc, {
+    title: isSpecial ? 'Comisiones Individual - PnL Especial' : 'Comisiones Individual - PnL',
+    company: data.companyName,
+    right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
+  });
 
   // Profile Info
-  let y = 38;
-  doc.setTextColor(30, 41, 59);
-  doc.setFontSize(16);
+  doc.setTextColor(...C.ink);
+  doc.setFontSize(15);
   doc.setFont('helvetica', 'bold');
   doc.text(data.name, 14, y);
   y += 6;
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 116, 139);
+  doc.setTextColor(...C.muted);
   doc.text(`${data.role}  |  ${data.email}  |  HEAD: ${data.headName}`, 14, y);
+  y += 8;
 
-  // Summary cards
-  y += 12;
-  const cardW = 42;
-  const cardGap = 4;
-  const cards = [
-    { label: 'PnL Mes Actual', value: `$${fmt(data.pnl)}` },
-    { label: 'Comisión', value: `$${fmt(data.commission)}` },
-    { label: 'Com. por Lotes', value: `$${fmt(data.lotCommissions)}` },
-    { label: 'Pago Real', value: `$${fmt(data.realPayment)}` },
-  ];
-  cards.forEach((card, i) => {
-    const x = 14 + i * (cardW + cardGap);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(x, y, cardW, 20, 2, 2, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(x, y, cardW, 20, 2, 2, 'S');
-    doc.setFontSize(7);
-    doc.setTextColor(100, 116, 139);
-    doc.setFont('helvetica', 'normal');
-    doc.text(card.label, x + 4, y + 7);
-    doc.setFontSize(12);
-    doc.setTextColor(30, 41, 59);
-    doc.setFont('helvetica', 'bold');
-    doc.text(card.value, x + 4, y + 16);
-  });
+  // KPIs
+  y = pdfCards(doc, y, [
+    { label: 'PnL Mes Actual', value: money(data.pnl), tone: 'primary' },
+    { label: 'Comision', value: money(data.commission), tone: 'accent' },
+    { label: 'Com. por Lotes', value: money(data.lotCommissions), tone: 'ink' },
+    { label: 'Pago Real', value: money(data.realPayment), tone: data.realPayment >= 0 ? 'positive' : 'negative' },
+  ], 14, 18);
 
   // Calculation detail
-  y += 30;
-  doc.setFontSize(12);
-  doc.setTextColor(30, 41, 59);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Detalle del Calculo', 14, y);
-  y += 3;
+  y = pdfSection(doc, 'Detalle del Calculo', y + 2);
 
   // Detalle del cálculo — en modo Especial se omiten las 3 filas que no
   // aplican (Acumulado previo, División, Acumulado siguiente) y se ajusta
@@ -611,20 +487,20 @@ export function generatePnlPDF(data: PdfPnlData) {
   const detailRows: string[][] = isSpecial
     ? [
         ['Porcentaje de comision', `${data.pct}%`],
-        ['PnL Mes Actual', `$${fmt(data.pnl)}`],
-        ['Comision (PnL x %)', `$${fmt(data.commission)}`],
-        ['Comisiones ganadas por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
-        ['Pago Real (Comision - Com. Lotes)', `$${fmt(data.realPayment)}`],
+        ['PnL Mes Actual', money(data.pnl)],
+        ['Comision (PnL x %)', money(data.commission)],
+        ['Comisiones ganadas por Lotes (descuento)', `-${money(data.lotCommissions)}`],
+        ['Pago Real (Comision - Com. Lotes)', money(data.realPayment)],
       ]
     : [
         ['Porcentaje de comision', `${data.pct}%`],
-        ['PnL Mes Actual', `$${fmt(data.pnl)}`],
-        ['Acumulado del mes anterior', `$${fmt(data.accumulatedIn)}`],
-        ['Division (PnL / 2)', `$${fmt(data.division)}`],
-        ['Comision ((Division + Acumulado) x %)', `$${fmt(data.commission)}`],
-        ['Comisiones ganadas por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
-        ['Pago Real (Comision - Com. Lotes)', `$${fmt(data.realPayment)}`],
-        ['Acumulado -> Siguiente mes', `$${fmt(data.accumulatedOut)}`],
+        ['PnL Mes Actual', money(data.pnl)],
+        ['Acumulado del mes anterior', money(data.accumulatedIn)],
+        ['Division (PnL / 2)', money(data.division)],
+        ['Comision ((Division + Acumulado) x %)', money(data.commission)],
+        ['Comisiones ganadas por Lotes (descuento)', `-${money(data.lotCommissions)}`],
+        ['Pago Real (Comision - Com. Lotes)', money(data.realPayment)],
+        ['Acumulado -> Siguiente mes', money(data.accumulatedOut)],
       ];
 
   autoTable(doc, {
@@ -633,8 +509,8 @@ export function generatePnlPDF(data: PdfPnlData) {
     body: detailRows,
     theme: 'striped',
     styles: { fontSize: 9.5, cellPadding: 4 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: [248, 250, 252] },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
     didParseCell: (hookData) => {
       // Índices dependen del modo — en especial hay 3 filas menos.
       //   Normal : 0=pct 1=pnl 2=accIn 3=div 4=commission 5=lots 6=realPayment 7=accOut
@@ -643,12 +519,12 @@ export function generatePnlPDF(data: PdfPnlData) {
       const realPaymentRowIdx = isSpecial ? 4 : 6;
       // Resaltar fila de descuento lotes en ámbar
       if (hookData.section === 'body' && hookData.row.index === lotsRowIdx) {
-        hookData.cell.styles.textColor = [180, 83, 9];
+        hookData.cell.styles.textColor = C.warning;
       }
       // Resaltar Pago Real en verde/rojo
       if (hookData.section === 'body' && hookData.row.index === realPaymentRowIdx) {
         hookData.cell.styles.fontStyle = 'bold';
-        hookData.cell.styles.textColor = data.realPayment >= 0 ? [0, 130, 0] : [180, 0, 0];
+        hookData.cell.styles.textColor = data.realPayment >= 0 ? C.positive : C.negative;
       }
     },
     columnStyles: { 0: { cellWidth: 110 }, 1: { halign: 'right', fontStyle: 'bold' } },
@@ -657,43 +533,36 @@ export function generatePnlPDF(data: PdfPnlData) {
 
   // Resumen de pago
   y = getLastTableY(doc, y + 60, 10);
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Resumen de Pago', 14, y);
-  y += 3;
-
+  y = pdfSection(doc, 'Resumen de Pago', y);
   autoTable(doc, {
     startY: y,
     head: [['Concepto', 'Monto']],
     body: [
-      ['Comision bruta', `$${fmt(data.commission)}`],
-      ['Comisiones por Lotes (descuento)', `-$${fmt(data.lotCommissions)}`],
-      ['Pago Real (Comision - Lotes)', `$${fmt(data.realPayment)}`],
-      ['Salario', `$${fmt(data.salary)}`],
-      ['TOTAL A PAGAR', `$${fmt(data.total)}`],
+      ['Comision bruta', money(data.commission)],
+      ['Comisiones por Lotes (descuento)', `-${money(data.lotCommissions)}`],
+      ['Pago Real (Comision - Lotes)', money(data.realPayment)],
+      ['Salario', money(data.salary)],
+      ['TOTAL A PAGAR', money(data.total)],
     ],
     theme: 'grid',
     styles: { fontSize: 10, cellPadding: 4 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255, fontStyle: 'bold' },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    bodyStyles: { textColor: C.ink },
     didParseCell: (hookData) => {
       if (hookData.section === 'body' && hookData.row.index === 4) {
         hookData.cell.styles.fontStyle = 'bold';
-        hookData.cell.styles.fillColor = [234, 245, 255];
+        hookData.cell.styles.fillColor = [234, 241, 250];
+        hookData.cell.styles.textColor = C.primary;
       }
       if (hookData.section === 'body' && hookData.row.index === 1) {
-        hookData.cell.styles.textColor = [180, 83, 9];
+        hookData.cell.styles.textColor = C.warning;
       }
     },
     columnStyles: { 0: { cellWidth: 110 }, 1: { halign: 'right' } },
     margin: { left: 14, right: 14 },
   });
 
-  // Footer
-  const pageH = doc.internal.pageSize.getHeight();
-  doc.setFontSize(7);
-  doc.setTextColor(160, 174, 192);
-  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
-
+  pdfFooter(doc);
   const fileName = `${isSpecial ? 'ComisionPnLEspecial' : 'ComisionPnL'}_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
   doc.save(fileName);
 }
