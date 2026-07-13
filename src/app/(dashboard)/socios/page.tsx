@@ -25,7 +25,7 @@ import {
 } from '@/lib/supabase/mutations';
 import {
   Users, Download, AlertTriangle, TrendingDown, Wallet, Shield,
-  PiggyBank, Plus, Pencil, Trash2, X, Check, Settings, ChevronDown,
+  PiggyBank, Plus, Pencil, Trash2, X, Check, Settings, ChevronDown, FileText,
 } from 'lucide-react';
 
 const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
@@ -315,6 +315,31 @@ export default function SociosPage() {
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">{t('common.csv')}</span>
           </button>
+          {mode === 'single' && (
+            <button
+              onClick={() => verify2FA(async () => {
+                const { generatePartnerPeriodPDF } = await import('@/lib/pdf-export');
+                generatePartnerPeriodPDF({
+                  companyName: company?.name ?? '',
+                  periodLabel: currentPeriod?.label ?? '',
+                  ingresosNetos: currentChain?.ingresosNetos ?? 0,
+                  egresosNetos: currentChain?.egresosNetos ?? 0,
+                  reservaMes: reserveThisPeriod,
+                  deudaEntrada: carryDebt,
+                  montoDistribuir: totalToDistribute,
+                  partners: partners.map((p) => {
+                    const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
+                    return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
+                  }),
+                });
+              })}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
+              title="Descargar PDF del mes"
+            >
+              <FileText className="w-4 h-4" />
+              <span className="hidden sm:inline">PDF mes</span>
+            </button>
+          )}
           <PeriodSelector />
         </div>
       </div>
@@ -551,13 +576,44 @@ export default function SociosPage() {
 
           {/* Historical summary — collapsible */}
           <div className="mt-8">
-            <button
-              onClick={() => setShowHistory(!showHistory)}
-              className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <ChevronDown className={`w-4 h-4 transition-transform ${showHistory ? 'rotate-0' : '-rotate-90'}`} />
-              {t('partners.history')}
-            </button>
+            <div className="flex items-center justify-between gap-2">
+              <button
+                onClick={() => setShowHistory(!showHistory)}
+                className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
+              >
+                <ChevronDown className={`w-4 h-4 transition-transform ${showHistory ? 'rotate-0' : '-rotate-90'}`} />
+                {t('partners.history')}
+              </button>
+              <button
+                onClick={() => verify2FA(async () => {
+                  const { generatePartnerHistoryPDF } = await import('@/lib/pdf-export');
+                  const rows = periods.map((period) => {
+                    const pChain = periodChain.get(period.id);
+                    const pDist = pChain?.montoDistribuir ?? 0;
+                    const dists = partnerDistributions.filter((d) => d.period_id === period.id);
+                    const amounts = partners.map((p) => {
+                      const saved = dists.find((d) => d.partner_id === p.id);
+                      const pct = saved?.percentage ?? p.percentage;
+                      return pDist > 0 ? round2(pDist * pct) : 0;
+                    });
+                    return { periodLabel: period.label ?? '', amounts, total: round2(amounts.reduce((s, a) => s + a, 0)) };
+                  });
+                  const partnerTotals = partners.map((_, idx) => round2(rows.reduce((s, r) => s + r.amounts[idx], 0)));
+                  generatePartnerHistoryPDF({
+                    companyName: company?.name ?? '',
+                    partnerNames: partners.map((p) => p.name),
+                    rows,
+                    partnerTotals,
+                    grandTotal: round2(partnerTotals.reduce((s, a) => s + a, 0)),
+                  });
+                })}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-card text-xs font-medium hover:bg-muted transition-colors flex-shrink-0"
+                title="Descargar historial en PDF"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span className="hidden sm:inline">PDF</span>
+              </button>
+            </div>
             {showHistory && (
             <div className="overflow-x-auto mt-3">
               <table className="w-full text-xs">

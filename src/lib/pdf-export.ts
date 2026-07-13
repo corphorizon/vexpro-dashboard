@@ -557,3 +557,163 @@ export function generatePnlPDF(data: PdfPnlData) {
   const fileName = `${isSpecial ? 'ComisionPnLEspecial' : 'ComisionPnL'}_${data.name.replace(/\s/g, '_')}_${data.periodLabel.replace(/\s/g, '_')}.pdf`;
   doc.save(fileName);
 }
+
+// ═══════════════════════════════════════════════════════════
+// Distribución a Socios — mes individual
+// ═══════════════════════════════════════════════════════════
+
+export interface PdfPartnerPeriodData {
+  companyName: string;
+  periodLabel: string;
+  ingresosNetos: number;
+  egresosNetos: number;
+  reservaMes: number;
+  deudaEntrada: number;
+  montoDistribuir: number;
+  partners: { name: string; pct: number; amount: number }[];
+}
+
+export function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
+  const doc = new jsPDF('portrait', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // ─── Header ───
+  doc.setFillColor(30, 41, 59);
+  doc.rect(0, 0, pageWidth, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Distribucion a Socios', 14, 14);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(data.companyName, 14, 22);
+  doc.text(data.periodLabel, pageWidth - 14, 14, { align: 'right' });
+  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
+
+  // ─── Summary cards ───
+  doc.setTextColor(30, 41, 59);
+  let y = 40;
+  const cardW = 42;
+  const cardGap = 4;
+  const cards = [
+    { label: 'Ingresos Netos', value: `$${fmt(data.ingresosNetos)}` },
+    { label: 'Egresos', value: `$${fmt(data.egresosNetos)}` },
+    { label: 'Reserva del Mes', value: `$${fmt(data.reservaMes)}` },
+    { label: 'Monto a Distribuir', value: `$${fmt(data.montoDistribuir)}` },
+  ];
+  cards.forEach((card, i) => {
+    const x = 14 + i * (cardW + cardGap);
+    doc.setFillColor(248, 250, 252);
+    doc.roundedRect(x, y, cardW, 18, 2, 2, 'F');
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(x, y, cardW, 18, 2, 2, 'S');
+    doc.setFontSize(6.5);
+    doc.setTextColor(100, 116, 139);
+    doc.setFont('helvetica', 'normal');
+    doc.text(card.label, x + 3, y + 6);
+    doc.setFontSize(10);
+    doc.setTextColor(30, 41, 59);
+    doc.setFont('helvetica', 'bold');
+    doc.text(card.value, x + 3, y + 14);
+  });
+
+  y += 26;
+  if (data.deudaEntrada > 0) {
+    doc.setFontSize(8);
+    doc.setTextColor(220, 38, 38);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`* Deuda arrastrada del mes anterior descontada: $${fmt(data.deudaEntrada)}`, 14, y);
+    y += 6;
+  }
+
+  // ─── Tabla por socio ───
+  doc.setFontSize(11);
+  doc.setTextColor(30, 41, 59);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Reparto por Socio', 14, y);
+  y += 2;
+
+  autoTable(doc, {
+    startY: y,
+    head: [['Socio', '%', 'Monto']],
+    body: data.partners.map((p) => [
+      p.name,
+      `${(p.pct * 100).toFixed(1)}%`,
+      `$${fmt(p.amount)}`,
+    ]),
+    foot: [[
+      'Total',
+      '100%',
+      `$${fmt(data.partners.reduce((s, p) => s + p.amount, 0))}`,
+    ]],
+    styles: { fontSize: 10, cellPadding: 3 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+    footStyles: { fillColor: [241, 245, 249], textColor: [30, 41, 59], fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+  });
+
+  // ─── Footer ───
+  const pageH = doc.internal.pageSize.getHeight();
+  doc.setFontSize(7);
+  doc.setTextColor(160, 174, 192);
+  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
+
+  doc.save(`Distribucion_Socios_${data.periodLabel.replace(/\s/g, '_')}.pdf`);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Historial de Distribuciones — todos los meses
+// ═══════════════════════════════════════════════════════════
+
+export interface PdfPartnerHistoryData {
+  companyName: string;
+  partnerNames: string[];
+  rows: { periodLabel: string; amounts: number[]; total: number }[];
+  partnerTotals: number[];
+  grandTotal: number;
+}
+
+export function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
+  const doc = new jsPDF('landscape', 'mm', 'a4');
+  const pageWidth = doc.internal.pageSize.getWidth();
+
+  // ─── Header ───
+  doc.setFillColor(30, 41, 59);
+  doc.rect(0, 0, pageWidth, 28, 'F');
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text('Historial de Distribuciones', 14, 14);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(data.companyName, 14, 22);
+  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
+
+  autoTable(doc, {
+    startY: 36,
+    head: [['Periodo', ...data.partnerNames, 'Total']],
+    body: data.rows.map((r) => [
+      r.periodLabel,
+      ...r.amounts.map((a) => `$${fmt(a)}`),
+      `$${fmt(r.total)}`,
+    ]),
+    foot: [[
+      'Total',
+      ...data.partnerTotals.map((a) => `$${fmt(a)}`),
+      `$${fmt(data.grandTotal)}`,
+    ]],
+    styles: { fontSize: 9, cellPadding: 2.5 },
+    headStyles: { fillColor: [30, 41, 59], textColor: 255 },
+    footStyles: { fillColor: [241, 245, 249], textColor: [30, 41, 59], fontStyle: 'bold' },
+    columnStyles: Object.fromEntries(
+      data.partnerNames.map((_, i) => [i + 1, { halign: 'right' as const }]).concat([[data.partnerNames.length + 1, { halign: 'right' as const }]]),
+    ),
+  });
+
+  const pageH = doc.internal.pageSize.getHeight();
+  doc.setFontSize(7);
+  doc.setTextColor(160, 174, 192);
+  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
+
+  doc.save('Historial_Distribuciones.pdf');
+}
