@@ -139,7 +139,7 @@ Sin tests: `src/lib/api-integrations/totals.ts` (`computeProviderTotals` — agr
 
 ---
 
-**ARQ-01 — Formateo de moneda duplicado y disperso**
+**ARQ-01 — Formateo de moneda duplicado y disperso** ✅ **RESUELTO (2026-07-12, commit 50f41e8)** — fmt$/fmtPct/fmt de los archivos de risk migrados a formatCurrency/formatNumber/formatPercentValue (nuevo helper); fmtDuration/fmtDate quedan locales por ser específicos de contexto.
 Existe `src/lib/utils.ts` (`formatCurrency`, `formatNumber`, `formatPercent`) pero hay 24 `.toLocaleString(` crudos + `fmt$`/`fmtPct`/`fmtDuration` redefinidos localmente en `risk/retiros-wallet/page.tsx:115`, `risk/retiros-propfirm/page.tsx:38-54`, `components/risk/duration-distribution-table.tsx:30,99`.
 - **Impacto:** inconsistencia de decimales/locale entre pantallas; cambios de formato en N lugares.
 - **Solución:** centralizar en `src/lib/utils.ts` (o `format.ts`) y reemplazar los `toLocaleString` inline. **Esfuerzo: S.**
@@ -159,7 +159,7 @@ Existe `src/lib/utils.ts` (`formatCurrency`, `formatNumber`, `formatPercent`) pe
 
 ---
 
-**PERF-04 — Sin headers de cache en GET de integraciones/reportes**
+**PERF-04 — Sin headers de cache en GET de integraciones/reportes** ✅ **RESUELTO (2026-07-12, commit 51f41d6)** — `Cache-Control: private` (nunca s-maxage por multi-tenancy) en los 7 reads de APIs externas; excluidos los endpoints de edición.
 0 `Cache-Control`/`s-maxage`/`revalidate` en `api/integrations/*` y `api/reports/*`. Cada carga re-golpea APIs externas (Coinsbuy/Unipayment) y re-computa reportes.
 - **Solución:** `Cache-Control: s-maxage=60, stale-while-revalidate=300` en los GET idempotentes semi-estáticos. **Esfuerzo: S.**
 
