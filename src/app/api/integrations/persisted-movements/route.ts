@@ -55,13 +55,20 @@ export async function GET(request: NextRequest) {
     const from = request.nextUrl.searchParams.get('from');
     const to = request.nextUrl.searchParams.get('to');
     const walletIdRaw = request.nextUrl.searchParams.get('walletId');
-    // Treat empty string and the literal 'all' as "no filter" so the
-    // wallet selector in /movimientos can offer a "Todas las wallets"
-    // option without leaving the URL param dangling.
-    const walletId =
-      walletIdRaw && walletIdRaw !== 'all' && walletIdRaw.length > 0
-        ? walletIdRaw
-        : null;
+    // BUG-05 — scope de wallets de Coinsbuy. Tres modos:
+    //   · 'single'  → walletId explícito (deep-link del desglose a UNA wallet)
+    //   · 'all'     → literal 'all' (el desglose ofrece "Todas las wallets")
+    //   · 'pinned'  → vacío/ausente (DEFAULT, usado por /movimientos para los
+    //                 totales): scopea al SET de wallets pinneadas, IGUAL que
+    //                 el RPC get_period_totals_by_month de /balances, para que
+    //                 el net deposit coincida entre ambas pantallas.
+    const walletMode: 'single' | 'all' | 'pinned' =
+      walletIdRaw === 'all'
+        ? 'all'
+        : walletIdRaw && walletIdRaw.length > 0
+          ? 'single'
+          : 'pinned';
+    const walletId = walletMode === 'single' ? walletIdRaw : null;
     const slugParam = request.nextUrl.searchParams.get('slug');
     const requestedSlug =
       slugParam && (SLUGS as string[]).includes(slugParam)
@@ -79,6 +86,19 @@ export async function GET(request: NextRequest) {
       .from('excluded_transactions')
       .select('external_id, reason, excluded_by_name, excluded_at, provider')
       .eq('company_id', auth.companyId);
+
+    // Set de wallets pinneadas (para walletMode='pinned'). Company-wide: la
+    // misma tabla que usa /balances, así pinnear en cualquier pantalla afecta
+    // a las dos. Si no hay ninguna pinneada, no se filtra (= todas), igual que
+    // el `p.ids IS NULL` del RPC.
+    let pinnedIds: string[] = [];
+    if (walletMode === 'pinned') {
+      const { data: pinnedRows } = await admin
+        .from('pinned_coinsbuy_wallets')
+        .select('wallet_id')
+        .eq('company_id', auth.companyId);
+      pinnedIds = (pinnedRows ?? []).map((p) => p.wallet_id as string);
+    }
     const excludedMap = new Map<
       string,
       { reason: string; excludedByName: string | null; excludedAt: string }
@@ -185,13 +205,16 @@ export async function GET(request: NextRequest) {
         // BEFORE migration 041 have wallet_id=NULL — keep them in until
         // re-sync populates the column, otherwise Vex Pro's historic
         // breakdown would suddenly empty out.
-        if (
-          walletId &&
-          slug.startsWith('coinsbuy') &&
-          r.wallet_id &&
-          r.wallet_id !== walletId
-        ) {
-          return false;
+        if (slug.startsWith('coinsbuy') && r.wallet_id) {
+          if (walletMode === 'single' && r.wallet_id !== walletId) return false;
+          if (
+            walletMode === 'pinned' &&
+            pinnedIds.length > 0 &&
+            !pinnedIds.includes(r.wallet_id)
+          ) {
+            return false;
+          }
+          // walletMode === 'all' → sin filtro de wallet
         }
         return true;
       });

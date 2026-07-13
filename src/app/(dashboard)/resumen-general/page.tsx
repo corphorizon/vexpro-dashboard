@@ -68,7 +68,9 @@ export default function ResumenPage() {
   // "all wallets" — which inflated Retiros for tenants that have multiple
   // Coinsbuy wallets (e.g. Vex Pro: wallets 1079 + 1087 + 1076). Bug
   // reported by Kevin 2026-05-02.
-  const coexist = useApiCoexistence(activePeriods, company?.default_wallet_id ?? '');
+  // BUG-05: totales scopeados al set de wallets pinneadas ('' → modo 'pinned'),
+  // igual que /movimientos y /balances — net deposit consistente entre pantallas.
+  const coexist = useApiCoexistence(activePeriods, '');
   const useDerivedBroker = coexist.useDerivedBroker;
 
   // Skeleton while the data-context hasn't produced a summary yet. A blank

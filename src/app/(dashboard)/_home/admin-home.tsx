@@ -59,12 +59,13 @@ export function AdminHome() {
   // Mirrors /resumen-general and /movimientos so the home matches what
   // the user sees on those pages. Without this, post Apr-2026 periods
   // showed only the manual subset (often $0) and looked broken.
-  // Pass tenant's default_wallet_id so we don't sum across all wallets
-  // (Vex Pro has multiple Coinsbuy wallets — the others belong to
-  // separate sub-business units, not this dashboard's flow).
-  const walletPref = company?.default_wallet_id ?? '';
-  const currentCoexist = useApiCoexistence(currentPeriod ? [currentPeriod] : [], walletPref);
-  const prevCoexist = useApiCoexistence(prevPeriod ? [prevPeriod] : [], walletPref);
+  // BUG-05: totales scopeados al SET de wallets pinneadas ('' → modo 'pinned'),
+  // igual que /movimientos, /resumen-general y /balances. El pinning es la
+  // selección curada de "qué wallets cuentan para este dashboard" — reemplaza
+  // al viejo default_wallet_id único (Vex Pro tiene varias Coinsbuy de otras
+  // sub-unidades; se pinnean solo las que pertenecen a este flujo).
+  const currentCoexist = useApiCoexistence(currentPeriod ? [currentPeriod] : [], '');
+  const prevCoexist = useApiCoexistence(prevPeriod ? [prevPeriod] : [], '');
 
   const consolidate = (
     summary: typeof currentSummary,

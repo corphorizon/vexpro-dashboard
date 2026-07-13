@@ -97,7 +97,12 @@ export default function MovimientosPage() {
   const [apiRefreshKey, setApiRefreshKey] = useState(0);
 
   // Centralized API + manual coexistence (same hook feeds /resumen-general).
-  const coexist = useApiCoexistence(activePeriods, coinsbuyWalletId, apiRefreshKey);
+  // BUG-05: los TOTALES (net deposit) scopean al SET de wallets pinneadas
+  // (walletId '' → modo 'pinned' en persisted-movements), IGUAL que /balances,
+  // para que las dos pantallas muestren el mismo número. El selector de wallet
+  // del banner (coinsbuyWalletId) sigue siendo solo para ver el balance live
+  // de una wallet puntual, no scopea los totales.
+  const coexist = useApiCoexistence(activePeriods, '', apiRefreshKey);
   const { useDerivedBroker, apiFrom, apiTo } = coexist;
   // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0
   // until the CRM endpoint exists), but wired so the display already sums
