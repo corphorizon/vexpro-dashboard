@@ -672,14 +672,15 @@ export default function UploadPage() {
   const AUTOSAVE_DEBOUNCE_MS = 3000;
 
   useEffect(() => {
-    // Egresos ya persiste POR ACCIÓN (ver persistExpenses) — no participa del
-    // autosave batch. Durante su guardado se marca 'egresos' dirty como mutex
-    // del sync-effect; si el autosave batch también corriera, dispararía un
-    // saveAll redundante. Lo excluimos explícitamente.
-    if (section === 'egresos') return;
-    // Only autosave the section the user is looking at — saving a
-    // different tab's dirty rows from underneath them would be jarring.
-    if (!dirtySections.has(section)) return;
+    // BUG-03: autosave persiste TODAS las secciones batch con cambios sin
+    // guardar (depositos/retiros/ingresos), aunque el usuario haya cambiado de
+    // pestaña. Antes solo disparaba si la sección VISIBLE estaba dirty, así que
+    // editar Depósitos y cambiar a otra pestaña dejaba Depósitos sin guardar
+    // hasta volver — se perdía al recargar. saveAll ahora guarda la unión de
+    // secciones dirty (ver targets). No incluimos egresos: persiste por-acción
+    // (persistExpenses) y su dirty transitorio es un mutex, no un pendiente.
+    const AUTOSAVE_SECTIONS: DataSection[] = ['depositos', 'retiros', 'ingresos'];
+    if (!AUTOSAVE_SECTIONS.some((s) => dirtySections.has(s))) return;
     if (savingAll) return; // queue up: re-fires when savingAll flips false
     const t = setTimeout(() => {
       // saveAll handles the savingAll lock + error surfacing internally.
@@ -688,12 +689,11 @@ export default function UploadPage() {
       void saveAll();
     }, AUTOSAVE_DEBOUNCE_MS);
     return () => clearTimeout(t);
-    // saveAll is intentionally NOT in deps — it's recreated on every
-    // render and would defeat the debounce. The function captures
-    // `section`/`dirtySections` through the closure, which is fine
-    // because both ARE in the deps list and will retrigger this effect.
+    // saveAll NO va en deps — se recrea en cada render y anularía el debounce;
+    // captura `section`/estado por closure. No dependemos de `section`: cambiar
+    // de pestaña ya no cancela un guardado pendiente (ese era el bug).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirtySections, section, savingAll]);
+  }, [dirtySections, savingAll]);
 
   // ── End auto-save ─────────────────────────────────────────────────────
 
@@ -1550,49 +1550,65 @@ export default function UploadPage() {
       ]);
     };
 
-    // Build an informative success message tied to what was saved.
-    // "3 egresos guardados correctamente" is far more useful than a
-    // generic "Guardado OK" — users can sanity-check that the count
-    // matches what they see in the table.
+    // BUG-03: persistir TODAS las secciones con cambios sin guardar, no solo
+    // la visible. Antes saveAll solo guardaba `section`, así que editar
+    // Depósitos, cambiar a Egresos y dejar correr el autosave dejaba Depósitos
+    // sin persistir hasta volver a esa pestaña — se perdía al recargar. Ahora
+    // guarda la unión de las secciones dirty + la visible.
+    // Egresos NO entra: persiste por-acción (persistExpenses) y usa 'egresos'
+    // dirty como mutex del sync-effect — batchearlo acá crearía una carrera.
+    const SAVE_HANDLED: DataSection[] = ['depositos', 'retiros', 'ingresos'];
+    const targets = SAVE_HANDLED.filter((s) => dirtySections.has(s) || s === section);
+
+    // Guarda UNA sección y devuelve su mensaje de éxito. Las mutaciones son
+    // atómicas/idempotentes, así que el solapamiento entre secciones (p.ej.
+    // 'ingresos' y 'retiros' ambas escriben withdrawals desde el mismo estado)
+    // es inofensivo.
+    const saveSectionWork = async (sec: DataSection): Promise<string> => {
+      if (sec === 'depositos') {
+        await upsertDeposits(companyId, periodId, deposits);
+        await upsertPropFirmSales(companyId, periodId, propFirmAmount);
+        if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
+        const nonZero = deposits.filter(d => d.amount !== 0).length;
+        return `${nonZero} depósito${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
+      } else if (sec === 'retiros') {
+        const combined = [
+          ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
+          ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
+        ];
+        await upsertWithdrawals(companyId, periodId, combined);
+        await upsertP2PTransfers(companyId, periodId, p2pAmount);
+        if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
+        const nonZero = withdrawals.filter(w => w.amount !== 0).length + withdrawalExtras.length;
+        return `${nonZero} retiro${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
+      } else {
+        // ingresos — mismo payload que saveIncome: income + prop firm ventas
+        // + withdrawals (la pestaña Ingresos también posee esos campos).
+        const combinedWithdrawals = [
+          ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
+          ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
+        ];
+        await upsertOperatingIncome(companyId, periodId, income);
+        await upsertPropFirmSales(companyId, periodId, propFirmAmount);
+        await upsertWithdrawals(companyId, periodId, combinedWithdrawals);
+        if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
+        return 'Ingresos operativos guardados correctamente';
+      }
+    };
+
+    const saved: DataSection[] = [];
+    const messages: string[] = [];
     let successMsg = 'Datos guardados correctamente';
     try {
       await timedSave(async () => {
-        if (section === 'depositos') {
-          await upsertDeposits(companyId, periodId, deposits);
-          await upsertPropFirmSales(companyId, periodId, propFirmAmount);
-          if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
-          const nonZero = deposits.filter(d => d.amount !== 0).length;
-          successMsg = `${nonZero} depósito${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
-        } else if (section === 'retiros') {
-          const combined = [
-            ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
-            ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
-          ];
-          await upsertWithdrawals(companyId, periodId, combined);
-          await upsertP2PTransfers(companyId, periodId, p2pAmount);
-          if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
-          const nonZero = withdrawals.filter(w => w.amount !== 0).length + withdrawalExtras.length;
-          successMsg = `${nonZero} retiro${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
-        } else if (section === 'egresos') {
-          await upsertExpenses(companyId, periodId, expenses);
-          if (user) logAction(user.id, user.name, 'update', 'expenses', `Todos los egresos guardados para ${periodLabel}`);
-          const count = expenses.length;
-          successMsg = `${count} egreso${count === 1 ? '' : 's'} guardado${count === 1 ? '' : 's'} correctamente`;
-        } else if (section === 'ingresos') {
-          // Same payload as saveIncome (above) — the Ingresos tab now also
-          // owns Prop Firm ventas + retiros. See saveIncome's comment for
-          // why we persist the full withdrawals shape, not just prop_firm.
-          const combinedWithdrawals = [
-            ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
-            ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
-          ];
-          await upsertOperatingIncome(companyId, periodId, income);
-          await upsertPropFirmSales(companyId, periodId, propFirmAmount);
-          await upsertWithdrawals(companyId, periodId, combinedWithdrawals);
-          if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
-          successMsg = 'Ingresos operativos guardados correctamente';
+        for (const sec of targets) {
+          messages.push(await saveSectionWork(sec));
+          saved.push(sec);
         }
       }, 'Guardar todo');
+      successMsg = messages.length <= 1
+        ? (messages[0] ?? successMsg)
+        : `${saved.length} secciones guardadas correctamente`;
 
       // Main save succeeded. Show success + unlock the button NOW.
       showSuccess(successMsg);
@@ -1602,7 +1618,7 @@ export default function UploadPage() {
       Sentry.addBreadcrumb({
         category: 'upload.save',
         message: 'saveAll:success',
-        data: { section, periodId },
+        data: { sections: saved, periodId },
       });
 
       // Refresh + THEN clear the dirty flag for the saved section.
@@ -1631,13 +1647,15 @@ export default function UploadPage() {
       // guard, on a real refresh failure the dirty stays marked, the
       // banner stays up, and the next save attempt re-pushes the
       // current local view (which is correct).
-      // B1: refresh selectivo — solo las tablas de la sección guardada
-      // (2-3 queries) en vez de recargar toda la empresa (~19 queries).
-      const ok = await refreshSections([section as 'depositos' | 'retiros' | 'egresos' | 'ingresos']);
+      // B1: refresh selectivo — solo las tablas de las secciones guardadas
+      // (2-3 queries c/u) en vez de recargar toda la empresa (~19 queries).
+      const ok = await refreshSections(
+        saved as Array<'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones'>,
+      );
       if (ok) {
-        clearDirty(section);
-        if (section === 'ingresos') {
-          clearDirty('retiros');
+        for (const sec of saved) {
+          clearDirty(sec);
+          if (sec === 'ingresos') clearDirty('retiros');
         }
       } else {
         showError('Datos guardados pero no se pudo recargar. Puedes seguir editando — el indicador "cambios sin guardar" se limpiará al próximo save exitoso.');
