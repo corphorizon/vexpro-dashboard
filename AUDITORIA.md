@@ -146,7 +146,7 @@ Existe `src/lib/utils.ts` (`formatCurrency`, `formatNumber`, `formatPercent`) pe
 
 ---
 
-**ARQ-02 — Tres estilos de fetching conviviendo; el helper `api-fetch.ts` no se usa**
+**ARQ-02 — Tres estilos de fetching conviviendo; el helper `api-fetch.ts` no se usa** ✅ **RESUELTO (2026-07-12, commit fcfc337)** — nuevo `apiFetch()` (Response-returning: withActiveCompany + timeout + JSON solo para bodies string); 34 archivos migrados, 90 usos, 0 fetch a /api crudos.
 34 archivos con `fetch()` directo, 13 con cliente Supabase directo, y los helpers `queries.ts`/`mutations.ts` (el patrón bueno). `src/lib/api-fetch.ts` existe pero **0 componentes lo usan**.
 - **Impacto:** manejo de errores/timeouts/headers reimplementado ad-hoc en cada `fetch`.
 - **Solución:** canalizar los `fetch` de API interna por `api-fetch.ts` (centralizar auth headers, error, timeout). **Esfuerzo: M.**
