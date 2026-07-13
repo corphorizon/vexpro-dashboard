@@ -165,14 +165,14 @@ Existe `src/lib/utils.ts` (`formatCurrency`, `formatNumber`, `formatPercent`) pe
 
 ---
 
-**LNK-01 — Asset `/icon.png` no existe (PWA + middleware)**
+**LNK-01 — Asset `/icon.png` no existe (PWA + middleware)** ✅ **RESUELTO (commit 0da6d1e)** — manifest → /icon.svg + /apple-touch-icon.png; allowlist del middleware actualizado.
 `public/manifest.json:13,19` y `src/lib/supabase/middleware.ts:21` referencian `/icon.png`; en `public/` solo existe `icon.svg`.
 - **Impacto:** el ícono de instalación PWA devuelve 404.
 - **Solución:** agregar `public/icon.png` en los tamaños referenciados, o apuntar el manifest a `/icon.svg`. **Esfuerzo: S.**
 
 ---
 
-**A11Y-01 — `lang="es"` hardcodeado pese a i18n es/en**
+**A11Y-01 — `lang="es"` hardcodeado pese a i18n es/en** ✅ **RESUELTO (commit 0da6d1e)** — efecto en I18nProvider sincroniza `document.documentElement.lang` con el locale.
 `src/app/layout.tsx:75`. Cuando el usuario elige inglés, lectores de pantalla siguen anunciando el contenido como español.
 - **Solución:** derivar `lang` de la preferencia i18n. **Esfuerzo: S.**
 
@@ -182,7 +182,7 @@ Existe `src/lib/utils.ts` (`formatCurrency`, `formatNumber`, `formatPercent`) pe
 
 ---
 
-**BUG-04 — Docstring de `calculateCommission` contradice el código (foot-gun)**
+**BUG-04 — Docstring de `calculateCommission` contradice el código (foot-gun)** ✅ **RESUELTO (commit 0da6d1e)** — comentario corregido para reflejar el código + aviso de no romper el arrastre de deuda.
 `src/lib/commission-calculator.ts:30-38` (comentario) vs `:56-60` (código). El comentario dice `real_payment = MAX(0, commission)` y `accumulated_out = base si commission<0`; el código hace `realPayment = commission` (sin clamp) y `accumulatedOut = division` siempre. **El código es el correcto** (los tests lo fijan; es el modelo de arrastre de deuda del BDM). El riesgo es que un mantenedor "corrija" el código para cumplir el comentario y **rompa el arrastre de deuda** (pagaría de más).
 - **Solución:** corregir el comentario para reflejar el código. **Esfuerzo: S.**
 
@@ -207,7 +207,7 @@ Sin caller in-app: `POST /api/send-email`, `GET /api/send-email/test`, `GET /api
 
 ---
 
-**Otros BAJO:** LNK-03 (`docs.unipayment.io` muerto, solo comentario, `api-integrations/unipayment.ts:4`, esfuerzo XS) · LNK-04 (faltan `not-found.tsx`/`error.tsx` de marca; solo hay `global-error.tsx`, esfuerzo S) · QUAL-02 (`socks-proxy-agent` sin usar en package.json, esfuerzo XS) · BUG-06 (`dates.ts:41` `formatDate` usa hora local, no UTC → posible off-by-one de día en husos negativos, esfuerzo S) · PERF-05 (tablas editables sin memo de fila → re-render por tecla en tablas >100 filas, esfuerzo M) · TS-01 (non-null assertions frágiles en `movimientos/page.tsx:270-273`, `sidebar.tsx:252`, esfuerzo S) · UX-01 (`egresos/page.tsx` guarda sin spinner, solo botón deshabilitado, esfuerzo S) · B2-bugs (`computeExpensePending`: pendiente explícito de 0 se trata como vacío — documentado como intencional, esfuerzo XS).
+**Otros BAJO:** ✅ LNK-03 (`docs.unipayment.io` muerto → nota, commit 0da6d1e) · ✅ LNK-04 (`not-found.tsx` + `(dashboard)/error.tsx` agregados, commit 0da6d1e) · ✅ QUAL-02 (`socks-proxy-agent` removido; destapó que `socks` era transitivo → ahora dep directa, commit 0da6d1e) · ⬜ BUG-06 (`dates.ts:41` `formatDate` usa hora local, no UTC → posible off-by-one de día en husos negativos, esfuerzo S) · PERF-05 (tablas editables sin memo de fila → re-render por tecla en tablas >100 filas, esfuerzo M) · TS-01 (non-null assertions frágiles en `movimientos/page.tsx:270-273`, `sidebar.tsx:252`, esfuerzo S) · UX-01 (`egresos/page.tsx` guarda sin spinner, solo botón deshabilitado, esfuerzo S) · B2-bugs (`computeExpensePending`: pendiente explícito de 0 se trata como vacío — documentado como intencional, esfuerzo XS).
 
 ---
 
