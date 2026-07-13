@@ -132,7 +132,7 @@ El autosave dispara solo si `dirtySections.has(section)` (la pestaña actual) y 
 
 ---
 
-**QA-01 — Lógica de dinero/riesgo sin cobertura de tests**
+**QA-01 — Lógica de dinero/riesgo sin cobertura de tests** ✅ **RESUELTO (2026-07-12, commit 1134086)** — +27 tests (89→116) en totals, alerts, duration-distribution y rules (analyzeReport).
 Sin tests: `src/lib/api-integrations/totals.ts` (`computeProviderTotals` — agrega dinero de CoinsBuy/UniPayment/FairPay), `src/lib/risk/rules.ts` (`analyzeReport`, 272 líneas, motor de reglas de riesgo), `src/lib/risk/duration-distribution.ts` (buckets — terreno de off-by-one), `src/lib/ib-rebates/alerts.ts` (umbrales de rebates a socios).
 - **Impacto:** módulos que mueven/deciden plata sin red de seguridad; un refactor los rompe en silencio.
 - **Solución:** ver §5 (los 5 tests priorizados). **Esfuerzo: M.**
