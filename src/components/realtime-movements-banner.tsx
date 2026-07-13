@@ -12,11 +12,15 @@ import {
   ChevronRight,
   Calendar,
   Wallet,
+  Pin,
+  PinOff,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { computeProviderTotals } from '@/lib/api-integrations/totals';
 import { apiFetch } from '@/lib/api-fetch';
+import { pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
+import { fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
 import type {
   ProviderDataset,
   ProviderSlug,
@@ -149,6 +153,38 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Wallets pinneadas — el SET que cuenta para los totales (company-wide,
+  // misma tabla que /balances). Permite pinnear/despinnear desde acá; tras el
+  // toggle se refrescan los totales vía onAfterLiveSync (BUG-05).
+  const [pinnedIds, setPinnedIds] = useState<string[]>([]);
+  const [pinBusy, setPinBusy] = useState(false);
+  const loadPinned = useCallback(async () => {
+    if (!company?.id) return;
+    const pins = await fetchPinnedCoinsbuyWallets(company.id);
+    setPinnedIds(pins.map((p) => p.wallet_id));
+  }, [company?.id]);
+  useEffect(() => {
+    if (isAdmin) void loadPinned();
+  }, [isAdmin, loadPinned]);
+
+  const togglePin = async (id: string, label: string) => {
+    if (!company?.id || !id || pinBusy) return;
+    setPinBusy(true);
+    try {
+      if (pinnedIds.includes(id)) {
+        await unpinCoinsbuyWallet(company.id, id);
+      } else {
+        await pinCoinsbuyWallet(company.id, id, label);
+      }
+      await loadPinned();
+      onAfterLiveSync?.(); // re-scopea los totales al nuevo set pinneado
+    } catch {
+      // silencioso — la UI queda en el estado previo; el usuario puede reintentar
+    } finally {
+      setPinBusy(false);
+    }
+  };
 
   // Load wallet options once on mount — only admins need the full list
   useEffect(() => {
@@ -382,10 +418,38 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
               ))}
             </select>
           ) : (
+            <></>
+          )}
+          {isAdmin && walletId && walletOptions.length > 0 ? (
+            // Fijar/quitar la wallet seleccionada del set que cuenta para los
+            // totales (BUG-05). Los pins son company-wide → afecta también a
+            // /balances y /resumen-general.
+            (() => {
+              const sel = walletOptions.find((w) => w.id === walletId);
+              const pinned = pinnedIds.includes(walletId);
+              return (
+                <button
+                  type="button"
+                  onClick={() => togglePin(walletId, sel?.label ?? '')}
+                  disabled={pinBusy}
+                  className={`h-8 inline-flex items-center gap-1 px-2 text-xs rounded-md border transition-colors disabled:opacity-50 ${
+                    pinned
+                      ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                      : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                  }`}
+                  title={pinned ? 'Quitar del conteo de totales' : 'Fijar para que cuente en los totales'}
+                  aria-label={pinned ? 'Quitar wallet fijada' : 'Fijar wallet'}
+                >
+                  {pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                  {pinned ? 'Fijada' : 'Fijar'}
+                </button>
+              );
+            })()
+          ) : !isAdmin ? (
             <span className="h-8 flex items-center px-2.5 text-xs rounded-md border border-border bg-muted/50 text-foreground">
               Wallet principal
             </span>
-          )}
+          ) : null}
         </label>
       </div>
 
