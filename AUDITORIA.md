@@ -195,7 +195,7 @@ Sin caller in-app: `POST /api/send-email`, `GET /api/send-email/test`, `GET /api
 
 ---
 
-**BUG-05 — Net deposit: misma fórmula, distinta provenance de inputs entre /movimientos y /balances** 🟡 **CONFIRMADO, latente (2026-07-12)** — verificado: el RPC `get_period_totals_by_month` (/balances) suma Coinsbuy de TODAS las wallets pinneadas; `/movimientos` scopea a UNA `walletId` (persisted-movements). Coinciden solo con 1 wallet pinneada = la seleccionada (caso VexPro actual). La unificación requiere decisión de negocio (¿todas las pinneadas o solo la seleccionada?) — NO se cambia a ciegas.
+**BUG-05 — Net deposit: misma fórmula, distinta provenance de inputs entre /movimientos y /balances** ✅ **RESUELTO (2026-07-13, commits 798a221 + ad9cdc2)** — decisión de Kevin: los totales scopean al SET de wallets pinneadas en TODAS las pantallas. persisted-movements pasó a 3 modos (single/all/pinned); movimientos, resumen-general y admin-home usan modo 'pinned' (= el RPC de /balances). Además se agregó botón fijar/quitar wallet en el banner de /movimientos.
 `movimientos/page.tsx:262-267` (hook `coexist`, tiempo real, wallets pinneadas) vs `balances/page.tsx:188-193` (`apiMonthly[ymKey]`). La fórmula (`computeDerivedNetDeposit`) se unificó, pero los inputs vienen de fuentes distintas; si scopean/cachean distinto, el Net Deposit puede diferir entre pantallas.
 - **Solución:** verificar que ambas fuentes derivan del mismo scope de wallets, o documentar la diferencia. **Esfuerzo: S.**
 
