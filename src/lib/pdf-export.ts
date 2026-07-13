@@ -16,6 +16,146 @@ function getLastTableY(doc: jsPDF, fallback: number, gap = 8): number {
 
 /** Format number for PDF — uses shared formatNumber from utils */
 const fmt = formatNumber;
+const money = (n: number) => `$${fmt(n)}`;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Sistema de diseño compartido para PDFs — paleta del dashboard (globals.css)
+//   primary #1E3A5F · accent #3B82F6 · positive #10B981 · negative #EF4444
+// Da a todos los informes el mismo look que la app (navy + azul, tarjetas KPI
+// blancas con acento lateral, encabezado con brandmark y stripe de acento).
+// ═══════════════════════════════════════════════════════════════════════════════
+type RGB = [number, number, number];
+const C = {
+  primary: [30, 58, 95] as RGB, // #1E3A5F
+  accent: [59, 130, 246] as RGB, // #3B82F6
+  ink: [15, 23, 42] as RGB, // #0F172A
+  muted: [100, 116, 139] as RGB, // #64748B
+  border: [226, 232, 240] as RGB, // #E2E8F0
+  surface: [248, 250, 252] as RGB, // #F8FAFC
+  positive: [5, 150, 105] as RGB, // #059669 (emerald-600, legible en papel)
+  negative: [220, 38, 38] as RGB, // #DC2626
+  warning: [217, 119, 6] as RGB, // #D97706
+  white: [255, 255, 255] as RGB,
+};
+
+/** Encabezado con banda navy, brandmark y stripe de acento. Devuelve la Y libre. */
+function pdfHeader(
+  doc: jsPDF,
+  opts: { title: string; company: string; right?: string[] },
+): number {
+  const w = doc.internal.pageSize.getWidth();
+  doc.setFillColor(...C.primary);
+  doc.rect(0, 0, w, 30, 'F');
+  doc.setFillColor(...C.accent);
+  doc.rect(0, 30, w, 1.4, 'F');
+
+  // Brandmark: cuadro redondeado de acento con las iniciales de la empresa.
+  const initials = opts.company
+    .split(/\s+/)
+    .map((s) => s[0])
+    .filter(Boolean)
+    .join('')
+    .slice(0, 2)
+    .toUpperCase();
+  doc.setFillColor(...C.accent);
+  doc.roundedRect(w - 14 - 13, 7, 13, 13, 2.5, 2.5, 'F');
+  doc.setTextColor(...C.white);
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.text(initials, w - 14 - 6.5, 15.6, { align: 'center' });
+
+  doc.setTextColor(...C.white);
+  doc.setFontSize(18);
+  doc.setFont('helvetica', 'bold');
+  doc.text(opts.title, 14, 14);
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.text(opts.company, 14, 22);
+
+  if (opts.right?.length) {
+    doc.setFontSize(8.5);
+    opts.right.forEach((line, i) => {
+      doc.text(line, w - 14 - 16, 12 + i * 5, { align: 'right' });
+    });
+  }
+  return 40;
+}
+
+/** Título de sección: cuadrito de acento + label + regla fina. Devuelve Y libre. */
+function pdfSection(doc: jsPDF, label: string, y: number, margin = 14): number {
+  const w = doc.internal.pageSize.getWidth();
+  doc.setFillColor(...C.accent);
+  doc.roundedRect(margin, y - 3.2, 2.6, 4.2, 0.6, 0.6, 'F');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(11);
+  doc.setTextColor(...C.ink);
+  doc.text(label, margin + 5, y);
+  doc.setDrawColor(...C.border);
+  doc.setLineWidth(0.3);
+  doc.line(margin, y + 2.5, w - margin, y + 2.5);
+  return y + 8;
+}
+
+interface KpiCard {
+  label: string;
+  value: string;
+  tone?: 'ink' | 'positive' | 'negative' | 'accent' | 'primary';
+}
+
+/** Fila de tarjetas KPI: blancas, borde, barra de acento a la izquierda. */
+function pdfCards(doc: jsPDF, y: number, cards: KpiCard[], margin = 14, h = 20): number {
+  const w = doc.internal.pageSize.getWidth();
+  const gap = 4;
+  const cardW = (w - margin * 2 - gap * (cards.length - 1)) / cards.length;
+  const toneColor = (t?: KpiCard['tone']): RGB =>
+    t === 'positive' ? C.positive
+      : t === 'negative' ? C.negative
+      : t === 'accent' ? C.accent
+      : t === 'primary' ? C.primary
+      : C.ink;
+
+  cards.forEach((c, i) => {
+    const x = margin + i * (cardW + gap);
+    doc.setFillColor(...C.white);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.3);
+    doc.roundedRect(x, y, cardW, h, 2, 2, 'FD');
+    // barra de acento lateral
+    doc.setFillColor(...(c.tone && c.tone !== 'ink' ? toneColor(c.tone) : C.accent));
+    doc.rect(x + 1, y + 2.4, 1.4, h - 4.8, 'F');
+    // label
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.8);
+    doc.setTextColor(...C.muted);
+    doc.text(c.label.toUpperCase(), x + 5, y + 7);
+    // value
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(h >= 20 ? 12 : 10.5);
+    doc.setTextColor(...toneColor(c.tone));
+    doc.text(c.value, x + 5, y + h - 5.5);
+  });
+  return y + h + 6;
+}
+
+/** Pie de página con numeración y marca. */
+function pdfFooter(doc: jsPDF, brand = 'Smart Dashboard') {
+  const w = doc.internal.pageSize.getWidth();
+  const h = doc.internal.pageSize.getHeight();
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.3);
+    doc.line(14, h - 10, w - 14, h - 10);
+    doc.setFontSize(7);
+    doc.setTextColor(...C.muted);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Documento generado automaticamente — ${brand}`, 14, h - 5.5);
+    if (pages > 1) {
+      doc.text(`Pagina ${i} de ${pages}`, w - 14, h - 5.5, { align: 'right' });
+    }
+  }
+}
 
 interface PdfCommissionData {
   companyName: string;
@@ -575,89 +715,77 @@ export interface PdfPartnerPeriodData {
 
 export function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
   const doc = new jsPDF('portrait', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
 
-  // ─── Header ───
-  doc.setFillColor(30, 41, 59);
-  doc.rect(0, 0, pageWidth, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Distribucion a Socios', 14, 14);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(data.companyName, 14, 22);
-  doc.text(data.periodLabel, pageWidth - 14, 14, { align: 'right' });
-  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
-
-  // ─── Summary cards ───
-  doc.setTextColor(30, 41, 59);
-  let y = 40;
-  const cardW = 42;
-  const cardGap = 4;
-  const cards = [
-    { label: 'Ingresos Netos', value: `$${fmt(data.ingresosNetos)}` },
-    { label: 'Egresos', value: `$${fmt(data.egresosNetos)}` },
-    { label: 'Reserva del Mes', value: `$${fmt(data.reservaMes)}` },
-    { label: 'Monto a Distribuir', value: `$${fmt(data.montoDistribuir)}` },
-  ];
-  cards.forEach((card, i) => {
-    const x = 14 + i * (cardW + cardGap);
-    doc.setFillColor(248, 250, 252);
-    doc.roundedRect(x, y, cardW, 18, 2, 2, 'F');
-    doc.setDrawColor(226, 232, 240);
-    doc.roundedRect(x, y, cardW, 18, 2, 2, 'S');
-    doc.setFontSize(6.5);
-    doc.setTextColor(100, 116, 139);
-    doc.setFont('helvetica', 'normal');
-    doc.text(card.label, x + 3, y + 6);
-    doc.setFontSize(10);
-    doc.setTextColor(30, 41, 59);
-    doc.setFont('helvetica', 'bold');
-    doc.text(card.value, x + 3, y + 14);
+  let y = pdfHeader(doc, {
+    title: 'Distribucion a Socios',
+    company: data.companyName,
+    right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
   });
 
-  y += 26;
-  if (data.deudaEntrada > 0) {
-    doc.setFontSize(8);
-    doc.setTextColor(220, 38, 38);
-    doc.setFont('helvetica', 'normal');
-    doc.text(`* Deuda arrastrada del mes anterior descontada: $${fmt(data.deudaEntrada)}`, 14, y);
-    y += 6;
-  }
+  // ─── KPIs ───
+  y = pdfCards(doc, y, [
+    { label: 'Ingresos Netos', value: money(data.ingresosNetos), tone: 'positive' },
+    { label: 'Egresos', value: money(data.egresosNetos), tone: 'negative' },
+    { label: 'Reserva del Mes', value: money(data.reservaMes), tone: 'ink' },
+    { label: 'Monto a Distribuir', value: money(data.montoDistribuir), tone: 'accent' },
+  ]);
 
-  // ─── Tabla por socio ───
-  doc.setFontSize(11);
-  doc.setTextColor(30, 41, 59);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Reparto por Socio', 14, y);
-  y += 2;
-
+  // ─── Cascada del cálculo (cómo se llega al monto a distribuir) ───
+  y = pdfSection(doc, 'Como se calcula', y + 2);
+  const cascada: [string, number, boolean?][] = [
+    ['Ingresos netos operativos', data.ingresosNetos],
+    ['(-) Egresos del mes', -data.egresosNetos],
+  ];
+  if (data.deudaEntrada > 0) cascada.push(['(-) Deuda arrastrada del mes anterior', -data.deudaEntrada, true]);
+  cascada.push(['(-) Reserva financiera del mes', -data.reservaMes]);
   autoTable(doc, {
     startY: y,
-    head: [['Socio', '%', 'Monto']],
+    body: cascada.map(([k, v]) => [k, money(v)]),
+    foot: [['Monto a distribuir', money(data.montoDistribuir)]],
+    theme: 'plain',
+    styles: { fontSize: 9.5, cellPadding: 2.6, textColor: C.ink },
+    footStyles: { fontStyle: 'bold', fillColor: C.surface, textColor: C.primary, fontSize: 10.5 },
+    columnStyles: { 0: { cellWidth: 130 }, 1: { halign: 'right', fontStyle: 'bold' } },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 1) h.cell.styles.halign = 'right';
+      if (h.section === 'body' && h.column.index === 1) {
+        const raw = cascada[h.row.index];
+        h.cell.styles.textColor = raw[2] ? C.warning : raw[1] < 0 ? C.negative : C.positive;
+      }
+    },
+  });
+  y = getLastTableY(doc, y + 30, 10);
+
+  // ─── Reparto por socio ───
+  y = pdfSection(doc, 'Reparto por Socio', y);
+  autoTable(doc, {
+    startY: y,
+    head: [['Socio', 'Participacion', 'Monto a recibir']],
     body: data.partners.map((p) => [
       p.name,
       `${(p.pct * 100).toFixed(1)}%`,
-      `$${fmt(p.amount)}`,
+      money(p.amount),
     ]),
     foot: [[
       'Total',
       '100%',
-      `$${fmt(data.partners.reduce((s, p) => s + p.amount, 0))}`,
+      money(data.partners.reduce((s, p) => s + p.amount, 0)),
     ]],
-    styles: { fontSize: 10, cellPadding: 3 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255 },
-    footStyles: { fillColor: [241, 245, 249], textColor: [30, 41, 59], fontStyle: 'bold' },
-    columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+    theme: 'striped',
+    styles: { fontSize: 10, cellPadding: 3.2 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right', fontStyle: 'bold', textColor: C.ink } },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 1) h.cell.styles.halign = 'center';
+      if (h.section === 'foot' && h.column.index === 2) h.cell.styles.halign = 'right';
+    },
   });
 
-  // ─── Footer ───
-  const pageH = doc.internal.pageSize.getHeight();
-  doc.setFontSize(7);
-  doc.setTextColor(160, 174, 192);
-  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
-
+  pdfFooter(doc);
   doc.save(`Distribucion_Socios_${data.periodLabel.replace(/\s/g, '_')}.pdf`);
 }
 
@@ -675,45 +803,242 @@ export interface PdfPartnerHistoryData {
 
 export function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
   const doc = new jsPDF('landscape', 'mm', 'a4');
-  const pageWidth = doc.internal.pageSize.getWidth();
 
-  // ─── Header ───
-  doc.setFillColor(30, 41, 59);
-  doc.rect(0, 0, pageWidth, 28, 'F');
-  doc.setTextColor(255, 255, 255);
-  doc.setFontSize(18);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Historial de Distribuciones', 14, 14);
-  doc.setFontSize(10);
-  doc.setFont('helvetica', 'normal');
-  doc.text(data.companyName, 14, 22);
-  doc.text(`Generado: ${new Date().toLocaleDateString()}`, pageWidth - 14, 22, { align: 'right' });
+  let y = pdfHeader(doc, {
+    title: 'Historial de Distribuciones',
+    company: data.companyName,
+    right: [`Generado: ${new Date().toLocaleDateString()}`],
+  });
 
+  // ─── KPIs resumen ───
+  const topPartnerIdx = data.partnerTotals.reduce((best, v, i, a) => (v > a[best] ? i : best), 0);
+  y = pdfCards(doc, y, [
+    { label: 'Meses distribuidos', value: String(data.rows.length), tone: 'primary' },
+    { label: 'Total repartido', value: money(data.grandTotal), tone: 'accent' },
+    { label: 'Promedio mensual', value: money(data.rows.length ? data.grandTotal / data.rows.length : 0), tone: 'ink' },
+    { label: `Mayor socio (${data.partnerNames[topPartnerIdx] ?? '—'})`, value: money(data.partnerTotals[topPartnerIdx] ?? 0), tone: 'positive' },
+  ]);
+
+  y = pdfSection(doc, 'Reparto mensual por socio', y + 2);
   autoTable(doc, {
-    startY: 36,
+    startY: y,
     head: [['Periodo', ...data.partnerNames, 'Total']],
     body: data.rows.map((r) => [
       r.periodLabel,
-      ...r.amounts.map((a) => `$${fmt(a)}`),
-      `$${fmt(r.total)}`,
+      ...r.amounts.map((a) => money(a)),
+      money(r.total),
     ]),
     foot: [[
       'Total',
-      ...data.partnerTotals.map((a) => `$${fmt(a)}`),
-      `$${fmt(data.grandTotal)}`,
+      ...data.partnerTotals.map((a) => money(a)),
+      money(data.grandTotal),
     ]],
-    styles: { fontSize: 9, cellPadding: 2.5 },
-    headStyles: { fillColor: [30, 41, 59], textColor: 255 },
-    footStyles: { fillColor: [241, 245, 249], textColor: [30, 41, 59], fontStyle: 'bold' },
-    columnStyles: Object.fromEntries(
-      data.partnerNames.map((_, i) => [i + 1, { halign: 'right' as const }]).concat([[data.partnerNames.length + 1, { halign: 'right' as const }]]),
-    ),
+    theme: 'striped',
+    styles: { fontSize: 9, cellPadding: 2.6 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: {
+      ...Object.fromEntries(data.partnerNames.map((_, i) => [i + 1, { halign: 'right' as const }])),
+      [data.partnerNames.length + 1]: { halign: 'right' as const, fontStyle: 'bold' as const, textColor: C.ink },
+    },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index > 0) h.cell.styles.halign = 'right';
+    },
   });
 
-  const pageH = doc.internal.pageSize.getHeight();
-  doc.setFontSize(7);
-  doc.setTextColor(160, 174, 192);
-  doc.text('Documento generado automaticamente — Smart Dashboard', pageWidth / 2, pageH - 4, { align: 'center' });
-
+  pdfFooter(doc);
   doc.save('Historial_Distribuciones.pdf');
+}
+
+// ═══════════════════════════════════════════════════════════
+// Informe de Cierre Mensual — resumen ejecutivo del mes
+//   (ingresos, egresos, resultado, flujo de depósitos/retiros, distribución)
+// ═══════════════════════════════════════════════════════════
+
+export interface PdfMonthlyCloseData {
+  companyName: string;
+  periodLabel: string;
+  // Resultado operativo
+  brokerPnl: number;
+  propFirmNet: number;
+  investmentProfits: number;
+  otherIncome: number;
+  ingresosNetos: number;
+  egresosTotal: number;
+  egresosPagados: number;
+  egresosPendientes: number;
+  saldo: number;
+  reservaMes: number;
+  reservaAcumulada: number;
+  deudaEntrada: number;
+  montoDistribuir: number;
+  // Flujo de caja de clientes
+  depositsByChannel: { label: string; amount: number }[];
+  depositsTotal: number;
+  withdrawalsByCategory: { label: string; amount: number }[];
+  withdrawalsTotal: number;
+  netFlow: number;
+  // Detalle
+  topExpenses: { concept: string; amount: number }[];
+  partners: { name: string; pct: number; amount: number }[];
+}
+
+export function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
+  const doc = new jsPDF('portrait', 'mm', 'a4');
+
+  let y = pdfHeader(doc, {
+    title: 'Informe de Cierre Mensual',
+    company: data.companyName,
+    right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
+  });
+
+  // ─── KPIs principales ───
+  y = pdfCards(doc, y, [
+    { label: 'Ingresos Netos', value: money(data.ingresosNetos), tone: 'positive' },
+    { label: 'Egresos', value: money(data.egresosTotal), tone: 'negative' },
+    { label: 'Resultado del Mes', value: money(data.saldo), tone: data.saldo >= 0 ? 'positive' : 'negative' },
+    { label: 'A Distribuir', value: money(data.montoDistribuir), tone: 'accent' },
+  ]);
+
+  // ─── Resultado operativo ───
+  y = pdfSection(doc, 'Resultado Operativo', y + 2);
+  const opRows: [string, number][] = [
+    ['Broker P&L (Book B)', data.brokerPnl],
+    ['Prop Firm (neto)', data.propFirmNet],
+    ['Ganancias de inversiones', data.investmentProfits],
+  ];
+  if (data.otherIncome) opRows.push(['Otros ingresos', data.otherIncome]);
+  autoTable(doc, {
+    startY: y,
+    body: opRows.map(([k, v]) => [k, money(v)]),
+    foot: [
+      ['Ingresos netos operativos', money(data.ingresosNetos)],
+      ['Egresos del mes', money(-data.egresosTotal)],
+      ['Resultado (saldo)', money(data.saldo)],
+    ],
+    theme: 'plain',
+    styles: { fontSize: 9.5, cellPadding: 2.4, textColor: C.ink },
+    footStyles: { fontStyle: 'bold', fillColor: C.surface, textColor: C.primary },
+    columnStyles: { 0: { cellWidth: 130 }, 1: { halign: 'right', fontStyle: 'bold', textColor: C.positive } },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 1) {
+        h.cell.styles.halign = 'right';
+        if (h.row.index === 1) h.cell.styles.textColor = C.negative;
+        if (h.row.index === 2) h.cell.styles.textColor = data.saldo >= 0 ? C.positive : C.negative;
+      }
+    },
+  });
+  y = getLastTableY(doc, y + 40, 8);
+
+  // ─── Flujo de depósitos y retiros (clientes) ───
+  y = pdfSection(doc, 'Flujo de Depositos y Retiros de Clientes', y);
+  const maxRows = Math.max(data.depositsByChannel.length, data.withdrawalsByCategory.length);
+  const flowBody: string[][] = [];
+  for (let i = 0; i < maxRows; i++) {
+    const d = data.depositsByChannel[i];
+    const w = data.withdrawalsByCategory[i];
+    flowBody.push([
+      d ? d.label : '', d ? money(d.amount) : '',
+      w ? w.label : '', w ? money(w.amount) : '',
+    ]);
+  }
+  autoTable(doc, {
+    startY: y,
+    head: [['Depositos por canal', 'Monto', 'Retiros por categoria', 'Monto']],
+    body: flowBody,
+    foot: [['Total depositos', money(data.depositsTotal), 'Total retiros', money(data.withdrawalsTotal)]],
+    theme: 'grid',
+    styles: { fontSize: 9, cellPadding: 2.6 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
+    footStyles: { fillColor: C.surface, textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 52 }, 1: { halign: 'right', textColor: C.positive },
+      2: { cellWidth: 52 }, 3: { halign: 'right', textColor: C.negative },
+    },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && (h.column.index === 1 || h.column.index === 3)) h.cell.styles.halign = 'right';
+    },
+  });
+  y = getLastTableY(doc, y + 30, 5);
+  // Banda de flujo neto
+  doc.setFillColor(...C.surface);
+  doc.setDrawColor(...C.border);
+  doc.setLineWidth(0.3);
+  const wPage = doc.internal.pageSize.getWidth();
+  doc.roundedRect(14, y, wPage - 28, 11, 2, 2, 'FD');
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9.5);
+  doc.setTextColor(...C.ink);
+  doc.text('Flujo neto de clientes (depositos - retiros)', 18, y + 7);
+  doc.setTextColor(...(data.netFlow >= 0 ? C.positive : C.negative));
+  doc.setFontSize(11);
+  doc.text(money(data.netFlow), wPage - 18, y + 7.2, { align: 'right' });
+  y += 17;
+
+  // ─── Página 2: egresos + distribución ───
+  doc.addPage();
+  y = pdfHeader(doc, {
+    title: 'Informe de Cierre Mensual',
+    company: data.companyName,
+    right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
+  });
+
+  y = pdfCards(doc, y, [
+    { label: 'Egresos pagados', value: money(data.egresosPagados), tone: 'positive' },
+    { label: 'Egresos pendientes', value: money(data.egresosPendientes), tone: data.egresosPendientes > 0 ? 'negative' : 'ink' },
+    { label: 'Reserva del mes', value: money(data.reservaMes), tone: 'ink' },
+    { label: 'Reserva acumulada', value: money(data.reservaAcumulada), tone: 'primary' },
+  ], 14, 18);
+
+  y = pdfSection(doc, 'Principales Egresos', y + 2);
+  autoTable(doc, {
+    startY: y,
+    head: [['Concepto', 'Monto']],
+    body: data.topExpenses.map((e) => [e.concept, money(e.amount)]),
+    foot: [['Total egresos del mes', money(data.egresosTotal)]],
+    theme: 'striped',
+    styles: { fontSize: 9, cellPadding: 2.8 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: { 0: { cellWidth: 130 }, 1: { halign: 'right', fontStyle: 'bold', textColor: C.negative } },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 1) h.cell.styles.halign = 'right';
+    },
+  });
+  y = getLastTableY(doc, y + 40, 8);
+
+  y = pdfSection(doc, 'Distribucion a Socios', y);
+  if (data.deudaEntrada > 0) {
+    doc.setFontSize(8);
+    doc.setTextColor(...C.warning);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Deuda arrastrada del mes anterior descontada: ${money(data.deudaEntrada)}`, 14, y);
+    y += 5;
+  }
+  autoTable(doc, {
+    startY: y,
+    head: [['Socio', 'Participacion', 'Monto a recibir']],
+    body: data.partners.map((p) => [p.name, `${(p.pct * 100).toFixed(1)}%`, money(p.amount)]),
+    foot: [['Total distribuido', '100%', money(data.montoDistribuir)]],
+    theme: 'striped',
+    styles: { fontSize: 10, cellPadding: 3.2 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right', fontStyle: 'bold', textColor: C.ink } },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 1) h.cell.styles.halign = 'center';
+      if (h.section === 'foot' && h.column.index === 2) h.cell.styles.halign = 'right';
+    },
+  });
+
+  pdfFooter(doc);
+  doc.save(`Cierre_Mensual_${data.periodLabel.replace(/\s/g, '_')}.pdf`);
 }
