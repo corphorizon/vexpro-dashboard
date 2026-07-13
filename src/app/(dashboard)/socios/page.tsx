@@ -25,8 +25,10 @@ import {
 } from '@/lib/supabase/mutations';
 import {
   Users, Download, AlertTriangle, TrendingDown, Wallet, Shield,
-  PiggyBank, Plus, Pencil, Trash2, X, Check, Settings, ChevronDown, FileText,
+  PiggyBank, Plus, Pencil, Trash2, X, Check, Settings, ChevronDown, FileText, FileBarChart,
 } from 'lucide-react';
+import { apiFetch } from '@/lib/api-fetch';
+import { computeProviderTotals, monthRange } from '@/lib/api-integrations/totals';
 
 const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
 
@@ -338,6 +340,94 @@ export default function SociosPage() {
             >
               <FileText className="w-4 h-4" />
               <span className="hidden sm:inline">PDF mes</span>
+            </button>
+          )}
+          {mode === 'single' && (
+            <button
+              onClick={() => verify2FA(async () => {
+                const sum = getPeriodSummary(selectedPeriodId);
+                if (!sum || !currentPeriod) return;
+                const pad = (n: number) => String(n).padStart(2, '0');
+                const { from, to } = monthRange(`${currentPeriod.year}-${pad(currentPeriod.month)}`);
+
+                // Flujo de clientes — MISMA fuente y filtros que /movimientos y
+                // /balances: persisted-movements en modo 'pinned' (walletId
+                // vacío) + computeProviderTotals (descuenta excluidas). Así los
+                // números del informe coinciden con los del dashboard.
+                let depCoinsbuy = 0, depFairpay = 0, depUnipay = 0, wdCoinsbuy = 0;
+                try {
+                  const res = await apiFetch(`/api/integrations/persisted-movements?from=${from}&to=${to}`);
+                  const json = await res.json();
+                  for (const ds of (json.datasets ?? [])) {
+                    const totals = computeProviderTotals(ds);
+                    if (ds.slug === 'coinsbuy-deposits') depCoinsbuy = totals.total;
+                    else if (ds.slug === 'fairpay') depFairpay = totals.total;
+                    else if (ds.slug === 'unipayment') depUnipay = totals.total;
+                    else if (ds.slug === 'coinsbuy-withdrawals') wdCoinsbuy = totals.total;
+                  }
+                } catch {
+                  // Sin conexión a movimientos: el informe sale con manuales.
+                }
+
+                const manualDepTotal = sum.deposits.reduce((s, d) => s + d.amount, 0);
+                const depositsByChannel = [
+                  { label: 'Coinsbuy (crypto)', amount: depCoinsbuy },
+                  { label: 'UniPayment (tarjeta)', amount: depUnipay },
+                  { label: 'FairPay (local)', amount: depFairpay },
+                  { label: 'Otros (manual)', amount: manualDepTotal },
+                ].filter((c) => c.amount !== 0);
+                const depositsTotal = depositsByChannel.reduce((s, c) => s + c.amount, 0);
+
+                const CAT_LABEL: Record<string, string> = {
+                  broker: 'Broker', prop_firm: 'Prop Firm', ib: 'Comisiones IB', other: 'Otros', p2p: 'P2P',
+                };
+                const wdMap = new Map<string, number>();
+                for (const w of sum.withdrawals) wdMap.set(w.category, (wdMap.get(w.category) ?? 0) + w.amount);
+                const withdrawalsByCategory = [
+                  ...Array.from(wdMap.entries()).map(([k, v]) => ({ label: CAT_LABEL[k] ?? k, amount: v })),
+                  { label: 'Coinsbuy (crypto)', amount: wdCoinsbuy },
+                ].filter((c) => c.amount !== 0);
+                const withdrawalsTotal = withdrawalsByCategory.reduce((s, c) => s + c.amount, 0);
+
+                const topExpenses = [...sum.expenses]
+                  .sort((a, b) => b.amount - a.amount)
+                  .slice(0, 10)
+                  .map((e) => ({ concept: e.concept, amount: e.amount }));
+
+                const { generateMonthlyClosePDF } = await import('@/lib/pdf-export');
+                generateMonthlyClosePDF({
+                  companyName: company?.name ?? '',
+                  periodLabel: currentPeriod.label ?? `${currentPeriod.year}-${pad(currentPeriod.month)}`,
+                  brokerPnl: sum.operatingIncome?.broker_pnl ?? 0,
+                  propFirmNet: sum.propFirmNetIncome ?? 0,
+                  investmentProfits: sum.investmentProfits ?? 0,
+                  otherIncome: sum.operatingIncome?.other ?? 0,
+                  ingresosNetos: currentChain?.ingresosNetos ?? 0,
+                  egresosTotal: sum.totalExpenses,
+                  egresosPagados: sum.totalExpensesPaid,
+                  egresosPendientes: sum.totalExpensesPending,
+                  saldo: currentChain?.saldoAFavor ?? 0,
+                  reservaMes: reserveThisPeriod,
+                  reservaAcumulada: accumulatedReserve,
+                  deudaEntrada: carryDebt,
+                  montoDistribuir: totalToDistribute,
+                  depositsByChannel,
+                  depositsTotal,
+                  withdrawalsByCategory,
+                  withdrawalsTotal,
+                  netFlow: depositsTotal - withdrawalsTotal,
+                  topExpenses,
+                  partners: partners.map((p) => {
+                    const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
+                    return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
+                  }),
+                });
+              })}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
+              title="Descargar informe de cierre mensual"
+            >
+              <FileBarChart className="w-4 h-4" />
+              <span className="hidden sm:inline">Cierre mensual</span>
             </button>
           )}
           <PeriodSelector />
