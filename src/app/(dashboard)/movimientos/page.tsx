@@ -266,12 +266,10 @@ export default function MovimientosPage() {
         manualBroker: storedBroker,
       })
     : null;
-  const displayTotalWithdrawals = useDerivedBroker
-    ? _derived!.totalWithdrawals
-    : summary.totalWithdrawals;
-  const displayNetDeposit = useDerivedBroker
-    ? _derived!.netDeposit
-    : summary.netDeposit;
+  // TS-01: chequear el nullable real (_derived) en vez de `useDerivedBroker`
+  // + non-null assertion — TS estrecha el tipo y desaparece el `!` frágil.
+  const displayTotalWithdrawals = _derived ? _derived.totalWithdrawals : summary.totalWithdrawals;
+  const displayNetDeposit = _derived ? _derived.netDeposit : summary.netDeposit;
 
   return (
     <div className="space-y-6">

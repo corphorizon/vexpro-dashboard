@@ -23,7 +23,18 @@ type DateLike = Date | string | number | null | undefined;
 
 function toDate(input: DateLike): Date | null {
   if (input == null || input === '') return null;
-  const d = input instanceof Date ? input : new Date(input);
+  let d: Date;
+  if (typeof input === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(input)) {
+    // BUG-06: una fecha-solo "YYYY-MM-DD" la parsea `new Date()` como
+    // medianoche UTC; con getDate()/getMonth() (hora local) eso se corre al
+    // día ANTERIOR en husos negativos (LatAm, UTC-5/-6) → "07/06" se veía
+    // "06/06". Forzamos medianoche LOCAL para que la fecha del calendario se
+    // muestre tal cual, sin importar el huso. (Los datetime con hora se
+    // parsean normal y siguen mostrándose en hora local.)
+    d = new Date(`${input}T00:00:00`);
+  } else {
+    d = input instanceof Date ? input : new Date(input);
+  }
   return Number.isNaN(d.getTime()) ? null : d;
 }
 

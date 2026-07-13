@@ -18,7 +18,7 @@ import { logAction } from '@/lib/audit-log';
 import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
 import { useConfirm } from '@/lib/use-confirm';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
-import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download, Receipt } from 'lucide-react';
+import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download, Receipt, Loader2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 
 type SortState = 'default' | 'desc' | 'asc';
@@ -314,7 +314,8 @@ export default function EgresosPage() {
         </div>
       )}
       {saving && (
-        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-medium">
+        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-medium" aria-live="polite">
+          <Loader2 className="w-3.5 h-3.5 animate-spin" />
           Guardando…
         </div>
       )}

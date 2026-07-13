@@ -249,8 +249,8 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
               // Next.js image allow-list.
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={company!.logo_url_white || company!.logo_url || ''}
-                alt={company!.name}
+                src={company?.logo_url_white || company?.logo_url || ''}
+                alt={company?.name ?? ''}
                 className="h-14 max-w-[180px] w-auto object-contain"
                 onError={(e) => {
                   // Fail gracefully: swap for name text if the URL 404s.
