@@ -29,8 +29,16 @@ export function formatNumber(value: number): string {
   }).format(value);
 }
 
+/** Fracción (0.5) → "50.0%". Para valores YA en porcentaje (50 → "50.0%")
+ *  usar `formatPercentValue` — no multiplica por 100. */
 export function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
+}
+
+/** Valor YA en porcentaje (50) → "50.0%". No multiplica por 100.
+ *  (formatPercent toma fracción y sí multiplica — footgun señalado en ARQ-01). */
+export function formatPercentValue(value: number): string {
+  return `${value.toFixed(1)}%`;
 }
 
 export function periodLabel(year: number, month: number): string {

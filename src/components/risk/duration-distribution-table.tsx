@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { X } from 'lucide-react';
 import type { Trade } from '@/lib/risk/types';
 import type { DurationBucket } from '@/lib/risk/duration-distribution';
-import { cn } from '@/lib/utils';
+import { cn, formatNumber, formatCurrency } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // DurationDistributionTable
@@ -26,9 +26,6 @@ interface DurationDistributionTableProps {
 export function DurationDistributionTable({ buckets, totalCount, totalProfit }: DurationDistributionTableProps) {
   const [openBucketKey, setOpenBucketKey] = useState<string | null>(null);
   const openBucket = openBucketKey ? buckets.find((b) => b.key === openBucketKey) : null;
-
-  const fmt = (n: number) =>
-    n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const profitColor = (n: number) =>
     n > 0 ? 'text-emerald-700 dark:text-emerald-400'
@@ -65,7 +62,7 @@ export function DurationDistributionTable({ buckets, totalCount, totalProfit }: 
                   <td className="px-4 py-3 text-center font-medium">{b.label}</td>
                   <td className="px-4 py-3 text-center">{b.count}</td>
                   <td className={cn('px-4 py-3 text-center font-semibold', profitColor(b.profitTotal))}>
-                    {fmt(b.profitTotal)}
+                    {formatNumber(b.profitTotal)}
                   </td>
                 </tr>
               );
@@ -74,7 +71,7 @@ export function DurationDistributionTable({ buckets, totalCount, totalProfit }: 
             <tr className="bg-emerald-700 text-white font-bold">
               <td className="px-4 py-3 text-left">Total:</td>
               <td className="px-4 py-3 text-center">{totalCount}</td>
-              <td className="px-4 py-3 text-center">{fmt(totalProfit)}</td>
+              <td className="px-4 py-3 text-center">{formatNumber(totalProfit)}</td>
             </tr>
           </tbody>
         </table>
@@ -96,8 +93,6 @@ export function DurationDistributionTable({ buckets, totalCount, totalProfit }: 
 // ─────────────────────────────────────────────────────────────────────────────
 
 function DurationBucketModal({ bucket, onClose }: { bucket: DurationBucket; onClose: () => void }) {
-  const fmt$ = (n: number) =>
-    `${n < 0 ? '-' : ''}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const fmtDuration = (m: number) => {
     if (m < 1) return `${(m * 60).toFixed(0)}s`;
     if (m < 60) return `${m.toFixed(1)}m`;
@@ -121,7 +116,7 @@ function DurationBucketModal({ bucket, onClose }: { bucket: DurationBucket; onCl
           <div>
             <h3 className="font-semibold text-base">Trades en rango {bucket.label}</h3>
             <p className="text-xs text-muted-foreground">
-              {bucket.count} {bucket.count === 1 ? 'trade' : 'trades'} · Profit total: {fmt$(bucket.profitTotal)}
+              {bucket.count} {bucket.count === 1 ? 'trade' : 'trades'} · Profit total: {formatCurrency(bucket.profitTotal)}
             </p>
           </div>
           <button
@@ -153,7 +148,7 @@ function DurationBucketModal({ bucket, onClose }: { bucket: DurationBucket; onCl
                   <td className="px-3 py-2 uppercase">{t.type}</td>
                   <td className="px-3 py-2 text-right">{t.volume}</td>
                   <td className={`px-3 py-2 text-right font-semibold ${t.profit > 0 ? 'text-emerald-600' : t.profit < 0 ? 'text-red-600' : ''}`}>
-                    {fmt$(t.profit)}
+                    {formatCurrency(t.profit)}
                   </td>
                   <td className="px-3 py-2 text-right">{fmtDuration(t.durationMinutes)}</td>
                   <td className="px-3 py-2">{fmtDate(t.openTime)}</td>

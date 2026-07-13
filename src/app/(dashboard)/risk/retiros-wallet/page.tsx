@@ -14,7 +14,7 @@ import { useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
-import { cn } from '@/lib/utils';
+import { cn, formatCurrency } from '@/lib/utils';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import {
   Search,
@@ -112,15 +112,6 @@ interface Verdict {
 
 // ─── Helpers ───
 
-function fmt$(n: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
-
 // Local thin wrappers keep existing call sites (fmtDate / fmtDateTime)
 // readable while routing through the centralised formatters in @/lib/dates.
 const fmtDate = (iso: string) => formatDate(iso);
@@ -191,13 +182,13 @@ function evaluateVerdict(req: WithdrawalRequest): Verdict {
 
   if (recentP2PSentTotal > 0) {
     if (p2pPct > 50) {
-      reasons.push(`P2P enviados últimos 7 días: ${fmt$(recentP2PSentTotal)} (${p2pPct.toFixed(1)}% del retiro) — patrón sospechoso.`);
+      reasons.push(`P2P enviados últimos 7 días: ${formatCurrency(recentP2PSentTotal)} (${p2pPct.toFixed(1)}% del retiro) — patrón sospechoso.`);
       escalate('RECHAZAR');
     } else if (p2pPct > 30) {
-      reasons.push(`P2P enviados últimos 7 días: ${fmt$(recentP2PSentTotal)} (${p2pPct.toFixed(1)}% del retiro).`);
+      reasons.push(`P2P enviados últimos 7 días: ${formatCurrency(recentP2PSentTotal)} (${p2pPct.toFixed(1)}% del retiro).`);
       escalate('REVISAR');
     } else {
-      reasons.push(`P2P enviados recientes menores: ${fmt$(recentP2PSentTotal)} (${p2pPct.toFixed(1)}% del retiro).`);
+      reasons.push(`P2P enviados recientes menores: ${formatCurrency(recentP2PSentTotal)} (${p2pPct.toFixed(1)}% del retiro).`);
     }
   }
 
@@ -541,7 +532,7 @@ export default function RetirosWalletPage() {
                     <div className="font-medium">{r.user.name}</div>
                     <div className="text-xs text-muted-foreground">{r.user.email}</div>
                   </td>
-                  <td className="px-3 py-3 text-right font-semibold">{fmt$(r.amount)}</td>
+                  <td className="px-3 py-3 text-right font-semibold">{formatCurrency(r.amount)}</td>
                   <td className="px-3 py-3">
                     <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', walletBadgeClass(r.fromWallet))}>
                       <Wallet className="w-3 h-3" />
@@ -636,7 +627,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
               </span>
             </div>
             <div className="mt-3 flex items-center gap-3">
-              <div className="text-2xl font-bold">{fmt$(request.amount)}</div>
+              <div className="text-2xl font-bold">{formatCurrency(request.amount)}</div>
               <span className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', walletBadgeClass(request.fromWallet))}>
                 <Wallet className="w-3 h-3" />
                 Origen: {request.fromWallet}
@@ -660,7 +651,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
               <div>
                 <div className="text-xs text-muted-foreground mb-1">Depositado vs Retirado</div>
                 <div className="flex items-center gap-2 text-sm font-medium mb-1">
-                  <span>{fmt$(request.totalWithdrawn)} / {fmt$(request.totalDeposited)}</span>
+                  <span>{formatCurrency(request.totalWithdrawn)} / {formatCurrency(request.totalDeposited)}</span>
                   <span className="text-xs text-muted-foreground">({depositVsWithdraw.toFixed(1)}%)</span>
                 </div>
                 <div className="w-full h-2 bg-muted rounded-full overflow-hidden">
@@ -679,7 +670,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
               <div>
                 <div className="text-xs text-muted-foreground mb-1">Ratio retiro / saldo total</div>
                 <div className="text-sm font-medium">
-                  {fmt$(request.amount)} / {fmt$(totalBalance)}
+                  {formatCurrency(request.amount)} / {formatCurrency(totalBalance)}
                   <span className="text-xs text-muted-foreground ml-2">({ratioRequest.toFixed(1)}%)</span>
                 </div>
               </div>
@@ -689,7 +680,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
               {(['Balance', 'IB Program', 'IB Social'] as WalletKind[]).map((w) => (
                 <div key={w} className="rounded-lg border border-border p-3">
                   <div className="text-xs text-muted-foreground mb-1">{w}</div>
-                  <div className="text-base font-semibold">{fmt$(request.walletBalances[w])}</div>
+                  <div className="text-base font-semibold">{formatCurrency(request.walletBalances[w])}</div>
                 </div>
               ))}
             </div>
@@ -720,10 +711,10 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
                     <tr key={a.number} className="border-b border-border">
                       <td className="px-2 py-2 font-mono">{a.number}</td>
                       <td className="px-2 py-2">{a.platform}</td>
-                      <td className="px-2 py-2 text-right">{fmt$(a.balance)}</td>
-                      <td className="px-2 py-2 text-right">{fmt$(a.equity)}</td>
+                      <td className="px-2 py-2 text-right">{formatCurrency(a.balance)}</td>
+                      <td className="px-2 py-2 text-right">{formatCurrency(a.equity)}</td>
                       <td className={cn('px-2 py-2 text-right font-medium', a.pnl >= 0 ? 'text-emerald-600' : 'text-rose-600')}>
-                        {a.pnl >= 0 ? '+' : ''}{fmt$(a.pnl)}
+                        {a.pnl >= 0 ? '+' : ''}{formatCurrency(a.pnl)}
                       </td>
                       <td className="px-2 py-2 text-center">
                         {a.openPositions > 0 ? (
@@ -746,7 +737,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
               cols={['Fecha', 'Monto', 'Método', 'Wallet destino']}
               rows={request.deposits.slice(0, 10).map((d) => [
                 fmtDate(d.date),
-                fmt$(d.amount),
+                formatCurrency(d.amount),
                 d.method,
                 <span key="w" className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', walletBadgeClass(d.destinationWallet))}>{d.destinationWallet}</span>,
               ])}
@@ -760,7 +751,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
               cols={['Fecha', 'Monto', 'Estado', 'Wallet origen']}
               rows={request.withdrawals.map((w) => [
                 fmtDate(w.date),
-                fmt$(w.amount),
+                formatCurrency(w.amount),
                 <span key="s" className={cn(
                   'inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium',
                   w.status === 'Aprobado' ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-300 dark:border-emerald-900'
@@ -778,7 +769,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
             {recentP2PSent.length > 0 && (
               <Alert
                 kind={recentP2PSent.reduce((s, p) => s + p.amount, 0) > request.amount * 0.5 ? 'danger' : 'warning'}
-                msg={`P2P enviados últimos 7 días: ${recentP2PSent.length} transacción(es) por ${fmt$(recentP2PSent.reduce((s, p) => s + p.amount, 0))}`}
+                msg={`P2P enviados últimos 7 días: ${recentP2PSent.length} transacción(es) por ${formatCurrency(recentP2PSent.reduce((s, p) => s + p.amount, 0))}`}
               />
             )}
             <SimpleTable
@@ -793,7 +784,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
                   {p.direction}
                 </span>,
                 p.counterparty,
-                fmt$(p.amount),
+                formatCurrency(p.amount),
                 <span key="w" className={cn('inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium', walletBadgeClass(p.wallet))}>{p.wallet}</span>,
               ])}
               emptyMsg="Sin transferencias P2P."
@@ -822,7 +813,7 @@ function AuditPanel({ request, onClose }: { request: WithdrawalRequest; onClose:
                   <span className="text-muted-foreground">→</span>
                   <span className={cn('inline-flex items-center rounded-full border px-2 py-0.5 font-medium', walletBadgeClass(m.toWallet))}>{m.toWallet}</span>
                 </span>,
-                fmt$(m.amount),
+                formatCurrency(m.amount),
               ])}
               emptyMsg="Sin movimientos internos."
             />

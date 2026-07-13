@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
-import { cn } from '@/lib/utils';
+import { cn, formatCurrency, formatPercentValue } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { parseTradeReport, type ParseResult } from '@/lib/risk/parser';
 import { analyzeReport } from '@/lib/risk/rules';
@@ -34,14 +34,6 @@ import {
 } from 'lucide-react';
 
 // ─── Helpers ───
-
-function fmt$(n: number): string {
-  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(n);
-}
-
-function fmtPct(n: number): string {
-  return `${n.toFixed(1)}%`;
-}
 
 function fmtDuration(mins: number): string {
   if (isNaN(mins)) return '—';
@@ -355,7 +347,7 @@ export default function RetirosPropFirmPage() {
       doc.text(`Cuenta: ${meta.accountNumber}`, 14, 28);
       doc.text(`Broker: ${meta.broker}`, 14, 33);
       doc.text(`Período: ${meta.period}`, 14, 38);
-      doc.text(`Total Net Profit: ${fmt$(meta.totalNetProfit)}`, 14, 43);
+      doc.text(`Total Net Profit: ${formatCurrency(meta.totalNetProfit)}`, 14, 43);
       doc.text(`Total Operaciones: ${rec.totalTrades}`, 14, 48);
       doc.text(`Revisado: ${formatDate(rec.savedAt)}`, 14, 53);
       doc.text(`Archivo: ${rec.fileName}`, 14, 58);
@@ -414,7 +406,7 @@ export default function RetirosPropFirmPage() {
           v.tradeData?.symbol ?? '—',
           v.tradeData?.type?.toUpperCase() ?? '—',
           v.tradeData?.volume ?? '—',
-          fmt$(v.tradeData?.profit ?? 0),
+          formatCurrency(v.tradeData?.profit ?? 0),
           fmtDuration(v.tradeData?.durationMinutes ?? 0),
           v.ruleName ?? '—',
           v.detail ?? '—',
@@ -767,7 +759,7 @@ export default function RetirosPropFirmPage() {
     doc.text(`Cuenta: ${meta.accountNumber}`, 14, 28);
     doc.text(`Broker: ${meta.broker}`, 14, 33);
     doc.text(`Período: ${meta.period}`, 14, 38);
-    doc.text(`Total Net Profit: ${fmt$(meta.totalNetProfit)}`, 14, 43);
+    doc.text(`Total Net Profit: ${formatCurrency(meta.totalNetProfit)}`, 14, 43);
     doc.text(`Total Operaciones: ${result.trades.length}`, 14, 48);
     doc.text(`Generado: ${formatDate(new Date())}`, 14, 53);
 
@@ -821,7 +813,7 @@ export default function RetirosPropFirmPage() {
           trade.symbol,
           trade.type.toUpperCase(),
           trade.volume.toString(),
-          fmt$(trade.profit),
+          formatCurrency(trade.profit),
           fmtDuration(trade.durationMinutes),
           fmtDate(trade.openTime),
           isViolation ? rules.join(', ') : '✓ OK',
@@ -1153,7 +1145,7 @@ export default function RetirosPropFirmPage() {
                       <td className="px-3 py-3 text-muted-foreground">{rec.period || '—'}</td>
                       <td className="px-3 py-3 text-right">{rec.totalTrades}</td>
                       <td className={cn('px-3 py-3 text-right font-medium', rec.totalNetProfit >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                        {fmt$(rec.totalNetProfit)}
+                        {formatCurrency(rec.totalNetProfit)}
                       </td>
                       <td className="px-3 py-3 text-center">
                         {rec.verdict === 'approved' && (
@@ -1302,7 +1294,7 @@ export default function RetirosPropFirmPage() {
             <MetaCard label={t('risk.metaAccount')} value={result.metadata.accountNumber || '—'} />
             <MetaCard label={t('risk.metaBroker')} value={result.metadata.broker || '—'} />
             <MetaCard label={t('risk.metaPeriod')} value={result.metadata.period || '—'} />
-            <MetaCard label={t('risk.metaProfit')} value={fmt$(result.metadata.totalNetProfit)}
+            <MetaCard label={t('risk.metaProfit')} value={formatCurrency(result.metadata.totalNetProfit)}
               valueClass={result.metadata.totalNetProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'} />
             <MetaCard label={t('risk.metaTrades')} value={String(result.trades.length)} />
           </div>
@@ -1318,7 +1310,7 @@ export default function RetirosPropFirmPage() {
                 {rr.isActive ? (
                   <>
                     <p className="text-2xl font-bold text-foreground">{rr.violations.length}</p>
-                    <p className="text-xs text-muted-foreground">{t('risk.violations')} ({fmtPct(rr.violationPct)})</p>
+                    <p className="text-xs text-muted-foreground">{t('risk.violations')} ({formatPercentValue(rr.violationPct)})</p>
                     {Object.entries(rr.computedParams).length > 0 && (
                       <div className="mt-2 space-y-0.5">
                         {Object.entries(rr.computedParams).map(([k, v]) => (
@@ -1429,7 +1421,7 @@ export default function RetirosPropFirmPage() {
                         </td>
                         <td className="px-3 py-2 text-right font-mono">{item.trade?.volume ?? '—'}</td>
                         <td className={cn('px-3 py-2 text-right font-mono', (item.trade?.profit ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
-                          {fmt$(item.trade?.profit ?? 0)}
+                          {formatCurrency(item.trade?.profit ?? 0)}
                         </td>
                         <td className="px-3 py-2 text-right">{fmtDuration(item.trade?.durationMinutes ?? 0)}</td>
                         <td className="px-3 py-2">
@@ -1542,10 +1534,10 @@ export default function RetirosPropFirmPage() {
                         <td className="px-3 py-2 text-muted-foreground">{fmtDate(trade.closeTime)}</td>
                         <td className="px-3 py-2 text-right font-mono">{trade.openPrice}</td>
                         <td className="px-3 py-2 text-right font-mono">{trade.closePrice}</td>
-                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">{fmt$(trade.commission)}</td>
-                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">{fmt$(trade.swap)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatCurrency(trade.commission)}</td>
+                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatCurrency(trade.swap)}</td>
                         <td className={cn('px-3 py-2 text-right font-mono', trade.profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
-                          {fmt$(trade.profit)}
+                          {formatCurrency(trade.profit)}
                         </td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{fmtDuration(trade.durationMinutes)}</td>
                         <td className="px-3 py-2 text-center">
