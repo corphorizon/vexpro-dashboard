@@ -117,7 +117,7 @@ return NextResponse.json({ success: false, error: error.message }, { status: 500
 
 ---
 
-**PERF-02 — Over-fetch global: se traen todas las tablas completas sin filtro de período**
+**PERF-02 — Over-fetch global: se traen todas las tablas completas sin filtro de período** 🟡 **PARCIAL (2026-07-12, commit 21a3602)** — Medido: ~900 filas en TODA la historia de VexPro; el costo del over-fetch es despreciable y las queries ya son paralelas (la latencia es RTT Londres↔LatAm, que el scoping no reduce). Scoping por período DESCARTADO (rompería las cadenas históricas que necesitan todos los períodos; cero beneficio). Aplicado solo lo seguro: `.limit(10_000)` defensivo en las 11 detail queries.
 `src/lib/data-context.tsx:283` — las queries de `queries.ts` aceptan un parámetro `periodIds?` (ej. `fetchDeposits(companyId, periodIds?)`) que **data-context nunca pasa**. Se descarga el historial completo de la empresa en cada arranque y en cada `refresh()`. Varias queries (`fetchDeposits/Withdrawals/Expenses/LiquidityMovements/Investments`) no tienen `.limit()`.
 - **Impacto:** el payload crece linealmente con la antigüedad de la cuenta; con la DB en Londres y usuarios en Dubai/LatAm cada mes añade filas que viajan en cada carga. La infraestructura para filtrar ya existe, sin usar.
 - **Solución:** pasar `periodIds` a las queries que lo soportan; cargar períodos históricos on-demand. Paginar/acotar por fecha las tablas de alto volumen (movimientos, liquidez). **Esfuerzo: M.**
