@@ -124,7 +124,7 @@ return NextResponse.json({ success: false, error: error.message }, { status: 500
 
 ---
 
-**BUG-03 — Autosave solo persiste la sección visible; otras secciones "dirty" no se guardan**
+**BUG-03 — Autosave solo persiste la sección visible; otras secciones "dirty" no se guardan** ✅ **RESUELTO (2026-07-12, commit c1995d7)** — saveAll + autosave ahora cubren todas las secciones batch dirty (depositos/retiros/ingresos); egresos ya persistía por-acción.
 `src/app/(dashboard)/upload/page.tsx:674-691` (efecto autosave) y `saveAll:1489-1524`.
 El autosave dispara solo si `dirtySections.has(section)` (la pestaña actual) y `saveAll` persiste solo el `section` visible. Si el usuario edita Depósitos, cambia a Egresos y corre el debounce, Depósitos queda dirty en estado de React sin llegar a la DB hasta volver a esa pestaña o pulsar "Guardar Todo".
 - **Impacto:** en navegación/refresh se pierden ediciones no visibles (solo las protege `beforeunload`). El candado `saveAllInFlightRef` está bien; el gap es el alcance por-sección.
@@ -153,7 +153,7 @@ Existe `src/lib/utils.ts` (`formatCurrency`, `formatNumber`, `formatPercent`) pe
 
 ---
 
-**PERF-03 — recharts (~350KB) estático en /resumen-general**
+**PERF-03 — recharts (~350KB) estático en /resumen-general** ✅ **RESUELTO (2026-07-12, commit ca7b132)** — `next/dynamic` + ssr:false; recharts en chunk async (~352K).
 `src/components/charts/monthly-chart.tsx:6` → importado estáticamente por `resumen-general/page.tsx:10`. Único consumidor de recharts.
 - **Solución:** `dynamic(() => import('@/components/charts/monthly-chart'), { ssr:false })`. Ya está en `React.memo`. **Esfuerzo: S.**
 
