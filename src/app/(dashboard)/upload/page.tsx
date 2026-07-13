@@ -1407,6 +1407,22 @@ export default function UploadPage() {
     });
   };
 
+  // Marcar un egreso como pagado en un click: paid = amount, pending = 0.
+  // Pedido de Kevin (2026-07-13) — sobre todo para los egresos fijos, sin
+  // tener que abrir la edición. Persiste por-acción (ahora server-side, rápido).
+  const markExpensePaid = (id: string) => {
+    if (!userCanEdit) return;
+    const target = expenses.find(e => e.id === id);
+    if (!target || target.pending <= 0) return; // ya está pagado
+    const previous = expenses;
+    const next = expenses.map(e => e.id === id ? { ...e, paid: e.amount, pending: 0 } : e);
+    setExpensesRaw(next); // optimista
+    void persistExpenses(next, previous, {
+      toast: `"${target.concept}" marcado como pagado`,
+      audit: { action: 'update', details: `Egreso marcado como pagado: ${target.concept} ($${target.amount.toLocaleString()})` },
+    });
+  };
+
   const deleteExpense = (id: string) => {
     if (!userCanDelete) return;
     const exp = expenses.find(e => e.id === id);
@@ -2208,6 +2224,9 @@ export default function UploadPage() {
                       {(userCanEdit || userCanDelete) && (
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
+                            {userCanEdit && exp.pending > 0 && (
+                              <button onClick={() => markExpensePaid(exp.id)} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" title="Marcar como pagado" aria-label={`Marcar ${exp.concept} como pagado`}><Check className="w-3.5 h-3.5" /></button>
+                            )}
                             {userCanEdit && (
                               <button onClick={() => startEditExpense(exp)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
                             )}

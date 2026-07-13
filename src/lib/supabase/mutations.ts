@@ -1,5 +1,5 @@
 import { createClient } from './client';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { withActiveCompany, apiFetch } from '@/lib/api-fetch';
 
 const supabase = createClient();
 
@@ -192,37 +192,20 @@ async function resilientWrite<T>(op: () => Promise<T>, label: string): Promise<T
   throw lastErr;
 }
 
-async function syncExpenseTemplates(
-  companyId: string,
-  fixedExpenses: { concept: string; amount: number }[],
-): Promise<void> {
-  if (fixedExpenses.length === 0) return;
-  // `expense_templates` has UNIQUE (company_id, concept) — one bulk upsert
-  // replaces the old N+1 select-then-update/insert loop.
-  const { error } = await supabase
-    .from('expense_templates')
-    .upsert(
-      fixedExpenses.map((fx) => ({
-        company_id: companyId,
-        concept: fx.concept,
-        amount: fx.amount,
-        active: true,
-      })),
-      { onConflict: 'company_id,concept' },
-    );
-  if (error) throw new Error(error.message);
-}
-
 export async function upsertExpenses(
-  companyId: string,
+  _companyId: string,
   periodId: string,
   expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null }[]
 ): Promise<void> {
-  // Reemplazo ATÓMICO vía RPC (migración atomic_replace_period_expenses).
-  // Antes esto era un DELETE seguido de un INSERT en dos llamadas HTTP
-  // separadas: si el INSERT fallaba o time-outeaba tras un DELETE exitoso, el
-  // período quedaba VACÍO (así se perdió VexPro May 2026). La función plpgsql
-  // corre todo en una sola transacción → o se guarda completo o no se toca nada.
+  // Guardado SERVER-SIDE vía /api/admin/expenses (2026-07-13). Antes esto
+  // llamaba supabase.rpc() desde el browser y se colgaba >12s de forma
+  // recurrente: el cliente supabase-js intenta refrescar el token de auth
+  // antes de cada request y ese refresh se estancaba (navigator.locks/red),
+  // aunque la DB responde en ~9ms. Ahora el browser hace un fetch simple con
+  // su cookie de sesión; el server valida auth (company_id del JWT) y corre la
+  // RPC atómica replace_period_expenses + el sync de plantillas. Elimina la
+  // clase de cuelgues del auth-lock del cliente. company_id se resuelve
+  // server-side desde el token — el param del cliente se ignora.
   const rows = expenses.map((e) => ({
     concept: e.concept,
     amount: e.amount,
@@ -232,24 +215,14 @@ export async function upsertExpenses(
     category: e.category ?? null,
   }));
 
-  await resilientWrite(async () => {
-    const { error } = await supabase.rpc('replace_period_expenses', {
-      p_company_id: companyId,
-      p_period_id: periodId,
-      p_rows: rows,
-    });
-    if (error) throw new Error(`Error guardando egresos: ${error.message}`);
-  }, 'Guardar egresos');
-
-  // Fire-and-forget template sync — never blocks the return. If it fails
-  // we log and move on; the user still sees a successful save, and next
-  // save will reconcile.
-  const fixedExpenses = expenses
-    .filter((e) => e.is_fixed && e.concept.trim())
-    .map((e) => ({ concept: e.concept, amount: e.amount }));
-  void syncExpenseTemplates(companyId, fixedExpenses).catch((err) => {
-    console.error('[upsertExpenses] template sync failed (non-fatal):', err);
+  const res = await apiFetch('/api/admin/expenses', {
+    method: 'POST',
+    body: JSON.stringify({ periodId, rows }),
   });
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    throw new Error(data?.error || `Error guardando egresos (${res.status})`);
+  }
 }
 
 // ─── Expense ordering (drag-and-drop in /upload) ───
