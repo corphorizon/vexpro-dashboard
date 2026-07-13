@@ -672,14 +672,18 @@ export default function UploadPage() {
   const AUTOSAVE_DEBOUNCE_MS = 3000;
 
   useEffect(() => {
-    // BUG-03: autosave persiste TODAS las secciones batch con cambios sin
-    // guardar (depositos/retiros/ingresos), aunque el usuario haya cambiado de
-    // pestaña. Antes solo disparaba si la sección VISIBLE estaba dirty, así que
-    // editar Depósitos y cambiar a otra pestaña dejaba Depósitos sin guardar
-    // hasta volver — se perdía al recargar. saveAll ahora guarda la unión de
-    // secciones dirty (ver targets). No incluimos egresos: persiste por-acción
-    // (persistExpenses) y su dirty transitorio es un mutex, no un pendiente.
-    const AUTOSAVE_SECTIONS: DataSection[] = ['depositos', 'retiros', 'ingresos'];
+    // BUG-03: autosave persiste las secciones batch con cambios sin guardar,
+    // aunque el usuario haya cambiado de pestaña. saveAll guarda la unión de
+    // secciones dirty (ver targets).
+    //
+    // Exclusiones:
+    //   · egresos → persiste por-acción (persistExpenses); su dirty transitorio
+    //     es un mutex, no un pendiente.
+    //   · ingresos (Kevin 2026-07-13) → son inputs numéricos que se escriben a
+    //     mano (broker_pnl, other); autosalvar a los 3s interrumpía la escritura
+    //     y re-hidrataba el valor a medio tipear. Ingresos se guarda SOLO con
+    //     "Guardar Todo". (Sigue en SAVE_HANDLED, así el botón manual lo persiste.)
+    const AUTOSAVE_SECTIONS: DataSection[] = ['depositos', 'retiros'];
     if (!AUTOSAVE_SECTIONS.some((s) => dirtySections.has(s))) return;
     if (savingAll) return; // queue up: re-fires when savingAll flips false
     const t = setTimeout(() => {
