@@ -79,7 +79,11 @@ export async function fetchDeposits(companyId: string, periodIds?: string[]): Pr
   let query = supabase
     .from('deposits')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -100,7 +104,11 @@ export async function fetchWithdrawals(companyId: string, periodIds?: string[]):
   let query = supabase
     .from('withdrawals')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -122,7 +130,8 @@ export async function fetchExpenses(companyId: string, periodIds?: string[]): Pr
     .from('expenses')
     .select('*')
     .eq('company_id', companyId)
-    .order('sort_order', { ascending: true });
+    .order('sort_order', { ascending: true })
+    .limit(10_000); // PERF-02: cota defensiva (ver comentario en fetchDeposits)
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -232,7 +241,11 @@ export async function fetchOperatingIncome(companyId: string, periodIds?: string
   let query = supabase
     .from('operating_income')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -253,7 +266,11 @@ export async function fetchBrokerBalance(companyId: string, periodIds?: string[]
   let query = supabase
     .from('broker_balance')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -274,7 +291,11 @@ export async function fetchFinancialStatus(companyId: string, periodIds?: string
   let query = supabase
     .from('financial_status')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -310,7 +331,11 @@ export async function fetchPartnerDistributions(companyId: string, periodIds?: s
   let query = supabase
     .from('partner_distributions')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -331,7 +356,11 @@ export async function fetchPropFirmSales(companyId: string, periodIds?: string[]
   let query = supabase
     .from('prop_firm_sales')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -352,7 +381,11 @@ export async function fetchP2PTransfers(companyId: string, periodIds?: string[])
   let query = supabase
     .from('p2p_transfers')
     .select('*')
-    .eq('company_id', companyId);
+    .eq('company_id', companyId)
+    // PERF-02: cota defensiva. El volumen real es minúsculo (cientos de filas
+    // en toda la historia), pero evita un fetch sin límite ante un futuro
+    // patológico. NO es paginación — es un techo de seguridad.
+    .limit(10_000);
 
   if (periodIds) {
     query = query.in('period_id', periodIds);
@@ -374,7 +407,8 @@ export async function fetchLiquidityMovements(companyId: string): Promise<Liquid
     .from('liquidity_movements')
     .select('*')
     .eq('company_id', companyId)
-    .order('date', { ascending: true });
+    .order('date', { ascending: true })
+    .limit(10_000); // PERF-02: cota defensiva (ver comentario en fetchDeposits)
 
   if (error) {
     console.error('Error fetching liquidity movements:', error.message);
@@ -390,7 +424,8 @@ export async function fetchInvestments(companyId: string): Promise<Investment[]>
     .from('investments')
     .select('*')
     .eq('company_id', companyId)
-    .order('date', { ascending: true });
+    .order('date', { ascending: true })
+    .limit(10_000); // PERF-02: cota defensiva (ver comentario en fetchDeposits)
 
   if (error) {
     console.error('Error fetching investments:', error.message);
