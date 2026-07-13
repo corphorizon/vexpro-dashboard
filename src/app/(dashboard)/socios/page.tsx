@@ -576,11 +576,22 @@ export default function SociosPage() {
                     const pChain = periodChain.get(period.id);
                     const pDistributable = pChain?.montoDistribuir ?? 0;
 
-                    const effectiveDists = dists.map(d => ({
-                      ...d,
-                      amount: pDistributable > 0 ? pDistributable * d.percentage : 0,
-                    }));
-                    const total = effectiveDists.reduce((s, d) => s + d.amount, 0);
+                    // Construir UNA fila por socio (no mapear sobre las filas
+                    // guardadas). Antes, los meses sin partner_distributions
+                    // guardadas (p.ej. recién calculados y aún sin "Guardar")
+                    // mostraban $0 aunque montoDistribuir fuera positivo. Ahora
+                    // se deriva de montoDistribuir × %, usando el % guardado si
+                    // existe o el % actual del socio como fallback.
+                    const effectiveDists = partners.map(p => {
+                      const saved = dists.find(d => d.partner_id === p.id);
+                      const pct = saved?.percentage ?? p.percentage;
+                      return {
+                        partner_id: p.id,
+                        percentage: pct,
+                        amount: pDistributable > 0 ? round2(pDistributable * pct) : 0,
+                      };
+                    });
+                    const total = round2(effectiveDists.reduce((s, d) => s + d.amount, 0));
 
                     return (
                       <tr key={period.id} className={`border-b border-border/30 ${period.id === selectedPeriodId ? 'bg-blue-50 dark:bg-blue-950/50' : ''}`}>
@@ -611,13 +622,14 @@ export default function SociosPage() {
                   <tr className="border-t-2 border-border font-bold bg-muted/50">
                     <td className="py-2 px-2">Total</td>
                     {partners.map(p => {
-                      const partnerTotal = periods.reduce((sum, period) => {
+                      const partnerTotal = round2(periods.reduce((sum, period) => {
                         const pChain = periodChain.get(period.id);
                         const pDist = pChain?.montoDistribuir ?? 0;
                         if (pDist <= 0) return sum;
-                        const dist = partnerDistributions.find(d => d.period_id === period.id && d.partner_id === p.id);
-                        return sum + (dist ? pDist * dist.percentage : 0);
-                      }, 0);
+                        const saved = partnerDistributions.find(d => d.period_id === period.id && d.partner_id === p.id);
+                        const pct = saved?.percentage ?? p.percentage;
+                        return sum + round2(pDist * pct);
+                      }, 0));
                       return (
                         <td key={p.id} className="py-2 px-2 text-right">
                           {formatCurrency(partnerTotal)}
