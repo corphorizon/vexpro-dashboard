@@ -7,7 +7,7 @@ import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { PeriodSelector } from '@/components/period-selector';
-import { MonthlyChart } from '@/components/charts/monthly-chart';
+import dynamic from 'next/dynamic';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -30,6 +30,21 @@ import {
   FileText,
   BarChart3,
 } from 'lucide-react';
+
+// PERF-03: recharts (~350KB) se carga on-demand — solo esta página lo usa.
+// dynamic + ssr:false lo saca del bundle inicial; placeholder de igual altura
+// que el chart (350px) para evitar layout shift.
+const MonthlyChart = dynamic(
+  () => import('@/components/charts/monthly-chart').then((m) => m.MonthlyChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[350px] flex items-center justify-center text-sm text-muted-foreground">
+        Cargando gráfico…
+      </div>
+    ),
+  },
+);
 
 export default function ResumenPage() {
   const { t } = useI18n();
