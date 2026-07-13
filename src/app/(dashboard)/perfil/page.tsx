@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useAuth, ROLE_LABELS } from '@/lib/auth-context';
@@ -102,7 +103,7 @@ export default function PerfilPage() {
     setTotpLoading(true);
 
     try {
-      const res = await fetch('/api/auth/setup-2fa', {
+      const res = await apiFetch('/api/auth/setup-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'generate' }),
@@ -132,7 +133,7 @@ export default function PerfilPage() {
 
     setTotpLoading(true);
     try {
-      const res = await fetch('/api/auth/setup-2fa', {
+      const res = await apiFetch('/api/auth/setup-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'verify', secret: totpSecret, token: totpToken }),
@@ -181,7 +182,7 @@ export default function PerfilPage() {
 
     setDeactivateLoading(true);
     try {
-      const res = await fetch('/api/auth/setup-2fa', {
+      const res = await apiFetch('/api/auth/setup-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'disable', token: deactivatePin }),

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { ShieldCheck, Loader2, X } from 'lucide-react';
 
 interface Verify2FAModalProps {
@@ -27,7 +28,7 @@ export function Verify2FAModal({ open, onVerified, onClose }: Verify2FAModalProp
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/verify-pin', {
+      const res = await apiFetch('/api/auth/verify-pin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ pin: token }),

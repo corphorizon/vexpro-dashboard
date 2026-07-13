@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 
 interface Tx {
   id: string;
@@ -40,7 +40,7 @@ export function ExcludeToggleButton({
     if (!reason || reason.trim().length === 0) return;
     setBusy(true);
     try {
-      const res = await fetch(withActiveCompany('/api/integrations/excluded-transactions'), {
+      const res = await apiFetch('/api/integrations/excluded-transactions', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -73,7 +73,7 @@ export function ExcludeToggleButton({
     try {
       // El DELETE necesita el id de la fila en excluded_transactions, pero
       // acá solo tenemos el external_id (tx.id). Hacemos GET para resolverlo.
-      const listRes = await fetch(withActiveCompany('/api/integrations/excluded-transactions'));
+      const listRes = await apiFetch('/api/integrations/excluded-transactions');
       const listData = await listRes.json();
       if (!listData.success) {
         window.alert('No se pudo cargar la lista de excluidas');
@@ -87,8 +87,7 @@ export function ExcludeToggleButton({
         window.alert('No se encontró el registro de exclusión');
         return;
       }
-      const res = await fetch(
-        withActiveCompany(`/api/integrations/excluded-transactions/${found.id}`),
+      const res = await apiFetch(`/api/integrations/excluded-transactions/${found.id}`,
         { method: 'DELETE' },
       );
       const data = await res.json();

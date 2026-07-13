@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
@@ -136,7 +137,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   const handlePing = async (provider: Provider) => {
     setPingBusy(provider);
     try {
-      const res = await fetch(`/api/integrations/${provider.replace('_', '-')}/ping${qs}`);
+      const res = await apiFetch(`/api/integrations/${provider.replace('_', '-')}/ping${qs}`);
       const data = (await res.json()) as Omit<PingResult, 'testedAt'>;
       setPingResults((prev) => ({
         ...prev,
@@ -162,7 +163,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
     setError(null);
     try {
       // Credentials list.
-      const res = await fetch(`/api/admin/api-credentials${qs}`);
+      const res = await apiFetch(`/api/admin/api-credentials${qs}`);
       const data = await res.json();
       if (!data.success) throw new Error(data.error);
       setCreds(data.credentials);
@@ -198,7 +199,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   const handleDelete = async (provider: Provider) => {
     if (!confirm(`¿Eliminar las credenciales de ${PROVIDER_META[provider].label}?`)) return;
     try {
-      const res = await fetch(`/api/admin/api-credentials${qs}`, {
+      const res = await apiFetch(`/api/admin/api-credentials${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', provider, company_id: companyId }),
@@ -491,7 +492,7 @@ function ApiCredentialForm({
       const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
 
       // Step 1 — upsert the credential.
-      const res = await fetch(`/api/admin/api-credentials${qs}`, {
+      const res = await apiFetch(`/api/admin/api-credentials${qs}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -514,7 +515,7 @@ function ApiCredentialForm({
         // Only PATCH if the value actually changed (avoid a useless audit
         // entry on every save).
         if (trimmed !== (currentWalletId ?? '')) {
-          const r2 = await fetch(`/api/superadmin/companies/${companyId}`, {
+          const r2 = await apiFetch(`/api/superadmin/companies/${companyId}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

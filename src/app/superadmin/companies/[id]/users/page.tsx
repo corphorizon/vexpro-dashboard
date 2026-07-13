@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Users, Settings2, Loader2, UserPlus } from 'lucide-react';
@@ -72,7 +73,7 @@ export default function CompanyUsersPage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/superadmin/companies/${companyId}/users`);
+      const res = await apiFetch(`/api/superadmin/companies/${companyId}/users`);
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       setUsers(json.users);

@@ -7,7 +7,7 @@ import {
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 import { isDerivedBrokerPeriod, computeDerivedBroker } from '@/lib/broker-logic';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,7 +98,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
       return;
     }
     let cancelled = false;
-    fetch(withActiveCompany(`/api/integrations/period-totals?from=${apiFrom}&to=${apiTo}`))
+    apiFetch(`/api/integrations/period-totals?from=${apiFrom}&to=${apiTo}`)
       .then((r) => r.json())
       .then((json) => {
         if (cancelled) return;

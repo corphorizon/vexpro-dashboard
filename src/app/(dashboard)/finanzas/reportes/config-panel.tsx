@@ -12,6 +12,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { ChevronDown, Save, Settings2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
@@ -83,8 +84,8 @@ export function ReportsConfigPanel() {
     (async () => {
       try {
         const [cfgRes, recRes] = await Promise.all([
-          fetch('/api/reports/config'),
-          fetch('/api/reports/recipients'),
+          apiFetch('/api/reports/config'),
+          apiFetch('/api/reports/recipients'),
         ]);
         const cfgJson = (await cfgRes.json()) as {
           success: boolean;
@@ -134,7 +135,7 @@ export function ReportsConfigPanel() {
     setSaving(true);
     setStatus(null);
     try {
-      const res = await fetch('/api/reports/config', {
+      const res = await apiFetch('/api/reports/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

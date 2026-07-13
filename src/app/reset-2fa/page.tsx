@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
 import { AuthBrand } from '@/components/auth-brand';
@@ -21,7 +22,7 @@ export default function Reset2FAPage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/request-2fa-reset', {
+      const res = await apiFetch('/api/auth/request-2fa-reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password }),
@@ -46,7 +47,7 @@ export default function Reset2FAPage() {
     }
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/confirm-2fa-reset', {
+      const res = await apiFetch('/api/auth/confirm-2fa-reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, code }),

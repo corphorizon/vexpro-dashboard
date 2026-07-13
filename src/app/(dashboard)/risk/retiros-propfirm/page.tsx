@@ -13,7 +13,7 @@ import { analyzeReport } from '@/lib/risk/rules';
 import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode } from '@/lib/risk/types';
 import { computeDurationDistribution } from '@/lib/risk/duration-distribution';
 import { DurationDistributionTable } from '@/components/risk/duration-distribution-table';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import {
   Upload,
   Settings,
@@ -137,7 +137,7 @@ export default function RetirosPropFirmPage() {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(withActiveCompany('/api/risk/revisions'));
+        const res = await apiFetch('/api/risk/revisions');
         const data = await res.json();
         if (cancelled) return;
         if (res.ok && data.success && Array.isArray(data.revisions)) {
@@ -227,7 +227,7 @@ export default function RetirosPropFirmPage() {
 
     (async () => {
       try {
-        const res = await fetch(withActiveCompany('/api/risk/revisions'), {
+        const res = await apiFetch('/api/risk/revisions', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ payload: record }),
@@ -1101,7 +1101,7 @@ export default function RetirosPropFirmPage() {
                   try {
                     await Promise.all(
                       idsToDelete.map((id) =>
-                        fetch(withActiveCompany(`/api/risk/revisions/${id}`), {
+                        apiFetch(`/api/risk/revisions/${id}`, {
                           method: 'DELETE',
                         }).catch(() => null),
                       ),

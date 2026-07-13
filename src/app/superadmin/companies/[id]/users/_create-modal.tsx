@@ -11,6 +11,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { X, Loader2, UserPlus } from 'lucide-react';
 import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS, ROLE_DEFAULT_MODULES } from '@/lib/auth-context';
 import { ALL_MODULES } from '../../_form';
@@ -80,7 +81,7 @@ export function CreateUserModal({
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`/api/superadmin/companies/${companyId}/users`, {
+      const res = await apiFetch(`/api/superadmin/companies/${companyId}/users`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

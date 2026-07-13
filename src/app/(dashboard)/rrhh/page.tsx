@@ -11,7 +11,7 @@ import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
 import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee, createEmployee, updateEmployee } from '@/lib/supabase/mutations';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
@@ -185,7 +185,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
     const formData = new FormData();
     formData.append('file', contractFile);
     formData.append('profile_id', profileId);
-    const res = await fetch(withActiveCompany('/api/admin/upload-contract'), { method: 'POST', body: formData });
+    const res = await apiFetch('/api/admin/upload-contract', { method: 'POST', body: formData });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || 'Error subiendo contrato');
     setContractUrl(data.url);
@@ -827,7 +827,7 @@ export default function RRHHPage() {
     if (!company?.id) return;
     setNegLoading(true);
     try {
-      const res = await fetch(withActiveCompany(`/api/admin/negotiations?company_id=${company.id}`));
+      const res = await apiFetch(`/api/admin/negotiations?company_id=${company.id}`);
       if (res.ok) {
         const data = await res.json();
         setNegotiations(data);
@@ -1182,7 +1182,7 @@ export default function RRHHPage() {
 
       // If creating a new profile first
       if (data.newProfile) {
-        const profileRes = await fetch(withActiveCompany('/api/admin/commercial-profiles'), {
+        const profileRes = await apiFetch('/api/admin/commercial-profiles', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1205,7 +1205,7 @@ export default function RRHHPage() {
         const formData = new FormData();
         formData.append('file', data.contractFile);
         formData.append('profile_id', resolvedProfileId);
-        const uploadRes = await fetch(withActiveCompany('/api/admin/upload-contract'), { method: 'POST', body: formData });
+        const uploadRes = await apiFetch('/api/admin/upload-contract', { method: 'POST', body: formData });
         const uploadResult = await uploadRes.json();
         if (!uploadRes.ok || uploadResult.error) throw new Error(uploadResult.error || 'Error subiendo contrato');
       }
@@ -1213,7 +1213,7 @@ export default function RRHHPage() {
       const body = editingNeg
         ? { action: 'update', id: editingNeg.id, title: data.title, description: data.description, status: data.status }
         : { action: 'create', company_id: company.id, profile_id: resolvedProfileId, title: data.title, description: data.description, status: data.status };
-      const res = await fetch(withActiveCompany('/api/admin/negotiations'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const res = await apiFetch('/api/admin/negotiations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const result = await res.json();
       if (!res.ok || result.error) throw new Error(result.error);
       setShowNegForm(false);
@@ -1234,7 +1234,7 @@ export default function RRHHPage() {
   const handleDeleteNegotiation = async (id: string) => {
     if (!confirm(t('hr.confirmDelete'))) return;
     try {
-      const res = await fetch(withActiveCompany('/api/admin/negotiations'), {
+      const res = await apiFetch('/api/admin/negotiations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'delete', id }),

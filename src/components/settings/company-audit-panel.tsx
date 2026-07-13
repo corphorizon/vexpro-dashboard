@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, ClipboardList } from 'lucide-react';
@@ -46,7 +47,7 @@ export function CompanyAuditPanel({ companyId }: { companyId: string }) {
       qs.set('limit', '200');
       if (actionFilter !== 'all') qs.set('action', actionFilter);
       if (moduleFilter !== 'all') qs.set('module', moduleFilter);
-      const res = await fetch(`/api/superadmin/companies/${companyId}/audit-logs?${qs}`);
+      const res = await apiFetch(`/api/superadmin/companies/${companyId}/audit-logs?${qs}`);
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       setRows(json.entries);

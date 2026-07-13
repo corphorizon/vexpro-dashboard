@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { X, Loader2, KeyRound, ShieldOff, Power, ClipboardList, Check } from 'lucide-react';
 import { ALL_MODULES } from '../../_form';
 import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/auth-context';
@@ -59,7 +60,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
   useEffect(() => {
     (async () => {
       try {
-        const res = await fetch(
+        const res = await apiFetch(
           `/api/superadmin/companies/${user.company_id}/users/${user.id}/audit?limit=5`,
         );
         const json = await res.json();
@@ -93,7 +94,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/superadmin/companies/${user.company_id}/users/${user.id}`,
         {
           method: 'PATCH',
@@ -123,7 +124,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
     setBusyAction('reset');
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/superadmin/companies/${user.company_id}/users/${user.id}/reset-password`,
         { method: 'POST' },
       );
@@ -148,7 +149,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
     setBusyAction('disable2fa');
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/superadmin/companies/${user.company_id}/users/${user.id}/disable-2fa`,
         { method: 'POST' },
       );
@@ -174,7 +175,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
     setBusyAction('deactivate');
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/superadmin/companies/${user.company_id}/users/${user.id}`,
         {
           method: 'PATCH',

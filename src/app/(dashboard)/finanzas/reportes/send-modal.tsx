@@ -15,6 +15,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { Send, X } from 'lucide-react';
 
 export type Cadence = 'current' | 'daily' | 'weekly' | 'monthly';
@@ -99,8 +100,8 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
     (async () => {
       try {
         const [rRes, cRes] = await Promise.all([
-          fetch('/api/reports/recipients'),
-          fetch('/api/reports/config'),
+          apiFetch('/api/reports/recipients'),
+          apiFetch('/api/reports/config'),
         ]);
         const rJson = (await rRes.json()) as {
           success: boolean;
@@ -177,7 +178,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
         sections,
         cadence: cadence === 'current' ? 'daily' : cadence,
       };
-      const res = await fetch('/api/reports/send', {
+      const res = await apiFetch('/api/reports/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import {
   BarChart3,
   Download,
@@ -222,7 +223,7 @@ export default function ReportesPage() {
     setError(null);
     try {
       const qs = new URLSearchParams({ from, to });
-      const res = await fetch(`/api/reports/consolidated?${qs}`);
+      const res = await apiFetch(`/api/reports/consolidated?${qs}`);
       const json = (await res.json()) as ReportResponse;
       if (!json.success) throw new Error('No se pudo cargar el reporte');
       setData(json);

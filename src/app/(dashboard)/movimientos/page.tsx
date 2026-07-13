@@ -22,7 +22,7 @@ import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { Deposit, Withdrawal } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
@@ -84,7 +84,7 @@ export default function MovimientosPage() {
   // still applies for this session).
   const handleWalletChange = (next: string) => {
     setCoinsbuyWalletId(next);
-    fetch(withActiveCompany('/api/admin/wallet-preference'), {
+    apiFetch('/api/admin/wallet-preference', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ walletId: next || null }),

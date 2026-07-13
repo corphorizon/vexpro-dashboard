@@ -10,7 +10,7 @@ import type {
 } from '@/lib/ib-rebates/types';
 import { DEFAULT_THRESHOLDS } from '@/lib/ib-rebates/types';
 import { computeAlert } from '@/lib/ib-rebates/alerts';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 
 // ─── Tipos locales ────────────────────────────────────────────────────────
 
@@ -66,8 +66,8 @@ export function IbRebatesTab() {
     setLoading(true);
     try {
       const [cRes, tRes] = await Promise.all([
-        fetch(withActiveCompany('/api/admin/ib-rebates')),
-        fetch(withActiveCompany('/api/admin/ib-rebates/thresholds')),
+        apiFetch('/api/admin/ib-rebates'),
+        apiFetch('/api/admin/ib-rebates/thresholds'),
       ]);
       const cData = await cRes.json();
       const tData = await tRes.json();
@@ -128,7 +128,7 @@ export function IbRebatesTab() {
     e.preventDefault();
     try {
       if (editingId) {
-        const res = await fetch(withActiveCompany(`/api/admin/ib-rebates/${editingId}`), {
+        const res = await apiFetch(`/api/admin/ib-rebates/${editingId}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ...form, changeType: pendingIntent }),
@@ -136,7 +136,7 @@ export function IbRebatesTab() {
         const data = await res.json();
         if (!data.success) { alert(data.error || 'Error al guardar'); return; }
       } else {
-        const res = await fetch(withActiveCompany('/api/admin/ib-rebates'), {
+        const res = await apiFetch('/api/admin/ib-rebates', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(form),
@@ -159,7 +159,7 @@ export function IbRebatesTab() {
       : `¿Marcar que ${c.username} cumplió metas?`;
     if (!confirm(msg)) return;
     try {
-      const res = await fetch(withActiveCompany(`/api/admin/ib-rebates/${c.id}`), {
+      const res = await apiFetch(`/api/admin/ib-rebates/${c.id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ changeType: 'goals_met' }),
@@ -175,7 +175,7 @@ export function IbRebatesTab() {
   const handleDelete = async (c: IbRebateConfig) => {
     if (!confirm(`¿Eliminar configuración de ${c.username}? Esta acción no se puede deshacer.`)) return;
     try {
-      const res = await fetch(withActiveCompany(`/api/admin/ib-rebates/${c.id}`), {
+      const res = await apiFetch(`/api/admin/ib-rebates/${c.id}`, {
         method: 'DELETE',
       });
       const data = await res.json();
@@ -190,7 +190,7 @@ export function IbRebatesTab() {
     setShowHistoryFor(configId);
     setHistoryEntries([]);
     try {
-      const res = await fetch(withActiveCompany(`/api/admin/ib-rebates/${configId}/history`));
+      const res = await apiFetch(`/api/admin/ib-rebates/${configId}/history`);
       const data = await res.json();
       if (data.success) setHistoryEntries(data.history);
     } catch (err) {
@@ -599,7 +599,7 @@ function ThresholdsModal({
     e.preventDefault();
     setSaving(true);
     try {
-      const res = await fetch(withActiveCompany('/api/admin/ib-rebates/thresholds'), {
+      const res = await apiFetch('/api/admin/ib-rebates/thresholds', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
@@ -720,7 +720,7 @@ function ImportModal({
       const formData = new FormData();
       formData.append('file', file);
       formData.append('mode', mode);
-      const res = await fetch(withActiveCompany('/api/admin/ib-rebates/import'), {
+      const res = await apiFetch('/api/admin/ib-rebates/import', {
         method: 'POST',
         body: formData,
       });

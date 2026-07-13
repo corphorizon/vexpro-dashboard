@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, Suspense, useEffect } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Eye, EyeOff, ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
 import { AuthBrand } from '@/components/auth-brand';
@@ -109,7 +110,7 @@ function ResetPasswordInner() {
         if (error) throw new Error(error.message);
         setSuccess(true);
       } else if (mode === 'custom-reset') {
-        const res = await fetch('/api/auth/reset-password-confirm', {
+        const res = await apiFetch('/api/auth/reset-password-confirm', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ token: customToken, newPassword: password }),

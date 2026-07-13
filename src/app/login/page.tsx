@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
 import { useAuth, type LoginResult } from '@/lib/auth-context';
 import { AuthBrand } from '@/components/auth-brand';
@@ -25,7 +26,7 @@ export default function LoginPage() {
 
   // Fire-and-forget: send login notification email (never blocks navigation)
   const notifyLogin = (name: string, userEmail: string) => {
-    fetch('/api/auth/login-notification', {
+    apiFetch('/api/auth/login-notification', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ userName: name, userEmail }),
@@ -260,7 +261,7 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/forgot-password', {
+      const res = await apiFetch('/api/auth/forgot-password', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),

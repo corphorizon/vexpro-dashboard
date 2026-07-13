@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
@@ -36,7 +37,7 @@ export default function Setup2FAPage() {
 
   const generateSecret = async () => {
     try {
-      const res = await fetch('/api/auth/setup-2fa', {
+      const res = await apiFetch('/api/auth/setup-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'generate' }),
@@ -75,7 +76,7 @@ export default function Setup2FAPage() {
 
     setLoading(true);
     try {
-      const res = await fetch('/api/auth/setup-2fa', {
+      const res = await apiFetch('/api/auth/setup-2fa', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // Server reads the pending secret from the DB; do NOT send it from the client.

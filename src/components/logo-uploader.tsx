@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { Upload, Trash2, Loader2, AlertCircle } from 'lucide-react';
 import { CompanyLogo } from './company-logo';
 
@@ -64,7 +65,7 @@ export function LogoUploader({
     try {
       const fd = new FormData();
       fd.append('file', file);
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/superadmin/companies/${companyId}/logo?variant=${variant}`,
         { method: 'POST', body: fd },
       );
@@ -87,7 +88,7 @@ export function LogoUploader({
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
+      const res = await apiFetch(
         `/api/superadmin/companies/${companyId}/logo?variant=${variant}`,
         { method: 'DELETE' },
       );

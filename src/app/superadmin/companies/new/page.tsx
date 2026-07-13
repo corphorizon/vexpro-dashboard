@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
@@ -37,7 +38,7 @@ export default function NewCompanyPage() {
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch('/api/superadmin/companies', {
+      const res = await apiFetch('/api/superadmin/companies', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(values),

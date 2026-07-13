@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Settings as SettingsIcon, Key, ClipboardList, Users } from 'lucide-react';
@@ -70,7 +71,7 @@ export default function EditCompanyPage() {
     try {
       const { slug: _ignoreSlug, ...payload } = next; // slug is read-only here
       void _ignoreSlug;
-      const res = await fetch(`/api/superadmin/companies/${id}`, {
+      const res = await apiFetch(`/api/superadmin/companies/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),

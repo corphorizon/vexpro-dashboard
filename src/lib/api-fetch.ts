@@ -32,3 +32,45 @@ export function withActiveCompany(url: string): string {
   const sep = url.includes('?') ? '&' : '?';
   return `${url}${sep}company_id=${encodeURIComponent(companyId)}`;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// apiFetch — wrapper canónico para llamar la API interna desde el cliente
+// (ARQ-02). Centraliza tres cosas que antes cada componente reimplementaba:
+//   1. withActiveCompany (scope de superadmin viewing-as) — automático.
+//   2. Timeout (AbortController) — evita requests colgados para siempre.
+//   3. Content-Type: application/json — SOLO cuando el body es string; los
+//      bodies FormData/Blob se dejan intactos (el browser pone el boundary).
+//
+// Devuelve un `Response` normal (misma interfaz que fetch), así el manejo de
+// res.ok / res.json() / errores en cada call-site queda IGUAL — la migración
+// es un swap mecánico `fetch(withActiveCompany(url), opts)` → `apiFetch(url, opts)`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const DEFAULT_TIMEOUT_MS = 25_000;
+
+export async function apiFetch(
+  url: string,
+  init: RequestInit & { timeoutMs?: number } = {},
+): Promise<Response> {
+  const { timeoutMs = DEFAULT_TIMEOUT_MS, ...rest } = init;
+
+  const headers = new Headers(rest.headers);
+  if (typeof rest.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
+
+  // Timeout propio salvo que el caller ya haya pasado su signal.
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let signal = rest.signal;
+  if (!signal) {
+    const controller = new AbortController();
+    timer = setTimeout(() => controller.abort(), timeoutMs);
+    signal = controller.signal;
+  }
+
+  try {
+    return await fetch(withActiveCompany(url), { ...rest, headers, signal });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

@@ -19,7 +19,7 @@ import {
   Search,
 } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { computeProviderTotals, acceptedTransactions } from '@/lib/api-integrations/totals';
 import { ExcludeToggleButton } from './_components/exclude-toggle-button';
@@ -130,8 +130,7 @@ export default function BreakdownPage({
       //      whatever the card shows, the breakdown shows the same.
       // To pull fresh data the user clicks "Refrescar desde APIs" on the
       // banner up on /movimientos; that endpoint hits live + write-throughs.
-      const res = await fetch(
-        withActiveCompany(`/api/integrations/persisted-movements?${qs.toString()}`),
+      const res = await apiFetch(`/api/integrations/persisted-movements?${qs.toString()}`,
       );
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error desconocido');

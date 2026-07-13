@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import Link from 'next/link';
 import { ArrowLeft, Plus, Trash2, Loader2, Mail } from 'lucide-react';
 import { ALL_MODULES } from '../companies/_form';
@@ -55,8 +56,8 @@ export default function SuperadminUsersPage() {
       setError(null);
       const qs = filterCompany === 'all' ? '' : `?company_id=${filterCompany}`;
       const [uRes, cRes] = await Promise.all([
-        fetch(`/api/superadmin/users${qs}`),
-        fetch('/api/superadmin/companies'),
+        apiFetch(`/api/superadmin/users${qs}`),
+        apiFetch('/api/superadmin/companies'),
       ]);
       const uJson = await uRes.json();
       const cJson = await cRes.json();
@@ -75,7 +76,7 @@ export default function SuperadminUsersPage() {
 
   const updateUser = async (id: string, patch: Partial<Pick<UserRow, 'role' | 'name' | 'allowed_modules'>>) => {
     try {
-      const res = await fetch(`/api/superadmin/users/${id}`, {
+      const res = await apiFetch(`/api/superadmin/users/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(patch),
@@ -97,7 +98,7 @@ export default function SuperadminUsersPage() {
     if (!confirm(`Reenviar invitación a ${email}?`)) return;
     setResendingId(id);
     try {
-      const res = await fetch(`/api/superadmin/users/${id}/resend-invite`, { method: 'POST' });
+      const res = await apiFetch(`/api/superadmin/users/${id}/resend-invite`, { method: 'POST' });
       const json = await res.json();
       if (!res.ok || !json.success) {
         alert(json.error || 'Error reenviando invitación');
@@ -114,7 +115,7 @@ export default function SuperadminUsersPage() {
   const deleteUser = async (id: string, email: string) => {
     if (!confirm(`Eliminar la membresía de ${email}?`)) return;
     try {
-      const res = await fetch(`/api/superadmin/users/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`/api/superadmin/users/${id}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok || !json.success) {
         alert(json.error || 'Error eliminando');
@@ -306,7 +307,7 @@ function InviteModal({
     setErr(null);
     setSubmitting(true);
     try {
-      const res = await fetch('/api/superadmin/users', {
+      const res = await apiFetch('/api/superadmin/users', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, role, company_id: companyId, allowed_modules: allowed }),

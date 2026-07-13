@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Plus, Users, Building2, ArrowRight, Settings, PowerOff, AlertTriangle } from 'lucide-react';
@@ -38,7 +39,7 @@ export default function SuperadminHome() {
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/superadmin/companies');
+      const res = await apiFetch('/api/superadmin/companies');
       const json = await res.json();
       if (!res.ok || !json.success) {
         throw new Error(json.error || `HTTP ${res.status}`);
