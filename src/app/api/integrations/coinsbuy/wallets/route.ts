@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
@@ -40,7 +41,7 @@ export async function GET(request: NextRequest) {
       ).catch((err) => console.error('[coinsbuy/wallets] snapshot failed:', err));
     }
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({ success: true, ...result }, { headers: privateCache() });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[Coinsbuy Wallets] Error:', message);

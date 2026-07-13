@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchFairpayDeposits } from '@/lib/api-integrations/fairpay/transactions';
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
     const to = request.nextUrl.searchParams.get('to') ?? undefined;
 
     const dataset = await fetchFairpayDeposits({ from, to, companyId: auth.companyId });
-    return NextResponse.json({ success: true, dataset });
+    return NextResponse.json({ success: true, dataset }, { headers: privateCache() });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[FairPay Transactions] Error:', message);

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
@@ -36,7 +37,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json({ success: true, ...result }, { headers: privateCache() });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[UniPayment Balances] Error:', message);

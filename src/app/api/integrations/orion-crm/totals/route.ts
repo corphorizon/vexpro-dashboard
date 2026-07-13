@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { privateCache } from '@/lib/cache-headers';
 import { verifyAuth } from '@/lib/api-auth';
 import { fetchOrionCrmTotals } from '@/lib/api-integrations/orion-crm/totals';
 
@@ -22,7 +23,7 @@ export async function GET(request: NextRequest) {
     const to = request.nextUrl.searchParams.get('to') ?? '';
 
     const totals = await fetchOrionCrmTotals(auth.companyId, from, to);
-    return NextResponse.json(totals);
+    return NextResponse.json(totals, { headers: privateCache() });
   } catch (err) {
     console.error('[orion-crm/totals] unhandled:', err);
     return NextResponse.json(

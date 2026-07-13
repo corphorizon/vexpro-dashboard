@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { fetchCoinsbuyDepositsV3 } from '@/lib/api-integrations/coinsbuy/deposits';
@@ -27,7 +28,7 @@ export async function GET(request: Request) {
       walletId,
       companyId: auth.companyId,
     });
-    return NextResponse.json({ success: true, dataset });
+    return NextResponse.json({ success: true, dataset }, { headers: privateCache() });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[Coinsbuy Deposits] Error:', message);
