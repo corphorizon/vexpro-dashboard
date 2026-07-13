@@ -195,7 +195,7 @@ Sin caller in-app: `POST /api/send-email`, `GET /api/send-email/test`, `GET /api
 
 ---
 
-**BUG-05 — Net deposit: misma fórmula, distinta provenance de inputs entre /movimientos y /balances**
+**BUG-05 — Net deposit: misma fórmula, distinta provenance de inputs entre /movimientos y /balances** 🟡 **CONFIRMADO, latente (2026-07-12)** — verificado: el RPC `get_period_totals_by_month` (/balances) suma Coinsbuy de TODAS las wallets pinneadas; `/movimientos` scopea a UNA `walletId` (persisted-movements). Coinciden solo con 1 wallet pinneada = la seleccionada (caso VexPro actual). La unificación requiere decisión de negocio (¿todas las pinneadas o solo la seleccionada?) — NO se cambia a ciegas.
 `movimientos/page.tsx:262-267` (hook `coexist`, tiempo real, wallets pinneadas) vs `balances/page.tsx:188-193` (`apiMonthly[ymKey]`). La fórmula (`computeDerivedNetDeposit`) se unificó, pero los inputs vienen de fuentes distintas; si scopean/cachean distinto, el Net Deposit puede diferir entre pantallas.
 - **Solución:** verificar que ambas fuentes derivan del mismo scope de wallets, o documentar la diferencia. **Esfuerzo: S.**
 
@@ -207,7 +207,7 @@ Sin caller in-app: `POST /api/send-email`, `GET /api/send-email/test`, `GET /api
 
 ---
 
-**Otros BAJO:** ✅ LNK-03 (`docs.unipayment.io` muerto → nota, commit 0da6d1e) · ✅ LNK-04 (`not-found.tsx` + `(dashboard)/error.tsx` agregados, commit 0da6d1e) · ✅ QUAL-02 (`socks-proxy-agent` removido; destapó que `socks` era transitivo → ahora dep directa, commit 0da6d1e) · ⬜ BUG-06 (`dates.ts:41` `formatDate` usa hora local, no UTC → posible off-by-one de día en husos negativos, esfuerzo S) · PERF-05 (tablas editables sin memo de fila → re-render por tecla en tablas >100 filas, esfuerzo M) · TS-01 (non-null assertions frágiles en `movimientos/page.tsx:270-273`, `sidebar.tsx:252`, esfuerzo S) · UX-01 (`egresos/page.tsx` guarda sin spinner, solo botón deshabilitado, esfuerzo S) · B2-bugs (`computeExpensePending`: pendiente explícito de 0 se trata como vacío — documentado como intencional, esfuerzo XS).
+**Otros BAJO:** ✅ LNK-03 (`docs.unipayment.io` muerto → nota, commit 0da6d1e) · ✅ LNK-04 (`not-found.tsx` + `(dashboard)/error.tsx`, commit 0da6d1e) · ✅ QUAL-02 (`socks-proxy-agent` removido; `socks` → dep directa, commit 0da6d1e) · ✅ BUG-06 (`formatDate` parseaba fecha-solo como UTC → off-by-one en LatAm; ahora medianoche local + 7 tests, commit 9099a84) · ✅ TS-01 (non-null assertions eliminadas en movimientos + sidebar, commit 9099a84) · ✅ UX-01 (spinner en el banner de guardado de /egresos, commit 9099a84) · 🟡 PERF-05 (memo de fila — SKIP con evidencia: las tablas editables tienen ≤49 filas, la premisa de ">100" no aplica) · 🟡 B2-bugs (`computeExpensePending`: pendiente 0 = vacío — intencional, documentado).
 
 ---
 
