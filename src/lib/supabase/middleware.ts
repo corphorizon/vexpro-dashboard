@@ -18,7 +18,9 @@ export async function updateSession(request: NextRequest) {
     // never reach Sentry.
     pathname.startsWith('/monitoring') ||
     pathname === '/favicon.ico' ||
-    pathname === '/icon.png';
+    pathname === '/icon.svg' ||
+    pathname === '/manifest.json' ||
+    pathname === '/apple-touch-icon.png';
 
   if (skipAuthCheck) {
     return NextResponse.next({ request });

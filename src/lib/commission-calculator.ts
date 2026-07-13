@@ -31,10 +31,14 @@ export interface CommissionCalcResult {
 // division = net_deposit_current / 2
 // base = division + accumulated_in
 // commission = base * (percentage / 100)
-// real_payment = MAX(0, commission)
-// accumulated_out:
-//   if commission >= 0 → division (carry only division forward)
-//   if commission < 0  → base    (carry full negative base forward)
+// real_payment = commission   (SIN clamp — una comisión negativa ES una deuda
+//                              del BDM que se arrastra; el modelo de deuda vive
+//                              en applyTotalEarnedDebt, no acá)
+// accumulated_out = division  (SIEMPRE, positivo o negativo)
+//
+// ⚠ OJO: no "corregir" esto a MAX(0, commission) ni a arrastrar `base` en
+// meses negativos — rompería el arrastre de deuda y pagaría de más. Los tests
+// en commission-calculator.test.ts fijan este comportamiento a propósito.
 // ---------------------------------------------------------------------------
 
 export function calculateCommission(

@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Unipayment — Deposits service
 //
-// Real API docs: https://docs.unipayment.io
+// API docs: en el panel de UniPayment (https://unipayment.io) — el subdominio
+// docs.unipayment.io quedó muerto (NXDOMAIN). La base URL real se configura
+// vía UNIPAYMENT_BASE_URL.
 // Required env vars: UNIPAYMENT_API_KEY, UNIPAYMENT_API_SECRET, UNIPAYMENT_BASE_URL
 //
 // Accepted status for totals: "Completed". Canonical amount = netAmount.

@@ -1629,6 +1629,16 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  // A11Y-01: mantener <html lang> sincronizado con el idioma elegido. El
+  // locale vive en localStorage (client), así que el SSR arranca en "es"
+  // (el default del layout) y esto lo corrige tras hidratar / al cambiar —
+  // para que lectores de pantalla y traductores anuncien el idioma correcto.
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.lang = locale;
+    }
+  }, [locale]);
+
   const setLocale = useCallback((newLocale: Locale) => {
     setLocaleState(newLocale);
     localStorage.setItem(STORAGE_KEY, newLocale);
