@@ -79,6 +79,29 @@ export default function InversionesPage() {
   const totalWithdrawals = filtered.reduce((s, i) => s + i.withdrawal, 0);
   const totalProfit = filtered.reduce((s, i) => s + i.profit, 0);
 
+  // Agregado: resumen por responsable. Agrupa las filas del filtro actual
+  // por `inv.responsible`, sumando deposits, withdrawals, profit y calculando
+  // balance = deposit - withdrawal + profit. Se ignoran filas sin responsable.
+  // La misma fórmula del balance global se usa acá para consistencia.
+  const perResponsibleTotals = useMemo(() => {
+    const map = new Map<string, { deposits: number; withdrawals: number; profit: number; balance: number; count: number }>();
+    for (const inv of filtered) {
+      const responsible = (inv.responsible ?? '').trim();
+      if (!responsible) continue;
+      const existing = map.get(responsible) ?? { deposits: 0, withdrawals: 0, profit: 0, balance: 0, count: 0 };
+      existing.deposits += inv.deposit;
+      existing.withdrawals += inv.withdrawal;
+      existing.profit += inv.profit;
+      existing.balance += inv.deposit - inv.withdrawal + inv.profit;
+      existing.count += 1;
+      map.set(responsible, existing);
+    }
+    // Ordenar por balance descendente
+    return Array.from(map.entries())
+      .map(([responsible, totals]) => ({ responsible, ...totals }))
+      .sort((a, b) => b.balance - a.balance);
+  }, [filtered]);
+
   // Pagination
   const [page, setPage] = useState(0);
   useEffect(() => { setPage(0); }, [filter, investmentsData.length]);
@@ -171,6 +194,57 @@ export default function InversionesPage() {
           tone={totalProfit >= 0 ? 'positive' : 'negative'}
         />
       </div>
+
+      {/* Resumen por responsable — respeta el mismo filtro de fecha activo.
+          Se ignoran filas sin responsable. Ordenado por balance desc. */}
+      {perResponsibleTotals.length > 0 && (
+        <div>
+          <h2 className="text-lg font-semibold mb-3">Por Responsable</h2>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {perResponsibleTotals.map((r) => (
+              <Card key={r.responsible} className="p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="text-base font-semibold">{r.responsible}</h3>
+                    <p className="text-xs text-muted-foreground">
+                      {r.count} {r.count === 1 ? 'inversión' : 'inversiones'}
+                    </p>
+                  </div>
+                  <div className={cn(
+                    'text-lg font-bold tabular-nums',
+                    r.balance >= 0 ? 'text-emerald-600' : 'text-red-600',
+                  )}>
+                    {formatCurrency(r.balance)}
+                  </div>
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground">Aportes</span>
+                    <span className="font-medium text-blue-600 tabular-nums">
+                      {formatCurrency(r.deposits)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground">Retiros</span>
+                    <span className="font-medium text-red-600 tabular-nums">
+                      {formatCurrency(r.withdrawals)}
+                    </span>
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-muted-foreground">Profit</span>
+                    <span className={cn(
+                      'font-medium tabular-nums',
+                      r.profit >= 0 ? 'text-emerald-600' : 'text-red-600',
+                    )}>
+                      {formatCurrency(r.profit)}
+                    </span>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
 
       <Card>
         <h2 className="text-lg font-semibold mb-4">{t('investments.history')}</h2>
