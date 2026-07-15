@@ -723,28 +723,38 @@ export default function UploadPage() {
       ),
     ]);
 
-  // Expense concept autocomplete
-  const CONCEPT_STORAGE_KEY = 'fd_expense_concepts';
-  const [conceptSuggestions, setConceptSuggestions] = useState<string[]>(() => loadFromStorage(CONCEPT_STORAGE_KEY, [] as string[]));
+  // Expense concept autocomplete.
+  //
+  // Aislamiento (Kevin 2026-07-15): antes esto persistía las sugerencias en
+  // un localStorage GLOBAL (`fd_expense_concepts`) sin scope de empresa, y
+  // hacía merge+re-save de esa lista con `allExpenses`. Resultado: los
+  // conceptos de una empresa se filtraban a otra (superadmin en viewing-as
+  // veía conceptos de Vex Pro estando en AP Markets). Se elimina el
+  // localStorage por completo: `allExpenses` YA viene scopeado por
+  // company_id desde el DataProvider y contiene todos los conceptos jamás
+  // guardados de la empresa — es la única fuente de verdad necesaria.
+  // Las adiciones de sesión (concepto recién tecleado, antes del refresh)
+  // viven solo en estado en memoria y se pierden al cambiar de empresa.
+  const [sessionConcepts, setSessionConcepts] = useState<string[]>([]);
   const [showConceptDropdown, setShowConceptDropdown] = useState(false);
   const conceptInputRef = useRef<HTMLInputElement>(null);
 
-  // Keep concept list updated from all expenses across periods
+  // Al cambiar de empresa, purgar las adiciones de sesión para que no se
+  // arrastren conceptos de la empresa anterior.
   useEffect(() => {
-    const allConcepts = allExpenses.map(e => e.concept);
-    const stored = loadFromStorage<string[]>(CONCEPT_STORAGE_KEY, []);
-    const merged = Array.from(new Set([...stored, ...allConcepts])).filter(Boolean).sort();
-    setConceptSuggestions(merged);
-    saveToStorage(CONCEPT_STORAGE_KEY, merged);
-  }, [allExpenses]);
+    setSessionConcepts([]);
+  }, [company?.id]);
+
+  const conceptSuggestions = useMemo(() => {
+    const fromExpenses = allExpenses.map(e => e.concept);
+    return Array.from(new Set([...fromExpenses, ...sessionConcepts]))
+      .filter(Boolean)
+      .sort();
+  }, [allExpenses, sessionConcepts]);
 
   const addConceptToHistory = (concept: string) => {
     if (!concept) return;
-    setConceptSuggestions(prev => {
-      const updated = Array.from(new Set([...prev, concept])).sort();
-      saveToStorage(CONCEPT_STORAGE_KEY, updated);
-      return updated;
-    });
+    setSessionConcepts(prev => (prev.includes(concept) ? prev : [...prev, concept]));
   };
 
   const filteredConcepts = useMemo(() => {
@@ -753,30 +763,31 @@ export default function UploadPage() {
     return conceptSuggestions.filter(c => c.toLowerCase().includes(q));
   }, [newExpense.concept, conceptSuggestions]);
 
-  // Expense category autocomplete — mirrors the concept pattern above.
-  // Categories come from (a) localStorage history and (b) every category ever
-  // saved on an expense row for this company.
-  const CATEGORY_STORAGE_KEY = 'fd_expense_categories';
-  const [categorySuggestions, setCategorySuggestions] = useState<string[]>(() => loadFromStorage(CATEGORY_STORAGE_KEY, [] as string[]));
+  // Expense category autocomplete — mismo patrón (y mismo fix de
+  // aislamiento) que los conceptos. Derivado puro de `allExpenses`
+  // (scopeado por empresa) + adiciones de sesión en memoria. Sin
+  // localStorage global que filtre categorías entre empresas.
+  const [sessionCategories, setSessionCategories] = useState<string[]>([]);
   const [showCategoryDropdown, setShowCategoryDropdown] = useState(false);
   const [showEditCategoryDropdown, setShowEditCategoryDropdown] = useState(false);
 
   useEffect(() => {
-    const all = allExpenses.map(e => e.category).filter((c): c is string => !!c && !!c.trim());
-    const stored = loadFromStorage<string[]>(CATEGORY_STORAGE_KEY, []);
-    const merged = Array.from(new Set([...stored, ...all])).filter(Boolean).sort((a, b) => a.localeCompare(b));
-    setCategorySuggestions(merged);
-    saveToStorage(CATEGORY_STORAGE_KEY, merged);
-  }, [allExpenses]);
+    setSessionCategories([]);
+  }, [company?.id]);
+
+  const categorySuggestions = useMemo(() => {
+    const fromExpenses = allExpenses
+      .map(e => e.category)
+      .filter((c): c is string => !!c && !!c.trim());
+    return Array.from(new Set([...fromExpenses, ...sessionCategories]))
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b));
+  }, [allExpenses, sessionCategories]);
 
   const addCategoryToHistory = (cat: string) => {
     const trimmed = cat.trim();
     if (!trimmed) return;
-    setCategorySuggestions(prev => {
-      const updated = Array.from(new Set([...prev, trimmed])).sort((a, b) => a.localeCompare(b));
-      saveToStorage(CATEGORY_STORAGE_KEY, updated);
-      return updated;
-    });
+    setSessionCategories(prev => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
   };
 
   const filteredCategoriesNew = useMemo(() => {
