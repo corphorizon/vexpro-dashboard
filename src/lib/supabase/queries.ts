@@ -163,6 +163,23 @@ export async function fetchExpenseTemplates(companyId: string): Promise<import('
   return data ?? [];
 }
 
+// Ocultamientos por período de plantillas fijas (migration-050). Cada fila
+// = una plantilla oculta en un período específico.
+export async function fetchExpenseTemplateHidden(
+  companyId: string,
+): Promise<import('../types').ExpenseTemplateHidden[]> {
+  const { data, error } = await supabase
+    .from('expense_template_period_hidden')
+    .select('id, company_id, template_id, period_id')
+    .eq('company_id', companyId);
+
+  if (error) {
+    console.error('Error fetching expense template hidden overrides:', error.message);
+    return [];
+  }
+  return data ?? [];
+}
+
 // ─── Channel Balances (snapshots por dia) ───
 //
 // Resolution rules (matched in /balances UI):

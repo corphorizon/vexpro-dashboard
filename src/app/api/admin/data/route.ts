@@ -198,6 +198,94 @@ export async function POST(request: NextRequest) {
         if (error) return fail(error, op);
         return NextResponse.json({ success: true });
       }
+      // Ocultar una plantilla fija en UN período (migration-050).
+      //   1. registra el override (idempotente sobre el UNIQUE);
+      //   2. borra la fila de egreso YA materializada de ese concepto en ese
+      //      período, para que desaparezca también en meses ya guardados.
+      case 'expense_template_hide': {
+        const { data: tpl } = await admin
+          .from('expense_templates')
+          .select('concept')
+          .eq('id', body.templateId)
+          .eq('company_id', companyId)
+          .maybeSingle();
+        if (!tpl) return NextResponse.json({ error: 'Plantilla no encontrada' }, { status: 404 });
+
+        const { error: hideErr } = await admin
+          .from('expense_template_period_hidden')
+          .upsert(
+            { company_id: companyId, template_id: body.templateId, period_id: body.periodId },
+            { onConflict: 'template_id,period_id', ignoreDuplicates: true },
+          );
+        if (hideErr) return fail(hideErr, op);
+
+        // Quitar la fila materializada de ese concepto (solo fijos).
+        const { error: delErr } = await admin
+          .from('expenses')
+          .delete()
+          .eq('company_id', companyId)
+          .eq('period_id', body.periodId)
+          .eq('concept', tpl.concept)
+          .eq('is_fixed', true);
+        if (delErr) return fail(delErr, op);
+        return NextResponse.json({ success: true });
+      }
+      // Mostrar de nuevo una plantilla oculta en un período.
+      //   1. elimina el override;
+      //   2. si el período ya tiene egresos (está guardado) y el concepto no
+      //      está presente, re-inserta la fila fija con la categoría heredada
+      //      del expense más reciente con el mismo concepto. Para períodos no
+      //      guardados no hace falta: el preview de /upload lo vuelve a mostrar.
+      case 'expense_template_unhide': {
+        const { error: unhideErr } = await admin
+          .from('expense_template_period_hidden')
+          .delete()
+          .eq('company_id', companyId)
+          .eq('template_id', body.templateId)
+          .eq('period_id', body.periodId);
+        if (unhideErr) return fail(unhideErr, op);
+
+        const { data: tpl } = await admin
+          .from('expense_templates')
+          .select('concept, amount')
+          .eq('id', body.templateId)
+          .eq('company_id', companyId)
+          .maybeSingle();
+        if (!tpl) return NextResponse.json({ success: true }); // plantilla borrada; nada que re-insertar
+
+        const { data: periodRows } = await admin
+          .from('expenses')
+          .select('id, concept')
+          .eq('company_id', companyId)
+          .eq('period_id', body.periodId);
+        const periodIsSaved = (periodRows ?? []).length > 0;
+        const alreadyPresent = (periodRows ?? []).some((r) => r.concept === tpl.concept);
+
+        if (periodIsSaved && !alreadyPresent) {
+          // Heredar categoría del expense más reciente con el mismo concepto.
+          const { data: latest } = await admin
+            .from('expenses')
+            .select('category, period_id')
+            .eq('company_id', companyId)
+            .eq('concept', tpl.concept)
+            .not('category', 'is', null)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          const { error: insErr } = await admin.from('expenses').insert({
+            company_id: companyId,
+            period_id: body.periodId,
+            concept: tpl.concept,
+            amount: tpl.amount,
+            paid: 0,
+            pending: tpl.amount,
+            is_fixed: true,
+            category: latest?.category ?? null,
+          });
+          if (insErr) return fail(insErr, op);
+        }
+        return NextResponse.json({ success: true });
+      }
 
       default:
         return NextResponse.json({ error: `Operación desconocida: ${op}` }, { status: 400 });

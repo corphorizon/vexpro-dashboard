@@ -58,19 +58,53 @@ export async function POST(request: NextRequest) {
     if (error) return apiError('admin/expenses', error, { status: 500 });
 
     // Sync de plantillas de egresos fijos (best-effort, no bloquea la respuesta).
-    const fixed = rows
+    //
+    // Cambio 2026-07-15 (vigencia): antes esto hacía upsert onConflict, que
+    // (a) re-activaba una plantilla que el usuario había desactivado, y
+    // (b) no seteaba vigencia. Ahora SOLO inserta plantillas NUEVAS con
+    // effective_from = año/mes del período que se está guardando — así una
+    // plantilla creada en julio no se materializa en meses anteriores. Las
+    // plantillas existentes NO se tocan aquí: su amount/active/vigencia se
+    // gestionan desde el panel de plantillas, y no queremos que un guardado
+    // de egresos las reactive ni pise su fecha.
+    const fixedConcepts = rows
       .filter((e) => e.is_fixed && e.concept?.trim())
-      .map((e) => ({
-        company_id: auth.companyId,
-        concept: e.concept,
-        amount: e.amount,
-        active: true,
-      }));
-    if (fixed.length > 0) {
-      const { error: tplErr } = await admin
+      .map((e) => ({ concept: e.concept.trim(), amount: e.amount }));
+
+    if (fixedConcepts.length > 0) {
+      // Vigencia de las plantillas nuevas = período destino.
+      const { data: period } = await admin
+        .from('periods')
+        .select('year, month')
+        .eq('id', periodId)
+        .eq('company_id', auth.companyId)
+        .maybeSingle();
+
+      // Deduplicar por concepto y filtrar las que ya existen.
+      const uniqueByConcept = new Map(fixedConcepts.map((e) => [e.concept, e]));
+      const concepts = Array.from(uniqueByConcept.keys());
+      const { data: existingTpls } = await admin
         .from('expense_templates')
-        .upsert(fixed, { onConflict: 'company_id,concept' });
-      if (tplErr) console.error('[admin/expenses] template sync failed (non-fatal):', tplErr.message);
+        .select('concept')
+        .eq('company_id', auth.companyId)
+        .in('concept', concepts);
+      const existing = new Set((existingTpls ?? []).map((t) => t.concept));
+
+      const toInsert = concepts
+        .filter((c) => !existing.has(c))
+        .map((c) => ({
+          company_id: auth.companyId,
+          concept: c,
+          amount: uniqueByConcept.get(c)!.amount,
+          active: true,
+          effective_from_year: period?.year ?? null,
+          effective_from_month: period?.month ?? null,
+        }));
+
+      if (toInsert.length > 0) {
+        const { error: tplErr } = await admin.from('expense_templates').insert(toInsert);
+        if (tplErr) console.error('[admin/expenses] template insert failed (non-fatal):', tplErr.message);
+      }
     }
 
     return NextResponse.json({ success: true });
