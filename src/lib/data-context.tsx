@@ -25,6 +25,7 @@ import type {
   P2PTransfer,
   Expense,
   ExpenseTemplate,
+  ExpenseTemplateHidden,
   PreoperativeExpense,
   OperatingIncome,
   BrokerBalance,
@@ -45,6 +46,7 @@ import {
   fetchWithdrawals,
   fetchExpenses,
   fetchExpenseTemplates,
+  fetchExpenseTemplateHidden,
   fetchPreoperativeExpenses,
   fetchOperatingIncome,
   fetchBrokerBalance,
@@ -108,6 +110,7 @@ export interface DataContextValue {
   partnerDistributions: PartnerDistribution[];
   preoperativeExpenses: PreoperativeExpense[];
   expenseTemplates: ExpenseTemplate[];
+  expenseTemplateHidden: ExpenseTemplateHidden[];
   allExpenses: Expense[];
   allDeposits: Deposit[];
   allWithdrawals: Withdrawal[];
@@ -183,6 +186,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [expenseTemplates, setExpenseTemplates] = useState<ExpenseTemplate[]>([]);
+  const [expenseTemplateHidden, setExpenseTemplateHidden] = useState<ExpenseTemplateHidden[]>([]);
   const [preoperativeExpenses, setPreoperativeExpenses] = useState<PreoperativeExpense[]>([]);
   const [operatingIncome, setOperatingIncome] = useState<OperatingIncome[]>([]);
   const [brokerBalance, setBrokerBalance] = useState<BrokerBalance[]>([]);
@@ -265,6 +269,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setWithdrawals([]);
       setExpenses([]);
       setExpenseTemplates([]);
+      setExpenseTemplateHidden([]);
       setPreoperativeExpenses([]);
       setOperatingIncome([]);
       setBrokerBalance([]);
@@ -327,13 +332,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const fetchRest = async (comp: { id: string }) => {
       try {
         const [
-          deps, wdrs, exps, expTpls, preExps, opInc,
+          deps, wdrs, exps, expTpls, expHidden, preExps, opInc,
           brkBal, finSts, ptns, ptnDist, pfs, p2p, liq, inv,
         ] = await Promise.all([
           fetchDeposits(comp.id),
           fetchWithdrawals(comp.id),
           fetchExpenses(comp.id),
           fetchExpenseTemplates(comp.id),
+          fetchExpenseTemplateHidden(comp.id),
           fetchPreoperativeExpenses(comp.id),
           fetchOperatingIncome(comp.id),
           fetchBrokerBalance(comp.id),
@@ -351,6 +357,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setWithdrawals(wdrs);
         setExpenses(exps);
         setExpenseTemplates(expTpls);
+        setExpenseTemplateHidden(expHidden);
         setPreoperativeExpenses(preExps);
         setOperatingIncome(opInc);
         setBrokerBalance(brkBal);
@@ -843,6 +850,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       partnerDistributions,
       preoperativeExpenses,
       expenseTemplates,
+      expenseTemplateHidden,
       allExpenses: expenses,
       allDeposits: deposits,
       allWithdrawals: withdrawals,
@@ -910,6 +918,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
           if (s.has('egresos')) {
             tasks.push(fetchExpenses(comp.id).then(setExpenses));
             tasks.push(fetchExpenseTemplates(comp.id).then(setExpenseTemplates));
+            tasks.push(fetchExpenseTemplateHidden(comp.id).then(setExpenseTemplateHidden));
           }
           if (s.has('ingresos')) {
             tasks.push(fetchOperatingIncome(comp.id).then(setOperatingIncome));
@@ -965,6 +974,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       partnerDistributions,
       preoperativeExpenses,
       expenseTemplates,
+      expenseTemplateHidden,
       expenses,
       deposits,
       withdrawals,

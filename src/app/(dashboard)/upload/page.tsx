@@ -255,7 +255,7 @@ function SavedRecentlyBadge({ at }: { at: Date }) {
 export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const { periods, allDeposits, allWithdrawals, allExpenses, expenseTemplates, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh, refreshSections } = useData();
+  const { periods, allDeposits, allWithdrawals, allExpenses, expenseTemplates, expenseTemplateHidden, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh, refreshSections } = useData();
   const isAdmin = user?.role === 'admin';
   const userCanAdd = canAdd(user);
   const userCanEdit = canEdit(user);
@@ -394,8 +394,32 @@ export default function UploadPage() {
       }
     }
 
-    const activeTemplates = expenseTemplates.filter(tpl => tpl.active);
-    return activeTemplates.map((tpl, i) => ({
+    // Vigencia + ocultamiento por mes (migration-050). El preview debe
+    // coincidir con lo que la RPC materialize_fixed_expenses inserta:
+    //   · effective_from: una plantilla creada en julio no aparece en meses
+    //     anteriores (NULL = siempre, retro-compat).
+    //   · hidden override: si la plantilla está oculta en ESTE período, no
+    //     se muestra (aunque esté activa).
+    const targetPeriod = periods.find(p => p.id === periodId);
+    const hiddenTplIds = new Set(
+      expenseTemplateHidden
+        .filter(h => h.period_id === periodId)
+        .map(h => h.template_id),
+    );
+    const applicableTemplates = expenseTemplates.filter(tpl => {
+      if (!tpl.active) return false;
+      if (hiddenTplIds.has(tpl.id)) return false;
+      // effective_from: NULL = siempre. Si tiene fecha, el período destino
+      // debe ser >= a ella.
+      if (tpl.effective_from_year != null && targetPeriod) {
+        const efY = tpl.effective_from_year;
+        const efM = tpl.effective_from_month ?? 1;
+        if (targetPeriod.year < efY) return false;
+        if (targetPeriod.year === efY && targetPeriod.month < efM) return false;
+      }
+      return true;
+    });
+    return applicableTemplates.map((tpl, i) => ({
       id: `tpl-${tpl.id}-${i}`,
       concept: tpl.concept,
       amount: tpl.amount,
@@ -404,7 +428,7 @@ export default function UploadPage() {
       is_fixed: true,
       category: conceptCategoryMap.get(tpl.concept) ?? null,
     }));
-  }, [allExpenses, expenseTemplates, periods]);
+  }, [allExpenses, expenseTemplates, expenseTemplateHidden, periods]);
 
   const loadIncomeForPeriod = useCallback((periodId: string): IncomeRow => {
     const periodIncome = allOperatingIncome.find(oi => oi.period_id === periodId);
@@ -2371,8 +2395,16 @@ export default function UploadPage() {
             </div>
           )}
 
-          {/* Plantillas de Egresos Fijos */}
-          <FixedExpenseTemplatesPanel />
+          {/* Plantillas de Egresos Fijos — el ocultar/mostrar aplica al
+              período seleccionado (migration-050). Tras un cambio recargamos
+              egresos + plantillas + overrides para reflejar el nuevo estado.
+              Solo re-sincroniza si la sección no está sucia (el sync effect
+              respeta dirtySections). */}
+          <FixedExpenseTemplatesPanel
+            selectedPeriodId={selectedPeriod}
+            selectedPeriodLabel={periodLabel}
+            onChanged={() => { void refreshSections(['egresos']); }}
+          />
         </Card>
       )}
 

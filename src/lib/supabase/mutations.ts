@@ -166,6 +166,15 @@ export async function deleteExpenseTemplate(id: string): Promise<void> {
   await postData('expense_template_delete', { id });
 }
 
+// Ocultar/mostrar una plantilla fija en UN período (migration-050).
+export async function hideExpenseTemplateForPeriod(templateId: string, periodId: string): Promise<void> {
+  await postData('expense_template_hide', { templateId, periodId });
+}
+
+export async function unhideExpenseTemplateForPeriod(templateId: string, periodId: string): Promise<void> {
+  await postData('expense_template_unhide', { templateId, periodId });
+}
+
 // ─── Channel Balances (snapshots por dia) ───
 
 // Upsert nativo en UNA llamada (ON CONFLICT sobre el UNIQUE existente).

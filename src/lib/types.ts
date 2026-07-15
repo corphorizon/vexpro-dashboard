@@ -79,6 +79,22 @@ export interface ExpenseTemplate {
   amount: number;
   active: boolean;
   sort_order: number;
+  // Vigencia (migration-050): primer año/mes en que la plantilla aplica.
+  // null = "siempre" (plantillas creadas antes de la feature). Una
+  // plantilla nueva se crea con la vigencia = período actual, así que no
+  // se materializa en meses anteriores.
+  effective_from_year: number | null;
+  effective_from_month: number | null;
+}
+
+// Ocultamiento por período (migration-050). La existencia de una fila
+// significa "esta plantilla está oculta en ESTE período". Permite esconder
+// un fijo en un mes puntual sin afectar los demás.
+export interface ExpenseTemplateHidden {
+  id: string;
+  company_id: string;
+  template_id: string;
+  period_id: string;
 }
 
 export interface ChannelBalance {
