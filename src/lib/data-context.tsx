@@ -204,6 +204,14 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // only the newest call's results get committed — prevents "flash of old data".
   const loadGenerationRef = useRef(0);
 
+  // Última company cuyos datos se cargaron. Permite distinguir "cambio
+  // de empresa" (→ purgar datasets Stage-2 del tenant anterior) de un
+  // simple retry/refresh de la misma empresa (→ conservar datos).
+  // Sentinel inicial distinto de null para que el primer load también
+  // registre la company sin tratar null (superadmin sin empresa) como
+  // "ya cargada".
+  const lastLoadedCompanyRef = useRef<string | null | undefined>(undefined);
+
   // ─── Fetch all data ───
 
   // Fetches everything. If `silent` is true, the UI stays mounted and we
@@ -247,6 +255,36 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }, LOAD_WATCHDOG_MS);
     }
 
+    // Limpia TODOS los datasets Stage-2. Se usa al cambiar de empresa:
+    // sin esto, tras el splash los hijos montaban con los `periods`
+    // NUEVOS pero allDeposits/allWithdrawals/etc. de la empresa
+    // ANTERIOR hasta que fetchRest resolvía (auditoría multi-tenant
+    // 2026-07-15 — ventana de fuga visual cross-tenant en viewing-as).
+    const clearStageTwoData = () => {
+      setDeposits([]);
+      setWithdrawals([]);
+      setExpenses([]);
+      setExpenseTemplates([]);
+      setPreoperativeExpenses([]);
+      setOperatingIncome([]);
+      setBrokerBalance([]);
+      setFinancialStatus([]);
+      setPartners([]);
+      setPartnerDistributions([]);
+      setPropFirmSales([]);
+      setP2PTransfers([]);
+      setLiquidityMovements([]);
+      setInvestments([]);
+    };
+
+    // Cambio de tenant detectado → purgar los datasets del anterior ANTES
+    // de cargar. lastLoadedCompanyRef distingue "cambio de empresa" de
+    // "retry de la misma" (un Reintentar no debe borrar datos válidos).
+    if (lastLoadedCompanyRef.current !== effectiveCompanyId) {
+      lastLoadedCompanyRef.current = effectiveCompanyId;
+      clearStageTwoData();
+    }
+
     // ── Stage 1: critical data (with timeout) ──
     // These are the tables needed for the UI to render immediately.
     const fetchCritical = async () => {
@@ -260,6 +298,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setEmployees([]);
         setCommercialProfiles([]);
         setMonthlyResults([]);
+        // Stage-2 ya se purgó arriba al detectar el cambio de tenant.
         return null;
       }
 

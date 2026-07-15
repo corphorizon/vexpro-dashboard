@@ -20,6 +20,46 @@ export async function POST(request: NextRequest) {
     const company_id = auth.companyId;
     const admin = createAdminClient();
 
+    // ── Tenant-ownership validation (auditoría 2026-07-15) ──
+    // period_id / head_id / profile_id vienen del body. Sin esta
+    // validación, un admin de la empresa A podía enviar IDs de la
+    // empresa B y (a) actualizar rows de B vía el UPDATE por id, o
+    // (b) insertar rows contaminados (period de B bajo company A).
+    // Mismo patrón de fetch+check que commercial-profiles ya usa.
+    const { data: periodRow } = await admin
+      .from('periods')
+      .select('id, company_id')
+      .eq('id', period_id)
+      .maybeSingle();
+    if (!periodRow || periodRow.company_id !== company_id) {
+      return NextResponse.json(
+        { error: 'El período no pertenece a tu empresa' },
+        { status: 403 },
+      );
+    }
+
+    const referencedProfileIds = Array.from(
+      new Set(
+        entries.flatMap((e: { profile_id?: string; head_id?: string }) => [
+          e.profile_id,
+          e.head_id || head_id,
+        ]).filter(Boolean),
+      ),
+    );
+    const { data: ownedProfiles } = await admin
+      .from('commercial_profiles')
+      .select('id')
+      .eq('company_id', company_id)
+      .in('id', referencedProfileIds);
+    const ownedIds = new Set((ownedProfiles ?? []).map((p) => p.id));
+    const foreign = referencedProfileIds.filter((id) => !ownedIds.has(id));
+    if (foreign.length > 0) {
+      return NextResponse.json(
+        { error: 'Uno o más perfiles no pertenecen a tu empresa' },
+        { status: 403 },
+      );
+    }
+
     for (const entry of entries) {
       const entryHeadId = entry.head_id || head_id;
       const row = {

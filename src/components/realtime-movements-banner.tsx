@@ -536,6 +536,10 @@ export function useApiTotals(
           if (from) qs.set('from', from);
           if (to) qs.set('to', to);
           if (walletId) qs.set('walletId', walletId);
+          // apiFetch = withActiveCompany + manejo de errores. Este era el
+          // ÚNICO fetch del banner sin scope de tenant (auditoría
+          // 2026-07-15) — useApiTotals alimentaba los cards de Movimientos
+          // con la empresa equivocada en viewing-as.
           const res = await apiFetch(
             `/api/integrations/persisted-movements?${qs.toString()}`,
             { signal: controller.signal },
