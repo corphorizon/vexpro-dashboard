@@ -57,6 +57,25 @@ export async function POST(request: NextRequest) {
     if (action === 'update') {
       if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 });
       const safe = pickAllowed(body);
+
+      // Detectar cambio de HEAD para reconciliar el registro del período ACTUAL
+      // y no dejar registros huérfanos bajo el head viejo. Solo el período
+      // actual (el último) se mueve/limpia; los meses pasados quedan como
+      // estaban (historia intacta) — es la política elegida ("solo del mes
+      // actual en adelante"). Leemos el head viejo ANTES de actualizar.
+      let headReassign: { oldHead: string; newHead: string | null } | null = null;
+      if ('head_id' in safe) {
+        const { data: existing } = await admin
+          .from('commercial_profiles')
+          .select('head_id')
+          .eq('id', id)
+          .eq('company_id', company_id)
+          .maybeSingle();
+        const oldHead = existing?.head_id ?? null;
+        const newHead = (safe.head_id as string | null) ?? null;
+        if (oldHead && oldHead !== newHead) headReassign = { oldHead, newHead };
+      }
+
       const { data, error } = await admin
         .from('commercial_profiles')
         .update(safe)
@@ -73,6 +92,62 @@ export async function POST(request: NextRequest) {
           { status: 404 },
         );
       }
+
+      // Reconciliar el período actual tras el cambio de head. Best-effort: si
+      // algo falla, el perfil ya se actualizó — no reventamos la respuesta.
+      if (headReassign) {
+        try {
+          const { oldHead, newHead } = headReassign;
+          // Período actual = el más reciente de la empresa (año/mes desc).
+          const { data: latest } = await admin
+            .from('periods')
+            .select('id')
+            .eq('company_id', company_id)
+            .order('year', { ascending: false })
+            .order('month', { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (latest) {
+            // Registro del período actual bajo el head VIEJO (posible huérfano).
+            const { data: oldRows } = await admin
+              .from('commercial_monthly_results')
+              .select('id')
+              .eq('profile_id', id)
+              .eq('company_id', company_id)
+              .eq('period_id', latest.id)
+              .eq('head_id', oldHead);
+            if (oldRows && oldRows.length > 0) {
+              // ¿El head NUEVO ya tiene registro en el período actual?
+              let newExists = false;
+              if (newHead) {
+                const { data: newRows } = await admin
+                  .from('commercial_monthly_results')
+                  .select('id')
+                  .eq('profile_id', id)
+                  .eq('company_id', company_id)
+                  .eq('period_id', latest.id)
+                  .eq('head_id', newHead)
+                  .limit(1);
+                newExists = !!(newRows && newRows.length > 0);
+              }
+              const oldIds = oldRows.map((r) => r.id);
+              if (newExists) {
+                // Ya existe bajo el nuevo head → borrar el huérfano del viejo.
+                await admin.from('commercial_monthly_results').delete().in('id', oldIds);
+              } else {
+                // Mover el registro del período actual al nuevo head (preserva datos).
+                await admin
+                  .from('commercial_monthly_results')
+                  .update({ head_id: newHead })
+                  .in('id', oldIds);
+              }
+            }
+          }
+        } catch (reconErr) {
+          console.warn('[admin/commercial-profiles] reconciliacion de head fallo (no fatal):', reconErr);
+        }
+      }
+
       return NextResponse.json({ success: true });
     }
 
