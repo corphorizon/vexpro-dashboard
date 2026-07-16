@@ -264,7 +264,7 @@ export default function PerfilPage() {
                 <span className="px-3 py-2 text-sm">{user.name}</span>
                 <button
                   onClick={() => { setName(user.name); setEditingName(true); }}
-                  className="text-xs text-[var(--color-primary)] hover:underline"
+                  className="text-xs text-primary dark:text-accent hover:underline"
                 >
                   {t('profile.edit')}
                 </button>

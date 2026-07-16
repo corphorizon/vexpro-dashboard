@@ -446,7 +446,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
             )}
             <a
               href={`/superadmin/companies/${user.company_id}?tab=audit`}
-              className="inline-block mt-2 text-xs text-[var(--color-primary)] hover:underline"
+              className="inline-block mt-2 text-xs text-primary dark:text-accent hover:underline"
             >
               Ver historial completo →
             </a>

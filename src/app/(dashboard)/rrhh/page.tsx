@@ -311,7 +311,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                 type="checkbox"
                 checked={pnlSpecialMode}
                 onChange={(e) => setPnlSpecialMode(e.target.checked)}
-                className="mt-0.5 h-4 w-4 rounded border-border text-[var(--color-primary)] focus:ring-2 focus:ring-[var(--color-secondary)]"
+                className="mt-0.5 h-4 w-4 rounded border-border text-primary dark:text-accent focus:ring-2 focus:ring-[var(--color-secondary)]"
               />
               <label htmlFor="pnl-special-mode" className="flex-1 cursor-pointer">
                 <span className="block text-sm font-medium">{t('hr.pnlSpecialMode')}</span>
@@ -1295,7 +1295,7 @@ export default function RRHHPage() {
                 <Link
                   href={`/rrhh/perfil?id=${leader.id}`}
                   className={cn(
-                    'text-base sm:text-lg font-semibold hover:text-[var(--color-primary)] transition-colors',
+                    'text-base sm:text-lg font-semibold hover:text-primary dark:text-accent transition-colors',
                     firedNameClass(leader),
                   )}
                 >
@@ -1897,7 +1897,7 @@ export default function RRHHPage() {
                       return (
                         <tr key={p.id} className="border-b border-border/50">
                           <td className="py-2.5 font-medium">
-                            <Link href={`/rrhh/perfil?id=${p.id}`} className="hover:text-[var(--color-primary)]">{p.name}</Link>
+                            <Link href={`/rrhh/perfil?id=${p.id}`} className="hover:text-primary dark:text-accent">{p.name}</Link>
                           </td>
                           <td className="py-2.5">
                             <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', getRoleBadge(p.role))}>
@@ -1922,7 +1922,7 @@ export default function RRHHPage() {
                     <td className="py-3 text-right">{formatCurrency(filteredResults.reduce((s, r) => s + r.commissions_earned, 0))}</td>
                     <td className="py-3 text-right">{filteredResults.reduce((s, r) => s + r.bonus, 0) > 0 ? formatCurrency(filteredResults.reduce((s, r) => s + r.bonus, 0)) : '-'}</td>
                     <td className="py-3 text-right">{filteredResults.reduce((s, r) => s + r.salary_paid, 0) > 0 ? formatCurrency(filteredResults.reduce((s, r) => s + r.salary_paid, 0)) : '-'}</td>
-                    <td className="py-3 text-right text-[var(--color-primary)]">{formatCurrency(totalCommissionsFiltered)}</td>
+                    <td className="py-3 text-right text-primary dark:text-accent">{formatCurrency(totalCommissionsFiltered)}</td>
                   </tr>
                 </tfoot>
               </table>

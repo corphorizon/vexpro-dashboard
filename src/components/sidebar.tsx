@@ -336,9 +336,11 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                   )}
                 >
                   <span className="flex items-center gap-3">
+                    {/* El sidebar es SIEMPRE oscuro (slate-900) en ambos temas:
+                        navy acá era invisible — acento claro fijo. */}
                     <SectionIcon className={cn(
                       'w-4 h-4 shrink-0',
-                      hasActiveChild ? 'text-[var(--color-primary)]' : ''
+                      hasActiveChild ? 'text-[#60A5FA]' : ''
                     )} />
                     <span className="uppercase tracking-wide text-[11px]">{t(section.i18nKey)}</span>
                   </span>

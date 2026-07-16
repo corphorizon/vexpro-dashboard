@@ -297,7 +297,7 @@ export default function Setup2FAPage() {
 
               <button
                 onClick={() => { setStep('scan'); setError(''); }}
-                className="w-full text-center text-sm text-[var(--color-primary)] hover:underline"
+                className="w-full text-center text-sm text-primary dark:text-accent hover:underline"
               >
                 Volver al código QR
               </button>

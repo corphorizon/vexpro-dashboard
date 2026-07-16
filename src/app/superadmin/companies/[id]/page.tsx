@@ -111,7 +111,7 @@ export default function EditCompanyPage() {
           onClick={() => setActiveTab('settings')}
           className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'settings'
-              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              ? 'border-[var(--color-primary)] text-primary dark:text-accent'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
@@ -121,7 +121,7 @@ export default function EditCompanyPage() {
           onClick={() => setActiveTab('apis')}
           className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'apis'
-              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              ? 'border-[var(--color-primary)] text-primary dark:text-accent'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >
@@ -131,7 +131,7 @@ export default function EditCompanyPage() {
           onClick={() => setActiveTab('audit')}
           className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
             activeTab === 'audit'
-              ? 'border-[var(--color-primary)] text-[var(--color-primary)]'
+              ? 'border-[var(--color-primary)] text-primary dark:text-accent'
               : 'border-transparent text-muted-foreground hover:text-foreground'
           }`}
         >

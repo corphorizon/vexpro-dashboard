@@ -97,7 +97,7 @@ export default function PerfilPage() {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p>{t('hr.noProfileSpecified')}</p>
-        <Link href="/rrhh" className="text-[var(--color-primary)] hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
+        <Link href="/rrhh" className="text-primary dark:text-accent hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
       </div>
     );
   }
@@ -106,7 +106,7 @@ export default function PerfilPage() {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p>{t('hr.profileNotFound')}</p>
-        <Link href="/rrhh" className="text-[var(--color-primary)] hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
+        <Link href="/rrhh" className="text-primary dark:text-accent hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
       </div>
     );
   }
@@ -555,7 +555,7 @@ export default function PerfilPage() {
                 {subordinates.map(sub => (
                   <tr key={sub.id} className="border-b border-border/50">
                     <td className="py-2.5">
-                      <Link href={`/rrhh/perfil?id=${sub.id}`} className="font-medium hover:text-[var(--color-primary)] transition-colors">
+                      <Link href={`/rrhh/perfil?id=${sub.id}`} className="font-medium hover:text-primary dark:text-accent transition-colors">
                         {sub.name}
                       </Link>
                     </td>
@@ -705,7 +705,7 @@ export default function PerfilPage() {
                   <td className="py-3 text-right">{formatCurrency(totalCommissions)}</td>
                   <td className="py-3 text-right">{totalBonus > 0 ? formatCurrency(totalBonus) : '-'}</td>
                   <td className="py-3 text-right">{totalSalary > 0 ? formatCurrency(totalSalary) : '-'}</td>
-                  <td className="py-3 text-right text-[var(--color-primary)]">{formatCurrency(totalEarned)}</td>
+                  <td className="py-3 text-right text-primary dark:text-accent">{formatCurrency(totalEarned)}</td>
                 </tr>
               </tfoot>
             </table>

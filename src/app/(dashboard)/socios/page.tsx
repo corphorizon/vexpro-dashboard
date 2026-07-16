@@ -916,7 +916,7 @@ export default function SociosPage() {
               <button
                 onClick={() => handleSaveReserve(true)}
                 disabled={saving}
-                className="w-full px-4 py-2.5 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-sm font-medium hover:bg-[var(--color-primary)]/10 disabled:opacity-50 transition-colors"
+                className="w-full px-4 py-2.5 rounded-lg border border-[var(--color-primary)] text-primary dark:text-accent text-sm font-medium hover:bg-[var(--color-primary)]/10 disabled:opacity-50 transition-colors"
               >
                 {saving ? 'Guardando...' : t('partners.reserveApplyAll')}
               </button>

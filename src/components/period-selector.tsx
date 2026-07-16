@@ -107,7 +107,7 @@ export function PeriodSelector() {
 
       {/* Consolidated mode indicator */}
       {mode === 'consolidated' && (
-        <span className="px-2 py-1 text-xs font-medium bg-[var(--color-primary)]/10 text-[var(--color-primary)] rounded-md">
+        <span className="px-2 py-1 text-xs font-medium bg-[var(--color-primary)]/10 text-primary dark:text-accent rounded-md">
           {consolidationLabel}
         </span>
       )}

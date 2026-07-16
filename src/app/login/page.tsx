@@ -114,11 +114,11 @@ export default function LoginPage() {
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           {step === 'credentials' ? (
             <>
-              <h2 className="text-lg font-semibold mb-6">Sign in to your account</h2>
+              <h2 className="text-lg font-semibold mb-6">Iniciá sesión en tu cuenta</h2>
 
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
-                  <label htmlFor="email" className="block text-sm font-medium mb-1.5">
+                  <label htmlFor="email" className="block text-sm font-medium mb-1.5"> 
                     Email
                   </label>
                   <input
@@ -126,7 +126,7 @@ export default function LoginPage() {
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="you@company.com"
+                    placeholder="tu@empresa.com"
                     required
                     autoComplete="email"
                     className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
@@ -135,7 +135,7 @@ export default function LoginPage() {
 
                 <div>
                   <label htmlFor="password" className="block text-sm font-medium mb-1.5">
-                    Password
+                    Contraseña
                   </label>
                   <div className="relative">
                     <input
@@ -151,7 +151,7 @@ export default function LoginPage() {
                     <button
                       type="button"
                       onClick={() => setShowPassword(v => !v)}
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                      aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
                       aria-pressed={showPassword}
                       className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] rounded-r-lg"
                     >
@@ -171,14 +171,14 @@ export default function LoginPage() {
                   disabled={loading}
                   className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50"
                 >
-                  {loading ? 'Signing in…' : 'Sign in'}
+                  {loading ? 'Ingresando…' : 'Iniciar sesión'}
                 </button>
               </form>
 
               <div className="mt-4 text-center">
                 <button
                   onClick={() => setShowRecovery(true)}
-                  className="inline-flex items-center gap-1 text-sm font-semibold text-[var(--color-primary)] hover:underline"
+                  className="inline-flex items-center gap-1 text-sm font-semibold text-primary dark:text-accent hover:underline"
                 >
                   ¿Olvidaste tu contraseña?
                 </button>
@@ -229,7 +229,7 @@ export default function LoginPage() {
               <div className="mt-4 text-center space-y-2">
                 <button
                   onClick={handleBackToCredentials}
-                  className="flex items-center gap-2 mx-auto text-sm text-[var(--color-primary)] hover:underline"
+                  className="flex items-center gap-2 mx-auto text-sm text-primary dark:text-accent hover:underline"
                 >
                   <ArrowLeft className="w-4 h-4" />
                   Back to sign in
@@ -291,7 +291,7 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
               <p className="text-sm text-muted-foreground">
                 The link will expire in 1 hour. If you don&apos;t receive it, check spam or contact your administrator.
               </p>
-              <button onClick={onBack} className="flex items-center gap-2 text-sm text-[var(--color-primary)] hover:underline">
+              <button onClick={onBack} className="flex items-center gap-2 text-sm text-primary dark:text-accent hover:underline">
                 <ArrowLeft className="w-4 h-4" />
                 Back to sign in
               </button>
@@ -308,7 +308,7 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
                   type="email"
                   value={email}
                   onChange={e => setEmail(e.target.value)}
-                  placeholder="you@company.com"
+                  placeholder="tu@empresa.com"
                   required
                   autoFocus
                   autoComplete="email"

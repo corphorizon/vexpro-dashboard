@@ -1086,7 +1086,7 @@ export default function RetirosPropFirmPage() {
         <Card className="p-0 overflow-hidden">
           <div className="flex items-center justify-between px-5 py-4 border-b border-border">
             <h3 className="font-semibold flex items-center gap-2">
-              <FileSearch className="w-4 h-4 text-[var(--color-primary)]" />
+              <FileSearch className="w-4 h-4 text-primary dark:text-accent" />
               Historial de Revisiones
               <span className="text-sm font-normal text-muted-foreground">({history.length} registros)</span>
             </h3>
@@ -1238,7 +1238,7 @@ export default function RetirosPropFirmPage() {
       {/* Loading */}
       {loading && (
         <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <Loader2 className="w-8 h-8 animate-spin text-[var(--color-primary)]" />
+          <Loader2 className="w-8 h-8 animate-spin text-primary dark:text-accent" />
           <p className="text-sm text-muted-foreground">{t('risk.analyzing')}</p>
         </div>
       )}
@@ -1281,7 +1281,7 @@ export default function RetirosPropFirmPage() {
               </button>
               <button
                 onClick={() => { setResult(null); setError(null); setFileName(null); }}
-                className="text-sm text-[var(--color-primary)] hover:underline"
+                className="text-sm text-primary dark:text-accent hover:underline"
               >
                 {t('risk.newUpload')}
               </button>

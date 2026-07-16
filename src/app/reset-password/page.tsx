@@ -152,7 +152,7 @@ function ResetPasswordInner() {
           </p>
           <button
             onClick={() => router.push('/login')}
-            className="text-sm text-[var(--color-primary)] hover:underline"
+            className="text-sm text-primary dark:text-accent hover:underline"
           >
             ← Volver al inicio de sesión
           </button>

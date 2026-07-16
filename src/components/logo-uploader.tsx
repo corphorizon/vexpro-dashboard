@@ -158,7 +158,7 @@ export function LogoUploader({
                 <button
                   type="button"
                   onClick={() => inputRef.current?.click()}
-                  className="text-[var(--color-primary)] hover:underline font-medium"
+                  className="text-primary dark:text-accent hover:underline font-medium"
                 >
                   elige un archivo
                 </button>

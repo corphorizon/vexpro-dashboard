@@ -434,7 +434,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                   disabled={pinBusy}
                   className={`h-8 inline-flex items-center gap-1 px-2 text-xs rounded-md border transition-colors disabled:opacity-50 ${
                     pinned
-                      ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-[var(--color-primary)]'
+                      ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-primary dark:text-accent'
                       : 'border-border bg-card text-muted-foreground hover:text-foreground'
                   }`}
                   title={pinned ? 'Quitar del conteo de totales' : 'Fijar para que cuente en los totales'}

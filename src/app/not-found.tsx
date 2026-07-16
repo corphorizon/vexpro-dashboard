@@ -6,7 +6,7 @@ export default function NotFound() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-background px-4">
       <div className="max-w-md w-full text-center rounded-2xl border border-border bg-card p-8 shadow-sm">
-        <p className="text-5xl font-bold text-[var(--color-primary)] tabular-nums">404</p>
+        <p className="text-5xl font-bold text-primary dark:text-accent tabular-nums">404</p>
         <h1 className="mt-3 text-lg font-semibold text-foreground">Página no encontrada</h1>
         <p className="mt-2 text-sm text-muted-foreground">
           La página que buscás no existe o fue movida.

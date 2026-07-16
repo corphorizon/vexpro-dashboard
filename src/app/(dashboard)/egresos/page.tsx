@@ -411,7 +411,7 @@ export default function EgresosPage() {
                 onClick={cycleSortState}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
                   sortState !== 'default'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-info/10'
+                    ? 'border-[var(--color-primary)] text-primary dark:text-accent bg-info/10'
                     : 'border-border hover:bg-muted'
                 }`}
                 title={

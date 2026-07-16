@@ -8,7 +8,9 @@ import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 import { isDerivedBrokerPeriod, computeDerivedBroker } from '@/lib/broker-logic';
 import { apiFetch } from '@/lib/api-fetch';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
+import { EmptyState } from '@/components/ui/empty-state';
+import { formatCurrency } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // MonthlyChart — bars per period for deposits / retiros / egresos.
@@ -172,6 +174,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
           <button
             onClick={() => setStartIndex(Math.max(0, startIndex - maxVisible))}
             disabled={!canGoBack}
+            aria-label="Períodos anteriores"
             className="p-1 rounded-md border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
@@ -179,6 +182,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
           <button
             onClick={() => setStartIndex(Math.min(allPeriods.length - maxVisible, startIndex + maxVisible))}
             disabled={!canGoForward}
+            aria-label="Períodos siguientes"
             className="p-1 rounded-md border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronRight className="w-4 h-4" />
@@ -186,21 +190,33 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
         </div>
       )}
 
-      <ResponsiveContainer width="100%" height={isMobile ? 250 : 350}>
-        <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis dataKey="name" tick={{ fontSize: isMobile ? 10 : 12, fill: 'var(--muted-foreground)' }} />
-          <YAxis tick={{ fontSize: isMobile ? 10 : 12, fill: 'var(--muted-foreground)' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} width={isMobile ? 45 : 60} />
-          <Tooltip
-            formatter={(value) => [`$${Number(value).toLocaleString('en-US', { minimumFractionDigits: 2 })}`]}
-            contentStyle={{ borderRadius: '8px', border: '1px solid var(--border)', backgroundColor: 'var(--card)', color: 'var(--foreground)', fontSize: '12px' }}
-          />
-          <Legend wrapperStyle={{ fontSize: isMobile ? '10px' : '12px' }} />
-          <Bar dataKey="Depósitos" fill="#3B82F6" radius={[4, 4, 0, 0]} />
-          <Bar dataKey="Retiros" fill="#EF4444" radius={[4, 4, 0, 0]} />
-          <Bar dataKey="Egresos" fill="#F59E0B" radius={[4, 4, 0, 0]} />
-        </BarChart>
-      </ResponsiveContainer>
+      {data.length === 0 ? (
+        <EmptyState
+          icon={BarChart3}
+          title="Sin datos para graficar"
+          description="Seleccioná al menos un período con movimientos para ver la comparativa mensual."
+        />
+      ) : (
+        <ResponsiveContainer width="100%" height={isMobile ? 250 : 350}>
+          <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+            <XAxis dataKey="name" tick={{ fontSize: isMobile ? 10 : 12, fill: 'var(--muted-foreground)' }} />
+            <YAxis tick={{ fontSize: isMobile ? 10 : 12, fill: 'var(--muted-foreground)' }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} width={isMobile ? 45 : 60} />
+            <Tooltip
+              formatter={(value) => [formatCurrency(Number(value))]}
+              contentStyle={{ borderRadius: '8px', border: '1px solid var(--border)', backgroundColor: 'var(--card)', color: 'var(--foreground)', fontSize: '12px', boxShadow: 'var(--elevation-2)' }}
+              cursor={{ fill: 'var(--muted)', opacity: 0.5 }}
+            />
+            <Legend wrapperStyle={{ fontSize: isMobile ? '10px' : '12px' }} />
+            {/* Colores via tokens semánticos: entrada=info, salida=negative,
+                gasto=warning — flipan solos en dark mode (antes hex crudos
+                que quedaban apagados sobre fondo oscuro). */}
+            <Bar dataKey="Depósitos" fill="var(--info)" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="Retiros" fill="var(--negative)" radius={[4, 4, 0, 0]} />
+            <Bar dataKey="Egresos" fill="var(--warning)" radius={[4, 4, 0, 0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      )}
     </div>
   );
 });

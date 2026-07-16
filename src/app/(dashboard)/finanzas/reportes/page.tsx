@@ -763,7 +763,7 @@ export default function ReportesPage() {
           Sin datos para el período seleccionado.{' '}
           <button
             onClick={() => void load()}
-            className="underline text-[var(--color-primary)]"
+            className="underline text-primary dark:text-accent"
           >
             Reintentar
           </button>
