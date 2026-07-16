@@ -277,9 +277,9 @@ export default function ReportesPage() {
       ['Período', 'Hasta', to],
       ['Depósitos', 'Total depósitos del rango', data.deposits_withdrawals.range.total_deposits],
       ['Depósitos', 'Total retiros del rango', data.deposits_withdrawals.range.total_withdrawals],
-      ['Depósitos', 'Net Deposit del rango', data.deposits_withdrawals.range.net_deposit],
-      ['Depósitos', 'Net Deposit del mes', monthNet],
-      ['Depósitos', 'Net Deposit mes anterior', prevNet],
+      ['Depósitos', 'Depósito Neto del rango', data.deposits_withdrawals.range.net_deposit],
+      ['Depósitos', 'Depósito Neto del mes', monthNet],
+      ['Depósitos', 'Depósito Neto mes anterior', prevNet],
       ['CRM Users', 'Nuevos usuarios del rango', data.crm_users.new_users_in_range],
       ['CRM Users', 'Nuevos usuarios del mes', data.crm_users.new_users_this_month],
       ['CRM Users', 'Total usuarios', data.crm_users.total_users],
@@ -495,7 +495,7 @@ export default function ReportesPage() {
             {/* Range net + monthly context */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard
-                label="Net Deposit del rango"
+                label="Depósito Neto del rango"
                 value={formatCurrency(rangeNet)}
                 tone={rangeNet >= 0 ? 'positive' : 'negative'}
                 hint={
@@ -505,13 +505,13 @@ export default function ReportesPage() {
                 }
               />
               <StatCard
-                label="Net Deposit mes actual"
+                label="Depósito Neto mes actual"
                 value={formatCurrency(monthNet)}
                 tone={monthNet >= 0 ? 'positive' : 'negative'}
                 hint={<VariationBadge pct={monthVsPrev} />}
               />
               <StatCard
-                label="Net Deposit mes anterior"
+                label="Depósito Neto mes anterior"
                 value={formatCurrency(prevNet)}
                 tone="neutral"
               />

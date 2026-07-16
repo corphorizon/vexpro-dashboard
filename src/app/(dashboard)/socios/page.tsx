@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
+import { PageHeader } from '@/components/ui/page-header';
 import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
 import { PeriodSelector } from '@/components/period-selector';
@@ -295,12 +296,11 @@ export default function SociosPage() {
   return (
     <div className="space-y-6">
       {Modal2FA}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('partners.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('partners.subtitle')}</p>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
+      <PageHeader
+        title={t('partners.title')}
+        subtitle={t('partners.subtitle')}
+        icon={Users}
+        actions={<>
           <button
             onClick={() => verify2FA(() => {
               const headers = ['Socio', 'Porcentaje', 'Monto'];
@@ -431,8 +431,8 @@ export default function SociosPage() {
             </button>
           )}
           <PeriodSelector />
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Success / Error messages */}
       {successMsg && (

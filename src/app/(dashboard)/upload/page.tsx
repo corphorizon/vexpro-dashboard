@@ -1781,7 +1781,8 @@ export default function UploadPage() {
       {section === 'depositos' && (
         <Card>
           <h2 className="text-lg font-semibold mb-4">{t('upload.deposits')} — {periodLabel}</h2>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.channel')}</th>
@@ -1832,6 +1833,7 @@ export default function UploadPage() {
               </tr>
             </tfoot>
           </table>
+          </div>
 
           {/* Ventas Prop Firm — separate field, not summed into total */}
           <div className="mt-4 pt-4 border-t border-border">
@@ -1863,7 +1865,8 @@ export default function UploadPage() {
       {section === 'retiros' && (
         <Card>
           <h2 className="text-lg font-semibold mb-4">{t('upload.withdrawals')} — {periodLabel}</h2>
-          <table className="w-full text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="border-b border-border">
                 <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
@@ -1961,6 +1964,7 @@ export default function UploadPage() {
               )}
             </tfoot>
           </table>
+          </div>
 
           {/* Transferencias P2P — separate field, not summed into total */}
           <div className="mt-4 pt-4 border-t border-border">

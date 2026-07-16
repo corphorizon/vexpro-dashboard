@@ -2,6 +2,9 @@
 
 import { useMemo } from 'react';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
+import { StatCard } from '@/components/ui/stat-card';
+import { Button } from '@/components/ui/button';
+import { Skeleton } from '@/components/ui/skeleton';
 import { PageHeader } from '@/components/ui/page-header';
 import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
@@ -77,18 +80,18 @@ export default function ResumenPage() {
   // page mid-load (what used to show) felt like the app was broken.
   if (!summary) {
     return (
-      <div className="space-y-6 animate-pulse">
-        <div className="h-8 w-56 bg-muted rounded" />
+      <div className="space-y-6">
+        <Skeleton className="h-8 w-56 rounded" />
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} className="h-28 rounded-xl bg-muted/60" />
+            <Skeleton key={i} className="h-28" />
           ))}
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="h-48 rounded-xl bg-muted/60" />
-          <div className="h-48 rounded-xl bg-muted/60" />
+          <Skeleton className="h-48" />
+          <Skeleton className="h-48" />
         </div>
-        <div className="h-64 rounded-xl bg-muted/60" />
+        <Skeleton className="h-64" />
       </div>
     );
   }
@@ -167,30 +170,18 @@ export default function ResumenPage() {
         actions={
           <>
             <ConsolidatedBadge count={mode === 'consolidated' ? activePeriods.length : 1} />
-            <button
-              onClick={handleExport}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-              title={t('common.csv')}
-            >
+            <Button onClick={handleExport} title={t('common.csv')}>
               <Download className="w-4 h-4" />
               <span className="hidden sm:inline">{t('common.csv')}</span>
-            </button>
-            <button
-              onClick={handleExportExcel}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-              title="Excel"
-            >
+            </Button>
+            <Button onClick={handleExportExcel} title="Excel">
               <FileSpreadsheet className="w-4 h-4" />
               <span className="hidden sm:inline">Excel</span>
-            </button>
-            <button
-              onClick={handleExportPDF}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-              title="PDF"
-            >
+            </Button>
+            <Button onClick={handleExportPDF} title="PDF">
               <FileText className="w-4 h-4" />
               <span className="hidden sm:inline">PDF</span>
-            </button>
+            </Button>
             <PeriodSelector />
           </>
         }
@@ -198,66 +189,47 @@ export default function ResumenPage() {
 
       {/* Negative balance warning */}
       {balanceDisponible < 0 && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm font-medium">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm font-medium">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {t('summary.negativeBalance', { amount: formatCurrency(balanceDisponible) })}
         </div>
       )}
 
-      {/* KPI Cards */}
+      {/* KPI Cards — StatCard compartido con tonos semánticos: el color
+          codifica significado (entrada/salida/resultado), no decoración. */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
-              <ArrowDownCircle className="w-5 h-5 text-blue-500" />
-            </div>
-            <CardTitle>{t('summary.deposits')}</CardTitle>
-          </div>
-          <CardValue>{formatCurrency(consolidatedDeposits)}</CardValue>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/50">
-              <ArrowUpCircle className="w-5 h-5 text-red-500" />
-            </div>
-            <CardTitle>{t('summary.withdrawals')}</CardTitle>
-          </div>
-          <CardValue>{formatCurrency(consolidatedWithdrawals)}</CardValue>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
-              <DollarSign className="w-5 h-5 text-emerald-500" />
-            </div>
-            <CardTitle className="inline-flex items-center gap-1.5">
-              {t('summary.netDeposit')}
-              <InfoTip text={GLOSSARY.netDeposit} />
-            </CardTitle>
-          </div>
-          <CardValue positive={consolidatedNetDeposit > 0} negative={consolidatedNetDeposit < 0}>
-            {formatCurrency(consolidatedNetDeposit)}
-          </CardValue>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
-              <Receipt className="w-5 h-5 text-amber-500" />
-            </div>
-            <CardTitle>{t('summary.expenses')}</CardTitle>
-          </div>
-          <CardValue>{formatCurrency(summary.totalExpenses)}</CardValue>
-        </Card>
+        <StatCard
+          label={t('summary.deposits')}
+          value={formatCurrency(consolidatedDeposits)}
+          icon={ArrowDownCircle}
+          tone="info"
+        />
+        <StatCard
+          label={t('summary.withdrawals')}
+          value={formatCurrency(consolidatedWithdrawals)}
+          icon={ArrowUpCircle}
+          tone="negative"
+        />
+        <StatCard
+          label={<>{t('summary.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} /></>}
+          value={formatCurrency(consolidatedNetDeposit)}
+          icon={DollarSign}
+          tone={consolidatedNetDeposit >= 0 ? 'positive' : 'negative'}
+        />
+        <StatCard
+          label={t('summary.expenses')}
+          value={formatCurrency(summary.totalExpenses)}
+          icon={Receipt}
+          tone="warning"
+        />
       </div>
 
       {/* Second row */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card>
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
-              <TrendingUp className="w-5 h-5 text-violet-500" />
+            <div className="p-2 rounded-lg bg-primary/10">
+              <TrendingUp className="w-5 h-5 text-primary dark:text-accent" />
             </div>
             <CardTitle>{t('summary.operatingIncome')}</CardTitle>
           </div>
@@ -288,8 +260,8 @@ export default function ResumenPage() {
 
         <Card>
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-sky-50 dark:bg-sky-950/50">
-              <Wallet className="w-5 h-5 text-sky-500" />
+            <div className="p-2 rounded-lg bg-info/10">
+              <Wallet className="w-5 h-5 text-info" />
             </div>
             <CardTitle className="inline-flex items-center gap-1.5">
               {t('summary.balance')}
@@ -302,13 +274,13 @@ export default function ResumenPage() {
           <div className="mt-3 space-y-1 text-sm text-muted-foreground">
             <div className="flex justify-between">
               <span>{t('summary.operatingIncome')}</span>
-              <span className={totalIncome >= 0 ? 'text-emerald-600' : 'text-red-600'}>
+              <span className={totalIncome >= 0 ? 'text-positive' : 'text-negative'}>
                 {formatCurrency(totalIncome)}
               </span>
             </div>
             <div className="flex justify-between">
               <span>{t('summary.expenses')}</span>
-              <span className="text-red-600">
+              <span className="text-negative">
                 -{formatCurrency(summary.totalExpenses)}
               </span>
             </div>

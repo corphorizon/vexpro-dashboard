@@ -3,6 +3,8 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
+import { Button } from '@/components/ui/button';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -1135,7 +1137,7 @@ export default function RRHHPage() {
   });
 
   const handleExportCommercial = () => verify2FA(() => {
-    const headers = [t('common.name'), t('common.email'), t('hr.role'), 'Net Deposit %', 'PNL %', t('hr.commLotPlaceholder'), t('hr.salary'), t('hr.total')];
+    const headers = [t('common.name'), t('common.email'), t('hr.role'), '% Depósito Neto', '% PnL', t('hr.commLotPlaceholder'), t('hr.salary'), t('hr.total')];
     const rows = profiles.map(p => [
       p.name, p.email, ROLE_LABELS_HR[p.role],
       p.net_deposit_pct != null ? `${p.net_deposit_pct}%` : 'N/A',
@@ -1323,7 +1325,7 @@ export default function RRHHPage() {
             </div>
           </div>
           <div className="text-left sm:text-right ml-13 sm:ml-0">
-            <p className="text-sm text-muted-foreground">Net Deposit: {leader.net_deposit_pct != null ? `${leader.net_deposit_pct}%` : 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">Depósito Neto: {leader.net_deposit_pct != null ? `${leader.net_deposit_pct}%` : 'N/A'}</p>
             <p className="font-semibold">{formatCurrency(leaderTotal)}</p>
           </div>
         </div>
@@ -1420,20 +1422,20 @@ export default function RRHHPage() {
       )}
 
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('hr.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('hr.subtitle')}</p>
-        </div>
-        <button
-          onClick={tab === 'employees' ? handleExportEmployees : handleExportCommercial}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors self-start sm:self-auto"
-          title={t('common.csv')}
-        >
-          <Download className="w-4 h-4" />
-          <span className="hidden sm:inline">{t('common.csv')}</span>
-        </button>
-      </div>
+      <PageHeader
+        title={t('hr.title')}
+        subtitle={t('hr.subtitle')}
+        icon={Users}
+        actions={
+          <Button
+            onClick={tab === 'employees' ? handleExportEmployees : handleExportCommercial}
+            title={t('common.csv')}
+          >
+            <Download className="w-4 h-4" />
+            <span className="hidden sm:inline">{t('common.csv')}</span>
+          </Button>
+        }
+      />
 
       {/* KPI Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

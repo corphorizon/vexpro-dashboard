@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
@@ -121,10 +122,11 @@ export default function PeríodosPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold">{t('periods.title')}</h1>
-        <p className="text-muted-foreground text-sm mt-1">{t('periods.subtitle')}</p>
-      </div>
+      <PageHeader
+        title={t('periods.title')}
+        subtitle={t('periods.subtitle')}
+        icon={Calendar}
+      />
 
       {successMsg && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">

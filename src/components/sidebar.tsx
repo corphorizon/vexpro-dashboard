@@ -184,7 +184,12 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
     // active_modules — a deactivated module never shows, even to admins.
     // Superadmins bypass (handled inside hasModuleAccess).
     if (!hasModuleAccess(user, item.module, company?.active_modules)) return null;
-    const isActive = pathname === item.href;
+    // Match exacto O prefijo de ruta hija — así /movimientos/desglose/[slug]
+    // mantiene iluminado el leaf "Movimientos" (antes solo se iluminaba la
+    // sección y el usuario perdía la ubicación). Guard: '/' solo exacto.
+    const isActive =
+      pathname === item.href ||
+      (item.href !== '/' && pathname.startsWith(item.href + '/'));
     const Icon = item.icon;
     return (
       <Link

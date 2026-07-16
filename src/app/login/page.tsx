@@ -55,14 +55,14 @@ export default function LoginPage() {
           router.push('/');
         }
       } else if (result.locked) {
-        setError(result.error ?? 'Your account is locked. Reset your password to unlock it.');
+        setError(result.error ?? 'Tu cuenta está bloqueada. Restablecé tu contraseña para desbloquearla.');
       } else if (typeof result.attemptsLeft === 'number' && result.attemptsLeft > 0) {
-        setError(`Invalid credentials. ${result.attemptsLeft} attempt${result.attemptsLeft === 1 ? '' : 's'} left.`);
+        setError(`Credenciales inválidas. ${result.attemptsLeft === 1 ? 'Queda 1 intento' : `Quedan ${result.attemptsLeft} intentos`}.`);
       } else {
-        setError(result.error ?? 'Invalid email or password.');
+        setError(result.error ?? 'Email o contraseña incorrectos.');
       }
     } catch {
-      setError('Something went wrong. Please try again.');
+      setError('Algo salió mal. Intentá de nuevo.');
     } finally {
       setLoading(false);
     }
@@ -82,11 +82,11 @@ export default function LoginPage() {
         clearActiveCompanyId();
         router.push('/');
       } else {
-        setError(result.error || 'Invalid code.');
+        setError(result.error || 'Código inválido.');
         setPin('');
       }
     } catch {
-      setError('Invalid code.');
+      setError('Código inválido.');
       setPin('');
     } finally {
       setLoading(false);
@@ -270,7 +270,7 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
       if (!res.ok) throw new Error(data.error || 'Error');
       setSent(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setError(err instanceof Error ? err.message : 'Algo salió mal');
     } finally {
       setLoading(false);
     }

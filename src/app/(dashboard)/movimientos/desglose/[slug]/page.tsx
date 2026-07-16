@@ -395,7 +395,10 @@ export default function BreakdownPage({
 
       {/* Transactions table */}
       <Card>
-        <div className="overflow-x-auto">
+        {/* Scroll interno (70vh) para que el header quede sticky al recorrer
+            las 100 filas de la página — sin él, position:sticky no tiene
+            contra qué pegarse (el wrapper solo scrollea en X). */}
+        <div className="overflow-auto max-h-[70vh]">
           <BreakdownTable slug={slug} rows={pageRows} onExclusionChanged={load} />
         </div>
 
@@ -453,7 +456,7 @@ function BreakdownTable({
   onExclusionChanged?: () => void;
 }) {
   const thCls =
-    'text-left py-2 px-2 text-muted-foreground font-medium border-b border-border';
+    'text-left py-2 px-2 text-muted-foreground font-medium border-b border-border sticky top-0 bg-card z-10';
   const tdCls = 'py-2 px-2 border-b border-border/50';
 
   if (slug === 'coinsbuy-deposits') {

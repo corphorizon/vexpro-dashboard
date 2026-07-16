@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import type { CommercialMonthlyResult } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
@@ -1171,11 +1172,11 @@ export default function ComisionesPage() {
     <div className="space-y-6">
       {Modal2FA}
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Calculator className="w-6 h-6" />{t('comm.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('comm.subtitle')}</p>
-        </div>
+      <PageHeader
+        title={t('comm.title')}
+        subtitle={t('comm.subtitle')}
+        icon={Calculator}
+        actions={
         <div className="relative">
           <button
             onClick={() => setShowExportMenu(!showExportMenu)}
@@ -1208,8 +1209,8 @@ export default function ComisionesPage() {
             </>
           )}
         </div>
-      </div>
-
+        }
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit">
