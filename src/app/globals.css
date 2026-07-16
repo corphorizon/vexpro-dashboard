@@ -2,9 +2,23 @@
 
 @custom-variant dark (&:where(.dark, .dark *));
 
+/* ═════════════════════════════════════════════════════════════════════════
+   DESIGN TOKENS — fuente única de verdad del sistema visual (rediseño 2026-07)
+
+   Reglas de uso (ver AUDITORIA-UX.md):
+   · Dinero/estado SIEMPRE via tokens semánticos: text-positive, text-negative,
+     bg-warning/10… — NUNCA text-emerald-600 / text-red-600 / dark:* a mano.
+   · Los tokens flipan solos en .dark — no escribas variantes dark: de color.
+   · Superficies: bg-background / bg-card / bg-muted; bordes: border-border.
+   · Marca: bg-primary / text-primary / bg-accent (no bg-[var(--color-primary)]).
+   ═════════════════════════════════════════════════════════════════════════ */
+
 :root {
-  --color-primary: #1E3A5F;
-  --color-secondary: #3B82F6;
+  /* ── Marca ── */
+  --color-primary: #1E3A5F;      /* navy — identidad, headers, botón primario */
+  --color-secondary: #3B82F6;    /* azul — acento interactivo */
+
+  /* ── Superficies y texto ── */
   --background: #F8FAFC;
   --foreground: #0F172A;
   --card: #FFFFFF;
@@ -13,25 +27,45 @@
   --muted: #F1F5F9;
   --muted-foreground: #64748B;
   --accent: #3B82F6;
-  --positive: #10B981;
-  --negative: #EF4444;
-  --warning: #F59E0B;
+
+  /* ── Semánticos (dinero / estado) ── */
+  --positive: #059669;           /* emerald-600 — ganancia, éxito */
+  --negative: #DC2626;           /* red-600 — pérdida, destructivo */
+  --warning: #D97706;            /* amber-600 — pendiente, atención */
+  --info: #2563EB;               /* blue-600 — informativo */
+
+  /* ── Elevación (escalera de 3 niveles; no usar shadow-* sueltos) ── */
+  --elevation-1: 0 1px 2px rgb(15 23 42 / 0.05);                             /* cards en reposo */
+  --elevation-2: 0 2px 4px rgb(15 23 42 / 0.06), 0 8px 16px -6px rgb(15 23 42 / 0.10);  /* hover, dropdowns */
+  --elevation-3: 0 8px 12px -4px rgb(15 23 42 / 0.12), 0 20px 40px -12px rgb(15 23 42 / 0.25); /* modales */
+
+  /* ── Motion (durations + easings compartidos) ── */
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 280ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 .dark {
   /* Tuned for better contrast + hierarchy: bg darker, card distinct from
      muted, borders more visible, secondary text slightly brighter. */
-  --background: #0B1222;         /* a touch darker than slate-900 so cards pop */
-  --foreground: #F1F5F9;         /* slate-100 — easier to read than slate-200 */
-  --card: #1E293B;               /* slate-800 */
+  --background: #0B1222;
+  --foreground: #F1F5F9;
+  --card: #1E293B;
   --card-foreground: #F1F5F9;
-  --border: #334155;             /* slate-700 */
-  --muted: #263548;              /* between card and slate-700 — distinct surface for chips/badges/empty states */
-  --muted-foreground: #B8C4D4;   /* easier to read on dark bg than slate-400 */
-  --accent: #60A5FA;             /* slightly lighter blue for dark mode contrast */
+  --border: #334155;
+  --muted: #263548;
+  --muted-foreground: #B8C4D4;
+  --accent: #60A5FA;
   --positive: #34D399;
   --negative: #F87171;
   --warning: #FBBF24;
+  --info: #60A5FA;
+
+  --elevation-1: 0 1px 2px rgb(0 0 0 / 0.4);
+  --elevation-2: 0 2px 4px rgb(0 0 0 / 0.4), 0 8px 16px -6px rgb(0 0 0 / 0.5);
+  --elevation-3: 0 8px 12px -4px rgb(0 0 0 / 0.5), 0 20px 40px -12px rgb(0 0 0 / 0.6);
 }
 
 @theme inline {
@@ -46,15 +80,39 @@
   --color-positive: var(--positive);
   --color-negative: var(--negative);
   --color-warning: var(--warning);
+  --color-info: var(--info);
   --color-primary: var(--color-primary);
   --color-secondary: var(--color-secondary);
+
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --shadow-card: var(--elevation-1);
+  --shadow-raised: var(--elevation-2);
+  --shadow-overlay: var(--elevation-3);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: system-ui, -apple-system, sans-serif;
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11"; /* Inter: 1 con serifa — distingue 1/l/I en tablas */
 }
+
+/* ── Foco de teclado visible en TODA la app (WCAG 2.4.7) ──
+   Una sola regla cubre los ~387 botones + links + selects sin tocarlos.
+   Solo :focus-visible (teclado), no :focus (click), así el mouse no ve anillos. */
+:where(button, [role="button"], a, select, summary, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:where(input, textarea):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 0;
+}
+
+/* Números tabulares por defecto en celdas — las cifras alinean en columnas */
+:where(td, th) { font-variant-numeric: tabular-nums; }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
@@ -68,7 +126,7 @@ body {
 .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
 .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
 
-/* ─── Loading screen animations ─── */
+/* ─── Motion primitives (respetan prefers-reduced-motion) ─── */
 @keyframes vex-fade-in {
   from { opacity: 0; transform: translateY(4px); }
   to   { opacity: 1; transform: translateY(0); }
@@ -82,9 +140,24 @@ body {
   50%  { transform: translateX(20%); }
   100% { transform: translateX(120%); }
 }
-.vex-fade-in    { animation: vex-fade-in 400ms ease-out both; }
+@keyframes vex-pop-in {
+  from { opacity: 0; transform: scale(0.97) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes vex-slide-out-right {
+  from { opacity: 1; transform: translateX(0); }
+  to   { opacity: 0; transform: translateX(16px); }
+}
+.vex-fade-in    { animation: vex-fade-in var(--duration-slow) var(--ease-out) both; }
 .vex-logo-pulse { animation: vex-logo-pulse 2.2s ease-in-out infinite; }
-.vex-bar-track  {
+.vex-pop-in     { animation: vex-pop-in var(--duration-base) var(--ease-out) both; }
+.vex-slide-out-right { animation: vex-slide-out-right var(--duration-base) var(--ease-in-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .vex-fade-in, .vex-logo-pulse, .vex-pop-in, .vex-slide-out-right { animation: none; }
+}
+
+.vex-bar-track {
   position: relative;
   overflow: hidden;
   width: 140px;
