@@ -25,7 +25,7 @@ export function PageHeader({ title, subtitle, actions, icon: Icon, className }: 
       <div className="flex items-start gap-3 min-w-0">
         {Icon && (
           <div className="hidden sm:block p-2 rounded-lg bg-[var(--color-primary)]/10 mt-0.5">
-            <Icon className="w-5 h-5 text-[var(--color-primary)]" />
+            <Icon className="w-5 h-5 text-primary dark:text-accent" />
           </div>
         )}
         <div className="min-w-0">

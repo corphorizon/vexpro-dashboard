@@ -166,7 +166,7 @@ export default function SuperadminUsersPage() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
+        <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
           {error}
         </div>
       )}
@@ -334,7 +334,7 @@ function InviteModal({
       >
         <h3 className="text-lg font-semibold">Invitar usuario</h3>
         {err && (
-          <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 text-red-800 dark:text-red-200 p-2 text-sm">
+          <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-2 text-sm">
             {err}
           </div>
         )}

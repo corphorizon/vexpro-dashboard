@@ -134,7 +134,7 @@ export function CreateUserModal({
 
         <div className="p-5 space-y-4">
           {error && (
-            <div className="rounded-md border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 text-red-800 dark:text-red-200 p-2.5 text-xs">
+            <div className="rounded-md border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-2.5 text-xs">
               {error}
             </div>
           )}

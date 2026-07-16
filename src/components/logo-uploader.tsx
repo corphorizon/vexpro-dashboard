@@ -158,7 +158,7 @@ export function LogoUploader({
                 <button
                   type="button"
                   onClick={() => inputRef.current?.click()}
-                  className="text-[var(--color-primary)] hover:underline font-medium"
+                  className="text-primary dark:text-accent hover:underline font-medium"
                 >
                   elige un archivo
                 </button>
@@ -191,7 +191,7 @@ export function LogoUploader({
               <button
                 type="button"
                 onClick={handleRemove}
-                className="inline-flex items-center gap-1.5 text-xs text-red-700 dark:text-red-400 hover:underline"
+                className="inline-flex items-center gap-1.5 text-xs text-negative hover:underline"
               >
                 <Trash2 className="w-3.5 h-3.5" /> Quitar logo
               </button>
@@ -207,7 +207,7 @@ export function LogoUploader({
       )}
 
       {error && (
-        <div className="mt-2 flex items-start gap-2 text-xs text-red-700 dark:text-red-400">
+        <div className="mt-2 flex items-start gap-2 text-xs text-negative">
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>

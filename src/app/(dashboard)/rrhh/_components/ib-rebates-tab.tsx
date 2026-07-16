@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
+import { EmptyState } from '@/components/ui/empty-state';
 import {
   Search, Plus, Edit2, Trash2, ChevronUp, ChevronDown,
   History, Settings, Upload, CheckCircle2, AlertCircle, AlertTriangle, X,
@@ -311,8 +312,12 @@ export function IbRebatesTab() {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={13} className="p-8 text-center text-muted-foreground">
-                  No hay configuraciones
+                <td colSpan={13}>
+                  <EmptyState
+                    compact
+                    title="Sin configuraciones de rebate"
+                    description="Agregá la primera configuración para empezar a calcular rebates IB."
+                  />
                 </td>
               </tr>
             ) : filtered.map((c) => {
@@ -825,7 +830,7 @@ function HistoryModal({
           </button>
         </div>
         {entries.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No hay historial</p>
+          <EmptyState compact title="Sin historial" description="Los cálculos guardados van a aparecer acá." />
         ) : (
           <div className="space-y-2">
             {entries.map((e) => (

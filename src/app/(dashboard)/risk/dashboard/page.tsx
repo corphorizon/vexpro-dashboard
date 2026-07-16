@@ -197,7 +197,7 @@ function RecentSection({
                   )}
                   <Link
                     href={r.detailHref}
-                    className="inline-flex items-center gap-1 text-xs text-[var(--color-primary)] hover:underline"
+                    className="inline-flex items-center gap-1 text-xs text-primary dark:text-accent hover:underline"
                   >
                     Ver detalle <ArrowRight className="w-3 h-3" />
                   </Link>
@@ -225,7 +225,7 @@ function QuickTile({
       href={href}
       className="flex items-center gap-3 p-3 rounded-xl border border-border bg-card hover:bg-muted transition-colors"
     >
-      <div className="p-2 rounded-lg bg-muted/70 text-[var(--color-primary)]">
+      <div className="p-2 rounded-lg bg-muted/70 text-primary dark:text-accent">
         <Icon className="w-4 h-4" />
       </div>
       <span className="text-sm font-medium truncate">{label}</span>

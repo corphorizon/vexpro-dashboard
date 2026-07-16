@@ -246,7 +246,7 @@ export default function BreakdownPage({
             .
           </p>
           {dataAgeHours !== null && dataAgeHours > 6 && (
-            <p className="mt-1 text-xs text-amber-600 dark:text-amber-400 inline-flex items-center gap-1">
+            <p className="mt-1 text-xs text-warning inline-flex items-center gap-1">
               <AlertTriangle className="w-3 h-3" />
               Datos del último sync hace {Math.round(dataAgeHours)}h. Volvé a /movimientos y clickeá &quot;Refrescar desde APIs&quot; para datos actualizados.
             </p>
@@ -354,7 +354,7 @@ export default function BreakdownPage({
           )}
         </div>
         {errorMsg && (
-          <div className="mt-2 p-2 rounded bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+          <div className="mt-2 p-2 rounded bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
             {errorMsg}
           </div>
         )}
@@ -395,7 +395,10 @@ export default function BreakdownPage({
 
       {/* Transactions table */}
       <Card>
-        <div className="overflow-x-auto">
+        {/* Scroll interno (70vh) para que el header quede sticky al recorrer
+            las 100 filas de la página — sin él, position:sticky no tiene
+            contra qué pegarse (el wrapper solo scrollea en X). */}
+        <div className="overflow-auto max-h-[70vh]">
           <BreakdownTable slug={slug} rows={pageRows} onExclusionChanged={load} />
         </div>
 
@@ -453,7 +456,7 @@ function BreakdownTable({
   onExclusionChanged?: () => void;
 }) {
   const thCls =
-    'text-left py-2 px-2 text-muted-foreground font-medium border-b border-border';
+    'text-left py-2 px-2 text-muted-foreground font-medium border-b border-border sticky top-0 bg-card z-10';
   const tdCls = 'py-2 px-2 border-b border-border/50';
 
   if (slug === 'coinsbuy-deposits') {

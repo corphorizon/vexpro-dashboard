@@ -302,25 +302,25 @@ export default function EgresosPage() {
           persist round-trip finishes so the user has feedback on slow
           networks. */}
       {successMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-positive/10 text-positive text-sm font-medium" aria-live="polite">
           <Check className="w-4 h-4" />
           {successMsg}
         </div>
       )}
       {errorMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 text-sm font-medium" aria-live="assertive">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="assertive">
           <X className="w-4 h-4" />
           {errorMsg}
         </div>
       )}
       {saving && (
-        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 text-xs font-medium" aria-live="polite">
+        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-info/10 text-blue-700 dark:text-blue-300 text-xs font-medium" aria-live="polite">
           <Loader2 className="w-3.5 h-3.5 animate-spin" />
           Guardando…
         </div>
       )}
       {editingDisabled && (userCanEdit || userCanDelete) && (
-        <div className="px-3 py-2 rounded-lg border border-amber-300/60 bg-amber-50 dark:bg-amber-950/30 text-amber-800 dark:text-amber-300 text-xs">
+        <div className="px-3 py-2 rounded-lg border border-amber-300/60 bg-warning/10/30 text-amber-800 dark:text-amber-300 text-xs">
           Edición desactivada en modo consolidado — selecciona un solo mes para editar o eliminar egresos.
         </div>
       )}
@@ -328,9 +328,9 @@ export default function EgresosPage() {
       {showPreoperativo ? (
         <Card>
           <h2 className="text-lg font-semibold mb-4">{t('expenses.preoperative')}</h2>
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[65vh]">
             <table className="w-full text-sm">
-              <thead>
+              <thead className="sticky top-0 bg-card z-10">
                 <tr className="border-b border-border">
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium w-8">#</th>
                   <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
@@ -411,7 +411,7 @@ export default function EgresosPage() {
                 onClick={cycleSortState}
                 className={`flex items-center gap-1.5 px-3 py-2 rounded-lg border text-sm font-medium transition-colors ${
                   sortState !== 'default'
-                    ? 'border-[var(--color-primary)] text-[var(--color-primary)] bg-blue-50 dark:bg-blue-950/50'
+                    ? 'border-[var(--color-primary)] text-primary dark:text-accent bg-info/10'
                     : 'border-border hover:bg-muted'
                 }`}
                 title={
@@ -424,9 +424,9 @@ export default function EgresosPage() {
               </button>
             </div>
 
-            <div className="overflow-x-auto">
+            <div className="overflow-auto max-h-[65vh]">
               <table className="w-full text-sm">
-                <thead>
+                <thead className="sticky top-0 bg-card z-10">
                   <tr className="border-b border-border">
                     <th className="text-left py-2 px-3 text-muted-foreground font-medium w-8">#</th>
                     <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>

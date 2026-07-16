@@ -277,9 +277,9 @@ export default function ReportesPage() {
       ['Período', 'Hasta', to],
       ['Depósitos', 'Total depósitos del rango', data.deposits_withdrawals.range.total_deposits],
       ['Depósitos', 'Total retiros del rango', data.deposits_withdrawals.range.total_withdrawals],
-      ['Depósitos', 'Net Deposit del rango', data.deposits_withdrawals.range.net_deposit],
-      ['Depósitos', 'Net Deposit del mes', monthNet],
-      ['Depósitos', 'Net Deposit mes anterior', prevNet],
+      ['Depósitos', 'Depósito Neto del rango', data.deposits_withdrawals.range.net_deposit],
+      ['Depósitos', 'Depósito Neto del mes', monthNet],
+      ['Depósitos', 'Depósito Neto mes anterior', prevNet],
       ['CRM Users', 'Nuevos usuarios del rango', data.crm_users.new_users_in_range],
       ['CRM Users', 'Nuevos usuarios del mes', data.crm_users.new_users_this_month],
       ['CRM Users', 'Total usuarios', data.crm_users.total_users],
@@ -438,7 +438,7 @@ export default function ReportesPage() {
           </div>
         </div>
         {anyMock && (
-          <p className="mt-3 text-xs text-amber-700 dark:text-amber-400">
+          <p className="mt-3 text-xs text-warning">
             · Algunos datos provienen de <strong>mock</strong> (Orion CRM sin credenciales). Configúralas en{' '}
             <em>Superadmin → Empresa → APIs externas</em> para ver datos reales.
           </p>
@@ -446,7 +446,7 @@ export default function ReportesPage() {
       </Card>
 
       {error && (
-        <Card className="bg-red-50 dark:bg-red-950/40 border-red-300 dark:border-red-800">
+        <Card className="bg-negative/10 border-red-300 dark:border-red-800">
           <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
         </Card>
       )}
@@ -495,7 +495,7 @@ export default function ReportesPage() {
             {/* Range net + monthly context */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard
-                label="Net Deposit del rango"
+                label="Depósito Neto del rango"
                 value={formatCurrency(rangeNet)}
                 tone={rangeNet >= 0 ? 'positive' : 'negative'}
                 hint={
@@ -505,13 +505,13 @@ export default function ReportesPage() {
                 }
               />
               <StatCard
-                label="Net Deposit mes actual"
+                label="Depósito Neto mes actual"
                 value={formatCurrency(monthNet)}
                 tone={monthNet >= 0 ? 'positive' : 'negative'}
                 hint={<VariationBadge pct={monthVsPrev} />}
               />
               <StatCard
-                label="Net Deposit mes anterior"
+                label="Depósito Neto mes anterior"
                 value={formatCurrency(prevNet)}
                 tone="neutral"
               />
@@ -559,7 +559,7 @@ export default function ReportesPage() {
                         </td>
                         <td
                           className={`px-3 py-2 text-right font-medium ${
-                            c.amount >= 0 ? '' : 'text-red-600 dark:text-red-400'
+                            c.amount >= 0 ? '' : 'text-negative'
                           }`}
                         >
                           {formatCurrency(c.amount)}
@@ -575,8 +575,8 @@ export default function ReportesPage() {
                       <td
                         className={`px-3 py-2 text-right ${
                           data.balances_by_channel.total >= 0
-                            ? 'text-emerald-600 dark:text-emerald-400'
-                            : 'text-red-600 dark:text-red-400'
+                            ? 'text-positive'
+                            : 'text-negative'
                         }`}
                       >
                         {formatCurrency(data.balances_by_channel.total)}
@@ -763,7 +763,7 @@ export default function ReportesPage() {
           Sin datos para el período seleccionado.{' '}
           <button
             onClick={() => void load()}
-            className="underline text-[var(--color-primary)]"
+            className="underline text-primary dark:text-accent"
           >
             Reintentar
           </button>

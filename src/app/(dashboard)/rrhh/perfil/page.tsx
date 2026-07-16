@@ -97,7 +97,7 @@ export default function PerfilPage() {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p>{t('hr.noProfileSpecified')}</p>
-        <Link href="/rrhh" className="text-[var(--color-primary)] hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
+        <Link href="/rrhh" className="text-primary dark:text-accent hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
       </div>
     );
   }
@@ -106,7 +106,7 @@ export default function PerfilPage() {
     return (
       <div className="text-center py-12 text-muted-foreground">
         <p>{t('hr.profileNotFound')}</p>
-        <Link href="/rrhh" className="text-[var(--color-primary)] hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
+        <Link href="/rrhh" className="text-primary dark:text-accent hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
       </div>
     );
   }
@@ -307,21 +307,21 @@ export default function PerfilPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card>
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50"><TrendingUp className="w-5 h-5 text-blue-500" /></div>
+            <div className="p-2 rounded-lg bg-info/10"><TrendingUp className="w-5 h-5 text-blue-500" /></div>
             <CardTitle>{t('hr.netDepPct')}</CardTitle>
           </div>
           <CardValue>{profileData.net_deposit_pct != null ? `${profileData.net_deposit_pct}%` : 'N/A'}</CardValue>
         </Card>
         <Card>
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50"><TrendingUp className="w-5 h-5 text-emerald-500" /></div>
+            <div className="p-2 rounded-lg bg-positive/10"><TrendingUp className="w-5 h-5 text-emerald-500" /></div>
             <CardTitle>{t('hr.pnlPct')}</CardTitle>
           </div>
           <CardValue>{profileData.pnl_pct != null ? `${profileData.pnl_pct}%` : 'N/A'}</CardValue>
         </Card>
         <Card>
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50"><DollarSign className="w-5 h-5 text-amber-500" /></div>
+            <div className="p-2 rounded-lg bg-warning/10"><DollarSign className="w-5 h-5 text-amber-500" /></div>
             <CardTitle>{t('hr.fixedSalary')}</CardTitle>
           </div>
           <CardValue>{profileData.fixed_salary && profileData.salary != null ? formatCurrency(profileData.salary) : 'N/A'}</CardValue>
@@ -484,7 +484,7 @@ export default function PerfilPage() {
             </div>
             <div>
               <span className="text-muted-foreground">{t('hr.status')}:</span>{' '}
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${profileData.status === 'active' ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400' : 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400'}`}>
+              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${profileData.status === 'active' ? 'bg-positive/10 text-positive' : 'bg-negative/10 text-negative'}`}>
                 {profileData.status === 'active' ? t('hr.statusActive') : t('hr.statusInactive')}
               </span>
             </div>
@@ -501,9 +501,9 @@ export default function PerfilPage() {
           </div>
         </div>
         {profileData.contract_url ? (
-          <div className="flex items-center gap-3 p-3 bg-emerald-50 dark:bg-emerald-950/30 rounded-lg">
+          <div className="flex items-center gap-3 p-3 bg-positive/10/30 rounded-lg">
             <FileText className="w-5 h-5 text-emerald-600" />
-            <span className="text-sm font-medium text-emerald-700 dark:text-emerald-400 flex-1">Contrato cargado</span>
+            <span className="text-sm font-medium text-positive flex-1">Contrato cargado</span>
             <a href={profileData.contract_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">
               <ExternalLink className="w-3.5 h-3.5" /> Ver contrato
             </a>
@@ -555,7 +555,7 @@ export default function PerfilPage() {
                 {subordinates.map(sub => (
                   <tr key={sub.id} className="border-b border-border/50">
                     <td className="py-2.5">
-                      <Link href={`/rrhh/perfil?id=${sub.id}`} className="font-medium hover:text-[var(--color-primary)] transition-colors">
+                      <Link href={`/rrhh/perfil?id=${sub.id}`} className="font-medium hover:text-primary dark:text-accent transition-colors">
                         {sub.name}
                       </Link>
                     </td>
@@ -584,7 +584,7 @@ export default function PerfilPage() {
         </div>
 
         {successMsg && (
-          <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm">
+          <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-positive/10 text-positive text-sm">
             <Check className="w-4 h-4" />
             {successMsg}
           </div>
@@ -705,7 +705,7 @@ export default function PerfilPage() {
                   <td className="py-3 text-right">{formatCurrency(totalCommissions)}</td>
                   <td className="py-3 text-right">{totalBonus > 0 ? formatCurrency(totalBonus) : '-'}</td>
                   <td className="py-3 text-right">{totalSalary > 0 ? formatCurrency(totalSalary) : '-'}</td>
-                  <td className="py-3 text-right text-[var(--color-primary)]">{formatCurrency(totalEarned)}</td>
+                  <td className="py-3 text-right text-primary dark:text-accent">{formatCurrency(totalEarned)}</td>
                 </tr>
               </tfoot>
             </table>
@@ -738,9 +738,9 @@ export default function PerfilPage() {
                     <div className="flex items-center gap-2 mb-1">
                       <span className="font-medium text-sm">{neg.title}</span>
                       <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-                        neg.status === 'active' ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400' :
-                        neg.status === 'pending' ? 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400' :
-                        'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400'
+                        neg.status === 'active' ? 'bg-positive/10 text-positive' :
+                        neg.status === 'pending' ? 'bg-warning/10 text-warning' :
+                        'bg-negative/10 text-negative'
                       }`}>
                         {neg.status === 'active' ? t('hr.negStatusActive') : neg.status === 'pending' ? t('hr.negStatusPending') : t('hr.negStatusClosed')}
                       </span>

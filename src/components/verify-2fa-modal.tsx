@@ -62,7 +62,7 @@ export function Verify2FAModal({ open, onVerified, onClose }: Verify2FAModalProp
         {/* Header */}
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
+            <div className="p-2 rounded-lg bg-info/10">
               <ShieldCheck className="w-5 h-5 text-blue-500" />
             </div>
             <div>
@@ -97,7 +97,7 @@ export function Verify2FAModal({ open, onVerified, onClose }: Verify2FAModalProp
           </div>
 
           {error && (
-            <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert">
+            <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert">
               {error}
             </div>
           )}

@@ -215,7 +215,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   return (
     <div className="space-y-4">
       {error && (
-        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 text-sm">
+        <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 text-sm">
           {error}
         </div>
       )}
@@ -289,10 +289,10 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                   <p
                     className={`text-xs ${
                       ping.connected
-                        ? 'text-emerald-600 dark:text-emerald-400'
+                        ? 'text-positive'
                         : ping.isMock
-                          ? 'text-amber-600 dark:text-amber-400'
-                          : 'text-red-600 dark:text-red-400'
+                          ? 'text-warning'
+                          : 'text-negative'
                     }`}
                   >
                     {ping.message} · {new Date(ping.testedAt).toLocaleString('es-ES')}
@@ -320,7 +320,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                   )}
                   <button
                     onClick={() => handleDelete(provider)}
-                    className="px-3 py-1.5 rounded-lg border border-red-200 dark:border-red-800 text-red-600 text-sm hover:bg-red-50 dark:hover:bg-red-950/30"
+                    className="px-3 py-1.5 rounded-lg border border-negative/30 text-red-600 text-sm hover:bg-red-50 dark:hover:bg-red-950/30"
                   >
                     Eliminar
                   </button>
@@ -670,7 +670,7 @@ function ApiCredentialForm({
       )}
 
       {error && (
-        <div className="p-2 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 text-sm">
+        <div className="p-2 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 text-sm">
           {error}
         </div>
       )}

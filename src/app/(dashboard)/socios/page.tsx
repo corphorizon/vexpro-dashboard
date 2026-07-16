@@ -3,6 +3,7 @@
 import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
+import { PageHeader } from '@/components/ui/page-header';
 import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
 import { PeriodSelector } from '@/components/period-selector';
@@ -295,12 +296,11 @@ export default function SociosPage() {
   return (
     <div className="space-y-6">
       {Modal2FA}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">{t('partners.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('partners.subtitle')}</p>
-        </div>
-        <div className="flex items-center gap-2 overflow-x-auto">
+      <PageHeader
+        title={t('partners.title')}
+        subtitle={t('partners.subtitle')}
+        icon={Users}
+        actions={<>
           <button
             onClick={() => verify2FA(() => {
               const headers = ['Socio', 'Porcentaje', 'Monto'];
@@ -431,18 +431,18 @@ export default function SociosPage() {
             </button>
           )}
           <PeriodSelector />
-        </div>
-      </div>
+        </>}
+      />
 
       {/* Success / Error messages */}
       {successMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-positive/10 text-positive text-sm font-medium" aria-live="polite">
           <Check className="w-4 h-4" />
           {successMsg}
         </div>
       )}
       {errorMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 text-sm font-medium" aria-live="polite">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="polite">
           <AlertTriangle className="w-4 h-4" />
           {errorMsg}
         </div>
@@ -450,7 +450,7 @@ export default function SociosPage() {
 
       {/* Percentage warning */}
       {percentageMismatch && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-400 text-sm font-medium">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-warning/10 border border-warning/30 text-warning text-sm font-medium">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {t('partners.percentageWarning', { pct: (totalPercentage * 100).toFixed(1) })}
         </div>
@@ -740,7 +740,7 @@ export default function SociosPage() {
                     const total = round2(effectiveDists.reduce((s, d) => s + d.amount, 0));
 
                     return (
-                      <tr key={period.id} className={`border-b border-border/30 ${period.id === selectedPeriodId ? 'bg-blue-50 dark:bg-blue-950/50' : ''}`}>
+                      <tr key={period.id} className={`border-b border-border/30 ${period.id === selectedPeriodId ? 'bg-info/10' : ''}`}>
                         <td className="py-1.5 px-2 font-medium">
                           <div className="flex items-center gap-1">
                             {period.label}
@@ -916,7 +916,7 @@ export default function SociosPage() {
               <button
                 onClick={() => handleSaveReserve(true)}
                 disabled={saving}
-                className="w-full px-4 py-2.5 rounded-lg border border-[var(--color-primary)] text-[var(--color-primary)] text-sm font-medium hover:bg-[var(--color-primary)]/10 disabled:opacity-50 transition-colors"
+                className="w-full px-4 py-2.5 rounded-lg border border-[var(--color-primary)] text-primary dark:text-accent text-sm font-medium hover:bg-[var(--color-primary)]/10 disabled:opacity-50 transition-colors"
               >
                 {saving ? 'Guardando...' : t('partners.reserveApplyAll')}
               </button>

@@ -184,7 +184,12 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
     // active_modules — a deactivated module never shows, even to admins.
     // Superadmins bypass (handled inside hasModuleAccess).
     if (!hasModuleAccess(user, item.module, company?.active_modules)) return null;
-    const isActive = pathname === item.href;
+    // Match exacto O prefijo de ruta hija — así /movimientos/desglose/[slug]
+    // mantiene iluminado el leaf "Movimientos" (antes solo se iluminaba la
+    // sección y el usuario perdía la ubicación). Guard: '/' solo exacto.
+    const isActive =
+      pathname === item.href ||
+      (item.href !== '/' && pathname.startsWith(item.href + '/'));
     const Icon = item.icon;
     return (
       <Link
@@ -331,9 +336,11 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                   )}
                 >
                   <span className="flex items-center gap-3">
+                    {/* El sidebar es SIEMPRE oscuro (slate-900) en ambos temas:
+                        navy acá era invisible — acento claro fijo. */}
                     <SectionIcon className={cn(
                       'w-4 h-4 shrink-0',
-                      hasActiveChild ? 'text-[var(--color-primary)]' : ''
+                      hasActiveChild ? 'text-[#60A5FA]' : ''
                     )} />
                     <span className="uppercase tracking-wide text-[11px]">{t(section.i18nKey)}</span>
                   </span>

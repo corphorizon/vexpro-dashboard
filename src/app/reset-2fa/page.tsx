@@ -112,7 +112,7 @@ export default function Reset2FAPage() {
                   </div>
                 </div>
                 {error && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
+                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm">
                     {error}
                   </div>
                 )}
@@ -155,7 +155,7 @@ export default function Reset2FAPage() {
                   />
                 </div>
                 {error && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
+                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm">
                     {error}
                   </div>
                 )}

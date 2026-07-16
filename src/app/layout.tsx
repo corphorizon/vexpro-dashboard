@@ -1,6 +1,16 @@
 import type { Metadata, Viewport } from "next";
+import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
+
+// Tipografía de marca (rediseño UX 2026-07): Inter variable, self-hosted por
+// next/font (cero requests externos, cero layout shift). Expuesta como
+// --font-inter y consumida por --font-sans en globals.css.
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
 
 // Production URL used for every canonical link, Open Graph URL, and
 // metadataBase. Override in dev/preview via NEXT_PUBLIC_APP_URL.
@@ -72,7 +82,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es" className="h-full" suppressHydrationWarning>
+    <html lang="es" className={`h-full ${inter.variable}`} suppressHydrationWarning>
       <body className="h-full">
         <Providers>{children}</Providers>
       </body>

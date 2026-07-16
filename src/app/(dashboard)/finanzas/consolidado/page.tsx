@@ -244,7 +244,7 @@ export default function ConsolidadoPage() {
       },
       {
         key: 'netDeposit',
-        label: 'Net Deposit',
+        label: 'Depósito Neto',
         compute: (c) => {
           const deposits = c.apiDeposits + (c.summary?.totalDeposits ?? 0);
           const manualBroker =

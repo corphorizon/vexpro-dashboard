@@ -184,7 +184,7 @@ export function AdminHome() {
       ) : hasFinance ? (
         <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <StatCard
-            label="Net Deposit · mes"
+            label="Depósito Neto · mes"
             value={formatCurrency(cur.netDeposit)}
             icon={Wallet}
             tone={cur.netDeposit >= 0 ? 'positive' : 'negative'}

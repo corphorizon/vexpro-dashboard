@@ -26,36 +26,39 @@ interface StatCardProps {
   className?: string;
 }
 
+/* Tonos cableados a los tokens semánticos de globals.css — flipan solos en
+   dark mode (nada de variantes dark: a mano). El valor neutral queda en tinta
+   normal; solo los tonos con significado colorean la cifra. */
 const TONE_STYLES: Record<Tone, { bg: string; icon: string; value: string }> = {
   neutral: {
-    bg: 'bg-slate-100 dark:bg-slate-900/50',
-    icon: 'text-slate-500 dark:text-slate-400',
+    bg: 'bg-muted',
+    icon: 'text-muted-foreground',
     value: 'text-foreground',
   },
   info: {
-    bg: 'bg-blue-50 dark:bg-blue-950/40',
-    icon: 'text-blue-500 dark:text-blue-400',
-    value: 'text-blue-600 dark:text-blue-400',
+    bg: 'bg-info/10',
+    icon: 'text-info',
+    value: 'text-info',
   },
   primary: {
-    bg: 'bg-[var(--color-primary)]/10',
-    icon: 'text-[var(--color-primary)]',
-    value: 'text-[var(--color-primary)]',
+    bg: 'bg-primary/10',
+    icon: 'text-primary dark:text-accent',
+    value: 'text-primary dark:text-accent',
   },
   positive: {
-    bg: 'bg-emerald-50 dark:bg-emerald-950/40',
-    icon: 'text-emerald-500 dark:text-emerald-400',
-    value: 'text-emerald-600 dark:text-emerald-400',
+    bg: 'bg-positive/10',
+    icon: 'text-positive',
+    value: 'text-positive',
   },
   negative: {
-    bg: 'bg-red-50 dark:bg-red-950/40',
-    icon: 'text-red-500 dark:text-red-400',
-    value: 'text-red-600 dark:text-red-400',
+    bg: 'bg-negative/10',
+    icon: 'text-negative',
+    value: 'text-negative',
   },
   warning: {
-    bg: 'bg-amber-50 dark:bg-amber-950/40',
-    icon: 'text-amber-500 dark:text-amber-400',
-    value: 'text-amber-600 dark:text-amber-400',
+    bg: 'bg-warning/10',
+    icon: 'text-warning',
+    value: 'text-warning',
   },
 };
 

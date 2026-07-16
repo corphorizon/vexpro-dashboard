@@ -3,6 +3,7 @@
 import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import type { CommercialMonthlyResult } from '@/lib/types';
 import { useAuth } from '@/lib/auth-context';
@@ -78,9 +79,9 @@ function appearsInCommissions(p: { status: string; termination_date?: string | n
 }
 
 const ROLE_BADGE: Record<string, string> = {
-  sales_manager: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
+  sales_manager: 'bg-warning/10 text-warning',
   head: 'bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
-  bdm: 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400',
+  bdm: 'bg-info/10 text-info',
   bdm_global: 'bg-purple-100 dark:bg-purple-950/50 text-purple-800 dark:text-purple-300 border border-purple-300',
 };
 const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', head: 'HEAD', bdm: 'BDM', bdm_global: 'BDM GLOBAL' };
@@ -1171,11 +1172,11 @@ export default function ComisionesPage() {
     <div className="space-y-6">
       {Modal2FA}
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2"><Calculator className="w-6 h-6" />{t('comm.title')}</h1>
-          <p className="text-muted-foreground text-sm mt-1">{t('comm.subtitle')}</p>
-        </div>
+      <PageHeader
+        title={t('comm.title')}
+        subtitle={t('comm.subtitle')}
+        icon={Calculator}
+        actions={
         <div className="relative">
           <button
             onClick={() => setShowExportMenu(!showExportMenu)}
@@ -1208,8 +1209,8 @@ export default function ComisionesPage() {
             </>
           )}
         </div>
-      </div>
-
+        }
+      />
 
       {/* Tabs */}
       <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit">
@@ -1278,7 +1279,7 @@ export default function ComisionesPage() {
               <p className="text-sm text-muted-foreground">{t('comm.totalWithSalary')}</p>
               <p className={cn('text-2xl font-bold', teamSummary.totalWithSalary >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(teamSummary.totalWithSalary)}</p>
               {teamSummary.prevDebt < 0 && (
-                <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                <p className="text-xs text-warning mt-1">
                   {formatCurrency(teamSummary.rawTotalWithSalary)} − {formatCurrency(Math.abs(teamSummary.prevDebt))} deuda = {formatCurrency(teamSummary.totalWithSalary)}
                 </p>
               )}
@@ -1286,13 +1287,13 @@ export default function ComisionesPage() {
           </div>
 
           {/* Info */}
-          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-sm">
+          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10/30 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
             <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.teamFromHR')}</span>
           </div>
 
           {/* Validation warning */}
           {teamNdValidation && (
-            <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-sm">
+            <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-warning/10/30 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm">
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
                 El ND total de este equipo ({formatCurrency(teamNdValidation.actual)}) no coincide con el valor ingresado en el grupo de <strong>{teamNdValidation.parentName}</strong> ({formatCurrency(teamNdValidation.expected)}). La suma del equipo debe ser igual.
@@ -1427,7 +1428,7 @@ export default function ComisionesPage() {
       {/* ═══════════ TAB: INDIVIDUAL ═══════════ */}
       {tab === 'individual' && (
         <>
-          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300 text-sm">
+          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10/30 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
             <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.allBdms')} — {allBdms.length} BDMs</span>
           </div>
 

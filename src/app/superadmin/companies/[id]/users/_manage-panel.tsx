@@ -224,12 +224,12 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
 
         <div className="p-5 space-y-6">
           {error && (
-            <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
+            <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
               {error}
             </div>
           )}
           {toast && (
-            <div className="rounded-lg border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 p-3 text-sm flex items-center gap-2">
+            <div className="rounded-lg border border-emerald-300 bg-positive/10 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 p-3 text-sm flex items-center gap-2">
               <Check className="w-4 h-4" /> {toast}
             </div>
           )}
@@ -359,7 +359,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
                   <span
                     className={`text-xs ${
                       user.twofa_enabled
-                        ? 'text-emerald-700 dark:text-emerald-400'
+                        ? 'text-positive'
                         : 'text-muted-foreground'
                     }`}
                   >
@@ -410,7 +410,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
               <ClipboardList className="w-4 h-4" /> Historial reciente
             </h3>
             {auditErr && (
-              <div className="text-xs text-red-700 dark:text-red-400">{auditErr}</div>
+              <div className="text-xs text-negative">{auditErr}</div>
             )}
             {!audit && !auditErr && (
               <div className="text-xs text-muted-foreground">Cargando…</div>
@@ -446,7 +446,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
             )}
             <a
               href={`/superadmin/companies/${user.company_id}?tab=audit`}
-              className="inline-block mt-2 text-xs text-[var(--color-primary)] hover:underline"
+              className="inline-block mt-2 text-xs text-primary dark:text-accent hover:underline"
             >
               Ver historial completo →
             </a>
