@@ -52,9 +52,9 @@ const SLUG_LABEL: Record<ProviderSlug, string> = {
 };
 
 const SLUG_ACCENT: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'text-blue-600 dark:text-blue-400',
-  'coinsbuy-withdrawals': 'text-red-600 dark:text-red-400',
-  fairpay: 'text-emerald-600 dark:text-emerald-400',
+  'coinsbuy-deposits': 'text-info',
+  'coinsbuy-withdrawals': 'text-negative',
+  fairpay: 'text-positive',
   unipayment: 'text-violet-600 dark:text-violet-400',
 };
 
@@ -454,7 +454,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       </div>
 
       {errorMsg && (
-        <div className="p-2 mb-2 rounded bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+        <div className="p-2 mb-2 rounded bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
           {errorMsg}
         </div>
       )}

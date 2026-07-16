@@ -242,7 +242,7 @@ function SavedRecentlyBadge({ at }: { at: Date }) {
         : `Guardado hace ${Math.floor(secs / 60)} min`;
   return (
     <span
-      className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-400 whitespace-nowrap"
+      className="inline-flex items-center gap-1.5 text-xs font-medium text-positive whitespace-nowrap"
       aria-live="polite"
       title="Última vez que se guardó esta sección"
     >
@@ -1886,7 +1886,7 @@ export default function UploadPage() {
                     <td className="py-3 px-3 font-medium">
                       {WITHDRAWAL_LABELS[w.category]}
                       {isBrokerAutoRow && (
-                        <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                        <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
                           auto
                         </span>
                       )}
@@ -2472,7 +2472,7 @@ export default function UploadPage() {
               </div>
               <div className="flex items-center justify-end mt-2 text-sm">
                 <span className="text-muted-foreground mr-2">Resultado Prop Firm:</span>
-                <span className={`font-semibold ${propFirmNet < 0 ? 'text-red-600 dark:text-red-400' : ''}`}>
+                <span className={`font-semibold ${propFirmNet < 0 ? 'text-negative' : ''}`}>
                   {formatCurrency(propFirmNet)}
                 </span>
               </div>
@@ -2986,7 +2986,7 @@ export default function UploadPage() {
               </span>
             ) : dirtySections.has(section) ? (
               <span
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-amber-700 dark:text-amber-400 whitespace-nowrap"
+                className="inline-flex items-center gap-1.5 text-xs font-medium text-warning whitespace-nowrap"
                 aria-live="polite"
                 title="Hay cambios sin guardar — se guardarán automáticamente en 3 segundos"
               >

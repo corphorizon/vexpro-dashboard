@@ -222,7 +222,7 @@ export default function PerfilPage() {
       {/* Profile Info Card */}
       <Card>
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
+          <div className="p-2 rounded-lg bg-info/10">
             <UserCircle className="w-5 h-5 text-blue-500" />
           </div>
           <h2 className="text-lg font-semibold">{t('profile.personalInfo')}</h2>
@@ -298,7 +298,7 @@ export default function PerfilPage() {
       {/* Password Card */}
       <Card>
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
+          <div className="p-2 rounded-lg bg-warning/10">
             <Lock className="w-5 h-5 text-amber-500" />
           </div>
           <div className="flex-1">
@@ -308,7 +308,7 @@ export default function PerfilPage() {
         </div>
 
         {passwordSuccess && (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-400 text-sm" aria-live="polite">
+          <div className="mb-4 px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-800 dark:text-emerald-400 text-sm" aria-live="polite">
             {t('profile.passwordSuccess')}
           </div>
         )}
@@ -378,7 +378,7 @@ export default function PerfilPage() {
             </div>
 
             {passwordError && (
-              <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert" aria-live="assertive">
+              <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert" aria-live="assertive">
                 {passwordError}
               </div>
             )}
@@ -412,7 +412,7 @@ export default function PerfilPage() {
       {/* 2FA Card */}
       <Card>
         <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
+          <div className="p-2 rounded-lg bg-positive/10">
             <ShieldCheck className="w-5 h-5 text-emerald-500" />
           </div>
           <div className="flex-1">
@@ -422,7 +422,7 @@ export default function PerfilPage() {
         </div>
 
         {pinSuccess && (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-400 text-sm" aria-live="polite">
+          <div className="mb-4 px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-800 dark:text-emerald-400 text-sm" aria-live="polite">
             {t('profile.pinSuccess')}
           </div>
         )}
@@ -431,7 +431,7 @@ export default function PerfilPage() {
         <div className="mb-4 flex items-center gap-3">
           <span className="text-sm font-medium">{t('profile.twofaStatus')}</span>
           {user.twofa_enabled ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-positive/10 text-positive border border-positive/30">
               <span className="w-2 h-2 rounded-full bg-emerald-500" />
               {t('profile.twofaActivated')}
             </span>
@@ -451,15 +451,15 @@ export default function PerfilPage() {
 
             <button
               onClick={handleDisable2FA}
-              className="px-4 py-2 rounded-lg border border-red-200 dark:border-red-800 text-red-600 dark:text-red-400 text-sm font-medium hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
+              className="px-4 py-2 rounded-lg border border-negative/30 text-negative text-sm font-medium hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
             >
               Desactivar 2FA
             </button>
 
             {/* Deactivation form */}
             {showDeactivateForm && (
-              <form onSubmit={handleConfirmDeactivate} className="mt-2 p-4 rounded-lg border border-red-200 dark:border-red-800 bg-red-50/30 dark:bg-red-950/20 space-y-4">
-                <p className="text-sm font-medium text-red-700 dark:text-red-400">
+              <form onSubmit={handleConfirmDeactivate} className="mt-2 p-4 rounded-lg border border-negative/30 bg-red-50/30 dark:bg-red-950/20 space-y-4">
+                <p className="text-sm font-medium text-negative">
                   Ingresa el código de tu app de autenticación para confirmar:
                 </p>
                 <div>
@@ -477,7 +477,7 @@ export default function PerfilPage() {
                 </div>
 
                 {deactivateError && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert">
+                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert">
                     {deactivateError}
                   </div>
                 )}
@@ -528,7 +528,7 @@ export default function PerfilPage() {
               </div>
             ) : totpStep === 'scan' ? (
               <>
-                <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-400 text-sm">
+                <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
                   <strong>Paso 1:</strong> Escanea este código QR con tu app de autenticación.
                 </div>
 
@@ -569,7 +569,7 @@ export default function PerfilPage() {
               </>
             ) : (
               <form onSubmit={handleVerifyTotp} className="space-y-4">
-                <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-400 text-sm">
+                <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
                   <strong>Paso 2:</strong> Ingresa el código de 6 dígitos de tu app.
                 </div>
 
@@ -589,7 +589,7 @@ export default function PerfilPage() {
                 </div>
 
                 {pinError && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert">
+                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert">
                     {pinError}
                   </div>
                 )}

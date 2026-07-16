@@ -257,7 +257,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                         disabled={busy}
                         className={`shrink-0 p-1.5 rounded-md border ${
                           ch.isVisible
-                            ? 'border-emerald-300 text-emerald-600 bg-emerald-50 dark:bg-emerald-950/30'
+                            ? 'border-emerald-300 text-emerald-600 bg-positive/10/30'
                             : 'border-muted text-muted-foreground'
                         } disabled:opacity-50`}
                         aria-label={ch.isVisible ? 'Ocultar canal' : 'Mostrar canal'}
@@ -309,7 +309,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                             <div className="flex items-center gap-2 flex-wrap">
                               <p className="font-medium truncate">{ch.label}</p>
                               {isApi && (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-info/10 text-blue-700 dark:text-blue-300 border border-info/30">
                                   <Lock className="w-2.5 h-2.5" /> API
                                 </span>
                               )}

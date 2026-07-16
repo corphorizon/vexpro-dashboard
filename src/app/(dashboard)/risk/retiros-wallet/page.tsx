@@ -126,17 +126,17 @@ function daysBetween(a: string, b: string): number {
 function walletBadgeClass(w: WalletKind): string {
   switch (w) {
     case 'Balance':
-      return 'bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-900';
+      return 'bg-info/10 text-blue-700 dark:text-blue-300 border-blue-200 dark:border-blue-900';
     case 'IB Program':
       return 'bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border-violet-200 dark:border-violet-900';
     case 'IB Social':
-      return 'bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-900';
+      return 'bg-warning/10 text-amber-700 dark:text-amber-300 border-amber-200 dark:border-amber-900';
   }
 }
 
 function kycBadgeClass(k: KycStatus): string {
   return k === 'Verificado'
-    ? 'bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900'
+    ? 'bg-positive/10 text-emerald-700 dark:text-emerald-300 border-emerald-200 dark:border-emerald-900'
     : 'bg-rose-50 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-200 dark:border-rose-900';
 }
 
@@ -465,7 +465,7 @@ export default function RetirosWalletPage() {
             Auditoría de solicitudes de retiro a wallets externas. Datos mock — pendiente integración CRM.
           </p>
         </div>
-        <div className="text-xs text-muted-foreground bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900 rounded-lg px-3 py-2 flex items-center gap-2">
+        <div className="text-xs text-muted-foreground bg-warning/10/30 border border-amber-200 dark:border-amber-900 rounded-lg px-3 py-2 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 text-amber-600" />
           Modo mock — API CRM en proceso
         </div>
@@ -893,7 +893,7 @@ function Section({
 function Alert({ kind, msg }: { kind: 'warning' | 'danger'; msg: string }) {
   const cls = kind === 'danger'
     ? 'bg-rose-50 dark:bg-rose-950/30 border-rose-200 dark:border-rose-900 text-rose-700 dark:text-rose-300'
-    : 'bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300';
+    : 'bg-warning/10/30 border-amber-200 dark:border-amber-900 text-amber-700 dark:text-amber-300';
   return (
     <div className={cn('flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium mb-3', cls)}>
       <AlertTriangle className="w-4 h-4 flex-shrink-0" />

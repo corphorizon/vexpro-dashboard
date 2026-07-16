@@ -491,7 +491,7 @@ export default function MovimientosPage() {
                 <td className="py-1">
                   {t('movements.p2pTransfer')}
                   {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
-                    <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                    <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
                       api+manual
                     </span>
                   )}
@@ -528,7 +528,7 @@ export default function MovimientosPage() {
                 <td className="py-2.5">
                   {t('movements.propFirmSales')}
                   {brokerCrmTotals.connected && apiPropFirmSales > 0 && manualPropFirmSales > 0 ? (
-                    <span className="ml-2 text-[10px] text-emerald-600 dark:text-emerald-400 uppercase tracking-wide">
+                    <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
                       api+manual
                     </span>
                   ) : (

@@ -21,9 +21,9 @@ import {
 } from 'lucide-react';
 
 const ROLE_BADGE: Record<string, string> = {
-  sales_manager: 'bg-amber-100 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
+  sales_manager: 'bg-amber-100 dark:bg-amber-950/50 text-warning',
   head: 'bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
-  bdm: 'bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400',
+  bdm: 'bg-blue-100 dark:bg-blue-950/50 text-info',
 };
 const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', head: 'HEAD', bdm: 'BDM' };
 
@@ -169,7 +169,7 @@ export default function DashboardPage() {
 
         <Card>
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
+            <div className="p-2 rounded-lg bg-info/10">
               <Briefcase className="w-5 h-5 text-blue-500" />
             </div>
             <CardTitle>{t('hrDash.totalEmployees')}</CardTitle>
@@ -183,7 +183,7 @@ export default function DashboardPage() {
 
         <Card>
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50">
+            <div className="p-2 rounded-lg bg-positive/10">
               <DollarSign className="w-5 h-5 text-emerald-500" />
             </div>
             <CardTitle>{t('hrDash.totalPayroll')}</CardTitle>
@@ -203,7 +203,7 @@ export default function DashboardPage() {
 
         <Card>
           <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50">
+            <div className="p-2 rounded-lg bg-warning/10">
               <UserCog className="w-5 h-5 text-amber-500" />
             </div>
             <CardTitle>{t('hrDash.byRole')}</CardTitle>

@@ -125,7 +125,7 @@ export default function CompanyUsersPage() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/40 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
+        <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
           {error}
         </div>
       )}
@@ -178,7 +178,7 @@ export default function CompanyUsersPage() {
                     <span
                       className={`inline-flex items-center gap-1.5 text-xs ${
                         u.status === 'active'
-                          ? 'text-emerald-700 dark:text-emerald-400'
+                          ? 'text-positive'
                           : 'text-muted-foreground'
                       }`}
                     >
@@ -192,7 +192,7 @@ export default function CompanyUsersPage() {
                   </td>
                   <td className="px-4 py-3 text-xs">
                     {u.twofa_enabled ? (
-                      <span className="text-emerald-700 dark:text-emerald-400">Activo</span>
+                      <span className="text-positive">Activo</span>
                     ) : (
                       <span className="text-muted-foreground">No configurado</span>
                     )}

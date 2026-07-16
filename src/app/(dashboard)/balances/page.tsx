@@ -608,12 +608,12 @@ export default function BalancesPage() {
       />
 
       {okMsg && (
-        <div className="p-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-300 text-sm">
+        <div className="p-3 rounded-lg bg-positive/10/30 border border-positive/30 text-emerald-700 dark:text-emerald-300 text-sm">
           {okMsg}
         </div>
       )}
       {errMsg && (
-        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm">
+        <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
           {errMsg}
         </div>
       )}
@@ -622,7 +622,7 @@ export default function BalancesPage() {
       <Card>
         <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
+            <div className="p-2 rounded-lg bg-info/10">
               <Wallet className="w-5 h-5 text-blue-500" />
             </div>
             <div>
@@ -670,7 +670,7 @@ export default function BalancesPage() {
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
                 Resultado del mes · {currentBalanceRow.label}
               </p>
-              <p className={`text-3xl sm:text-4xl font-bold tabular-nums ${currentBalanceRow.balanceMes >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+              <p className={`text-3xl sm:text-4xl font-bold tabular-nums ${currentBalanceRow.balanceMes >= 0 ? 'text-positive' : 'text-negative'}`}>
                 {formatCurrency(currentBalanceRow.balanceMes)}
               </p>
               <p className="text-xs text-muted-foreground mt-2">
@@ -682,14 +682,14 @@ export default function BalancesPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
               <div className="p-3 rounded-lg border border-border">
                 <p className="text-xs text-muted-foreground">{t('balances.netDeposit')}</p>
-                <p className="text-lg font-semibold text-emerald-600 dark:text-emerald-400">
+                <p className="text-lg font-semibold text-positive">
                   +{formatCurrency(currentBalanceRow.netDeposit)}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">{t('balances.fromMovements')}</p>
               </div>
               <div className="p-3 rounded-lg border border-border">
                 <p className="text-xs text-muted-foreground">{t('balances.operatingExpenses')}</p>
-                <p className="text-lg font-semibold text-red-600 dark:text-red-400">
+                <p className="text-lg font-semibold text-negative">
                   −{formatCurrency(currentBalanceRow.egresos)}
                 </p>
                 <p className="text-[10px] text-muted-foreground mt-0.5">{t('balances.fromExpenses')}</p>
@@ -732,8 +732,8 @@ export default function BalancesPage() {
                         className={`border-b border-border/50 ${isSelected ? 'bg-blue-50/40 dark:bg-blue-950/20 font-medium' : 'hover:bg-muted/30'}`}
                       >
                         <td className="py-2 px-3 font-medium">{row.label}</td>
-                        <td className="py-2 px-3 text-right text-emerald-600 dark:text-emerald-400">{formatCurrency(row.netDeposit)}</td>
-                        <td className="py-2 px-3 text-right text-red-600 dark:text-red-400">{formatCurrency(row.egresos)}</td>
+                        <td className="py-2 px-3 text-right text-positive">{formatCurrency(row.netDeposit)}</td>
+                        <td className="py-2 px-3 text-right text-negative">{formatCurrency(row.egresos)}</td>
                         <td className="py-2 px-3 text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.montoDistribuir)}</td>
                         <td className={`py-2 px-3 text-right font-medium ${row.balanceMes >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.balanceMes)}</td>
                         <td className={`py-2 px-3 text-right font-bold ${row.saldoFinal >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.saldoFinal)}</td>
@@ -826,12 +826,12 @@ export default function BalancesPage() {
                     <p className="text-xs text-muted-foreground truncate">{ch.description}</p>
                   </div>
                   {isAuto && !canOverride && (
-                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
+                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-info/10 text-blue-700 dark:text-blue-300 border border-info/30">
                       Automático
                     </span>
                   )}
                   {canOverride && (
-                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-300 border border-amber-200 dark:border-amber-800">
+                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/10 text-amber-700 dark:text-amber-300 border border-warning/30">
                       API + manual
                     </span>
                   )}
@@ -866,7 +866,7 @@ export default function BalancesPage() {
                     </>
                   ) : (
                     <>
-                      <span className={`font-semibold text-base ${value >= 0 ? '' : 'text-red-600 dark:text-red-400'}`}>
+                      <span className={`font-semibold text-base ${value >= 0 ? '' : 'text-negative'}`}>
                         {formatCurrency(value)}
                       </span>
                       {((!isAuto && !isCoinsbuy) || canOverride) && userCanAdd && (
@@ -937,7 +937,7 @@ export default function BalancesPage() {
               {t('balances.totalHint')}
             </p>
           </div>
-          <p className={`text-2xl font-bold ${totalConsolidado >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+          <p className={`text-2xl font-bold ${totalConsolidado >= 0 ? 'text-positive' : 'text-negative'}`}>
             {formatCurrency(totalConsolidado)}
           </p>
         </div>
@@ -973,7 +973,7 @@ export default function BalancesPage() {
             {/* Header */}
             <div className="flex items-center justify-between p-5 border-b border-border">
               <div className="flex items-center gap-3 min-w-0">
-                <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 shrink-0">
+                <div className="p-2 rounded-lg bg-positive/10 shrink-0">
                   <Wallet className="w-5 h-5 text-emerald-500" />
                 </div>
                 <div className="min-w-0">
@@ -1011,7 +1011,7 @@ export default function BalancesPage() {
             {/* Body */}
             <div className="p-5 overflow-y-auto flex-1">
               {walletsError && (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-700 dark:text-amber-300 text-sm mb-3">
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10/30 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm mb-3">
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   <span>
                     {walletsError}

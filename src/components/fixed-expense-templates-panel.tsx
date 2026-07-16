@@ -92,7 +92,7 @@ export function FixedExpenseTemplatesPanel() {
           </p>
 
           {errMsg && (
-            <div className="p-2 mb-2 rounded bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-xs">
+            <div className="p-2 mb-2 rounded bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
               {errMsg}
             </div>
           )}
@@ -121,7 +121,7 @@ export function FixedExpenseTemplatesPanel() {
                         <span
                           className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
                             tpl.active
-                              ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                              ? 'bg-positive/10 text-emerald-700 dark:text-emerald-300 border border-positive/30'
                               : 'bg-gray-100 dark:bg-gray-900/50 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'
                           }`}
                         >

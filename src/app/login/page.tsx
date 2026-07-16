@@ -161,7 +161,7 @@ export default function LoginPage() {
                 </div>
 
                 {error && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert" aria-live="assertive">
+                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert" aria-live="assertive">
                     {error}
                   </div>
                 )}
@@ -212,7 +212,7 @@ export default function LoginPage() {
                 </div>
 
                 {error && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert" aria-live="assertive">
+                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert" aria-live="assertive">
                     {error}
                   </div>
                 )}
@@ -285,7 +285,7 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
           <h2 className="text-lg font-semibold mb-4">Account recovery</h2>
           {sent ? (
             <div className="space-y-4">
-              <div className="px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-400 text-sm">
+              <div className="px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-800 dark:text-emerald-400 text-sm">
                 If an account exists for <span className="font-medium">{email}</span>, you will receive a password reset link within a few minutes.
               </div>
               <p className="text-sm text-muted-foreground">
@@ -316,7 +316,7 @@ function RecoveryScreen({ onBack, initialEmail }: { onBack: () => void; initialE
                 />
               </div>
               {error && (
-                <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert">
+                <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert">
                   {error}
                 </div>
               )}

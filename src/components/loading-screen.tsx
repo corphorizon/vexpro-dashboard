@@ -120,7 +120,7 @@ export function LoadingError({ message, onRetry }: LoadingErrorProps) {
           />
         </div>
         <div className="space-y-1">
-          <p className="text-sm font-medium text-red-600 dark:text-red-400">
+          <p className="text-sm font-medium text-negative">
             No pudimos cargar los datos
           </p>
           <p className="text-xs text-muted-foreground">{message}</p>

@@ -383,7 +383,7 @@ export default function UsuariosPage() {
               const effectiveRole = custom?.base_role ?? form.role;
               if (roleCanWrite(effectiveRole)) return null;
               return (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 text-sm">
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10/30 border border-warning/30 text-amber-800 dark:text-amber-300 text-sm">
                   <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <span>
                     <strong>{ROLE_LABELS[effectiveRole] ?? form.role}</strong> es un rol de
@@ -428,7 +428,7 @@ export default function UsuariosPage() {
             </div>
 
             {formError && (
-              <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300 text-sm">
+              <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
                 {formError}
               </div>
             )}
@@ -602,7 +602,7 @@ export default function UsuariosPage() {
               </button>
             </div>
             {resetSuccess ? (
-              <div className="px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-700 dark:text-emerald-400 text-sm">
+              <div className="px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-positive text-sm">
                 Contraseña actualizada correctamente para {resetPwUser.name}.
               </div>
             ) : (
@@ -660,7 +660,7 @@ export default function UsuariosPage() {
               El usuario deberá volver a configurar su aplicación de autenticación.
             </p>
             {reset2faError && (
-              <div className="px-3 py-2 mb-4 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm">
+              <div className="px-3 py-2 mb-4 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm">
                 {reset2faError}
               </div>
             )}

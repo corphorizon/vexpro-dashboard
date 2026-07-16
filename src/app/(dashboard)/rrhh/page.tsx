@@ -26,9 +26,9 @@ import { IbRebatesTab } from './_components/ib-rebates-tab';
 type Tab = 'employees' | 'commercial' | 'negotiations' | 'ib_rebates';
 
 const STATUS_BADGE_CLASSES: Record<string, string> = {
-  active: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400',
-  inactive: 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400',
-  probation: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
+  active: 'bg-positive/10 text-positive',
+  inactive: 'bg-negative/10 text-negative',
+  probation: 'bg-warning/10 text-warning',
   fired: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400',
 };
 
@@ -40,9 +40,9 @@ const STATUS_LABEL_KEYS: Record<string, string> = {
 };
 
 const ROLE_BADGE_COLORS: Record<string, string> = {
-  sales_manager: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
+  sales_manager: 'bg-warning/10 text-warning',
   head: 'bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
-  bdm: 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400',
+  bdm: 'bg-info/10 text-info',
 };
 
 const DEFAULT_ROLE_BADGE = 'bg-gray-50 dark:bg-gray-900/50 text-gray-700 dark:text-gray-400';
@@ -305,7 +305,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
               (pnl × pct − lotes) y aparece en una sección separada en
               /comisiones. */}
           {pnlPct && (
-            <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800">
+            <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-info/10/30 border border-info/30">
               <input
                 id="pnl-special-mode"
                 type="checkbox"
@@ -435,7 +435,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                         setError(err instanceof Error ? err.message : t('hr.fireError'));
                       }
                     }}
-                    className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-emerald-300 text-emerald-700 dark:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
+                    className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded border border-emerald-300 text-positive hover:bg-emerald-50 dark:hover:bg-emerald-950/50"
                   >
                     {t('hr.reinstate')}
                   </button>
@@ -488,9 +488,9 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
         <div className="mt-4 border-t border-border pt-4">
           <label className="block text-xs font-medium text-muted-foreground mb-2">Contrato firmado</label>
           {contractUrl && !contractFile && (
-            <div className="flex items-center gap-2 mb-2 p-2 bg-emerald-50 dark:bg-emerald-950/30 rounded-lg">
+            <div className="flex items-center gap-2 mb-2 p-2 bg-positive/10/30 rounded-lg">
               <FileText className="w-4 h-4 text-emerald-600" />
-              <span className="text-sm text-emerald-700 dark:text-emerald-400 flex-1">Contrato cargado</span>
+              <span className="text-sm text-positive flex-1">Contrato cargado</span>
               <a href={contractUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
                 Ver <ExternalLink className="w-3 h-3" />
               </a>
@@ -513,7 +513,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
             )}
           </div>
         </div>
-        {error && <p className="mt-4 text-sm text-red-600 bg-red-50 dark:bg-red-950/30 px-3 py-2 rounded-lg">{error}</p>}
+        {error && <p className="mt-4 text-sm text-red-600 bg-negative/10/30 px-3 py-2 rounded-lg">{error}</p>}
         <div className="mt-4 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors">
             {t('common.cancel')}
@@ -742,9 +742,9 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
           </div>
         </div>
         {errorMsg && (
-          <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
-            <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
-            <span className="text-sm text-red-700 dark:text-red-400">{errorMsg}</span>
+          <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-negative/10/30 border border-negative/30">
+            <AlertCircle className="w-4 h-4 text-negative shrink-0 mt-0.5" />
+            <span className="text-sm text-negative">{errorMsg}</span>
           </div>
         )}
         <div className="mt-4 flex justify-end gap-2">
@@ -764,9 +764,9 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
 }
 
 const NEG_STATUS_BADGE: Record<string, string> = {
-  active: 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400',
-  pending: 'bg-amber-50 dark:bg-amber-950/50 text-amber-700 dark:text-amber-400',
-  closed: 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400',
+  active: 'bg-positive/10 text-positive',
+  pending: 'bg-warning/10 text-warning',
+  closed: 'bg-negative/10 text-negative',
 };
 
 const NEG_STATUS_LABELS: Record<string, string> = {
@@ -1415,7 +1415,7 @@ export default function RRHHPage() {
       {Modal2FA}
       {/* Toast notification */}
       {toast && (
-        <div className={cn('flex items-center gap-2 px-4 py-3 rounded-lg text-sm', toast.type === 'success' ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800')}>
+        <div className={cn('flex items-center gap-2 px-4 py-3 rounded-lg text-sm', toast.type === 'success' ? 'bg-positive/10 text-positive border border-positive/30' : 'bg-negative/10 text-negative border border-negative/30')}>
           {toast.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
           {toast.msg}
         </div>
@@ -1441,7 +1441,7 @@ export default function RRHHPage() {
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Card>
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50"><Users className="w-5 h-5 text-blue-500" /></div>
+            <div className="p-2 rounded-lg bg-info/10"><Users className="w-5 h-5 text-blue-500" /></div>
             <span className="text-sm text-muted-foreground">{t('hr.employees')}</span>
           </div>
           <p className="text-2xl font-bold">{employees.length}</p>
@@ -1455,7 +1455,7 @@ export default function RRHHPage() {
         </Card>
         <Card>
           <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50"><Briefcase className="w-5 h-5 text-emerald-500" /></div>
+            <div className="p-2 rounded-lg bg-positive/10"><Briefcase className="w-5 h-5 text-emerald-500" /></div>
             <span className="text-sm text-muted-foreground">{t('hr.totalCommissions')}</span>
           </div>
           <p className="text-2xl font-bold">{formatCurrency(totalCommissionsFiltered)}</p>
@@ -1583,7 +1583,7 @@ export default function RRHHPage() {
                       <td className="py-2.5 hidden md:table-cell">
                         <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium',
                           emp.source === 'commercial'
-                            ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400'
+                            ? 'bg-info/10 text-info'
                             : 'bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-400')}>
                           {emp.source === 'commercial' ? t('hr.typeCommercial') : t('hr.typeAdmin')}
                         </span>

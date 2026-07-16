@@ -129,13 +129,13 @@ export default function PeríodosPage() {
       />
 
       {successMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium" aria-live="polite">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-positive/10 text-positive text-sm font-medium" aria-live="polite">
           <Check className="w-4 h-4" />
           {successMsg}
         </div>
       )}
       {errorMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-red-50 dark:bg-red-950/50 text-red-700 dark:text-red-400 text-sm font-medium" aria-live="assertive">
+        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="assertive">
           <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" /></svg>
           {errorMsg}
         </div>
@@ -163,7 +163,7 @@ export default function PeríodosPage() {
         </Card>
         <Card>
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-amber-50 dark:bg-amber-950/50"><Clock className="w-5 h-5 text-amber-500" /></div>
+            <div className="p-2 rounded-lg bg-warning/10"><Clock className="w-5 h-5 text-amber-500" /></div>
             <div>
               <p className="text-sm text-muted-foreground">{t('periods.inProgress')}</p>
               <p className="text-2xl font-bold">{inProgressCount}</p>

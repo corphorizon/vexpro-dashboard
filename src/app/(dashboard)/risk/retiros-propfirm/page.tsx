@@ -1149,12 +1149,12 @@ export default function RetirosPropFirmPage() {
                       </td>
                       <td className="px-3 py-3 text-center">
                         {rec.verdict === 'approved' && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-positive">
                             <CheckCircle className="w-2.5 h-2.5" /> Aprobado
                           </span>
                         )}
                         {rec.verdict === 'rejected' && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 dark:bg-red-950/60 text-red-700 dark:text-red-400">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 dark:bg-red-950/60 text-negative">
                             <XCircle className="w-2.5 h-2.5" /> Rechazado
                           </span>
                         )}
@@ -1168,8 +1168,8 @@ export default function RetirosPropFirmPage() {
                             <span key={r.ruleName} className={cn(
                               'px-1.5 py-0.5 rounded text-[9px] font-medium',
                               r.status === 'pass'
-                                ? 'bg-emerald-100 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-400'
-                                : 'bg-red-100 dark:bg-red-950/50 text-red-700 dark:text-red-400',
+                                ? 'bg-emerald-100 dark:bg-emerald-950/50 text-positive'
+                                : 'bg-red-100 dark:bg-red-950/50 text-negative',
                             )}>
                               {r.displayName}: {r.violations}
                             </span>
@@ -1180,7 +1180,7 @@ export default function RetirosPropFirmPage() {
                         <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => restoreFromHistory(rec)}
-                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-400 hover:bg-blue-100 transition-colors"
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-info/10 text-info hover:bg-blue-100 transition-colors"
                             title="Ver análisis"
                           >
                             <Eye className="w-3 h-3" />
@@ -1189,7 +1189,7 @@ export default function RetirosPropFirmPage() {
                           <button
                             onClick={() => downloadPDFFromHistory(rec)}
                             disabled={historyLoading === rec.id}
-                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-red-50 dark:bg-red-950/40 text-red-600 dark:text-red-400 hover:bg-red-100 transition-colors disabled:opacity-50"
+                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-negative/10 text-negative hover:bg-red-100 transition-colors disabled:opacity-50"
                             title="Descargar PDF"
                           >
                             {historyLoading === rec.id
@@ -1246,7 +1246,7 @@ export default function RetirosPropFirmPage() {
       {/* Error */}
       {error && (
         <Card className="p-4 border-red-500/30 bg-red-500/5">
-          <div className="flex items-center gap-2 text-red-600 dark:text-red-400">
+          <div className="flex items-center gap-2 text-negative">
             <XCircle className="w-5 h-5" />
             <p className="text-sm font-medium">{error}</p>
           </div>
@@ -1295,7 +1295,7 @@ export default function RetirosPropFirmPage() {
             <MetaCard label={t('risk.metaBroker')} value={result.metadata.broker || '—'} />
             <MetaCard label={t('risk.metaPeriod')} value={result.metadata.period || '—'} />
             <MetaCard label={t('risk.metaProfit')} value={formatCurrency(result.metadata.totalNetProfit)}
-              valueClass={result.metadata.totalNetProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'} />
+              valueClass={result.metadata.totalNetProfit >= 0 ? 'text-positive' : 'text-negative'} />
             <MetaCard label={t('risk.metaTrades')} value={String(result.trades.length)} />
           </div>
 
@@ -1338,7 +1338,7 @@ export default function RetirosPropFirmPage() {
                 ? <CheckCircle className="w-6 h-6 text-green-500" />
                 : <XCircle className="w-6 h-6 text-red-500" />}
               <div>
-                <p className={cn('text-sm font-bold', verdict.status === 'pass' ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                <p className={cn('text-sm font-bold', verdict.status === 'pass' ? 'text-positive' : 'text-negative')}>
                   {verdict.status === 'pass' ? t('risk.approved') : t('risk.rejected')}
                 </p>
                 <p className="text-xs text-muted-foreground">{verdict.msg}</p>
@@ -1420,7 +1420,7 @@ export default function RetirosPropFirmPage() {
                           ) : '—'}
                         </td>
                         <td className="px-3 py-2 text-right font-mono">{item.trade?.volume ?? '—'}</td>
-                        <td className={cn('px-3 py-2 text-right font-mono', (item.trade?.profit ?? 0) >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                        <td className={cn('px-3 py-2 text-right font-mono', (item.trade?.profit ?? 0) >= 0 ? 'text-positive' : 'text-negative')}>
                           {formatCurrency(item.trade?.profit ?? 0)}
                         </td>
                         <td className="px-3 py-2 text-right">{fmtDuration(item.trade?.durationMinutes ?? 0)}</td>
@@ -1470,7 +1470,7 @@ export default function RetirosPropFirmPage() {
 
           {/* Restored-from-history notice */}
           {result.trades.length === 0 && (
-            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 text-amber-700 text-sm">
+            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-warning/10/30 border border-amber-200 text-amber-700 text-sm">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               <span>Este análisis fue restaurado del historial. Las operaciones individuales no están disponibles — sube el archivo original para verlas.</span>
             </div>
@@ -1536,7 +1536,7 @@ export default function RetirosPropFirmPage() {
                         <td className="px-3 py-2 text-right font-mono">{trade.closePrice}</td>
                         <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatCurrency(trade.commission)}</td>
                         <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatCurrency(trade.swap)}</td>
-                        <td className={cn('px-3 py-2 text-right font-mono', trade.profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400')}>
+                        <td className={cn('px-3 py-2 text-right font-mono', trade.profit >= 0 ? 'text-positive' : 'text-negative')}>
                           {formatCurrency(trade.profit)}
                         </td>
                         <td className="px-3 py-2 text-right text-muted-foreground">{fmtDuration(trade.durationMinutes)}</td>

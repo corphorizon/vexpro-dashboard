@@ -161,7 +161,7 @@ export function FireModal({ profile, onClose, onSuccess }: FireModalProps) {
         </div>
 
         {error && (
-          <div className="mt-3 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-xs">
+          <div className="mt-3 px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-xs">
             {error}
           </div>
         )}

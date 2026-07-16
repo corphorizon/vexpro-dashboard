@@ -110,7 +110,7 @@ export default function SuperadminHome() {
       {/* System alerts — surfaces inactive tenants so the operator notices at
           a glance. Non-blocking and always dismissable by the status change. */}
       {inactiveCount > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-3 text-sm">
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-3 text-sm">
           <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
           <div>
             <p className="font-medium">{inactiveCount} {inactiveCount === 1 ? 'empresa inactiva' : 'empresas inactivas'}</p>
@@ -123,7 +123,7 @@ export default function SuperadminHome() {
 
       {/* Error / Loading / Empty */}
       {error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950/50 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
+        <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
           {error}
         </div>
       )}

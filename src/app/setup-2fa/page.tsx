@@ -130,11 +130,11 @@ export default function Setup2FAPage() {
 
           <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
             <div className="space-y-4">
-              <div className="px-4 py-3 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-400 text-sm">
+              <div className="px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-800 dark:text-emerald-400 text-sm">
                 A partir de ahora, cada vez que inicies sesión necesitarás un código de tu app de autenticación.
               </div>
 
-              <div className="px-4 py-3 rounded-lg bg-amber-50 dark:bg-amber-950/50 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-400 text-sm">
+              <div className="px-4 py-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-800 dark:text-amber-400 text-sm">
                 <strong>Importante:</strong> No elimines la cuenta del dashboard en tu aplicación de autenticación. Si la pierdes, contacta al administrador de tu empresa.
               </div>
 
@@ -163,7 +163,7 @@ export default function Setup2FAPage() {
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50">
+            <div className="p-2 rounded-lg bg-info/10">
               <ShieldCheck className="w-5 h-5 text-blue-500" />
             </div>
             <div>
@@ -181,7 +181,7 @@ export default function Setup2FAPage() {
           {step === 'scan' && (
             <div className="space-y-5">
               {/* Step 1: Instructions */}
-              <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-400 text-sm">
+              <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
                 <strong>Paso 1:</strong> Abre tu app de autenticación (Google Authenticator, Authy, etc.) y escanea este código QR.
               </div>
 
@@ -247,7 +247,7 @@ export default function Setup2FAPage() {
           {step === 'verify' && (
             <div className="space-y-5">
               {/* Step 2: Verify */}
-              <div className="px-4 py-3 rounded-lg bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-400 text-sm">
+              <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
                 <strong>Paso 2:</strong> Ingresa el código de 6 dígitos que aparece en tu aplicación de autenticación.
               </div>
 
@@ -274,7 +274,7 @@ export default function Setup2FAPage() {
                 </div>
 
                 {error && (
-                  <div className="px-3 py-2 rounded-lg bg-red-50 dark:bg-red-950/50 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 text-sm" role="alert" aria-live="assertive">
+                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert" aria-live="assertive">
                     {error}
                   </div>
                 )}

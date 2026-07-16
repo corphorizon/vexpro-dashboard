@@ -28,8 +28,8 @@ export function DurationDistributionTable({ buckets, totalCount, totalProfit }: 
   const openBucket = openBucketKey ? buckets.find((b) => b.key === openBucketKey) : null;
 
   const profitColor = (n: number) =>
-    n > 0 ? 'text-emerald-700 dark:text-emerald-400'
-    : n < 0 ? 'text-red-600 dark:text-red-400'
+    n > 0 ? 'text-positive'
+    : n < 0 ? 'text-negative'
     : 'text-foreground';
 
   return (

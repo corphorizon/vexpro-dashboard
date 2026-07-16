@@ -98,7 +98,7 @@ export function RolesPanel() {
       {loading ? (
         <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
       ) : error ? (
-        <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 text-sm">{error}</div>
+        <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 text-sm">{error}</div>
       ) : roles.length === 0 ? (
         <p className="text-sm text-muted-foreground text-center py-8">
           No hay roles personalizados. Los 6 roles del sistema siguen disponibles.
@@ -280,7 +280,7 @@ function RoleForm({ editing, onClose, onSaved }: {
         </div>
 
         {error && (
-          <div className="p-3 rounded-lg bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800 text-red-700 text-sm">
+          <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 text-sm">
             {error}
           </div>
         )}
