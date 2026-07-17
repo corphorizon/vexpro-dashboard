@@ -467,25 +467,25 @@ export default function UsuariosPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('users.name')}</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('users.email')}</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('users.role')}</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('users.modules')}</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">2FA</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.name')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.email')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.role')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.modules')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">2FA</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-b border-border/50 hover:bg-muted/50">
-                  <td className="py-3 px-3 font-medium">{u.name}</td>
-                  <td className="py-3 px-3 text-muted-foreground">{u.email}</td>
-                  <td className="py-3 px-3">
+                <tr key={u.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                  <td className="py-2.5 px-3 font-medium">{u.name}</td>
+                  <td className="py-2.5 px-3 text-muted-foreground">{u.email}</td>
+                  <td className="py-2.5 px-3">
                     <Badge variant={u.role === 'admin' ? 'success' : 'neutral'}>
                       {ROLE_LABELS[u.role] || u.role}
                     </Badge>
                   </td>
-                  <td className="py-3 px-3">
+                  <td className="py-2.5 px-3">
                     <div className="flex flex-wrap gap-1">
                       {u.allowed_modules.slice(0, 4).map(mod => (
                         <span key={mod} className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
@@ -499,7 +499,7 @@ export default function UsuariosPage() {
                       )}
                     </div>
                   </td>
-                  <td className="py-3 px-3">
+                  <td className="py-2.5 px-3">
                     <span className={u.twofa_enabled
                       ? 'inline-flex px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
                       : 'inline-flex px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
@@ -507,7 +507,7 @@ export default function UsuariosPage() {
                       {u.twofa_enabled ? 'Activo' : 'No activo'}
                     </span>
                   </td>
-                  <td className="py-3 px-3 text-right">
+                  <td className="py-2.5 px-3 text-right">
                     {/* Para usuarios con role='admin', el admin de empresa
                         no puede gestionarlos — solo el superadmin. Mostramos
                         un guion en vez de los botones. */}

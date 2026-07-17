@@ -456,8 +456,8 @@ function BreakdownTable({
   onExclusionChanged?: () => void;
 }) {
   const thCls =
-    'text-left py-2 px-2 text-muted-foreground font-medium border-b border-border sticky top-0 bg-card z-10';
-  const tdCls = 'py-2 px-2 border-b border-border/50';
+    'text-left py-2.5 px-3 text-muted-foreground font-medium border-b border-border sticky top-0 bg-card z-10';
+  const tdCls = 'py-2 px-3 border-b border-border/50';
 
   if (slug === 'coinsbuy-deposits') {
     const r = rows as CoinsbuyDepositTx[];
@@ -477,7 +477,7 @@ function BreakdownTable({
         <tbody>
           {r.map((t) => {
             const isExcluded = t.excluded === true;
-            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : '';
+            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : 'hover:bg-muted/50 transition-colors';
             return (
               <tr key={t.id} className={rowCls}>
                 <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
@@ -524,7 +524,7 @@ function BreakdownTable({
         <tbody>
           {r.map((t) => {
             const isExcluded = t.excluded === true;
-            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : '';
+            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : 'hover:bg-muted/50 transition-colors';
             return (
               <tr key={t.id} className={rowCls}>
                 <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
@@ -570,7 +570,7 @@ function BreakdownTable({
         </thead>
         <tbody>
           {r.map((t) => (
-            <tr key={t.id}>
+            <tr key={t.id} className="hover:bg-muted/50 transition-colors">
               <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
               <td className={tdCls}>{t.customerEmail}</td>
               <td className={`${tdCls} font-mono`}>{t.id}</td>
@@ -606,7 +606,7 @@ function BreakdownTable({
       </thead>
       <tbody>
         {r.map((t) => (
-          <tr key={t.id}>
+          <tr key={t.id} className="hover:bg-muted/50 transition-colors">
             <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
             <td className={tdCls}>{t.email}</td>
             <td className={`${tdCls} font-mono`}>{t.orderId}</td>

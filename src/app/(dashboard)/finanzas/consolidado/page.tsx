@@ -489,14 +489,14 @@ export default function ConsolidadoPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead className="bg-muted/50 sticky top-0">
-              <tr>
-                <th className="text-left py-2.5 px-3 font-semibold sticky left-0 bg-muted/50 z-10 border-r border-border whitespace-nowrap">
+              <tr className="border-b border-border">
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium sticky left-0 bg-muted/50 z-10 border-r border-border whitespace-nowrap">
                   Mes
                 </th>
                 {visibleColumns.map((c) => (
                   <th
                     key={c.key}
-                    className="text-right py-2.5 px-3 font-semibold whitespace-nowrap"
+                    className="text-right py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap"
                   >
                     {c.label}
                   </th>
@@ -518,9 +518,9 @@ export default function ConsolidadoPage() {
               {visiblePeriodContexts.map((ctx) => (
                 <tr
                   key={ctx.periodId}
-                  className="border-b border-border/50 hover:bg-muted/30"
+                  className="border-b border-border/50 hover:bg-muted/50 transition-colors"
                 >
-                  <td className="py-2 px-3 font-medium sticky left-0 bg-background hover:bg-muted/30 border-r border-border whitespace-nowrap">
+                  <td className="py-2 px-3 font-medium sticky left-0 bg-background hover:bg-muted/50 border-r border-border whitespace-nowrap">
                     {ctx.periodLabel}
                   </td>
                   {visibleColumns.map((c) => {

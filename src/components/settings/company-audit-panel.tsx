@@ -5,6 +5,8 @@ import { apiFetch } from '@/lib/api-fetch';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Loader2, ClipboardList } from 'lucide-react';
+import { DataTable } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CompanyAuditPanel — used inside /superadmin/companies/[id] to list the
@@ -111,43 +113,47 @@ export function CompanyAuditPanel({ companyId }: { companyId: string }) {
         </div>
       )}
 
-      {rows !== null && rows.length === 0 && !error && (
-        <Card className="text-center py-8 text-sm text-muted-foreground">
-          <ClipboardList className="w-6 h-6 mx-auto mb-2 text-muted-foreground/60" />
-          Sin registros de auditoría para esta empresa (con los filtros actuales).
-        </Card>
-      )}
-
-      {rows !== null && rows.length > 0 && (
+      {rows !== null && !error && (
         <Card className="p-0 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-muted-foreground">
-                <tr>
-                  <th className="text-left px-3 py-2 font-medium">Fecha</th>
-                  <th className="text-left px-3 py-2 font-medium">Usuario</th>
-                  <th className="text-left px-3 py-2 font-medium">Acción</th>
-                  <th className="text-left px-3 py-2 font-medium">Módulo</th>
-                  <th className="text-left px-3 py-2 font-medium">Detalle</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-t border-border hover:bg-muted/30">
-                    <td className="px-3 py-2 text-xs whitespace-nowrap">
-                      {new Date(r.timestamp).toLocaleString('es-ES')}
-                    </td>
-                    <td className="px-3 py-2 text-xs">{r.user_name ?? '—'}</td>
-                    <td className="px-3 py-2">
-                      <Badge variant={variantFor(r.action)}>{r.action}</Badge>
-                    </td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground">{r.module ?? '—'}</td>
-                    <td className="px-3 py-2 text-xs text-muted-foreground max-w-md truncate">{r.details ?? ''}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <DataTable<AuditRow>
+            data={rows}
+            density="compact"
+            empty={
+              <EmptyState
+                compact
+                icon={ClipboardList}
+                title="Sin registros de auditoría"
+                description="No hay actividad para esta empresa (con los filtros actuales)."
+              />
+            }
+            columns={[
+              {
+                header: 'Fecha',
+                accessor: (r) => (
+                  <span className="text-xs whitespace-nowrap">
+                    {new Date(r.timestamp).toLocaleString('es-ES')}
+                  </span>
+                ),
+              },
+              {
+                header: 'Usuario',
+                accessor: (r) => <span className="text-xs">{r.user_name ?? '—'}</span>,
+              },
+              {
+                header: 'Acción',
+                accessor: (r) => <Badge variant={variantFor(r.action)}>{r.action}</Badge>,
+              },
+              {
+                header: 'Módulo',
+                accessor: (r) => <span className="text-xs text-muted-foreground">{r.module ?? '—'}</span>,
+              },
+              {
+                header: 'Detalle',
+                className: 'max-w-md truncate',
+                accessor: (r) => <span className="text-xs text-muted-foreground">{r.details ?? ''}</span>,
+              },
+            ]}
+          />
         </Card>
       )}
     </div>

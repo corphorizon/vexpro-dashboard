@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
 import { Badge } from '@/components/ui/badge';
 import { useAuth, canEdit } from '@/lib/auth-context';
@@ -191,43 +192,43 @@ export default function PeríodosPage() {
           <Calendar className="w-5 h-5 text-muted-foreground" />
           <h2 className="text-lg font-semibold">{t('periods.title')}</h2>
         </div>
-        <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-        <table className="w-full text-sm min-w-[480px]">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('periods.title')}</th>
-              <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('periods.year')}</th>
-              <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('periods.month')}</th>
-              <th className="text-center py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('common.status')}</th>
-              {isAdmin && <th className="text-center py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
-            </tr>
-          </thead>
-          <tbody>
-            {managedPeriods.map(period => {
-              const badge = STATUS_BADGE[period.status];
-              const Icon = STATUS_ICON[period.status];
-              const now = new Date();
-              const currentYear = now.getFullYear();
-              const currentMonth = now.getMonth() + 1;
-              const isCurrentMonth = period.year === currentYear && period.month === currentMonth;
-              const isPastMonth = period.year < currentYear || (period.year === currentYear && period.month < currentMonth);
-              const isUpdating = updating === period.id;
-
-              return (
-                <tr key={period.id} className="border-b border-border/50 hover:bg-muted/50">
-                  <td className="py-3 px-2 sm:px-3 font-medium">
-                    <div className="flex items-center gap-2">
-                      <Icon className="w-4 h-4 text-muted-foreground" />
-                      {period.label}
-                    </div>
-                  </td>
-                  <td className="py-3 px-2 sm:px-3 hidden sm:table-cell">{period.year}</td>
-                  <td className="py-3 px-2 sm:px-3 hidden sm:table-cell">{period.month}</td>
-                  <td className="py-3 px-2 sm:px-3 text-center">
-                    <Badge variant={badge}>{t(STATUS_LABEL_KEY[period.status])}</Badge>
-                  </td>
-                  {isAdmin && (
-                    <td className="py-3 px-3 text-center">
+        <DataTable
+          className="-mx-4 px-4 sm:mx-0 sm:px-0"
+          data={managedPeriods}
+          columns={[
+            {
+              header: t('periods.title'),
+              accessor: (period) => {
+                const Icon = STATUS_ICON[period.status];
+                return (
+                  <div className="flex items-center gap-2 font-medium">
+                    <Icon className="w-4 h-4 text-muted-foreground" />
+                    {period.label}
+                  </div>
+                );
+              },
+            },
+            { header: t('periods.year'), accessor: 'year', className: 'hidden sm:table-cell' },
+            { header: t('periods.month'), accessor: 'month', className: 'hidden sm:table-cell' },
+            {
+              header: t('common.status'),
+              align: 'center',
+              accessor: (period) => (
+                <Badge variant={STATUS_BADGE[period.status]}>{t(STATUS_LABEL_KEY[period.status])}</Badge>
+              ),
+            },
+            ...(isAdmin
+              ? [{
+                  header: t('common.actions'),
+                  align: 'center' as const,
+                  accessor: (period: ManagedPeriod) => {
+                    const now = new Date();
+                    const currentYear = now.getFullYear();
+                    const currentMonth = now.getMonth() + 1;
+                    const isCurrentMonth = period.year === currentYear && period.month === currentMonth;
+                    const isPastMonth = period.year < currentYear || (period.year === currentYear && period.month < currentMonth);
+                    const isUpdating = updating === period.id;
+                    return (
                       <div className="flex justify-center gap-1">
                         {isUpdating ? (
                           <span className="text-xs text-muted-foreground">Actualizando...</span>
@@ -263,14 +264,12 @@ export default function PeríodosPage() {
                           </>
                         )}
                       </div>
-                    </td>
-                  )}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-        </div>
+                    );
+                  },
+                }]
+              : []),
+          ]}
+        />
       </Card>
 
       {ConfirmModal}

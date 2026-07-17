@@ -332,17 +332,17 @@ export default function EgresosPage() {
             <table className="w-full text-sm">
               <thead className="sticky top-0 bg-card z-10">
                 <tr className="border-b border-border">
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium w-8">#</th>
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.amount')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
-                  <th className="text-center py-2 px-3 text-muted-foreground font-medium">{t('expenses.status')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium w-8">#</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.amount')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
+                  <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.status')}</th>
                 </tr>
               </thead>
               <tbody>
                 {preoperativeExpenses.map((expense, i) => (
-                  <tr key={expense.id} className="border-b border-border/50 hover:bg-muted/50">
+                  <tr key={expense.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
                     <td className="py-2.5 px-3">{expense.concept}</td>
                     <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
@@ -428,15 +428,15 @@ export default function EgresosPage() {
               <table className="w-full text-sm">
                 <thead className="sticky top-0 bg-card z-10">
                   <tr className="border-b border-border">
-                    <th className="text-left py-2 px-3 text-muted-foreground font-medium w-8">#</th>
-                    <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
-                    <th className="text-left py-2 px-3 text-muted-foreground font-medium">Categoría</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.amount')}</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
-                    <th className="text-center py-2 px-3 text-muted-foreground font-medium">{t('expenses.status')}</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium w-8">#</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Categoría</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.amount')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
+                    <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.status')}</th>
                     {(userCanEdit || userCanDelete) && (
-                      <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">{t('expenses.actions')}</th>
+                      <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.actions')}</th>
                     )}
                   </tr>
                 </thead>
@@ -449,22 +449,22 @@ export default function EgresosPage() {
                     </tr>
                   )}
                   {filteredExpenses.map((expense, i) => (
-                    <tr key={expense.id} className="border-b border-border/50 hover:bg-muted/50">
+                    <tr key={expense.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                       {editingId === expense.id ? (
                         <>
-                          <td className="py-2 px-3 text-muted-foreground">{i + 1}</td>
-                          <td className="py-2 px-3">
+                          <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
+                          <td className="py-2.5 px-3">
                             <input
                               value={editForm.concept}
                               onChange={e => setEditForm(p => ({ ...p, concept: e.target.value }))}
                               className="w-full px-2 py-1 rounded border border-border text-sm"
                             />
                           </td>
-                          <td className="py-2 px-3 text-xs text-muted-foreground">
+                          <td className="py-2.5 px-3 text-xs text-muted-foreground">
                             {/* Category editing happens in /upload; read-only here */}
                             {expense.category || '—'}
                           </td>
-                          <td className="py-2 px-3">
+                          <td className="py-2.5 px-3">
                             <input
                               type="number"
                               step="0.01"
@@ -473,7 +473,7 @@ export default function EgresosPage() {
                               className="w-full text-right px-2 py-1 rounded border border-border text-sm"
                             />
                           </td>
-                          <td className="py-2 px-3">
+                          <td className="py-2.5 px-3">
                             <input
                               type="number"
                               step="0.01"
@@ -482,7 +482,7 @@ export default function EgresosPage() {
                               className="w-full text-right px-2 py-1 rounded border border-border text-sm"
                             />
                           </td>
-                          <td className="py-2 px-3">
+                          <td className="py-2.5 px-3">
                             <input
                               type="number"
                               step="0.01"
@@ -492,7 +492,7 @@ export default function EgresosPage() {
                             />
                           </td>
                           <td></td>
-                          <td className="py-2 px-3 text-center">
+                          <td className="py-2.5 px-3 text-center">
                             <div className="flex justify-center gap-1">
                               <button onClick={saveEdit} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
                               <button onClick={cancelEdit} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>

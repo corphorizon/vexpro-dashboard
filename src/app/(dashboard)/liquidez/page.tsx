@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -89,6 +91,10 @@ export default function LiquidezPage() {
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
     [filtered, page],
   );
+
+  // Número de fila global (respeta la paginación) — DataTable no expone el
+  // índice en el accessor, así que se precalcula acá.
+  const tableRows = pagedRows.map((mov, i) => ({ ...mov, rowNum: page * PAGE_SIZE + i + 1 }));
 
   return (
     <div className="space-y-6">
@@ -179,41 +185,52 @@ export default function LiquidezPage() {
 
       <Card>
         <h2 className="text-lg font-semibold mb-4">{t('liquidity.history')}</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium w-12">#</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Descripción</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Ingreso</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Salida</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedRows.map((mov, i) => (
-                <tr key={mov.id} className="border-b border-border/50 hover:bg-muted/50">
-                  <td className="py-2.5 px-3 text-muted-foreground tabular-nums">{page * PAGE_SIZE + i + 1}</td>
-                  <td className="py-2.5 px-3">{formatDate(mov.date)}</td>
-                  <td className="py-2.5 px-3 text-xs max-w-[200px] truncate">{mov.user_email || '—'}</td>
-                  <td className="py-2.5 px-3">{mov.mt_account || '—'}</td>
-                  <td className="py-2.5 px-3 text-right font-medium text-blue-600">
-                    {mov.deposit > 0 ? formatCurrency(mov.deposit) : '—'}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-medium text-red-600">
-                    {mov.withdrawal > 0 ? formatCurrency(mov.withdrawal) : '—'}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(balanceMap.get(mov.id) ?? 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {filtered.length === 0 && (
-          <p className="text-center text-muted-foreground py-8">{t('common.noData')}</p>
-        )}
+        <DataTable
+          data={tableRows}
+          columns={[
+            {
+              header: '#',
+              className: 'w-12',
+              accessor: (mov) => (
+                <span className="text-muted-foreground tabular-nums">{mov.rowNum}</span>
+              ),
+            },
+            { header: 'Fecha', accessor: (mov) => formatDate(mov.date) },
+            {
+              header: 'Concepto',
+              accessor: (mov) => (
+                <span className="block text-xs max-w-[200px] truncate">{mov.user_email || '—'}</span>
+              ),
+            },
+            { header: 'Descripción', accessor: (mov) => mov.mt_account || '—' },
+            {
+              header: 'Ingreso',
+              align: 'right',
+              accessor: (mov) => (
+                <span className="font-medium text-blue-600">
+                  {mov.deposit > 0 ? formatCurrency(mov.deposit) : '—'}
+                </span>
+              ),
+            },
+            {
+              header: 'Salida',
+              align: 'right',
+              accessor: (mov) => (
+                <span className="font-medium text-red-600">
+                  {mov.withdrawal > 0 ? formatCurrency(mov.withdrawal) : '—'}
+                </span>
+              ),
+            },
+            {
+              header: 'Balance',
+              align: 'right',
+              accessor: (mov) => (
+                <span className="font-bold">{formatCurrency(balanceMap.get(mov.id) ?? 0)}</span>
+              ),
+            },
+          ]}
+          empty={<EmptyState compact title={t('common.noData')} />}
+        />
         {filtered.length > 0 && (
           <div className="flex items-center justify-between mt-4 text-sm flex-wrap gap-2">
             <span className="text-muted-foreground">

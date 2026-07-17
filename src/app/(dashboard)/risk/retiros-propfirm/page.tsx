@@ -1123,21 +1123,21 @@ export default function RetirosPropFirmPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border bg-muted/30 text-xs">
-                    <th className="text-left px-4 py-3 font-medium">Fecha</th>
-                    <th className="text-left px-3 py-3 font-medium">Trader</th>
-                    <th className="text-left px-3 py-3 font-medium">Cuenta</th>
-                    <th className="text-left px-3 py-3 font-medium">Período</th>
-                    <th className="text-right px-3 py-3 font-medium">Operaciones</th>
-                    <th className="text-right px-3 py-3 font-medium">Net Profit</th>
-                    <th className="text-center px-3 py-3 font-medium">Veredicto</th>
-                    <th className="text-left px-3 py-3 font-medium">Reglas</th>
-                    <th className="text-center px-3 py-3 font-medium">Acciones</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Fecha</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Trader</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Cuenta</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Período</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Operaciones</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Net Profit</th>
+                    <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">Veredicto</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Reglas</th>
+                    <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {history.map((rec) => (
-                    <tr key={rec.id} className="border-b border-border/40 hover:bg-muted/20 text-xs">
-                      <td className="px-4 py-3 text-muted-foreground whitespace-nowrap">
+                    <tr key={rec.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors text-xs">
+                      <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">
                         {new Date(rec.savedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </td>
                       <td className="px-3 py-3 font-medium">{rec.traderName || '—'}</td>
@@ -1398,18 +1398,18 @@ export default function RetirosPropFirmPage() {
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Position</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Symbol</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">Volume</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">Profit</th>
-                      <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t('risk.duration')}</th>
-                      <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('risk.rulesViolated')}</th>
+                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Position</th>
+                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Symbol</th>
+                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Type</th>
+                      <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Volume</th>
+                      <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Profit</th>
+                      <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.duration')}</th>
+                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">{t('risk.rulesViolated')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {violPageItems.map((item, i) => (
-                      <tr key={`${item.tradeIndex}-${i}`} className="border-b border-border/50 hover:bg-muted/30">
+                      <tr key={`${item.tradeIndex}-${i}`} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                         <td className="px-3 py-2 font-mono">{item.trade?.position ?? '—'}</td>
                         <td className="px-3 py-2 font-medium">{item.trade?.symbol ?? '—'}</td>
                         <td className="px-3 py-2">
@@ -1496,20 +1496,20 @@ export default function RetirosPropFirmPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border bg-muted/50">
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">#</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Position</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Symbol</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">Type</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Volume</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('risk.openTime')}</th>
-                    <th className="px-3 py-2 text-left font-medium text-muted-foreground">{t('risk.closeTime')}</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t('risk.openPrice')}</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t('risk.closePrice')}</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Commission</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Swap</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">Profit</th>
-                    <th className="px-3 py-2 text-right font-medium text-muted-foreground">{t('risk.duration')}</th>
-                    <th className="px-3 py-2 text-center font-medium text-muted-foreground">{t('risk.flags')}</th>
+                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">#</th>
+                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Position</th>
+                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Symbol</th>
+                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Type</th>
+                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Volume</th>
+                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">{t('risk.openTime')}</th>
+                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">{t('risk.closeTime')}</th>
+                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.openPrice')}</th>
+                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.closePrice')}</th>
+                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Commission</th>
+                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Swap</th>
+                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Profit</th>
+                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.duration')}</th>
+                    <th className="py-2.5 px-3 text-center font-medium text-muted-foreground">{t('risk.flags')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1518,8 +1518,8 @@ export default function RetirosPropFirmPage() {
                     const rules = tradeRuleMap.get(trade.index) || [];
                     return (
                       <tr key={trade.index} className={cn(
-                        'border-b border-border/50',
-                        isViolated ? 'bg-red-50/50 dark:bg-red-950/20' : 'hover:bg-muted/30'
+                        'border-b border-border/50 transition-colors',
+                        isViolated ? 'bg-red-50/50 dark:bg-red-950/20' : 'hover:bg-muted/50'
                       )}>
                         <td className="px-3 py-2 text-muted-foreground">{trade.index + 1}</td>
                         <td className="px-3 py-2 font-mono">{trade.position}</td>

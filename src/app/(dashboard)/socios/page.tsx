@@ -562,18 +562,18 @@ export default function SociosPage() {
           <table className="w-full text-sm min-w-[360px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('partners.name')}</th>
-                <th className="text-right py-2 px-2 sm:px-3 text-muted-foreground font-medium">%</th>
-                <th className="text-right py-2 px-2 sm:px-3 text-muted-foreground font-medium">{t('partners.amount')}</th>
-                {isAdmin && <th className="text-center py-2 px-1 sm:px-3 text-muted-foreground font-medium w-16 sm:w-20"></th>}
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('partners.name')}</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">%</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('partners.amount')}</th>
+                {isAdmin && <th className="text-center py-2.5 px-3 text-muted-foreground font-medium w-16 sm:w-20"></th>}
               </tr>
             </thead>
             <tbody>
               {effectiveDistributions.map((dist, i) => {
                 const partner = partners.find(p => p.id === dist.partner_id);
                 return (
-                  <tr key={dist.id} className="border-b border-border/50 hover:bg-muted/50">
-                    <td className="py-3 px-2 sm:px-3">
+                  <tr key={dist.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                    <td className="py-2.5 px-3">
                       <div className="flex items-center gap-2">
                         <div
                           className="w-3 h-3 rounded-full flex-shrink-0"
@@ -587,12 +587,12 @@ export default function SociosPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-2 sm:px-3 text-right font-medium whitespace-nowrap">{formatPercent(dist.percentage)}</td>
-                    <td className={`py-3 px-2 sm:px-3 text-right font-bold whitespace-nowrap ${dist.amount < 0 ? 'text-red-600' : ''}`}>
+                    <td className="py-2.5 px-3 text-right font-medium whitespace-nowrap">{formatPercent(dist.percentage)}</td>
+                    <td className={`py-2.5 px-3 text-right font-bold whitespace-nowrap ${dist.amount < 0 ? 'text-red-600' : ''}`}>
                       {formatCurrency(dist.amount)}
                     </td>
                     {isAdmin && (
-                      <td className="py-3 px-1 sm:px-3 text-center">
+                      <td className="py-2.5 px-3 text-center">
                         <div className="flex justify-center gap-0.5 sm:gap-1">
                           <button
                             onClick={() => handleEditPartner(dist.partner_id)}
@@ -709,11 +709,11 @@ export default function SociosPage() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="text-left py-1.5 px-2">{t('partners.period')}</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('partners.period')}</th>
                     {partners.map(p => (
-                      <th key={p.id} className="text-right py-1.5 px-2">{p.name}</th>
+                      <th key={p.id} className="text-right py-2.5 px-3 text-muted-foreground font-medium">{p.name}</th>
                     ))}
-                    <th className="text-right py-1.5 px-2">Total</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -740,8 +740,8 @@ export default function SociosPage() {
                     const total = round2(effectiveDists.reduce((s, d) => s + d.amount, 0));
 
                     return (
-                      <tr key={period.id} className={`border-b border-border/30 ${period.id === selectedPeriodId ? 'bg-info/10' : ''}`}>
-                        <td className="py-1.5 px-2 font-medium">
+                      <tr key={period.id} className={`border-b border-border/50 transition-colors ${period.id === selectedPeriodId ? 'bg-info/10' : 'hover:bg-muted/50'}`}>
+                        <td className="py-2.5 px-3 font-medium">
                           <div className="flex items-center gap-1">
                             {period.label}
                             {(pChain?.deudaArrastradaEntrada ?? 0) > 0 && (
@@ -752,12 +752,12 @@ export default function SociosPage() {
                         {partners.map(p => {
                           const d = effectiveDists.find(dd => dd.partner_id === p.id);
                           return (
-                            <td key={p.id} className="py-1.5 px-2 text-right">
+                            <td key={p.id} className="py-2.5 px-3 text-right">
                               {formatCurrency(d?.amount || 0)}
                             </td>
                           );
                         })}
-                        <td className="py-1.5 px-2 text-right font-bold">
+                        <td className="py-2.5 px-3 text-right font-bold">
                           {formatCurrency(total)}
                         </td>
                       </tr>

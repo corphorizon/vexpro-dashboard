@@ -715,12 +715,12 @@ export default function BalancesPage() {
               <table className="w-full text-sm min-w-[640px]">
                 <thead>
                   <tr className="border-b border-border">
-                    <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('balances.period')}</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('balances.netDeposit')}</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('balances.operatingExpenses')}</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('balances.amountToDistribute')}</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('balances.balanceMonth')}</th>
-                    <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('balances.accumulated')}</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('balances.period')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.netDeposit')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.operatingExpenses')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.amountToDistribute')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.balanceMonth')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.accumulated')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -729,14 +729,14 @@ export default function BalancesPage() {
                     return (
                       <tr
                         key={row.periodId}
-                        className={`border-b border-border/50 ${isSelected ? 'bg-blue-50/40 dark:bg-blue-950/20 font-medium' : 'hover:bg-muted/30'}`}
+                        className={`border-b border-border/50 transition-colors ${isSelected ? 'bg-blue-50/40 dark:bg-blue-950/20 font-medium' : 'hover:bg-muted/50'}`}
                       >
-                        <td className="py-2 px-3 font-medium">{row.label}</td>
-                        <td className="py-2 px-3 text-right text-positive">{formatCurrency(row.netDeposit)}</td>
-                        <td className="py-2 px-3 text-right text-negative">{formatCurrency(row.egresos)}</td>
-                        <td className="py-2 px-3 text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.montoDistribuir)}</td>
-                        <td className={`py-2 px-3 text-right font-medium ${row.balanceMes >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.balanceMes)}</td>
-                        <td className={`py-2 px-3 text-right font-bold ${row.saldoFinal >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.saldoFinal)}</td>
+                        <td className="py-2.5 px-3 font-medium">{row.label}</td>
+                        <td className="py-2.5 px-3 text-right text-positive">{formatCurrency(row.netDeposit)}</td>
+                        <td className="py-2.5 px-3 text-right text-negative">{formatCurrency(row.egresos)}</td>
+                        <td className="py-2.5 px-3 text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.montoDistribuir)}</td>
+                        <td className={`py-2.5 px-3 text-right font-medium ${row.balanceMes >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.balanceMes)}</td>
+                        <td className={`py-2.5 px-3 text-right font-bold ${row.saldoFinal >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.saldoFinal)}</td>
                       </tr>
                     );
                   })}

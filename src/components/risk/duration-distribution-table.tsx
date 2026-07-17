@@ -34,13 +34,13 @@ export function DurationDistributionTable({ buckets, totalCount, totalProfit }: 
 
   return (
     <>
-      <div className="rounded-xl overflow-hidden border border-border bg-card">
+      <div className="rounded-xl overflow-x-auto border border-border bg-card">
         <table className="w-full text-sm">
-          <thead>
-            <tr className="bg-emerald-700 text-white">
-              <th className="px-4 py-3 text-left font-semibold">Rango de duración</th>
-              <th className="px-4 py-3 text-center font-semibold">Cantidad de trades</th>
-              <th className="px-4 py-3 text-center font-semibold">Profit total</th>
+          <thead className="bg-card">
+            <tr className="border-b border-border">
+              <th className="px-4 py-3 text-left text-muted-foreground font-medium">Rango de duración</th>
+              <th className="px-4 py-3 text-center text-muted-foreground font-medium">Cantidad de trades</th>
+              <th className="px-4 py-3 text-center text-muted-foreground font-medium">Profit total</th>
             </tr>
           </thead>
           <tbody>
@@ -54,7 +54,7 @@ export function DurationDistributionTable({ buckets, totalCount, totalProfit }: 
                     'border-b border-border transition-colors',
                     i % 2 === 1 ? 'bg-muted/30' : 'bg-card',
                     isClickable
-                      ? 'cursor-pointer hover:bg-emerald-50 dark:hover:bg-emerald-950/30'
+                      ? 'cursor-pointer hover:bg-muted/50'
                       : 'opacity-60 cursor-default',
                   )}
                   title={isClickable ? 'Click para ver los trades de este rango' : 'Sin trades en este rango'}
@@ -68,7 +68,7 @@ export function DurationDistributionTable({ buckets, totalCount, totalProfit }: 
               );
             })}
             {/* Fila Total */}
-            <tr className="bg-emerald-700 text-white font-bold">
+            <tr className="border-t-2 border-border bg-muted/50 font-bold">
               <td className="px-4 py-3 text-left">Total:</td>
               <td className="px-4 py-3 text-center">{totalCount}</td>
               <td className="px-4 py-3 text-center">{formatNumber(totalProfit)}</td>
