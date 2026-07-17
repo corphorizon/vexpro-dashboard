@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -22,6 +23,21 @@ import {
   UserCog,
 } from 'lucide-react';
 
+// recharts (~350KB) on-demand — mismo patrón PERF-03 de resumen-general.
+const chartLoading = () => (
+  <div className="h-[260px] flex items-center justify-center text-sm text-muted-foreground">
+    Cargando gráfico…
+  </div>
+);
+const PayrollTrendChart = dynamic(
+  () => import('@/components/charts/hr-charts').then((m) => m.PayrollTrendChart),
+  { ssr: false, loading: chartLoading },
+);
+const DepartmentDonut = dynamic(
+  () => import('@/components/charts/hr-charts').then((m) => m.DepartmentDonut),
+  { ssr: false, loading: chartLoading },
+);
+
 const ROLE_BADGE: Record<string, string> = {
   sales_manager: 'bg-amber-100 dark:bg-amber-950/50 text-warning',
   head: 'bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
@@ -38,6 +54,8 @@ export default function DashboardPage() {
     employees,
     getResultsByPeriod,
     getProfilesByHead,
+    periods,
+    monthlyResults,
   } = useData();
 
   // ─── Commercial profiles stats ───
@@ -233,7 +251,29 @@ export default function DashboardPage() {
         </Card>
       </div>
 
-      {/* Row 2 — Top Performers + Team Summary */}
+      {/* Row 2 — Charts: evolución de nómina + distribución por departamento */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-accent/10">
+              <TrendingUp className="w-5 h-5 text-accent" />
+            </div>
+            <h2 className="font-semibold">Nómina por período</h2>
+          </div>
+          <PayrollTrendChart periods={periods} monthlyResults={monthlyResults} />
+        </Card>
+        <Card>
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 rounded-lg bg-primary/10">
+              <Users className="w-5 h-5 text-primary dark:text-accent" />
+            </div>
+            <h2 className="font-semibold">Empleados por departamento</h2>
+          </div>
+          <DepartmentDonut departments={empStats.departments} />
+        </Card>
+      </div>
+
+      {/* Row 3 — Top Performers + Team Summary */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Top Performers */}
         <Card>

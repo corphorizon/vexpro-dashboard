@@ -1,13 +1,30 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import dynamic from 'next/dynamic';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card } from '@/components/ui/card';
 import { StatCard } from '@/components/ui/stat-card';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
-import { ShieldCheck, Users, Clock, AlertTriangle, ArrowRight, FileSearch, Wallet } from 'lucide-react';
+import { apiFetch } from '@/lib/api-fetch';
+import type { RevisionSummary } from '@/components/charts/risk-revisions-chart';
+import { ShieldCheck, Users, Clock, AlertTriangle, ArrowRight, FileSearch, Wallet, BarChart3 } from 'lucide-react';
+
+// recharts on-demand (patrón PERF-03).
+const RiskRevisionsChart = dynamic(
+  () => import('@/components/charts/risk-revisions-chart').then((m) => m.RiskRevisionsChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[260px] flex items-center justify-center text-sm text-muted-foreground">
+        Cargando gráfico…
+      </div>
+    ),
+  },
+);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /risk/dashboard — landing page for support / risk-only roles.
@@ -54,6 +71,37 @@ export default function RiskDashboardPage() {
   const { user } = useAuth();
   const canAccess = useModuleAccess('risk');
   const data = useMemo(() => EMPTY_DATA, []);
+
+  // Historial REAL de revisiones Prop Firm — misma fuente que
+  // /risk/retiros-propfirm (/api/risk/revisions). Cada payload trae
+  // savedAt + verdict; alcanza para la evolución mensual por veredicto.
+  const [revisions, setRevisions] = useState<RevisionSummary[] | null>(null);
+  useEffect(() => {
+    if (user === null || !canAccess) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/risk/revisions');
+        const json = await res.json();
+        if (cancelled) return;
+        if (res.ok && json.success && Array.isArray(json.revisions)) {
+          setRevisions(
+            json.revisions.map(
+              (r: { payload: { savedAt: string; verdict: RevisionSummary['verdict'] } }) => ({
+                savedAt: r.payload?.savedAt,
+                verdict: r.payload?.verdict ?? null,
+              }),
+            ),
+          );
+        } else {
+          setRevisions([]);
+        }
+      } catch {
+        if (!cancelled) setRevisions([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [user, canAccess]);
 
   if (!canAccess) {
     return (
@@ -102,6 +150,27 @@ export default function RiskDashboardPage() {
           hint={data.suspiciousOpen === 0 ? 'Todo tranquilo' : 'Sin resolver'}
         />
       </section>
+
+      {/* Revisiones Prop Firm por mes (datos reales del historial guardado) */}
+      <Card>
+        <div className="flex items-center gap-3 mb-4">
+          <div className="p-2 rounded-lg bg-accent/10">
+            <BarChart3 className="w-5 h-5 text-accent" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 className="font-semibold">Revisiones Prop Firm por mes</h2>
+            <p className="text-xs text-muted-foreground">Historial guardado, apilado por veredicto</p>
+          </div>
+          <Link href="/risk/retiros-propfirm" className="text-xs text-muted-foreground hover:text-foreground shrink-0">
+            Ver historial →
+          </Link>
+        </div>
+        {revisions === null ? (
+          <Skeleton className="h-[260px]" />
+        ) : (
+          <RiskRevisionsChart revisions={revisions} />
+        )}
+      </Card>
 
       {/* Recent withdrawal requests */}
       <RecentSection
