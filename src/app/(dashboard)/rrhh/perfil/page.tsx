@@ -545,23 +545,23 @@ export default function PerfilPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('common.name')}</th>
-                  <th className="text-left py-2 text-muted-foreground font-medium">{t('common.email')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.netDepPct')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium">{t('hr.totalEarned')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.email')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netDepPct')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.totalEarned')}</th>
                 </tr>
               </thead>
               <tbody>
                 {subordinates.map(sub => (
-                  <tr key={sub.id} className="border-b border-border/50">
-                    <td className="py-2.5">
+                  <tr key={sub.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                    <td className="py-2.5 px-3">
                       <Link href={`/rrhh/perfil?id=${sub.id}`} className="font-medium hover:text-primary dark:text-accent transition-colors">
                         {sub.name}
                       </Link>
                     </td>
-                    <td className="py-2.5 text-muted-foreground text-xs">{sub.email}</td>
-                    <td className="py-2.5 text-right">{sub.net_deposit_pct != null ? `${sub.net_deposit_pct}%` : 'N/A'}</td>
-                    <td className="py-2.5 text-right font-medium">{formatCurrency(getTotalCommissions(sub.id))}</td>
+                    <td className="py-2.5 px-3 text-muted-foreground text-xs">{sub.email}</td>
+                    <td className="py-2.5 px-3 text-right">{sub.net_deposit_pct != null ? `${sub.net_deposit_pct}%` : 'N/A'}</td>
+                    <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(getTotalCommissions(sub.id))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -659,53 +659,53 @@ export default function PerfilPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-2 text-muted-foreground font-medium" rowSpan={2}>{t('hr.period')}</th>
-                  <th className="text-center py-2 text-muted-foreground font-medium border-b border-border" colSpan={3}>{t('hr.netDeposit')}</th>
-                  <th className="text-center py-2 text-muted-foreground font-medium border-b border-border" colSpan={3}>PNL</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium" rowSpan={2}>{t('hr.commissions')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium" rowSpan={2}>{t('hr.bonus')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium" rowSpan={2}>{t('hr.salaryCol')}</th>
-                  <th className="text-right py-2 text-muted-foreground font-medium font-bold" rowSpan={2}>{t('hr.totalEarned')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.period')}</th>
+                  <th className="text-center py-2.5 px-3 text-muted-foreground font-medium border-b border-border" colSpan={3}>{t('hr.netDeposit')}</th>
+                  <th className="text-center py-2.5 px-3 text-muted-foreground font-medium border-b border-border" colSpan={3}>PNL</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.commissions')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.bonus')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.salaryCol')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium font-bold" rowSpan={2}>{t('hr.totalEarned')}</th>
                 </tr>
                 <tr className="border-b border-border">
-                  <th className="text-right py-1 text-muted-foreground font-medium text-xs">{t('hr.netDepActual')}</th>
-                  <th className="text-right py-1 text-muted-foreground font-medium text-xs">{t('hr.accumulated')}</th>
-                  <th className="text-right py-1 text-muted-foreground font-medium text-xs">{t('hr.total')}</th>
-                  <th className="text-right py-1 text-muted-foreground font-medium text-xs">{t('hr.pnlCurrent')}</th>
-                  <th className="text-right py-1 text-muted-foreground font-medium text-xs">{t('hr.pnlAccumulated')}</th>
-                  <th className="text-right py-1 text-muted-foreground font-medium text-xs">{t('hr.pnlTotal')}</th>
+                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.netDepActual')}</th>
+                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.accumulated')}</th>
+                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.total')}</th>
+                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.pnlCurrent')}</th>
+                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.pnlAccumulated')}</th>
+                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.pnlTotal')}</th>
                 </tr>
               </thead>
               <tbody>
                 {results.map(r => (
-                  <tr key={r.id} className="border-b border-border/50">
-                    <td className="py-2.5 font-medium">{getPeriodLabel(r.period_id)}</td>
-                    <td className="py-2.5 text-right">{formatCurrency(r.net_deposit_current)}</td>
-                    <td className="py-2.5 text-right">{formatCurrency(r.net_deposit_accumulated)}</td>
-                    <td className="py-2.5 text-right">{formatCurrency(r.net_deposit_total)}</td>
-                    <td className="py-2.5 text-right">{r.pnl_current > 0 ? formatCurrency(r.pnl_current) : '-'}</td>
-                    <td className="py-2.5 text-right">{r.pnl_accumulated > 0 ? formatCurrency(r.pnl_accumulated) : '-'}</td>
-                    <td className="py-2.5 text-right">{r.pnl_total > 0 ? formatCurrency(r.pnl_total) : '-'}</td>
-                    <td className="py-2.5 text-right">{formatCurrency(r.commissions_earned)}</td>
-                    <td className="py-2.5 text-right">{r.bonus > 0 ? formatCurrency(r.bonus) : '-'}</td>
-                    <td className="py-2.5 text-right">{r.salary_paid > 0 ? formatCurrency(r.salary_paid) : '-'}</td>
-                    <td className="py-2.5 text-right font-bold">{formatCurrency(r.total_earned)}</td>
+                  <tr key={r.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                    <td className="py-2.5 px-3 font-medium">{getPeriodLabel(r.period_id)}</td>
+                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.net_deposit_current)}</td>
+                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.net_deposit_accumulated)}</td>
+                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.net_deposit_total)}</td>
+                    <td className="py-2.5 px-3 text-right">{r.pnl_current > 0 ? formatCurrency(r.pnl_current) : '-'}</td>
+                    <td className="py-2.5 px-3 text-right">{r.pnl_accumulated > 0 ? formatCurrency(r.pnl_accumulated) : '-'}</td>
+                    <td className="py-2.5 px-3 text-right">{r.pnl_total > 0 ? formatCurrency(r.pnl_total) : '-'}</td>
+                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.commissions_earned)}</td>
+                    <td className="py-2.5 px-3 text-right">{r.bonus > 0 ? formatCurrency(r.bonus) : '-'}</td>
+                    <td className="py-2.5 px-3 text-right">{r.salary_paid > 0 ? formatCurrency(r.salary_paid) : '-'}</td>
+                    <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(r.total_earned)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr className="font-bold border-t-2 border-border">
-                  <td className="py-3">TOTAL</td>
-                  <td className="py-3 text-right">{formatCurrency(totalNetDeposit)}</td>
-                  <td className="py-3 text-right">-</td>
-                  <td className="py-3 text-right">-</td>
-                  <td className="py-3 text-right">{totalPnlCurrent > 0 ? formatCurrency(totalPnlCurrent) : '-'}</td>
-                  <td className="py-3 text-right">-</td>
-                  <td className="py-3 text-right">-</td>
-                  <td className="py-3 text-right">{formatCurrency(totalCommissions)}</td>
-                  <td className="py-3 text-right">{totalBonus > 0 ? formatCurrency(totalBonus) : '-'}</td>
-                  <td className="py-3 text-right">{totalSalary > 0 ? formatCurrency(totalSalary) : '-'}</td>
-                  <td className="py-3 text-right text-primary dark:text-accent">{formatCurrency(totalEarned)}</td>
+                  <td className="py-3 px-3">TOTAL</td>
+                  <td className="py-3 px-3 text-right">{formatCurrency(totalNetDeposit)}</td>
+                  <td className="py-3 px-3 text-right">-</td>
+                  <td className="py-3 px-3 text-right">-</td>
+                  <td className="py-3 px-3 text-right">{totalPnlCurrent > 0 ? formatCurrency(totalPnlCurrent) : '-'}</td>
+                  <td className="py-3 px-3 text-right">-</td>
+                  <td className="py-3 px-3 text-right">-</td>
+                  <td className="py-3 px-3 text-right">{formatCurrency(totalCommissions)}</td>
+                  <td className="py-3 px-3 text-right">{totalBonus > 0 ? formatCurrency(totalBonus) : '-'}</td>
+                  <td className="py-3 px-3 text-right">{totalSalary > 0 ? formatCurrency(totalSalary) : '-'}</td>
+                  <td className="py-3 px-3 text-right text-primary dark:text-accent">{formatCurrency(totalEarned)}</td>
                 </tr>
               </tfoot>
             </table>

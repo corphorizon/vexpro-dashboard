@@ -1335,22 +1335,22 @@ export default function ComisionesPage() {
                 <table className="w-full text-sm min-w-[900px]">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
-                      <th className="text-left px-3 py-3 font-medium">{t('comm.role')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.ndCurrent')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.accumulated')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.division')}</th>
-                      <th className="text-center px-3 py-3 font-medium">%</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.accNext')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('comm.role')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.ndCurrent')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accumulated')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.division')}</th>
+                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accNext')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {/* HEAD's own ND row — earns full percentage on own work */}
                     {headOwnCalc && (
                       <tr className="border-b border-border bg-violet-50/50 dark:bg-violet-950/20 hover:bg-violet-50 dark:hover:bg-violet-950/30">
-                        <td className="px-4 py-3"><span className="font-semibold block">{headProfile.name}</span><span className="text-xs text-muted-foreground">{headProfile.email}</span></td>
+                        <td className="px-3 py-3"><span className="font-semibold block">{headProfile.name}</span><span className="text-xs text-muted-foreground">{headProfile.email}</span></td>
                         <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[headProfile.role])}>{ROLE_LABEL[headProfile.role]}</span></td>
                         <td className="px-3 py-3">
                           <input type="number" aria-label="Net Deposit del HEAD" value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1369,8 +1369,8 @@ export default function ComisionesPage() {
                       if (!profile) return null;
                       const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
                       return (
-                        <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3">
+                        <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                          <td className="px-3 py-3">
                             <span className={cn('font-medium block', firedNameClass(profile))}>
                               {profile.name}{hasOwnTeam && <span className="ml-1 text-[10px] text-violet-500">(equipo)</span>}
                               {profile.role === 'bdm_global' && (
@@ -1399,7 +1399,7 @@ export default function ComisionesPage() {
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/50 font-semibold">
-                      <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
+                      <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
                       <td className="px-3 py-3 text-right">{formatCurrency(teamTotalND)}</td>
                       <td className="px-3 py-3" colSpan={4}></td>
                       <td className={cn('px-3 py-3 text-right', teamSummary.totalPayment >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(teamSummary.totalPayment)}</td>
@@ -1471,18 +1471,18 @@ export default function ComisionesPage() {
                 <table className="w-full text-sm min-w-[900px]">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
-                      <th className="text-left px-3 py-3 font-medium">HEAD</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.ndCurrent')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.accumulated')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.division')}</th>
-                      <th className="text-center px-3 py-3 font-medium">%</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.salary')}</th>
-                      <th className="text-right px-3 py-3 font-medium">Total</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.accNext')}</th>
-                      <th className="px-2 py-3"></th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.ndCurrent')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accumulated')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.division')}</th>
+                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.salary')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accNext')}</th>
+                      <th className="py-2.5 px-3"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1491,8 +1491,8 @@ export default function ComisionesPage() {
                       if (!profile) return null;
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
-                        <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                        <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                          <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
                             <input type="number" aria-label="Net Deposit del comercial" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1567,7 +1567,7 @@ export default function ComisionesPage() {
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/50 font-semibold">
-                      <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
+                      <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
                       <td className="px-3 py-3 text-right">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
                       <td className="px-3 py-3" colSpan={4}></td>
                       <td className={cn('px-3 py-3 text-right', indSummary.totalCommission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.realPayment, 0))}</td>
@@ -1597,18 +1597,18 @@ export default function ComisionesPage() {
                 <table className="w-full text-sm min-w-[900px]">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
-                      <th className="text-left px-3 py-3 font-medium">HEAD</th>
-                      <th className="text-right px-3 py-3 font-medium">PnL</th>
-                      <th className="text-right px-3 py-3 font-medium">Com. Lotes</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.accumulated')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.division')}</th>
-                      <th className="text-center px-3 py-3 font-medium">%</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
-                      <th className="text-right px-3 py-3 font-medium">Total</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.accNext')}</th>
-                      <th className="px-2 py-3"></th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">PnL</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Com. Lotes</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accumulated')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.division')}</th>
+                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accNext')}</th>
+                      <th className="py-2.5 px-3"></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1617,8 +1617,8 @@ export default function ComisionesPage() {
                       if (!profile) return null;
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
-                        <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                        <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                          <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
                             <input type="number" aria-label="Net Deposit del comercial" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -1722,7 +1722,7 @@ export default function ComisionesPage() {
                   </tbody>
                   <tfoot>
                     <tr className="bg-muted/50 font-semibold">
-                      <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
+                      <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
                       <td className="px-3 py-3 text-right">{formatCurrency(pnlCalcs.reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
                       <td className="px-3 py-3" colSpan={5}></td>
                       <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(pnlSummary.totalRealPayment)}</td>
@@ -1768,15 +1768,15 @@ export default function ComisionesPage() {
                   <table className="w-full text-sm min-w-[800px]">
                     <thead>
                       <tr className="border-b border-border bg-muted/50">
-                        <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
-                        <th className="text-left px-3 py-3 font-medium">HEAD</th>
-                        <th className="text-right px-3 py-3 font-medium">PnL</th>
-                        <th className="text-right px-3 py-3 font-medium">Com. Lotes</th>
-                        <th className="text-center px-3 py-3 font-medium">%</th>
-                        <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
-                        <th className="text-right px-3 py-3 font-medium">{t('comm.realPayment')}</th>
-                        <th className="text-right px-3 py-3 font-medium">Total</th>
-                        <th className="px-2 py-3"></th>
+                        <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
+                        <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
+                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">PnL</th>
+                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Com. Lotes</th>
+                        <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
+                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
+                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
+                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
+                        <th className="py-2.5 px-3"></th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1790,8 +1790,8 @@ export default function ComisionesPage() {
                         const rawTE = calc.realPayment + calc.salary;
                         const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
                         return (
-                          <tr key={calc.profileId} className="border-b border-border hover:bg-muted/30">
-                            <td className="px-4 py-3">
+                          <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                            <td className="px-3 py-3">
                               <span className={cn('font-medium block', firedNameClass(profile))}>
                                 {profile.name}
                                 <FiredBadge profile={profile} />
@@ -1898,7 +1898,7 @@ export default function ComisionesPage() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-muted/50 font-semibold">
-                        <td className="px-4 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
+                        <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
                         <td className="px-3 py-3 text-right">{formatCurrency(pnlSpecialCalcs.reduce((s, c) => s + c.pnl, 0))}</td>
                         <td className="px-3 py-3" colSpan={3}></td>
                         <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(pnlSpecialSummary.totalRealPayment)}</td>
@@ -1924,18 +1924,18 @@ export default function ComisionesPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-4 py-3 font-medium">{t('common.name')}</th>
-                      <th className="text-left px-3 py-3 font-medium">HEAD</th>
-                      <th className="text-center px-3 py-3 font-medium">USD/Lote</th>
-                      <th className="text-right px-3 py-3 font-medium">{t('comm.commission')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
+                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">USD/Lote</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
                     </tr>
                   </thead>
                   <tbody>
                     {lotBdms.filter((profile) => matchesCommissionSearch(profile as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((profile) => {
                       const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
                       return (
-                        <tr key={profile.id} className="border-b border-border hover:bg-muted/30">
-                          <td className="px-4 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
+                        <tr key={profile.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                          <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3 text-center text-xs font-medium">{formatCurrency(profile.commission_per_lot ?? 0)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground italic text-xs">—</td>
@@ -2053,14 +2053,14 @@ export default function ComisionesPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left px-4 py-3 font-medium sticky left-0 bg-muted/50 z-10 min-w-[180px]">{t('common.name')}</th>
-                      <th className="text-left px-2 py-3 font-medium">{t('comm.role')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium sticky left-0 bg-muted/50 z-10 min-w-[180px]">{t('common.name')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('comm.role')}</th>
                       {historyPeriods.map((p) => (
-                        <th key={p.id} className="text-right px-3 py-3 font-medium whitespace-nowrap">
+                        <th key={p.id} className="text-right py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap">
                           {p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}
                         </th>
                       ))}
-                      <th className="text-right px-4 py-3 font-semibold bg-muted/80">{t('comm.totalAll')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium bg-muted/80">{t('comm.totalAll')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -2069,7 +2069,7 @@ export default function ComisionesPage() {
                       const showSeparator = prevRole && prevRole !== profile.role;
                       const total = getProfileTotal(profile.id);
                       return (
-                        <tr key={profile.id} className={cn('border-b border-border/50 hover:bg-muted/30', showSeparator && 'border-t-2 border-t-border')}>
+                        <tr key={profile.id} className={cn('border-b border-border/50 hover:bg-muted/50 transition-colors', showSeparator && 'border-t-2 border-t-border')}>
                           <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} />{profile.pnl_special_mode && (<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 align-middle">{t('comm.specialBadge')}</span>)}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-2 py-2.5">
                             <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', ROLE_BADGE[profile.role])}>
@@ -2093,7 +2093,7 @@ export default function ComisionesPage() {
                   </tbody>
                   <tfoot>
                     <tr className="border-t-2 border-border bg-muted/50 font-semibold">
-                      <td className="px-4 py-3 sticky left-0 bg-muted/50 z-10">Total</td>
+                      <td className="px-3 py-3 sticky left-0 bg-muted/50 z-10">Total</td>
                       <td className="px-2 py-3"></td>
                       {historyPeriods.map((p) => {
                         const monthTotal = allProfiles.reduce((sum, profile) => {
@@ -2106,7 +2106,7 @@ export default function ComisionesPage() {
                           </td>
                         );
                       })}
-                      <td className={cn('px-4 py-3 text-right bg-muted/80', (() => { const gt = allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0); return gt >= 0 ? 'text-emerald-600' : 'text-red-600'; })())}>
+                      <td className={cn('px-3 py-3 text-right bg-muted/80', (() => { const gt = allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0); return gt >= 0 ? 'text-emerald-600' : 'text-red-600'; })())}>
                         {formatCurrency(allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0))}
                       </td>
                     </tr>

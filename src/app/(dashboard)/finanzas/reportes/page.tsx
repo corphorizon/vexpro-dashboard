@@ -534,18 +534,18 @@ export default function ReportesPage() {
                 No hay canales visibles. Configúralos en <strong>Finanzas → Balances</strong>.
               </p>
             ) : (
-              <div className="rounded-lg border border-border overflow-hidden">
+              <div className="rounded-lg border border-border overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium">Canal</th>
-                      <th className="text-left px-3 py-2 font-medium">Tipo</th>
-                      <th className="text-right px-3 py-2 font-medium">Balance</th>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2.5 px-3 font-medium">Canal</th>
+                      <th className="text-left py-2.5 px-3 font-medium">Tipo</th>
+                      <th className="text-right py-2.5 px-3 font-medium">Balance</th>
                     </tr>
                   </thead>
                   <tbody>
                     {data.balances_by_channel.channels.map((c) => (
-                      <tr key={c.key} className="border-t border-border">
+                      <tr key={c.key} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                         <td className="px-3 py-2">
                           {c.label}
                           {c.isCustom && (
@@ -680,18 +680,18 @@ export default function ReportesPage() {
                   Sin ventas en el período seleccionado
                 </p>
               ) : (
-                <div className="rounded-lg border border-border overflow-hidden">
+                <div className="rounded-lg border border-border overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                      <tr>
-                        <th className="text-left px-3 py-2 font-medium">Producto</th>
-                        <th className="text-right px-3 py-2 font-medium">Cantidad</th>
-                        <th className="text-right px-3 py-2 font-medium">Monto</th>
+                      <tr className="border-b border-border">
+                        <th className="text-left py-2.5 px-3 font-medium">Producto</th>
+                        <th className="text-right py-2.5 px-3 font-medium">Cantidad</th>
+                        <th className="text-right py-2.5 px-3 font-medium">Monto</th>
                       </tr>
                     </thead>
                     <tbody>
                       {data.prop_trading.products.map((p) => (
-                        <tr key={p.name} className="border-t border-border">
+                        <tr key={p.name} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                           <td className="px-3 py-2">{p.name}</td>
                           <td className="px-3 py-2 text-right">{p.quantity}</td>
                           <td className="px-3 py-2 text-right">{formatCurrency(p.amount)}</td>
@@ -788,18 +788,18 @@ function TableList({
     return <p className="text-sm text-muted-foreground py-3">{emptyLabel}</p>;
   }
   return (
-    <div className="rounded-lg border border-border overflow-hidden">
+    <div className="rounded-lg border border-border overflow-x-auto">
       <table className="w-full text-sm">
         <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-          <tr>
-            <th className="text-left px-3 py-2 font-medium">Canal / Cat</th>
-            <th className="text-right px-3 py-2 font-medium">#</th>
-            <th className="text-right px-3 py-2 font-medium">Monto</th>
+          <tr className="border-b border-border">
+            <th className="text-left py-2.5 px-3 font-medium">Canal / Cat</th>
+            <th className="text-right py-2.5 px-3 font-medium">#</th>
+            <th className="text-right py-2.5 px-3 font-medium">Monto</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.label} className="border-t border-border">
+            <tr key={r.label} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
               <td className="px-3 py-2">{r.label}</td>
               <td className="px-3 py-2 text-right">{r.count}</td>
               <td className="px-3 py-2 text-right font-medium">{formatCurrency(r.amount)}</td>

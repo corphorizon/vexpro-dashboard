@@ -8,6 +8,8 @@ import { ArrowLeft, Users, Settings2, Loader2, UserPlus } from 'lucide-react';
 import { formatDateRelative } from '@/lib/dates';
 import { ManageUserPanel } from './_manage-panel';
 import { CreateUserModal } from './_create-modal';
+import { DataTable } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/companies/[id]/users
@@ -134,84 +136,93 @@ export default function CompanyUsersPage() {
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="w-4 h-4 animate-spin" /> Cargando usuarios…
         </div>
-      ) : users.length === 0 ? (
-        <div className="rounded-lg border border-border p-8 text-center text-sm text-muted-foreground">
-          Esta organización aún no tiene usuarios.
-        </div>
       ) : (
         <div className="rounded-lg border border-border overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-              <tr>
-                <th className="text-left px-4 py-2.5 font-medium">Usuario</th>
-                <th className="text-left px-4 py-2.5 font-medium">Rol</th>
-                <th className="text-left px-4 py-2.5 font-medium">Estado</th>
-                <th className="text-left px-4 py-2.5 font-medium">2FA</th>
-                <th className="text-left px-4 py-2.5 font-medium">Último acceso</th>
-                <th className="px-4 py-2.5" />
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-t border-border hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center text-xs font-semibold shrink-0">
-                        {initials(u.name || u.email)}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{u.name || '(sin nombre)'}</div>
-                        <div className="text-xs text-muted-foreground truncate">{u.email}</div>
-                      </div>
+          <DataTable<CompanyUser>
+            data={users}
+            empty={
+              <EmptyState
+                compact
+                icon={Users}
+                title="Sin usuarios"
+                description="Esta organización aún no tiene usuarios."
+              />
+            }
+            columns={[
+              {
+                header: 'Usuario',
+                accessor: (u) => (
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center text-xs font-semibold shrink-0">
+                      {initials(u.name || u.email)}
                     </div>
-                  </td>
-                  <td className="px-4 py-3">
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{u.name || '(sin nombre)'}</div>
+                      <div className="text-xs text-muted-foreground truncate">{u.email}</div>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                header: 'Rol',
+                accessor: (u) => (
+                  <span
+                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                      ROLE_COLORS[u.role] ?? ROLE_COLORS.invitado
+                    }`}
+                  >
+                    {ROLE_LABEL[u.role] ?? u.role}
+                  </span>
+                ),
+              },
+              {
+                header: 'Estado',
+                accessor: (u) => (
+                  <span
+                    className={`inline-flex items-center gap-1.5 text-xs ${
+                      u.status === 'active'
+                        ? 'text-positive'
+                        : 'text-muted-foreground'
+                    }`}
+                  >
                     <span
-                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                        ROLE_COLORS[u.role] ?? ROLE_COLORS.invitado
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        u.status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50'
                       }`}
-                    >
-                      {ROLE_LABEL[u.role] ?? u.role}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`inline-flex items-center gap-1.5 text-xs ${
-                        u.status === 'active'
-                          ? 'text-positive'
-                          : 'text-muted-foreground'
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${
-                          u.status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50'
-                        }`}
-                      />
-                      {u.status === 'active' ? 'Activo' : 'Inactivo'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-xs">
-                    {u.twofa_enabled ? (
-                      <span className="text-positive">Activo</span>
-                    ) : (
-                      <span className="text-muted-foreground">No configurado</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-muted-foreground">
-                    {formatLastLogin(u.last_login_at)}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => setSelected(u)}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border hover:bg-muted"
-                    >
-                      <Settings2 className="w-3.5 h-3.5" /> Gestionar
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    />
+                    {u.status === 'active' ? 'Activo' : 'Inactivo'}
+                  </span>
+                ),
+              },
+              {
+                header: '2FA',
+                accessor: (u) =>
+                  u.twofa_enabled ? (
+                    <span className="text-xs text-positive">Activo</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">No configurado</span>
+                  ),
+              },
+              {
+                header: 'Último acceso',
+                accessor: (u) => (
+                  <span className="text-xs text-muted-foreground">{formatLastLogin(u.last_login_at)}</span>
+                ),
+              },
+              {
+                header: '',
+                align: 'right',
+                accessor: (u) => (
+                  <button
+                    onClick={() => setSelected(u)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border hover:bg-muted"
+                  >
+                    <Settings2 className="w-3.5 h-3.5" /> Gestionar
+                  </button>
+                ),
+              },
+            ]}
+          />
         </div>
       )}
 

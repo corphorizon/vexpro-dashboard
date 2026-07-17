@@ -6,6 +6,8 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Plus, Users, Building2, ArrowRight, Settings, PowerOff, AlertTriangle } from 'lucide-react';
 import { formatDate } from '@/lib/dates';
+import { DataTable } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 
 interface CompanyRow {
   id: string;
@@ -134,88 +136,93 @@ export default function SuperadminHome() {
           ))}
         </div>
       )}
-      {!error && companies !== null && companies.length === 0 && (
-        <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          Aún no hay entidades. Crea la primera con &quot;Nueva entidad&quot;.
-        </div>
-      )}
-
       {/* Table */}
-      {companies && companies.length > 0 && (
+      {!error && companies !== null && (
         <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50">
-              <tr className="text-muted-foreground">
-                <th className="text-left p-3 font-medium">Entidad</th>
-                <th className="text-left p-3 font-medium hidden sm:table-cell">Slug</th>
-                <th className="text-left p-3 font-medium">Usuarios</th>
-                <th className="text-left p-3 font-medium">Estado</th>
-                <th className="text-right p-3 font-medium">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {companies.map((c) => (
-                <tr key={c.id} className="border-t border-border hover:bg-muted/30">
-                  <td className="p-3">
-                    <div className="flex items-center gap-3">
-                      <div
-                        className="w-9 h-9 rounded-md flex items-center justify-center shrink-0 text-white font-semibold text-xs"
-                        style={{ backgroundColor: c.color_primary || '#1E3A5F' }}
-                      >
-                        {c.logo_url ? (
-                          // Logos from tenants are arbitrary URLs — use plain
-                          // <img> so we don't force the Next.js loader's
-                          // domain allowlist.
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img src={c.logo_url} alt={c.name} className="w-full h-full object-cover rounded-md" />
-                        ) : (
-                          initials(c.name)
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="font-medium truncate">{c.name}</div>
-                        <div className="text-xs text-muted-foreground">
-                          Creada: {formatDate(c.created_at)}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="p-3 hidden sm:table-cell">
-                    <code className="text-xs text-muted-foreground">{c.slug}</code>
-                  </td>
-                  <td className="p-3">{c.user_count}</td>
-                  <td className="p-3">
-                    <span
-                      className={
-                        c.status === 'active'
-                          ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
-                          : 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                      }
+          <DataTable<CompanyRow>
+            data={companies}
+            empty={
+              <EmptyState
+                compact
+                icon={Building2}
+                title="Aún no hay entidades"
+                description="Crea la primera con &quot;Nueva entidad&quot;."
+              />
+            }
+            columns={[
+              {
+                header: 'Entidad',
+                accessor: (c) => (
+                  <div className="flex items-center gap-3">
+                    <div
+                      className="w-9 h-9 rounded-md flex items-center justify-center shrink-0 text-white font-semibold text-xs"
+                      style={{ backgroundColor: c.color_primary || '#1E3A5F' }}
                     >
-                      {c.status === 'active' ? 'Activa' : 'Inactiva'}
-                    </span>
-                  </td>
-                  <td className="p-3">
-                    <div className="flex justify-end gap-2">
-                      <Link
-                        href={`/superadmin/companies/${c.id}`}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border text-xs hover:bg-muted"
-                      >
-                        <Settings className="w-3 h-3" /> Gestionar
-                      </Link>
-                      <button
-                        onClick={() => enterAsAdmin(c.id)}
-                        disabled={c.status !== 'active'}
-                        className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-primary)] text-white text-xs hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-                      >
-                        Entrar como Admin <ArrowRight className="w-3 h-3" />
-                      </button>
+                      {c.logo_url ? (
+                        // Logos from tenants are arbitrary URLs — use plain
+                        // <img> so we don't force the Next.js loader's
+                        // domain allowlist.
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={c.logo_url} alt={c.name} className="w-full h-full object-cover rounded-md" />
+                      ) : (
+                        initials(c.name)
+                      )}
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                    <div className="min-w-0">
+                      <div className="font-medium truncate">{c.name}</div>
+                      <div className="text-xs text-muted-foreground">
+                        Creada: {formatDate(c.created_at)}
+                      </div>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                header: 'Slug',
+                className: 'hidden sm:table-cell',
+                accessor: (c) => <code className="text-xs text-muted-foreground">{c.slug}</code>,
+              },
+              {
+                header: 'Usuarios',
+                accessor: (c) => c.user_count,
+              },
+              {
+                header: 'Estado',
+                accessor: (c) => (
+                  <span
+                    className={
+                      c.status === 'active'
+                        ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
+                        : 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                    }
+                  >
+                    {c.status === 'active' ? 'Activa' : 'Inactiva'}
+                  </span>
+                ),
+              },
+              {
+                header: 'Acciones',
+                align: 'right',
+                accessor: (c) => (
+                  <div className="flex justify-end gap-2">
+                    <Link
+                      href={`/superadmin/companies/${c.id}`}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border text-xs hover:bg-muted"
+                    >
+                      <Settings className="w-3 h-3" /> Gestionar
+                    </Link>
+                    <button
+                      onClick={() => enterAsAdmin(c.id)}
+                      disabled={c.status !== 'active'}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-primary)] text-white text-xs hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Entrar como Admin <ArrowRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                ),
+              },
+            ]}
+          />
         </div>
       )}
     </div>

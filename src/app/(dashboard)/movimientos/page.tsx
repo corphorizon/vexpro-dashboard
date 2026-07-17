@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
 import { StatCard } from '@/components/ui/stat-card';
 import { MovimientosPeriodSelector } from '@/components/movimientos-period-selector';
 import {
@@ -276,6 +277,29 @@ export default function MovimientosPage() {
   const displayTotalWithdrawals = _derived ? _derived.totalWithdrawals : summary.totalWithdrawals;
   const displayNetDeposit = _derived ? _derived.netDeposit : summary.netDeposit;
 
+  // Filas de la tabla de Depósitos — API + manual coexist: per-channel
+  // display = API amount (when this period uses derived broker logic) +
+  // manual entry from Supabase `deposits` table.
+  const API_SLUG_MAP: Record<string, 'coinsbuy-deposits' | 'fairpay' | 'unipayment'> = {
+    coinsbuy: 'coinsbuy-deposits',
+    fairpay: 'fairpay',
+    unipayment: 'unipayment',
+  };
+  const depositRows = fullDeposits.map((d) => {
+    const apiSlug = API_SLUG_MAP[d.channel];
+    const apiAmount = useDerivedBroker && apiSlug
+      ? coexist.apiTotalsBy[apiSlug] ?? 0
+      : 0;
+    const manualAmount = d.amount;
+    return {
+      ...d,
+      apiAmount,
+      manualAmount,
+      displayAmount: apiAmount + manualAmount,
+      isApiChannel: !!apiSlug,
+    };
+  });
+
   return (
     <div className="space-y-6">
       {Modal2FA}
@@ -348,96 +372,78 @@ export default function MovimientosPage() {
           <h2 className="text-lg font-semibold mb-4 text-blue-600">
             {t('movements.depositsTab')}
           </h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2 text-muted-foreground font-medium">
-                  {t('movements.channel')}
-                </th>
-                <th className="text-right py-2 text-muted-foreground font-medium">
-                  {t('movements.amount')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {fullDeposits.map((d) => {
-                // API + manual coexist: per-channel display = API amount
-                // (when this period uses derived broker logic) + manual
-                // entry from Supabase `deposits` table.
-                const API_SLUG_MAP: Record<string, 'coinsbuy-deposits' | 'fairpay' | 'unipayment'> = {
-                  coinsbuy: 'coinsbuy-deposits',
-                  fairpay: 'fairpay',
-                  unipayment: 'unipayment',
-                };
-                const apiSlug = API_SLUG_MAP[d.channel];
-                const apiAmount = useDerivedBroker && apiSlug
-                  ? coexist.apiTotalsBy[apiSlug] ?? 0
-                  : 0;
-                const manualAmount = d.amount;
-                const displayAmount = apiAmount + manualAmount;
-                const isApiChannel = !!apiSlug;
-
-                return (
-                  <tr key={d.id} className="border-b border-border/50">
-                    <td className="py-2.5">
-                      {CHANNEL_LABELS[d.channel]}
-                      {d.channel === 'other' && (
-                        <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                          manual
-                        </span>
-                      )}
-                      {isApiChannel && useDerivedBroker && (
-                        <span className="ml-2 text-[10px] text-emerald-500 uppercase tracking-wide">
-                          api
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 text-right font-medium">
-                      {formatCurrency(displayAmount)}
-                      {/* Breakdown when both sources contribute — shows the
-                          user that manual + API are coexisting, not fighting. */}
-                      {isApiChannel && useDerivedBroker && apiAmount > 0 && manualAmount > 0 && (
-                        <span className="block text-[10px] text-muted-foreground">
-                          {formatCurrency(apiAmount)} API + {formatCurrency(manualAmount)} manual
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold">
-                <td className="py-3">Depósitos Totales (API)</td>
-                <td className="py-3 text-right text-blue-600">
-                  {formatCurrency(apiDepositsTotal)}
-                </td>
-              </tr>
-              <tr className="text-muted-foreground">
-                <td className="py-1">
-                  <span className="inline-flex items-center gap-1.5">
-                    {t('movements.propFirmSales')}
-                    <InfoTip text={GLOSSARY.propFirm} />
+          <DataTable
+            data={depositRows}
+            columns={[
+              {
+                header: t('movements.channel'),
+                accessor: (d) => (
+                  <>
+                    {CHANNEL_LABELS[d.channel]}
+                    {d.channel === 'other' && (
+                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                        manual
+                      </span>
+                    )}
+                    {d.isApiChannel && useDerivedBroker && (
+                      <span className="ml-2 text-[10px] text-emerald-500 uppercase tracking-wide">
+                        api
+                      </span>
+                    )}
+                  </>
+                ),
+              },
+              {
+                header: t('movements.amount'),
+                align: 'right',
+                accessor: (d) => (
+                  <span className="font-medium">
+                    {formatCurrency(d.displayAmount)}
+                    {/* Breakdown when both sources contribute — shows the
+                        user that manual + API are coexisting, not fighting. */}
+                    {d.isApiChannel && useDerivedBroker && d.apiAmount > 0 && d.manualAmount > 0 && (
+                      <span className="block text-[10px] text-muted-foreground">
+                        {formatCurrency(d.apiAmount)} API + {formatCurrency(d.manualAmount)} manual
+                      </span>
+                    )}
                   </span>
-                </td>
-                <td className="py-1 text-right">{formatCurrency(propFirmSalesDisplay)}</td>
-              </tr>
-              <tr className="text-muted-foreground">
-                <td className="py-1">
-                  <span className="inline-flex items-center gap-1.5">
-                    {t('movements.brokerDeposits')}
-                    <InfoTip text={GLOSSARY.brokerDeposits} />
-                  </span>
-                  {useDerivedBroker && (
-                    <span className="ml-2 text-[10px] text-muted-foreground/80 uppercase tracking-wide">
-                      total api − prop firm
+                ),
+              },
+            ]}
+            footerRow={
+              <>
+                <tr className="font-bold">
+                  <td className="px-4 py-3">Depósitos Totales (API)</td>
+                  <td className="px-4 py-3 text-right text-blue-600">
+                    {formatCurrency(apiDepositsTotal)}
+                  </td>
+                </tr>
+                <tr className="text-muted-foreground">
+                  <td className="px-4 py-1">
+                    <span className="inline-flex items-center gap-1.5">
+                      {t('movements.propFirmSales')}
+                      <InfoTip text={GLOSSARY.propFirm} />
                     </span>
-                  )}
-                </td>
-                <td className="py-1 text-right">{formatCurrency(brokerDepositsDisplay)}</td>
-              </tr>
-            </tfoot>
-          </table>
+                  </td>
+                  <td className="px-4 py-1 text-right">{formatCurrency(propFirmSalesDisplay)}</td>
+                </tr>
+                <tr className="text-muted-foreground">
+                  <td className="px-4 py-1">
+                    <span className="inline-flex items-center gap-1.5">
+                      {t('movements.brokerDeposits')}
+                      <InfoTip text={GLOSSARY.brokerDeposits} />
+                    </span>
+                    {useDerivedBroker && (
+                      <span className="ml-2 text-[10px] text-muted-foreground/80 uppercase tracking-wide">
+                        total api − prop firm
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-1 text-right">{formatCurrency(brokerDepositsDisplay)}</td>
+                </tr>
+              </>
+            }
+          />
         </Card>
 
         {/* Retiros */}
@@ -445,78 +451,74 @@ export default function MovimientosPage() {
           <h2 className="text-lg font-semibold mb-4 text-red-600">
             {t('movements.withdrawalsTab')}
           </h2>
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2 text-muted-foreground font-medium">
-                  {t('movements.category')}
-                </th>
-                <th className="text-right py-2 text-muted-foreground font-medium">
-                  {t('movements.amount')}
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {fullWithdrawals.map((w) => {
+          <DataTable
+            data={fullWithdrawals}
+            columns={[
+              {
+                header: t('movements.category'),
+                accessor: (w) => (
+                  <>
+                    {WITHDRAWAL_LABELS[w.category]}
+                    <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                      manual
+                    </span>
+                  </>
+                ),
+              },
+              {
+                header: t('movements.amount'),
+                align: 'right',
                 // Broker — Kevin (2026-05-03): es informativo manual,
                 // siempre se muestra solo lo cargado en Carga de Datos.
                 // Las demás categorías (Comisiones IB, Prop Firm, Otros)
                 // también son manuales. Ninguna lleva splitting API+MANUAL
                 // porque los retiros reales viven en "Retiros Totales".
-                const displayAmount =
-                  w.category === 'broker' ? brokerDisplay : w.amount;
-                return (
-                  <tr key={w.id} className="border-b border-border/50">
-                    <td className="py-2.5">
-                      {WITHDRAWAL_LABELS[w.category]}
-                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                        manual
+                accessor: (w) => (
+                  <span className="font-medium">
+                    {formatCurrency(w.category === 'broker' ? brokerDisplay : w.amount)}
+                  </span>
+                ),
+              },
+            ]}
+            footerRow={
+              <>
+                <tr className="font-bold">
+                  <td className="px-4 py-3">Retiros Totales</td>
+                  <td className="px-4 py-3 text-right text-red-600">
+                    {formatCurrency(displayTotalWithdrawals)}
+                  </td>
+                </tr>
+                <tr className="text-muted-foreground">
+                  <td className="px-4 py-1">
+                    {t('movements.p2pTransfer')}
+                    {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
+                      <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
+                        api+manual
                       </span>
-                    </td>
-                    <td className="py-2.5 text-right font-medium">
-                      {formatCurrency(displayAmount)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold">
-                <td className="py-3">Retiros Totales</td>
-                <td className="py-3 text-right text-red-600">
-                  {formatCurrency(displayTotalWithdrawals)}
-                </td>
-              </tr>
-              <tr className="text-muted-foreground">
-                <td className="py-1">
-                  {t('movements.p2pTransfer')}
-                  {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
-                    <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
-                      api+manual
-                    </span>
-                  )}
-                </td>
-                <td className="py-1 text-right">
-                  {formatCurrency(p2pTransferDisplay)}
-                  {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
-                    <span className="block text-[10px] text-muted-foreground">
-                      {formatCurrency(apiP2PTransfer)} API + {formatCurrency(manualP2PTransfer)} manual
-                    </span>
-                  )}
-                </td>
-              </tr>
-              <tr className="font-bold border-t border-border">
-                <td className="py-3">{t('movements.netDeposit')}</td>
-                <td
-                  className={`py-3 text-right ${
-                    displayNetDeposit >= 0 ? 'text-emerald-600' : 'text-red-600'
-                  }`}
-                >
-                  {formatCurrency(displayNetDeposit)}
-                </td>
-              </tr>
-            </tfoot>
-          </table>
+                    )}
+                  </td>
+                  <td className="px-4 py-1 text-right">
+                    {formatCurrency(p2pTransferDisplay)}
+                    {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
+                      <span className="block text-[10px] text-muted-foreground">
+                        {formatCurrency(apiP2PTransfer)} API + {formatCurrency(manualP2PTransfer)} manual
+                      </span>
+                    )}
+                  </td>
+                </tr>
+                <tr className="font-bold border-t border-border">
+                  <td className="px-4 py-3">{t('movements.netDeposit')}</td>
+                  <td
+                    className={`px-4 py-3 text-right ${
+                      displayNetDeposit >= 0 ? 'text-emerald-600' : 'text-red-600'
+                    }`}
+                  >
+                    {formatCurrency(displayNetDeposit)}
+                  </td>
+                </tr>
+              </>
+            }
+          />
         </Card>
 
         {/* Balance Prop Firm */}

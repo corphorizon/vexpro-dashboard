@@ -2,6 +2,8 @@
 
 import { useMemo } from 'react';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/page-header';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
@@ -276,41 +278,38 @@ export default function DashboardPage() {
             </div>
             <h2 className="font-semibold">{t('hrDash.teamSummary')}</h2>
           </div>
-          {teamSummary.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('hrDash.noData')}</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-muted-foreground">
-                    <th className="text-left py-2 font-medium">{t('hrDash.team')}</th>
-                    <th className="text-center py-2 font-medium">{t('hrDash.members')}</th>
-                    <th className="text-right py-2 font-medium">{t('hrDash.teamND')}</th>
-                    <th className="text-right py-2 font-medium">{t('hrDash.teamCommissions')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {teamSummary.map((team) => (
-                    <tr key={team.id} className="border-b last:border-0">
-                      <td className="py-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium">{team.name}</span>
-                          <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', ROLE_BADGE[team.role] || ROLE_BADGE.head)}>
-                            {ROLE_LABEL[team.role] || team.role}
-                          </span>
-                        </div>
-                      </td>
-                      <td className="py-2 text-center">{team.membersCount}</td>
-                      <td className={cn('py-2 text-right font-medium', team.teamND >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                        {formatCurrency(team.teamND)}
-                      </td>
-                      <td className="py-2 text-right">{formatCurrency(team.teamCommissions)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <DataTable
+            data={teamSummary}
+            columns={[
+              {
+                header: t('hrDash.team'),
+                accessor: (team) => (
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{team.name}</span>
+                    <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', ROLE_BADGE[team.role] || ROLE_BADGE.head)}>
+                      {ROLE_LABEL[team.role] || team.role}
+                    </span>
+                  </div>
+                ),
+              },
+              { header: t('hrDash.members'), align: 'center', accessor: 'membersCount' },
+              {
+                header: t('hrDash.teamND'),
+                align: 'right',
+                accessor: (team) => (
+                  <span className={cn('font-medium', team.teamND >= 0 ? 'text-emerald-600' : 'text-red-600')}>
+                    {formatCurrency(team.teamND)}
+                  </span>
+                ),
+              },
+              {
+                header: t('hrDash.teamCommissions'),
+                align: 'right',
+                accessor: (team) => formatCurrency(team.teamCommissions),
+              },
+            ]}
+            empty={<EmptyState compact title={t('hrDash.noData')} />}
+          />
         </Card>
       </div>
     </div>

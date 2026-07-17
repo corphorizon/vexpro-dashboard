@@ -293,20 +293,20 @@ export function IbRebatesTab() {
       <div className="rounded-xl border border-border bg-card overflow-x-auto">
         <table className="w-full text-sm min-w-[1100px]">
           <thead className="bg-muted/50 text-xs text-muted-foreground">
-            <tr>
-              <th className="text-left p-3 font-medium">Username</th>
-              <th className="text-left p-3 font-medium">Fecha original</th>
-              <th className="text-left p-3 font-medium">Última actualización</th>
-              <th className="text-center p-3 font-medium">STP</th>
-              <th className="text-center p-3 font-medium">ECN</th>
-              <th className="text-center p-3 font-medium">CENT</th>
-              <th className="text-center p-3 font-medium">PRO</th>
-              <th className="text-center p-3 font-medium">VIP</th>
-              <th className="text-center p-3 font-medium">ELITE</th>
-              <th className="text-center p-3 font-medium">Sint.</th>
-              <th className="text-center p-3 font-medium">PropFirm</th>
-              <th className="text-left p-3 font-medium">Estado</th>
-              <th className="text-right p-3 font-medium">Acciones</th>
+            <tr className="border-b border-border">
+              <th className="text-left py-2.5 px-3 font-medium">Username</th>
+              <th className="text-left py-2.5 px-3 font-medium">Fecha original</th>
+              <th className="text-left py-2.5 px-3 font-medium">Última actualización</th>
+              <th className="text-center py-2.5 px-3 font-medium">STP</th>
+              <th className="text-center py-2.5 px-3 font-medium">ECN</th>
+              <th className="text-center py-2.5 px-3 font-medium">CENT</th>
+              <th className="text-center py-2.5 px-3 font-medium">PRO</th>
+              <th className="text-center py-2.5 px-3 font-medium">VIP</th>
+              <th className="text-center py-2.5 px-3 font-medium">ELITE</th>
+              <th className="text-center py-2.5 px-3 font-medium">Sint.</th>
+              <th className="text-center py-2.5 px-3 font-medium">PropFirm</th>
+              <th className="text-left py-2.5 px-3 font-medium">Estado</th>
+              <th className="text-right py-2.5 px-3 font-medium">Acciones</th>
             </tr>
           </thead>
           <tbody>
@@ -323,7 +323,7 @@ export function IbRebatesTab() {
             ) : filtered.map((c) => {
               const alert = computeAlert(c, thresholds);
               return (
-                <tr key={c.id} className="border-t border-border hover:bg-muted/30">
+                <tr key={c.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                   <td className="p-3 font-medium">{c.username}</td>
                   <td className="p-3 text-xs text-muted-foreground whitespace-nowrap">
                     {new Date(c.original_config_date).toLocaleDateString()}

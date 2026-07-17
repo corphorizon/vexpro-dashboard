@@ -2,6 +2,8 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Card } from '@/components/ui/card';
+import { DataTable } from '@/components/ui/data-table';
+import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -110,6 +112,10 @@ export default function InversionesPage() {
     () => filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE),
     [filtered, page],
   );
+
+  // Número de fila global (respeta la paginación) — DataTable no expone el
+  // índice en el accessor, así que se precalcula acá.
+  const tableRows = pagedRows.map((inv, i) => ({ ...inv, rowNum: page * PAGE_SIZE + i + 1 }));
 
   return (
     <div className="space-y-6">
@@ -248,45 +254,56 @@ export default function InversionesPage() {
 
       <Card>
         <h2 className="text-lg font-semibold mb-4">{t('investments.history')}</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium w-12">#</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Responsable</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Aporte</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Retiro</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Profit</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pagedRows.map((inv, i) => (
-                <tr key={inv.id} className="border-b border-border/50 hover:bg-muted/50">
-                  <td className="py-2.5 px-3 text-muted-foreground tabular-nums">{page * PAGE_SIZE + i + 1}</td>
-                  <td className="py-2.5 px-3">{formatDate(inv.date)}</td>
-                  <td className="py-2.5 px-3">{inv.concept || '—'}</td>
-                  <td className="py-2.5 px-3">{inv.responsible || '—'}</td>
-                  <td className="py-2.5 px-3 text-right font-medium text-blue-600">
-                    {inv.deposit > 0 ? formatCurrency(inv.deposit) : '—'}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-medium text-red-600">
-                    {inv.withdrawal > 0 ? formatCurrency(inv.withdrawal) : '—'}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-medium text-emerald-600">
-                    {inv.profit > 0 ? formatCurrency(inv.profit) : '—'}
-                  </td>
-                  <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(balanceMap.get(inv.id) ?? 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {filtered.length === 0 && (
-          <p className="text-center text-muted-foreground py-8">{t('common.noData')}</p>
-        )}
+        <DataTable
+          data={tableRows}
+          columns={[
+            {
+              header: '#',
+              className: 'w-12',
+              accessor: (inv) => (
+                <span className="text-muted-foreground tabular-nums">{inv.rowNum}</span>
+              ),
+            },
+            { header: 'Fecha', accessor: (inv) => formatDate(inv.date) },
+            { header: 'Concepto', accessor: (inv) => inv.concept || '—' },
+            { header: 'Responsable', accessor: (inv) => inv.responsible || '—' },
+            {
+              header: 'Aporte',
+              align: 'right',
+              accessor: (inv) => (
+                <span className="font-medium text-blue-600">
+                  {inv.deposit > 0 ? formatCurrency(inv.deposit) : '—'}
+                </span>
+              ),
+            },
+            {
+              header: 'Retiro',
+              align: 'right',
+              accessor: (inv) => (
+                <span className="font-medium text-red-600">
+                  {inv.withdrawal > 0 ? formatCurrency(inv.withdrawal) : '—'}
+                </span>
+              ),
+            },
+            {
+              header: 'Profit',
+              align: 'right',
+              accessor: (inv) => (
+                <span className="font-medium text-emerald-600">
+                  {inv.profit > 0 ? formatCurrency(inv.profit) : '—'}
+                </span>
+              ),
+            },
+            {
+              header: 'Balance',
+              align: 'right',
+              accessor: (inv) => (
+                <span className="font-bold">{formatCurrency(balanceMap.get(inv.id) ?? 0)}</span>
+              ),
+            },
+          ]}
+          empty={<EmptyState compact title={t('common.noData')} />}
+        />
         {filtered.length > 0 && (
           <div className="flex items-center justify-between mt-4 text-sm flex-wrap gap-2">
             <span className="text-muted-foreground">

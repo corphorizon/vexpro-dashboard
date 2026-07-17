@@ -155,7 +155,7 @@ function SortableExpenseRow({
   };
 
   return (
-    <tr ref={setNodeRef} style={style} className="border-b border-border/50 hover:bg-muted/50">
+    <tr ref={setNodeRef} style={style} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
       <td
         className={`py-2.5 px-2 text-muted-foreground ${
           disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
@@ -1820,16 +1820,16 @@ export default function UploadPage() {
           <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.channel')}</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium w-48">{t('upload.amountUsd')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.channel')}</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium w-48">{t('upload.amountUsd')}</th>
                 {userCanAdd && <th className="w-20"></th>}
               </tr>
             </thead>
             <tbody>
               {deposits.map(d => (
-                <tr key={d.id} className="border-b border-border/50">
-                  <td className="py-3 px-3 font-medium">{CHANNEL_LABELS[d.channel]}</td>
-                  <td className="py-3 px-3 text-right">
+                <tr key={d.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                  <td className="py-2.5 px-3 font-medium">{CHANNEL_LABELS[d.channel]}</td>
+                  <td className="py-2.5 px-3 text-right">
                     {userCanAdd ? (
                       <input
                         type="number"
@@ -1845,7 +1845,7 @@ export default function UploadPage() {
                     )}
                   </td>
                   {userCanAdd && (
-                    <td className="py-3 px-3 text-center">
+                    <td className="py-2.5 px-3 text-center">
                       <button
                         onClick={() => updateDeposit(d.id, d.amount)}
                         disabled={savingDepositIds.has(d.id)}
@@ -1904,8 +1904,8 @@ export default function UploadPage() {
           <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium w-48">{t('upload.amountUsd')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium w-48">{t('upload.amountUsd')}</th>
                 {userCanAdd && <th className="w-20"></th>}
               </tr>
             </thead>
@@ -1917,8 +1917,8 @@ export default function UploadPage() {
                   ? derivedBrokerAmount
                   : w.amount;
                 return (
-                  <tr key={w.id} className="border-b border-border/50">
-                    <td className="py-3 px-3 font-medium">
+                  <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                    <td className="py-2.5 px-3 font-medium">
                       {WITHDRAWAL_LABELS[w.category]}
                       {isBrokerAutoRow && (
                         <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
@@ -1926,7 +1926,7 @@ export default function UploadPage() {
                         </span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-right">
+                    <td className="py-2.5 px-3 text-right">
                       {userCanAdd ? (
                         <div className="flex flex-col items-end gap-1">
                           <input
@@ -1953,7 +1953,7 @@ export default function UploadPage() {
                       )}
                     </td>
                     {userCanAdd && (
-                      <td className="py-3 px-3 text-center">
+                      <td className="py-2.5 px-3 text-center">
                         <button
                           onClick={() => updateWithdrawal(w.id, w.amount)}
                           disabled={savingWithdrawalIds.has(w.id)}
@@ -2098,15 +2098,15 @@ export default function UploadPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">Categoría</th>
-                      <th className="text-left py-2 px-3 text-muted-foreground font-medium">Descripción</th>
-                      <th className="text-right py-2 px-3 text-muted-foreground font-medium">Monto</th>
-                      {userCanAdd && <th className="w-16 text-center py-2 px-3 text-muted-foreground font-medium">Acción</th>}
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Categoría</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Descripción</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Monto</th>
+                      {userCanAdd && <th className="w-16 text-center py-2.5 px-3 text-muted-foreground font-medium">Acción</th>}
                     </tr>
                   </thead>
                   <tbody>
                     {withdrawalExtras.map((w) => (
-                      <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50">
+                      <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                         <td className="py-2.5 px-3">
                           <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
                             {WITHDRAWAL_LABELS[w.category]}
@@ -2157,15 +2157,15 @@ export default function UploadPage() {
           <table className="w-full text-sm min-w-[500px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="w-8 py-2 px-2" aria-label="Reordenar"></th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">#</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Concepto</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Categoría</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Monto</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Pagado</th>
-                <th className="text-right py-2 px-3 text-muted-foreground font-medium">Pendiente</th>
-                <th className="text-center py-2 px-3 text-muted-foreground font-medium">Estado</th>
-                {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">Acciones</th>}
+                <th className="w-8 py-2.5 px-2" aria-label="Reordenar"></th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">#</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Concepto</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Categoría</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Monto</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Pagado</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Pendiente</th>
+                <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">Estado</th>
+                {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>}
               </tr>
             </thead>
             <SortableContext
@@ -2184,15 +2184,15 @@ export default function UploadPage() {
                 >
                   {editingExpenseId === exp.id ? (
                     <>
-                      <td className="py-2 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
-                      <td className="py-2 px-3">
+                      <td className="py-2.5 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
+                      <td className="py-2.5 px-3">
                         <input aria-label="Concepto del gasto" value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
                         <label className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground cursor-pointer">
                           <input type="checkbox" aria-label="Gasto fijo" checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
                           {t('expenses.fixed')} ({t('expenses.fixedHint')})
                         </label>
                       </td>
-                      <td className="py-2 px-3">
+                      <td className="py-2.5 px-3">
                         <div className="relative">
                           <input
                             value={editExpense.category}
@@ -2219,11 +2219,11 @@ export default function UploadPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Monto del gasto" value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Pagado" value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Pendiente" value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Monto del gasto" value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Pagado" value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Pendiente" value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                       <td></td>
-                      <td className="py-2 px-3 text-center">
+                      <td className="py-2.5 px-3 text-center">
                         <div className="flex justify-center gap-1">
                           <button onClick={saveEditExpense} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
                           <button onClick={() => setEditingExpenseId(null)} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
@@ -2285,9 +2285,9 @@ export default function UploadPage() {
               <tfoot>
                 <tr className="font-bold bg-muted/50">
                   <td className="py-3 px-3" colSpan={4}>Total</td>
-                  <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
-                  <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
-                  <td className="py-3 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
+                  <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
+                  <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
+                  <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
                   <td colSpan={2}></td>
                 </tr>
               </tfoot>
@@ -2604,13 +2604,13 @@ export default function UploadPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.userEmail')}</th>
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.mtAccount')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
-                  {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.userEmail')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.mtAccount')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
+                  {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -2618,16 +2618,16 @@ export default function UploadPage() {
                   <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">{t('upload.noLiquidity')}</td></tr>
                 )}
                 {pagedLiquidity.map(row => (
-                  <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
+                  <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     {editingLiqId === row.id ? (
                       <>
-                        <td className="py-2 px-3"><input type="date" aria-label="Fecha" value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input aria-label="Usuario" value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input aria-label="Cuenta MT" value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
-                        <td className="py-2 px-3 text-center">
+                        <td className="py-2.5 px-3"><input type="date" aria-label="Fecha" value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label="Usuario" value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label="Cuenta MT" value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
+                        <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
                             <button onClick={saveEditLiq} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
                             <button onClick={() => setEditingLiqId(null)} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
@@ -2665,7 +2665,7 @@ export default function UploadPage() {
                     <td className="py-3 px-3" colSpan={3}>Totales</td>
                     <td className="py-3 px-3 text-right text-emerald-600">{formatCurrency(liqTotalDeposits)}</td>
                     <td className="py-3 px-3 text-right text-red-600">{formatCurrency(liqTotalWithdrawals)}</td>
-                    <td className="py-3 px-3 text-right">{formatCurrency(liqCurrentBalance)}</td>
+                    <td className="py-2.5 px-3 text-right">{formatCurrency(liqCurrentBalance)}</td>
                     {(userCanEdit || userCanDelete) && <td></td>}
                   </tr>
                 </tfoot>
@@ -2790,14 +2790,14 @@ export default function UploadPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border">
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
-                  <th className="text-left py-2 px-3 text-muted-foreground font-medium">{t('upload.responsible')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.profit')}</th>
-                  <th className="text-right py-2 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
-                  {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
+                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.responsible')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.profit')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
+                  {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
                 </tr>
               </thead>
               <tbody>
@@ -2805,17 +2805,17 @@ export default function UploadPage() {
                   <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">{t('upload.noInvestments')}</td></tr>
                 )}
                 {pagedInvestments.map(row => (
-                  <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50">
+                  <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     {editingInvId === row.id ? (
                       <>
-                        <td className="py-2 px-3"><input type="date" aria-label="Fecha" value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input aria-label="Concepto" value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input aria-label="Responsable" value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3"><input type="number" step="0.01" aria-label="Ganancia" value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
-                        <td className="py-2 px-3 text-center">
+                        <td className="py-2.5 px-3"><input type="date" aria-label="Fecha" value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label="Concepto" value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label="Responsable" value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Ganancia" value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
+                        <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
                             <button onClick={saveEditInv} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
                             <button onClick={() => setEditingInvId(null)} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
@@ -2855,7 +2855,7 @@ export default function UploadPage() {
                     <td className="py-3 px-3 text-right text-emerald-600">{formatCurrency(invTotalDeposits)}</td>
                     <td className="py-3 px-3 text-right text-red-600">{formatCurrency(invTotalWithdrawals)}</td>
                     <td className="py-3 px-3 text-right text-blue-600">{formatCurrency(invTotalProfit)}</td>
-                    <td className="py-3 px-3 text-right">{formatCurrency(invCurrentBalance)}</td>
+                    <td className="py-2.5 px-3 text-right">{formatCurrency(invCurrentBalance)}</td>
                     {(userCanEdit || userCanDelete) && <td></td>}
                   </tr>
                 </tfoot>
@@ -2948,11 +2948,11 @@ export default function UploadPage() {
           <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Archivo</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium">Fecha</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium hidden sm:table-cell">Descripcion</th>
-                <th className="text-left py-2 px-3 text-muted-foreground font-medium hidden sm:table-cell">Subido por</th>
-                <th className="w-24 text-center py-2 px-3 text-muted-foreground font-medium">Acciones</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Archivo</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Fecha</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">Descripcion</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">Subido por</th>
+                <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>
               </tr>
             </thead>
             <tbody>
@@ -2960,7 +2960,7 @@ export default function UploadPage() {
                 <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">No hay documentos subidos</td></tr>
               )}
               {docs.map(doc => (
-                <tr key={doc.id} className="border-b border-border/50 hover:bg-muted/50">
+                <tr key={doc.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                   <td className="py-2.5 px-3">
                     <div className="flex items-center gap-2">
                       <FileSpreadsheet className="w-4 h-4 text-emerald-500" />

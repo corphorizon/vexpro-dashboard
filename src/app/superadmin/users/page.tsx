@@ -184,18 +184,18 @@ export default function SuperadminUsersPage() {
       {users && users.length > 0 && (
         <div className="rounded-xl border border-border bg-card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                <th className="text-left p-3 font-medium">Usuario</th>
-                <th className="text-left p-3 font-medium">Empresa</th>
-                <th className="text-left p-3 font-medium">Rol</th>
-                <th className="text-left p-3 font-medium">2FA</th>
-                <th className="text-right p-3 font-medium">Acciones</th>
+            <thead>
+              <tr className="border-b border-border">
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Usuario</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Empresa</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Rol</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">2FA</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {users.map((u) => (
-                <tr key={u.id} className="border-t border-border hover:bg-muted/30">
+                <tr key={u.id} className="border-b border-border/50 hover:bg-muted/30">
                   <td className="p-3">
                     <div className="font-medium">{u.name}</div>
                     <div className="text-xs text-muted-foreground">{u.email}</div>
