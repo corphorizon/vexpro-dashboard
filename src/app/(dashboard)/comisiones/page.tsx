@@ -1014,7 +1014,12 @@ export default function ComisionesPage() {
   const doExport = () => {
     if (tab === 'history') {
       // Export the full history table from saved DB data
-      const activeProfiles = commercialProfiles.filter(appearsInCommissions);
+      // Historial: excluir despedidos (status inactive + termination_date). En
+      // Equipos/Individual sí aparecen para cargar negativos post-despido, pero
+      // en el Historial no se quieren ver.
+      const activeProfiles = commercialProfiles.filter(
+        (p) => appearsInCommissions(p) && !(p.status === 'inactive' && p.termination_date),
+      );
       const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
       const headProfilesList = activeProfiles.filter((p) => p.role === 'head');
       // Stiven (2026-06-19): Bug — el CSV no incluía los BDM Global porque
@@ -1953,7 +1958,12 @@ export default function ComisionesPage() {
       )}
       {/* ═══════════ TAB: HISTORY ═══════════ */}
       {tab === 'history' && (() => {
-        const activeProfiles = commercialProfiles.filter(appearsInCommissions);
+        // Historial: excluir despedidos (status inactive + termination_date). En
+      // Equipos/Individual sí aparecen para cargar negativos post-despido, pero
+      // en el Historial no se quieren ver.
+      const activeProfiles = commercialProfiles.filter(
+        (p) => appearsInCommissions(p) && !(p.status === 'inactive' && p.termination_date),
+      );
         const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
         const headProfiles = activeProfiles.filter((p) => p.role === 'head');
         const bdmProfiles = activeProfiles.filter((p) => p.role === 'bdm' || p.role === 'bdm_global');
