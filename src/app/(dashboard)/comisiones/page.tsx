@@ -25,6 +25,7 @@ import {
   calculateGroupSummary,
   calculateSalaryFromND,
   calculateHeadSalaryFromND,
+  prorateFixedSalary,
   calculateBdmPctFromND,
   getAccumulatedIn,
   calculatePnlSpecial,
@@ -185,6 +186,10 @@ export default function ComisionesPage() {
     : Math.max(0, sortedPeriods.length - 1);
   const [periodIdx, setPeriodIdx] = useState(initialPeriodIdx);
   const selectedPeriod = sortedPeriods[periodIdx] ?? null;
+  // Año/mes del período seleccionado — usados para prorratear el salario fijo
+  // en el mes de ingreso (prorateFixedSalary). Primitivos para deps limpias.
+  const periodYear = selectedPeriod?.year ?? 0;
+  const periodMonth = selectedPeriod?.month ?? 0;
 
   const existingResults = useMemo(() => {
     if (!selectedPeriod) return [];
@@ -419,7 +424,7 @@ export default function ComisionesPage() {
             commissionPct: pctExtraSobreHead,
             bdmOwnPct: profile.net_deposit_pct ?? 0,
             diffPct: pctExtraSobreHead,
-            salary: profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd),
+            salary: profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd),
             totalEarnedDebt: 0,
             netDepositCurrent: sumNdBdms,
             accumulatedIn: accIn,
@@ -446,10 +451,10 @@ export default function ComisionesPage() {
       // Extra % only applies when natural differential is 0 (same percentage)
       const diffPct = naturalDiff === 0 ? extraPct : naturalDiff;
       const calc = calculateCommission(nd, accIn, diffPct);
-      const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
+      const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles]);
+  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth]);
 
   // HEAD differential total (sum of all BDM differential commissions)
   const headDiff = useMemo(() => {
@@ -466,9 +471,9 @@ export default function ComisionesPage() {
   }, [teamProfiles, ndInputs]);
 
   const autoSalary = useMemo(() => {
-    if (headProfile?.fixed_salary) return headProfile.salary ?? 0;
+    if (headProfile?.fixed_salary) return prorateFixedSalary(headProfile.salary ?? 0, headProfile.hire_date, periodYear, periodMonth);
     return calculateHeadSalaryFromND(teamTotalND);
-  }, [teamTotalND, headProfile]);
+  }, [teamTotalND, headProfile, periodYear, periodMonth]);
 
   // Validation: if this HEAD belongs to a parent group, check that team total matches
   // what was entered for them in the parent's group
@@ -543,10 +548,10 @@ export default function ComisionesPage() {
         ? (profile.net_deposit_pct ?? 0)
         : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
       const calc = calculateCommission(nd, accIn, pct);
-      const bdmSalary = profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd);
+      const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: pct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [allBdms, ndInputs, previousResultsAll]);
+  }, [allBdms, ndInputs, previousResultsAll, periodYear, periodMonth]);
 
   const indSummary = useMemo(() => calculateGroupSummary(indCalcs), [indCalcs]);
 
@@ -575,10 +580,10 @@ export default function ComisionesPage() {
       const pct = profile.pnl_pct ?? 0; // always fixed, no dynamic tiers
       const calc = calculateCommission(nd, accIn, pct);
       // No salary tiers for PnL — only fixed salary if configured
-      const pnlSalary = profile.fixed_salary ? (profile.salary ?? 0) : 0;
+      const pnlSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : 0;
       return { profileId: profile.id, commissionPct: pct, salary: pnlSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [pnlBdms, ndInputs, previousResultsAll]);
+  }, [pnlBdms, ndInputs, previousResultsAll, periodYear, periodMonth]);
 
   const pnlSummary = useMemo(() => calculateGroupSummary(pnlCalcs), [pnlCalcs]);
 
@@ -591,11 +596,11 @@ export default function ComisionesPage() {
       const pnl = ndInputs.get(profile.id) ?? 0;
       const lotComm = lotInputs.get(profile.id) ?? 0;
       const pct = profile.pnl_pct ?? 0;
-      const specialSalary = profile.fixed_salary ? (profile.salary ?? 0) : 0;
+      const specialSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : 0;
       const calc = calculatePnlSpecial(pnl, pct, lotComm, specialSalary);
       return { profileId: profile.id, ...calc };
     });
-  }, [pnlSpecialBdms, ndInputs, lotInputs]);
+  }, [pnlSpecialBdms, ndInputs, lotInputs, periodYear, periodMonth]);
 
   const pnlSpecialSummary = useMemo(() => {
     const totalRealPayment = pnlSpecialCalcs.reduce((s, c) => s + c.realPayment, 0);
@@ -901,10 +906,10 @@ export default function ComisionesPage() {
               commissions_earned: calc.commission,
               real_payment: calc.realPayment,
               accumulated_out: calc.accumulatedOut,
-              salary_paid: isHead ? autoSalary : (profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd)),
+              salary_paid: isHead ? autoSalary : (profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd)),
               total_earned: (isHead && !headHasParent)
                 ? teamSummary.totalWithSalary
-                : calc.realPayment + (profile.fixed_salary ? (profile.salary ?? 0) : calculateSalaryFromND(nd)),
+                : calc.realPayment + (profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd)),
               bonus: isHead ? teamSummary.debtOut : 0,
             });
           }

@@ -196,6 +196,34 @@ export function calculateHeadSalaryFromND(teamTotalND: number): number {
   return 0;
 }
 
+/**
+ * Prorratea el salario FIJO en el mes de ingreso. Si hire_date cae en el mismo
+ * mes/año del período, paga proporcional a los días trabajados (desde el día de
+ * ingreso hasta fin de mes, inclusive / días del mes). En cualquier otro mes
+ * paga el salario completo. Si no hay hire_date o el período no aplica, devuelve
+ * el salario tal cual. Usa UTC para no depender del timezone.
+ *
+ * Ejemplo: salario 2000, ingreso 2026-06-12, período jun-2026 (30 días) →
+ *   días trabajados = 30 − 12 + 1 = 19 → 2000 × 19/30 = 1266.67
+ */
+export function prorateFixedSalary(
+  salary: number,
+  hireDate: string | null | undefined,
+  periodYear: number,
+  periodMonth: number, // 1-12
+): number {
+  if (!hireDate || !periodYear || !periodMonth) return salary;
+  const d = new Date(hireDate);
+  if (Number.isNaN(d.getTime())) return salary;
+  const hy = d.getUTCFullYear();
+  const hm = d.getUTCMonth() + 1;
+  const hd = d.getUTCDate();
+  if (hy !== periodYear || hm !== periodMonth) return salary;
+  const daysInMonth = new Date(Date.UTC(periodYear, periodMonth, 0)).getUTCDate();
+  const daysWorked = Math.max(0, Math.min(daysInMonth, daysInMonth - hd + 1));
+  return round2((salary * daysWorked) / daysInMonth);
+}
+
 // ---------------------------------------------------------------------------
 // BDM commission percentage tiers — based on individual ND
 //
