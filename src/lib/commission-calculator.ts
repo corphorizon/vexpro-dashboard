@@ -218,7 +218,11 @@ export function prorateFixedSalary(
   const hy = d.getUTCFullYear();
   const hm = d.getUTCMonth() + 1;
   const hd = d.getUTCDate();
-  if (hy !== periodYear || hm !== periodMonth) return salary;
+  // Período ANTES del mes de ingreso: la persona aún no estaba contratada → $0.
+  if (periodYear < hy || (periodYear === hy && periodMonth < hm)) return 0;
+  // Período DESPUÉS del mes de ingreso: salario completo.
+  if (periodYear > hy || (periodYear === hy && periodMonth > hm)) return salary;
+  // Mes de ingreso: prorrateo por días trabajados.
   const daysInMonth = new Date(Date.UTC(periodYear, periodMonth, 0)).getUTCDate();
   const daysWorked = Math.max(0, Math.min(daysInMonth, daysInMonth - hd + 1));
   return round2((salary * daysWorked) / daysInMonth);
