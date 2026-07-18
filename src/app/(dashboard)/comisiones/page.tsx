@@ -409,9 +409,15 @@ export default function ComisionesPage() {
       // ── (c)/(d) HEAD intermedio bajo este HEAD ──
       const isIntermediateHead = profile.role === 'head' || profile.role === 'sales_manager';
       if (isIntermediateHead) {
-        const sumNdBdms = commercialProfiles
+        // El ND que se ingresa para el sub-HEAD en el grupo padre YA es el total
+        // de su equipo (lo garantiza teamNdValidation). Sus BDMs viven en otro
+        // grupo y no se cargan en esta vista, así que sumarlos daría 0. Usamos el
+        // ND tecleado como base; solo si no hay ND tecleado caemos a la suma de
+        // los BDMs que sí estén cargados.
+        const sumNdBdmsFromTeam = commercialProfiles
           .filter((s) => s.head_id === profile.id && (s.role === 'bdm' || s.role === 'bdm_global') && appearsInCommissions(s))
           .reduce((sum, s) => sum + (ndInputs.get(s.id) ?? 0), 0);
+        const sumNdBdms = nd !== 0 ? nd : sumNdBdmsFromTeam;
         const e = calculateExtraOverHeadCommission(
           pctExtraSobreHead,
           applyExtraNoSalary,
@@ -897,19 +903,28 @@ export default function ComisionesPage() {
             // Sub-members with own team: preserve net_deposit_accumulated (-1 flag)
             // because that field stores their personal ND from their own group
             const isSubWithTeam = !isHead && commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
+            // Para sub-HEADs la comisión correcta (extra sobre head, sobre el ND
+            // de su equipo) ya la resuelve bdmCalcs. Reusamos ese resultado para
+            // que lo GUARDADO coincida con lo MOSTRADO. Los BDMs normales
+            // conservan su cálculo propio (su payout individual).
+            const bdmCalc = bdmCalcs.find((c) => c.profileId === profile.id);
+            const src = (isSubWithTeam && bdmCalc) ? bdmCalc : calc;
+            const memberSalary = profile.fixed_salary
+              ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth)
+              : calculateSalaryFromND(nd);
             entries.push({
               profile_id: profile.id,
               net_deposit_current: nd,
               net_deposit_accumulated: isSubWithTeam ? null : accIn,
-              division: calc.division,
+              division: src.division,
               base_amount: 0,
-              commissions_earned: calc.commission,
-              real_payment: calc.realPayment,
-              accumulated_out: calc.accumulatedOut,
-              salary_paid: isHead ? autoSalary : (profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd)),
+              commissions_earned: src.commission,
+              real_payment: src.realPayment,
+              accumulated_out: src.accumulatedOut,
+              salary_paid: isHead ? autoSalary : memberSalary,
               total_earned: (isHead && !headHasParent)
                 ? teamSummary.totalWithSalary
-                : calc.realPayment + (profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd)),
+                : src.realPayment + memberSalary,
               bonus: isHead ? teamSummary.debtOut : 0,
             });
           }
