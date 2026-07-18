@@ -494,7 +494,11 @@ export function calculateExtraOverHeadCommission(
 
     const division = round2(h.sumNdBdms / 2);
     const commission = round2((division + h.accumulatedIn) * (pctExtraSobreHead / 100));
-    const realPayment = round2(Math.max(0, commission));
+    // El pago real puede ser NEGATIVO (clawback por ND negativo), igual que en
+    // calculateCommission. No se clampea a 0: si el equipo del sub-HEAD tuvo ND
+    // negativo, ese negativo debe restar en el total del grupo, consistente con
+    // los BDMs y el HEAD principal en la misma vista.
+    const realPayment = round2(commission);
     const accumulatedOut = division;
 
     details.push({
