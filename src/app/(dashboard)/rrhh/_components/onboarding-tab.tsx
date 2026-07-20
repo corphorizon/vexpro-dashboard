@@ -45,10 +45,10 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
   const [search, setSearch] = useState('');
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
 
-  // Sponsor por defecto = nombre del HEAD del perfil.
-  const nameById = useMemo(() => {
+  // Sponsor por defecto = email del HEAD del perfil.
+  const emailById = useMemo(() => {
     const m = new Map<string, string>();
-    for (const p of profiles) m.set(p.id, p.name);
+    for (const p of profiles) m.set(p.id, p.email);
     return m;
   }, [profiles]);
 
@@ -188,7 +188,7 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
                 const complete = BOOL_COLS.every((c) => r[c.key]);
                 const fired = isFired(p);
                 const salarioDefault = p.salary ?? null;
-                const sponsorDefault = p.head_id ? (nameById.get(p.head_id) ?? '') : '';
+                const sponsorDefault = p.head_id ? (emailById.get(p.head_id) ?? '') : '';
                 const salarioVal = r.salario_fijo ?? salarioDefault ?? '';
                 const sponsorVal = r.sponsor ?? sponsorDefault;
                 return (
