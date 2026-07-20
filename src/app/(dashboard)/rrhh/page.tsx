@@ -18,12 +18,13 @@ import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt, ChevronDown, ChevronRight } from 'lucide-react';
+import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt, ChevronDown, ChevronRight, ClipboardCheck } from 'lucide-react';
 import { FireModal } from '@/components/fire-modal';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import { IbRebatesTab } from './_components/ib-rebates-tab';
+import { OnboardingTab } from './_components/onboarding-tab';
 
-type Tab = 'employees' | 'commercial' | 'negotiations' | 'ib_rebates';
+type Tab = 'employees' | 'commercial' | 'negotiations' | 'ib_rebates' | 'onboarding';
 
 const STATUS_BADGE_CLASSES: Record<string, string> = {
   active: 'bg-positive/10 text-positive',
@@ -798,7 +799,7 @@ export default function RRHHPage() {
     try {
       const restore = sessionStorage.getItem('rrhh-restore-tab');
       if (restore) {
-        if (restore === 'employees' || restore === 'commercial' || restore === 'negotiations' || restore === 'ib_rebates') {
+        if (restore === 'employees' || restore === 'commercial' || restore === 'negotiations' || restore === 'ib_rebates' || restore === 'onboarding') {
           setTab(restore);
         }
         sessionStorage.removeItem('rrhh-restore-tab');
@@ -1506,10 +1507,23 @@ export default function RRHHPage() {
             Configuración IBs
           </button>
         )}
+        <button
+          onClick={() => setTab('onboarding')}
+          className={cn(
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
+            tab === 'onboarding' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <ClipboardCheck className="w-4 h-4 inline mr-1 sm:mr-2" />
+          Check List Onboarding
+        </button>
       </div>
 
       {/* ═══════════ IB REBATES TAB ═══════════ */}
       {tab === 'ib_rebates' && hasIbRebatesAccess && <IbRebatesTab />}
+
+      {/* ═══════════ ONBOARDING CHECKLIST TAB ═══════════ */}
+      {tab === 'onboarding' && <OnboardingTab profiles={profiles} />}
 
       {/* ═══════════ EMPLOYEES TAB ═══════════ */}
       {tab === 'employees' && (

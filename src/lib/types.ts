@@ -307,6 +307,22 @@ export interface CommercialMonthlyResult {
   accumulated_out: number;
 }
 
+// Check List Onboarding — estado del proceso de contratación por comercial.
+export interface OnboardingChecklist {
+  id: string;
+  company_id: string;
+  profile_id: string;
+  propuesta: boolean;
+  acepto_propuesta: boolean;
+  contrato: boolean;
+  acepto_contrato: boolean;
+  accesos: boolean;
+  salario_fijo: number | null; // override; null = usar salary del perfil
+  sponsor: string | null;      // override; null = usar HEAD del perfil
+  created_at?: string;
+  updated_at?: string;
+}
+
 export type NegotiationStatus = 'active' | 'closed' | 'pending';
 
 export interface Negotiation {
