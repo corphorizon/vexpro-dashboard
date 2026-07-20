@@ -1094,10 +1094,17 @@ export default function ComisionesPage() {
     if (!selectedPeriod) return;
     if (tab === 'teams') {
       const headers = ['Name', 'Role', '%', t('comm.ndCurrent'), t('comm.division'), t('comm.commission'), t('comm.realPayment')];
-      const rows = bdmCalcs.map((c) => {
-        const p = commercialProfiles.find((pr) => pr.id === c.profileId);
-        return [p?.name ?? '', 'BDM', c.commissionPct, c.netDepositCurrent, c.division, c.commission, c.realPayment] as (string | number)[];
-      });
+      const rows = bdmCalcs
+        // Mismo criterio que el PDF: no listar despedidos sin ND (aportan $0).
+        .filter((c) => {
+          const p = commercialProfiles.find((pr) => pr.id === c.profileId);
+          const isFired = p?.status === 'inactive' && !!p?.termination_date;
+          return !(isFired && (c.netDepositCurrent ?? 0) === 0);
+        })
+        .map((c) => {
+          const p = commercialProfiles.find((pr) => pr.id === c.profileId);
+          return [p?.name ?? '', 'BDM', c.commissionPct, c.netDepositCurrent, c.division, c.commission, c.realPayment] as (string | number)[];
+        });
       if (headProfile) {
         rows.push([headProfile.name, ROLE_LABEL[headProfile.role], `Diff`, '', '', '', headDiff.totalDifferential, headDiff.totalRealPayment]);
       }
@@ -1164,7 +1171,16 @@ export default function ComisionesPage() {
       } : null,
       headDiff,
       teamSummary,
-      bdms: bdmCalcs.map(c => {
+      bdms: bdmCalcs
+        // Excluir del reporte a los despedidos SIN ND: no tuvieron actividad
+        // este mes (aportan $0), así que no deben figurar. Los despedidos CON
+        // ND (ej. negativos post-despido) sí se muestran.
+        .filter(c => {
+          const p = commercialProfiles.find(pr => pr.id === c.profileId);
+          const isFired = p?.status === 'inactive' && !!p?.termination_date;
+          return !(isFired && (c.netDepositCurrent ?? 0) === 0);
+        })
+        .map(c => {
         const p = commercialProfiles.find(pr => pr.id === c.profileId);
         return {
           name: p?.name ?? '',
