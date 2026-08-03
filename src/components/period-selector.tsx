@@ -68,7 +68,7 @@ export function PeriodSelector() {
         value={selectedYear}
         onChange={(e) => setSelectedYear(Number(e.target.value))}
         aria-label={t('periods.selectPeriod')}
-        className="px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-xs sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
+        className="px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
       >
         {years.map((year) => (
           <option key={year} value={year}>

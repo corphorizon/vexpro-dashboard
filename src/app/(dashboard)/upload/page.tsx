@@ -53,7 +53,7 @@ function PaginationControls({
         <button
           onClick={() => onChange(Math.max(0, page - 1))}
           disabled={page === 0}
-          className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+          className="p-2 sm:p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
           aria-label={t('upload.prevPage')}
         >
           <ChevronLeft className="w-4 h-4" />
@@ -64,7 +64,7 @@ function PaginationControls({
         <button
           onClick={() => onChange(Math.min(totalPages - 1, page + 1))}
           disabled={page >= totalPages - 1}
-          className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
+          className="p-2 sm:p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
           aria-label={t('upload.nextPage')}
         >
           <ChevronRight className="w-4 h-4" />
@@ -1851,7 +1851,7 @@ export default function UploadPage() {
                       <button
                         onClick={() => updateDeposit(d.id, d.amount)}
                         disabled={savingDepositIds.has(d.id)}
-                        className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
+                        className="p-2 sm:p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
                         title={savingDepositIds.has(d.id) ? t('common.saving') : t('common.save')}
                         aria-busy={savingDepositIds.has(d.id)}
                       >
@@ -1959,7 +1959,7 @@ export default function UploadPage() {
                         <button
                           onClick={() => updateWithdrawal(w.id, w.amount)}
                           disabled={savingWithdrawalIds.has(w.id)}
-                          className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
+                          className="p-2 sm:p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
                           title={savingWithdrawalIds.has(w.id) ? t('common.saving') : t('common.save')}
                           aria-busy={savingWithdrawalIds.has(w.id)}
                         >
@@ -2045,7 +2045,7 @@ export default function UploadPage() {
                 <select
                   value={newExtraWithdrawal.category}
                   onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, category: e.target.value as typeof p.category }))}
-                  className="px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 >
                   <option value="ib_commissions">{WITHDRAWAL_LABELS['ib_commissions']}</option>
                   <option value="broker">{WITHDRAWAL_LABELS['broker']}</option>
@@ -2057,7 +2057,7 @@ export default function UploadPage() {
                   value={newExtraWithdrawal.description}
                   onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, description: e.target.value }))}
                   placeholder={t('upload.withdrawalDescPlaceholder')}
-                  className="md:col-span-2 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="md:col-span-2 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="number"
@@ -2065,7 +2065,7 @@ export default function UploadPage() {
                   value={newExtraWithdrawal.amount}
                   onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, amount: e.target.value }))}
                   placeholder={t('upload.amountPlaceholder')}
-                  className="text-right px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="text-right px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <button
                   type="button"
@@ -2118,7 +2118,7 @@ export default function UploadPage() {
                           <td className="py-2.5 px-3 text-center">
                             <button
                               onClick={() => setWithdrawalExtras(prev => prev.filter(x => x.id !== w.id))}
-                              className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
+                              className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
                               title={t('common.delete')}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
@@ -2186,7 +2186,7 @@ export default function UploadPage() {
                     <>
                       <td className="py-2.5 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
                       <td className="py-2.5 px-3">
-                        <input aria-label={t('upload.expenseConceptAria')} value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
+                        <input aria-label={t('upload.expenseConceptAria')} value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" />
                         <label className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground cursor-pointer">
                           <input type="checkbox" aria-label={t('expenses.fixed')} checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
                           {t('expenses.fixed')} ({t('expenses.fixedHint')})
@@ -2200,7 +2200,7 @@ export default function UploadPage() {
                             onFocus={() => setShowEditCategoryDropdown(true)}
                             onBlur={() => setTimeout(() => setShowEditCategoryDropdown(false), 200)}
                             placeholder={t('upload.category')}
-                            className="w-full px-2 py-1 rounded border border-border text-sm"
+                            className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm"
                             autoComplete="off"
                           />
                           {showEditCategoryDropdown && filteredCategoriesEdit.length > 0 && (
@@ -2219,14 +2219,14 @@ export default function UploadPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.pending')} value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.pending')} value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                       <td></td>
                       <td className="py-2.5 px-3 text-center">
                         <div className="flex justify-center gap-1">
-                          <button onClick={saveEditExpense} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
-                          <button onClick={() => setEditingExpenseId(null)} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
+                          <button onClick={saveEditExpense} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
+                          <button onClick={() => setEditingExpenseId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
                         </div>
                       </td>
                     </>
@@ -2264,13 +2264,13 @@ export default function UploadPage() {
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
                             {userCanEdit && exp.pending > 0 && (
-                              <button onClick={() => markExpensePaid(exp.id)} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" title={t('upload.markPaid')} aria-label={t('upload.markPaidAria', { concept: exp.concept })}><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => markExpensePaid(exp.id)} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" title={t('upload.markPaid')} aria-label={t('upload.markPaidAria', { concept: exp.concept })}><Check className="w-3.5 h-3.5" /></button>
                             )}
                             {userCanEdit && (
-                              <button onClick={() => startEditExpense(exp)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => startEditExpense(exp)} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
                             )}
                             {userCanDelete && (
-                              <button onClick={() => deleteExpense(exp.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => deleteExpense(exp.id)} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
                             )}
                           </div>
                         </td>
@@ -2316,7 +2316,7 @@ export default function UploadPage() {
                     onFocus={() => setShowConceptDropdown(true)}
                     onBlur={() => setTimeout(() => setShowConceptDropdown(false), 200)}
                     placeholder={t('upload.conceptPlaceholder')}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                     autoComplete="off"
                   />
                   {showConceptDropdown && filteredConcepts.length > 0 && (
@@ -2341,7 +2341,7 @@ export default function UploadPage() {
                     onFocus={() => setShowCategoryDropdown(true)}
                     onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 200)}
                     placeholder={t('upload.category')}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                     autoComplete="off"
                   />
                   {showCategoryDropdown && filteredCategoriesNew.length > 0 && (
@@ -2367,14 +2367,14 @@ export default function UploadPage() {
                   value={newExpense.amount}
                   onChange={e => setNewExpense(p => ({ ...p, amount: e.target.value }))}
                   placeholder={t('upload.amountPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="number" step="0.01"
                   value={newExpense.paid}
                   onChange={e => setNewExpense(p => ({ ...p, paid: e.target.value }))}
                   placeholder={t('upload.paidPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <button
                   onClick={addExpense}
@@ -2437,7 +2437,7 @@ export default function UploadPage() {
                     type="number" step="0.01"
                     value={income.broker_pnl || ''}
                     onChange={e => setIncome(p => ({ ...p, broker_pnl: parseFloat(e.target.value) || 0 }))}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                     placeholder="0.00"
                   />
                 ) : (
@@ -2451,7 +2451,7 @@ export default function UploadPage() {
                     type="number" step="0.01"
                     value={income.other || ''}
                     onChange={e => setIncome(p => ({ ...p, other: parseFloat(e.target.value) || 0 }))}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                     placeholder="0.00"
                   />
                 ) : (
@@ -2482,7 +2482,7 @@ export default function UploadPage() {
                         setPropFirmAmount(parseFloat(e.target.value) || 0);
                         markDirty('ingresos');
                       }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="0.00"
                     />
                   ) : (
@@ -2505,7 +2505,7 @@ export default function UploadPage() {
                         ));
                         markDirty('ingresos');
                       }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                       placeholder="0.00"
                     />
                   ) : (
@@ -2557,7 +2557,7 @@ export default function UploadPage() {
                 type="date"
                 value={liqDateFrom}
                 onChange={e => setLiqDateFrom(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
             <div>
@@ -2566,7 +2566,7 @@ export default function UploadPage() {
                 type="date"
                 value={liqDateTo}
                 onChange={e => setLiqDateTo(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
             <div>
@@ -2574,7 +2574,7 @@ export default function UploadPage() {
               <select
                 value={liqPeriodFilter}
                 onChange={e => setLiqPeriodFilter(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 <option value="todos">{t('common.all')}</option>
                 {periods.map(p => (
@@ -2621,16 +2621,16 @@ export default function UploadPage() {
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     {editingLiqId === row.id ? (
                       <>
-                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('audit.filterUser')} value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('upload.mtAccountAria')} value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('audit.filterUser')} value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('upload.mtAccountAria')} value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                         <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
-                            <button onClick={saveEditLiq} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
-                            <button onClick={() => setEditingLiqId(null)} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
+                            <button onClick={saveEditLiq} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
+                            <button onClick={() => setEditingLiqId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
                           </div>
                         </td>
                       </>
@@ -2646,10 +2646,10 @@ export default function UploadPage() {
                           <td className="py-2.5 px-3 text-center">
                             <div className="flex justify-center gap-1">
                               {userCanEdit && (
-                                <button onClick={() => startEditLiq(row)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
+                                <button onClick={() => startEditLiq(row)} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
                               )}
                               {userCanDelete && (
-                                <button onClick={() => deleteLiqRow(row.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
+                                <button onClick={() => deleteLiqRow(row.id)} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
                               )}
                             </div>
                           </td>
@@ -2689,33 +2689,33 @@ export default function UploadPage() {
                   type="date"
                   value={newLiq.date}
                   onChange={e => setNewLiq(p => ({ ...p, date: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   value={newLiq.user_email}
                   onChange={e => setNewLiq(p => ({ ...p, user_email: e.target.value }))}
                   placeholder={t('upload.emailPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   value={newLiq.mt_account}
                   onChange={e => setNewLiq(p => ({ ...p, mt_account: e.target.value }))}
                   placeholder={t('upload.mtAccountPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="number" step="0.01"
                   value={newLiq.deposit}
                   onChange={e => setNewLiq(p => ({ ...p, deposit: e.target.value }))}
                   placeholder={t('upload.depositPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="number" step="0.01"
                   value={newLiq.withdrawal}
                   onChange={e => setNewLiq(p => ({ ...p, withdrawal: e.target.value }))}
                   placeholder={t('upload.withdrawalPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <button
                   onClick={addLiquidityRow}
@@ -2743,7 +2743,7 @@ export default function UploadPage() {
                 type="date"
                 value={invDateFrom}
                 onChange={e => setInvDateFrom(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
             <div>
@@ -2752,7 +2752,7 @@ export default function UploadPage() {
                 type="date"
                 value={invDateTo}
                 onChange={e => setInvDateTo(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               />
             </div>
             <div>
@@ -2760,7 +2760,7 @@ export default function UploadPage() {
               <select
                 value={invPeriodFilter}
                 onChange={e => setInvPeriodFilter(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               >
                 <option value="todos">{t('common.all')}</option>
                 {periods.map(p => (
@@ -2808,17 +2808,17 @@ export default function UploadPage() {
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     {editingInvId === row.id ? (
                       <>
-                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('upload.concept')} value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('upload.responsible')} value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.profit')} value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('upload.concept')} value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('upload.responsible')} value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.profit')} value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                         <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
-                            <button onClick={saveEditInv} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
-                            <button onClick={() => setEditingInvId(null)} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
+                            <button onClick={saveEditInv} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
+                            <button onClick={() => setEditingInvId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
                           </div>
                         </td>
                       </>
@@ -2835,10 +2835,10 @@ export default function UploadPage() {
                           <td className="py-2.5 px-3 text-center">
                             <div className="flex justify-center gap-1">
                               {userCanEdit && (
-                                <button onClick={() => startEditInv(row)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
+                                <button onClick={() => startEditInv(row)} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
                               )}
                               {userCanDelete && (
-                                <button onClick={() => deleteInvRow(row.id)} className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
+                                <button onClick={() => deleteInvRow(row.id)} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
                               )}
                             </div>
                           </td>
@@ -2879,40 +2879,40 @@ export default function UploadPage() {
                   type="date"
                   value={newInv.date}
                   onChange={e => setNewInv(p => ({ ...p, date: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   value={newInv.concept}
                   onChange={e => setNewInv(p => ({ ...p, concept: e.target.value }))}
                   placeholder={t('upload.conceptPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   value={newInv.responsible}
                   onChange={e => setNewInv(p => ({ ...p, responsible: e.target.value }))}
                   placeholder={t('upload.responsiblePlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="number" step="0.01"
                   value={newInv.deposit}
                   onChange={e => setNewInv(p => ({ ...p, deposit: e.target.value }))}
                   placeholder={t('upload.depositPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="number" step="0.01"
                   value={newInv.withdrawal}
                   onChange={e => setNewInv(p => ({ ...p, withdrawal: e.target.value }))}
                   placeholder={t('upload.withdrawalPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
                   type="number" step="0.01"
                   value={newInv.profit}
                   onChange={e => setNewInv(p => ({ ...p, profit: e.target.value }))}
                   placeholder={t('upload.profitPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <button
                   onClick={addInvestmentRow}
@@ -2974,7 +2974,7 @@ export default function UploadPage() {
                     <div className="flex justify-center gap-1">
                       <button
                         onClick={() => showSuccess(t('upload.downloading', { filename: doc.filename }))}
-                        className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                        className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
                         title={t('upload.download')}
                         aria-label={t('upload.download')}
                       >
@@ -2986,7 +2986,7 @@ export default function UploadPage() {
                             setDocs(prev => prev.filter(d => d.id !== doc.id));
                             showSuccess(t('upload.investmentDeleted'));
                           })}
-                          className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
+                          className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
                           aria-label={t('common.delete')}
                         >
                           <Trash2 className="w-3.5 h-3.5" />
@@ -3009,7 +3009,7 @@ export default function UploadPage() {
           <select
             value={selectedPeriod}
             onChange={(e) => setSelectedPeriod(e.target.value)}
-            className="flex-1 sm:flex-none px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
+            className="flex-1 sm:flex-none px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
           >
             {periods.map(p => (
               <option key={p.id} value={p.id}>{p.label} {p.is_closed ? t('upload.closedPeriod') : ''}</option>

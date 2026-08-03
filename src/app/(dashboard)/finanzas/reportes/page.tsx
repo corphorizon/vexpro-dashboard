@@ -393,7 +393,7 @@ export default function ReportesPage() {
                   setFrom(e.target.value);
                   setActiveQuickRange(null);
                 }}
-                className="px-2 py-1 rounded-md border border-border bg-background text-sm"
+                className="px-2 py-1 rounded-md border border-border bg-background text-base sm:text-sm"
               />
             </label>
             <label className="flex items-center gap-2 text-sm">
@@ -406,7 +406,7 @@ export default function ReportesPage() {
                   setTo(e.target.value);
                   setActiveQuickRange(null);
                 }}
-                className="px-2 py-1 rounded-md border border-border bg-background text-sm"
+                className="px-2 py-1 rounded-md border border-border bg-background text-base sm:text-sm"
               />
             </label>
             <button

@@ -640,7 +640,7 @@ export default function BalancesPage() {
               <select
                 value={balanceMonthPeriodId || selectedPeriodId || ''}
                 onChange={(e) => setBalanceMonthPeriodId(e.target.value)}
-                className="h-9 px-3 text-sm rounded-lg border border-border bg-card min-w-[200px] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                className="h-9 px-3 text-base sm:text-sm rounded-lg border border-border bg-card flex-1 min-w-0 sm:flex-none sm:min-w-[200px] max-w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
                 aria-label={t('balances.selectMonth')}
               >
                 {balanceChain.map((r) => (
@@ -772,7 +772,7 @@ export default function BalancesPage() {
               type="date"
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
-              className="h-9 px-3 text-sm rounded-lg border border-border bg-card focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              className="h-9 px-3 text-base sm:text-sm rounded-lg border border-border bg-card focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
               aria-label={t('balances.snapshotDate')}
             />
             <button
@@ -845,20 +845,20 @@ export default function BalancesPage() {
                         step="0.01"
                         value={editing[ch.key]}
                         onChange={(e) => setEditing(prev => ({ ...prev, [ch.key]: e.target.value }))}
-                        className="w-32 px-2 py-1 rounded border border-border text-sm text-right"
+                        className="w-32 px-2 py-1 rounded border border-border text-base sm:text-sm text-right"
                         autoFocus
                       />
                       <button
                         onClick={() => saveEdit(ch.key)}
                         disabled={savingKey === ch.key}
-                        className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-50"
+                        className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-50"
                         aria-label={t('common.save')}
                       >
                         {savingKey === ch.key ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                       </button>
                       <button
                         onClick={() => cancelEdit(ch.key)}
-                        className="p-1 text-muted-foreground hover:bg-muted rounded"
+                        className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded"
                         aria-label={t('common.cancel')}
                       >
                         <X className="w-4 h-4" />
@@ -872,7 +872,7 @@ export default function BalancesPage() {
                       {((!isAuto && !isCoinsbuy) || canOverride) && userCanAdd && (
                         <button
                           onClick={() => startEdit(ch.key)}
-                          className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                          className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
                           aria-label={t('common.edit')}
                           title={canOverride ? t('balances.manualOverrideTitle') : t('balances.editBalance')}
                         >
@@ -882,7 +882,7 @@ export default function BalancesPage() {
                       {isCoinsbuy && isAdmin && (
                         <button
                           onClick={() => setShowCoinsbuyModal(true)}
-                          className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                          className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
                           aria-label={t('balances.editWallets')}
                           title={t('balances.chooseCoinsbuyWallets')}
                         >
@@ -1065,7 +1065,7 @@ export default function BalancesPage() {
                           {isPinned(w.id) ? (
                             <button
                               onClick={() => handleUnpin(w.id)}
-                              className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
+                              className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
                               title={t('balances.unpinTitle')}
                             >
                               <PinOff className="w-4 h-4" />
@@ -1073,7 +1073,7 @@ export default function BalancesPage() {
                           ) : (
                             <button
                               onClick={() => handlePin(w.id, w.label)}
-                              className="p-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                              className="p-2 sm:p-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
                               title={t('balances.pinTitle')}
                             >
                               <Pin className="w-4 h-4" />
