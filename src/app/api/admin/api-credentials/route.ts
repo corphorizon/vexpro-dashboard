@@ -111,6 +111,25 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validación de extra_config.fee_pct (comisión del proveedor, fairpay/
+    // unipayment): número entre 0 y 30. El resolver (getProviderFeePct)
+    // también la ignora si está fuera de rango, pero rechazamos acá para
+    // que el superadmin vea el error en vez de un silencio.
+    if (
+      extra_config &&
+      typeof extra_config === 'object' &&
+      'fee_pct' in extra_config &&
+      extra_config.fee_pct != null
+    ) {
+      const feePct = Number(extra_config.fee_pct);
+      if (!Number.isFinite(feePct) || feePct < 0 || feePct > 30) {
+        return NextResponse.json(
+          { success: false, error: 'fee_pct debe ser un número entre 0 y 30' },
+          { status: 400 },
+        );
+      }
+    }
+
     let bundle;
     try {
       bundle = encryptSecret(secret);

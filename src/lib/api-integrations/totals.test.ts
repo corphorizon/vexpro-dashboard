@@ -92,6 +92,19 @@ describe('computeProviderTotals — fairpay / unipayment', () => {
     expect(t.count).toBe(1);
   });
 
+  it('fairpay con comisión configurada (fee_pct): total = suma de netos (billed − mdr) y feeTotal = suma de mdr', () => {
+    // Simula el output del fetcher con extra_config.fee_pct = 8:
+    // mdr = round2(billed × 0.08), net = round2(billed − mdr).
+    const t = computeProviderTotals(ds('fairpay', [
+      fp({ billed: 100, mdr: 8, net: 92, status: 'Completed' }),
+      fp({ billed: 250.5, mdr: 20.04, net: 230.46, status: 'Completed' }),
+      fp({ billed: 50, mdr: 4, net: 46, status: 'Pending' }), // no cuenta
+    ]));
+    expect(t.total).toBeCloseTo(322.46, 2);   // 92 + 230.46
+    expect(t.feeTotal).toBeCloseTo(28.04, 2); // 8 + 20.04
+    expect(t.count).toBe(2);
+  });
+
   it('unipayment suma netAmount y fee solo de Completed', () => {
     const t = computeProviderTotals(ds('unipayment', [
       up({ netAmount: 200, fee: 4, status: 'Completed' }),
