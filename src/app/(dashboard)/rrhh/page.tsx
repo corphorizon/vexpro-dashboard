@@ -117,23 +117,23 @@ function EmployeeForm({ onClose, onSave, editing, companyId }: { onClose: () => 
         <button onClick={onClose} aria-label={t('common.close')}><X className="w-4 h-4" /></button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        <input aria-label={t('hr.namePlaceholder')} placeholder={t('hr.namePlaceholder')} value={name} onChange={e => setName(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input aria-label={t('hr.emailPlaceholder')} placeholder={t('hr.emailPlaceholder')} value={email} onChange={e => setEmail(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input aria-label={t('hr.positionPlaceholder')} placeholder={t('hr.positionPlaceholder')} value={position} onChange={e => setPosition(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input aria-label={t('hr.departmentPlaceholder')} placeholder={t('hr.departmentPlaceholder')} value={department} onChange={e => setDepartment(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input aria-label={t('hr.startDatePlaceholder')} type="date" placeholder={t('hr.startDatePlaceholder')} value={startDate} onChange={e => setStartDate(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input aria-label={t('hr.salaryPlaceholder')} type="number" placeholder={t('hr.salaryPlaceholder')} value={salary} onChange={e => setSalary(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <select aria-label={t('hr.status')} value={status} onChange={e => setStatus(e.target.value as 'active' | 'inactive' | 'probation')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
+        <input aria-label={t('hr.namePlaceholder')} placeholder={t('hr.namePlaceholder')} value={name} onChange={e => setName(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
+        <input aria-label={t('hr.emailPlaceholder')} placeholder={t('hr.emailPlaceholder')} value={email} onChange={e => setEmail(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
+        <input aria-label={t('hr.positionPlaceholder')} placeholder={t('hr.positionPlaceholder')} value={position} onChange={e => setPosition(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
+        <input aria-label={t('hr.departmentPlaceholder')} placeholder={t('hr.departmentPlaceholder')} value={department} onChange={e => setDepartment(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
+        <input aria-label={t('hr.startDatePlaceholder')} type="date" placeholder={t('hr.startDatePlaceholder')} value={startDate} onChange={e => setStartDate(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
+        <input aria-label={t('hr.salaryPlaceholder')} type="number" placeholder={t('hr.salaryPlaceholder')} value={salary} onChange={e => setSalary(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
+        <select aria-label={t('hr.status')} value={status} onChange={e => setStatus(e.target.value as 'active' | 'inactive' | 'probation')} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm">
           <option value="active">{t('hr.statusActive')}</option>
           <option value="inactive">{t('hr.statusInactive')}</option>
           <option value="probation">{t('hr.statusProbation')}</option>
         </select>
         <div className="flex flex-col gap-1">
           <label className="text-xs text-muted-foreground">{t('hr.birthday')}</label>
-          <input aria-label={t('hr.birthday')} type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+          <input aria-label={t('hr.birthday')} type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
         </div>
-        <input aria-label={t('hr.supervisorPlaceholder')} placeholder={t('hr.supervisorPlaceholder')} value={supervisor} onChange={e => setSupervisor(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-        <input aria-label={t('hr.commentsPlaceholder')} placeholder={t('hr.commentsPlaceholder')} value={comments} onChange={e => setComments(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
+        <input aria-label={t('hr.supervisorPlaceholder')} placeholder={t('hr.supervisorPlaceholder')} value={supervisor} onChange={e => setSupervisor(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
+        <input aria-label={t('hr.commentsPlaceholder')} placeholder={t('hr.commentsPlaceholder')} value={comments} onChange={e => setComments(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm" />
       </div>
       <div className="mt-3 flex justify-end">
         <button onClick={handleSubmit} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90">
@@ -262,20 +262,20 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
       <div className="bg-card rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto p-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-lg">{editing ? t('hr.editProfile') : t('hr.newProfile')}</h3>
-          <button onClick={onClose} aria-label={t('common.close')} className="p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label={t('common.close')} className="p-2 sm:p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.namePlaceholder')}</label>
-            <input aria-label={t('hr.namePlaceholder')} value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.namePlaceholder')} value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.emailPlaceholder')}</label>
-            <input aria-label={t('hr.emailPlaceholder')} value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.emailPlaceholder')} value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.role')}</label>
-            <select aria-label={t('hr.role')} value={role} onChange={e => setRole(e.target.value as 'sales_manager' | 'head' | 'bdm' | 'bdm_global')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+            <select aria-label={t('hr.role')} value={role} onChange={e => setRole(e.target.value as 'sales_manager' | 'head' | 'bdm' | 'bdm_global')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
 
               <option value="sales_manager">Sales Manager</option>
               <option value="head">HEAD</option>
@@ -285,7 +285,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.supervisor')}</label>
-            <select aria-label={t('hr.supervisor')} value={headId} onChange={e => setHeadId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+            <select aria-label={t('hr.supervisor')} value={headId} onChange={e => setHeadId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
               <option value="">{t('hr.noSupervisor')}</option>
               {possibleHeads.filter(h => h.id !== editing?.id).map(h => (
                 <option key={h.id} value={h.id}>{h.name} ({ROLE_LABELS_HR[h.role]})</option>
@@ -294,11 +294,11 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.ndPctPlaceholder')}</label>
-            <input aria-label={t('hr.ndPctPlaceholder')} type="number" value={ndPct} onChange={e => setNdPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.ndPctPlaceholder')} type="number" value={ndPct} onChange={e => setNdPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pnlPctPlaceholder')}</label>
-            <input aria-label={t('hr.pnlPctPlaceholder')} type="number" value={pnlPct} onChange={e => setPnlPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.pnlPctPlaceholder')} type="number" value={pnlPct} onChange={e => setPnlPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
 
           {/* Modo PnL Especial — solo visible cuando hay pnl_pct configurado.
@@ -324,7 +324,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           )}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.commLotPlaceholder')}</label>
-            <input aria-label={t('hr.commLotPlaceholder')} type="number" value={commLot} onChange={e => setCommLot(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.commLotPlaceholder')} type="number" value={commLot} onChange={e => setCommLot(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <p className="text-xs text-muted-foreground italic px-1 -mt-1">{t('hr.commMethodHint')}</p>
           <div>
@@ -333,13 +333,13 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
               {t('hr.fixedSalaryCheckbox')}
             </label>
             {fixedSalary && (
-              <input aria-label={t('hr.amountUsdPlaceholder')} type="number" placeholder={t('hr.amountUsdPlaceholder')} value={salary} onChange={e => setSalary(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+              <input aria-label={t('hr.amountUsdPlaceholder')} type="number" placeholder={t('hr.amountUsdPlaceholder')} value={salary} onChange={e => setSalary(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
             )}
           </div>
           {(role === 'head' || role === 'sales_manager') && (
             <div>
               <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.extraPct')}</label>
-              <input aria-label={t('hr.extraPct')} type="number" step="0.01" value={extraPct} onChange={e => setExtraPct(e.target.value)} placeholder="0" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+              <input aria-label={t('hr.extraPct')} type="number" step="0.01" value={extraPct} onChange={e => setExtraPct(e.target.value)} placeholder="0" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
             </div>
           )}
           {/* BDM GLOBAL — campos extra del HEAD/Sales Manager */}
@@ -353,7 +353,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                   value={pctSobreBdmGlobal}
                   onChange={e => setPctSobreBdmGlobal(parseFloat(e.target.value) || 0)}
                   placeholder="0"
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
                 <p className="text-[11px] text-muted-foreground mt-1 leading-tight">{t('hr.pctOverGlobalBdmsHint')}</p>
               </div>
@@ -365,7 +365,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                   value={pctExtraSobreHead}
                   onChange={e => setPctExtraSobreHead(parseFloat(e.target.value) || 0)}
                   placeholder="0"
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
                 <p className="text-[11px] text-muted-foreground mt-1 leading-tight">{t('hr.pctExtraOverHeadHint')}</p>
               </div>
@@ -385,19 +385,19 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           )}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.benefitsPlaceholder')}</label>
-            <input aria-label={t('hr.benefitsPlaceholder')} value={benefits} onChange={e => setBenefits(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.benefitsPlaceholder')} value={benefits} onChange={e => setBenefits(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.commentsPlaceholder')}</label>
-            <input aria-label={t('hr.commentsPlaceholder')} value={comments} onChange={e => setComments(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.commentsPlaceholder')} value={comments} onChange={e => setComments(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.hireDatePlaceholder')}</label>
-            <input aria-label={t('hr.hireDatePlaceholder')} type="date" value={hireDate} onChange={e => setHireDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.hireDatePlaceholder')} type="date" value={hireDate} onChange={e => setHireDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.terminationDate')}</label>
-            <input aria-label={t('hr.terminationDate')} type="date" value={terminationDate} onChange={e => setTerminationDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.terminationDate')} type="date" value={terminationDate} onChange={e => setTerminationDate(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
             <p className="text-[10px] text-muted-foreground mt-1 leading-tight">
               {t('hr.terminationDateHint')}
             </p>
@@ -449,7 +449,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                     aria-label={t('hr.fireCategoryLabel')}
                     value={terminationCategory}
                     onChange={e => setTerminationCategory(e.target.value)}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
                   >
                     <option value="">—</option>
                     <option value="performance">{t('hr.categoryPerformance')}</option>
@@ -466,7 +466,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                     value={terminationReason}
                     onChange={e => setTerminationReason(e.target.value)}
                     rows={2}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm resize-none"
+                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm resize-none"
                     placeholder={t('hr.fireReasonPlaceholder')}
                   />
                 </div>
@@ -475,11 +475,11 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           )}
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.birthdayPlaceholder')}</label>
-            <input aria-label={t('hr.birthdayPlaceholder')} type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.birthdayPlaceholder')} type="date" value={birthday} onChange={e => setBirthday(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.status')}</label>
-            <select aria-label={t('hr.status')} value={status} onChange={e => setStatus(e.target.value as 'active' | 'inactive')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+            <select aria-label={t('hr.status')} value={status} onChange={e => setStatus(e.target.value as 'active' | 'inactive')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
               <option value="active">{t('hr.statusActive')}</option>
               <option value="inactive">{t('hr.statusInactive')}</option>
             </select>
@@ -508,7 +508,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
               <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
             </label>
             {contractFile && (
-              <button onClick={() => setContractFile(null)} className="p-1 rounded hover:bg-muted">
+              <button onClick={() => setContractFile(null)} className="p-2 sm:p-1 rounded hover:bg-muted">
                 <X className="w-4 h-4 text-muted-foreground" />
               </button>
             )}
@@ -570,7 +570,7 @@ function PeriodFilter({ preset, setPreset, selectedMonth, setSelectedMonth, cust
           aria-label={t('hr.filterMonth')}
           value={selectedMonth}
           onChange={e => setSelectedMonth(e.target.value)}
-          className="px-3 py-1.5 text-xs rounded-md border border-border bg-card"
+          className="px-3 py-1.5 text-base sm:text-xs rounded-md border border-border bg-card"
         >
           {periods.map(p => (
             <option key={p.id} value={p.id}>{p.label}</option>
@@ -644,7 +644,7 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
       <div className="bg-card rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto p-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-lg">{editing ? t('hr.editNegotiation') : t('hr.newNegotiation')}</h3>
-          <button onClick={onClose} aria-label={t('common.close')} className="p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label={t('common.close')} className="p-2 sm:p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
         </div>
         <div className="space-y-4">
           {/* Profile selection — existing or new */}
@@ -678,7 +678,7 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
               </div>
 
               {mode === 'existing' ? (
-                <select aria-label={t('hr.selectProfile')} value={profileId} onChange={e => setProfileId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+                <select aria-label={t('hr.selectProfile')} value={profileId} onChange={e => setProfileId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
                   {profiles.map(p => (
                     <option key={p.id} value={p.id}>{p.name} ({p.role.toUpperCase()})</option>
                   ))}
@@ -688,16 +688,16 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-medium text-muted-foreground mb-1">{t('common.name')} *</label>
-                      <input aria-label={t('common.name')} value={newName} onChange={e => setNewName(e.target.value)} placeholder={t('hr.fullNamePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                      <input aria-label={t('common.name')} value={newName} onChange={e => setNewName(e.target.value)} placeholder={t('hr.fullNamePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-medium text-muted-foreground mb-1">{t('common.email')} *</label>
-                      <input aria-label={t('common.email')} type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder={t('hr.emailExamplePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                      <input aria-label={t('common.email')} type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder={t('hr.emailExamplePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                     </div>
                   </div>
                   <div>
                     <label className="block text-[10px] font-medium text-muted-foreground mb-1">{t('hr.role')}</label>
-                    <input aria-label={t('hr.role')} value={newRole} onChange={e => setNewRole(e.target.value)} placeholder={t('hr.roleExamplePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                    <input aria-label={t('hr.role')} value={newRole} onChange={e => setNewRole(e.target.value)} placeholder={t('hr.roleExamplePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                   </div>
                 </div>
               )}
@@ -706,15 +706,15 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
 
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.negotiationTitle')}</label>
-            <input aria-label={t('hr.negotiationTitle')} value={title} onChange={e => setTitle(e.target.value)} placeholder={t('hr.titlePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            <input aria-label={t('hr.negotiationTitle')} value={title} onChange={e => setTitle(e.target.value)} placeholder={t('hr.titlePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.negotiationDesc')}</label>
-            <textarea aria-label={t('hr.negotiationDesc')} value={description} onChange={e => setDescription(e.target.value)} placeholder={t('hr.descriptionPlaceholder')} rows={3} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] resize-none" />
+            <textarea aria-label={t('hr.negotiationDesc')} value={description} onChange={e => setDescription(e.target.value)} placeholder={t('hr.descriptionPlaceholder')} rows={3} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] resize-none" />
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.negotiationStatus')}</label>
-            <select aria-label={t('hr.negotiationStatus')} value={status} onChange={e => setStatus(e.target.value as NegotiationStatus)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+            <select aria-label={t('hr.negotiationStatus')} value={status} onChange={e => setStatus(e.target.value as NegotiationStatus)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
               <option value="active">{t('hr.negStatusActive')}</option>
               <option value="pending">{t('hr.negStatusPending')}</option>
               <option value="closed">{t('hr.negStatusClosed')}</option>
@@ -735,7 +735,7 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
                 <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
               </label>
               {contractFile && (
-                <button type="button" onClick={() => setContractFile(null)} className="p-1 rounded hover:bg-muted">
+                <button type="button" onClick={() => setContractFile(null)} className="p-2 sm:p-1 rounded hover:bg-muted">
                   <X className="w-4 h-4 text-muted-foreground" />
                 </button>
               )}
@@ -1464,11 +1464,11 @@ export default function RRHHPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit">
+      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit max-w-full overflow-x-auto">
         <button
           onClick={() => setTab('employees')}
           className={cn(
-            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
             tab === 'employees' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
           )}
         >
@@ -1478,7 +1478,7 @@ export default function RRHHPage() {
         <button
           onClick={() => setTab('commercial')}
           className={cn(
-            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
             tab === 'commercial' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
           )}
         >
@@ -1488,7 +1488,7 @@ export default function RRHHPage() {
         <button
           onClick={() => setTab('negotiations')}
           className={cn(
-            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
             tab === 'negotiations' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
           )}
         >
@@ -1499,7 +1499,7 @@ export default function RRHHPage() {
           <button
             onClick={() => setTab('ib_rebates')}
             className={cn(
-              'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
+              'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
               tab === 'ib_rebates' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
             )}
           >
@@ -1510,7 +1510,7 @@ export default function RRHHPage() {
         <button
           onClick={() => setTab('onboarding')}
           className={cn(
-            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors',
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
             tab === 'onboarding' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
           )}
         >
@@ -1539,7 +1539,7 @@ export default function RRHHPage() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={t('hr.searchEmployees')}
-                  className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                  className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
               </div>
               <button
@@ -1771,7 +1771,7 @@ export default function RRHHPage() {
                   value={commercialSearch}
                   onChange={(e) => setCommercialSearch(e.target.value)}
                   placeholder={t('hr.searchCommercialPlaceholder')}
-                  className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                  className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
                 {commercialSearch && (
                   <button onClick={() => setCommercialSearch('')} className="absolute right-2 text-muted-foreground hover:text-foreground" aria-label={t('comm.clearSearch')}>✕</button>
@@ -1960,14 +1960,14 @@ export default function RRHHPage() {
                     value={negSearch}
                     onChange={e => setNegSearch(e.target.value)}
                     placeholder={t('hr.searchNegotiations')}
-                    className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                    className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                   />
                 </div>
                 <select
                   aria-label={t('hr.allProfiles')}
                   value={negFilterProfile}
                   onChange={e => setNegFilterProfile(e.target.value)}
-                  className="px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
                 >
                   <option value="">{t('hr.allProfiles')}</option>
                   {profiles.filter(p => p.status === 'active').map(p => (
@@ -1978,7 +1978,7 @@ export default function RRHHPage() {
                   aria-label={t('hr.allStatuses')}
                   value={negFilterStatus}
                   onChange={e => setNegFilterStatus(e.target.value as '' | NegotiationStatus)}
-                  className="px-3 py-2 rounded-lg border border-border bg-background text-sm"
+                  className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
                 >
                   <option value="">{t('hr.allStatuses')}</option>
                   <option value="active">{t('hr.negStatusActive')}</option>

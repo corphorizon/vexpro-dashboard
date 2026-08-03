@@ -367,7 +367,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
               type="month"
               value={month}
               onChange={(e) => setMonth(e.target.value)}
-              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+              className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
               aria-label="Seleccionar mes"
             />
           </label>
@@ -379,7 +379,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                 type="date"
                 value={rangeFrom}
                 onChange={(e) => setRangeFrom(e.target.value)}
-                className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
                 aria-label="Fecha desde"
               />
             </label>
@@ -389,7 +389,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                 type="date"
                 value={rangeTo}
                 onChange={(e) => setRangeTo(e.target.value)}
-                className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
                 aria-label="Fecha hasta"
               />
             </label>
@@ -407,7 +407,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
             <select
               value={walletId}
               onChange={(e) => setWalletId(e.target.value)}
-              className="h-8 px-2.5 text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 max-w-[240px]"
+              className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 max-w-[240px]"
               aria-label="Seleccionar wallet de Coinsbuy"
             >
               <option value="">Todas las wallets</option>

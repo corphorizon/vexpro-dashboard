@@ -496,7 +496,7 @@ export default function SociosPage() {
             {isAdmin && mode === 'single' && (
               <button
                 onClick={handleOpenReserveEdit}
-                className="p-1.5 rounded-md hover:bg-muted transition-colors"
+                className="p-2 sm:p-1.5 rounded-md hover:bg-muted transition-colors"
                 title={t('partners.editReserve')}
               >
                 <Settings className="w-4 h-4 text-muted-foreground" />
@@ -596,7 +596,7 @@ export default function SociosPage() {
                         <div className="flex justify-center gap-0.5 sm:gap-1">
                           <button
                             onClick={() => handleEditPartner(dist.partner_id)}
-                            className="p-1 rounded hover:bg-muted transition-colors"
+                            className="p-2 sm:p-1 rounded hover:bg-muted transition-colors"
                             title={t('partners.editPartner')}
                           >
                             <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
@@ -607,7 +607,7 @@ export default function SociosPage() {
                               () => handleDeletePartner(dist.partner_id),
                               { tone: 'danger', title: t('partners.deletePartner'), confirmLabel: t('partners.deletePartner') },
                             )}
-                            className="p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
+                            className="p-2 sm:p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
                             title={t('partners.deletePartner')}
                           >
                             <Trash2 className="w-3.5 h-3.5 text-red-500" />
@@ -806,7 +806,7 @@ export default function SociosPage() {
               <h3 className="text-lg font-semibold">
                 {editingPartner ? t('partners.editPartner') : t('partners.addPartner')}
               </h3>
-              <button onClick={() => setShowPartnerForm(false)} className="p-1 rounded hover:bg-muted">
+              <button onClick={() => setShowPartnerForm(false)} className="p-2 sm:p-1 rounded hover:bg-muted">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -818,7 +818,7 @@ export default function SociosPage() {
                   type="text"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="Nombre del socio"
                 />
               </div>
@@ -829,7 +829,7 @@ export default function SociosPage() {
                   type="email"
                   value={formEmail}
                   onChange={(e) => setFormEmail(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="email@ejemplo.com"
                 />
               </div>
@@ -845,7 +845,7 @@ export default function SociosPage() {
                   type="number"
                   value={formPercentage}
                   onChange={(e) => setFormPercentage(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="25.0"
                   min="0.1"
                   max={(((editingPartner ? availableForEdit(editingPartner) : availableForNew)) * 100).toFixed(1)}
@@ -881,7 +881,7 @@ export default function SociosPage() {
           <div className="bg-card rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">{t('partners.reserveTitle')}</h3>
-              <button onClick={() => setShowReserveEdit(false)} className="p-1 rounded hover:bg-muted">
+              <button onClick={() => setShowReserveEdit(false)} className="p-2 sm:p-1 rounded hover:bg-muted">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -893,7 +893,7 @@ export default function SociosPage() {
                   type="number"
                   value={reserveInput}
                   onChange={(e) => setReserveInput(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   min="0"
                   max="100"
                   step="0.5"

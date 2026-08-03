@@ -117,7 +117,7 @@ export function MovimientosPeriodSelector() {
           value={selectedYear}
           onChange={(e) => setSelectedYear(Number(e.target.value))}
           aria-label="Seleccionar año"
-          className="px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
+          className="px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
         >
           {years.map((year) => (
             <option key={year} value={year}>

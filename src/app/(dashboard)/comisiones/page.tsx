@@ -1258,14 +1258,14 @@ export default function ComisionesPage() {
       />
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit">
-        <button onClick={() => setTab('teams')} className={cn('flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors', tab === 'teams' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
+      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit max-w-full overflow-x-auto">
+        <button onClick={() => setTab('teams')} className={cn('flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap', tab === 'teams' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
           <Users className="w-4 h-4" />{t('comm.tabTeams')}
         </button>
-        <button onClick={() => setTab('individual')} className={cn('flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors', tab === 'individual' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
+        <button onClick={() => setTab('individual')} className={cn('flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap', tab === 'individual' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
           <UserCircle className="w-4 h-4" />{t('comm.tabIndividual')}
         </button>
-        <button onClick={() => setTab('history')} className={cn('flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-colors', tab === 'history' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
+        <button onClick={() => setTab('history')} className={cn('flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap', tab === 'history' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
           <BarChart3 className="w-4 h-4" />{t('comm.tabHistory')}
         </button>
       </div>
@@ -1277,7 +1277,7 @@ export default function ComisionesPage() {
             {tab === 'teams' && (
               <div className="flex-1">
                 <label className="block text-sm font-medium mb-1.5">{t('comm.selectHead')}</label>
-                <select value={selectedHeadId} onChange={(e) => setSelectedHeadId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+                <select value={selectedHeadId} onChange={(e) => setSelectedHeadId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
                   <option value="">{t('comm.selectHead')}</option>
                   {heads.map((h) => <option key={h.id} value={h.id}>{h.name} — {h.net_deposit_pct ?? 0}%</option>)}
                 </select>
@@ -1287,7 +1287,7 @@ export default function ComisionesPage() {
               <label className="block text-sm font-medium mb-1.5">{t('comm.selectPeriod')}</label>
               <div className="flex items-center gap-2">
                 <button onClick={() => navigatePeriod(-1)} disabled={periodIdx <= 0} className="p-2 rounded-lg border border-border hover:bg-muted disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-                <select value={selectedPeriod?.id ?? ''} onChange={(e) => { const i = sortedPeriods.findIndex((p) => p.id === e.target.value); if (i >= 0) setPeriodIdx(i); }} className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+                <select value={selectedPeriod?.id ?? ''} onChange={(e) => { const i = sortedPeriods.findIndex((p) => p.id === e.target.value); if (i >= 0) setPeriodIdx(i); }} className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
                   {sortedPeriods.map((p) => <option key={p.id} value={p.id}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
                 </select>
                 <button onClick={() => navigatePeriod(1)} disabled={periodIdx >= sortedPeriods.length - 1} className="p-2 rounded-lg border border-border hover:bg-muted disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
@@ -1357,7 +1357,7 @@ export default function ComisionesPage() {
               value={teamsSearch}
               onChange={(e) => setTeamsSearch(e.target.value)}
               placeholder={t('comm.searchPlaceholder')}
-              className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+              className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
             {teamsSearch && (
               <button
@@ -1398,7 +1398,7 @@ export default function ComisionesPage() {
                         <td className="px-3 py-3"><span className="font-semibold block">{headProfile.name}</span><span className="text-xs text-muted-foreground">{headProfile.email}</span></td>
                         <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[headProfile.role])}>{ROLE_LABEL[headProfile.role]}</span></td>
                         <td className="px-3 py-3">
-                          <input type="number" aria-label={t('comm.ndHeadAria')} value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                          <input type="number" aria-label={t('comm.ndHeadAria')} value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                         </td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.accumulatedIn)}</td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.division)}</td>
@@ -1427,7 +1427,7 @@ export default function ComisionesPage() {
                           </td>
                           <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[profile.role])}>{ROLE_LABEL[profile.role]}</span></td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
@@ -1488,7 +1488,7 @@ export default function ComisionesPage() {
               value={individualSearch}
               onChange={(e) => setIndividualSearch(e.target.value)}
               placeholder={t('comm.searchPlaceholder')}
-              className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+              className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
             {individualSearch && (
               <button
@@ -1540,7 +1540,7 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
@@ -1569,7 +1569,7 @@ export default function ComisionesPage() {
                               <button
                                 onClick={() => handleSaveBdm(calc.profileId, 'nd')}
                                 disabled={savingBdm.has(calc.profileId)}
-                                className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                className="p-2 sm:p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
                                 title={t('comm.saveBdm')}
                               >
                                 {savingBdm.has(calc.profileId)
@@ -1599,7 +1599,7 @@ export default function ComisionesPage() {
                                     total: calc.realPayment + calc.salary,
                                   });
                                 })}
-                                className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                                className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
                                 title={t('comm.downloadPdf')}
                               >
                                 <FileText className="w-4 h-4" />
@@ -1666,7 +1666,7 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                           </td>
                           <td className="px-3 py-3">
                             <input
@@ -1675,7 +1675,7 @@ export default function ComisionesPage() {
                               onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
                               onFocus={(e) => e.target.select()}
                               placeholder="0"
-                              className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                              className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                             />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
@@ -1721,7 +1721,7 @@ export default function ComisionesPage() {
                               <button
                                 onClick={() => handleSaveBdm(calc.profileId, 'pnl')}
                                 disabled={savingBdm.has(calc.profileId)}
-                                className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                className="p-2 sm:p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
                                 title={t('comm.saveBdm')}
                               >
                                 {savingBdm.has(calc.profileId)
@@ -1754,7 +1754,7 @@ export default function ComisionesPage() {
                                     total: adjustedReal + calc.salary,
                                   });
                                 })}
-                                className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                                className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
                                 title={t('comm.downloadPdf')}
                               >
                                 <FileText className="w-4 h-4" />
@@ -1853,7 +1853,7 @@ export default function ComisionesPage() {
                                 value={getNdDisplay(calc.profileId)}
                                 onChange={(e) => handleNdChange(calc.profileId, e.target.value)}
                                 onFocus={(e) => e.target.select()}
-                                className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                                className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                               />
                             </td>
                             <td className="px-3 py-3">
@@ -1863,7 +1863,7 @@ export default function ComisionesPage() {
                                 onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
                                 onFocus={(e) => e.target.select()}
                                 placeholder="0"
-                                className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                                className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                               />
                             </td>
                             <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
@@ -1893,7 +1893,7 @@ export default function ComisionesPage() {
                                 <button
                                   onClick={() => handleSaveBdm(calc.profileId, 'pnlSpecial')}
                                   disabled={savingBdm.has(calc.profileId)}
-                                  className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
+                                  className="p-2 sm:p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
                                   title={t('comm.saveBdm')}
                                 >
                                   {savingBdm.has(calc.profileId)
@@ -1930,7 +1930,7 @@ export default function ComisionesPage() {
                                       mode: 'special',
                                     });
                                   })}
-                                  className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
+                                  className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
                                   title={t('comm.downloadPdf')}
                                 >
                                   <FileText className="w-4 h-4" />
@@ -2049,13 +2049,13 @@ export default function ComisionesPage() {
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
                   <label className="block text-sm font-medium mb-1.5">{t('audit.filterFrom')}</label>
-                  <select value={historyFrom} onChange={(e) => setHistoryFrom(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+                  <select value={historyFrom} onChange={(e) => setHistoryFrom(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
                     {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
                   </select>
                 </div>
                 <div className="flex-1">
                   <label className="block text-sm font-medium mb-1.5">{t('audit.filterTo')}</label>
-                  <select value={historyTo} onChange={(e) => setHistoryTo(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+                  <select value={historyTo} onChange={(e) => setHistoryTo(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
                     {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
                   </select>
                 </div>
@@ -2082,7 +2082,7 @@ export default function ComisionesPage() {
                 value={historySearch}
                 onChange={(e) => setHistorySearch(e.target.value)}
                 placeholder={t('comm.searchPlaceholder')}
-                className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
               {historySearch && (
                 <button
