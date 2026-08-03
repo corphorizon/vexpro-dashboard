@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { checkRateLimit, recordFailure, clearAttempts } from '@/lib/rate-limit';
+import { checkRateLimit, recordFailure, clearAttempts, type AttemptKind } from '@/lib/rate-limit';
 import speakeasy from 'speakeasy';
 import { apiError } from '@/lib/api-error';
 
@@ -19,6 +19,22 @@ import { apiError } from '@/lib/api-error';
 
 const MAX_ATTEMPTS = 3;
 const LOCK_MS = 15 * 60 * 1000;
+
+// Per-IP throttle (S5 lockout-DoS fix): an attacker hammering PINs from one
+// IP gets their IP blocked with 429 instead of endlessly re-locking the
+// victim's account. IN ADDITION to the per-user lock above.
+// NOTE: 'login-ip' is not in the AttemptKind union (src/lib/rate-limit.ts is
+// owned by another change); the DB `kind` column is plain text, so the cast
+// is safe. Shared with /api/auth/login-gate on purpose — same attacker IP.
+const IP_KIND = 'login-ip' as const;
+const IP_MAX_ATTEMPTS = 10;
+const IP_LOCK_MS = 15 * 60 * 1000; // 15 minutes
+
+function getClientIp(request: NextRequest): string {
+  const fwd = request.headers.get('x-forwarded-for');
+  if (fwd) return fwd.split(',')[0].trim();
+  return request.headers.get('x-real-ip')?.trim() || 'unknown';
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,6 +60,22 @@ export async function POST(request: NextRequest) {
     }
 
     const adminClient = createAdminClient();
+
+    // Per-IP throttle BEFORE any account work (S5).
+    const ip = getClientIp(request);
+    const ipOpts = { key: `ip:${ip}`, kind: IP_KIND };
+    const ipGate = await checkRateLimit(adminClient, ipOpts);
+    if (ipGate.locked) {
+      return NextResponse.json(
+        { success: false, error: 'Demasiados intentos. Intenta de nuevo más tarde.' },
+        { status: 429 },
+      );
+    }
+    if (ipGate.failedCount >= IP_MAX_ATTEMPTS) {
+      // Previous IP lock expired — start a fresh window instead of
+      // re-locking on the very next failure.
+      await clearAttempts(adminClient, ipOpts);
+    }
 
     // DUAL-TABLE: the same email can live in company_users (tenant user)
     // OR platform_users (superadmin). Try both so superadmin login works
@@ -118,6 +150,21 @@ export async function POST(request: NextRequest) {
     });
 
     if (!isValid) {
+      // Count the failure against the caller's IP first (S5). If the IP
+      // just hit its cap, answer 429 WITHOUT pushing the account closer to
+      // its lock — blocks hammering IPs instead of DoS-ing the victim.
+      const ipState = await recordFailure(adminClient, {
+        ...ipOpts,
+        max: IP_MAX_ATTEMPTS,
+        lockMs: IP_LOCK_MS,
+      });
+      if (ipState.locked) {
+        return NextResponse.json(
+          { success: false, error: 'Demasiados intentos. Intenta de nuevo más tarde.' },
+          { status: 429 },
+        );
+      }
+
       const next = await recordFailure(adminClient, {
         ...rlOpts,
         max: MAX_ATTEMPTS,
@@ -168,6 +215,12 @@ export async function POST(request: NextRequest) {
     });
 
     if (signInError) {
+      // Wrong password with a valid PIN — still counts against the IP (S5).
+      await recordFailure(adminClient, {
+        ...ipOpts,
+        max: IP_MAX_ATTEMPTS,
+        lockMs: IP_LOCK_MS,
+      });
       return NextResponse.json(
         { success: false, error: 'Credenciales inválidas' },
         { status: 401 },
@@ -178,6 +231,9 @@ export async function POST(request: NextRequest) {
     // membership (post-2FA is the real "successful login" moment).
     // last_login_at only exists on company_users; skip for superadmins.
     await clearAttempts(adminClient, rlOpts);
+    if (ipGate.failedCount > 0) {
+      await clearAttempts(adminClient, ipOpts);
+    }
     if (account.table === 'company_users') {
       await adminClient
         .from('company_users')

@@ -13,7 +13,7 @@ import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
 import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee, createEmployee, updateEmployee } from '@/lib/supabase/mutations';
-import { apiFetch } from '@/lib/api-fetch';
+import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
@@ -492,7 +492,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
             <div className="flex items-center gap-2 mb-2 p-2 bg-positive/10/30 rounded-lg">
               <FileText className="w-4 h-4 text-emerald-600" />
               <span className="text-sm text-positive flex-1">Contrato cargado</span>
-              <a href={contractUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+              <a href={editing?.id ? withActiveCompany(`/api/admin/contract-url/${editing.id}`) : '#'} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
                 Ver <ExternalLink className="w-3 h-3" />
               </a>
             </div>

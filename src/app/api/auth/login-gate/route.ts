@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
+import { checkRateLimit, recordFailure, clearAttempts, type AttemptKind } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -26,6 +27,20 @@ import { apiError } from '@/lib/api-error';
 const MAX_ATTEMPTS = 3;
 const LOCK_MS = 24 * 60 * 60 * 1000; // 24 hours
 
+// Per-IP throttle (S5 lockout-DoS fix): an attacker hammering an email from
+// one IP gets their IP blocked with 429 instead of endlessly re-locking the
+// victim's account. Durable (twofa_attempts table), IN ADDITION to the
+// account lock above.
+const IP_KIND = 'login-ip' as const;
+const IP_MAX_ATTEMPTS = 10;
+const IP_LOCK_MS = 15 * 60 * 1000; // 15 minutes
+
+function getClientIp(request: NextRequest): string {
+  const fwd = request.headers.get('x-forwarded-for');
+  if (fwd) return fwd.split(',')[0].trim();
+  return request.headers.get('x-real-ip')?.trim() || 'unknown';
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json().catch(() => ({}));
@@ -39,6 +54,23 @@ export async function POST(request: NextRequest) {
     }
 
     const adminClient = createAdminClient();
+
+    // Per-IP throttle BEFORE any account work (S5). If this IP is hammering
+    // the endpoint, answer 429 without touching any account's lock state.
+    const ip = getClientIp(request);
+    const ipOpts = { key: `ip:${ip}`, kind: IP_KIND };
+    const ipGate = await checkRateLimit(adminClient, ipOpts);
+    if (ipGate.locked) {
+      return NextResponse.json(
+        { success: false, error: 'Demasiados intentos. Intenta de nuevo más tarde.' },
+        { status: 429 },
+      );
+    }
+    if (ipGate.failedCount >= IP_MAX_ATTEMPTS) {
+      // Previous IP lock expired — start a fresh window instead of
+      // re-locking on the very next failure.
+      await clearAttempts(adminClient, ipOpts);
+    }
 
     // Look up user state. Avoid leaking existence details: we respond with a
     // generic "credentials invalid" if the account doesn't exist.
@@ -61,17 +93,15 @@ export async function POST(request: NextRequest) {
           .eq('email', email.toLowerCase())
           .maybeSingle();
 
-    // Block deactivated users + deactivated tenants. Both checks use 403
-    // with a vague message — we don't want to tell attackers "this email
-    // exists but is disabled" either, so we apply them AFTER the password
-    // lookup would have succeeded? No — we apply them early because the
-    // deactivation is a hard stop and leaking "account disabled" vs
-    // "wrong password" is acceptable here (the user knows they were active
-    // yesterday; the admin told them they're off).
+    // Block deactivated users + deactivated tenants. S5 enumeration fix:
+    // respond with the SAME generic 401 used for bad credentials so an
+    // attacker cannot distinguish "wrong password" from "account disabled"
+    // or "org disabled". The real reason is logged server-side only.
     if (companyUser?.status === 'inactive') {
+      console.log(`[login-gate] Blocked login for deactivated account (company_user ${companyUser.id})`);
       return NextResponse.json(
-        { success: false, error: 'Tu cuenta está desactivada. Contacta al administrador.' },
-        { status: 403 },
+        { success: false, error: 'Email o contraseña incorrectos.' },
+        { status: 401 },
       );
     }
     // companies is an object after `!inner` single-row join, but Supabase
@@ -81,9 +111,10 @@ export async function POST(request: NextRequest) {
       ? (companiesRel[0] as { status?: string } | undefined)?.status
       : (companiesRel as { status?: string } | null | undefined)?.status;
     if (companyUser && companyStatus === 'inactive') {
+      console.log(`[login-gate] Blocked login into deactivated tenant (company_user ${companyUser.id})`);
       return NextResponse.json(
-        { success: false, error: 'Tu organización está desactivada. Contacta al administrador.' },
-        { status: 403 },
+        { success: false, error: 'Email o contraseña incorrectos.' },
+        { status: 401 },
       );
     }
 
@@ -115,6 +146,20 @@ export async function POST(request: NextRequest) {
     try { await tempClient.auth.signOut(); } catch { /* ignore */ }
 
     if (signInError || !signInData.user) {
+      // Count the failure against the caller's IP (S5). If the IP just hit
+      // its cap, answer 429 instead of pushing the account closer to lock.
+      const ipState = await recordFailure(adminClient, {
+        ...ipOpts,
+        max: IP_MAX_ATTEMPTS,
+        lockMs: IP_LOCK_MS,
+      });
+      if (ipState.locked) {
+        return NextResponse.json(
+          { success: false, error: 'Demasiados intentos. Intenta de nuevo más tarde.' },
+          { status: 429 },
+        );
+      }
+
       // Invalid credentials — record a failed attempt if the user exists.
       if (companyUser) {
         const newCount = (companyUser.failed_login_count ?? 0) + 1;
@@ -138,7 +183,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(
           {
             success: false,
-            error: 'Credenciales inválidas',
+            error: 'Email o contraseña incorrectos.',
             attemptsLeft: Math.max(0, MAX_ATTEMPTS - newCount),
           },
           { status: 401 },
@@ -146,9 +191,15 @@ export async function POST(request: NextRequest) {
       }
       // User doesn't exist — generic 401
       return NextResponse.json(
-        { success: false, error: 'Credenciales inválidas' },
+        { success: false, error: 'Email o contraseña incorrectos.' },
         { status: 401 },
       );
+    }
+
+    // Successful password check — reset the caller IP's failure counter so
+    // legitimate users behind shared NATs don't accumulate stale failures.
+    if (ipGate.failedCount > 0) {
+      await clearAttempts(adminClient, ipOpts);
     }
 
     // Password valid. Clear counter/lock; if no 2FA is required, stamp

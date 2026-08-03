@@ -132,17 +132,15 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get the public/signed URL
-    const { data: urlData } = admin.storage
-      .from(BUCKET)
-      .getPublicUrl(fileName);
-
-    const contractUrl = urlData.publicUrl;
-
-    // Update the profile with the contract URL (scoped to company)
+    // SEGURIDAD (S2, auditoría 2026-08): los contratos son PII. Antes se
+    // guardaba la URL PÚBLICA permanente (bucket público) — cualquiera con el
+    // link accedía sin login, para siempre. Ahora guardamos el PATH del
+    // storage y la lectura pasa por /api/admin/contract-url/[profileId], que
+    // valida auth + empresa y emite una URL FIRMADA de corta vida. El bucket
+    // se vuelve privado en el deploy de esta fase.
     const { error: updateError } = await admin
       .from('commercial_profiles')
-      .update({ contract_url: contractUrl })
+      .update({ contract_url: fileName })
       .eq('id', profileId)
       .eq('company_id', auth.companyId);
 
@@ -150,7 +148,18 @@ export async function POST(request: NextRequest) {
       return apiError('admin/upload-contract', updateError, { status: 400, withSuccessFlag: false });
     }
 
-    return NextResponse.json({ success: true, url: contractUrl });
+    // Devolver una URL firmada fresca para que la UI muestre/abra el archivo
+    // recién subido sin otro round-trip.
+    const { data: signed, error: signErr } = await admin.storage
+      .from(BUCKET)
+      .createSignedUrl(fileName, 600);
+    if (signErr || !signed) {
+      // El archivo quedó guardado igual; la UI puede pedir la URL firmada
+      // después via contract-url.
+      return NextResponse.json({ success: true, url: null, path: fileName });
+    }
+
+    return NextResponse.json({ success: true, url: signed.signedUrl, path: fileName });
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Internal error';
     return apiError('admin/upload-contract', err, { status: 500, withSuccessFlag: false });
