@@ -250,8 +250,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const profile = await fetchUserProfile(session.user);
           if (profile) {
             setUser(profile);
-            const allUsers = await fetchAllUsers(effectiveCompanyIdFor(profile));
-            setUsers(allUsers);
+            // Fire-and-forget: only /usuarios renders the full list, so
+            // don't block first paint (isLoading=false) on this round-trip
+            // to /api/admin/list-company-users. The list populates in the
+            // background; consumers see [] until it arrives.
+            fetchAllUsers(effectiveCompanyIdFor(profile))
+              .then(setUsers)
+              .catch(console.error);
           }
         }
       } catch (err) {

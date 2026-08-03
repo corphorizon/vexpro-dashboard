@@ -307,19 +307,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return null;
       }
 
-      const comp = await fetchCompanyById(effectiveCompanyId);
+      // Todas las queries de Stage 1 solo necesitan effectiveCompanyId (ya
+      // conocido) — una sola tanda paralela en vez de company → resto en
+      // serie (P1b, auditoría de performance 2026-08: ahorra un round-trip
+      // completo a la DB en cada bootstrap).
+      const [comp, pds, emps, cProfiles, mResults] = await Promise.all([
+        fetchCompanyById(effectiveCompanyId),
+        fetchPeriods(effectiveCompanyId),
+        fetchEmployees(effectiveCompanyId),
+        fetchCommercialProfiles(effectiveCompanyId),
+        fetchCommercialMonthlyResults(effectiveCompanyId),
+      ]);
       if (!comp) throw new Error('No se encontró la empresa');
       if (isStale()) return null;
       setCompany(comp);
-
-      const [pds, emps, cProfiles, mResults] = await Promise.all([
-        fetchPeriods(comp.id),
-        fetchEmployees(comp.id),
-        fetchCommercialProfiles(comp.id),
-        fetchCommercialMonthlyResults(comp.id),
-      ]);
-
-      if (isStale()) return null;
       setPeriods(pds);
       setEmployees(emps);
       setCommercialProfiles(cProfiles);
@@ -329,27 +330,29 @@ export function DataProvider({ children }: { children: ReactNode }) {
     };
 
     // ── Stage 2: remaining data (background, no timeout) ──
-    const fetchRest = async (comp: { id: string }) => {
+    // Solo necesita el company id (ya conocido), no el objeto Company —
+    // así puede arrancar en paralelo con Stage 1 (P1c).
+    const fetchRest = async (companyId: string) => {
       try {
         const [
           deps, wdrs, exps, expTpls, expHidden, preExps, opInc,
           brkBal, finSts, ptns, ptnDist, pfs, p2p, liq, inv,
         ] = await Promise.all([
-          fetchDeposits(comp.id),
-          fetchWithdrawals(comp.id),
-          fetchExpenses(comp.id),
-          fetchExpenseTemplates(comp.id),
-          fetchExpenseTemplateHidden(comp.id),
-          fetchPreoperativeExpenses(comp.id),
-          fetchOperatingIncome(comp.id),
-          fetchBrokerBalance(comp.id),
-          fetchFinancialStatus(comp.id),
-          fetchPartners(comp.id),
-          fetchPartnerDistributions(comp.id),
-          fetchPropFirmSales(comp.id),
-          fetchP2PTransfers(comp.id),
-          fetchLiquidityMovements(comp.id),
-          fetchInvestments(comp.id),
+          fetchDeposits(companyId),
+          fetchWithdrawals(companyId),
+          fetchExpenses(companyId),
+          fetchExpenseTemplates(companyId),
+          fetchExpenseTemplateHidden(companyId),
+          fetchPreoperativeExpenses(companyId),
+          fetchOperatingIncome(companyId),
+          fetchBrokerBalance(companyId),
+          fetchFinancialStatus(companyId),
+          fetchPartners(companyId),
+          fetchPartnerDistributions(companyId),
+          fetchPropFirmSales(companyId),
+          fetchP2PTransfers(companyId),
+          fetchLiquidityMovements(companyId),
+          fetchInvestments(companyId),
         ]);
 
         if (isStale()) return;
@@ -392,8 +395,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // false negatives, and the final loading/error flip lives in a
     // single finally block that runs only for the latest generation.
     let lastError: unknown = null;
-    let comp: { id: string } | null = null;
     let staleEarly = false;
+
+    // P1c: Stage 2 arranca EN PARALELO con Stage 1 — solo necesita el
+    // company id, que ya conocemos. Antes esperaba a que Stage 1 (con sus
+    // retries) terminara, encadenando ~15 queries detrás del primer batch.
+    // Sigue siendo no bloqueante para el splash: tiene su propio catch y
+    // el guard isStale() descarta resultados de generaciones viejas.
+    if (effectiveCompanyId) {
+      void fetchRest(effectiveCompanyId);
+    }
 
     try {
       for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
@@ -408,7 +419,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         });
 
         try {
-          comp = await Promise.race([fetchCritical(), timeoutPromise]);
+          await Promise.race([fetchCritical(), timeoutPromise]);
           lastError = null;
           break;
         } catch (err) {
@@ -458,10 +469,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    // Load remaining data in background (no timeout)
-    if (comp) {
-      fetchRest(comp);
-    }
+    // Stage 2 (fetchRest) ya se disparó arriba, en paralelo con Stage 1.
     return true;
   }, [effectiveCompanyId]);
 
