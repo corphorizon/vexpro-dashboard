@@ -61,6 +61,11 @@ import {
   fetchCommercialProfiles,
   fetchCommercialMonthlyResults,
 } from './supabase/queries';
+import {
+  loadWorkspaceSnapshot,
+  saveWorkspaceSnapshot,
+  type WorkspaceSnapshot,
+} from '@/lib/workspace-cache';
 import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 import * as Sentry from '@sentry/nextjs';
 import { LOAD_TIMEOUT_MS, LOAD_WATCHDOG_MS, LOAD_MAX_RETRIES } from '@/lib/config';
@@ -216,6 +221,20 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // "ya cargada".
   const lastLoadedCompanyRef = useRef<string | null | undefined>(undefined);
 
+  // ─── Workspace cache (fase 4b — SWR casero) ───
+  //
+  // Acumulador mutable del snapshot que se persiste en localStorage. Se
+  // construye SIEMPRE con los valores recién fetcheados en el punto donde
+  // se llama a cada setState (nunca leyendo el state de React) — así no hay
+  // closures viejas guardando datos desactualizados. Stage 1 y Stage 2
+  // resuelven en paralelo y cada uno mergea su tanda; refreshSections /
+  // refreshCommissions mergean solo las tablas que recargaron.
+  const snapshotRef = useRef<WorkspaceSnapshot>({});
+  const commitSnapshot = useCallback((companyId: string, partial: WorkspaceSnapshot) => {
+    snapshotRef.current = { ...snapshotRef.current, ...partial };
+    saveWorkspaceSnapshot(companyId, snapshotRef.current);
+  }, []);
+
   // ─── Fetch all data ───
 
   // Fetches everything. If `silent` is true, the UI stays mounted and we
@@ -239,6 +258,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setError(null);
     }
 
+    // Fase 4b: true cuando este load pintó la UI desde el snapshot local.
+    // Con caché en pantalla, un fallo/timeout de red NO debe reemplazar un
+    // dashboard usable por una pantalla de error — se degrada a warning
+    // (mismo trato que un refresh silencioso).
+    let hydratedFromCache = false;
+
     // Watchdog — guaranteed escape hatch. If for ANY reason we don't
     // flip loading=false within LOAD_WATCHDOG_MS, do it ourselves and
     // surface an error so the user can retry. Covers paths we haven't
@@ -248,6 +273,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (!silent) {
       watchdogId = setTimeout(() => {
         if (isStale()) return; // newer call will handle it
+        if (hydratedFromCache) {
+          // La UI ya está pintada con el snapshot — no hay splash colgado
+          // que rescatar ni razón para taparla con LoadingError.
+          console.warn('[data-context] Watchdog: revalidación lenta, la UI sigue con datos cacheados');
+          return;
+        }
         console.error('[data-context] Watchdog fired — forcing loading=false');
         Sentry.captureMessage('data-context watchdog fired', {
           level: 'error',
@@ -288,6 +319,72 @@ export function DataProvider({ children }: { children: ReactNode }) {
     if (lastLoadedCompanyRef.current !== effectiveCompanyId) {
       lastLoadedCompanyRef.current = effectiveCompanyId;
       clearStageTwoData();
+      // Fase 4b: el acumulador del snapshot también es tenant-scoped —
+      // resetearlo evita que slices de la empresa anterior se mergeen en
+      // el snapshot de la nueva (fuga cross-tenant en localStorage).
+      snapshotRef.current = {};
+    }
+
+    // ── Fase 4b — HIDRATACIÓN desde caché (stale-while-revalidate) ──
+    // Solo en loads que bloquean la UI (!silent): si hay snapshot local
+    // para esta empresa, pintamos TODO el dashboard al instante y soltamos
+    // el splash (loading=false, lo mismo que hoy desbloquea la UI tras
+    // Stage 1). La revalidación de red de abajo (fetchCritical + fetchRest)
+    // corre EXACTAMENTE igual que siempre y sobreescribe con datos frescos
+    // al llegar. Un refresh silencioso ya tiene datos (posiblemente más
+    // nuevos que el caché) en pantalla — hidratar ahí sería un retroceso.
+    if (!silent && effectiveCompanyId) {
+      try {
+        const cached = loadWorkspaceSnapshot(effectiveCompanyId);
+        // Guard de generación: si otro load arrancó mientras parseábamos,
+        // este ya no tiene derecho a tocar el state visible.
+        if (cached && !isStale()) {
+          // Cada slice se defaultéa individualmente: un snapshot viejo con
+          // menos slices (evolución de forma) no debe romper nada. Si la
+          // FORMA de un slice cambia, bumpear CACHE_VERSION en
+          // workspace-cache.ts para invalidar los snapshots previos.
+          if (cached.company) setCompany(cached.company);
+          setPeriods(cached.periods ?? []);
+          setDeposits(cached.deposits ?? []);
+          setWithdrawals(cached.withdrawals ?? []);
+          setExpenses(cached.expenses ?? []);
+          setExpenseTemplates(cached.expenseTemplates ?? []);
+          setExpenseTemplateHidden(cached.expenseTemplateHidden ?? []);
+          setPreoperativeExpenses(cached.preoperativeExpenses ?? []);
+          setOperatingIncome(cached.operatingIncome ?? []);
+          setBrokerBalance(cached.brokerBalance ?? []);
+          setFinancialStatus(cached.financialStatus ?? []);
+          setPartners(cached.partners ?? []);
+          setPartnerDistributions(cached.partnerDistributions ?? []);
+          setPropFirmSales(cached.propFirmSales ?? []);
+          setP2PTransfers(cached.p2pTransfers ?? []);
+          setLiquidityMovements(cached.liquidityMovements ?? []);
+          setInvestments(cached.investments ?? []);
+          setEmployees(cached.employees ?? []);
+          setCommercialProfiles(cached.commercialProfiles ?? []);
+          setMonthlyResults(cached.monthlyResults ?? []);
+          // Solo consideramos "hidratado" si el snapshot trae la empresa —
+          // sin Company el layout no puede pintar nada útil y conviene
+          // dejar el splash hasta que Stage 1 resuelva.
+          if (cached.company) {
+            // Sembrar el acumulador con el snapshot completo para que un
+            // commit parcial posterior (p.ej. refreshSections) no borre
+            // slices que la red aún no re-trajo.
+            snapshotRef.current = { ...cached };
+            hydratedFromCache = true;
+            setLoading(false);
+            Sentry.addBreadcrumb({
+              category: 'data-context.load',
+              message: 'loadAllData:hydrated-from-cache',
+              data: { generation, effectiveCompanyId },
+            });
+          }
+        }
+      } catch (err) {
+        // Cualquier problema hidratando → seguir por el camino de red
+        // como si el caché no existiera. El caché nunca puede romper el load.
+        console.warn('[data-context] Hidratación desde caché falló, va por red:', err);
+      }
     }
 
     // ── Stage 1: critical data (with timeout) ──
@@ -325,6 +422,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       setEmployees(emps);
       setCommercialProfiles(cProfiles);
       setMonthlyResults(mResults);
+
+      // Fase 4b — SAVE Stage 1: persistir el snapshot con los valores
+      // recién fetcheados (no leyendo state — evita closures viejas).
+      commitSnapshot(effectiveCompanyId, {
+        company: comp,
+        periods: pds,
+        employees: emps,
+        commercialProfiles: cProfiles,
+        monthlyResults: mResults,
+      });
 
       return comp;
     };
@@ -371,6 +478,27 @@ export function DataProvider({ children }: { children: ReactNode }) {
         setP2PTransfers(p2p);
         setLiquidityMovements(liq);
         setInvestments(inv);
+
+        // Fase 4b — SAVE Stage 2: mergear la tanda completa al snapshot.
+        // Stage 1 y 2 corren en paralelo; el orden de llegada no importa
+        // porque commitSnapshot mergea sobre el acumulador tenant-scoped.
+        commitSnapshot(companyId, {
+          deposits: deps,
+          withdrawals: wdrs,
+          expenses: exps,
+          expenseTemplates: expTpls,
+          expenseTemplateHidden: expHidden,
+          preoperativeExpenses: preExps,
+          operatingIncome: opInc,
+          brokerBalance: brkBal,
+          financialStatus: finSts,
+          partners: ptns,
+          partnerDistributions: ptnDist,
+          propFirmSales: pfs,
+          p2pTransfers: p2p,
+          liquidityMovements: liq,
+          investments: inv,
+        });
       } catch (err) {
         // Background stage — don't break the UI, just log
         console.warn('Background data load failed (non-critical):', err);
@@ -461,9 +589,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       console.error('Error loading data after retries:', lastError);
       const msg =
         lastError instanceof Error ? lastError.message : 'Error desconocido al cargar datos';
-      if (!silent) {
+      if (!silent && !hydratedFromCache) {
         setError(msg);
       } else {
+        // Silencioso, o hidratado desde caché (fase 4b): la UI ya muestra
+        // datos usables — degradar el fallo de revalidación a warning en
+        // vez de tapar el dashboard con la pantalla de error.
         console.warn('Silent refresh failed, keeping existing data:', msg);
       }
       return false;
@@ -471,7 +602,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     // Stage 2 (fetchRest) ya se disparó arriba, en paralelo con Stage 1.
     return true;
-  }, [effectiveCompanyId]);
+  }, [effectiveCompanyId, commitSnapshot]);
 
   useEffect(() => {
     // Initial load — ignore the boolean return (success/failure already
@@ -898,6 +1029,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
           // Solo recargar monthlyResults, los profiles no cambian al guardar comisiones
           const mResults = await fetchCommercialMonthlyResults(comp.id);
           setMonthlyResults(mResults);
+          // Fase 4b: mantener el snapshot local al día tras el refresh parcial.
+          commitSnapshot(comp.id, { monthlyResults: mResults });
         } catch (err) {
           console.warn('Error refreshing commissions:', err);
         }
@@ -913,32 +1046,37 @@ export function DataProvider({ children }: { children: ReactNode }) {
           if (!comp) return false;
           const s = new Set(sections);
           const tasks: Promise<unknown>[] = [];
+          // Fase 4b: cada tabla recargada también se acumula acá para
+          // persistir el snapshot UNA sola vez tras el Promise.all —
+          // siempre con los valores recién fetcheados, nunca leyendo state.
+          const snapPatch: WorkspaceSnapshot = {};
           if (s.has('depositos')) {
-            tasks.push(fetchDeposits(comp.id).then(setDeposits));
-            tasks.push(fetchPropFirmSales(comp.id).then(setPropFirmSales));
+            tasks.push(fetchDeposits(comp.id).then((v) => { setDeposits(v); snapPatch.deposits = v; }));
+            tasks.push(fetchPropFirmSales(comp.id).then((v) => { setPropFirmSales(v); snapPatch.propFirmSales = v; }));
           }
           // 'ingresos' también persiste retiros (ver saveAll en /upload),
           // así que ambos refrescan withdrawals + p2p.
           if (s.has('retiros') || s.has('ingresos')) {
-            tasks.push(fetchWithdrawals(comp.id).then(setWithdrawals));
-            tasks.push(fetchP2PTransfers(comp.id).then(setP2PTransfers));
+            tasks.push(fetchWithdrawals(comp.id).then((v) => { setWithdrawals(v); snapPatch.withdrawals = v; }));
+            tasks.push(fetchP2PTransfers(comp.id).then((v) => { setP2PTransfers(v); snapPatch.p2pTransfers = v; }));
           }
           if (s.has('egresos')) {
-            tasks.push(fetchExpenses(comp.id).then(setExpenses));
-            tasks.push(fetchExpenseTemplates(comp.id).then(setExpenseTemplates));
-            tasks.push(fetchExpenseTemplateHidden(comp.id).then(setExpenseTemplateHidden));
+            tasks.push(fetchExpenses(comp.id).then((v) => { setExpenses(v); snapPatch.expenses = v; }));
+            tasks.push(fetchExpenseTemplates(comp.id).then((v) => { setExpenseTemplates(v); snapPatch.expenseTemplates = v; }));
+            tasks.push(fetchExpenseTemplateHidden(comp.id).then((v) => { setExpenseTemplateHidden(v); snapPatch.expenseTemplateHidden = v; }));
           }
           if (s.has('ingresos')) {
-            tasks.push(fetchOperatingIncome(comp.id).then(setOperatingIncome));
-            tasks.push(fetchPropFirmSales(comp.id).then(setPropFirmSales));
+            tasks.push(fetchOperatingIncome(comp.id).then((v) => { setOperatingIncome(v); snapPatch.operatingIncome = v; }));
+            tasks.push(fetchPropFirmSales(comp.id).then((v) => { setPropFirmSales(v); snapPatch.propFirmSales = v; }));
           }
           if (s.has('liquidez')) {
-            tasks.push(fetchLiquidityMovements(comp.id).then(setLiquidityMovements));
+            tasks.push(fetchLiquidityMovements(comp.id).then((v) => { setLiquidityMovements(v); snapPatch.liquidityMovements = v; }));
           }
           if (s.has('inversiones')) {
-            tasks.push(fetchInvestments(comp.id).then(setInvestments));
+            tasks.push(fetchInvestments(comp.id).then((v) => { setInvestments(v); snapPatch.investments = v; }));
           }
           await Promise.all(tasks);
+          commitSnapshot(comp.id, snapPatch);
           return true;
         } catch (err) {
           console.warn('Error en refresh selectivo:', err);
@@ -1001,6 +1139,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getTotalCommissions,
       getPreviousPeriodResults,
       loadAllData,
+      commitSnapshot,
     ]
   );
 
