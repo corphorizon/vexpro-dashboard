@@ -278,6 +278,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'SIGNED_OUT') {
         setUser(null);
         setUsers([]);
+        // Fase 4b: limpiar el caché SWR también cuando el sign-out llega
+        // por este listener (auto-logout por inactividad, expiración de
+        // sesión, signOut desde otra pestaña) y no por logout() explícito.
+        import('./workspace-cache')
+          .then(({ clearWorkspaceCache }) => clearWorkspaceCache())
+          .catch(() => { /* non-fatal */ });
       }
       if (event === 'SIGNED_IN' && session?.user) {
         const profile = await fetchUserProfile(session.user);
@@ -424,8 +430,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // These helpers already no-op on the server.
       const { clearAuditLog } = await import('./audit-log');
       const { clearActiveCompanyId } = await import('./active-company');
+      // Fase 4b: el snapshot SWR del workspace (fd_ws_cache_*) contiene
+      // datos financieros del tenant — no debe sobrevivir el logout en
+      // máquinas compartidas.
+      const { clearWorkspaceCache } = await import('./workspace-cache');
       clearAuditLog();
       clearActiveCompanyId();
+      clearWorkspaceCache();
     } catch {
       // Non-fatal — worst case the next user sees stale non-sensitive data.
     }
