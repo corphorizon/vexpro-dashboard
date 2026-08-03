@@ -67,6 +67,18 @@ describe('computeProviderTotals — coinsbuy withdrawals', () => {
     expect(t.count).toBe(1);
     expect(t.feeTotal).toBe(20);
   });
+
+  it('no cuenta las transferencias internas (internal: true, txid null en Coinsbuy)', () => {
+    // Transferencia entre wallets propias (ej. Savings→Main): status Approved
+    // pero internal — no debe sumar en Retiros Totales ni Net Deposit.
+    const t = computeProviderTotals(ds('coinsbuy-withdrawals', [
+      cbWd({ chargedAmount: 2000, commission: 20, status: 'Approved' }),
+      cbWd({ chargedAmount: 30000, commission: 0, status: 'Approved', internal: true }),
+    ]));
+    expect(t.total).toBe(2000);
+    expect(t.count).toBe(1);
+    expect(t.feeTotal).toBe(20);
+  });
 });
 
 describe('computeProviderTotals — fairpay / unipayment', () => {

@@ -67,6 +67,14 @@ export interface CoinsbuyWithdrawalTx {
   /** See CoinsbuyDepositTx.walletId — same field, same purpose. */
   walletId?: string;
   walletLabel?: string;
+  /** Si true, es una transferencia INTERNA entre wallets propias de la
+   *  empresa (ej. Savings→Main). Se detecta porque Coinsbuy v3 devuelve
+   *  txid null/vacío para los payouts internos (los externos siempre
+   *  tienen txid de blockchain al confirmarse). NO cuenta en Retiros
+   *  Totales ni en Net Deposit — es plata que nunca salió de la empresa.
+   *  Distinto de `excluded` (exclusión manual del admin): `internal` se
+   *  marca automáticamente en el fetcher. */
+  internal?: boolean;
   /** Si true, el admin marcó esta transacción como externa (retiro
    *  procesado fuera del flow del CRM, swap interno, etc). NO se cuenta
    *  en totales y NO se muestra por defecto en /movimientos. */

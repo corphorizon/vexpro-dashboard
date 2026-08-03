@@ -524,11 +524,30 @@ function BreakdownTable({
         <tbody>
           {r.map((t) => {
             const isExcluded = t.excluded === true;
-            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : 'hover:bg-muted/50 transition-colors';
+            // Transferencia interna entre wallets propias (txid null en
+            // Coinsbuy): se muestra atenuada (sin strikethrough — no es una
+            // exclusión manual) con un badge "Interna". No cuenta en los
+            // totales de arriba (computeProviderTotals ya la descuenta).
+            const isInternal = t.internal === true;
+            const rowCls = isExcluded
+              ? 'opacity-50 line-through bg-muted/30'
+              : isInternal
+                ? 'opacity-60 hover:bg-muted/50 transition-colors'
+                : 'hover:bg-muted/50 transition-colors';
             return (
               <tr key={t.id} className={rowCls}>
                 <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-                <td className={tdCls}>{t.label}</td>
+                <td className={tdCls}>
+                  {t.label}
+                  {isInternal && (
+                    <span
+                      className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground align-middle"
+                      title="Transferencia interna entre wallets propias — no cuenta en los totales"
+                    >
+                      Interna
+                    </span>
+                  )}
+                </td>
                 <td className={`${tdCls} font-mono`}>{t.trackingId}</td>
                 <td className={`${tdCls} text-right`}>{formatCurrency(t.amount)}</td>
                 <td className={`${tdCls} text-right font-medium`}>

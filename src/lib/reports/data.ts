@@ -28,6 +28,9 @@ type ApiTx = {
   status?: string;
   transaction_date: string;
   wallet_id?: string | null;
+  /** Transferencia interna entre wallets propias (txid null en Coinsbuy).
+   *  No cuenta en Retiros Totales ni Net Deposit. */
+  internal?: boolean | null;
 };
 
 // Accepted-status whitelist — matches /balances and
@@ -202,6 +205,11 @@ function groupApiTx(
       if (!wid || !pinnedCoinsbuyIds.has(wid)) continue;
     }
 
+    // Transferencias internas entre wallets propias (txid null en Coinsbuy):
+    // no cuentan en Retiros Totales ni Net Deposit. Solo aplica al lado de
+    // retiros — el lado receptor no aparece como depósito (verificado).
+    if (r.provider === 'coinsbuy-withdrawals' && r.internal === true) continue;
+
     const amt = Number(r.amount) || 0;
     if (r.provider === 'coinsbuy-withdrawals') {
       withdrawals.count += 1;
@@ -344,21 +352,21 @@ export async function buildReportData(
       .eq('periods.month', prevMonthDate.getUTCMonth() + 1),
     admin
       .from('api_transactions')
-      .select('provider, amount, status, transaction_date, wallet_id')
+      .select('provider, amount, status, transaction_date, wallet_id, internal')
       .eq('company_id', companyId)
       .gte('transaction_date', `${from}T00:00:00.000Z`)
       .lte('transaction_date', `${to}T23:59:59.999Z`)
       .limit(10000),
     admin
       .from('api_transactions')
-      .select('provider, amount, status, transaction_date, wallet_id')
+      .select('provider, amount, status, transaction_date, wallet_id, internal')
       .eq('company_id', companyId)
       .gte('transaction_date', `${thisMonth.from}T00:00:00.000Z`)
       .lte('transaction_date', `${thisMonth.to}T23:59:59.999Z`)
       .limit(10000),
     admin
       .from('api_transactions')
-      .select('provider, amount, status, transaction_date, wallet_id')
+      .select('provider, amount, status, transaction_date, wallet_id, internal')
       .eq('company_id', companyId)
       .gte('transaction_date', `${prevMonth.from}T00:00:00.000Z`)
       .lte('transaction_date', `${prevMonth.to}T23:59:59.999Z`)

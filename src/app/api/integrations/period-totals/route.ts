@@ -34,6 +34,12 @@ import { createAdminClient } from '@/lib/supabase/admin';
 // Reemplazado por una RPC `get_period_totals_by_month` que hace TODO el
 // filtrado (status + pinned wallets) y agregado en SQL puro. Una sola
 // query, sin row caps, sin paginación. Migración inline el 2026-06-07.
+//
+// 2026-08-03: la RPC también excluye las transferencias INTERNAS del lado
+// de retiros (`coalesce(internal,false) = false` solo para
+// coinsbuy-withdrawals; los depósitos NO se tocan). Ver
+// supabase/migration-053-internal-transfers.sql — el filtro vive en SQL,
+// este route no necesita lógica adicional.
 
 export async function GET(request: NextRequest) {
   try {
