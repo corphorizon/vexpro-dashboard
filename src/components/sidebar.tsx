@@ -4,6 +4,7 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { apiFetch } from '@/lib/api-fetch';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { CompanyLogo } from '@/components/company-logo';
@@ -412,7 +413,18 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             </button>
             <span className="text-slate-700">|</span>
             <button
-              onClick={() => setLocale(locale === 'es' ? 'en' : 'es')}
+              onClick={() => {
+                const next = locale === 'es' ? 'en' : 'es';
+                setLocale(next);
+                // Persistir la preferencia para que los EMAILS salgan en el
+                // idioma del usuario (fase 7). Fire-and-forget: si falla, el
+                // localStorage local sigue mandando en la UI.
+                apiFetch('/api/user/language', {
+                  method: 'PATCH',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ language: next }),
+                }).catch(() => {});
+              }}
               aria-label="Change language"
               className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
             >

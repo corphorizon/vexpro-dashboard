@@ -2,6 +2,7 @@ import sgMail, { MailService } from '@sendgrid/mail';
 import type { SendEmailResponse, LoginNotificationData } from '@/lib/types';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptSecret } from '@/lib/crypto';
+import { et, type EmailLocale } from '@/lib/email-i18n';
 
 // ---------------------------------------------------------------------------
 // HTML escaping to prevent XSS in email templates
@@ -129,25 +130,31 @@ export async function sendEmail(
 // ---------------------------------------------------------------------------
 // Specialized email functions. All accept optional companyId to look up
 // per-company SendGrid credentials; omit for env-only defaults.
+//
+// Every function also takes a final optional `locale` ('en' | 'es', default
+// 'en') — subject/HTML/text are built via et() so the recipient gets the
+// email in their configured language. Callers resolve the locale with
+// resolveUserLocale() from @/lib/email-i18n.
 // ---------------------------------------------------------------------------
 
 export async function sendWelcomeEmail(
   to: string,
   userName: string,
   companyId?: string,
+  locale: EmailLocale = 'en',
 ): Promise<SendEmailResponse> {
-  const subject = 'Welcome to Smart Dashboard — Horizon Consulting';
+  const subject = et(locale, 'welcome.subject');
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1a1a2e;">Welcome to Smart Dashboard</h2>
-      <p>Hi <strong>${escapeHtml(userName)}</strong>,</p>
-      <p>Your account has been created successfully. You can now access the Smart Dashboard to view financial reports, manage operations, and collaborate with your team.</p>
-      <p>If you have any questions, please contact your administrator.</p>
+      <h2 style="color: #1a1a2e;">${et(locale, 'welcome.title')}</h2>
+      <p>${et(locale, 'common.hi')} <strong>${escapeHtml(userName)}</strong>,</p>
+      <p>${et(locale, 'welcome.body')}</p>
+      <p>${et(locale, 'welcome.contact')}</p>
       <br/>
-      <p style="color: #666; font-size: 12px;">— Horizon Consulting</p>
+      <p style="color: #666; font-size: 12px;">${et(locale, 'common.signature')}</p>
     </div>
   `;
-  const text = `Welcome to Smart Dashboard, ${userName}! Your account has been created successfully.`;
+  const text = et(locale, 'welcome.text', { name: userName });
   return sendEmail(to, subject, html, text, companyId);
 }
 
@@ -155,23 +162,24 @@ export async function sendPasswordResetEmail(
   to: string,
   resetLink: string,
   companyId?: string,
+  locale: EmailLocale = 'en',
 ): Promise<SendEmailResponse> {
-  const subject = 'Reset your password — Smart Dashboard';
+  const subject = et(locale, 'reset.subject');
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1a1a2e;">Password Reset Request</h2>
-      <p>We received a request to reset your password. Click the button below to set a new password:</p>
+      <h2 style="color: #1a1a2e;">${et(locale, 'reset.title')}</h2>
+      <p>${et(locale, 'reset.intro')}</p>
       <p style="text-align: center; margin: 30px 0;">
         <a href="${escapeHtml(resetLink)}" style="background-color: #1a1a2e; color: #fff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold;">
-          Reset Password
+          ${et(locale, 'reset.button')}
         </a>
       </p>
-      <p style="color: #666; font-size: 13px;">If you did not request this, you can safely ignore this email. This link expires in 1 hour.</p>
+      <p style="color: #666; font-size: 13px;">${et(locale, 'reset.ignore')}</p>
       <br/>
-      <p style="color: #666; font-size: 12px;">— Horizon Consulting</p>
+      <p style="color: #666; font-size: 12px;">${et(locale, 'common.signature')}</p>
     </div>
   `;
-  const text = `Reset your password by visiting: ${resetLink}. If you did not request this, ignore this email.`;
+  const text = et(locale, 'reset.text', { link: resetLink });
   return sendEmail(to, subject, html, text, companyId);
 }
 
@@ -181,22 +189,23 @@ export async function sendDashboardReportEmail(
   reportPeriod: string,
   reportSummary: string,
   companyId?: string,
+  locale: EmailLocale = 'en',
 ): Promise<SendEmailResponse> {
-  const subject = `Financial Report: ${reportName} — ${reportPeriod}`;
+  const subject = et(locale, 'dreport.subject', { name: reportName, period: reportPeriod });
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-      <h2 style="color: #1a1a2e;">Financial Report</h2>
-      <p><strong>Report:</strong> ${escapeHtml(reportName)}</p>
-      <p><strong>Period:</strong> ${escapeHtml(reportPeriod)}</p>
+      <h2 style="color: #1a1a2e;">${et(locale, 'dreport.title')}</h2>
+      <p><strong>${et(locale, 'dreport.reportLabel')}</strong> ${escapeHtml(reportName)}</p>
+      <p><strong>${et(locale, 'dreport.periodLabel')}</strong> ${escapeHtml(reportPeriod)}</p>
       <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
       <div>${escapeHtml(reportSummary)}</div>
       <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;" />
-      <p style="color: #666; font-size: 13px;">Log in to Smart Dashboard for the full report and interactive charts.</p>
+      <p style="color: #666; font-size: 13px;">${et(locale, 'dreport.footer')}</p>
       <br/>
-      <p style="color: #666; font-size: 12px;">— Horizon Consulting</p>
+      <p style="color: #666; font-size: 12px;">${et(locale, 'common.signature')}</p>
     </div>
   `;
-  const text = `Financial Report: ${reportName} — ${reportPeriod}\n\n${reportSummary}`;
+  const text = `${et(locale, 'dreport.textTitle', { name: reportName, period: reportPeriod })}\n\n${reportSummary}`;
   return sendEmail(to, subject, html, text, companyId);
 }
 
@@ -206,26 +215,27 @@ export async function sendTwofaResetCodeEmail(params: {
   code: string;
   expiresInMinutes?: number;
   companyId?: string;
+  locale?: EmailLocale;
 }): Promise<SendEmailResponse> {
-  const { to, userName, code, expiresInMinutes = 15, companyId } = params;
+  const { to, userName, code, expiresInMinutes = 15, companyId, locale = 'en' } = params;
   const safeName = escapeHtml(userName);
   const safeCode = escapeHtml(code);
-  const subject = 'Your 2FA reset code';
+  const subject = et(locale, 'twofa.subject');
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px;">
-      <h2 style="color: #1a1a2e;">Two-factor reset code</h2>
-      <p>Hi <strong>${safeName}</strong>,</p>
-      <p>Use the code below to reset your two-factor authentication. It expires in ${expiresInMinutes} minutes.</p>
+      <h2 style="color: #1a1a2e;">${et(locale, 'twofa.title')}</h2>
+      <p>${et(locale, 'common.hi')} <strong>${safeName}</strong>,</p>
+      <p>${et(locale, 'twofa.intro', { minutes: expiresInMinutes })}</p>
       <div style="margin: 24px 0; padding: 16px; background: #f1f5f9; border-radius: 8px; text-align: center;">
         <code style="font-size: 32px; letter-spacing: 8px; font-weight: 700; color: #0f172a;">${safeCode}</code>
       </div>
       <p style="color: #64748b; font-size: 13px;">
-        If you did not request this code, ignore this email — your account is still safe. Never share this code with anyone.
+        ${et(locale, 'twofa.ignore')}
       </p>
-      <p style="color: #666; font-size: 12px;">— Horizon Consulting</p>
+      <p style="color: #666; font-size: 12px;">${et(locale, 'common.signature')}</p>
     </div>
   `;
-  const text = `Your 2FA reset code is: ${code}\n\nIt expires in ${expiresInMinutes} minutes. If you did not request it, ignore this email.`;
+  const text = et(locale, 'twofa.text', { code, minutes: expiresInMinutes });
   return sendEmail(to, subject, html, text, companyId);
 }
 
@@ -234,14 +244,15 @@ export async function sendNotificationEmail(
   title: string,
   message: string,
   companyId?: string,
+  locale: EmailLocale = 'en',
 ): Promise<SendEmailResponse> {
-  const subject = `Smart Dashboard Alert: ${title}`;
+  const subject = et(locale, 'notif.subject', { title });
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
       <h2 style="color: #1a1a2e;">${escapeHtml(title)}</h2>
       <p>${escapeHtml(message)}</p>
       <br/>
-      <p style="color: #666; font-size: 12px;">— Horizon Consulting</p>
+      <p style="color: #666; font-size: 12px;">${et(locale, 'common.signature')}</p>
     </div>
   `;
   const text = `${title}\n\n${message}`;
@@ -253,10 +264,11 @@ export async function sendLoginNotificationEmail(
   userName: string,
   details: Omit<LoginNotificationData, 'userName'>,
   companyId?: string,
+  locale: EmailLocale = 'en',
 ): Promise<SendEmailResponse> {
   const { loginDate, loginTime, browser, ipAddress, dashboardUrl } = details;
 
-  const subject = 'New sign-in to your Horizon Consulting account';
+  const subject = et(locale, 'login.subject');
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9fafb; padding: 20px;">
       <!-- Header -->
@@ -267,28 +279,28 @@ export async function sendLoginNotificationEmail(
 
       <!-- Body -->
       <div style="background-color: #ffffff; padding: 32px 24px; border-radius: 0 0 8px 8px;">
-        <p style="font-size: 16px; color: #1a1a2e;">Hi <strong>${escapeHtml(userName)}</strong>,</p>
+        <p style="font-size: 16px; color: #1a1a2e;">${et(locale, 'common.hi')} <strong>${escapeHtml(userName)}</strong>,</p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6;">
-          We detected a new sign-in to your Smart Dashboard account. Here are the details:
+          ${et(locale, 'login.intro')}
         </p>
 
         <!-- Login details card -->
         <div style="background-color: #f7fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; margin: 24px 0;">
           <table style="width: 100%; border-collapse: collapse;">
             <tr>
-              <td style="padding: 8px 0; color: #718096; font-size: 13px; width: 120px;">Date</td>
+              <td style="padding: 8px 0; color: #718096; font-size: 13px; width: 120px;">${et(locale, 'login.date')}</td>
               <td style="padding: 8px 0; color: #1a202c; font-size: 14px; font-weight: 600;">${loginDate}</td>
             </tr>
             <tr>
-              <td style="padding: 8px 0; color: #718096; font-size: 13px;">Time</td>
+              <td style="padding: 8px 0; color: #718096; font-size: 13px;">${et(locale, 'login.time')}</td>
               <td style="padding: 8px 0; color: #1a202c; font-size: 14px; font-weight: 600;">${loginTime}</td>
             </tr>
             <tr>
-              <td style="padding: 8px 0; color: #718096; font-size: 13px;">Device / Browser</td>
+              <td style="padding: 8px 0; color: #718096; font-size: 13px;">${et(locale, 'login.device')}</td>
               <td style="padding: 8px 0; color: #1a202c; font-size: 14px; font-weight: 600;">${browser}</td>
             </tr>
             <tr>
-              <td style="padding: 8px 0; color: #718096; font-size: 13px;">IP Address</td>
+              <td style="padding: 8px 0; color: #718096; font-size: 13px;">${et(locale, 'login.ip')}</td>
               <td style="padding: 8px 0; color: #1a202c; font-size: 14px; font-weight: 600;">${ipAddress}</td>
             </tr>
           </table>
@@ -297,7 +309,7 @@ export async function sendLoginNotificationEmail(
         <!-- Warning banner -->
         <div style="background-color: #fffbeb; border: 1px solid #fbbf24; border-radius: 6px; padding: 16px; margin: 24px 0;">
           <p style="margin: 0; font-size: 14px; color: #92400e; line-height: 1.5;">
-            <strong>Was this you?</strong> If you did not sign in, your account may be compromised. Please reset your password immediately.
+            <strong>${et(locale, 'login.wasYou')}</strong> ${et(locale, 'login.warning')}
           </p>
         </div>
 
@@ -305,12 +317,12 @@ export async function sendLoginNotificationEmail(
         <p style="text-align: center; margin: 28px 0;">
           <a href="${dashboardUrl}/perfil"
              style="background-color: #dc2626; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 14px; display: inline-block;">
-            Secure My Account
+            ${et(locale, 'login.cta')}
           </a>
         </p>
 
         <p style="font-size: 12px; color: #a0aec0; text-align: center;">
-          If this was you, no action is needed. This is an automated security notification.
+          ${et(locale, 'login.noAction')}
         </p>
       </div>
 
@@ -322,13 +334,13 @@ export async function sendLoginNotificationEmail(
   `;
 
   const text = [
-    `Hi ${userName},`,
-    `A new sign-in was detected on your Smart Dashboard account.`,
-    `Date: ${loginDate}`,
-    `Time: ${loginTime}`,
-    `Device/Browser: ${browser}`,
-    `IP Address: ${ipAddress}`,
-    `If this wasn't you, please reset your password immediately at ${dashboardUrl}/perfil`,
+    `${et(locale, 'common.hi')} ${userName},`,
+    et(locale, 'login.textIntro'),
+    `${et(locale, 'login.date')}: ${loginDate}`,
+    `${et(locale, 'login.time')}: ${loginTime}`,
+    `${et(locale, 'login.device')}: ${browser}`,
+    `${et(locale, 'login.ip')}: ${ipAddress}`,
+    et(locale, 'login.textAction', { url: `${dashboardUrl}/perfil` }),
   ].join('\n');
 
   return sendEmail(to, subject, html, text, companyId);
@@ -341,6 +353,9 @@ export async function sendLoginNotificationEmail(
 // (que mandaba un template genérico apuntando a /login sin password). Acá
 // el link va a /reset-password?token=...&mode=setup, donde la página ya
 // soporta el flujo de "primera contraseña" tras el flag mode=setup.
+//
+// Bilingüe: el texto español original se preserva como variante 'es'; la
+// variante 'en' es la default (usuarios nuevos → inglés).
 // ─────────────────────────────────────────────────────────────────────────────
 export async function sendInviteEmail(
   to: string,
@@ -350,45 +365,47 @@ export async function sendInviteEmail(
   recipientName: string,
   expiresInHours: number = 24,
   companyId?: string,
+  locale: EmailLocale = 'en',
 ): Promise<SendEmailResponse> {
-  const subject = `Te han invitado a ${companyName} — Smart Dashboard`;
   const safeRecipient = escapeHtml(recipientName);
   const safeInviter = escapeHtml(inviterName);
   const safeCompany = escapeHtml(companyName);
   const safeLink = escapeHtml(setupLink);
 
+  const subject = et(locale, 'invite.subject', { company: companyName });
+
   const html = `
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9fafb; padding: 20px;">
       <div style="background-color: #1a1a2e; padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
-        <h1 style="color: #ffffff; margin: 0; font-size: 22px;">Bienvenido a ${safeCompany}</h1>
+        <h1 style="color: #ffffff; margin: 0; font-size: 22px;">${et(locale, 'invite.headerTitle', { company: safeCompany })}</h1>
         <p style="color: #a0aec0; margin: 6px 0 0; font-size: 13px;">Smart Dashboard · Horizon Consulting</p>
       </div>
 
       <div style="background-color: #ffffff; padding: 32px 24px; border-radius: 0 0 8px 8px;">
-        <p style="font-size: 16px; color: #1a1a2e;">Hola <strong>${safeRecipient}</strong>,</p>
+        <p style="font-size: 16px; color: #1a1a2e;">${et(locale, 'common.hi')} <strong>${safeRecipient}</strong>,</p>
         <p style="font-size: 14px; color: #4a5568; line-height: 1.6;">
-          ${safeInviter} te ha invitado a unirte a <strong>${safeCompany}</strong> en Smart Dashboard. Para completar tu registro, crea una contraseña haciendo click en el botón:
+          ${et(locale, 'invite.body', { inviter: safeInviter, company: safeCompany })}
         </p>
 
         <p style="text-align: center; margin: 32px 0;">
           <a href="${safeLink}"
              style="background-color: #1a1a2e; color: #ffffff; padding: 14px 32px; text-decoration: none; border-radius: 6px; font-weight: bold; font-size: 15px; display: inline-block;">
-            Crear mi contraseña
+            ${et(locale, 'invite.button')}
           </a>
         </p>
 
         <div style="background-color: #f7fafc; border: 1px solid #e2e8f0; border-radius: 6px; padding: 14px 18px; margin: 24px 0;">
           <p style="margin: 0; font-size: 13px; color: #4a5568; line-height: 1.5;">
-            <strong>📌 Importante:</strong> Este enlace expira en ${expiresInHours} horas. Si no lo usas a tiempo, pídele a tu administrador que te reenvíe la invitación.
+            <strong>📌 ${et(locale, 'invite.important')}</strong> ${et(locale, 'invite.expires', { hours: expiresInHours })}
           </p>
         </div>
 
         <p style="font-size: 12px; color: #a0aec0; line-height: 1.6;">
-          Si no esperabas esta invitación o no conoces a ${safeInviter}, puedes ignorar este correo de manera segura.
+          ${et(locale, 'invite.ignore', { inviter: safeInviter })}
         </p>
 
         <p style="font-size: 12px; color: #a0aec0; word-break: break-all;">
-          Si el botón no funciona, copia este enlace en tu navegador:<br/>
+          ${et(locale, 'invite.fallback')}<br/>
           ${safeLink}
         </p>
       </div>
@@ -400,15 +417,15 @@ export async function sendInviteEmail(
   `;
 
   const text = [
-    `Hola ${recipientName},`,
+    `${et(locale, 'common.hi')} ${recipientName},`,
     ``,
-    `${inviterName} te ha invitado a unirte a ${companyName} en Smart Dashboard.`,
+    et(locale, 'invite.textBody', { inviter: inviterName, company: companyName }),
     ``,
-    `Para crear tu contraseña, visita: ${setupLink}`,
+    et(locale, 'invite.textLink', { link: setupLink }),
     ``,
-    `Este enlace expira en ${expiresInHours} horas.`,
+    et(locale, 'invite.textExpires', { hours: expiresInHours }),
     ``,
-    `— Horizon Consulting`,
+    et(locale, 'common.signature'),
   ].join('\n');
 
   return sendEmail(to, subject, html, text, companyId);

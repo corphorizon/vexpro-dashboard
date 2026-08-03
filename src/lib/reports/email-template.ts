@@ -7,6 +7,12 @@
 //   · Whether to show "% vs mes" comparisons — daily/weekly show them,
 //     monthly shows the full month-vs-prev-month block instead.
 //
+// Localised: every renderer takes an EmailLocale ('en' | 'es'). The original
+// Spanish copy is preserved as the 'es' variant; 'en' is the default, per the
+// business rule that recipients without a configured language get English.
+// Strings live in the local `L` dictionary below (not in email-i18n) because
+// they are template-internal and numerous.
+//
 // HTML is plain table-based email HTML — deliberately old-school, because
 // every real email client in 2026 still renders it more reliably than CSS
 // grid / flexbox. Inline styles only (no <style> tags inside the body,
@@ -22,32 +28,234 @@
 
 import type { ReportData } from './data';
 import { formatCurrency } from '@/lib/utils';
+import type { EmailLocale } from '@/lib/email-i18n';
 
 const DASHBOARD_URL =
   process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.horizonconsulting.ai';
 
 export type ReportCadence = 'daily' | 'weekly' | 'monthly';
 
-// Spanish month names for the range header
-const MONTHS_ES = [
-  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
-];
+// Month names for the range header, per locale.
+const MONTHS: Record<EmailLocale, string[]> = {
+  es: [
+    'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+    'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+  ],
+  en: [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ],
+};
 
-const CHANNEL_LABEL: Record<string, string> = {
-  coinsbuy: 'Coinsbuy',
-  fairpay: 'FairPay',
-  unipayment: 'UniPayment',
-  other: 'Otros',
+const CHANNEL_LABEL: Record<EmailLocale, Record<string, string>> = {
+  es: {
+    coinsbuy: 'Coinsbuy',
+    fairpay: 'FairPay',
+    unipayment: 'UniPayment',
+    other: 'Otros',
+  },
+  en: {
+    coinsbuy: 'Coinsbuy',
+    fairpay: 'FairPay',
+    unipayment: 'UniPayment',
+    other: 'Other',
+  },
 };
-const CATEGORY_LABEL: Record<string, string> = {
-  ib_commissions: 'Comisiones IB',
-  broker: 'Broker',
-  prop_firm: 'Prop Firm',
-  other: 'Otros',
-  p2p: 'P2P Transfer',
-  coinsbuy_api: 'Coinsbuy (API)',
+const CATEGORY_LABEL: Record<EmailLocale, Record<string, string>> = {
+  es: {
+    ib_commissions: 'Comisiones IB',
+    broker: 'Broker',
+    prop_firm: 'Prop Firm',
+    other: 'Otros',
+    p2p: 'P2P Transfer',
+    coinsbuy_api: 'Coinsbuy (API)',
+  },
+  en: {
+    ib_commissions: 'IB Commissions',
+    broker: 'Broker',
+    prop_firm: 'Prop Firm',
+    other: 'Other',
+    p2p: 'P2P Transfer',
+    coinsbuy_api: 'Coinsbuy (API)',
+  },
 };
+
+// Template-internal strings. Original Spanish preserved as 'es'.
+const L: Record<EmailLocale, Record<string, string>> = {
+  es: {
+    noComparison: 'sin comparativa',
+    vsPrevMonth: 'vs mes anterior',
+    noData: 'sin datos',
+    subjectDaily: '📊 Reporte Financiero — {company} — {date}',
+    subjectWeekly: '📊 Reporte Semanal — {company} — Semana del {from} al {to}',
+    subjectMonthly: '📊 Reporte Mensual — {company} — {month}',
+    titleDaily: 'Reporte Financiero Diario',
+    titleWeekly: 'Reporte Financiero Semanal',
+    titleMonthly: 'Reporte Financiero Mensual',
+    noDataInPeriod: 'Sin datos en el período',
+    balancesTitle: 'Balances por Canal',
+    asOf: 'Al {date}',
+    typeApi: 'API',
+    typeAuto: 'Automático',
+    typeManual: 'Manual',
+    channel: 'Canal',
+    type: 'Tipo',
+    balance: 'Balance',
+    totalConsolidated: 'Total Consolidado',
+    noVisibleChannels: 'No hay canales visibles configurados.',
+    depositsWithdrawalsTitle: 'Depósitos y Retiros',
+    netDepositMonth: 'Net Deposit del mes',
+    totalDepositsMonth: 'Depósitos totales del mes',
+    totalWithdrawalsMonth: 'Retiros totales del mes',
+    netDepositRange: 'Net Deposit del rango',
+    netDepositPrevMonth: 'Net Deposit mes anterior',
+    pctOfMonth: '% del mes',
+    depositsByChannel: 'Depósitos por canal',
+    withdrawalsByCategory: 'Retiros por categoría',
+    category: 'Categoría',
+    amount: 'Monto',
+    total: 'Total',
+    crmUsersTitle: 'Usuarios CRM',
+    newInPeriod: 'Nuevos en el período',
+    newThisMonth: 'Nuevos este mes',
+    totalOnPlatform: 'Total en plataforma',
+    pnlMonth: 'P&L del mes',
+    pnlPrevMonth: 'P&L mes anterior',
+    pnlRange: 'P&L del rango',
+    variationVsPrev: 'Variación vs mes anterior',
+    propTradingTitle: 'Prop Trading Firm',
+    productsSold: 'Productos vendidos',
+    product: 'Producto',
+    quantity: 'Cantidad',
+    totalOfRange: 'Total del rango',
+    salesOfRange: 'Ventas del rango',
+    monthPrefix: 'Mes: {value}',
+    propWithdrawals: 'Retiros Prop Firm',
+    withdrawalsCount: '{count} retiros',
+    failureNote:
+      '⚠️ Algunas fuentes no respondieron y se omitieron del reporte: {failures}. El resto de los datos son correctos.',
+    mockNote:
+      'Los datos de Orion CRM provienen del entorno mock. Configure las credenciales en Superadmin → APIs externas para recibir datos reales.',
+    generatedBy: 'Reporte generado automáticamente por',
+    dataUpdated: 'Datos actualizados: {stamp}',
+    unsubscribe: 'Para dejar de recibir este reporte, contacta a tu administrador.',
+    textPeriod: 'Período',
+    textDepositsWithdrawals: 'DEPÓSITOS Y RETIROS (rango)',
+    textTotalDeposits: 'Total depósitos',
+    textTotalWithdrawals: 'Total retiros',
+    textCurrentMonth: 'MES ACTUAL',
+    textPrevMonth: 'mes anterior',
+    textBalancesByChannel: 'BALANCES POR CANAL',
+    textNoVisibleChannels: '(sin canales visibles)',
+    textCrmUsers: 'USUARIOS CRM',
+    textNewInRange: 'Nuevos en rango',
+    textNewThisMonth: 'Nuevos este mes',
+    textTotal: 'Total',
+    textBrokerPnl: 'BROKER P&L',
+    textRange: 'Rango',
+    textMonth: 'Mes',
+    textPropTrading: 'PROP TRADING FIRM',
+    textSalesRange: 'Ventas rango',
+    textWithdrawalsRange: 'Retiros rango',
+    textPnlRange: 'P&L rango',
+    textAutoDaily: 'Reporte diario automático.',
+    textAutoWeekly: 'Reporte semanal automático.',
+    textAutoMonthly: 'Reporte mensual automático.',
+  },
+  en: {
+    noComparison: 'no comparison',
+    vsPrevMonth: 'vs previous month',
+    noData: 'no data',
+    subjectDaily: '📊 Financial Report — {company} — {date}',
+    subjectWeekly: '📊 Weekly Report — {company} — Week of {from} to {to}',
+    subjectMonthly: '📊 Monthly Report — {company} — {month}',
+    titleDaily: 'Daily Financial Report',
+    titleWeekly: 'Weekly Financial Report',
+    titleMonthly: 'Monthly Financial Report',
+    noDataInPeriod: 'No data in this period',
+    balancesTitle: 'Balances by Channel',
+    asOf: 'As of {date}',
+    typeApi: 'API',
+    typeAuto: 'Automatic',
+    typeManual: 'Manual',
+    channel: 'Channel',
+    type: 'Type',
+    balance: 'Balance',
+    totalConsolidated: 'Consolidated Total',
+    noVisibleChannels: 'No visible channels configured.',
+    depositsWithdrawalsTitle: 'Deposits & Withdrawals',
+    netDepositMonth: 'Net Deposit (month)',
+    totalDepositsMonth: 'Total deposits (month)',
+    totalWithdrawalsMonth: 'Total withdrawals (month)',
+    netDepositRange: 'Net Deposit (range)',
+    netDepositPrevMonth: 'Net Deposit (prev. month)',
+    pctOfMonth: '% of month',
+    depositsByChannel: 'Deposits by channel',
+    withdrawalsByCategory: 'Withdrawals by category',
+    category: 'Category',
+    amount: 'Amount',
+    total: 'Total',
+    crmUsersTitle: 'CRM Users',
+    newInPeriod: 'New in period',
+    newThisMonth: 'New this month',
+    totalOnPlatform: 'Total on platform',
+    pnlMonth: 'P&L (month)',
+    pnlPrevMonth: 'P&L (prev. month)',
+    pnlRange: 'P&L (range)',
+    variationVsPrev: 'Change vs previous month',
+    propTradingTitle: 'Prop Trading Firm',
+    productsSold: 'Products sold',
+    product: 'Product',
+    quantity: 'Quantity',
+    totalOfRange: 'Range total',
+    salesOfRange: 'Sales (range)',
+    monthPrefix: 'Month: {value}',
+    propWithdrawals: 'Prop Firm withdrawals',
+    withdrawalsCount: '{count} withdrawals',
+    failureNote:
+      '⚠️ Some data sources did not respond and were omitted from this report: {failures}. The remaining figures are accurate.',
+    mockNote:
+      'Orion CRM data comes from the mock environment. Configure credentials in Superadmin → External APIs to receive real data.',
+    generatedBy: 'Report generated automatically by',
+    dataUpdated: 'Data updated: {stamp}',
+    unsubscribe: 'To stop receiving this report, contact your administrator.',
+    textPeriod: 'Period',
+    textDepositsWithdrawals: 'DEPOSITS & WITHDRAWALS (range)',
+    textTotalDeposits: 'Total deposits',
+    textTotalWithdrawals: 'Total withdrawals',
+    textCurrentMonth: 'CURRENT MONTH',
+    textPrevMonth: 'previous month',
+    textBalancesByChannel: 'BALANCES BY CHANNEL',
+    textNoVisibleChannels: '(no visible channels)',
+    textCrmUsers: 'CRM USERS',
+    textNewInRange: 'New in range',
+    textNewThisMonth: 'New this month',
+    textTotal: 'Total',
+    textBrokerPnl: 'BROKER P&L',
+    textRange: 'Range',
+    textMonth: 'Month',
+    textPropTrading: 'PROP TRADING FIRM',
+    textSalesRange: 'Sales (range)',
+    textWithdrawalsRange: 'Withdrawals (range)',
+    textPnlRange: 'P&L (range)',
+    textAutoDaily: 'Automated daily report.',
+    textAutoWeekly: 'Automated weekly report.',
+    textAutoMonthly: 'Automated monthly report.',
+  },
+};
+
+/** Template-local translate with {param} interpolation. */
+function lt(
+  locale: EmailLocale,
+  key: string,
+  params?: Record<string, string | number>,
+): string {
+  const raw = L[locale]?.[key] ?? L.en[key] ?? key;
+  if (!params) return raw;
+  return raw.replace(/\{(\w+)\}/g, (m, name: string) =>
+    name in params ? String(params[name]) : m,
+  );
+}
 
 /** Validates a hex colour string (#rgb or #rrggbb). Returns the normalised
  *  6-char hex on success, null otherwise — we never interpolate user input
@@ -72,10 +280,11 @@ function escapeHtml(s: string): string {
 // formatCurrency lives in @/lib/utils — imported above. Kept this comment
 // as a breadcrumb because the previous local copy diverged silently.
 
-function formatDateEs(iso: string): string {
+function formatDate(iso: string, locale: EmailLocale): string {
   const [y, m, d] = iso.split('-').map(Number);
   if (!y || !m || !d) return iso;
-  return `${d} ${MONTHS_ES[m - 1]} ${y}`;
+  if (locale === 'en') return `${MONTHS.en[m - 1]} ${d}, ${y}`;
+  return `${d} ${MONTHS.es[m - 1]} ${y}`;
 }
 
 function pctVariation(current: number, previous: number): number | null {
@@ -83,15 +292,15 @@ function pctVariation(current: number, previous: number): number | null {
   return ((current - previous) / Math.abs(previous)) * 100;
 }
 
-function variationTag(pct: number | null, invertColor = false): string {
+function variationTag(pct: number | null, locale: EmailLocale, invertColor = false): string {
   if (pct === null || !isFinite(pct)) {
-    return `<span style="color:#94a3b8;font-size:12px;">sin comparativa</span>`;
+    return `<span style="color:#94a3b8;font-size:12px;">${lt(locale, 'noComparison')}</span>`;
   }
   const rounded = Math.round(pct * 10) / 10;
   const positive = invertColor ? rounded < 0 : rounded >= 0;
   const color = positive ? '#10B981' : '#EF4444';
   const arrow = rounded >= 0 ? '▲' : '▼';
-  return `<span style="color:${color};font-weight:600;font-size:12px;">${arrow} ${rounded > 0 ? '+' : ''}${rounded}% vs mes anterior</span>`;
+  return `<span style="color:${color};font-weight:600;font-size:12px;">${arrow} ${rounded > 0 ? '+' : ''}${rounded}% ${lt(locale, 'vsPrevMonth')}</span>`;
 }
 
 /**
@@ -99,8 +308,8 @@ function variationTag(pct: number | null, invertColor = false): string {
  * Use this when the percent should land in `value` (which goes through
  * escapeHtml); use variationTag() when it goes into `hint` (raw-rendered).
  */
-function variationText(pct: number | null): string {
-  if (pct === null || !isFinite(pct)) return 'sin datos';
+function variationText(pct: number | null, locale: EmailLocale): string {
+  if (pct === null || !isFinite(pct)) return lt(locale, 'noData');
   const rounded = Math.round(pct * 10) / 10;
   return `${rounded > 0 ? '+' : ''}${rounded}%`;
 }
@@ -111,29 +320,39 @@ export interface EmailSubjectParts {
   companyName: string;
   cadence: ReportCadence;
   range: { from: string; to: string };
+  locale?: EmailLocale;
 }
 
 export function reportEmailSubject(parts: EmailSubjectParts): string {
   const { companyName, cadence, range } = parts;
+  const locale = parts.locale ?? 'en';
   if (cadence === 'daily') {
-    return `📊 Reporte Financiero — ${companyName} — ${formatDateEs(range.from)}`;
+    return lt(locale, 'subjectDaily', {
+      company: companyName,
+      date: formatDate(range.from, locale),
+    });
   }
   if (cadence === 'weekly') {
-    return `📊 Reporte Semanal — ${companyName} — Semana del ${formatDateEs(range.from)} al ${formatDateEs(range.to)}`;
+    return lt(locale, 'subjectWeekly', {
+      company: companyName,
+      from: formatDate(range.from, locale),
+      to: formatDate(range.to, locale),
+    });
   }
   // monthly: use the month of the `from` date.
   const [y, m] = range.from.split('-').map(Number);
+  const monthName = y && m ? MONTHS[locale][m - 1]! : null;
   const monthLabel =
-    y && m
-      ? `${MONTHS_ES[m - 1]!.charAt(0).toUpperCase() + MONTHS_ES[m - 1]!.slice(1)} ${y}`
+    y && m && monthName
+      ? `${monthName.charAt(0).toUpperCase() + monthName.slice(1)} ${y}`
       : `${range.from} → ${range.to}`;
-  return `📊 Reporte Mensual — ${companyName} — ${monthLabel}`;
+  return lt(locale, 'subjectMonthly', { company: companyName, month: monthLabel });
 }
 
-function reportTitle(cadence: ReportCadence): string {
-  if (cadence === 'daily') return 'Reporte Financiero Diario';
-  if (cadence === 'weekly') return 'Reporte Financiero Semanal';
-  return 'Reporte Financiero Mensual';
+function reportTitle(cadence: ReportCadence, locale: EmailLocale): string {
+  if (cadence === 'daily') return lt(locale, 'titleDaily');
+  if (cadence === 'weekly') return lt(locale, 'titleWeekly');
+  return lt(locale, 'titleMonthly');
 }
 
 // ─── Partial renderers ────────────────────────────────────────────────
@@ -164,6 +383,7 @@ function renderKpi(
 function renderTable(
   headers: string[],
   rows: string[][],
+  locale: EmailLocale,
   totalRow?: string[],
 ): string {
   const thead = headers
@@ -184,7 +404,7 @@ function renderTable(
     `,
         )
         .join('')
-    : `<tr><td colspan="${headers.length}" style="padding:12px;text-align:center;color:#64748B;font-size:12px;font-style:italic;">Sin datos en el período</td></tr>`;
+    : `<tr><td colspan="${headers.length}" style="padding:12px;text-align:center;color:#64748B;font-size:12px;font-style:italic;">${lt(locale, 'noDataInPeriod')}</td></tr>`;
 
   const foot = totalRow
     ? `
@@ -224,26 +444,30 @@ function sectionHeader(primary: string, emoji: string, title: string): string {
   `;
 }
 
-function renderBalancesByChannelSection(data: ReportData, primary: string): string {
+function renderBalancesByChannelSection(
+  data: ReportData,
+  primary: string,
+  locale: EmailLocale,
+): string {
   const b = data.balances_by_channel;
   const typeLabel = (t: 'api' | 'manual' | 'auto') =>
-    t === 'api' ? 'API' : t === 'auto' ? 'Automático' : 'Manual';
+    t === 'api' ? lt(locale, 'typeApi') : t === 'auto' ? lt(locale, 'typeAuto') : lt(locale, 'typeManual');
   const rows = b.channels.map((c) => [
     c.label,
     typeLabel(c.type),
     formatCurrency(c.amount),
   ]);
-  const totalRow: string[] = ['Total Consolidado', '', formatCurrency(b.total)];
+  const totalRow: string[] = [lt(locale, 'totalConsolidated'), '', formatCurrency(b.total)];
 
   const emptyNote =
     b.channels.length === 0
-      ? `<p style="font-size:12px;color:#64748B;font-style:italic;margin:6px 0 0 0;">No hay canales visibles configurados.</p>`
+      ? `<p style="font-size:12px;color:#64748B;font-style:italic;margin:6px 0 0 0;">${lt(locale, 'noVisibleChannels')}</p>`
       : '';
 
   return `
-    ${sectionHeader(primary, '🏦', 'Balances por Canal')}
-    <p style="font-size:11px;color:#64748B;margin:0 0 8px 0;">Al ${escapeHtml(b.asOf)}</p>
-    ${b.channels.length ? renderTable(['Canal', 'Tipo', 'Balance'], rows, totalRow) : ''}
+    ${sectionHeader(primary, '🏦', lt(locale, 'balancesTitle'))}
+    <p style="font-size:11px;color:#64748B;margin:0 0 8px 0;">${lt(locale, 'asOf', { date: escapeHtml(b.asOf) })}</p>
+    ${b.channels.length ? renderTable([lt(locale, 'channel'), lt(locale, 'type'), lt(locale, 'balance')], rows, locale, totalRow) : ''}
     ${emptyNote}
   `;
 }
@@ -252,14 +476,15 @@ function renderDepositsWithdrawalsSection(
   data: ReportData,
   cadence: ReportCadence,
   primary: string,
+  locale: EmailLocale,
 ): string {
   const d = data.deposits_withdrawals;
   const depositsRows = d.range.deposits
     .sort((a, b) => b.amount - a.amount)
-    .map((r) => [CHANNEL_LABEL[r.channel] ?? r.channel, String(r.count), formatCurrency(r.amount)]);
+    .map((r) => [CHANNEL_LABEL[locale][r.channel] ?? r.channel, String(r.count), formatCurrency(r.amount)]);
   const withdrawalsRows = d.range.withdrawals
     .sort((a, b) => b.amount - a.amount)
-    .map((r) => [CATEGORY_LABEL[r.category] ?? r.category, String(r.count), formatCurrency(r.amount)]);
+    .map((r) => [CATEGORY_LABEL[locale][r.category] ?? r.category, String(r.count), formatCurrency(r.amount)]);
 
   const monthVsPrev = pctVariation(d.month.net_deposit, d.prev_month.net_deposit);
   const rangePctOfMonth = d.month.net_deposit
@@ -272,52 +497,58 @@ function renderDepositsWithdrawalsSection(
     cadence === 'monthly'
       ? `
     <tr>
-      ${renderKpi('Net Deposit del mes', formatCurrency(d.month.net_deposit), d.month.net_deposit >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev))}
-      ${renderKpi('Depósitos totales del mes', formatCurrency(d.month.total_deposits), 'info')}
-      ${renderKpi('Retiros totales del mes', formatCurrency(d.month.total_withdrawals), 'neutral')}
+      ${renderKpi(lt(locale, 'netDepositMonth'), formatCurrency(d.month.net_deposit), d.month.net_deposit >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'totalDepositsMonth'), formatCurrency(d.month.total_deposits), 'info')}
+      ${renderKpi(lt(locale, 'totalWithdrawalsMonth'), formatCurrency(d.month.total_withdrawals), 'neutral')}
     </tr>
   `
       : `
     <tr>
-      ${renderKpi('Net Deposit del rango', formatCurrency(d.range.net_deposit), d.range.net_deposit >= 0 ? 'positive' : 'negative', rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}% del mes` : undefined)}
-      ${renderKpi('Net Deposit del mes', formatCurrency(d.month.net_deposit), d.month.net_deposit >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev))}
-      ${renderKpi('Net Deposit mes anterior', formatCurrency(d.prev_month.net_deposit), 'neutral')}
+      ${renderKpi(lt(locale, 'netDepositRange'), formatCurrency(d.range.net_deposit), d.range.net_deposit >= 0 ? 'positive' : 'negative', rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}${lt(locale, 'pctOfMonth')}` : undefined)}
+      ${renderKpi(lt(locale, 'netDepositMonth'), formatCurrency(d.month.net_deposit), d.month.net_deposit >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'netDepositPrevMonth'), formatCurrency(d.prev_month.net_deposit), 'neutral')}
     </tr>
   `;
 
   return `
-    ${sectionHeader(primary, '💰', 'Depósitos y Retiros')}
+    ${sectionHeader(primary, '💰', lt(locale, 'depositsWithdrawalsTitle'))}
 
     <table cellspacing="0" cellpadding="0" style="width:100%;margin-bottom:16px;">${kpiRow}</table>
 
     <div style="margin-bottom:16px;">
-      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">Depósitos por canal</h3>
-      ${renderTable(['Canal', '#', 'Monto'], depositsRows, ['Total', '', formatCurrency(d.range.total_deposits)])}
+      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">${lt(locale, 'depositsByChannel')}</h3>
+      ${renderTable([lt(locale, 'channel'), '#', lt(locale, 'amount')], depositsRows, locale, [lt(locale, 'total'), '', formatCurrency(d.range.total_deposits)])}
     </div>
 
     <div>
-      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">Retiros por categoría</h3>
-      ${renderTable(['Categoría', '#', 'Monto'], withdrawalsRows, ['Total', '', formatCurrency(d.range.total_withdrawals)])}
+      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">${lt(locale, 'withdrawalsByCategory')}</h3>
+      ${renderTable([lt(locale, 'category'), '#', lt(locale, 'amount')], withdrawalsRows, locale, [lt(locale, 'total'), '', formatCurrency(d.range.total_withdrawals)])}
     </div>
   `;
 }
 
-function renderCrmUsersSection(data: ReportData, primary: string): string {
+function renderCrmUsersSection(data: ReportData, primary: string, locale: EmailLocale): string {
   const u = data.crm_users;
-  const title = `Usuarios CRM${u.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
+  const title = `${lt(locale, 'crmUsersTitle')}${u.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
+  const numLocale = locale === 'es' ? 'es' : 'en';
   return `
     ${sectionHeader(primary, '👥', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">
       <tr>
-        ${renderKpi('Nuevos en el período', u.new_users_in_range.toLocaleString('es'), 'info')}
-        ${renderKpi('Nuevos este mes', u.new_users_this_month.toLocaleString('es'), 'info')}
-        ${renderKpi('Total en plataforma', u.total_users.toLocaleString('es'), 'neutral')}
+        ${renderKpi(lt(locale, 'newInPeriod'), u.new_users_in_range.toLocaleString(numLocale), 'info')}
+        ${renderKpi(lt(locale, 'newThisMonth'), u.new_users_this_month.toLocaleString(numLocale), 'info')}
+        ${renderKpi(lt(locale, 'totalOnPlatform'), u.total_users.toLocaleString(numLocale), 'neutral')}
       </tr>
     </table>
   `;
 }
 
-function renderBrokerPnlSection(data: ReportData, cadence: ReportCadence, primary: string): string {
+function renderBrokerPnlSection(
+  data: ReportData,
+  cadence: ReportCadence,
+  primary: string,
+  locale: EmailLocale,
+): string {
   const p = data.broker_pnl;
   const monthVsPrev = pctVariation(p.pnl_month, p.pnl_prev_month);
   const rangePctOfMonth = p.pnl_month
@@ -328,16 +559,16 @@ function renderBrokerPnlSection(data: ReportData, cadence: ReportCadence, primar
     cadence === 'monthly'
       ? `
     <tr>
-      ${renderKpi('P&L del mes', formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev))}
-      ${renderKpi('P&L mes anterior', formatCurrency(p.pnl_prev_month), 'neutral')}
-      ${renderKpi('Variación vs mes anterior', variationText(monthVsPrev), monthVsPrev === null ? 'neutral' : monthVsPrev >= 0 ? 'positive' : 'negative')}
+      ${renderKpi(lt(locale, 'pnlMonth'), formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'pnlPrevMonth'), formatCurrency(p.pnl_prev_month), 'neutral')}
+      ${renderKpi(lt(locale, 'variationVsPrev'), variationText(monthVsPrev, locale), monthVsPrev === null ? 'neutral' : monthVsPrev >= 0 ? 'positive' : 'negative')}
     </tr>
   `
       : `
     <tr>
-      ${renderKpi('P&L del rango', formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative', rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}% del mes` : undefined)}
-      ${renderKpi('P&L del mes', formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev))}
-      ${renderKpi('P&L mes anterior', formatCurrency(p.pnl_prev_month), 'neutral')}
+      ${renderKpi(lt(locale, 'pnlRange'), formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative', rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}${lt(locale, 'pctOfMonth')}` : undefined)}
+      ${renderKpi(lt(locale, 'pnlMonth'), formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'pnlPrevMonth'), formatCurrency(p.pnl_prev_month), 'neutral')}
     </tr>
   `;
 
@@ -348,7 +579,7 @@ function renderBrokerPnlSection(data: ReportData, cadence: ReportCadence, primar
   `;
 }
 
-function renderPropTradingSection(data: ReportData, primary: string): string {
+function renderPropTradingSection(data: ReportData, primary: string, locale: EmailLocale): string {
   const p = data.prop_trading;
   const productRows = p.products.map((prod) => [
     prod.name,
@@ -356,20 +587,20 @@ function renderPropTradingSection(data: ReportData, primary: string): string {
     formatCurrency(prod.amount),
   ]);
 
-  const title = `Prop Trading Firm${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
+  const title = `${lt(locale, 'propTradingTitle')}${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
   return `
     ${sectionHeader(primary, '🎯', title)}
 
     <div style="margin-bottom:16px;">
-      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">Productos vendidos</h3>
-      ${renderTable(['Producto', 'Cantidad', 'Monto'], productRows, ['Total del rango', '', formatCurrency(p.total_sales_range)])}
+      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">${lt(locale, 'productsSold')}</h3>
+      ${renderTable([lt(locale, 'product'), lt(locale, 'quantity'), lt(locale, 'amount')], productRows, locale, [lt(locale, 'totalOfRange'), '', formatCurrency(p.total_sales_range)])}
     </div>
 
     <table cellspacing="0" cellpadding="0" style="width:100%;">
       <tr>
-        ${renderKpi('Ventas del rango', formatCurrency(p.total_sales_range), 'info', `Mes: ${formatCurrency(p.total_sales_month)}`)}
-        ${renderKpi('Retiros Prop Firm', formatCurrency(p.prop_withdrawals_range), 'neutral', `${p.prop_withdrawals_count_range} retiros`)}
-        ${renderKpi('P&L del rango', formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative')}
+        ${renderKpi(lt(locale, 'salesOfRange'), formatCurrency(p.total_sales_range), 'info', lt(locale, 'monthPrefix', { value: formatCurrency(p.total_sales_month) }))}
+        ${renderKpi(lt(locale, 'propWithdrawals'), formatCurrency(p.prop_withdrawals_range), 'neutral', lt(locale, 'withdrawalsCount', { count: p.prop_withdrawals_count_range }))}
+        ${renderKpi(lt(locale, 'pnlRange'), formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative')}
       </tr>
     </table>
   `;
@@ -406,39 +637,44 @@ export interface RenderReportEmailParams {
    *  rendered as a small footer line so the recipient knows how fresh
    *  the numbers are. */
   lastSyncedAt?: string | null;
+  /** Recipient language. Defaults to 'en' — users without a configured
+   *  preference receive English. */
+  locale?: EmailLocale;
 }
 
 /** Format an ISO timestamp as "DD MMM YYYY · HH:MM UTC". Used in the
  *  email footer to convey data freshness. Returns empty string if input
  *  is null / unparseable so the footer simply omits the line. */
-function formatSyncTimestamp(iso: string | null | undefined): string {
+function formatSyncTimestamp(iso: string | null | undefined, locale: EmailLocale): string {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
   const day = d.getUTCDate();
-  const month = MONTHS_ES[d.getUTCMonth()] ?? '';
+  const month = MONTHS[locale][d.getUTCMonth()] ?? '';
   const year = d.getUTCFullYear();
   const hh = String(d.getUTCHours()).padStart(2, '0');
   const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  if (locale === 'en') return `${month} ${day} ${year} · ${hh}:${mm} UTC`;
   return `${day} ${month} ${year} · ${hh}:${mm} UTC`;
 }
 
 export function renderReportEmail(params: RenderReportEmailParams): string {
   const { data, cadence, companyName, companyLogoUrl } = params;
+  const locale = params.locale ?? 'en';
   const sections = params.sections ?? ALL_SECTIONS_ON;
   const primary = normalizeHex(params.primaryColor) ?? '#1E3A5F';
-  const title = reportTitle(cadence);
-  const syncStamp = formatSyncTimestamp(params.lastSyncedAt);
+  const title = reportTitle(cadence, locale);
+  const syncStamp = formatSyncTimestamp(params.lastSyncedAt, locale);
   const rangeLabel =
     cadence === 'daily'
-      ? formatDateEs(data.range.from)
-      : `${formatDateEs(data.range.from)} — ${formatDateEs(data.range.to)}`;
+      ? formatDate(data.range.from, locale)
+      : `${formatDate(data.range.from, locale)} — ${formatDate(data.range.to, locale)}`;
 
   const failureNote =
     data.failures.length > 0
       ? `
     <div style="margin:16px 0;padding:12px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;color:#92400E;font-size:12px;">
-      ⚠️ Algunas fuentes no respondieron y se omitieron del reporte: ${data.failures.join(', ')}. El resto de los datos son correctos.
+      ${lt(locale, 'failureNote', { failures: data.failures.join(', ') })}
     </div>
   `
       : '';
@@ -446,7 +682,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   const mockNote = data.anyMock
     ? `
     <div style="margin:16px 0;padding:10px;background:#FEF9C3;border:1px solid #FACC15;border-radius:8px;color:#854D0E;font-size:11px;">
-      Los datos de Orion CRM provienen del entorno mock. Configure las credenciales en Superadmin → APIs externas para recibir datos reales.
+      ${lt(locale, 'mockNote')}
     </div>
   `
     : '';
@@ -456,7 +692,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
     : `<div style="font-size:22px;font-weight:700;color:#ffffff;letter-spacing:-0.01em;">${escapeHtml(companyName)}</div>`;
 
   return `<!DOCTYPE html>
-<html lang="es">
+<html lang="${locale}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
@@ -491,11 +727,11 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
             <td style="padding:8px 32px 32px 32px;">
               ${failureNote}
               ${mockNote}
-              ${sections.deposits_withdrawals ? renderDepositsWithdrawalsSection(data, cadence, primary) : ''}
-              ${sections.balances_by_channel ? renderBalancesByChannelSection(data, primary) : ''}
-              ${sections.crm_users ? renderCrmUsersSection(data, primary) : ''}
-              ${sections.broker_pnl ? renderBrokerPnlSection(data, cadence, primary) : ''}
-              ${sections.prop_trading ? renderPropTradingSection(data, primary) : ''}
+              ${sections.deposits_withdrawals ? renderDepositsWithdrawalsSection(data, cadence, primary, locale) : ''}
+              ${sections.balances_by_channel ? renderBalancesByChannelSection(data, primary, locale) : ''}
+              ${sections.crm_users ? renderCrmUsersSection(data, primary, locale) : ''}
+              ${sections.broker_pnl ? renderBrokerPnlSection(data, cadence, primary, locale) : ''}
+              ${sections.prop_trading ? renderPropTradingSection(data, primary, locale) : ''}
             </td>
           </tr>
 
@@ -505,11 +741,11 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
               <div style="font-weight:600;color:#ffffff;font-size:12px;margin-bottom:10px;">${escapeHtml(companyName)}</div>
               <img src="${DASHBOARD_URL}/brand/logo-white.png" alt="Smart Dashboard" width="140" style="max-width:140px;height:auto;display:inline-block;margin:4px 0 10px 0;opacity:0.9;" />
               <br />
-              Reporte generado automáticamente por
+              ${lt(locale, 'generatedBy')}
               <a href="${DASHBOARD_URL}" style="color:#93C5FD;text-decoration:none;">Smart Dashboard</a>.
-              ${syncStamp ? `<br /><span style="color:#94A3B8;font-size:10px;">Datos actualizados: ${escapeHtml(syncStamp)}</span>` : ''}
+              ${syncStamp ? `<br /><span style="color:#94A3B8;font-size:10px;">${lt(locale, 'dataUpdated', { stamp: escapeHtml(syncStamp) })}</span>` : ''}
               <br />
-              <span style="color:#94A3B8;font-size:10px;">Para dejar de recibir este reporte, contacta a tu administrador.</span>
+              <span style="color:#94A3B8;font-size:10px;">${lt(locale, 'unsubscribe')}</span>
             </td>
           </tr>
 
@@ -524,46 +760,51 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
 // Plain-text fallback — SendGrid appends this when set, improves deliverability.
 export function renderReportEmailText(params: RenderReportEmailParams): string {
   const { data, cadence, companyName } = params;
-  const title = reportTitle(cadence);
+  const locale = params.locale ?? 'en';
+  const title = reportTitle(cadence, locale);
   const d = data.deposits_withdrawals;
   return [
     `${title} — ${companyName}`,
-    `Período: ${data.range.from} → ${data.range.to}`,
+    `${lt(locale, 'textPeriod')}: ${data.range.from} → ${data.range.to}`,
     ``,
-    `DEPÓSITOS Y RETIROS (rango)`,
-    `  Total depósitos: ${formatCurrency(d.range.total_deposits)}`,
-    `  Total retiros:   ${formatCurrency(d.range.total_withdrawals)}`,
-    `  Net Deposit:     ${formatCurrency(d.range.net_deposit)}`,
+    lt(locale, 'textDepositsWithdrawals'),
+    `  ${lt(locale, 'textTotalDeposits')}: ${formatCurrency(d.range.total_deposits)}`,
+    `  ${lt(locale, 'textTotalWithdrawals')}: ${formatCurrency(d.range.total_withdrawals)}`,
+    `  Net Deposit: ${formatCurrency(d.range.net_deposit)}`,
     ``,
-    `MES ACTUAL`,
-    `  Net Deposit:     ${formatCurrency(d.month.net_deposit)}`,
-    `  (mes anterior:   ${formatCurrency(d.prev_month.net_deposit)})`,
+    lt(locale, 'textCurrentMonth'),
+    `  Net Deposit: ${formatCurrency(d.month.net_deposit)}`,
+    `  (${lt(locale, 'textPrevMonth')}: ${formatCurrency(d.prev_month.net_deposit)})`,
     ``,
-    `BALANCES POR CANAL`,
+    lt(locale, 'textBalancesByChannel'),
     ...(data.balances_by_channel.channels.length === 0
-      ? [`  (sin canales visibles)`]
+      ? [`  ${lt(locale, 'textNoVisibleChannels')}`]
       : data.balances_by_channel.channels.map(
           (c) => `  ${c.label.padEnd(28, ' ')} ${formatCurrency(c.amount)}`,
         )),
     `  ${'TOTAL'.padEnd(28, ' ')} ${formatCurrency(data.balances_by_channel.total)}`,
     ``,
-    `USUARIOS CRM`,
-    `  Nuevos en rango: ${data.crm_users.new_users_in_range}`,
-    `  Nuevos este mes: ${data.crm_users.new_users_this_month}`,
-    `  Total:           ${data.crm_users.total_users}`,
+    lt(locale, 'textCrmUsers'),
+    `  ${lt(locale, 'textNewInRange')}: ${data.crm_users.new_users_in_range}`,
+    `  ${lt(locale, 'textNewThisMonth')}: ${data.crm_users.new_users_this_month}`,
+    `  ${lt(locale, 'textTotal')}: ${data.crm_users.total_users}`,
     ``,
-    `BROKER P&L`,
-    `  Rango:        ${formatCurrency(data.broker_pnl.pnl_range)}`,
-    `  Mes:          ${formatCurrency(data.broker_pnl.pnl_month)}`,
-    `  Mes anterior: ${formatCurrency(data.broker_pnl.pnl_prev_month)}`,
+    lt(locale, 'textBrokerPnl'),
+    `  ${lt(locale, 'textRange')}: ${formatCurrency(data.broker_pnl.pnl_range)}`,
+    `  ${lt(locale, 'textMonth')}: ${formatCurrency(data.broker_pnl.pnl_month)}`,
+    `  ${lt(locale, 'textPrevMonth')}: ${formatCurrency(data.broker_pnl.pnl_prev_month)}`,
     ``,
-    `PROP TRADING FIRM`,
-    `  Ventas rango:  ${formatCurrency(data.prop_trading.total_sales_range)}`,
-    `  Retiros rango: ${formatCurrency(data.prop_trading.prop_withdrawals_range)}`,
-    `  P&L rango:     ${formatCurrency(data.prop_trading.pnl_range)}`,
+    lt(locale, 'textPropTrading'),
+    `  ${lt(locale, 'textSalesRange')}: ${formatCurrency(data.prop_trading.total_sales_range)}`,
+    `  ${lt(locale, 'textWithdrawalsRange')}: ${formatCurrency(data.prop_trading.prop_withdrawals_range)}`,
+    `  ${lt(locale, 'textPnlRange')}: ${formatCurrency(data.prop_trading.pnl_range)}`,
     ``,
     `---`,
     `Smart Dashboard · ${DASHBOARD_URL}`,
-    cadence === 'daily' ? 'Reporte diario automático.' : cadence === 'weekly' ? 'Reporte semanal automático.' : 'Reporte mensual automático.',
+    cadence === 'daily'
+      ? lt(locale, 'textAutoDaily')
+      : cadence === 'weekly'
+        ? lt(locale, 'textAutoWeekly')
+        : lt(locale, 'textAutoMonthly'),
   ].join('\n');
 }

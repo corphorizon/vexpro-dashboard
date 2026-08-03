@@ -17,6 +17,7 @@ import {
   sendNotificationEmail,
   sendLoginNotificationEmail,
 } from '@/services/emailService';
+import { resolveUserLocale } from '@/lib/email-i18n';
 
 // ---------------------------------------------------------------------------
 // Validation helpers
@@ -184,20 +185,23 @@ export async function POST(request: NextRequest) {
       lockMs: SEND_WINDOW_MS,
     });
 
+    // Recipient's preferred email language ('en' when no preference is set).
+    const locale = await resolveUserLocale(adminClient, recipient);
+
     let result;
 
     switch (type) {
       case 'welcome':
-        result = await sendWelcomeEmail(to, (data as WelcomeEmailData).userName, cid);
+        result = await sendWelcomeEmail(to, (data as WelcomeEmailData).userName, cid, locale);
         break;
       case 'report': {
         const r = data as ReportEmailData;
-        result = await sendDashboardReportEmail(to, r.reportName, r.reportPeriod, r.reportSummary, cid);
+        result = await sendDashboardReportEmail(to, r.reportName, r.reportPeriod, r.reportSummary, cid, locale);
         break;
       }
       case 'notification': {
         const n = data as NotificationEmailData;
-        result = await sendNotificationEmail(to, n.title, n.message, cid);
+        result = await sendNotificationEmail(to, n.title, n.message, cid, locale);
         break;
       }
       case 'login_notification': {
@@ -208,7 +212,7 @@ export async function POST(request: NextRequest) {
           browser: l.browser || 'Unknown Device',
           ipAddress: l.ipAddress || 'Unknown IP',
           dashboardUrl: l.dashboardUrl || '',
-        }, cid);
+        }, cid, locale);
         break;
       }
       default:

@@ -104,7 +104,18 @@ export default function DashboardLayout({
 }) {
   const { user, isLoading } = useAuth();
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, setLocale } = useI18n();
+
+  // Seed del idioma desde la preferencia guardada en DB (fase 7): si el
+  // usuario nunca tocó el toggle en ESTE navegador (sin fd_locale en
+  // localStorage), adoptamos su preferred_language — usuarios nuevos ven
+  // inglés (default de la columna), los existentes español (backfill 052).
+  useEffect(() => {
+    if (!user?.preferred_language) return;
+    try {
+      if (!localStorage.getItem('fd_locale')) setLocale(user.preferred_language);
+    } catch { /* SSR/privacidad: sin localStorage no hay seed */ }
+  }, [user?.preferred_language, setLocale]);
 
   useEffect(() => {
     if (isLoading) return;

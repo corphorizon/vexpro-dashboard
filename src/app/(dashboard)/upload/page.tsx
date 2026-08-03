@@ -39,6 +39,7 @@ function PaginationControls({
   totalItems: number;
   onChange: (next: number) => void;
 }) {
+  const { t } = useI18n();
   // Hidden for small datasets — the spec says "25 or fewer → single page".
   if (totalItems <= PAGE_SIZE) return null;
   const from = page * PAGE_SIZE + 1;
@@ -46,25 +47,25 @@ function PaginationControls({
   return (
     <div className="flex items-center justify-between mt-3 text-sm">
       <span className="text-muted-foreground">
-        {from}–{to} de {totalItems}
+        {t('upload.pageRange', { from: String(from), to: String(to), total: String(totalItems) })}
       </span>
       <div className="flex items-center gap-1">
         <button
           onClick={() => onChange(Math.max(0, page - 1))}
           disabled={page === 0}
           className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-          aria-label="Página anterior"
+          aria-label={t('upload.prevPage')}
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
         <span className="px-2 tabular-nums">
-          Página {page + 1} de {totalPages}
+          {t('upload.pageOf', { page: String(page + 1), total: String(totalPages) })}
         </span>
         <button
           onClick={() => onChange(Math.min(totalPages - 1, page + 1))}
           disabled={page >= totalPages - 1}
           className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-          aria-label="Página siguiente"
+          aria-label={t('upload.nextPage')}
         >
           <ChevronRight className="w-4 h-4" />
         </button>
@@ -222,6 +223,7 @@ function saveToStorage<T>(key: string, value: T) {
  *  the label stays fresh without the parent owning a clock. Drops out
  *  silently after 5 min — at that point the user already moved on. */
 function SavedRecentlyBadge({ at }: { at: Date }) {
+  const { t } = useI18n();
   // secs se calcula DENTRO del effect (no en render): la regla react-compiler
   // prohíbe llamar funciones impuras como Date.now() durante el render.
   // `atMs` es estable (getTime es puro), así el effect corre una sola vez.
@@ -236,15 +238,15 @@ function SavedRecentlyBadge({ at }: { at: Date }) {
   if (secs > 300) return null; // > 5 min — stop bragging.
   const label =
     secs < 5
-      ? 'Guardado'
+      ? t('common.saved')
       : secs < 60
-        ? `Guardado hace ${secs} s`
-        : `Guardado hace ${Math.floor(secs / 60)} min`;
+        ? t('upload.savedSecondsAgo', { secs: String(secs) })
+        : t('upload.savedMinutesAgo', { mins: String(Math.floor(secs / 60)) });
   return (
     <span
       className="inline-flex items-center gap-1.5 text-xs font-medium text-positive whitespace-nowrap"
       aria-live="polite"
-      title="Última vez que se guardó esta sección"
+      title={t('upload.lastSavedTitle')}
     >
       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
       {label}
@@ -741,7 +743,7 @@ export default function UploadPage() {
       p,
       new Promise<T>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`${label}: la operación tardó demasiado (>${ms / 1000}s). Reintenta.`)),
+          () => reject(new Error(t('upload.opTimeout', { label, secs: String(ms / 1000) }))),
           ms,
         ),
       ),
@@ -971,7 +973,7 @@ export default function UploadPage() {
         }
       } catch (err) {
         console.error('[expenses:reorder] failed to persist order:', err);
-        showError(`No se pudo guardar el nuevo orden: ${(err as Error).message}`);
+        showError(t('upload.reorderError', { error: (err as Error).message }));
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1013,10 +1015,10 @@ export default function UploadPage() {
             withdrawal: wth,
             balance: 0,
           }),
-          'Guardar liquidez',
+          t('upload.opSaveLiquidity'),
         );
         setNewLiq({ date: '', user_email: '', mt_account: '', deposit: '', withdrawal: '' });
-        await withRowTimeout(refreshSections(['liquidez']), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['liquidez']), t('upload.opReloadData')).catch(() => {
           // Silent refresh failure shouldn't invalidate the successful save.
           console.warn('[liquidez] refresh after add failed');
         });
@@ -1059,10 +1061,10 @@ export default function UploadPage() {
             withdrawal: wth,
             balance: 0,
           }),
-          'Actualizar liquidez',
+          t('upload.opUpdateLiquidity'),
         );
         setEditingLiqId(null);
-        await withRowTimeout(refreshSections(['liquidez']), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['liquidez']), t('upload.opReloadData')).catch(() => {
           console.warn('[liquidez] refresh after edit failed');
         });
         setLiquidityRowsRaw([...getLiquidityData()]);
@@ -1078,11 +1080,11 @@ export default function UploadPage() {
   const deleteLiqRow = (id: string) => {
     if (!userCanDelete) return;
     if (savingLiq) return;
-    askConfirmation('Eliminar este movimiento de liquidez?', async () => {
+    askConfirmation(t('upload.confirmDeleteLiquidity'), async () => {
       setSavingLiq(true);
       try {
-        await withRowTimeout(deleteLiqMutation(id), 'Eliminar liquidez');
-        await withRowTimeout(refreshSections(['liquidez']), 'Recargar datos').catch(() => {
+        await withRowTimeout(deleteLiqMutation(id), t('upload.opDeleteLiquidity'));
+        await withRowTimeout(refreshSections(['liquidez']), t('upload.opReloadData')).catch(() => {
           console.warn('[liquidez] refresh after delete failed');
         });
         setLiquidityRowsRaw([...getLiquidityData()]);
@@ -1124,10 +1126,10 @@ export default function UploadPage() {
             profit: prf,
             balance: 0,
           }),
-          'Guardar inversión',
+          t('upload.opSaveInvestment'),
         );
         setNewInv({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
-        await withRowTimeout(refreshSections(['inversiones']), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['inversiones']), t('upload.opReloadData')).catch(() => {
           console.warn('[inversiones] refresh after add failed');
         });
         setInvestmentRowsRaw([...getInvestmentsData()]);
@@ -1172,10 +1174,10 @@ export default function UploadPage() {
             profit: prf,
             balance: 0,
           }),
-          'Actualizar inversión',
+          t('upload.opUpdateInvestment'),
         );
         setEditingInvId(null);
-        await withRowTimeout(refreshSections(['inversiones']), 'Recargar datos').catch(() => {
+        await withRowTimeout(refreshSections(['inversiones']), t('upload.opReloadData')).catch(() => {
           console.warn('[inversiones] refresh after edit failed');
         });
         setInvestmentRowsRaw([...getInvestmentsData()]);
@@ -1191,11 +1193,11 @@ export default function UploadPage() {
   const deleteInvRow = (id: string) => {
     if (!userCanDelete) return;
     if (savingInv) return;
-    askConfirmation('Eliminar este movimiento de inversion?', async () => {
+    askConfirmation(t('upload.confirmDeleteInvestment'), async () => {
       setSavingInv(true);
       try {
-        await withRowTimeout(deleteInvMutation(id), 'Eliminar inversión');
-        await withRowTimeout(refreshSections(['inversiones']), 'Recargar datos').catch(() => {
+        await withRowTimeout(deleteInvMutation(id), t('upload.opDeleteInvestment'));
+        await withRowTimeout(refreshSections(['inversiones']), t('upload.opReloadData')).catch(() => {
           console.warn('[inversiones] refresh after delete failed');
         });
         setInvestmentRowsRaw([...getInvestmentsData()]);
@@ -1241,7 +1243,7 @@ export default function UploadPage() {
       try {
         await withRowTimeout(
           upsertDeposits(company.id, selectedPeriodRef.current, updated),
-          'Guardar depósito',
+          t('upload.opSaveDeposit'),
         );
 
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
@@ -1263,7 +1265,7 @@ export default function UploadPage() {
           tags: { area: 'upload.updateDeposit' },
           extra: { id, amount, periodId: selectedPeriodRef.current },
         });
-        showError(`Error al guardar depósito: ${(err as Error).message}`);
+        showError(t('upload.saveDepositError', { error: (err as Error).message }));
       } finally {
         setSavingDepositIds(prev => {
           if (!prev.has(id)) return prev;
@@ -1304,7 +1306,7 @@ export default function UploadPage() {
         ];
         await withRowTimeout(
           upsertWithdrawals(company.id, selectedPeriodRef.current, combined),
-          'Guardar retiro',
+          t('upload.opSaveWithdrawal'),
         );
 
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
@@ -1321,7 +1323,7 @@ export default function UploadPage() {
           tags: { area: 'upload.updateWithdrawal' },
           extra: { id, amount, periodId: selectedPeriodRef.current },
         });
-        showError(`Error al guardar retiro: ${(err as Error).message}`);
+        showError(t('upload.saveWithdrawalError', { error: (err as Error).message }));
       } finally {
         setSavingWithdrawalIds(prev => {
           if (!prev.has(id)) return prev;
@@ -1360,7 +1362,7 @@ export default function UploadPage() {
     try {
       await withRowTimeout(
         upsertExpenses(company.id, selectedPeriodRef.current, nextList),
-        'Guardar egreso',
+        t('upload.opSaveExpense'),
       );
       if (user && opts.audit) {
         logAction(user.id, user.name, opts.audit.action, 'expenses', opts.audit.details);
@@ -1373,7 +1375,7 @@ export default function UploadPage() {
         tags: { area: 'upload.persistExpenses' },
         extra: { periodId: selectedPeriodRef.current },
       });
-      showError(`Error al guardar egreso: ${(err as Error).message}`);
+      showError(t('upload.saveExpenseError', { error: (err as Error).message }));
     } finally {
       setSavingExpenses(false);
       clearDirty('egresos'); // re-sync desde DB (ids reales) o limpia tras rollback
@@ -1437,7 +1439,7 @@ export default function UploadPage() {
     const next = expenses.map(e => e.id === id ? { ...e, is_fixed: !e.is_fixed } : e);
     setExpensesRaw(next); // optimista
     void persistExpenses(next, previous, {
-      toast: 'Egreso actualizado',
+      toast: t('upload.expenseUpdated'),
       audit: { action: 'update', details: `Egreso ${target?.concept ?? ''} marcado ${target?.is_fixed ? 'no fijo' : 'fijo'}` },
     });
   };
@@ -1453,7 +1455,7 @@ export default function UploadPage() {
     const next = expenses.map(e => e.id === id ? { ...e, paid: e.amount, pending: 0 } : e);
     setExpensesRaw(next); // optimista
     void persistExpenses(next, previous, {
-      toast: `"${target.concept}" marcado como pagado`,
+      toast: t('upload.markedPaid', { concept: target.concept }),
       audit: { action: 'update', details: `Egreso marcado como pagado: ${target.concept} ($${target.amount.toLocaleString()})` },
     });
   };
@@ -1461,7 +1463,7 @@ export default function UploadPage() {
   const deleteExpense = (id: string) => {
     if (!userCanDelete) return;
     const exp = expenses.find(e => e.id === id);
-    askConfirmation(`Eliminar egreso "${exp?.concept}"?`, () => {
+    askConfirmation(t('expenses.deleteConfirm', { concept: exp?.concept ?? '' }), () => {
       const previous = expenses;
       const next = expenses.filter(e => e.id !== id);
       setExpensesRaw(next); // optimista
@@ -1541,7 +1543,7 @@ export default function UploadPage() {
           clearDirty('ingresos');
           clearDirty('retiros');
         } else {
-          showError('Los ingresos se guardaron pero no se pudieron recargar. Puedes seguir editando, el indicador "cambios sin guardar" se limpiará en la próxima recarga.');
+          showError(t('upload.incomeReloadWarning'));
         }
       } catch (err) {
         const message = (err as Error).message;
@@ -1598,7 +1600,7 @@ export default function UploadPage() {
         work(),
         new Promise<never>((_, reject) =>
           setTimeout(
-            () => reject(new Error(`${label} tardó demasiado (>25s). Reintenta.`)),
+            () => reject(new Error(t('upload.saveTimeout', { label }))),
             SAVE_TIMEOUT_MS,
           ),
         ),
@@ -1625,7 +1627,7 @@ export default function UploadPage() {
         await upsertPropFirmSales(companyId, periodId, propFirmAmount);
         if (user) logAction(user.id, user.name, 'update', 'deposits', `Todos los depositos guardados para ${periodLabel}`);
         const nonZero = deposits.filter(d => d.amount !== 0).length;
-        return `${nonZero} depósito${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
+        return nonZero === 1 ? t('upload.depositsSavedOne') : t('upload.depositsSavedMany', { count: String(nonZero) });
       } else if (sec === 'retiros') {
         const combined = [
           ...withdrawals.map(w => ({ category: w.category, amount: w.amount, description: null as string | null })),
@@ -1635,7 +1637,7 @@ export default function UploadPage() {
         await upsertP2PTransfers(companyId, periodId, p2pAmount);
         if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Todos los retiros guardados para ${periodLabel}`);
         const nonZero = withdrawals.filter(w => w.amount !== 0).length + withdrawalExtras.length;
-        return `${nonZero} retiro${nonZero === 1 ? '' : 's'} guardado${nonZero === 1 ? '' : 's'} correctamente`;
+        return nonZero === 1 ? t('upload.withdrawalsSavedOne') : t('upload.withdrawalsSavedMany', { count: String(nonZero) });
       } else {
         // ingresos — mismo payload que saveIncome: income + prop firm ventas
         // + withdrawals (la pestaña Ingresos también posee esos campos).
@@ -1647,23 +1649,23 @@ export default function UploadPage() {
         await upsertPropFirmSales(companyId, periodId, propFirmAmount);
         await upsertWithdrawals(companyId, periodId, combinedWithdrawals);
         if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
-        return 'Ingresos operativos guardados correctamente';
+        return t('upload.incomeSavedOk');
       }
     };
 
     const saved: DataSection[] = [];
     const messages: string[] = [];
-    let successMsg = 'Datos guardados correctamente';
+    let successMsg = t('upload.dataSaved');
     try {
       await timedSave(async () => {
         for (const sec of targets) {
           messages.push(await saveSectionWork(sec));
           saved.push(sec);
         }
-      }, 'Guardar todo');
+      }, t('upload.opSaveAll'));
       successMsg = messages.length <= 1
         ? (messages[0] ?? successMsg)
-        : `${saved.length} secciones guardadas correctamente`;
+        : t('upload.sectionsSaved', { count: String(saved.length) });
 
       // Main save succeeded. Show success + unlock the button NOW.
       showSuccess(successMsg);
@@ -1713,7 +1715,7 @@ export default function UploadPage() {
           if (sec === 'ingresos') clearDirty('retiros');
         }
       } else {
-        showError('Datos guardados pero no se pudo recargar. Puedes seguir editando — el indicador "cambios sin guardar" se limpiará al próximo save exitoso.');
+        showError(t('upload.savedReloadWarning'));
       }
     } catch (err) {
       const message = (err as Error).message;
@@ -1721,7 +1723,7 @@ export default function UploadPage() {
         tags: { area: 'upload.saveAll', section },
         extra: { periodId, companyId, periodLabel },
       });
-      showError(`Error al guardar: ${message}`);
+      showError(t('upload.saveError', { error: message }));
       saveAllInFlightRef.current = false;
       setSavingAll(false);
       // dirty is intentionally NOT cleared on error — the user's
@@ -1850,7 +1852,7 @@ export default function UploadPage() {
                         onClick={() => updateDeposit(d.id, d.amount)}
                         disabled={savingDepositIds.has(d.id)}
                         className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
-                        title={savingDepositIds.has(d.id) ? 'Guardando...' : t('common.save')}
+                        title={savingDepositIds.has(d.id) ? t('common.saving') : t('common.save')}
                         aria-busy={savingDepositIds.has(d.id)}
                       >
                         <Save className={`w-4 h-4 ${savingDepositIds.has(d.id) ? 'animate-pulse' : ''}`} />
@@ -1862,7 +1864,7 @@ export default function UploadPage() {
             </tbody>
             <tfoot>
               <tr className="font-bold bg-muted/50">
-                <td className="py-3 px-3">Total</td>
+                <td className="py-3 px-3">{t('common.total')}</td>
                 <td className="py-3 px-3 text-right text-blue-600">{formatCurrency(deposits.reduce((s, d) => s + d.amount, 0))}</td>
                 {userCanAdd && <td></td>}
               </tr>
@@ -1874,8 +1876,8 @@ export default function UploadPage() {
           <div className="mt-4 pt-4 border-t border-border">
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium">Ventas Prop Firm</label>
-                <p className="text-xs text-muted-foreground">No se suma al total de depósitos</p>
+                <label className="text-sm font-medium">{t('movements.propFirmSales')}</label>
+                <p className="text-xs text-muted-foreground">{t('upload.notInDepositsTotal')}</p>
               </div>
               <div className="flex items-center gap-2">
                 {userCanAdd ? (
@@ -1958,7 +1960,7 @@ export default function UploadPage() {
                           onClick={() => updateWithdrawal(w.id, w.amount)}
                           disabled={savingWithdrawalIds.has(w.id)}
                           className="p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
-                          title={savingWithdrawalIds.has(w.id) ? 'Guardando...' : t('common.save')}
+                          title={savingWithdrawalIds.has(w.id) ? t('common.saving') : t('common.save')}
                           aria-busy={savingWithdrawalIds.has(w.id)}
                         >
                           <Save className={`w-4 h-4 ${savingWithdrawalIds.has(w.id) ? 'animate-pulse' : ''}`} />
@@ -1971,7 +1973,7 @@ export default function UploadPage() {
             </tbody>
             <tfoot>
               <tr className="font-bold bg-muted/50">
-                <td className="py-3 px-3">Total</td>
+                <td className="py-3 px-3">{t('common.total')}</td>
                 <td className="py-3 px-3 text-right text-red-600">
                   {formatCurrency(
                     // Total includes the manual amount entered in THIS form
@@ -1991,9 +1993,7 @@ export default function UploadPage() {
                     colSpan={userCanAdd ? 3 : 2}
                     className="py-2 px-3 text-[11px] text-muted-foreground italic"
                   >
-                    Broker: el campo manual de arriba convive con el monto
-                    auto-derivado de Coinsbuy. En Movimientos se muestran
-                    ambos por separado y se suman al total.
+                    {t('upload.brokerCoexistNote')}
                   </td>
                 </tr>
               )}
@@ -2005,8 +2005,8 @@ export default function UploadPage() {
           <div className="mt-4 pt-4 border-t border-border">
             <div className="flex items-center justify-between">
               <div>
-                <label className="text-sm font-medium">Transferencias P2P</label>
-                <p className="text-xs text-muted-foreground">No se suma al total de retiros</p>
+                <label className="text-sm font-medium">{t('upload.p2pTransfers')}</label>
+                <p className="text-xs text-muted-foreground">{t('upload.notInWithdrawalsTotal')}</p>
               </div>
               <div className="flex items-center gap-2">
                 {userCanAdd ? (
@@ -2032,9 +2032,9 @@ export default function UploadPage() {
           <div className="mt-6 pt-5 border-t border-border">
             <div className="flex items-center justify-between mb-3">
               <div>
-                <h3 className="text-sm font-semibold">Retiros manuales adicionales</h3>
+                <h3 className="text-sm font-semibold">{t('upload.extraWithdrawalsTitle')}</h3>
                 <p className="text-xs text-muted-foreground mt-0.5">
-                  Se guardan en la BD junto con los 4 agregados arriba y conviven con los datos de las APIs.
+                  {t('upload.extraWithdrawalsDesc')}
                 </p>
               </div>
             </div>
@@ -2056,7 +2056,7 @@ export default function UploadPage() {
                   type="text"
                   value={newExtraWithdrawal.description}
                   onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, description: e.target.value }))}
-                  placeholder="Descripción (ej: retiro manual, ajuste)"
+                  placeholder={t('upload.withdrawalDescPlaceholder')}
                   className="md:col-span-2 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input
@@ -2064,7 +2064,7 @@ export default function UploadPage() {
                   step="0.01"
                   value={newExtraWithdrawal.amount}
                   onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, amount: e.target.value }))}
-                  placeholder="Monto"
+                  placeholder={t('upload.amountPlaceholder')}
                   className="text-right px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <button
@@ -2083,7 +2083,7 @@ export default function UploadPage() {
                   disabled={!newExtraWithdrawal.description.trim() || !(parseFloat(newExtraWithdrawal.amount) > 0)}
                   className="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-1.5"
                 >
-                  <Plus className="w-4 h-4" /> Agregar
+                  <Plus className="w-4 h-4" /> {t('common.add')}
                 </button>
               </div>
             )}
@@ -2091,17 +2091,17 @@ export default function UploadPage() {
             {/* List of extras */}
             {withdrawalExtras.length === 0 ? (
               <p className="text-center text-xs text-muted-foreground py-4">
-                {userCanAdd ? 'Agrega entradas libres cuando necesites registrar un retiro fuera de los 4 agregados.' : 'Sin retiros manuales adicionales.'}
+                {userCanAdd ? t('upload.extraWithdrawalsEmptyAdd') : t('upload.extraWithdrawalsEmpty')}
               </p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-border">
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Categoría</th>
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Descripción</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Monto</th>
-                      {userCanAdd && <th className="w-16 text-center py-2.5 px-3 text-muted-foreground font-medium">Acción</th>}
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.description')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.amount')}</th>
+                      {userCanAdd && <th className="w-16 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('audit.action')}</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -2119,7 +2119,7 @@ export default function UploadPage() {
                             <button
                               onClick={() => setWithdrawalExtras(prev => prev.filter(x => x.id !== w.id))}
                               className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
-                              title="Eliminar"
+                              title={t('common.delete')}
                             >
                               <Trash2 className="w-3.5 h-3.5" />
                             </button>
@@ -2130,7 +2130,7 @@ export default function UploadPage() {
                   </tbody>
                   <tfoot>
                     <tr className="font-bold bg-muted/50">
-                      <td colSpan={2} className="py-3 px-3">Total extras</td>
+                      <td colSpan={2} className="py-3 px-3">{t('upload.totalExtras')}</td>
                       <td className="py-3 px-3 text-right text-red-600">
                         {formatCurrency(withdrawalExtras.reduce((s, w) => s + w.amount, 0))}
                       </td>
@@ -2147,7 +2147,7 @@ export default function UploadPage() {
       {/* EGRESOS */}
       {section === 'egresos' && (
         <Card>
-          <h2 className="text-base sm:text-lg font-semibold mb-4">Egresos Operativos — {periodLabel}</h2>
+          <h2 className="text-base sm:text-lg font-semibold mb-4">{t('summary.operatingExpenses')} — {periodLabel}</h2>
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           <DndContext
             sensors={dndSensors}
@@ -2157,15 +2157,15 @@ export default function UploadPage() {
           <table className="w-full text-sm min-w-[500px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="w-8 py-2.5 px-2" aria-label="Reordenar"></th>
+                <th className="w-8 py-2.5 px-2" aria-label={t('upload.reorder')}></th>
                 <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">#</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Concepto</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Categoría</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Monto</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Pagado</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Pendiente</th>
-                <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">Estado</th>
-                {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>}
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.amount')}</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
+                <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.status')}</th>
+                {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
               </tr>
             </thead>
             <SortableContext
@@ -2186,9 +2186,9 @@ export default function UploadPage() {
                     <>
                       <td className="py-2.5 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
                       <td className="py-2.5 px-3">
-                        <input aria-label="Concepto del gasto" value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
+                        <input aria-label={t('upload.expenseConceptAria')} value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" />
                         <label className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground cursor-pointer">
-                          <input type="checkbox" aria-label="Gasto fijo" checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
+                          <input type="checkbox" aria-label={t('expenses.fixed')} checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
                           {t('expenses.fixed')} ({t('expenses.fixedHint')})
                         </label>
                       </td>
@@ -2199,7 +2199,7 @@ export default function UploadPage() {
                             onChange={e => { setEditExpense(p => ({ ...p, category: e.target.value })); setShowEditCategoryDropdown(true); }}
                             onFocus={() => setShowEditCategoryDropdown(true)}
                             onBlur={() => setTimeout(() => setShowEditCategoryDropdown(false), 200)}
-                            placeholder="Categoría"
+                            placeholder={t('upload.category')}
                             className="w-full px-2 py-1 rounded border border-border text-sm"
                             autoComplete="off"
                           />
@@ -2219,9 +2219,9 @@ export default function UploadPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Monto del gasto" value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Pagado" value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Pendiente" value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.pending')} value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                       <td></td>
                       <td className="py-2.5 px-3 text-center">
                         <div className="flex justify-center gap-1">
@@ -2264,7 +2264,7 @@ export default function UploadPage() {
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
                             {userCanEdit && exp.pending > 0 && (
-                              <button onClick={() => markExpensePaid(exp.id)} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" title="Marcar como pagado" aria-label={`Marcar ${exp.concept} como pagado`}><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => markExpensePaid(exp.id)} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" title={t('upload.markPaid')} aria-label={t('upload.markPaidAria', { concept: exp.concept })}><Check className="w-3.5 h-3.5" /></button>
                             )}
                             {userCanEdit && (
                               <button onClick={() => startEditExpense(exp)} className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
@@ -2284,7 +2284,7 @@ export default function UploadPage() {
             {expenses.length > 0 && (
               <tfoot>
                 <tr className="font-bold bg-muted/50">
-                  <td className="py-3 px-3" colSpan={4}>Total</td>
+                  <td className="py-3 px-3" colSpan={4}>{t('common.total')}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
@@ -2340,7 +2340,7 @@ export default function UploadPage() {
                     onChange={e => { setNewExpense(p => ({ ...p, category: e.target.value })); setShowCategoryDropdown(true); }}
                     onFocus={() => setShowCategoryDropdown(true)}
                     onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 200)}
-                    placeholder="Categoría"
+                    placeholder={t('upload.category')}
                     className="w-full px-3 py-2 rounded-lg border border-border text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                     autoComplete="off"
                   />
@@ -2359,7 +2359,7 @@ export default function UploadPage() {
                     </div>
                   )}
                   {newExpense.category && !filteredCategoriesNew.some(c => c.toLowerCase() === newExpense.category.toLowerCase()) && (
-                    <p className="text-[11px] text-muted-foreground mt-1 px-1">Nueva categoría · se guardará al agregar</p>
+                    <p className="text-[11px] text-muted-foreground mt-1 px-1">{t('upload.newCategoryHint')}</p>
                   )}
                 </div>
                 <input
@@ -2381,7 +2381,7 @@ export default function UploadPage() {
                   disabled={!newExpense.concept || !newExpense.amount || savingExpenses}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
-                  {savingExpenses ? 'Guardando…' : t('common.add')}
+                  {savingExpenses ? t('common.saving') : t('common.add')}
                 </button>
               </div>
               <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">
@@ -2427,11 +2427,11 @@ export default function UploadPage() {
         const totalIngresos = income.broker_pnl + income.other + propFirmNet;
         return (
         <Card>
-          <h2 className="text-lg font-semibold mb-4">Ingresos Operativos — {periodLabel}</h2>
+          <h2 className="text-lg font-semibold mb-4">{t('upload.operatingIncome')} — {periodLabel}</h2>
           <div className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
-                <label className="text-sm text-muted-foreground mb-1 block">Broker P&L (Libro B)</label>
+                <label className="text-sm text-muted-foreground mb-1 block">{t('movements.brokerPnlBookB')}</label>
                 {userCanAdd ? (
                   <input
                     type="number" step="0.01"
@@ -2445,7 +2445,7 @@ export default function UploadPage() {
                 )}
               </div>
               <div>
-                <label className="text-sm text-muted-foreground mb-1 block">Otros</label>
+                <label className="text-sm text-muted-foreground mb-1 block">{t('upload.other')}</label>
                 {userCanAdd ? (
                   <input
                     type="number" step="0.01"
@@ -2468,12 +2468,12 @@ export default function UploadPage() {
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold">Prop Firm</h3>
                 <span className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/50 px-2 py-0.5 rounded">
-                  manual · pendiente Orion CRM
+                  {t('upload.manualPendingCrm')}
                 </span>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Ventas Prop Firm</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">{t('movements.propFirmSales')}</label>
                   {userCanAdd ? (
                     <input
                       type="number" step="0.01"
@@ -2490,7 +2490,7 @@ export default function UploadPage() {
                   )}
                 </div>
                 <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">Retiros Prop Firm</label>
+                  <label className="text-sm text-muted-foreground mb-1 block">{t('movements.propFirmWithdrawals')}</label>
                   {userCanAdd ? (
                     <input
                       type="number" step="0.01"
@@ -2514,7 +2514,7 @@ export default function UploadPage() {
                 </div>
               </div>
               <div className="flex items-center justify-end mt-2 text-sm">
-                <span className="text-muted-foreground mr-2">Resultado Prop Firm:</span>
+                <span className="text-muted-foreground mr-2">{t('upload.propFirmResult')}:</span>
                 <span className={`font-semibold ${propFirmNet < 0 ? 'text-negative' : ''}`}>
                   {formatCurrency(propFirmNet)}
                 </span>
@@ -2523,10 +2523,10 @@ export default function UploadPage() {
 
             <div className="flex items-center justify-between pt-4 border-t border-border">
               <div>
-                <p className="text-sm text-muted-foreground">Total Ingresos</p>
+                <p className="text-sm text-muted-foreground">{t('upload.totalIncome')}</p>
                 <p className="text-xl font-bold">{formatCurrency(totalIngresos)}</p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">
-                  Broker P&amp;L + Otros + (Ventas Prop Firm − Retiros Prop Firm)
+                  {t('upload.totalIncomeFormula')}
                 </p>
               </div>
               {userCanAdd && (
@@ -2535,7 +2535,7 @@ export default function UploadPage() {
                   className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
                 >
                   <Save className="w-4 h-4" />
-                  Guardar Ingresos
+                  {t('upload.saveIncomeBtn')}
                 </button>
               )}
             </div>
@@ -2547,12 +2547,12 @@ export default function UploadPage() {
       {/* LIQUIDEZ */}
       {section === 'liquidez' && (
         <Card>
-          <h2 className="text-lg font-semibold mb-4">Liquidez</h2>
+          <h2 className="text-lg font-semibold mb-4">{t('upload.liquidity')}</h2>
 
           {/* Filter bar */}
           <div className="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b border-border">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Desde</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterFrom')}</label>
               <input
                 type="date"
                 value={liqDateFrom}
@@ -2561,7 +2561,7 @@ export default function UploadPage() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Hasta</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterTo')}</label>
               <input
                 type="date"
                 value={liqDateTo}
@@ -2570,13 +2570,13 @@ export default function UploadPage() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Período</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.period')}</label>
               <select
                 value={liqPeriodFilter}
                 onChange={e => setLiqPeriodFilter(e.target.value)}
                 className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               >
-                <option value="todos">Todos</option>
+                <option value="todos">{t('common.all')}</option>
                 {periods.map(p => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
@@ -2607,8 +2607,8 @@ export default function UploadPage() {
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.userEmail')}</th>
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.mtAccount')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.deposit')}>+</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.withdrawal')}>−</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
                   {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
                 </tr>
@@ -2621,11 +2621,11 @@ export default function UploadPage() {
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     {editingLiqId === row.id ? (
                       <>
-                        <td className="py-2.5 px-3"><input type="date" aria-label="Fecha" value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label="Usuario" value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label="Cuenta MT" value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('audit.filterUser')} value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('upload.mtAccountAria')} value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
@@ -2662,7 +2662,7 @@ export default function UploadPage() {
               {filteredLiquidity.length > 0 && (
                 <tfoot>
                   <tr className="font-bold bg-muted/50">
-                    <td className="py-3 px-3" colSpan={3}>Totales</td>
+                    <td className="py-3 px-3" colSpan={3}>{t('upload.totals')}</td>
                     <td className="py-3 px-3 text-right text-emerald-600">{formatCurrency(liqTotalDeposits)}</td>
                     <td className="py-3 px-3 text-right text-red-600">{formatCurrency(liqTotalWithdrawals)}</td>
                     <td className="py-2.5 px-3 text-right">{formatCurrency(liqCurrentBalance)}</td>
@@ -2722,7 +2722,7 @@ export default function UploadPage() {
                   disabled={!newLiq.date || !newLiq.user_email || savingLiq}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
-                  {savingLiq ? 'Guardando…' : t('common.add')}
+                  {savingLiq ? t('common.saving') : t('common.add')}
                 </button>
               </div>
             </div>
@@ -2733,12 +2733,12 @@ export default function UploadPage() {
       {/* INVERSIONES */}
       {section === 'inversiones' && (
         <Card>
-          <h2 className="text-lg font-semibold mb-4">Inversiones</h2>
+          <h2 className="text-lg font-semibold mb-4">{t('upload.investments')}</h2>
 
           {/* Filter bar */}
           <div className="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b border-border">
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Desde</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterFrom')}</label>
               <input
                 type="date"
                 value={invDateFrom}
@@ -2747,7 +2747,7 @@ export default function UploadPage() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Hasta</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterTo')}</label>
               <input
                 type="date"
                 value={invDateTo}
@@ -2756,13 +2756,13 @@ export default function UploadPage() {
               />
             </div>
             <div>
-              <label className="text-xs text-muted-foreground mb-1 block">Período</label>
+              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.period')}</label>
               <select
                 value={invPeriodFilter}
                 onChange={e => setInvPeriodFilter(e.target.value)}
                 className="px-3 py-1.5 rounded border border-border text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
               >
-                <option value="todos">Todos</option>
+                <option value="todos">{t('common.all')}</option>
                 {periods.map(p => (
                   <option key={p.id} value={p.id}>{p.label}</option>
                 ))}
@@ -2793,8 +2793,8 @@ export default function UploadPage() {
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.responsible')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Depósito">+</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title="Retiro">−</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.deposit')}>+</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.withdrawal')}>−</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.profit')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
                   {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
@@ -2808,12 +2808,12 @@ export default function UploadPage() {
                   <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     {editingInvId === row.id ? (
                       <>
-                        <td className="py-2.5 px-3"><input type="date" aria-label="Fecha" value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label="Concepto" value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label="Responsable" value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Depósito" value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Retiro" value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label="Ganancia" value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('upload.concept')} value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input aria-label={t('upload.responsible')} value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
+                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.profit')} value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-sm" /></td>
                         <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
@@ -2851,7 +2851,7 @@ export default function UploadPage() {
               {filteredInvestments.length > 0 && (
                 <tfoot>
                   <tr className="font-bold bg-muted/50">
-                    <td className="py-3 px-3" colSpan={3}>Totales</td>
+                    <td className="py-3 px-3" colSpan={3}>{t('upload.totals')}</td>
                     <td className="py-3 px-3 text-right text-emerald-600">{formatCurrency(invTotalDeposits)}</td>
                     <td className="py-3 px-3 text-right text-red-600">{formatCurrency(invTotalWithdrawals)}</td>
                     <td className="py-3 px-3 text-right text-blue-600">{formatCurrency(invTotalProfit)}</td>
@@ -2919,7 +2919,7 @@ export default function UploadPage() {
                   disabled={!newInv.date || savingInv}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
-                  {savingInv ? 'Guardando…' : t('common.add')}
+                  {savingInv ? t('common.saving') : t('common.add')}
                 </button>
               </div>
             </div>
@@ -2931,33 +2931,33 @@ export default function UploadPage() {
       {section === 'documentos' && (
         <Card>
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">Documentos — {periodLabel}</h2>
+            <h2 className="text-lg font-semibold">{t('upload.documents')} — {periodLabel}</h2>
             {userCanAdd && (
               <button
                 onClick={() => fileRef.current?.click()}
                 className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
               >
                 <FileUp className="w-4 h-4" />
-                Subir Documento
+                {t('upload.uploadDoc')}
               </button>
             )}
-            <input ref={fileRef} type="file" aria-label="Subir documento" onChange={handleDocUpload} className="hidden" />
+            <input ref={fileRef} type="file" aria-label={t('upload.uploadDoc')} onChange={handleDocUpload} className="hidden" />
           </div>
 
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
           <table className="w-full text-sm min-w-[480px]">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Archivo</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Fecha</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">Descripcion</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">Subido por</th>
-                <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.filename')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('upload.description')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('upload.uploadedBy')}</th>
+                <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody>
               {docs.length === 0 && (
-                <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">No hay documentos subidos</td></tr>
+                <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">{t('upload.noDocuments')}</td></tr>
               )}
               {docs.map(doc => (
                 <tr key={doc.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
@@ -2973,16 +2973,16 @@ export default function UploadPage() {
                   <td className="py-2.5 px-3 text-center">
                     <div className="flex justify-center gap-1">
                       <button
-                        onClick={() => showSuccess(`Descargando ${doc.filename}...`)}
+                        onClick={() => showSuccess(t('upload.downloading', { filename: doc.filename }))}
                         className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                        title="Descargar"
-                        aria-label="Descargar"
+                        title={t('upload.download')}
+                        aria-label={t('upload.download')}
                       >
                         <Download className="w-3.5 h-3.5" />
                       </button>
                       {userCanDelete && (
                         <button
-                          onClick={() => askConfirmation(`Eliminar "${doc.filename}"?`, () => {
+                          onClick={() => askConfirmation(t('upload.confirmDeleteDoc', { filename: doc.filename }), () => {
                             setDocs(prev => prev.filter(d => d.id !== doc.id));
                             showSuccess(t('upload.investmentDeleted'));
                           })}
@@ -3005,14 +3005,14 @@ export default function UploadPage() {
       {/* Bottom bar: Period selector + Save All */}
       <div className="sticky bottom-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 bg-background/95 backdrop-blur border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4">
         <div className="flex items-center gap-2 sm:gap-3">
-          <label className="text-xs sm:text-sm font-medium text-muted-foreground whitespace-nowrap">Periodo:</label>
+          <label className="text-xs sm:text-sm font-medium text-muted-foreground whitespace-nowrap">{t('upload.period')}:</label>
           <select
             value={selectedPeriod}
             onChange={(e) => setSelectedPeriod(e.target.value)}
             className="flex-1 sm:flex-none px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
           >
             {periods.map(p => (
-              <option key={p.id} value={p.id}>{p.label} {p.is_closed ? '(Cerrado)' : ''}</option>
+              <option key={p.id} value={p.id}>{p.label} {p.is_closed ? t('upload.closedPeriod') : ''}</option>
             ))}
           </select>
         </div>
@@ -3022,19 +3022,19 @@ export default function UploadPage() {
               <span
                 className="inline-flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-400 whitespace-nowrap"
                 aria-live="polite"
-                title="Guardando automáticamente"
+                title={t('upload.autosaving')}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                Guardando…
+                {t('common.saving')}
               </span>
             ) : dirtySections.has(section) ? (
               <span
                 className="inline-flex items-center gap-1.5 text-xs font-medium text-warning whitespace-nowrap"
                 aria-live="polite"
-                title="Hay cambios sin guardar — se guardarán automáticamente en 3 segundos"
+                title={t('upload.unsavedAutosaveHint')}
               >
                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                Guardando en 3 s…
+                {t('upload.savingIn3s')}
               </span>
             ) : lastSavedAt ? (
               <SavedRecentlyBadge at={lastSavedAt} />
@@ -3043,10 +3043,10 @@ export default function UploadPage() {
               onClick={saveAll}
               disabled={savingAll}
               className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
-              title="Guardar ahora sin esperar al auto-save"
+              title={t('upload.saveNowTitle')}
             >
               <Save className="w-4 h-4" />
-              {savingAll ? 'Guardando…' : 'Guardar ahora'}
+              {savingAll ? t('common.saving') : t('upload.saveNow')}
             </button>
           </div>
         )}

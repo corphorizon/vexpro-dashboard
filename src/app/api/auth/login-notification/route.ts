@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendLoginNotificationEmail } from '@/services/emailService';
+import { resolveUserLocale } from '@/lib/email-i18n';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -123,6 +124,9 @@ export async function POST(request: NextRequest) {
       .eq('user_id', user.id)
       .maybeSingle();
 
+    // Recipient language — English when no preference is configured.
+    const locale = await resolveUserLocale(adminClient, userEmail);
+
     // Send email
     const result = await sendLoginNotificationEmail(userEmail, userName, {
       loginDate,
@@ -130,7 +134,7 @@ export async function POST(request: NextRequest) {
       browser,
       ipAddress,
       dashboardUrl,
-    }, profile?.company_id);
+    }, profile?.company_id, locale);
 
     if (!result.success) {
       console.error('[LoginNotification] Failed to send');

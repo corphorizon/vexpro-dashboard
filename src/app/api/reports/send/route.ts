@@ -34,6 +34,7 @@ import {
 } from '@/lib/reports/email-template';
 import { sendEmail } from '@/services/emailService';
 import { loadReportConfig } from '@/lib/reports/config';
+import { resolveUserLocale, type EmailLocale } from '@/lib/email-i18n';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -151,27 +152,42 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'Empresa no encontrada' }, { status: 404 });
   }
 
-  // Build data + render email.
+  // Build data once, then render lazily per recipient locale ('en' when the
+  // recipient has no configured preference) — one render per language, not
+  // per recipient.
   const data = await buildReportData(companyId, from, to);
-  const html = renderReportEmail({
-    data,
-    cadence,
-    companyName: company.name,
-    companyLogoUrl: company.logo_url,
-    primaryColor: (company as { color_primary?: string | null }).color_primary,
-    sections,
-  });
-  const text = renderReportEmailText({ data, cadence, companyName: company.name });
-  const subject = reportEmailSubject({
-    companyName: company.name,
-    cadence,
-    range: { from, to },
-  });
+  const rendered = new Map<EmailLocale, { html: string; text: string; subject: string }>();
+  const renderFor = (locale: EmailLocale) => {
+    const cached = rendered.get(locale);
+    if (cached) return cached;
+    const r = {
+      html: renderReportEmail({
+        data,
+        cadence,
+        companyName: company.name,
+        companyLogoUrl: company.logo_url,
+        primaryColor: (company as { color_primary?: string | null }).color_primary,
+        sections,
+        locale,
+      }),
+      text: renderReportEmailText({ data, cadence, companyName: company.name, locale }),
+      subject: reportEmailSubject({
+        companyName: company.name,
+        cadence,
+        range: { from, to },
+        locale,
+      }),
+    };
+    rendered.set(locale, r);
+    return r;
+  };
 
   let sent = 0;
   let failed = 0;
   const errors: string[] = [];
   for (const email of recipients) {
+    const locale = await resolveUserLocale(admin, email);
+    const { html, text, subject } = renderFor(locale);
     const res = await sendEmail(email, subject, html, text, companyId);
     if (res.success) sent += 1;
     else {

@@ -89,6 +89,10 @@ export async function generateAndSendInvite(params: SendInviteParams): Promise<S
   // Dynamic import — `emailService` arrastra sgMail (heavy), evitamos
   // cargarlo en routes que no necesiten emails.
   const { sendInviteEmail } = await import('@/services/emailService');
+  const { resolveUserLocale } = await import('@/lib/email-i18n');
+
+  // Idioma del destinatario — usuarios nuevos sin preferencia reciben inglés.
+  const locale = await resolveUserLocale(admin, recipientEmail);
 
   try {
     const result = await sendInviteEmail(
@@ -99,6 +103,7 @@ export async function generateAndSendInvite(params: SendInviteParams): Promise<S
       recipientName,
       INVITE_TOKEN_TTL_HOURS,
       companyId,
+      locale,
     );
     if (!result.success) {
       return { success: false, error: result.error || 'No se pudo enviar el email' };

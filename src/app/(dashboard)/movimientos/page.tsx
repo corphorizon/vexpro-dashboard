@@ -127,7 +127,7 @@ export default function MovimientosPage() {
             | number
           )[]
       ),
-      ['', 'Net Deposit', displayNetDeposit],
+      ['', t('movements.netDeposit'), displayNetDeposit],
     ];
     downloadCSV(
       `movimientos_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`,
@@ -332,10 +332,9 @@ export default function MovimientosPage() {
       {/* ─── Lower section: Datos del período (mes) ─── */}
       <div className="flex flex-col gap-3 pt-2 border-t border-border">
         <div>
-          <h2 className="text-lg font-semibold">Datos del período</h2>
+          <h2 className="text-lg font-semibold">{t('movements.periodData')}</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Depósitos, retiros, Prop Firm y Broker del mes seleccionado. Puedes
-            elegir varios meses para consolidar los totales.
+            {t('movements.periodDataDesc')}
           </p>
         </div>
         <MovimientosPeriodSelector />
@@ -344,23 +343,23 @@ export default function MovimientosPage() {
       {/* ─── Summary cards: Depósitos / Retiros / Net Deposit ─── */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard
-          label="Depósitos Totales"
+          label={t('summary.deposits')}
           value={formatCurrency(displayTotalDeposits)}
-          hint="Período seleccionado"
+          hint={t('movements.selectedPeriodHint')}
           icon={ArrowDownCircle}
           tone="info"
         />
         <StatCard
-          label="Retiros Totales"
+          label={t('summary.withdrawals')}
           value={formatCurrency(displayTotalWithdrawals)}
-          hint="Período seleccionado"
+          hint={t('movements.selectedPeriodHint')}
           icon={ArrowUpCircle}
           tone="negative"
         />
         <StatCard
-          label={<>Depósito Neto <InfoTip text={GLOSSARY.netDeposit} /></>}
+          label={<>{t('movements.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} /></>}
           value={formatCurrency(displayNetDeposit)}
-          hint="Depósitos − Retiros"
+          hint={t('movements.netDepositHint')}
           icon={Wallet}
           tone={displayNetDeposit >= 0 ? 'positive' : 'negative'}
         />
@@ -413,7 +412,7 @@ export default function MovimientosPage() {
             footerRow={
               <>
                 <tr className="font-bold">
-                  <td className="px-4 py-3">Depósitos Totales (API)</td>
+                  <td className="px-4 py-3">{t('movements.totalDepositsApi')}</td>
                   <td className="px-4 py-3 text-right text-blue-600">
                     {formatCurrency(apiDepositsTotal)}
                   </td>
@@ -483,7 +482,7 @@ export default function MovimientosPage() {
             footerRow={
               <>
                 <tr className="font-bold">
-                  <td className="px-4 py-3">Retiros Totales</td>
+                  <td className="px-4 py-3">{t('summary.withdrawals')}</td>
                   <td className="px-4 py-3 text-right text-red-600">
                     {formatCurrency(displayTotalWithdrawals)}
                   </td>
@@ -570,7 +569,7 @@ export default function MovimientosPage() {
               <tr className="border-b border-border/50">
                 <td className="py-2.5">
                   <span className="inline-flex items-center gap-1.5">
-                    Broker P&L (Libro B)
+                    {t('movements.brokerPnlBookB')}
                     <InfoTip text={GLOSSARY.libroB} />
                   </span>
                 </td>
@@ -579,7 +578,7 @@ export default function MovimientosPage() {
                 </td>
               </tr>
               <tr className="border-b border-border/50">
-                <td className="py-2.5">Otros</td>
+                <td className="py-2.5">{t('upload.other')}</td>
                 <td className="py-2.5 text-right font-medium">
                   {formatCurrency(summary.operatingIncome?.other || 0)}
                 </td>
