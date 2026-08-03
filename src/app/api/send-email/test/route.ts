@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { sendNotificationEmail } from '@/services/emailService';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { et, resolveUserLocale } from '@/lib/email-i18n';
 
 // ---------------------------------------------------------------------------
 // GET /api/send-email/test?to=email@example.com
@@ -41,12 +43,15 @@ export async function GET(request: NextRequest) {
     });
   }
 
-  // Send a real test email — uses the caller's company credentials if set.
+  // Send a real test email — uses the caller's company credentials if set,
+  // localised to the recipient's preferred language ('en' by default).
+  const locale = await resolveUserLocale(createAdminClient(), to);
   const result = await sendNotificationEmail(
     to,
-    'Smart Dashboard — Test Email',
-    'This is a test email to verify that SendGrid is configured correctly. If you received this, the integration is working!',
+    et(locale, 'test.subject'),
+    et(locale, 'test.message'),
     auth.companyId,
+    locale,
   );
 
   return NextResponse.json({

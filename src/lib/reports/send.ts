@@ -17,6 +17,7 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendEmail } from '@/services/emailService';
+import { isEmailLocale, type EmailLocale } from '@/lib/email-i18n';
 import { serverAuditLog } from '@/lib/server-audit';
 import { buildReportData } from './data';
 import { loadReportConfig } from './config';
@@ -58,6 +59,7 @@ interface UserRow {
   name: string;
   allowed_modules: string[];
   status: string;
+  preferred_language?: string | null;
 }
 
 /**
@@ -186,7 +188,7 @@ export async function sendReportsForCadence(
       // and not deactivated.
       const { data: users, error: usersError } = await admin
         .from('company_users')
-        .select('id, user_id, email, name, allowed_modules, status')
+        .select('id, user_id, email, name, allowed_modules, status, preferred_language')
         .eq('company_id', company.id);
       if (usersError) throw new Error(usersError.message);
 
@@ -211,41 +213,59 @@ export async function sendReportsForCadence(
         continue;
       }
 
-      // Build data + HTML once per tenant; all recipients get the same email.
+      // Build data once per tenant, then render once per locale group —
+      // recipients get the email in their preferred_language ('en' when
+      // absent) without re-rendering per recipient.
       const data = await buildReportData(company.id, range.from, range.to);
-      const html = renderReportEmail({
-        data,
-        cadence,
-        companyName: company.name,
-        companyLogoUrl: company.logo_url,
-        primaryColor: company.color_primary,
-        sections: cfg.sections,
-        lastSyncedAt: options.lastSyncedAt ?? null,
-      });
-      const text = renderReportEmailText({
-        data,
-        cadence,
-        companyName: company.name,
-      });
-      const subject = reportEmailSubject({
-        companyName: company.name,
-        cadence,
-        range,
-      });
 
+      const byLocale = new Map<EmailLocale, UserRow[]>();
       for (const r of recipients) {
-        if (options.dryRun) {
-          entry.sent += 1;
-          emails_sent += 1;
-          continue;
-        }
-        const res = await sendEmail(r.email, subject, html, text, company.id);
-        if (res.success) {
-          entry.sent += 1;
-          emails_sent += 1;
-        } else {
-          entry.failed += 1;
-          emails_failed += 1;
+        const locale: EmailLocale = isEmailLocale(r.preferred_language)
+          ? r.preferred_language
+          : 'en';
+        const group = byLocale.get(locale);
+        if (group) group.push(r);
+        else byLocale.set(locale, [r]);
+      }
+
+      for (const [locale, group] of byLocale) {
+        const html = renderReportEmail({
+          data,
+          cadence,
+          companyName: company.name,
+          companyLogoUrl: company.logo_url,
+          primaryColor: company.color_primary,
+          sections: cfg.sections,
+          lastSyncedAt: options.lastSyncedAt ?? null,
+          locale,
+        });
+        const text = renderReportEmailText({
+          data,
+          cadence,
+          companyName: company.name,
+          locale,
+        });
+        const subject = reportEmailSubject({
+          companyName: company.name,
+          cadence,
+          range,
+          locale,
+        });
+
+        for (const r of group) {
+          if (options.dryRun) {
+            entry.sent += 1;
+            emails_sent += 1;
+            continue;
+          }
+          const res = await sendEmail(r.email, subject, html, text, company.id);
+          if (res.success) {
+            entry.sent += 1;
+            emails_sent += 1;
+          } else {
+            entry.failed += 1;
+            emails_failed += 1;
+          }
         }
       }
 

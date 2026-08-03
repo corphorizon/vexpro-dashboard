@@ -4,6 +4,16 @@ import { createClient } from '@/lib/supabase/server';
 // Roles allowed to call /api/admin/* routes.
 const ADMIN_ROLES = ['admin', 'auditor', 'hr'];
 
+export type VerifyAdminAuthOptions = {
+  /**
+   * When true, only callers with role 'admin' pass. Platform superadmins
+   * (who act as role 'admin' inside the target tenant) also pass.
+   * Auditor / hr are rejected with 403. Use for user-lifecycle endpoints
+   * (reset password, delete user, reset 2FA, update auth user).
+   */
+  requireAdmin?: boolean;
+};
+
 export type AuthInfo = {
   userId: string;
   companyId: string;
@@ -39,8 +49,15 @@ function readCompanyIdFromRequest(request: NextRequest | undefined): string | nu
  * target a tenant via ?company_id=<id>. This keeps the "viewing as" flow
  * working for admin-only endpoints (e.g. /api/admin/api-credentials,
  * and the per-provider /api/integrations/<provider>/ping health checks).
+ *
+ * Pass `{ requireAdmin: true }` to restrict the endpoint to strict admins:
+ * auditor / hr are rejected with 403 while the superadmin path keeps working
+ * (superadmins already act as role 'admin' inside the target tenant).
  */
-export async function verifyAdminAuth(request?: NextRequest): Promise<AuthInfo | NextResponse> {
+export async function verifyAdminAuth(
+  request?: NextRequest,
+  opts?: VerifyAdminAuthOptions,
+): Promise<AuthInfo | NextResponse> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -97,6 +114,15 @@ export async function verifyAdminAuth(request?: NextRequest): Promise<AuthInfo |
   if (!ADMIN_ROLES.includes(profile.role)) {
     return NextResponse.json(
       { success: false, error: 'Permiso insuficiente — se requiere rol admin, auditor o hr' },
+      { status: 403 },
+    );
+  }
+
+  // Strict admin gate — auditor / hr can read admin endpoints elsewhere but
+  // must never touch user-lifecycle operations (S1 privilege escalation fix).
+  if (opts?.requireAdmin && profile.role !== 'admin') {
+    return NextResponse.json(
+      { success: false, error: 'Solo administradores pueden realizar esta acción' },
       { status: 403 },
     );
   }

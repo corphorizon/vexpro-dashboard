@@ -3,6 +3,7 @@ import { createHash, randomInt } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { sendTwofaResetCodeEmail } from '@/services/emailService';
+import { resolveUserLocale } from '@/lib/email-i18n';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -82,14 +83,20 @@ export async function POST(request: NextRequest) {
       expires_at: expiresAt,
     });
 
-    // Fire-and-forget email
-    sendTwofaResetCodeEmail({
-      to: companyUser.email,
-      userName: companyUser.name,
-      code,
-      expiresInMinutes: 15,
-      companyId: companyUser.company_id,
-    }).catch((err) => console.error('[request-2fa-reset] email send failed:', err));
+    // Fire-and-forget email — in the recipient's preferred language
+    // (English when no preference is set).
+    resolveUserLocale(adminClient, companyUser.email)
+      .then((locale) =>
+        sendTwofaResetCodeEmail({
+          to: companyUser.email,
+          userName: companyUser.name,
+          code,
+          expiresInMinutes: 15,
+          companyId: companyUser.company_id,
+          locale,
+        }),
+      )
+      .catch((err) => console.error('[request-2fa-reset] email send failed:', err));
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

@@ -13,7 +13,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { updateCommercialProfile } from '@/lib/supabase/mutations';
-import { apiFetch } from '@/lib/api-fetch';
+import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import type { CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus } from '@/lib/types';
 import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X, FileText, Upload, ExternalLink, Handshake, Trash2 } from 'lucide-react';
 
@@ -504,7 +504,7 @@ export default function PerfilPage() {
           <div className="flex items-center gap-3 p-3 bg-positive/10/30 rounded-lg">
             <FileText className="w-5 h-5 text-emerald-600" />
             <span className="text-sm font-medium text-positive flex-1">Contrato cargado</span>
-            <a href={profileData.contract_url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">
+            <a href={withActiveCompany(`/api/admin/contract-url/${profileData.id}`)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">
               <ExternalLink className="w-3.5 h-3.5" /> Ver contrato
             </a>
           </div>

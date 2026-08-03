@@ -45,6 +45,12 @@ export interface User {
   must_change_password: boolean;
   /** True only when the user record came from `platform_users`, not `company_users`. */
   is_superadmin: boolean;
+  /**
+   * Preferred language for transactional emails (`preferred_language`
+   * column, migration-052). Optional — absent (new users / pre-migration
+   * rows) means English.
+   */
+  preferred_language?: 'en' | 'es';
 }
 
 // ─── Built-in roles — single source of truth ─────────────────────────────
@@ -250,8 +256,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           const profile = await fetchUserProfile(session.user);
           if (profile) {
             setUser(profile);
-            const allUsers = await fetchAllUsers(effectiveCompanyIdFor(profile));
-            setUsers(allUsers);
+            // Fire-and-forget: only /usuarios renders the full list, so
+            // don't block first paint (isLoading=false) on this round-trip
+            // to /api/admin/list-company-users. The list populates in the
+            // background; consumers see [] until it arrives.
+            fetchAllUsers(effectiveCompanyIdFor(profile))
+              .then(setUsers)
+              .catch(console.error);
           }
         }
       } catch (err) {

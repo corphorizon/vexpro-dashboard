@@ -745,10 +745,10 @@ export default function ComisionesPage() {
       });
       setNdRawInputs((prev) => { const next = new Map(prev); next.delete(profileId); return next; });
 
-      setToast({ type: 'success', msg: 'Guardado correctamente' });
+      setToast({ type: 'success', msg: t('comm.savedOk') });
       setTimeout(() => setToast(null), 3000);
     } catch (err) {
-      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al guardar' });
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : t('comm.saveError') });
       setTimeout(() => setToast(null), 4000);
     } finally {
       setSavingBdm((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
@@ -858,7 +858,11 @@ export default function ComisionesPage() {
     if (tab === 'teams' && teamNdValidation) {
       setToast({
         type: 'error',
-        msg: `El ND total del equipo (${formatCurrency(teamNdValidation.actual)}) no coincide con el valor del grupo de ${teamNdValidation.parentName} (${formatCurrency(teamNdValidation.expected)}). Corrige los valores antes de guardar.`,
+        msg: t('comm.teamNdMismatch', {
+          actual: formatCurrency(teamNdValidation.actual),
+          parent: teamNdValidation.parentName,
+          expected: formatCurrency(teamNdValidation.expected),
+        }),
       });
       setTimeout(() => setToast(null), 6000);
       return;
@@ -983,7 +987,7 @@ export default function ComisionesPage() {
       }
       if (entries.length === 0) {
         setSaving(false);
-        setToast({ type: 'error', msg: 'No hay datos para guardar' });
+        setToast({ type: 'error', msg: t('comm.noDataToSave') });
         setTimeout(() => setToast(null), 4000);
         return;
       }
@@ -1022,11 +1026,11 @@ export default function ComisionesPage() {
       });
       setNdRawInputs(new Map());
       setSaving(false);
-      setToast({ type: 'success', msg: 'Comisiones guardadas' });
+      setToast({ type: 'success', msg: t('comm.saveSuccess') });
       setTimeout(() => setToast(null), 4000);
     } catch (err) {
       setSaving(false);
-      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al guardar' });
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : t('comm.saveError') });
       setTimeout(() => setToast(null), 4000);
     }
   };
@@ -1235,7 +1239,7 @@ export default function ComisionesPage() {
                   className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
                 >
                   <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                  Exportar CSV
+                  {t('audit.exportCsv')}
                 </button>
                 {tab === 'teams' && (
                   <button
@@ -1243,7 +1247,7 @@ export default function ComisionesPage() {
                     className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
                   >
                     <FileText className="w-4 h-4 text-red-500" />
-                    Informe PDF detallado
+                    {t('comm.exportPdfDetailed')}
                   </button>
                 )}
               </div>
@@ -1352,14 +1356,14 @@ export default function ComisionesPage() {
               type="text"
               value={teamsSearch}
               onChange={(e) => setTeamsSearch(e.target.value)}
-              placeholder="Buscar por nombre, email, monto..."
+              placeholder={t('comm.searchPlaceholder')}
               className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
             {teamsSearch && (
               <button
                 onClick={() => setTeamsSearch('')}
                 className="absolute right-2 text-muted-foreground hover:text-foreground"
-                aria-label="Limpiar búsqueda"
+                aria-label={t('comm.clearSearch')}
               >
                 ✕
               </button>
@@ -1394,7 +1398,7 @@ export default function ComisionesPage() {
                         <td className="px-3 py-3"><span className="font-semibold block">{headProfile.name}</span><span className="text-xs text-muted-foreground">{headProfile.email}</span></td>
                         <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[headProfile.role])}>{ROLE_LABEL[headProfile.role]}</span></td>
                         <td className="px-3 py-3">
-                          <input type="number" aria-label="Net Deposit del HEAD" value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                          <input type="number" aria-label={t('comm.ndHeadAria')} value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                         </td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.accumulatedIn)}</td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.division)}</td>
@@ -1423,7 +1427,7 @@ export default function ComisionesPage() {
                           </td>
                           <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[profile.role])}>{ROLE_LABEL[profile.role]}</span></td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label="Net Deposit del comercial" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
@@ -1483,14 +1487,14 @@ export default function ComisionesPage() {
               type="text"
               value={individualSearch}
               onChange={(e) => setIndividualSearch(e.target.value)}
-              placeholder="Buscar por nombre, email, monto..."
+              placeholder={t('comm.searchPlaceholder')}
               className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
             />
             {individualSearch && (
               <button
                 onClick={() => setIndividualSearch('')}
                 className="absolute right-2 text-muted-foreground hover:text-foreground"
-                aria-label="Limpiar búsqueda"
+                aria-label={t('comm.clearSearch')}
               >
                 ✕
               </button>
@@ -1536,7 +1540,7 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label="Net Deposit del comercial" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
@@ -1566,7 +1570,7 @@ export default function ComisionesPage() {
                                 onClick={() => handleSaveBdm(calc.profileId, 'nd')}
                                 disabled={savingBdm.has(calc.profileId)}
                                 className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
-                                title="Guardar este BDM"
+                                title={t('comm.saveBdm')}
                               >
                                 {savingBdm.has(calc.profileId)
                                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -1596,7 +1600,7 @@ export default function ComisionesPage() {
                                   });
                                 })}
                                 className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                                title="Descargar PDF"
+                                title={t('comm.downloadPdf')}
                               >
                                 <FileText className="w-4 h-4" />
                               </button>
@@ -1641,7 +1645,7 @@ export default function ComisionesPage() {
                       <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
                       <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
                       <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">PnL</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Com. Lotes</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.lotCommShort')}</th>
                       <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accumulated')}</th>
                       <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.division')}</th>
                       <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
@@ -1662,7 +1666,7 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label="Net Deposit del comercial" value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                           </td>
                           <td className="px-3 py-3">
                             <input
@@ -1718,7 +1722,7 @@ export default function ComisionesPage() {
                                 onClick={() => handleSaveBdm(calc.profileId, 'pnl')}
                                 disabled={savingBdm.has(calc.profileId)}
                                 className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
-                                title="Guardar este BDM"
+                                title={t('comm.saveBdm')}
                               >
                                 {savingBdm.has(calc.profileId)
                                   ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -1751,7 +1755,7 @@ export default function ComisionesPage() {
                                   });
                                 })}
                                 className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                                title="Descargar PDF"
+                                title={t('comm.downloadPdf')}
                               >
                                 <FileText className="w-4 h-4" />
                               </button>
@@ -1812,7 +1816,7 @@ export default function ComisionesPage() {
                         <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
                         <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
                         <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">PnL</th>
-                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Com. Lotes</th>
+                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.lotCommShort')}</th>
                         <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
                         <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
                         <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
@@ -1890,7 +1894,7 @@ export default function ComisionesPage() {
                                   onClick={() => handleSaveBdm(calc.profileId, 'pnlSpecial')}
                                   disabled={savingBdm.has(calc.profileId)}
                                   className="p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
-                                  title="Guardar este BDM"
+                                  title={t('comm.saveBdm')}
                                 >
                                   {savingBdm.has(calc.profileId)
                                     ? <Loader2 className="w-4 h-4 animate-spin" />
@@ -1927,7 +1931,7 @@ export default function ComisionesPage() {
                                     });
                                   })}
                                   className="p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                                  title="Descargar PDF"
+                                  title={t('comm.downloadPdf')}
                                 >
                                   <FileText className="w-4 h-4" />
                                 </button>
@@ -1967,7 +1971,7 @@ export default function ComisionesPage() {
                     <tr className="border-b border-border bg-muted/50">
                       <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
                       <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
-                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">USD/Lote</th>
+                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('comm.usdPerLot')}</th>
                       <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
                     </tr>
                   </thead>
@@ -2044,13 +2048,13 @@ export default function ComisionesPage() {
             <Card>
               <div className="flex flex-col sm:flex-row gap-4">
                 <div className="flex-1">
-                  <label className="block text-sm font-medium mb-1.5">Desde</label>
+                  <label className="block text-sm font-medium mb-1.5">{t('audit.filterFrom')}</label>
                   <select value={historyFrom} onChange={(e) => setHistoryFrom(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
                     {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
                   </select>
                 </div>
                 <div className="flex-1">
-                  <label className="block text-sm font-medium mb-1.5">Hasta</label>
+                  <label className="block text-sm font-medium mb-1.5">{t('audit.filterTo')}</label>
                   <select value={historyTo} onChange={(e) => setHistoryTo(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
                     {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
                   </select>
@@ -2077,14 +2081,14 @@ export default function ComisionesPage() {
                 type="text"
                 value={historySearch}
                 onChange={(e) => setHistorySearch(e.target.value)}
-                placeholder="Buscar por nombre, email, monto..."
+                placeholder={t('comm.searchPlaceholder')}
                 className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
               />
               {historySearch && (
                 <button
                   onClick={() => setHistorySearch('')}
                   className="absolute right-2 text-muted-foreground hover:text-foreground"
-                  aria-label="Limpiar búsqueda"
+                  aria-label={t('comm.clearSearch')}
                 >
                   ✕
                 </button>

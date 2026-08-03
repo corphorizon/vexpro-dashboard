@@ -13,7 +13,7 @@ import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus, CommercialRole } from '@/lib/types';
 import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee, createEmployee, updateEmployee } from '@/lib/supabase/mutations';
-import { apiFetch } from '@/lib/api-fetch';
+import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
@@ -114,7 +114,7 @@ function EmployeeForm({ onClose, onSave, editing, companyId }: { onClose: () => 
     <div className="border border-border rounded-lg p-4 mb-4 bg-muted/30">
       <div className="flex justify-between items-center mb-3">
         <h3 className="font-semibold text-sm">{editing ? t('hr.editEmployee') : t('hr.newEmployee')}</h3>
-        <button onClick={onClose} aria-label="Close"><X className="w-4 h-4" /></button>
+        <button onClick={onClose} aria-label={t('common.close')}><X className="w-4 h-4" /></button>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
         <input aria-label={t('hr.namePlaceholder')} placeholder={t('hr.namePlaceholder')} value={name} onChange={e => setName(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
@@ -252,7 +252,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
       onClose();
       window.location.reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error al guardar');
+      setError(err instanceof Error ? err.message : t('hr.saveError'));
       setLocalSaving(false);
     }
   };
@@ -262,7 +262,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
       <div className="bg-card rounded-xl shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto p-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-lg">{editing ? t('hr.editProfile') : t('hr.newProfile')}</h3>
-          <button onClick={onClose} aria-label="Close" className="p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label={t('common.close')} className="p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
@@ -330,10 +330,10 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           <div>
             <label className="flex items-center gap-2 text-xs font-medium text-muted-foreground mb-1 cursor-pointer">
               <input type="checkbox" checked={fixedSalary} onChange={e => setFixedSalary(e.target.checked)} className="rounded border-border" />
-              Salario fijo (no depende de ND)
+              {t('hr.fixedSalaryCheckbox')}
             </label>
             {fixedSalary && (
-              <input aria-label="Monto USD" type="number" placeholder="Monto USD" value={salary} onChange={e => setSalary(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+              <input aria-label={t('hr.amountUsdPlaceholder')} type="number" placeholder={t('hr.amountUsdPlaceholder')} value={salary} onChange={e => setSalary(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
             )}
           </div>
           {(role === 'head' || role === 'sales_manager') && (
@@ -346,7 +346,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
           {(role === 'head' || role === 'sales_manager') && (
             <>
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">% sobre BDM Globales</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pctOverGlobalBdms')}</label>
                 <input
                   type="number"
                   step="0.01"
@@ -355,10 +355,10 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                   placeholder="0"
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
-                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">% que cobra este HEAD sobre el ND de cada BDM GLOBAL en su estructura</p>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">{t('hr.pctOverGlobalBdmsHint')}</p>
               </div>
               <div>
-                <label className="block text-xs font-medium text-muted-foreground mb-1">% Extra sobre HEAD bajo su estructura</label>
+                <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pctExtraOverHead')}</label>
                 <input
                   type="number"
                   step="0.01"
@@ -367,7 +367,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                   placeholder="0"
                   className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
-                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">% sobre la suma de ND de los BDMs de cada HEAD con salario fijo bajo su estructura</p>
+                <p className="text-[11px] text-muted-foreground mt-1 leading-tight">{t('hr.pctExtraOverHeadHint')}</p>
               </div>
               <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-purple-50 dark:bg-purple-950/30 border border-purple-200 dark:border-purple-800">
                 <input
@@ -378,7 +378,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                   className="mt-0.5 h-4 w-4 rounded border-border"
                 />
                 <label htmlFor="apply-pct-extra-no-salary" className="flex-1 cursor-pointer text-sm">
-                  Aplicar el % Extra sobre HEAD también cuando no tienen salario fijo
+                  {t('hr.applyExtraPctNoSalary')}
                 </label>
               </div>
             </>
@@ -487,13 +487,13 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
         </div>
         {/* Contract upload section */}
         <div className="mt-4 border-t border-border pt-4">
-          <label className="block text-xs font-medium text-muted-foreground mb-2">Contrato firmado</label>
+          <label className="block text-xs font-medium text-muted-foreground mb-2">{t('hr.signedContract')}</label>
           {contractUrl && !contractFile && (
             <div className="flex items-center gap-2 mb-2 p-2 bg-positive/10/30 rounded-lg">
               <FileText className="w-4 h-4 text-emerald-600" />
-              <span className="text-sm text-positive flex-1">Contrato cargado</span>
-              <a href={contractUrl} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
-                Ver <ExternalLink className="w-3 h-3" />
+              <span className="text-sm text-positive flex-1">{t('hr.contractUploaded')}</span>
+              <a href={editing?.id ? withActiveCompany(`/api/admin/contract-url/${editing.id}`) : '#'} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
+                {t('hr.viewContract')} <ExternalLink className="w-3 h-3" />
               </a>
             </div>
           )}
@@ -502,7 +502,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
               <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border hover:border-[var(--color-secondary)] hover:bg-muted/50 transition-colors">
                 <Upload className="w-4 h-4 text-muted-foreground" />
                 <span className="text-sm text-muted-foreground">
-                  {contractFile ? contractFile.name : (contractUrl ? 'Cambiar contrato...' : 'Subir contrato (PDF, máx 10 MB)')}
+                  {contractFile ? contractFile.name : (contractUrl ? t('hr.changeContract') : t('hr.uploadContract'))}
                 </span>
               </div>
               <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
@@ -520,7 +520,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
             {t('common.cancel')}
           </button>
           <button onClick={handleSubmit} disabled={localSaving || uploading} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50">
-            {uploading ? 'Subiendo contrato...' : localSaving ? t('hr.saving') : (editing ? t('common.save') : t('common.add'))}
+            {uploading ? t('hr.uploadingContract') : localSaving ? t('hr.saving') : (editing ? t('common.save') : t('common.add'))}
           </button>
         </div>
       </div>
@@ -644,7 +644,7 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
       <div className="bg-card rounded-xl shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto p-6">
         <div className="flex justify-between items-center mb-4">
           <h3 className="font-semibold text-lg">{editing ? t('hr.editNegotiation') : t('hr.newNegotiation')}</h3>
-          <button onClick={onClose} aria-label="Close" className="p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label={t('common.close')} className="p-1 rounded hover:bg-muted"><X className="w-5 h-5" /></button>
         </div>
         <div className="space-y-4">
           {/* Profile selection — existing or new */}
@@ -662,7 +662,7 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
                   )}
                 >
                   <Users className="w-3.5 h-3.5 inline mr-1" />
-                  Existente
+                  {t('hr.existingProfile')}
                 </button>
                 <button
                   type="button"
@@ -673,7 +673,7 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
                   )}
                 >
                   <Plus className="w-3.5 h-3.5 inline mr-1" />
-                  Crear nuevo
+                  {t('hr.createNewProfile')}
                 </button>
               </div>
 
@@ -688,16 +688,16 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
                       <label className="block text-[10px] font-medium text-muted-foreground mb-1">{t('common.name')} *</label>
-                      <input aria-label={t('common.name')} value={newName} onChange={e => setNewName(e.target.value)} placeholder="Nombre completo" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                      <input aria-label={t('common.name')} value={newName} onChange={e => setNewName(e.target.value)} placeholder={t('hr.fullNamePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                     </div>
                     <div>
                       <label className="block text-[10px] font-medium text-muted-foreground mb-1">{t('common.email')} *</label>
-                      <input aria-label={t('common.email')} type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder="correo@ejemplo.com" className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                      <input aria-label={t('common.email')} type="email" value={newEmail} onChange={e => setNewEmail(e.target.value)} placeholder={t('hr.emailExamplePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                     </div>
                   </div>
                   <div>
                     <label className="block text-[10px] font-medium text-muted-foreground mb-1">{t('hr.role')}</label>
-                    <input aria-label={t('hr.role')} value={newRole} onChange={e => setNewRole(e.target.value)} placeholder="Ej: BDM, Closer, Setter, Trader..." className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                    <input aria-label={t('hr.role')} value={newRole} onChange={e => setNewRole(e.target.value)} placeholder={t('hr.roleExamplePlaceholder')} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
                   </div>
                 </div>
               )}
@@ -723,13 +723,13 @@ function NegotiationForm({ onClose, onSave, editing, profiles, saving, errorMsg 
 
           {/* Contract upload */}
           <div>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">Contrato firmado</label>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.signedContract')}</label>
             <div className="flex items-center gap-2">
               <label className="flex-1 cursor-pointer">
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border hover:border-[var(--color-secondary)] hover:bg-muted/50 transition-colors">
                   <Upload className="w-4 h-4 text-muted-foreground" />
                   <span className="text-sm text-muted-foreground">
-                    {contractFile ? contractFile.name : 'Subir contrato (PDF, máx 10 MB)'}
+                    {contractFile ? contractFile.name : t('hr.uploadContract')}
                   </span>
                 </div>
                 <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
@@ -940,11 +940,11 @@ export default function RRHHPage() {
         setEmployees((prev) => [...prev, created]);
       }
       await refresh();
-      setToast({ type: 'success', msg: editingEmp ? 'Empleado actualizado' : 'Empleado creado' });
+      setToast({ type: 'success', msg: editingEmp ? t('hr.employeeUpdated') : t('hr.employeeCreated') });
     } catch (err) {
       setToast({
         type: 'error',
-        msg: err instanceof Error ? err.message : 'Error guardando empleado',
+        msg: err instanceof Error ? err.message : t('hr.employeeSaveError'),
       });
     } finally {
       setEditingEmp(undefined);
@@ -1096,7 +1096,7 @@ export default function RRHHPage() {
       window.location.reload();
     } catch (err) {
       setDeletingId(null);
-      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al eliminar' });
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : t('hr.deleteError') });
       setTimeout(() => setToast(null), 4000);
     }
   };
@@ -1112,7 +1112,7 @@ export default function RRHHPage() {
       if (isUuid) await refresh();
     } catch (err) {
       setDeletingId(null);
-      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error al eliminar' });
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : t('hr.deleteError') });
       setTimeout(() => setToast(null), 4000);
     }
   };
@@ -1138,7 +1138,7 @@ export default function RRHHPage() {
   });
 
   const handleExportCommercial = () => verify2FA(() => {
-    const headers = [t('common.name'), t('common.email'), t('hr.role'), '% Depósito Neto', '% PnL', t('hr.commLotPlaceholder'), t('hr.salary'), t('hr.total')];
+    const headers = [t('common.name'), t('common.email'), t('hr.role'), t('hr.netDepPct'), t('hr.pnlPct'), t('hr.commLotPlaceholder'), t('hr.salary'), t('hr.total')];
     const rows = profiles.map(p => [
       p.name, p.email, ROLE_LABELS_HR[p.role],
       p.net_deposit_pct != null ? `${p.net_deposit_pct}%` : 'N/A',
@@ -1283,8 +1283,8 @@ export default function RRHHPage() {
             <button
               onClick={() => toggleTeamCollapsed(leader.id)}
               className="text-muted-foreground hover:text-foreground shrink-0"
-              aria-label={isCollapsed ? 'Expandir equipo' : 'Contraer equipo'}
-              title={isCollapsed ? 'Expandir equipo' : 'Contraer equipo'}
+              aria-label={isCollapsed ? t('hr.expandTeam') : t('hr.collapseTeam')}
+              title={isCollapsed ? t('hr.expandTeam') : t('hr.collapseTeam')}
             >
               {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
             </button>
@@ -1309,7 +1309,7 @@ export default function RRHHPage() {
                 {deletingId === leader.id ? (
                   <div className="flex items-center gap-1">
                     <button onClick={() => handleDeleteProfile(leader.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
-                    <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
+                    <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">{t('common.no')}</button>
                   </div>
                 ) : (
                   <button onClick={() => setDeletingId(leader.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
@@ -1326,7 +1326,7 @@ export default function RRHHPage() {
             </div>
           </div>
           <div className="text-left sm:text-right ml-13 sm:ml-0">
-            <p className="text-sm text-muted-foreground">Depósito Neto: {leader.net_deposit_pct != null ? `${leader.net_deposit_pct}%` : 'N/A'}</p>
+            <p className="text-sm text-muted-foreground">{t('hr.netDeposit')}: {leader.net_deposit_pct != null ? `${leader.net_deposit_pct}%` : 'N/A'}</p>
             <p className="font-semibold">{formatCurrency(leaderTotal)}</p>
           </div>
         </div>
@@ -1375,7 +1375,7 @@ export default function RRHHPage() {
                         {deletingId === bdm.id ? (
                           <div className="flex items-center gap-1">
                             <button onClick={() => handleDeleteProfile(bdm.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
-                            <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
+                            <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">{t('common.no')}</button>
                           </div>
                         ) : (
                           <button onClick={() => setDeletingId(bdm.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
@@ -1504,7 +1504,7 @@ export default function RRHHPage() {
             )}
           >
             <Receipt className="w-4 h-4 inline mr-1 sm:mr-2" />
-            Configuración IBs
+            {t('hr.ibConfigTab')}
           </button>
         )}
         <button
@@ -1515,7 +1515,7 @@ export default function RRHHPage() {
           )}
         >
           <ClipboardCheck className="w-4 h-4 inline mr-1 sm:mr-2" />
-          Check List Onboarding
+          {t('hr.onboardingTab')}
         </button>
       </div>
 
@@ -1708,7 +1708,7 @@ export default function RRHHPage() {
                             deletingId === emp.id ? (
                               <div className="flex items-center gap-1">
                                 <button onClick={() => handleDeleteEmployee(emp.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
-                                <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">No</button>
+                                <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">{t('common.no')}</button>
                               </div>
                             ) : (
                               <button onClick={() => setDeletingId(emp.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
@@ -1770,11 +1770,11 @@ export default function RRHHPage() {
                   type="text"
                   value={commercialSearch}
                   onChange={(e) => setCommercialSearch(e.target.value)}
-                  placeholder="Buscar por encargado (HEAD/SM) o por BDM / usuario..."
+                  placeholder={t('hr.searchCommercialPlaceholder')}
                   className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
                 {commercialSearch && (
-                  <button onClick={() => setCommercialSearch('')} className="absolute right-2 text-muted-foreground hover:text-foreground" aria-label="Limpiar búsqueda">✕</button>
+                  <button onClick={() => setCommercialSearch('')} className="absolute right-2 text-muted-foreground hover:text-foreground" aria-label={t('comm.clearSearch')}>✕</button>
                 )}
               </div>
               {!commercialQ && (
@@ -1783,21 +1783,22 @@ export default function RRHHPage() {
                     onClick={() => setCollapsedTeams(new Set([...salesManagers, ...heads].map((l) => l.id)))}
                     className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted"
                   >
-                    Contraer todos
+                    {t('hr.collapseAll')}
                   </button>
                   <button
                     onClick={() => setCollapsedTeams(new Set())}
                     className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted"
                   >
-                    Expandir todos
+                    {t('hr.expandAll')}
                   </button>
                 </div>
               )}
             </div>
             {commercialQ && (
               <p className="text-xs text-muted-foreground mt-2">
-                Mostrando {visibleSalesManagers.length + visibleHeads.length} equipo(s)
-                {visibleIndependentBdms.length > 0 ? ` y ${visibleIndependentBdms.length} BDM(s) independiente(s)` : ''} para &quot;{commercialSearch}&quot;.
+                {t('hr.showingTeams', { teams: String(visibleSalesManagers.length + visibleHeads.length) })}
+                {visibleIndependentBdms.length > 0 ? t('hr.showingBdms', { count: String(visibleIndependentBdms.length) }) : ''}
+                {t('hr.forQuery', { query: commercialSearch })}
               </p>
             )}
           </Card>
@@ -1810,7 +1811,7 @@ export default function RRHHPage() {
 
           {/* Sin resultados de búsqueda */}
           {commercialQ && visibleSalesManagers.length === 0 && visibleHeads.length === 0 && visibleIndependentBdms.length === 0 && (
-            <Card><p className="text-center text-muted-foreground py-8">Sin resultados para &quot;{commercialSearch}&quot;.</p></Card>
+            <Card><p className="text-center text-muted-foreground py-8">{t('hr.noResultsFor', { query: commercialSearch })}</p></Card>
           )}
 
           {/* Independent BDMs */}
@@ -1974,12 +1975,12 @@ export default function RRHHPage() {
                   ))}
                 </select>
                 <select
-                  aria-label="Todos los estados"
+                  aria-label={t('hr.allStatuses')}
                   value={negFilterStatus}
                   onChange={e => setNegFilterStatus(e.target.value as '' | NegotiationStatus)}
                   className="px-3 py-2 rounded-lg border border-border bg-background text-sm"
                 >
-                  <option value="">Todos los estados</option>
+                  <option value="">{t('hr.allStatuses')}</option>
                   <option value="active">{t('hr.negStatusActive')}</option>
                   <option value="pending">{t('hr.negStatusPending')}</option>
                   <option value="closed">{t('hr.negStatusClosed')}</option>

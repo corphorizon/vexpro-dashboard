@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createHash, randomBytes } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendPasswordResetEmail } from '@/services/emailService';
+import { resolveUserLocale } from '@/lib/email-i18n';
 import { checkRateLimit, recordFailure } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
 
@@ -113,10 +114,15 @@ export async function POST(request: NextRequest) {
     const resetUrl = `${origin}/reset-password?token=${encodeURIComponent(rawToken)}`;
 
     // Fire-and-forget email send — uses the company's own SendGrid creds if
-    // configured, otherwise falls back to env.
-    sendPasswordResetEmail(companyUser.email, resetUrl, companyUser.company_id).catch((err) => {
-      console.error('[forgot-password] email send failed:', err);
-    });
+    // configured, otherwise falls back to env. Sent in the recipient's
+    // preferred language (English when no preference is set).
+    resolveUserLocale(adminClient, companyUser.email)
+      .then((locale) =>
+        sendPasswordResetEmail(companyUser.email, resetUrl, companyUser.company_id, locale),
+      )
+      .catch((err) => {
+        console.error('[forgot-password] email send failed:', err);
+      });
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

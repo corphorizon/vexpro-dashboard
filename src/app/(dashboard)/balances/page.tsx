@@ -532,7 +532,7 @@ export default function BalancesPage() {
     // Reject NaN / Infinity explicitly — `|| 0` would silently turn a bad
     // input into a real save of "0", which is data corruption.
     if (!Number.isFinite(value)) {
-      setErrMsg('El valor ingresado no es un número válido');
+      setErrMsg(t('balances.invalidNumber'));
       return;
     }
     setSavingKey(key);
@@ -553,30 +553,30 @@ export default function BalancesPage() {
           }),
         }),
         10_000,
-        'Guardar balance',
+        t('balances.opSaveBalance'),
       );
       const json = (await res.json()) as { success: boolean; error?: string };
       if (!res.ok || !json.success) {
-        throw new Error(json.error ?? `Error guardando (HTTP ${res.status})`);
+        throw new Error(json.error ?? t('balances.saveErrorHttp', { status: String(res.status) }));
       }
       // Refresh BEFORE collapsing the editor so the displayed value reflects
       // what's actually persisted. If the refresh itself stalls we still show
       // success — the write was confirmed by the 200 above.
       try {
-        await withTimeout(loadSnapshots(), 10_000, 'Recargar balances');
+        await withTimeout(loadSnapshots(), 10_000, t('balances.opReloadBalances'));
       } catch (refreshErr) {
         console.warn('[balances] refresh after save failed:', refreshErr);
       }
       cancelEdit(key);
-      setOkMsg(`Balance guardado correctamente`);
+      setOkMsg(t('balances.savedOk'));
       setTimeout(() => setOkMsg(null), 4000);
     } catch (err) {
       const msg =
         err instanceof TimeoutError
-          ? `${err.message}. Tu cambio puede no haberse guardado — verificá y reintentá.`
+          ? `${err.message}. ${t('balances.timeoutRetry')}`
           : err instanceof Error
             ? err.message
-            : 'Error guardando balance';
+            : t('balances.saveErrorGeneric');
       setErrMsg(msg);
     } finally {
       setSavingKey(null);
@@ -626,9 +626,9 @@ export default function BalancesPage() {
               <Wallet className="w-5 h-5 text-blue-500" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold">Resumen del mes</h2>
+              <h2 className="text-lg font-semibold">{t('balances.monthSummary')}</h2>
               <p className="text-xs text-muted-foreground">
-                Net Deposit − Egresos Operativos − Monto a Distribuir. Se acumula al siguiente período.
+                {t('balances.formulaHint')}
               </p>
             </div>
           </div>
@@ -641,7 +641,7 @@ export default function BalancesPage() {
                 value={balanceMonthPeriodId || selectedPeriodId || ''}
                 onChange={(e) => setBalanceMonthPeriodId(e.target.value)}
                 className="h-9 px-3 text-sm rounded-lg border border-border bg-card min-w-[200px] focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                aria-label="Seleccionar mes"
+                aria-label={t('balances.selectMonth')}
               >
                 {balanceChain.map((r) => (
                   <option key={r.periodId} value={r.periodId}>
@@ -656,8 +656,8 @@ export default function BalancesPage() {
               onClick={loadApiMonthly}
               disabled={apiTotalsLoading}
               className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-              title="Refrescar datos de API"
-              aria-label="Refrescar datos de API"
+              title={t('balances.refreshApi')}
+              aria-label={t('balances.refreshApi')}
             >
               <RefreshCw className={`w-4 h-4 ${apiTotalsLoading ? 'animate-spin' : ''}`} />
             </button>
@@ -668,13 +668,13 @@ export default function BalancesPage() {
           <>
             <div className="text-center py-6 mb-4 bg-muted/30 rounded-lg">
               <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
-                Resultado del mes · {currentBalanceRow.label}
+                {t('balances.balanceMonth')} · {currentBalanceRow.label}
               </p>
               <p className={`text-3xl sm:text-4xl font-bold tabular-nums ${currentBalanceRow.balanceMes >= 0 ? 'text-positive' : 'text-negative'}`}>
                 {formatCurrency(currentBalanceRow.balanceMes)}
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                Net Deposit − Egresos − Monto a Distribuir (acumulado del mes: <span className="font-medium text-foreground">{formatCurrency(currentBalanceRow.saldoFinal)}</span>)
+                {t('balances.monthResultHint')} ({t('balances.monthAccumulated')} <span className="font-medium text-foreground">{formatCurrency(currentBalanceRow.saldoFinal)}</span>)
               </p>
             </div>
 
@@ -773,14 +773,14 @@ export default function BalancesPage() {
               value={selectedDate}
               onChange={(e) => setSelectedDate(e.target.value)}
               className="h-9 px-3 text-sm rounded-lg border border-border bg-card focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-              aria-label="Fecha del snapshot"
+              aria-label={t('balances.snapshotDate')}
             />
             <button
               onClick={loadSnapshots}
               disabled={loadingSnap}
               className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-              title="Recargar"
-              aria-label="Recargar"
+              title={t('balances.reload')}
+              aria-label={t('balances.reload')}
             >
               <RefreshCw className={`w-4 h-4 ${loadingSnap ? 'animate-spin' : ''}`} />
             </button>
@@ -788,10 +788,10 @@ export default function BalancesPage() {
               <button
                 onClick={() => setShowChannelConfig(true)}
                 className="inline-flex items-center gap-1.5 h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors"
-                title="Configurar canales"
+                title={t('balances.configureChannels')}
               >
                 <Settings2 className="w-4 h-4" />
-                <span className="hidden sm:inline">Configurar</span>
+                <span className="hidden sm:inline">{t('balances.configure')}</span>
               </button>
             )}
           </div>
@@ -799,7 +799,7 @@ export default function BalancesPage() {
 
         {visibleChannels.length === 0 && (
           <p className="text-sm text-muted-foreground py-6 text-center">
-            No hay canales visibles. Abre <strong>Configurar</strong> para activar al menos uno.
+            {t('balances.noVisibleChannelsPre')} <strong>{t('balances.configure')}</strong> {t('balances.noVisibleChannelsPost')}
           </p>
         )}
 
@@ -827,7 +827,7 @@ export default function BalancesPage() {
                   </div>
                   {isAuto && !canOverride && (
                     <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-info/10 text-blue-700 dark:text-blue-300 border border-info/30">
-                      Automático
+                      {t('balances.autoBadge')}
                     </span>
                   )}
                   {canOverride && (
@@ -852,14 +852,14 @@ export default function BalancesPage() {
                         onClick={() => saveEdit(ch.key)}
                         disabled={savingKey === ch.key}
                         className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-50"
-                        aria-label="Guardar"
+                        aria-label={t('common.save')}
                       >
                         {savingKey === ch.key ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                       </button>
                       <button
                         onClick={() => cancelEdit(ch.key)}
                         className="p-1 text-muted-foreground hover:bg-muted rounded"
-                        aria-label="Cancelar"
+                        aria-label={t('common.cancel')}
                       >
                         <X className="w-4 h-4" />
                       </button>
@@ -873,8 +873,8 @@ export default function BalancesPage() {
                         <button
                           onClick={() => startEdit(ch.key)}
                           className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                          aria-label="Editar"
-                          title={canOverride ? 'Agregar valor manual (respaldo si la API falla)' : 'Editar balance'}
+                          aria-label={t('common.edit')}
+                          title={canOverride ? t('balances.manualOverrideTitle') : t('balances.editBalance')}
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
@@ -883,8 +883,8 @@ export default function BalancesPage() {
                         <button
                           onClick={() => setShowCoinsbuyModal(true)}
                           className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                          aria-label="Editar wallets"
-                          title="Elegir wallets de Coinsbuy"
+                          aria-label={t('balances.editWallets')}
+                          title={t('balances.chooseCoinsbuyWallets')}
                         >
                           <Edit2 className="w-3.5 h-3.5" />
                         </button>
@@ -977,9 +977,9 @@ export default function BalancesPage() {
                   <Wallet className="w-5 h-5 text-emerald-500" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="text-lg font-semibold">Wallets de Coinsbuy</h2>
+                  <h2 className="text-lg font-semibold">{t('balances.coinsbuyWallets')}</h2>
                   <p className="text-xs text-muted-foreground">
-                    Elige cuáles suman al balance del canal
+                    {t('balances.coinsbuyWalletsHint')}
                     {walletsIsMock && <span className="ml-1 text-amber-500">(Mock)</span>}
                   </p>
                 </div>
@@ -994,14 +994,14 @@ export default function BalancesPage() {
                   onClick={fetchWallets}
                   disabled={walletsLoading}
                   className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-                  title="Refrescar wallets"
+                  title={t('balances.refreshWallets')}
                 >
                   <RefreshCw className={`w-4 h-4 ${walletsLoading ? 'animate-spin' : ''}`} />
                 </button>
                 <button
                   onClick={() => setShowCoinsbuyModal(false)}
                   className="p-2 rounded-lg hover:bg-muted"
-                  aria-label="Cerrar"
+                  aria-label={t('common.close')}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -1015,13 +1015,13 @@ export default function BalancesPage() {
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   <span>
                     {walletsError}
-                    {walletsFetchedAt && ` — Datos desactualizados (última sync: ${new Date(walletsFetchedAt).toLocaleString('es-ES')})`}
+                    {walletsFetchedAt && t('balances.staleData', { time: new Date(walletsFetchedAt).toLocaleString('es-ES') })}
                   </span>
                 </div>
               )}
 
               <p className="text-xs text-muted-foreground mb-3">
-                Usa el <strong>pin</strong> para incluir/excluir una wallet del canal Coinsbuy en Balances por Canal. El toggle controla si se suma al total temporal de esta vista.
+                {t('balances.pinHint')}
               </p>
 
               {wallets.length > 0 ? (
@@ -1039,7 +1039,7 @@ export default function BalancesPage() {
                           <button
                             onClick={() => toggleWallet(w.id)}
                             className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                            title={isOn ? 'Excluir del total' : 'Incluir en el total'}
+                            title={isOn ? t('balances.excludeFromTotal') : t('balances.includeInTotal')}
                           >
                             {isOn
                               ? <ToggleRight className="w-6 h-6 text-emerald-500" />
@@ -1052,7 +1052,7 @@ export default function BalancesPage() {
                               {w.currencyCode}
                               {w.balancePending > 0 && (
                                 <span className="ml-2 text-amber-500">
-                                  Pendiente: {w.balancePending.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                                  {t('expenses.pending')}: {w.balancePending.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                                 </span>
                               )}
                             </p>
@@ -1066,7 +1066,7 @@ export default function BalancesPage() {
                             <button
                               onClick={() => handleUnpin(w.id)}
                               className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
-                              title="Quitar de Balances por Canal"
+                              title={t('balances.unpinTitle')}
                             >
                               <PinOff className="w-4 h-4" />
                             </button>
@@ -1074,7 +1074,7 @@ export default function BalancesPage() {
                             <button
                               onClick={() => handlePin(w.id, w.label)}
                               className="p-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                              title="Fijar en Balances por Canal"
+                              title={t('balances.pinTitle')}
                             >
                               <Pin className="w-4 h-4" />
                             </button>
@@ -1085,9 +1085,9 @@ export default function BalancesPage() {
                   })}
                 </div>
               ) : walletsLoading ? (
-                <p className="text-center text-muted-foreground py-8">Cargando wallets…</p>
+                <p className="text-center text-muted-foreground py-8">{t('balances.loadingWallets')}</p>
               ) : (
-                <p className="text-center text-muted-foreground py-8">No hay wallets activas</p>
+                <p className="text-center text-muted-foreground py-8">{t('balances.noActiveWallets')}</p>
               )}
             </div>
 
@@ -1096,17 +1096,17 @@ export default function BalancesPage() {
               <div className="p-4 border-t border-border flex items-center justify-between">
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    Wallets fijadas
+                    {t('balances.pinnedWallets')}
                   </p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    {pinnedWallets.length} fijada{pinnedWallets.length === 1 ? '' : 's'} · suman en Balances por Canal
+                    {t('balances.pinnedCount', { count: String(pinnedWallets.length) })}
                   </p>
                 </div>
                 <button
                   onClick={() => setShowCoinsbuyModal(false)}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
                 >
-                  Listo
+                  {t('balances.done')}
                 </button>
               </div>
             )}

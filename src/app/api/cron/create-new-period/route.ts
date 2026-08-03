@@ -32,21 +32,30 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendNotificationEmail } from '@/services/emailService';
+import { et, isEmailLocale, type EmailLocale } from '@/lib/email-i18n';
 
 const SPANISH_MONTHS_SHORT = [
   'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
   'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
 ];
-const SPANISH_MONTHS_LONG = [
-  'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-];
+const MONTHS_LONG: Record<EmailLocale, string[]> = {
+  es: [
+    'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+  ],
+  en: [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December',
+  ],
+};
 
+// El label del período en DB se mantiene en español ("Ene 26") — es un dato
+// de negocio compartido por todos los usuarios, no copy del email.
 function labelFor(year: number, month: number): string {
   return `${SPANISH_MONTHS_SHORT[month - 1]} ${String(year).slice(-2)}`;
 }
-function fullName(year: number, month: number): string {
-  return `${SPANISH_MONTHS_LONG[month - 1]} ${year}`;
+function fullName(year: number, month: number, locale: EmailLocale): string {
+  return `${MONTHS_LONG[locale][month - 1]} ${year}`;
 }
 
 type CompanyRow = {
@@ -55,7 +64,7 @@ type CompanyRow = {
   slug: string;
   status: string;
 };
-type AdminRow = { name: string | null; email: string };
+type AdminRow = { name: string | null; email: string; preferred_language?: string | null };
 type PerCompanyResult = {
   company_id: string;
   company_name: string;
@@ -223,10 +232,11 @@ export async function GET(request: NextRequest) {
         }),
       });
 
-      // 5. Notify admins of this company.
+      // 5. Notify admins of this company — each in their preferred
+      //    language ('en' when no preference is configured).
       const { data: admins } = await admin
         .from('company_users')
-        .select('name, email')
+        .select('name, email, preferred_language')
         .eq('company_id', c.id)
         .eq('role', 'admin')
         .eq('status', 'active');
@@ -236,14 +246,21 @@ export async function GET(request: NextRequest) {
       for (const a of (admins ?? []) as AdminRow[]) {
         if (!a.email) continue;
         try {
-          const message =
-            `Se ha creado automáticamente el período ${fullName(targetYear, targetMonth)}. ` +
-            `El período ${fullName(prevYear, prevMonth)} sigue abierto para tu revisión y cierre manual.`;
+          const locale: EmailLocale = isEmailLocale(a.preferred_language)
+            ? a.preferred_language
+            : 'en';
+          const message = et(locale, 'period.message', {
+            period: fullName(targetYear, targetMonth, locale),
+            prevPeriod: fullName(prevYear, prevMonth, locale),
+          });
           const res = await sendNotificationEmail(
             a.email,
-            `Nuevo período abierto: ${fullName(targetYear, targetMonth)}`,
+            et(locale, 'period.subject', {
+              period: fullName(targetYear, targetMonth, locale),
+            }),
             message,
             c.id,
+            locale,
           );
           if (res.success) emailed += 1;
           else emailFailures += 1;

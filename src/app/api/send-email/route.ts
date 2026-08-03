@@ -1,28 +1,38 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { checkRateLimit, recordFailure, clearAttempts, type AttemptKind } from '@/lib/rate-limit';
 import type {
   SendEmailRequest,
   EmailType,
   WelcomeEmailData,
-  PasswordResetEmailData,
   ReportEmailData,
   NotificationEmailData,
   LoginNotificationData,
 } from '@/lib/types';
 import {
   sendWelcomeEmail,
-  sendPasswordResetEmail,
   sendDashboardReportEmail,
   sendNotificationEmail,
   sendLoginNotificationEmail,
 } from '@/services/emailService';
+import { resolveUserLocale } from '@/lib/email-i18n';
 
 // ---------------------------------------------------------------------------
 // Validation helpers
 // ---------------------------------------------------------------------------
 
-const VALID_EMAIL_TYPES: EmailType[] = ['welcome', 'password_reset', 'report', 'notification', 'login_notification'];
+// 'password_reset' was removed on purpose (S4): this route must not send
+// reset links. The real flow lives in /api/auth/forgot-password, which
+// builds the link server-side and never trusts one from the client.
+const VALID_EMAIL_TYPES: EmailType[] = ['welcome', 'report', 'notification', 'login_notification'];
+
+// Durable send quota per company (S4 relay hardening). Reuses the same
+// twofa_attempts-backed mechanism used by the auth endpoints.
+const SEND_KIND = 'send-email' as const;
+const SEND_MAX_PER_WINDOW = 20;
+const SEND_WINDOW_MS = 60 * 60 * 1000; // 1 hour
 
 function isValidEmail(email: string): boolean {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -62,11 +72,6 @@ function validateBody(body: unknown): { valid: true; data: SendEmailRequest } | 
       if (!d.userName) return { valid: false, error: '"data.userName" is required for welcome emails' };
       break;
     }
-    case 'password_reset': {
-      const d = data as Partial<PasswordResetEmailData>;
-      if (!d.resetLink) return { valid: false, error: '"data.resetLink" is required for password reset emails' };
-      break;
-    }
     case 'report': {
       const d = data as Partial<ReportEmailData>;
       if (!d.reportName) return { valid: false, error: '"data.reportName" is required for report emails' };
@@ -98,10 +103,21 @@ function validateBody(body: unknown): { valid: true; data: SendEmailRequest } | 
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
+
+    // S4: this endpoint must never send password reset links — a caller-
+    // supplied resetLink is a phishing/account-takeover primitive. The real
+    // flow lives in /api/auth/forgot-password.
+    if ((body as Record<string, unknown> | null)?.type === 'password_reset') {
+      return NextResponse.json(
+        { success: false, error: 'Usá el flujo de recuperación de contraseña' },
+        { status: 400 },
+      );
+    }
+
     const validation = validateBody(body);
 
     if (!validation.valid) {
@@ -114,23 +130,78 @@ export async function POST(request: NextRequest) {
     const { to, type, data } = validation.data;
     const cid = auth.companyId; // use caller's company credentials if configured
 
+    const adminClient = createAdminClient();
+
+    // S4: recipient must belong to the caller's company — this endpoint is
+    // not an open relay. `ilike` without wildcards = case-insensitive equality.
+    const recipient = to.trim();
+    const { data: member } = await adminClient
+      .from('company_users')
+      .select('id')
+      .eq('company_id', cid)
+      .ilike('email', recipient)
+      .maybeSingle();
+
+    let allowed = !!member;
+    if (!allowed && auth.isSuperadmin) {
+      // Superadmins may also notify other platform users.
+      const { data: pu } = await adminClient
+        .from('platform_users')
+        .select('id')
+        .ilike('email', recipient)
+        .maybeSingle();
+      allowed = !!pu;
+    }
+
+    if (!allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Solo se puede enviar correo a usuarios de tu organización' },
+        { status: 403 },
+      );
+    }
+
+    // S4: durable send quota — max SEND_MAX_PER_WINDOW sends per company per
+    // window. Each send counts as one "attempt"; hitting the max locks the
+    // counter for SEND_WINDOW_MS, after which it is reset.
+    const quotaOpts = { key: `company:${cid}`, kind: SEND_KIND };
+    const gate = await checkRateLimit(adminClient, quotaOpts);
+    if (gate.locked) {
+      const minutes = Math.ceil(gate.waitMs / 60000);
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Límite de envío de correos alcanzado. Intenta de nuevo en ${minutes} minuto${minutes === 1 ? '' : 's'}.`,
+        },
+        { status: 429 },
+      );
+    }
+    if (gate.failedCount >= SEND_MAX_PER_WINDOW) {
+      // Previous window's lock expired — start a fresh window.
+      await clearAttempts(adminClient, quotaOpts);
+    }
+    await recordFailure(adminClient, {
+      ...quotaOpts,
+      max: SEND_MAX_PER_WINDOW,
+      lockMs: SEND_WINDOW_MS,
+    });
+
+    // Recipient's preferred email language ('en' when no preference is set).
+    const locale = await resolveUserLocale(adminClient, recipient);
+
     let result;
 
     switch (type) {
       case 'welcome':
-        result = await sendWelcomeEmail(to, (data as WelcomeEmailData).userName, cid);
-        break;
-      case 'password_reset':
-        result = await sendPasswordResetEmail(to, (data as PasswordResetEmailData).resetLink, cid);
+        result = await sendWelcomeEmail(to, (data as WelcomeEmailData).userName, cid, locale);
         break;
       case 'report': {
         const r = data as ReportEmailData;
-        result = await sendDashboardReportEmail(to, r.reportName, r.reportPeriod, r.reportSummary, cid);
+        result = await sendDashboardReportEmail(to, r.reportName, r.reportPeriod, r.reportSummary, cid, locale);
         break;
       }
       case 'notification': {
         const n = data as NotificationEmailData;
-        result = await sendNotificationEmail(to, n.title, n.message, cid);
+        result = await sendNotificationEmail(to, n.title, n.message, cid, locale);
         break;
       }
       case 'login_notification': {
@@ -141,9 +212,15 @@ export async function POST(request: NextRequest) {
           browser: l.browser || 'Unknown Device',
           ipAddress: l.ipAddress || 'Unknown IP',
           dashboardUrl: l.dashboardUrl || '',
-        }, cid);
+        }, cid, locale);
         break;
       }
+      default:
+        // Unreachable — validateBody already rejected unknown types.
+        return NextResponse.json(
+          { success: false, error: 'Tipo de correo no soportado' },
+          { status: 400 },
+        );
     }
 
     if (!result.success) {

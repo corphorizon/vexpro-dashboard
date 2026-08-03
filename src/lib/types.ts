@@ -339,6 +339,13 @@ export interface Negotiation {
 // UserRole is defined in auth-context.tsx — re-export for convenience
 export type { UserRole } from './auth-context';
 
+/**
+ * Preferred email language stored in company_users.preferred_language and
+ * platform_users.preferred_language (migration-052). Users without a
+ * configured preference receive English.
+ */
+export type PreferredLanguage = 'en' | 'es';
+
 // Email Types
 export type EmailType = 'welcome' | 'password_reset' | 'report' | 'notification' | 'login_notification';
 
