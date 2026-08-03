@@ -115,7 +115,10 @@ const NAV_STRUCTURE: NavEntry[] = [
       // flat-menu mode puts it at the top.
       { href: '/risk/dashboard', i18nKey: 'nav.riskDashboard', icon: LayoutDashboard, module: 'risk' },
       { href: '/risk/retiros-propfirm', i18nKey: 'nav.riskWithdrawals', icon: FileSearch, module: 'risk' },
-      { href: '/risk/retiros-wallet', i18nKey: 'nav.riskWalletWithdrawals', icon: Wallet, module: 'risk' },
+      // Oculto del menú (decisión Kevin 2026-08-03): la página es 100% mock
+      // (MOCK_REQUESTS + botones alert) hasta conectar el CRM real. La ruta
+      // sigue existiendo para desarrollo; solo no se navega desde acá.
+      // { href: '/risk/retiros-wallet', i18nKey: 'nav.riskWalletWithdrawals', icon: Wallet, module: 'risk' },
     ],
   },
 
