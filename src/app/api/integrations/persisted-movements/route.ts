@@ -145,7 +145,7 @@ export async function GET(request: NextRequest) {
         let q = admin
           .from('api_transactions')
           .select(
-            'provider, external_id, amount, fee, currency, status, transaction_date, wallet_id, wallet_label, raw',
+            'provider, external_id, amount, fee, currency, status, transaction_date, wallet_id, wallet_label, internal, raw',
           )
           .eq('company_id', companyId)
           .eq('provider', slug)
@@ -242,6 +242,11 @@ export async function GET(request: NextRequest) {
         // the new fields too once a re-sync runs.
         if (r.wallet_id) (base as Record<string, unknown>).walletId = r.wallet_id;
         if (r.wallet_label) (base as Record<string, unknown>).walletLabel = r.wallet_label;
+        // Overlay de `internal` desde la COLUMNA (igual que wallet_id): las
+        // filas persistidas antes del fix no traen el campo dentro de `raw`,
+        // pero después del backfill la columna es la fuente de verdad. Así
+        // computeProviderTotals y la UI ven la marca sin re-sync del raw.
+        if (r.internal === true) (base as Record<string, unknown>).internal = true;
         // Enriquecer con info de exclusión manual (solo coinsbuy-deposits hoy).
         const excludedInfo = excludedMap.get(`${slug}:${r.external_id}`);
         if (excludedInfo) {

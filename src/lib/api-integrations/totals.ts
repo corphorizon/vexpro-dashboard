@@ -64,8 +64,12 @@ export function computeProviderTotals(dataset: ProviderDataset): ProviderTotals 
       // Igual que deposits: excluimos las marcadas manualmente como externas
       // (retiros fuera del flow del CRM / swaps) — el admin las flagea desde
       // /movimientos/desglose y no deben contar para los totales.
+      // También excluimos las transferencias INTERNAS (`internal === true`):
+      // payouts entre wallets propias de la empresa (txid null en Coinsbuy).
+      // Ese dinero nunca salió de la empresa, así que no cuenta en Retiros
+      // Totales ni en Net Deposit.
       const rows = (dataset.transactions as CoinsbuyWithdrawalTx[]).filter(
-        (t) => t.status === 'Approved' && t.excluded !== true
+        (t) => t.status === 'Approved' && t.excluded !== true && t.internal !== true
       );
       return {
         total: rows.reduce((s, t) => s + t.chargedAmount, 0),

@@ -123,6 +123,12 @@ export async function persistDataset(
         'walletLabel' in tx && typeof tx.walletLabel === 'string'
           ? tx.walletLabel
           : null;
+      // Transferencia interna entre wallets propias (solo coinsbuy-withdrawals
+      // hoy: txid null en la API v3 → el fetcher setea `internal: true`).
+      // Se persiste como columna propia para que las agregaciones SQL
+      // (get_period_totals_by_month, reports) puedan filtrarla sin abrir `raw`.
+      const internal =
+        'internal' in tx && (tx as { internal?: boolean }).internal === true;
       return {
         company_id: companyId,
         provider: dataset.slug,
@@ -134,6 +140,7 @@ export async function persistDataset(
         transaction_date: tx.createdAt,
         wallet_id: walletId,
         wallet_label: walletLabel,
+        internal,
         raw: tx as unknown as Record<string, unknown>,
         synced_at: new Date().toISOString(),
       };
@@ -253,7 +260,7 @@ export async function loadPersistedTotals(
 
   let query = admin
     .from('api_transactions')
-    .select('provider, amount, status, transaction_date, wallet_id')
+    .select('provider, amount, status, transaction_date, wallet_id, internal')
     .eq('company_id', companyId)
     .gte('transaction_date', fromISO)
     .lte('transaction_date', toISO)
@@ -297,6 +304,10 @@ export async function loadPersistedTotals(
     if (!(slug in by)) continue;
     const accepted = ACCEPTED[slug];
     if (row.status && !accepted.includes(row.status)) continue;
+    // Transferencias internas entre wallets propias (txid null en Coinsbuy):
+    // no cuentan en Retiros Totales ni Net Deposit. Solo aplica al lado de
+    // retiros — el lado receptor no aparece como depósito (verificado).
+    if (slug === 'coinsbuy-withdrawals' && row.internal === true) continue;
     by[slug] += Number(row.amount) || 0;
   }
 

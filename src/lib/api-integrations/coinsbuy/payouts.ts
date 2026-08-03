@@ -210,6 +210,11 @@ export async function fetchCoinsbuyPayoutsV3(
           commission,
           currency: 'USD',
           status: 'Approved',
+          // Transferencia interna entre wallets propias: Coinsbuy devuelve
+          // txid null/vacío para payouts internos (verificado contra la API
+          // v3 el 2026-08-03; los externos confirmados siempre traen txid
+          // de blockchain). No cuenta en Retiros Totales ni Net Deposit.
+          internal: !attrs.txid,
         });
       }
 
