@@ -10,7 +10,7 @@
 // When credentials are not configured, falls back to mock data.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getUnipaymentToken, isUnipaymentEnabled, getUnipaymentBaseUrl } from './auth';
+import { getUnipaymentToken, isUnipaymentEnabled, getUnipaymentBaseUrl, getUnipaymentFeePct } from './auth';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
 import { generateUnipaymentDeposits } from '../mocks';
@@ -122,6 +122,9 @@ export async function fetchUnipaymentDepositsV2(
   try {
     const token = await getUnipaymentToken(companyId);
     const baseUrl = await getUnipaymentBaseUrl(companyId);
+    // % de comisión configurable por tenant (api_credentials.extra_config.
+    // fee_pct). Si no está configurado, cae al 9% empírico de abajo.
+    const tenantFeePct = await getUnipaymentFeePct(companyId);
     const allTransactions: UnipaymentDepositTx[] = [];
 
     let pageNo = 1;
@@ -177,13 +180,20 @@ export async function fetchUnipaymentDepositsV2(
         // understated fees by ~9x.
         //
         // The pickFee fallback chain (fee_amount, service_fee, etc.)
-        // remains in case UniPayment ever ships a per-invoice fee field.
+        // remains in case UniPayment ever ships a per-invoice fee field —
+        // un fee real de la API SIEMPRE gana sobre el % configurado.
+        //
+        // Precedencia (2026-08-03): 1) fee real de la API (pickFee),
+        // 2) % configurado por tenant (extra_config.fee_pct), 3) 9%
+        // empírico como último recurso (calibración de arriba).
         const realFee = pickFee(inv);
         const UNIPAYMENT_DEFAULT_FEE_RATE = 0.09; // 9% empirical aggregate.
+        const feeRate =
+          tenantFeePct !== null ? tenantFeePct / 100 : UNIPAYMENT_DEFAULT_FEE_RATE;
         const fee =
           realFee !== null
             ? Math.round(realFee * 100) / 100
-            : Math.round(grossAmount * UNIPAYMENT_DEFAULT_FEE_RATE * 100) / 100;
+            : Math.round(grossAmount * feeRate * 100) / 100;
         const netAmount = Math.max(0, grossAmount - fee);
 
         if (grossAmount <= 0) continue;

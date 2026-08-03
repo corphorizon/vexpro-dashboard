@@ -56,6 +56,12 @@ interface ProviderMeta {
   editsCompanyWallet?: boolean;
   /** Health-check button enabled. */
   supportsPing?: boolean;
+  /**
+   * FairPay / UniPayment: muestran el campo "Comisión del proveedor (%)"
+   * que se persiste en extra_config.fee_pct. Estos proveedores no exponen
+   * su comisión por API, así que el % se configura acá por tenant.
+   */
+  supportsFeePct?: boolean;
 }
 
 const PROVIDER_META: Record<Provider, ProviderMeta> = {
@@ -79,11 +85,13 @@ const PROVIDER_META: Record<Provider, ProviderMeta> = {
     label: 'Unipayment',
     description: 'Procesador de pagos.',
     form: { kind: 'compound' },
+    supportsFeePct: true,
   },
   fairpay: {
     label: 'Fairpay',
     description: 'Procesador de pagos.',
     form: { kind: 'apiKey' },
+    supportsFeePct: true,
   },
   orion_crm: {
     label: 'Orion CRM',
@@ -445,6 +453,11 @@ function ApiCredentialForm({
   const [clientSecret, setClientSecret] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [walletInput, setWalletInput] = useState(currentWalletId ?? '');
+  // Comisión del proveedor (%) — solo fairpay/unipayment (supportsFeePct).
+  // Se guarda en extra_config.fee_pct; vacío = sin comisión configurada.
+  const [feePct, setFeePct] = useState<string>(() =>
+    existingExtras.fee_pct != null ? String(existingExtras.fee_pct) : '',
+  );
   const [showSecret, setShowSecret] = useState(false);
   const [extras, setExtras] = useState<Record<string, string>>(() => {
     const init: Record<string, string> = {};
@@ -460,7 +473,7 @@ function ApiCredentialForm({
 
     // Per-kind validation + secret payload construction.
     let secret: string;
-    let extra_config: Record<string, string> | null = null;
+    let extra_config: Record<string, unknown> | null = null;
 
     if (meta.form.kind === 'compound') {
       if (!clientId.trim() || clientSecret.length < 8) {
@@ -485,6 +498,24 @@ function ApiCredentialForm({
       }
       secret = apiKey;
       extra_config = extras;
+    }
+
+    // Comisión del proveedor (%) — merge sobre extra_config existente para
+    // no pisar otras keys (base_url, etc.). Vacío = quitar fee_pct.
+    if (meta.supportsFeePct) {
+      const merged: Record<string, unknown> = { ...existingExtras, ...(extra_config ?? {}) };
+      const trimmedFee = feePct.trim();
+      if (trimmedFee === '') {
+        delete merged.fee_pct;
+      } else {
+        const n = Number(trimmedFee);
+        if (!Number.isFinite(n) || n < 0 || n > 30) {
+          setError('La comisión del proveedor debe ser un número entre 0 y 30 (%).');
+          return;
+        }
+        merged.fee_pct = n;
+      }
+      extra_config = Object.keys(merged).length > 0 ? merged : null;
     }
 
     setSaving(true);
@@ -667,6 +698,29 @@ function ApiCredentialForm({
             </div>
           ))}
         </>
+      )}
+
+      {/* Comisión del proveedor (%) — solo fairpay/unipayment. Persistida en
+          extra_config.fee_pct (merge sin pisar otras keys). */}
+      {meta.supportsFeePct && (
+        <div>
+          <label className="block text-sm font-medium mb-1.5">Comisión del proveedor (%)</label>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            max={30}
+            step={0.01}
+            value={feePct}
+            onChange={(e) => setFeePct(e.target.value)}
+            placeholder="Ej: 9"
+            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Se descuenta de cada depósito para calcular el neto. FairPay/UniPayment no
+            exponen este dato por API. Vacío = sin comisión configurada.
+          </p>
+        </div>
       )}
 
       {error && (

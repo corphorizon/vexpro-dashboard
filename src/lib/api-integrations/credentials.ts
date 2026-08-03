@@ -77,6 +77,29 @@ async function readRaw(
   return { plaintext, extraConfig: data.extra_config };
 }
 
+/**
+ * Parsea `extra_config.fee_pct` — el porcentaje de comisión que el proveedor
+ * cobra por depósito (en unidades de porcentaje: 8 = 8%).
+ *
+ * Ni FairPay ni UniPayment exponen su comisión por API (verificado
+ * 2026-08-03 contra ambas APIs en vivo), así que el superadmin la configura
+ * por tenant desde el panel de credenciales. Válido: número finito entre
+ * 0 y 30; ausente o fuera de rango → null (el caller decide el fallback).
+ */
+export function getProviderFeePct(
+  extraConfig: Record<string, unknown> | null | undefined,
+): number | null {
+  const v = extraConfig?.fee_pct;
+  const n =
+    typeof v === 'number'
+      ? v
+      : typeof v === 'string' && v.trim() !== ''
+        ? Number(v)
+        : NaN;
+  if (!Number.isFinite(n) || n < 0 || n > 30) return null;
+  return n;
+}
+
 // ── Coinsbuy ─────────────────────────────────────────────────────────────
 
 export interface CoinsbuyCredentials {
@@ -122,6 +145,8 @@ export interface UnipaymentCredentials {
   clientSecret: string;
   /** Optional per-tenant base URL override (extra_config.base_url). */
   baseUrl?: string;
+  /** Comisión del proveedor por tenant (extra_config.fee_pct, 8 = 8%). */
+  feePct: number | null;
 }
 
 export async function resolveUnipaymentCredentials(
@@ -142,6 +167,7 @@ export async function resolveUnipaymentCredentials(
       clientId: parsed.client_id,
       clientSecret: parsed.client_secret,
       baseUrl,
+      feePct: getProviderFeePct(raw.extraConfig),
     };
   } catch {
     console.warn('[credentials] unipayment secret not JSON — falling back to env');
@@ -155,6 +181,8 @@ export interface FairpayCredentials {
   apiKey: string;
   /** Optional per-tenant base URL override (sandbox vs prod). */
   baseUrl?: string;
+  /** Comisión del proveedor por tenant (extra_config.fee_pct, 8 = 8%). */
+  feePct: number | null;
 }
 
 export async function resolveFairpayCredentials(
@@ -171,7 +199,7 @@ export async function resolveFairpayCredentials(
     typeof raw.extraConfig?.base_url === 'string'
       ? (raw.extraConfig.base_url as string)
       : undefined;
-  return { apiKey, baseUrl };
+  return { apiKey, baseUrl, feePct: getProviderFeePct(raw.extraConfig) };
 }
 
 // ── Orion CRM ────────────────────────────────────────────────────────────

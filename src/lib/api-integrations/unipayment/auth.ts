@@ -40,6 +40,8 @@ interface ResolvedConfig {
   clientId: string;
   clientSecret: string;
   baseUrl: string;
+  /** Comisión configurada por tenant (extra_config.fee_pct) o null. */
+  feePct: number | null;
 }
 
 async function resolveConfig(companyId: string | null | undefined): Promise<ResolvedConfig | null> {
@@ -53,6 +55,7 @@ async function resolveConfig(companyId: string | null | undefined): Promise<Reso
     clientId: perTenant.clientId,
     clientSecret: perTenant.clientSecret,
     baseUrl: perTenant.baseUrl ?? ENV_BASE_URL,
+    feePct: perTenant.feePct,
   };
 }
 
@@ -131,6 +134,18 @@ export async function getUnipaymentToken(
   };
   tokenCache.set(key, fresh);
   return fresh.accessToken;
+}
+
+/**
+ * Devuelve el % de comisión configurado para el tenant
+ * (api_credentials.extra_config.fee_pct) o null si no está configurado.
+ * UniPayment no expone la comisión por invoice, por eso es un knob por tenant.
+ */
+export async function getUnipaymentFeePct(
+  companyId?: string | null,
+): Promise<number | null> {
+  const config = await resolveConfig(companyId ?? null);
+  return config?.feePct ?? null;
 }
 
 /**

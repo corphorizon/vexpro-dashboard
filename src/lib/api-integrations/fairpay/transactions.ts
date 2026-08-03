@@ -37,8 +37,8 @@
 //   createdAt    ← created_at
 //   customerEmail← '' (not available from list)
 //   billed       ← amount_usd
-//   mdr          ← 0 (not available from list)
-//   net          ← amount_usd  (canonical USD value, what we sum for totals)
+//   mdr          ← billed × fee_pct/100 (extra_config.fee_pct) — 0 si no hay % configurado
+//   net          ← billed − mdr  (canonical USD value, what we sum for totals)
 //   currency     ← 'USD'
 //   status       ← status === 1 ? 'Completed' : 'Pending'
 //
@@ -46,7 +46,7 @@
 // set so the UI can still be exercised.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getFairpayToken, getFairpayBaseUrl, isFairpayEnabled } from './auth';
+import { getFairpayToken, getFairpayBaseUrl, getFairpayFeePct, isFairpayEnabled } from './auth';
 import { withRetry } from '../retry';
 import { generateFairpayDeposits } from '../mocks';
 import { filterByDateRange } from '../totals';
@@ -122,6 +122,11 @@ export async function fetchFairpayDeposits(
 
     const token = await getFairpayToken(companyId);
     const baseUrl = await getFairpayBaseUrl(companyId);
+    // La API de FairPay no expone la comisión (verificado 2026-08-03:
+    // getTransactionList y getTransaction solo traen montos brutos); el %
+    // viene de api_credentials.extra_config.fee_pct, configurado por el
+    // superadmin. null → sin comisión configurada (mdr 0, net = billed).
+    const feePct = await getFairpayFeePct(companyId);
 
     const body = new URLSearchParams({
       start_date: startDate,
@@ -160,8 +165,12 @@ export async function fetchFairpayDeposits(
     }
 
     const rows = json.data ?? [];
+    const round2 = (n: number) => Math.round(n * 100) / 100;
     const transactions: FairpayDepositTx[] = rows.map((row): FairpayDepositTx => {
       const amountUsd = Number(row.amount_usd ?? 0);
+      // Comisión configurable por tenant (ver comentario junto a feePct).
+      const mdr = feePct !== null ? round2(amountUsd * (feePct / 100)) : 0;
+      const net = feePct !== null ? round2(amountUsd - mdr) : amountUsd;
       // Map numeric status: 1 = Completed, 0 = Pending. Anything else falls
       // back to Failed so it never gets summed into totals.
       let status: FairpayDepositTx['status'];
@@ -176,8 +185,8 @@ export async function fetchFairpayDeposits(
         createdAt: row.created_at,
         customerEmail: '', // Not available from the list endpoint
         billed: amountUsd,
-        mdr: 0,           // Not available from the list endpoint
-        net: amountUsd,   // Without MDR data, net == billed (USD)
+        mdr,              // billed × fee_pct/100 (0 si no hay % configurado)
+        net,              // billed − mdr (== billed sin % configurado)
         currency: row.currency ?? 'USD',
         status,
       };
