@@ -14,6 +14,7 @@ export const ALL_MODULES: { key: string; label: string }[] = [
   { key: 'investments', label: 'Inversiones' },
   { key: 'balances', label: 'Balances' },
   { key: 'partners', label: 'Socios' },
+  { key: 'payment_orders', label: 'Órdenes de Pago' },
   { key: 'upload', label: 'Carga de datos' },
   { key: 'periods', label: 'Períodos' },
   { key: 'hr', label: 'Recursos Humanos' },

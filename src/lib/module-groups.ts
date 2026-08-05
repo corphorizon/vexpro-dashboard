@@ -42,6 +42,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
       { module: 'investments', href: '/inversiones',     labelEs: 'Inversiones' },
       { module: 'balances',    href: '/balances',        labelEs: 'Balances' },
       { module: 'partners',    href: '/socios',          labelEs: 'Socios' },
+      { module: 'payment_orders', href: '/ordenes-pago',  labelEs: 'Órdenes de Pago' },
       { module: 'upload',      href: '/upload',          labelEs: 'Carga de Datos' },
       { module: 'periods',     href: '/periodos',        labelEs: 'Períodos' },
       { module: 'reports',     href: '/finanzas/reportes', labelEs: 'Reportes' },

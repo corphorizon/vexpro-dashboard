@@ -22,7 +22,7 @@ const DEFAULT_VALUES: CompanyFormValues = {
   color_secondary: '#3B82F6',
   // Reasonable default module set for a fresh tenant.
   active_modules: ALL_MODULES.map((m) => m.key).filter((k) =>
-    ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'upload', 'periods'].includes(k),
+    ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'payment_orders', 'upload', 'periods'].includes(k),
   ),
   status: 'active',
   reserve_pct: 0.1,

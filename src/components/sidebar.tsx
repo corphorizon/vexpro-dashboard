@@ -37,6 +37,7 @@ import {
   FileSearch,
   Briefcase,
   FileText,
+  FileSignature,
   Table,
 } from 'lucide-react';
 
@@ -83,6 +84,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
       { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
       { href: '/socios', i18nKey: 'nav.partners', icon: Briefcase, module: 'partners' },
+      { href: '/ordenes-pago', i18nKey: 'nav.paymentOrders', icon: FileSignature, module: 'payment_orders' },
       { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
       { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },
       { href: '/finanzas/reportes', i18nKey: 'nav.reports', icon: FileText, module: 'reports' },

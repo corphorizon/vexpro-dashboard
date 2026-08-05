@@ -93,7 +93,7 @@ export async function POST(request: NextRequest) {
         color_secondary: color_secondary || '#3B82F6',
         active_modules: active_modules || [
           'summary', 'movements', 'expenses', 'liquidity', 'investments',
-          'balances', 'partners', 'upload', 'periods',
+          'balances', 'partners', 'payment_orders', 'upload', 'periods',
         ],
         reserve_pct: reserve_pct ?? 0.1,
         currency: currency || 'USD',
