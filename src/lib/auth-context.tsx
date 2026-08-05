@@ -104,7 +104,7 @@ interface AuthState {
 //   · `audit`    — reserved for SUPERADMIN only. Tenants cannot grant the
 //     audit module to their users; platform-level audit lives inside the
 //     superadmin panel (/superadmin/companies/[id]).
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'commissions', 'reports', 'hr', 'risk', 'upload', 'periods', 'users'];
+const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'payment_orders', 'commissions', 'reports', 'hr', 'risk', 'upload', 'periods', 'users'];
 
 const AuthContext = createContext<AuthState | null>(null);
 

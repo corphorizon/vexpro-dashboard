@@ -59,6 +59,7 @@ const VALID_MODULE_KEYS: ReadonlySet<string> = new Set([
   'balances',
   'partners',
   'upload',
+  'payment_orders',
   'periods',
   'commissions',
   'risk',
