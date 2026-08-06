@@ -726,7 +726,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const fs = financialStatus.find(f => f.period_id === periodId) || null;
 
       const totalDeposits = periodDeposits.reduce((sum, d) => sum + d.amount, 0);
-      const totalWithdrawals = periodWithdrawals.reduce((sum, w) => sum + w.amount, 0);
+      // PROP FIRM ES UN CIRCUITO APARTE (decisión Kevin 2026-08-06): las ventas
+      // y los retiros de prop firm NO son movimiento de fondos de clientes.
+      // Ya se reflejan en Ingresos Operativos vía propFirmNetIncome
+      // (ventas − retiros); contarlos también acá los duplicaba e inflaba
+      // Retiros Totales y desvirtuaba el Net Deposit. Las ventas nunca
+      // estuvieron en `deposits` (viven en prop_firm_sales), así que solo hay
+      // que excluir el retiro.
+      const totalWithdrawals = periodWithdrawals
+        .filter(w => w.category !== 'prop_firm')
+        .reduce((sum, w) => sum + w.amount, 0);
       const pfs = propFirmSale?.amount || 0;
       const p2p = p2pTransfer?.amount || 0;
       const propFirmWithdrawal = periodWithdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
@@ -815,7 +824,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }));
 
       const totalDeposits = consolidatedDeposits.reduce((s, d) => s + d.amount, 0);
-      const totalWithdrawals = consolidatedWithdrawals.reduce((s, w) => s + w.amount, 0);
+      // Mismo criterio que getPeriodSummary: prop firm fuera de los totales de
+      // movimientos (la fila sigue existiendo en consolidatedWithdrawals para
+      // el desglose informativo y para calcular propFirmNetIncome).
+      const totalWithdrawals = consolidatedWithdrawals
+        .filter(w => w.category !== 'prop_firm')
+        .reduce((s, w) => s + w.amount, 0);
       const pfs = propFirmSales
         .filter(p => periodIds.includes(p.period_id))
         .reduce((s, p) => s + p.amount, 0);

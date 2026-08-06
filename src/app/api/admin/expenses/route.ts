@@ -29,6 +29,15 @@ interface ExpenseRow {
   pending: number;
   is_fixed?: boolean;
   category?: string | null;
+  /** 'YYYY-MM-DD' o null/'' — fecha opcional del egreso (migration-056). */
+  expense_date?: string | null;
+}
+
+// La fecha viaja como string del <input type="date">. Cualquier cosa que no
+// sea YYYY-MM-DD se guarda como null en vez de reventar el cast en Postgres.
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+function normalizeDate(v: unknown): string | null {
+  return typeof v === 'string' && ISO_DATE.test(v) ? v : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -53,6 +62,9 @@ export async function POST(request: NextRequest) {
         pending: e.pending,
         is_fixed: !!e.is_fixed,
         category: e.category ?? null,
+        // migration-056: la RPC borra e re-inserta el período entero desde
+        // este payload — si la fecha no viaja acá se pierde en cada guardado.
+        expense_date: normalizeDate(e.expense_date),
       })),
     });
     if (error) return apiError('admin/expenses', error, { status: 500 });

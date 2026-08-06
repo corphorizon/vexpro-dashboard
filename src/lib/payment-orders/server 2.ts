@@ -324,9 +324,6 @@ export async function createExpenseForPaidOrder(
   admin: SupabaseClient,
   companyId: string,
   order: { id: string; order_number: string; beneficiary_name: string; total: number },
-  /** Categoría del egreso a registrar. Opcional: null = sin categoría, igual
-   *  que un egreso cargado a mano sin elegirla. */
-  category?: string | null,
 ): Promise<{ expenseId: string | null; warning: string | null }> {
   const { data: period, error: periodErr } = await admin
     .from('periods')
@@ -360,7 +357,7 @@ export async function createExpenseForPaidOrder(
       paid: total,
       pending: 0,
       is_fixed: false,
-      category: str(category) || null,
+      category: null,
     })
     .select('id')
     .maybeSingle();

@@ -10,10 +10,12 @@ import { useAuth, canEdit, canDelete } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
+import { formatDate, formatDayMonth } from '@/lib/dates';
 import type { Expense } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
-import { upsertExpenses } from '@/lib/supabase/mutations';
+import { upsertExpenses, applyFixedExpenseForward } from '@/lib/supabase/mutations';
+import { FixedForwardDialog } from '@/components/ui/fixed-forward-dialog';
 import { logAction } from '@/lib/audit-log';
 import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
 import { useConfirm } from '@/lib/use-confirm';
@@ -47,7 +49,16 @@ export default function EgresosPage() {
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ concept: '', amount: '', paid: '', pending: '' });
+  const [editForm, setEditForm] = useState({ concept: '', amount: '', paid: '', pending: '', expense_date: '' });
+
+  // Egreso fijo recién editado, a la espera de que el usuario elija el alcance
+  // ("solo este mes" vs "este mes y los siguientes"). Se arma DESPUÉS de que el
+  // guardado normal del mes actual salió bien; guardamos el concepto VIEJO
+  // porque es la clave con la que el backend encuentra la plantilla y las filas
+  // futuras (los egresos no tienen template_id).
+  const [forwardPending, setForwardPending] = useState<
+    { oldConcept: string; concept: string; amount: number; category: string | null } | null
+  >(null);
 
   // Add expense removed — expenses loaded via "Carga de Datos"
 
@@ -141,6 +152,7 @@ export default function EgresosPage() {
         pending: e.pending,
         is_fixed: !!e.is_fixed,
         category: e.category ?? null,
+        expense_date: e.expense_date ?? null,
       })));
       // Clear the optimistic override — next read pulls from the refreshed
       // data-context so we never show stale numbers.
@@ -169,6 +181,8 @@ export default function EgresosPage() {
       amount: String(expense.amount),
       paid: String(expense.paid),
       pending: String(expense.pending),
+      // <input type="date"> exige 'YYYY-MM-DD'; sin fecha, string vacío.
+      expense_date: expense.expense_date ?? '',
     });
   };
 
@@ -185,8 +199,13 @@ export default function EgresosPage() {
     if (pn < 0) { showError('Pendiente inválido'); return; }
     if (!editForm.concept.trim()) { showError('Concepto requerido'); return; }
 
+    // Vacío = sin fecha específica. Nunca se inventa un día.
+    const nextDate = editForm.expense_date || null;
+
+    const edited = currentExpenses.find(e => e.id === editingId);
+    const newConcept = editForm.concept.trim();
     const nextList = currentExpenses.map(e => e.id === editingId
-      ? { ...e, concept: editForm.concept.trim(), amount: amt, paid: pd, pending: pn }
+      ? { ...e, concept: newConcept, amount: amt, paid: pd, pending: pn, expense_date: nextDate }
       : e
     );
     setEditingId(null);
@@ -194,8 +213,51 @@ export default function EgresosPage() {
       await persistExpenses(nextList);
       if (user) logAction(user.id, user.name, 'update', 'expenses', `Egreso ${editForm.concept}: $${amt.toLocaleString()}`);
       showSuccess(t('expenses.updatedSuccess'));
+      // Si era un egreso FIJO, el mes actual ya quedó guardado; ahora se
+      // pregunta el alcance. Nunca se propaga en silencio.
+      if (edited?.is_fixed) {
+        setForwardPending({
+          oldConcept: edited.concept,
+          concept: newConcept,
+          amount: amt,
+          category: edited.category ?? null,
+        });
+      }
     } catch (err) {
       showError(`Error guardando: ${(err as Error).message}`);
+    }
+  };
+
+  // Alcance elegido en el diálogo del egreso fijo.
+  //   'this'    → nada más que hacer: el guardado del mes ya corrió.
+  //   'forward' → plantilla + meses futuros ya materializados.
+  const applyForward = async (apply: 'this' | 'forward') => {
+    if (!forwardPending || !selectedPeriodId) return;
+    if (apply === 'this') return;
+    try {
+      const { updatedPeriods } = await applyFixedExpenseForward({
+        periodId: selectedPeriodId,
+        oldConcept: forwardPending.oldConcept,
+        concept: forwardPending.concept,
+        amount: forwardPending.amount,
+        category: forwardPending.category,
+        apply: 'forward',
+      });
+      showSuccess(
+        updatedPeriods > 0
+          ? t('expenses.forwardSuccess', { count: String(updatedPeriods) })
+          : t('expenses.forwardSuccessNone'),
+      );
+      if (user) {
+        logAction(user.id, user.name, 'update', 'expenses',
+          `Egreso fijo "${forwardPending.oldConcept}" propagado a ${updatedPeriods} mes(es) siguientes`);
+      }
+      // Refresco selectivo — la pantalla refleja el cambio sin recargar.
+      void refreshSections(['egresos']).catch((err) => {
+        console.warn('[applyForward] background refresh failed:', err);
+      });
+    } catch (err) {
+      showError(t('expenses.forwardError', { error: (err as Error).message }));
     }
   };
 
@@ -277,13 +339,15 @@ export default function EgresosPage() {
                 const exps = showPreoperativo ? preoperativeExpenses : filteredExpenses;
                 const headers = showPreoperativo
                   ? ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')]
-                  : ['#', t('expenses.concept'), 'Categoría', t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
+                  : ['#', t('expenses.concept'), 'Categoría', t('expenses.date'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
                 const rows = exps.map((e, i) => {
                   if (showPreoperativo) {
                     return [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[];
                   }
                   const exp = e as Expense;
-                  return [i + 1, exp.concept, exp.category ?? '', exp.amount, exp.paid, exp.pending] as (string | number)[];
+                  // La fecha va completa (DD/MM/AAAA) en el CSV: fuera de la
+                  // tabla no hay período que dé el año por contexto.
+                  return [i + 1, exp.concept, exp.category ?? '', exp.expense_date ? formatDate(exp.expense_date) : '', exp.amount, exp.paid, exp.pending] as (string | number)[];
                 });
                 downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
               })}
@@ -431,6 +495,10 @@ export default function EgresosPage() {
                     <th className="text-left py-2.5 px-3 text-muted-foreground font-medium w-8">#</th>
                     <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
                     <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Categoría</th>
+                    {/* Fecha opcional (migration-056). Columna angosta con
+                        formato DD/MM — el año ya lo da el período — para no
+                        ensanchar la tabla en móvil. */}
+                    <th className="text-left py-2 px-2 text-muted-foreground font-medium w-16">{t('expenses.date')}</th>
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.amount')}</th>
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
@@ -443,7 +511,7 @@ export default function EgresosPage() {
                 <tbody>
                   {filteredExpenses.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-muted-foreground">
+                      <td colSpan={9} className="py-8 text-center text-muted-foreground">
                         {searchQuery ? t('expenses.noResults') : t('expenses.noExpenses')}
                       </td>
                     </tr>
@@ -463,6 +531,15 @@ export default function EgresosPage() {
                           <td className="py-2.5 px-3 text-xs text-muted-foreground">
                             {/* Category editing happens in /upload; read-only here */}
                             {expense.category || '—'}
+                          </td>
+                          <td className="py-2 px-2">
+                            <input
+                              type="date"
+                              aria-label={t('expenses.dateAria')}
+                              value={editForm.expense_date}
+                              onChange={e => setEditForm(p => ({ ...p, expense_date: e.target.value }))}
+                              className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
+                            />
                           </td>
                           <td className="py-2.5 px-3">
                             <input
@@ -511,6 +588,9 @@ export default function EgresosPage() {
                             ) : (
                               <span className="text-xs text-muted-foreground">—</span>
                             )}
+                          </td>
+                          <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                            {expense.expense_date ? formatDayMonth(expense.expense_date) : '—'}
                           </td>
                           <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
                           <td className="py-2.5 px-3 text-right">{formatCurrency(expense.paid)}</td>
@@ -566,7 +646,7 @@ export default function EgresosPage() {
                 </tbody>
                 <tfoot>
                   <tr className="font-bold bg-muted/50">
-                    <td className="py-3 px-3" colSpan={3}>TOTAL</td>
+                    <td className="py-3 px-3" colSpan={4}>TOTAL</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalExpenses)}</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPaid)}</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPending)}</td>
@@ -583,6 +663,15 @@ export default function EgresosPage() {
       )}
 
       {ConfirmModal}
+
+      {/* Alcance de la edición de un egreso fijo (ver FixedForwardDialog). */}
+      {forwardPending && (
+        <FixedForwardDialog
+          concept={forwardPending.concept}
+          onChoose={applyForward}
+          onClose={() => setForwardPending(null)}
+        />
+      )}
     </div>
   );
 }

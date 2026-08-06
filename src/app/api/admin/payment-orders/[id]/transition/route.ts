@@ -17,7 +17,8 @@ import {
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/payment-orders/[id]/transition
-//   body: { to, reason?, payment_reference?, payment_date?, create_expense? }
+//   body: { to, reason?, payment_reference?, payment_date?, create_expense?,
+//           expense_category? }
 //
 // Único punto por el que cambia el estado de una orden. Concentra los tres
 // controles que le dan valor al documento:
@@ -41,6 +42,8 @@ interface TransitionBody {
   payment_reference?: string | null;
   payment_date?: string | null;
   create_expense?: boolean;
+  /** Categoría del egreso generado (solo aplica con create_expense). */
+  expense_category?: string | null;
 }
 
 export async function POST(
@@ -58,10 +61,10 @@ export async function POST(
       );
     }
 
-    // Aprobar / rechazar = decisión de autorización → solo rol admin estricto.
-    const auth = await verifyAdminAuth(request, {
-      requireAdmin: to === 'approved' || to === 'rejected',
-    });
+    // Aprobación abierta (decisión Kevin 2026-08-05): cualquier usuario con
+    // acceso al módulo puede aprobar/rechazar, incluida su propia orden. La
+    // trazabilidad (approved_by/at) reemplaza al bloqueo como control.
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const { id } = await params;
@@ -109,13 +112,8 @@ export async function POST(
       }
 
       case 'approved': {
-        // Maker-checker: el control que evita que una sola persona mueva plata.
-        if (order.created_by && order.created_by === auth.userId) {
-          return NextResponse.json(
-            { success: false, error: 'Quien crea la orden no puede aprobarla' },
-            { status: 403 },
-          );
-        }
+        // Sin maker-checker (ver arriba). Una autoaprobación queda registrada
+        // igual: approved_by === created_by es visible en el historial.
         updates.approved_by = auth.userId;
         updates.approved_by_name = who;
         updates.approved_at = now;
@@ -196,9 +194,9 @@ export async function POST(
 
     if (error) {
       // El trigger payment_orders_guard levanta excepciones de negocio
-      // (segregación de funciones / inmutabilidad) — se devuelven como 400.
+      // (inmutabilidad post-aprobación) — se devuelven como 400.
       const msg = error.message ?? '';
-      if (/Segregación de funciones|inmutable/i.test(msg)) {
+      if (/inmutable/i.test(msg)) {
         return NextResponse.json({ success: false, error: msg }, { status: 400 });
       }
       return apiError('admin/payment-orders/transition', error, { status: 500 });
@@ -222,7 +220,7 @@ export async function POST(
         order_number: result.order_number,
         beneficiary_name: result.beneficiary_name,
         total: result.total,
-      });
+      }, body?.expense_category ?? null);
       warning = w;
       if (expenseId) {
         const { data: linked } = await admin

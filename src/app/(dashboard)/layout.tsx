@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Sidebar } from '@/components/sidebar';
@@ -78,14 +78,43 @@ function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
   );
 }
 
+const SIDEBAR_COLLAPSED_KEY = 'fd_sidebar_collapsed';
+
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  // El estado del rail vive acá (no en el Sidebar) para que <main> siga el
+  // ancho. Arranca SIEMPRE expandido y adopta lo guardado en un effect —
+  // leer localStorage durante el primer render rompería la hidratación
+  // (mismo patrón que theme-context y el seed de idioma de abajo).
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+
+  useEffect(() => {
+    try {
+      setSidebarCollapsed(localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === '1');
+    } catch { /* SSR/privacidad: sin localStorage se queda expandido */ }
+  }, []);
+
+  const toggleSidebarCollapsed = useCallback(() => {
+    setSidebarCollapsed(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem(SIDEBAR_COLLAPSED_KEY, next ? '1' : '0');
+      } catch { /* no persistimos, pero la sesión actual sí cambia */ }
+      return next;
+    });
+  }, []);
 
   return (
     <div className="flex h-full">
       <MobileTopBar onMenuToggle={() => setMobileMenuOpen(prev => !prev)} />
-      <Sidebar mobileOpen={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
-      <main className="flex-1 overflow-auto pt-14 lg:pt-0">
+      <Sidebar
+        mobileOpen={mobileMenuOpen}
+        onClose={() => setMobileMenuOpen(false)}
+        collapsed={sidebarCollapsed}
+        onToggleCollapse={toggleSidebarCollapsed}
+      />
+      <main className="flex-1 min-w-0 overflow-auto pt-14 lg:pt-0 transition-[width,padding] duration-200">
         <ViewingAsBanner />
         <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
           <ErrorBoundary>

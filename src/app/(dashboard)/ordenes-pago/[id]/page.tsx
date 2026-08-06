@@ -14,7 +14,7 @@
 // qué, cuándo y con qué referencia), por eso va completo y en orden.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import {
@@ -22,11 +22,15 @@ import {
   Ban,
   CheckCheck,
   Download,
+  ExternalLink,
   FileText,
   History,
   Landmark,
+  Paperclip,
   Pencil,
   Send,
+  Trash2,
+  Upload,
   Wallet,
   X,
 } from 'lucide-react';
@@ -50,9 +54,27 @@ import {
   type PaymentOrderLine,
   type PaymentOrderStatus,
 } from '@/lib/payment-orders/types';
-import { getPaymentOrder, transitionPaymentOrder, type TransitionOptions } from '@/lib/payment-orders/api';
+import {
+  deletePaymentProof,
+  getPaymentOrder,
+  paymentProofUrl,
+  transitionPaymentOrder,
+  uploadPaymentProof,
+  type TransitionOptions,
+} from '@/lib/payment-orders/api';
 
-type Dialog = null | 'submit' | 'approve' | 'reject' | 'cancel' | 'pay' | 'reopen';
+type Dialog = null | 'submit' | 'approve' | 'reject' | 'cancel' | 'pay' | 'reopen' | 'removeProof';
+
+/** Mismo tope que el endpoint — validar acá evita subir 30 MB para nada. */
+const MAX_PROOF_BYTES = 10 * 1024 * 1024;
+const PROOF_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
+
+function formatFileSize(bytes: number | null): string {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function todayISO(): string {
   const d = new Date();
@@ -69,7 +91,7 @@ export default function OrdenPagoDetallePage() {
   const id = params?.id ?? '';
   const router = useRouter();
   const { user } = useAuth();
-  const { company } = useData();
+  const { company, refreshSections } = useData();
   const { toast, ToastHost } = useToasts();
 
   const [order, setOrder] = useState<PaymentOrder | null>(null);
@@ -101,35 +123,96 @@ export default function OrdenPagoDetallePage() {
   );
 
   // ── Permisos ──────────────────────────────────────────────────────────────
-  const isAdmin = user?.effective_role === 'admin' || user?.effective_role === 'superadmin';
-  // created_by puede venir como company_users.id o como auth.users.id según el
-  // camino de login; se comparan los dos para no fallar abierto.
+  // Aprobación abierta (decisión Kevin 2026-08-05): cualquier usuario con
+  // acceso al módulo aprueba, incluida su propia orden. Se conserva el
+  // registro: si el aprobador es el emisor, el historial lo muestra como
+  // autoaprobada.
   const isCreator = Boolean(
     order?.created_by && (order.created_by === user?.id || order.created_by === user?.auth_user_id),
   );
-  const canApprove = isAdmin && !isCreator;
-  const approveBlockedReason = !isAdmin
-    ? t('payOrders.approveNeedsAdmin')
-    : isCreator
-      ? t('payOrders.makerChecker')
-      : '';
 
-  async function runTransition(to: PaymentOrderStatus, payload?: TransitionOptions) {
+  /**
+   * `proofFile` solo llega desde el diálogo de pago. Se sube DESPUÉS de la
+   * transición y en su propio try: el comprobante es opcional, así que un fallo
+   * al subirlo no puede desandar ni bloquear el "pagada" que ya se registró.
+   */
+  async function runTransition(
+    to: PaymentOrderStatus,
+    payload?: TransitionOptions,
+    proofFile?: File | null,
+  ) {
     if (!order) return;
     setBusy(true);
     try {
       const { order: updated, warning } = await transitionPaymentOrder(order.id, to, payload);
-      setOrder(updated ?? order);
+      const paid = updated ?? order;
+      setOrder(paid);
       setDialog(null);
       // `warning` = la transición se aplicó pero algo secundario no (típico:
       // pagada sin período abierto donde registrar el egreso). No es un error.
       if (warning) toast.info(warning);
       else toast.success(t('payOrders.transitionOk'));
+      // El egreso se crea SERVER-SIDE, así que el data-context (de donde lee
+      // /egresos) no se entera solo: sin este refresh el egreso existe en la
+      // DB pero no aparece en la pantalla de Egresos hasta recargar la app
+      // — y con el snapshot de la fase 4b, ni siquiera al navegar.
+      if (to === 'paid' && payload?.create_expense) {
+        void refreshSections(['egresos']);
+      }
+
+      if (proofFile) {
+        try {
+          setOrder(await uploadPaymentProof(paid.id, proofFile));
+          toast.success(t('payOrders.proofUploadOk'));
+        } catch (err) {
+          toast.error(
+            t('payOrders.proofErrorAfterPay', {
+              error: err instanceof Error ? err.message : t('payOrders.proofError'),
+            }),
+          );
+        }
+      }
+
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('payOrders.transitionError'));
     } finally {
       setBusy(false);
+    }
+  }
+
+  // ── Comprobante de pago (adjunto opcional) ────────────────────────────────
+  const proofInputRef = useRef<HTMLInputElement>(null);
+  const [proofBusy, setProofBusy] = useState(false);
+
+  async function onProofPicked(file: File | null) {
+    if (!order || !file) return;
+    if (file.size > MAX_PROOF_BYTES) {
+      toast.error(t('payOrders.proofTooLarge'));
+      return;
+    }
+    setProofBusy(true);
+    try {
+      setOrder(await uploadPaymentProof(order.id, file));
+      toast.success(t('payOrders.proofUploadOk'));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('payOrders.proofError'));
+    } finally {
+      setProofBusy(false);
+    }
+  }
+
+  async function removeProof() {
+    if (!order) return;
+    setProofBusy(true);
+    try {
+      setOrder(await deletePaymentProof(order.id));
+      setDialog(null);
+      toast.success(t('payOrders.proofRemoveOk'));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('payOrders.proofError'));
+    } finally {
+      setProofBusy(false);
     }
   }
 
@@ -228,21 +311,17 @@ export default function OrdenPagoDetallePage() {
           )}
 
           {canTransition(order.status, 'approved') && (
-            <span title={approveBlockedReason || undefined}>
-              <Button variant="primary" disabled={!canApprove} onClick={() => setDialog('approve')}>
-                <CheckCheck className="w-4 h-4" />
-                {t('payOrders.approve')}
-              </Button>
-            </span>
+            <Button variant="primary" onClick={() => setDialog('approve')}>
+              <CheckCheck className="w-4 h-4" />
+              {t('payOrders.approve')}
+            </Button>
           )}
 
           {canTransition(order.status, 'rejected') && (
-            <span title={approveBlockedReason || undefined}>
-              <Button variant="destructive" disabled={!canApprove} onClick={() => setDialog('reject')}>
-                <X className="w-4 h-4" />
-                {t('payOrders.reject')}
-              </Button>
-            </span>
+            <Button variant="destructive" onClick={() => setDialog('reject')}>
+              <X className="w-4 h-4" />
+              {t('payOrders.reject')}
+            </Button>
           )}
 
           {canTransition(order.status, 'paid') && (
@@ -267,8 +346,8 @@ export default function OrdenPagoDetallePage() {
         </div>
       </div>
 
-      {approveBlockedReason && order.status === 'pending' && (
-        <p className="text-xs text-muted-foreground">{approveBlockedReason}</p>
+      {isCreator && order.status === 'pending' && (
+        <p className="text-xs text-muted-foreground">{t('payOrders.selfApproveNotice')}</p>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
@@ -364,6 +443,94 @@ export default function OrdenPagoDetallePage() {
             )}
           </Card>
 
+          {/* ── Comprobante de pago (opcional) ────────────────────────── */}
+          {/* Metadato operativo: se puede adjuntar, reemplazar o quitar aun con
+              la orden pagada. Solo desaparece en una orden anulada. */}
+          {order.status !== 'cancelled' && (order.payment_proof_path || order.status === 'paid') && (
+            <Card className="space-y-3">
+              <h2 className="text-base font-semibold flex items-center gap-2">
+                <Paperclip className="w-4 h-4 text-muted-foreground" />
+                {t('payOrders.proofSection')}
+              </h2>
+
+              {/* Un solo input oculto sirve para "adjuntar" y "reemplazar". */}
+              <input
+                ref={proofInputRef}
+                type="file"
+                accept={PROOF_ACCEPT}
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  e.target.value = ''; // permite volver a elegir el mismo archivo
+                  void onProofPicked(file);
+                }}
+              />
+
+              {order.payment_proof_path ? (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium break-all">
+                      {order.payment_proof_name || t('payOrders.proofSection')}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {formatFileSize(order.payment_proof_size)}
+                      {order.payment_proof_uploaded_at && (
+                        <>
+                          {' · '}
+                          {t('payOrders.proofUploaded', {
+                            date: formatDateTime(order.payment_proof_uploaded_at),
+                          })}
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a
+                      href={paymentProofUrl(order.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={t('payOrders.proofViewAria')}
+                    >
+                      <Button variant="secondary">
+                        <ExternalLink className="w-4 h-4" />
+                        {t('payOrders.proofView')}
+                      </Button>
+                    </a>
+                    <Button
+                      aria-label={t('payOrders.proofReplaceAria')}
+                      disabled={proofBusy}
+                      onClick={() => proofInputRef.current?.click()}
+                    >
+                      <Upload className="w-4 h-4" />
+                      {t('payOrders.proofReplace')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      aria-label={t('payOrders.proofRemoveAria')}
+                      disabled={proofBusy}
+                      onClick={() => setDialog('removeProof')}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                      {t('payOrders.proofRemove')}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                  <Button
+                    aria-label={t('payOrders.proofAttach')}
+                    loading={proofBusy}
+                    onClick={() => proofInputRef.current?.click()}
+                  >
+                    <Paperclip className="w-4 h-4" />
+                    {t('payOrders.proofAttach')}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">{t('payOrders.proofHint')}</span>
+                </div>
+              )}
+            </Card>
+          )}
+
           {/* ── Concepto ──────────────────────────────────────────────── */}
           <Card className="space-y-3">
             <h2 className="text-base font-semibold">{t('payOrders.sectionNotes')}</h2>
@@ -395,7 +562,28 @@ export default function OrdenPagoDetallePage() {
                 )}
                 <p className="text-sm font-medium leading-snug">{ev.title}</p>
                 {ev.when && <p className="text-xs text-muted-foreground mt-0.5">{ev.when}</p>}
-                {ev.detail && <p className="text-xs text-muted-foreground mt-1">{ev.detail}</p>}
+                {ev.detail && (
+                  <p className="text-xs text-muted-foreground mt-1 break-words">{ev.detail}</p>
+                )}
+                {ev.reference && (
+                  <p className="text-xs text-muted-foreground mt-1 min-w-0">
+                    <span className="block">{t('payOrders.tlReferenceLabel')}</span>
+                    {/* break-all: un hash o una URL de explorer no tienen
+                        espacios, así que sin esto desbordan la tarjeta. */}
+                    {isUrl(ev.reference) ? (
+                      <a
+                        href={ev.reference}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-info hover:underline break-all"
+                      >
+                        {ev.reference}
+                      </a>
+                    ) : (
+                      <span className="break-all font-mono">{ev.reference}</span>
+                    )}
+                  </p>
+                )}
               </li>
             ))}
           </ol>
@@ -470,7 +658,17 @@ export default function OrdenPagoDetallePage() {
           busy={busy}
           defaultDate={order.payment_date || todayISO()}
           onClose={() => setDialog(null)}
-          onConfirm={(payload) => runTransition('paid', payload)}
+          onConfirm={(payload, proofFile) => runTransition('paid', payload, proofFile)}
+        />
+      )}
+
+      {dialog === 'removeProof' && (
+        <ConfirmDialog
+          title={t('payOrders.proofRemoveTitle')}
+          message={t('payOrders.proofRemoveMessage')}
+          confirmLabel={t('payOrders.proofRemove')}
+          onConfirm={removeProof}
+          onClose={() => setDialog(null)}
         />
       )}
     </div>
@@ -483,7 +681,22 @@ interface TimelineEvent {
   title: string;
   when?: string;
   detail?: string;
+  /** Referencia de pago: se renderiza aparte porque puede ser una URL
+   *  (link clickeable) y suele ser larga (necesita corte de palabra). */
+  reference?: string;
   tone: 'positive' | 'negative' | 'warning' | 'neutral';
+}
+
+/** ¿La referencia es un link? Kevin a veces pega el hash y a veces la URL del
+ *  explorer; cuando es URL conviene que se pueda abrir de un clic. Solo
+ *  http/https — nada de javascript: ni data:. */
+function isUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function buildTimeline(o: PaymentOrder, t: (k: string, p?: Record<string, string>) => string): TimelineEvent[] {
@@ -517,7 +730,7 @@ function buildTimeline(o: PaymentOrder, t: (k: string, p?: Record<string, string
     events.push({
       title: t('payOrders.tlPaid', { who: who(o.paid_by_name) }),
       when: formatDateTime(o.paid_at),
-      detail: o.payment_reference ? t('payOrders.tlReference', { ref: o.payment_reference }) : undefined,
+      reference: o.payment_reference || undefined,
       tone: 'positive',
     });
   }
@@ -665,14 +878,36 @@ function PayDialog({
 }: {
   busy: boolean;
   defaultDate: string;
-  onConfirm: (payload: { payment_reference: string; payment_date: string; create_expense: boolean }) => void;
+  onConfirm: (
+    payload: {
+      payment_reference: string;
+      payment_date: string;
+      create_expense: boolean;
+      expense_category?: string | null;
+    },
+    proofFile: File | null,
+  ) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const { allExpenses } = useData();
   const [reference, setReference] = useState('');
   const [date, setDate] = useState(defaultDate);
   const [createExpense, setCreateExpense] = useState(true);
+  const [expenseCategory, setExpenseCategory] = useState('');
+  // Categorías ya usadas por la empresa — se ofrecen como sugerencia para no
+  // fragmentar el catálogo con variantes tipeadas a mano ("SaaS"/"saas"/…).
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of allExpenses) {
+      const c = (e.category ?? '').trim();
+      if (c) set.add(c);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [allExpenses]);
+  const [proofFile, setProofFile] = useState<File | null>(null);
   const [error, setError] = useState('');
+  const [fileError, setFileError] = useState('');
 
   return (
     <Modal title={t('payOrders.payTitle')} onClose={busy ? () => {} : onClose}>
@@ -702,6 +937,37 @@ function PayDialog({
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={INPUT} />
       </label>
 
+      {/* Comprobante: OPCIONAL. Se sube después de registrar el pago, así que
+          si falla la subida el pago igual queda asentado. */}
+      <label className="block">
+        <span className="block text-sm font-medium mb-1.5">{t('payOrders.proofField')}</span>
+        <input
+          type="file"
+          accept={PROOF_ACCEPT}
+          onChange={(e) => {
+            const file = e.target.files?.[0] ?? null;
+            if (file && file.size > MAX_PROOF_BYTES) {
+              setProofFile(null);
+              e.target.value = '';
+              setFileError(t('payOrders.proofTooLarge'));
+              return;
+            }
+            setFileError('');
+            setProofFile(file);
+          }}
+          className={cn(
+            INPUT,
+            'file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm file:text-foreground',
+            fileError && 'border-negative',
+          )}
+        />
+        {fileError ? (
+          <span className="block text-xs text-negative mt-1">{fileError}</span>
+        ) : (
+          <span className="block text-xs text-muted-foreground mt-1">{t('payOrders.proofHint')}</span>
+        )}
+      </label>
+
       <label className="flex items-start gap-2.5 cursor-pointer">
         <input
           type="checkbox"
@@ -715,6 +981,28 @@ function PayDialog({
         </span>
       </label>
 
+      {/* La categoría solo tiene sentido si el egreso se va a crear. */}
+      {createExpense && (
+        <label className="block">
+          <span className="block text-sm font-medium mb-1.5">{t('payOrders.payExpenseCategory')}</span>
+          <input
+            list="payorder-expense-categories"
+            value={expenseCategory}
+            onChange={(e) => setExpenseCategory(e.target.value)}
+            placeholder={t('payOrders.payExpenseCategoryPlaceholder')}
+            className={INPUT}
+          />
+          <datalist id="payorder-expense-categories">
+            {categoryOptions.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+          <span className="block text-xs text-muted-foreground mt-1">
+            {t('payOrders.payExpenseCategoryHint')}
+          </span>
+        </label>
+      )}
+
       <div className="flex justify-end gap-3 pt-2">
         <Button onClick={onClose} disabled={busy}>
           {t('payOrders.cancel')}
@@ -727,7 +1015,15 @@ function PayDialog({
               setError(t('payOrders.errReference'));
               return;
             }
-            onConfirm({ payment_reference: reference.trim(), payment_date: date, create_expense: createExpense });
+            onConfirm(
+              {
+                payment_reference: reference.trim(),
+                payment_date: date,
+                create_expense: createExpense,
+                expense_category: createExpense ? expenseCategory.trim() || null : null,
+              },
+              proofFile,
+            );
           }}
         >
           {t('payOrders.markPaid')}
