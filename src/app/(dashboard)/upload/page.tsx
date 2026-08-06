@@ -107,6 +107,7 @@ import {
   applyFixedExpenseForward,
 } from '@/lib/supabase/mutations';
 import { FixedForwardDialog } from '@/components/ui/fixed-forward-dialog';
+import { SELECTABLE_MOVEMENT_TYPES, inferMovementType } from '@/lib/investment-types';
 import { formatDayMonth } from '@/lib/dates';
 import * as Sentry from '@sentry/nextjs';
 
@@ -634,7 +635,7 @@ export default function UploadPage() {
   const [invSortAsc, setInvSortAsc] = useState(true);
   const [editingInvId, setEditingInvId] = useState<string | null>(null);
   const [editInv, setEditInv] = useState({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
-  const [newInv, setNewInv] = useState({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
+  const [newInv, setNewInv] = useState({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '', movement_type: '' });
 
   // Stiven (2026-06-19): Bug "tabs vacíos en Carga de Datos".
   //
@@ -1167,10 +1168,16 @@ export default function UploadPage() {
             withdrawal: wth,
             profit: prf,
             balance: 0,
+            // Si no se elige tipo, se infiere de los importes y el concepto —
+            // la misma heurística del backfill (migración 062). Así ninguna
+            // fila nueva nace sin clasificar.
+            movement_type:
+              newInv.movement_type ||
+              inferMovementType({ deposit: dep, withdrawal: wth, profit: prf, concept: newInv.concept }),
           }),
           t('upload.opSaveInvestment'),
         );
-        setNewInv({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '' });
+        setNewInv({ date: '', concept: '', responsible: '', deposit: '', withdrawal: '', profit: '', movement_type: '' });
         await withRowTimeout(refreshSections(['inversiones']), t('upload.opReloadData')).catch(() => {
           console.warn('[inversiones] refresh after add failed');
         });
@@ -3071,6 +3078,22 @@ export default function UploadPage() {
                   placeholder={t('upload.responsiblePlaceholder')}
                   className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
+                {/* Tipo de movimiento (migración 062): separa devolución de
+                    capital de cobro de ganancias, que antes iban revueltas en
+                    la misma columna de retiros. */}
+                <select
+                  aria-label="Tipo de movimiento"
+                  value={newInv.movement_type}
+                  onChange={e => setNewInv(p => ({ ...p, movement_type: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option value="">Tipo (automático)</option>
+                  {SELECTABLE_MOVEMENT_TYPES.map(mt => (
+                    <option key={mt.key} value={mt.key} title={mt.description}>
+                      {mt.labelEs}
+                    </option>
+                  ))}
+                </select>
                 <input
                   type="number" step="0.01"
                   value={newInv.deposit}

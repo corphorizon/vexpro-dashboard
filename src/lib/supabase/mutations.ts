@@ -308,7 +308,7 @@ export async function deleteLiquidityMovement(id: string): Promise<void> {
 
 export async function insertInvestment(
   companyId: string,
-  investment: { date: string; concept: string | null; responsible: string | null; deposit: number; withdrawal: number; profit: number; balance: number }
+  investment: { date: string; concept: string | null; responsible: string | null; deposit: number; withdrawal: number; profit: number; balance: number; movement_type?: string | null }
 ): Promise<string> {
   // id generado en el cliente para volver el INSERT idempotente y por lo tanto
   // reintentable (ver resilientWrite): si un intento se estanca en la red y se

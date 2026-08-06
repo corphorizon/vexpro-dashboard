@@ -219,6 +219,11 @@ export interface Investment {
   withdrawal: number;
   profit: number;
   balance: number;
+  /**
+   * Tipo de movimiento (migración 062). Null en filas viejas — la UI lo
+   * infiere con inferMovementType(). Ver src/lib/investment-types.ts.
+   */
+  movement_type?: string | null;
 }
 
 // Computed types for the dashboard
