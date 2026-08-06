@@ -454,8 +454,13 @@ export default function ComisionesPage() {
       // vez de su net_deposit_pct. El resto del cálculo es idéntico al normal.
       const refPct = profile.role === 'bdm_global' ? pctSobreBdmGlobal : headPct;
       const naturalDiff = refPct - bdmOwnPct;
-      // Extra % only applies when natural differential is 0 (same percentage)
-      const diffPct = naturalDiff === 0 ? extraPct : naturalDiff;
+      // Extra % solo aplica cuando el diferencial natural es 0 (mismo %).
+      // Y NUNCA negativo: si el BDM tieriza por encima del head, el head no
+      // "paga" por el buen mes de su BDM — cobra 0 por ese diferencial
+      // (auditoría 2026-08-06: head 5% con BDM tierizado a 6% le restaba
+      // $1.000 al head). La función calculateHeadDifferential ya clampeaba
+      // así, pero no era la que usaba esta pantalla.
+      const diffPct = naturalDiff > 0 ? naturalDiff : naturalDiff === 0 ? extraPct : 0;
       const calc = calculateCommission(nd, accIn, diffPct);
       const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
@@ -916,20 +921,36 @@ export default function ComisionesPage() {
             const memberSalary = profile.fixed_salary
               ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth)
               : calculateSalaryFromND(nd);
+            // Deuda arrastrada de los MIEMBROS (no-head): guardar desde
+            // Equipos escribía `bonus: 0` y un total_earned sin
+            // applyTotalEarnedDebt — la misma fila que Individual guardaba
+            // CON deuda. Resultado (auditoría 2026-08-06): un BDM que debía
+            // $2.000 quedaba a cero con solo guardar desde la otra pestaña.
+            // Ahora ambas pestañas aplican la misma regla.
+            const memberDebt = (() => {
+              if (isHead) return null;
+              const prevDebt = getPrevDebtAll(profile.id);
+              const rawTE = src.realPayment + memberSalary;
+              return applyTotalEarnedDebt(prevDebt, rawTE);
+            })();
+
             entries.push({
               profile_id: profile.id,
               net_deposit_current: nd,
               net_deposit_accumulated: isSubWithTeam ? null : accIn,
               division: src.division,
               base_amount: 0,
-              commissions_earned: src.commission,
-              real_payment: src.realPayment,
+              // El HEAD sin padre también cobra el diferencial de sus BDMs:
+              // guardarlo solo en total_earned (y no acá) hacía que todo
+              // reporte que agrega commissions_earned lo subestimara.
+              commissions_earned: isHead ? src.commission + headDiff.totalDifferential : src.commission,
+              real_payment: isHead ? src.realPayment + headDiff.totalRealPayment : src.realPayment,
               accumulated_out: src.accumulatedOut,
               salary_paid: isHead ? autoSalary : memberSalary,
               total_earned: (isHead && !headHasParent)
                 ? teamSummary.totalWithSalary
-                : src.realPayment + memberSalary,
-              bonus: isHead ? teamSummary.debtOut : 0,
+                : (memberDebt?.finalTotalEarned ?? src.realPayment + memberSalary),
+              bonus: isHead ? teamSummary.debtOut : (memberDebt?.debtOut ?? 0),
             });
           }
         }
@@ -1598,7 +1619,14 @@ export default function ComisionesPage() {
                                     realPayment: calc.realPayment,
                                     accumulatedOut: calc.accumulatedOut,
                                     salary: calc.salary,
-                                    total: calc.realPayment + calc.salary,
+                                    // Con la MISMA regla de deuda que la tabla
+                                    // y el guardado: el PDF decía $5.000
+                                    // cuando se pagaban $3.000 porque ignoraba
+                                    // la deuda arrastrada (auditoría 2026-08-06).
+                                    total: applyTotalEarnedDebt(
+                                      getPrevDebtAll(calc.profileId),
+                                      calc.realPayment + calc.salary,
+                                    ).finalTotalEarned,
                                   });
                                 })}
                                 className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"

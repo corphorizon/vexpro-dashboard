@@ -22,12 +22,35 @@ import type { Period } from './types';
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('calculateCommission (fórmula estándar PnL normal)', () => {
-  it('ND=0 devuelve todo en cero (no paga ni acumula)', () => {
+  it('ND=0 no paga pero CONSERVA el acumulado arrastrado', () => {
+    // Fix auditoría 2026-08-06: antes accumulatedOut salía en 0 y un BDM que
+    // venía con $5.000 acumulados los perdía para siempre por un mes sin
+    // depósitos (o simplemente sin cargar — el default del input es 0).
+    // No se paga nada (pagar sobre el acumulado convertiría cada fila sin
+    // cargar en un pago fantasma), pero el acumulado sigue vivo y entra al
+    // próximo mes con ND real.
     const r = calculateCommission(0, 5000, 5);
     expect(r.division).toBe(0);
     expect(r.commission).toBe(0);
     expect(r.realPayment).toBe(0);
-    expect(r.accumulatedOut).toBe(0);
+    expect(r.accumulatedOut).toBe(5000);
+  });
+
+  it('tras un ND=0, el mes siguiente paga sobre el acumulado conservado', () => {
+    const mesSinDepositos = calculateCommission(0, 50_000, 5);
+    const mesSiguiente = calculateCommission(100_000, mesSinDepositos.accumulatedOut, 5);
+    // (50.000 de división + 50.000 conservados) × 5% = 5.000
+    expect(mesSiguiente.commission).toBe(5_000);
+  });
+
+  it('el tier de % nunca degrada un porcentaje negociado mayor', () => {
+    // BDM con 7% pactado y ND $120K: el tier de la tabla dice 5%, pero el
+    // acuerdo manda (auditoría 2026-08-06: cobraba 3.000 en vez de 4.200).
+    expect(calculateBdmPctFromND(120_000, 7)).toBe(7);
+    // Y el tier sí mejora un % menor: 3% pactado con ND $200K → 6%.
+    expect(calculateBdmPctFromND(200_000, 3)).toBe(6);
+    // Sin tier alcanzado, manda el perfil.
+    expect(calculateBdmPctFromND(10_000, 4)).toBe(4);
   });
 
   it('división = ND/2 y comisión = (división + acumulado) × pct', () => {

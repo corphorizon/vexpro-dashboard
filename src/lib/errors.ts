@@ -76,6 +76,17 @@ const POSTGRES_ERROR_MAP: Record<string, string> = {
 export function friendlyDbMessage(err: UnknownError): string {
   if (err && typeof err === 'object') {
     const pg = err as PostgresLikeError;
+
+    // Excepción de negocio del trigger guard_closed_period (migración 061):
+    // el mensaje lo escribimos NOSOTROS en el trigger, en castellano y sin
+    // filtrar internals, así que es seguro y mucho más útil que el genérico.
+    // Sin esto, editar un mes cerrado devolvía "Los datos no cumplen las
+    // reglas de validación" — indistinguible de cualquier otro error
+    // (auditoría 2026-08-06).
+    if (typeof pg.message === 'string' && /per[ií]odo est[aá] cerrado/i.test(pg.message)) {
+      return pg.message;
+    }
+
     if (pg.code && POSTGRES_ERROR_MAP[pg.code]) {
       return POSTGRES_ERROR_MAP[pg.code];
     }
