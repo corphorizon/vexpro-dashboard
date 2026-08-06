@@ -17,6 +17,12 @@ async function adminUpsertChannelBalance(
   amount: number,
   source: 'manual' | 'api' | 'derived',
 ) {
+  // ignoreDuplicates: la PRIMERA escritura del día gana. El snapshot con
+  // fecha D es "el cierre de D−1" y es un hecho histórico: re-correr el cron
+  // (o fijar una wallet a media tarde, que dispara un re-snapshot) NO debe
+  // pisarlo con una lectura intradía. Auditoría 2026-08-06: la fila de ese
+  // día fue sobreescrita a las 15:42 al fijarse la wallet 1705 y el "cierre
+  // del 05" quedó inflado en ~$11.700 hasta que se restauró a mano.
   const { error } = await admin
     .from('channel_balances')
     .upsert(
@@ -27,7 +33,7 @@ async function adminUpsertChannelBalance(
         amount,
         source,
       },
-      { onConflict: 'company_id,snapshot_date,channel_key' },
+      { onConflict: 'company_id,snapshot_date,channel_key', ignoreDuplicates: true },
     );
   if (error) throw new Error(error.message);
 }
@@ -143,6 +149,19 @@ export async function GET(request: NextRequest) {
         const pins = pinned ?? [];
         const wallets = cb.wallets ?? [];
 
+        // Si la API respondió 200 pero le falta alguna wallet fijada
+        // (respuesta parcial, wallet en mantenimiento, permisos del token),
+        // el `?? 0` de abajo la convertiría en un retiro ficticio por su
+        // saldo completo. Mejor no escribir nada de Coinsbuy hoy y avisar.
+        const missing = pins.filter((p) => !wallets.some((w) => w.id === p.wallet_id));
+        if (pins.length > 0 && missing.length > 0) {
+          entry.coinsbuy_error =
+            `La API no devolvió ${missing.length} wallet(s) fijada(s): ` +
+            missing.map((m) => m.wallet_label || m.wallet_id).join(', ') +
+            '. Snapshot y libro de hoy omitidos para no asentar un saldo falso.';
+          throw new Error(entry.coinsbuy_error as string);
+        }
+
         // Per-wallet snapshots (only for pinned ones).
         let pinnedTotal = 0;
         const perWallet: Record<string, number> = {};
@@ -238,6 +257,37 @@ export async function GET(request: NextRequest) {
   };
 
   const results = await Promise.all(companies.map(snapshotOneCompany));
+
+  // El libro por canal es contabilidad: un error acá no puede viajar dentro
+  // de un 200. Auditoría 2026-08-06: el asiento falló todas las noches en
+  // silencio porque el error quedaba en results[].ledger[] y nadie lo leía.
+  const ledgerErrors = results.flatMap((r) => {
+    const ledger = (r as { ledger?: LedgerSyncResult[] }).ledger ?? [];
+    return ledger.filter((l) => l.error).map((l) => `${l.channel_key} ${l.entry_date}: ${l.error}`);
+  });
+
+  if (ledgerErrors.length > 0) {
+    try {
+      const Sentry = await import('@sentry/nextjs');
+      Sentry.captureMessage('Libro por canal: asiento diario con errores', {
+        level: 'error',
+        tags: { area: 'cron.daily-balance', kind: 'ledger' },
+        extra: { errors: ledgerErrors },
+      });
+    } catch { /* sentry opcional */ }
+
+    return NextResponse.json(
+      {
+        success: false,
+        snapshot_date: today,
+        ledger_date: ledgerDate,
+        companies_processed: results.length,
+        ledger_errors: ledgerErrors,
+        results,
+      },
+      { status: 500 },
+    );
+  }
 
   return NextResponse.json({
     success: true,

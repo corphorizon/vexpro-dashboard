@@ -41,6 +41,20 @@ interface LedgerLine {
 /** Diferencias por debajo de un centavo son ruido de coma flotante, no un ajuste. */
 const CENT = 0.01;
 
+/**
+ * Ajuste máximo tolerado por canal antes de ABORTAR el asiento del día.
+ * Coinsbuy: comisiones de red, $1-4/día — 500 da margen de sobra.
+ * UniPayment: absorbe las liquidaciones de salida que su API no expone
+ * ($2K-8K/día observados) — 25.000 cubre picos sin tragarse un desastre.
+ * Un ajuste fuera de rango casi siempre es una wallet que faltó en la
+ * respuesta de la API o un snapshot pisado: mejor no escribir nada, avisar,
+ * y reprocesar el día cuando se entienda la causa.
+ */
+export const MAX_ADJUSTMENT: Record<string, number> = {
+  coinsbuy: 500,
+  unipayment: 25_000,
+};
+
 export interface LedgerSyncResult {
   channel_key: string;
   entry_date: string;
@@ -121,6 +135,24 @@ export async function syncChannelLedgerDay(
     internal: Number(mov?.internal) || 0,
   };
 
+  // Líneas MANUALES del mismo día: entran al saldo (balanceAsOf las incluye)
+  // pero no vienen de api_transactions, así que si no se suman acá el ajuste
+  // las "des-explicaría". Caso concreto: el alta de la wallet 1705 se asentó
+  // como línea manual de +38.397,58 el 2026-08-06 — sin este término, el
+  // cierre de esa noche calcularía un ajuste de ~+38K y abortaría por umbral.
+  const { data: manualRows, error: manualErr } = await admin
+    .from('channel_ledger_entries')
+    .select('kind, amount')
+    .eq('company_id', companyId)
+    .eq('channel_key', channelKey)
+    .eq('entry_date', entryDate)
+    .eq('source', 'manual');
+  if (manualErr) {
+    return { channel_key: channelKey, entry_date: entryDate, closing: actualClose, error: manualErr.message };
+  }
+  const manualDelta = ((manualRows ?? []) as Array<{ kind: string; amount: number }>)
+    .reduce((sum, r) => sum + (r.kind === 'out' ? -Number(r.amount) : Number(r.amount)), 0);
+
   const lines: LedgerLine[] = [];
   if (day.deposits > CENT) {
     lines.push({ entry_date: entryDate, kind: 'in', concept: 'Depósitos del día', category: AUTO_CATEGORIES.deposits, amount: day.deposits });
@@ -137,7 +169,7 @@ export async function syncChannelLedgerDay(
   }
 
   // ── Ajuste que cierra contra el saldo real ─────────────────────────────
-  const computed = priorBalance + day.deposits - day.withdrawals - day.internal;
+  const computed = priorBalance + manualDelta + day.deposits - day.withdrawals - day.internal;
   const adjustment = actualClose - computed;
   if (Math.abs(adjustment) > CENT) {
     lines.push({
@@ -150,20 +182,33 @@ export async function syncChannelLedgerDay(
     });
   }
 
-  if (lines.length > 0) {
-    const { error } = await admin.from('channel_ledger_entries').upsert(
-      lines.map((l) => ({
-        company_id: companyId,
-        channel_key: channelKey,
-        source: 'api' as const,
-        ...l,
-        notes: l.notes ?? null,
-      })),
-      { onConflict: 'company_id,channel_key,entry_date,category' },
-    );
-    if (error) {
-      return { channel_key: channelKey, entry_date: entryDate, closing: actualClose, error: error.message };
-    }
+  // Cota de sanidad ANTES de escribir: un ajuste enorme no es una comisión de
+  // red, es un dato de entrada roto (wallet ausente en la respuesta, snapshot
+  // pisado, wallet recién fijada). Escribirlo contaminaría el libro con un
+  // movimiento que no existió; mejor fallar ruidoso y reprocesar el día.
+  const maxAdj = MAX_ADJUSTMENT[channelKey] ?? 1_000;
+  if (Math.abs(adjustment) > maxAdj) {
+    return {
+      channel_key: channelKey,
+      entry_date: entryDate,
+      closing: actualClose,
+      error: `Ajuste fuera de rango (${adjustment.toFixed(2)} > ±${maxAdj}): no se asentó el día. Revisar snapshot y wallets antes de reprocesar.`,
+    };
+  }
+
+  // RPC en vez de upsert: el ON CONFLICT de PostgREST no puede apoyarse en el
+  // índice único PARCIAL (where source='api') — Postgres lo rechaza con 42P10
+  // y por eso el cron nunca escribió (auditoría 2026-08-06). La RPC además
+  // REEMPLAZA el día completo (delete+insert de las líneas 'api'), así que una
+  // re-corrida que produce menos líneas no deja huérfanas.
+  const { error } = await admin.rpc('replace_channel_ledger_day', {
+    p_company_id: companyId,
+    p_channel_key: channelKey,
+    p_entry_date: entryDate,
+    p_lines: lines.map((l) => ({ ...l, notes: l.notes ?? null })),
+  });
+  if (error) {
+    return { channel_key: channelKey, entry_date: entryDate, closing: actualClose, error: error.message };
   }
 
   return { channel_key: channelKey, entry_date: entryDate, closing: actualClose, adjustment };
