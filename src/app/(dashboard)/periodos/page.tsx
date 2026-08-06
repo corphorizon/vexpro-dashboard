@@ -89,32 +89,50 @@ export default function PeríodosPage() {
   const showSuccess = (msg: string) => { showErrorRaw(''); showSuccessRaw(msg); };
   const showError = (msg: string) => { showSuccessRaw(''); showErrorRaw(msg); };
 
+  const [reopenTarget, setReopenTarget] = useState<{ id: string; label: string } | null>(null);
+  const [reopenReason, setReopenReason] = useState('');
+  const [reopening, setReopening] = useState(false);
+
+  const confirmReopen = async () => {
+    if (!reopenTarget || !reopenReason.trim()) return;
+    setReopening(true);
+    setUpdating(reopenTarget.id);
+    try {
+      await updatePeriodStatus(reopenTarget.id, false, reopenReason.trim());
+      await refresh();
+      showSuccess(t('periods.statusChanged', { label: reopenTarget.label, status: t(STATUS_LABEL_KEY.open) }));
+      setReopenTarget(null);
+    } catch (err) {
+      showError(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+    } finally {
+      setReopening(false);
+      setUpdating(null);
+    }
+  };
+
   const changeStatus = (id: string, newStatus: PeriodStatus) => {
     const period = managedPeriods.find(p => p.id === id);
     if (!period) return;
 
     const statusLabel = t(STATUS_LABEL_KEY[newStatus]);
+
+    // Reabrir tiene su propio diálogo con campo de motivo. El window.prompt
+    // anterior era nativo, sin estilo, sin i18n y algunos navegadores lo
+    // bloquean en silencio — la reapertura se cancelaba sin explicación
+    // (auditoría 2026-08-06, QW12).
+    if (newStatus !== 'closed') {
+      setReopenTarget({ id, label: period.label });
+      setReopenReason('');
+      return;
+    }
+
     confirm(
       t('periods.changeStatusConfirm', { label: period.label, status: statusLabel }) +
         (newStatus === 'closed' ? t('periods.closedWarning') : ''),
       async () => {
         setUpdating(id);
         try {
-          const isClosed = newStatus === 'closed';
-          // Reabrir un período cerrado deshace un cierre contable: el motivo
-          // queda en el registro de actividad junto a quién lo hizo.
-          let reason: string | undefined;
-          if (!isClosed) {
-            const answer = window.prompt(
-              `Reabrir ${period.label} desbloquea la edición de ese mes y puede cambiar el saldo ya distribuido a los socios.\n\n¿Motivo?`,
-            );
-            if (answer === null || !answer.trim()) {
-              setUpdating(null);
-              return;
-            }
-            reason = answer.trim();
-          }
-          await updatePeriodStatus(id, isClosed, reason);
+          await updatePeriodStatus(id, true, undefined);
           await refresh();
           showSuccess(t('periods.statusChanged', { label: period.label, status: statusLabel }));
         } catch (err) {
@@ -286,6 +304,52 @@ export default function PeríodosPage() {
       </Card>
 
       {ConfirmModal}
+
+      {/* Diálogo de reapertura con motivo obligatorio (reemplaza al
+          window.prompt nativo). El motivo queda en el Registro de Actividad
+          junto a quién reabrió. */}
+      {reopenTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Reabrir ${reopenTarget.label}`}
+            className="w-full max-w-md rounded-xl border border-border bg-card shadow-[var(--elevation-3)] p-5 space-y-4"
+          >
+            <h2 className="font-semibold">Reabrir {reopenTarget.label}</h2>
+            <p className="text-sm text-muted-foreground">
+              Reabrir desbloquea la edición de ese mes y puede cambiar el saldo ya
+              distribuido a los socios. El motivo queda registrado junto a tu nombre.
+            </p>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-muted-foreground">Motivo (obligatorio)</span>
+              <textarea
+                rows={2}
+                autoFocus
+                value={reopenReason}
+                onChange={(e) => setReopenReason(e.target.value)}
+                className="w-full rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
+                placeholder="Ej.: corregir el egreso de la oficina duplicado"
+              />
+            </label>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setReopenTarget(null)}
+                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmReopen}
+                disabled={reopening || !reopenReason.trim()}
+                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                {reopening ? 'Reabriendo…' : 'Reabrir período'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

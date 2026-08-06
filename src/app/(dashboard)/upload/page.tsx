@@ -112,7 +112,7 @@ import { formatDayMonth } from '@/lib/dates';
 import * as Sentry from '@sentry/nextjs';
 import Link from 'next/link';
 
-type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones' | 'documentos';
+type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones';
 
 const SECTION_KEYS: Record<DataSection, string> = {
   depositos: 'upload.deposits',
@@ -121,7 +121,6 @@ const SECTION_KEYS: Record<DataSection, string> = {
   ingresos: 'upload.operatingIncome',
   liquidez: 'upload.liquidity',
   inversiones: 'upload.investments',
-  documentos: 'upload.documents',
 };
 
 interface DepositRow { id: string; channel: string; amount: number; }
@@ -184,7 +183,6 @@ function SortableExpenseRow({
   );
 }
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
-interface DocRow { id: string; filename: string; date: string; description: string; uploaded_by?: string; }
 
 const INITIAL_DEPOSITS: DepositRow[] = [
   { id: 'd1', channel: 'coinsbuy', amount: 0 },
@@ -200,14 +198,8 @@ const INITIAL_WITHDRAWALS: WithdrawalRow[] = [
   { id: 'w4', category: 'other', amount: 0 },
 ];
 
-const MOCK_DOCS: DocRow[] = [
-  { id: 'doc1', filename: 'reporte_coinsbuy_mar26.csv', date: '2026-03-15', description: 'Extracto Coinsbuy Marzo' },
-  { id: 'doc2', filename: 'facturas_egresos_mar26.pdf', date: '2026-03-14', description: 'Facturas operativas Marzo' },
-  { id: 'doc3', filename: 'pl_broker_feb26.xlsx', date: '2026-02-28', description: 'P&L Libro B Febrero' },
-];
 
 const STORAGE_KEYS = {
-  docs: 'fd_upload_docs',
 };
 
 const getPerPeriodKey = (section: string, periodId: string) => `fd_data_${section}_${periodId}`;
@@ -487,7 +479,6 @@ export default function UploadPage() {
   const [income, setIncomeRaw] = useState<IncomeRow>(() => loadIncomeForPeriod(lastPeriodId));
   const [propFirmAmount, setPropFirmAmount] = useState<number>(() => allPropFirmSales.find(p => p.period_id === lastPeriodId)?.amount || 0);
   const [p2pAmount, setP2PAmount] = useState<number>(() => allP2PTransfers.find(p => p.period_id === lastPeriodId)?.amount || 0);
-  const [docs, setDocsRaw] = useState<DocRow[]>(() => loadFromStorage(STORAGE_KEYS.docs, MOCK_DOCS));
 
   // ARCHITECTURE NOTE: We use a ref to track selectedPeriod in setDeposits/setWithdrawals/etc.
   // callbacks. This avoids stale closures without adding selectedPeriod to useCallback deps
@@ -558,9 +549,6 @@ export default function UploadPage() {
     setIncomeRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
     markDirty('ingresos');
   }, [markDirty]);
-  const setDocs = useCallback((updater: DocRow[] | ((prev: DocRow[]) => DocRow[])) => {
-    setDocsRaw(prev => typeof updater === 'function' ? updater(prev) : updater);
-  }, []);
 
   // ── Broker derived-logic helpers ──
   // For April 2026+ the broker amount is no longer entered by hand: it's
@@ -685,7 +673,6 @@ export default function UploadPage() {
   const [forwardPending, setForwardPending] = useState<
     { oldConcept: string; concept: string; amount: number; category: string | null } | null
   >(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const [savingAll, setSavingAll] = useState(false);
 
   // Per-module "saving" locks for Liquidez / Inversiones row handlers.
@@ -1861,14 +1848,6 @@ export default function UploadPage() {
     }
   };
 
-  // Doc handler
-  const handleDocUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setDocs(prev => [{ id: `doc-${Date.now()}`, filename: f.name, date: new Date().toISOString().split('T')[0], description: '', uploaded_by: user?.name || '' }, ...prev]);
-    showSuccess(t('upload.documentUploaded'));
-    e.target.value = '';
-  };
 
   // Liquidity totals
   const liqTotalDeposits = filteredLiquidity.reduce((s, r) => s + r.deposit, 0);
@@ -3160,79 +3139,13 @@ export default function UploadPage() {
       )}
 
       {/* DOCUMENTOS */}
-      {section === 'documentos' && (
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">{t('upload.documents')} — {periodLabel}</h2>
-            {userCanAdd && (
-              <button
-                onClick={() => fileRef.current?.click()}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-              >
-                <FileUp className="w-4 h-4" />
-                {t('upload.uploadDoc')}
-              </button>
-            )}
-            <input ref={fileRef} type="file" aria-label={t('upload.uploadDoc')} onChange={handleDocUpload} className="hidden" />
-          </div>
-
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          <table className="w-full text-sm min-w-[480px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.filename')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('upload.description')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('upload.uploadedBy')}</th>
-                <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {docs.length === 0 && (
-                <tr><td colSpan={5} className="py-8 text-center text-muted-foreground">{t('upload.noDocuments')}</td></tr>
-              )}
-              {docs.map(doc => (
-                <tr key={doc.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                  <td className="py-2.5 px-3">
-                    <div className="flex items-center gap-2">
-                      <FileSpreadsheet className="w-4 h-4 text-emerald-500" />
-                      <span className="font-medium">{doc.filename}</span>
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-3 text-muted-foreground">{doc.date}</td>
-                  <td className="py-2.5 px-3 text-muted-foreground hidden sm:table-cell">{doc.description || '—'}</td>
-                  <td className="py-2.5 px-3 text-muted-foreground hidden sm:table-cell">{doc.uploaded_by || '—'}</td>
-                  <td className="py-2.5 px-3 text-center">
-                    <div className="flex justify-center gap-1">
-                      <button
-                        onClick={() => showSuccess(t('upload.downloading', { filename: doc.filename }))}
-                        className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                        title={t('upload.download')}
-                        aria-label={t('upload.download')}
-                      >
-                        <Download className="w-3.5 h-3.5" />
-                      </button>
-                      {userCanDelete && (
-                        <button
-                          onClick={() => askConfirmation(t('upload.confirmDeleteDoc', { filename: doc.filename }), () => {
-                            setDocs(prev => prev.filter(d => d.id !== doc.id));
-                            showSuccess(t('upload.investmentDeleted'));
-                          })}
-                          className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
-                          aria-label={t('common.delete')}
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          </div>
-        </Card>
-      )}
+      {/* La pestaña Documentos se quitó (auditoría 2026-08-06, QW10): "subía"
+          archivos guardando SOLO EL NOMBRE en localStorage — el archivo nunca
+          llegaba a ningún storage y daba falsa sensación de respaldo
+          documental. Los comprobantes reales viven adjuntos a cada egreso y a
+          cada orden de pago, en buckets privados. Si algún día se quiere una
+          biblioteca de documentos del período, la infra es la de
+          expense-attachments. */}
 
       {/* Bottom bar: Period selector + Save All */}
       <div className="sticky bottom-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 bg-background/95 backdrop-blur border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4">
@@ -3248,7 +3161,7 @@ export default function UploadPage() {
             ))}
           </select>
         </div>
-        {userCanAdd && section !== 'documentos' && section !== 'liquidez' && section !== 'inversiones' && (
+        {userCanAdd && section !== 'liquidez' && section !== 'inversiones' && (
           <div className="flex items-center gap-3">
             {savingAll ? (
               <span

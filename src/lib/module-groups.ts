@@ -66,7 +66,6 @@ export const MODULE_GROUPS: ModuleGroup[] = [
     items: [
       { module: 'risk',        href: '/risk/dashboard',       labelEs: 'Dashboard Risk' },
       { module: 'risk',        href: '/risk/retiros-propfirm', labelEs: 'Retiros PropFirm' },
-      { module: 'risk',        href: '/risk/retiros-wallet',   labelEs: 'Retiros Wallet' },
     ],
   },
   {

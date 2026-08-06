@@ -37,7 +37,6 @@ const ENTRIES: Entry[] = [
   { href: '/rrhh/dashboard', label: 'Dashboard RRHH', module: 'hr', Icon: LayoutDashboard, color: 'text-rose-500' },
   { href: '/comisiones', label: 'Comisiones', module: 'commissions', Icon: Calculator, color: 'text-orange-600' },
   { href: '/risk/retiros-propfirm', label: 'Risk · Prop Firm', module: 'risk', Icon: FileSearch, color: 'text-teal-600' },
-  { href: '/risk/retiros-wallet', label: 'Risk · Wallet', module: 'risk', Icon: Wallet, color: 'text-teal-600' },
   { href: '/usuarios', label: 'Usuarios', module: 'users', Icon: Users, color: 'text-slate-600' },
   // Auditoría removed from tenant quick-access — lives in /superadmin/companies/[id] now.
 ];

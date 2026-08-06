@@ -14,6 +14,7 @@ import {
   createExpenseForPaidOrder,
   normalizeOrder,
 } from '@/lib/payment-orders/server';
+import { notifyOrderTransition } from '@/lib/payment-orders/notifications';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/payment-orders/[id]/transition
@@ -210,6 +211,11 @@ export async function POST(
 
     let result = normalizeOrder(updated as Record<string, unknown>);
     let warning: string | null = null;
+
+    // Notificaciones (QW11): a los admins cuando entra a aprobación, al
+    // creador cuando se aprueba o rechaza. SIN await — un fallo de SendGrid
+    // no puede demorar ni romper una transición de tesorería.
+    void notifyOrderTransition(admin, companyId, result, to, who);
 
     // ── Egreso automático al pagar (opcional) ──
     // Si no hay período abierto NO se rompe la transición: la orden ya está
