@@ -3,7 +3,7 @@
 //
 // Reproduce el formulario del cliente: banda oscura con logo + título, tres
 // campos de cabecera, bloque de beneficiario, tabla de detalle, totales, el
-// medio de pago ELEGIDO (no el formulario en blanco) y observaciones.
+// medio de pago ELEGIDO (no el formulario en blanco), observaciones y firmas.
 //
 // Reutiliza la paleta y el lenguaje visual de src/lib/pdf-export.ts (navy
 // #1E3A5F + acento, tarjetas con borde, tablas autotable con cabecera navy),
@@ -71,8 +71,8 @@ const LABELS = {
     swift: 'SWIFT / BIC',
     accountType: 'TIPO DE CUENTA',
     notes: 'CONCEPTO / OBSERVACIONES',
-    issuedBy: 'Emitida por',
-    approvedBy: 'Aprobada por',
+    requestedBy: 'SOLICITADO POR · NOMBRE Y FIRMA',
+    authorizedBy: 'AUTORIZADO POR · NOMBRE Y FIRMA',
     footer: 'Documento interno · Verificá la red y la dirección antes de ejecutar el pago.',
     paidStamp: 'PAGADA',
     reference: 'Ref.',
@@ -113,8 +113,8 @@ const LABELS = {
     swift: 'SWIFT · BIC',
     accountType: 'ACCOUNT TYPE',
     notes: 'NOTES · REMARKS',
-    issuedBy: 'Issued by',
-    approvedBy: 'Approved by',
+    requestedBy: 'REQUESTED BY · NAME AND SIGNATURE',
+    authorizedBy: 'AUTHORIZED BY · NAME AND SIGNATURE',
     footer: 'Internal document · Verify network and address before executing the payment.',
     paidStamp: 'PAID',
     reference: 'Ref.',
@@ -519,11 +519,45 @@ export async function generatePaymentOrderPDF(
   doc.text(noteLines, MARGIN + 4, y + 5.5);
   y += notesH;
 
-  // ── 8. (Sin bloque de firmas) ─────────────────────────────────────────────
-  // Kevin pidió quitar "Solicitado por / Autorizado por" (2026-08-05): con la
-  // aprobación digital las rayas para firmar a mano perdieron sentido. La
-  // traza de quién emitió y quién aprobó va en el pie, y el historial completo
-  // vive en la pantalla de detalle de la orden.
+  // ── 8. Firmas ─────────────────────────────────────────────────────────────
+  // Las firmas se anclan al pie de la página; si el cuerpo llegó demasiado
+  // abajo, el bloque se va entero a la siguiente hoja (nunca se parte).
+  // La raya de firma baja al pie si sobra espacio, pero nunca invade el footer.
+  const signLineY = Math.max(y + 10, pageH - 26);
+  if (signLineY > pageH - 22) {
+    doc.addPage();
+    y = MARGIN + 16;
+  } else {
+    y = signLineY;
+  }
+
+  const authorized = isAuthorized(order.status);
+  const signW = (contentW - 16) / 2;
+  const signs: { label: string; who: string | null; when: string | null; x: number }[] = [
+    { label: L.requestedBy, who: order.created_by_name, when: order.created_at, x: MARGIN },
+    { label: L.authorizedBy, who: order.approved_by_name, when: order.approved_at, x: MARGIN + signW + 16 },
+  ];
+
+  signs.forEach((s) => {
+    // El documento emitido lleva su traza digital; el borrador se firma a mano.
+    if (authorized && s.who) {
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(...C.ink);
+      doc.text(s.who, s.x + signW / 2, y - 2, { align: 'center' });
+    }
+    doc.setDrawColor(...C.ink);
+    doc.setLineWidth(0.4);
+    doc.line(s.x, y, s.x + signW, y);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.6);
+    doc.setTextColor(...C.muted);
+    doc.text(s.label, s.x + signW / 2, y + 4, { align: 'center', charSpace: 0.2 });
+    if (authorized && s.who && s.when) {
+      doc.setFontSize(6);
+      doc.text(formatDateTime(s.when, order.locale), s.x + signW / 2, y + 8, { align: 'center' });
+    }
+  });
 
   // ── 9. Marca de agua / sello de estado ────────────────────────────────────
   paintStatusWatermark(doc, order, L);
@@ -546,20 +580,6 @@ export async function generatePaymentOrderPDF(
       pageH - 8.5,
       { align: 'right' },
     );
-    // Traza de emisión/autorización: reemplaza al viejo bloque de firmas.
-    // Solo cuando el documento ya vale como autorización (aprobada/pagada).
-    if (isAuthorized(order.status)) {
-      const trace = [
-        order.created_by_name ? `${L.issuedBy} ${order.created_by_name}` : null,
-        order.approved_by_name
-          ? `${L.approvedBy} ${order.approved_by_name}${order.approved_at ? ` · ${formatDateTime(order.approved_at, order.locale)}` : ''}`
-          : null,
-      ].filter(Boolean).join('   ·   ');
-      if (trace) {
-        doc.setFontSize(6.4);
-        doc.text(trace, MARGIN, pageH - 4.8);
-      }
-    }
   }
 
   // ── Salida ────────────────────────────────────────────────────────────────

@@ -95,17 +95,6 @@ export interface PaymentOrder {
   cancelled_by_name: string | null;
   cancellation_reason: string | null;
 
-  // Comprobante de pago — OPCIONAL. Respaldo del pago (captura de la
-  // transferencia, PDF del banco…) que acompaña a payment_reference. Se guarda
-  // el PATH dentro del bucket privado `payment-proofs`, nunca una URL pública:
-  // la lectura pasa por /api/admin/payment-orders/[id]/proof, que valida
-  // sesión + empresa y emite una URL firmada de corta vida.
-  payment_proof_path: string | null;
-  payment_proof_name: string | null;
-  payment_proof_mime: string | null;
-  payment_proof_size: number | null;
-  payment_proof_uploaded_at: string | null;
-
   expense_id: string | null;
   updated_at: string;
 }

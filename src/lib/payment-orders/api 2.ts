@@ -10,7 +10,7 @@
 // propias de estos objetos.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 import type {
   PaymentBeneficiary,
   PaymentOrder,
@@ -106,45 +106,6 @@ export async function transitionPaymentOrder(
     { method: 'POST', body: jsonBody({ to, ...opts }) },
   );
   return { order, warning: warning ?? null };
-}
-
-// ── Comprobante de pago (opcional) ──────────────────────────────────────────
-
-/**
- * Sube (o reemplaza) el comprobante de la orden. PDF/PNG/JPG/WEBP, máx 10 MB —
- * el servidor valida los magic bytes, no la extensión.
- *
- * OJO: no se setea Content-Type a mano. apiFetch solo lo agrega cuando el body
- * es string, así que con FormData el browser pone el multipart con su boundary
- * (fijarlo a mano rompe el parseo server-side).
- */
-export async function uploadPaymentProof(orderId: string, file: File): Promise<PaymentOrder> {
-  const body = new FormData();
-  body.append('file', file);
-  const { order } = await request<{ order: PaymentOrder }>(
-    `/api/admin/payment-orders/${orderId}/proof`,
-    { method: 'POST', body },
-  );
-  return order;
-}
-
-/** Quita el comprobante (archivo + columnas). No permitido en órdenes anuladas. */
-export async function deletePaymentProof(orderId: string): Promise<PaymentOrder> {
-  const { order } = await request<{ order: PaymentOrder }>(
-    `/api/admin/payment-orders/${orderId}/proof`,
-    { method: 'DELETE' },
-  );
-  return order;
-}
-
-/**
- * URL de lectura del comprobante para un <a href> / window.open: el GET
- * responde un 302 a una URL firmada de 10 minutos. Pasa por withActiveCompany
- * porque una navegación directa no atraviesa apiFetch (el superadmin en modo
- * "viendo como" necesita el ?company_id en la URL).
- */
-export function paymentProofUrl(orderId: string): string {
-  return withActiveCompany(`/api/admin/payment-orders/${orderId}/proof`);
 }
 
 // ── Libreta de beneficiarios ────────────────────────────────────────────────
