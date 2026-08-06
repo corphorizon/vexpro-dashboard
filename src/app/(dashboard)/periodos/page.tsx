@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { apiFetch } from '@/lib/api-fetch';
 import { Card } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
@@ -10,7 +11,6 @@ import { useData } from '@/lib/data-context';
 import type { Period } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
 import { updatePeriodStatus } from '@/lib/supabase/mutations';
-import { useConfirm } from '@/lib/use-confirm';
 import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
 import { Calendar, Lock, Unlock, Clock, Check } from 'lucide-react';
 
@@ -79,7 +79,6 @@ export default function PeríodosPage() {
     );
   }, [dataPeriods]);
 
-  const { confirm, Modal: ConfirmModal } = useConfirm();
   const [successMsg, showSuccessRaw] = useAutoClearMessage(3000);
   const [errorMsg, showErrorRaw] = useAutoClearMessage(4500);
   const [updating, setUpdating] = useState<string | null>(null);
@@ -88,6 +87,31 @@ export default function PeríodosPage() {
   // vice-versa, so the UI never displays both at once.
   const showSuccess = (msg: string) => { showErrorRaw(''); showSuccessRaw(msg); };
   const showError = (msg: string) => { showSuccessRaw(''); showErrorRaw(msg); };
+
+  const [closeTarget, setCloseTarget] = useState<{ id: string; label: string; statusLabel: string } | null>(null);
+  const [checklist, setChecklist] = useState<{
+    items: Array<{ key: string; label: string; count: number; detail: string | null }>;
+    clean: boolean;
+    failed?: boolean;
+  } | null>(null);
+  const [closing, setClosing] = useState(false);
+
+  const confirmClose = async () => {
+    if (!closeTarget) return;
+    setClosing(true);
+    setUpdating(closeTarget.id);
+    try {
+      await updatePeriodStatus(closeTarget.id, true, undefined);
+      await refresh();
+      showSuccess(t('periods.statusChanged', { label: closeTarget.label, status: closeTarget.statusLabel }));
+      setCloseTarget(null);
+    } catch (err) {
+      showError(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+    } finally {
+      setClosing(false);
+      setUpdating(null);
+    }
+  };
 
   const [reopenTarget, setReopenTarget] = useState<{ id: string; label: string } | null>(null);
   const [reopenReason, setReopenReason] = useState('');
@@ -126,26 +150,22 @@ export default function PeríodosPage() {
       return;
     }
 
-    confirm(
-      t('periods.changeStatusConfirm', { label: period.label, status: statusLabel }) +
-        (newStatus === 'closed' ? t('periods.closedWarning') : ''),
-      async () => {
-        setUpdating(id);
-        try {
-          await updatePeriodStatus(id, true, undefined);
-          await refresh();
-          showSuccess(t('periods.statusChanged', { label: period.label, status: statusLabel }));
-        } catch (err) {
-          console.error('Error updating period status:', err);
-          showError(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
-        } finally {
-          setUpdating(null);
-        }
-      },
-      // Closing a period is a consequential (near-destructive) action — use
-      // the red tone. Opening back is fine with default styling.
-      { tone: newStatus === 'closed' ? 'danger' : 'default' },
-    );
+    // Cerrar abre su propio diálogo con el CHECKLIST de pendientes (P1-4 del
+    // benchmark, auditoría 2026-08-06): egresos sin comprobante, liquidez sin
+    // conciliar, órdenes aprobadas sin pagar e inversiones mixtas. Son
+    // advertencias, no bloqueos — cerrar con pendientes es legítimo, pero
+    // tiene que ser una decisión informada, no un descuido.
+    setCloseTarget({ id, label: period.label, statusLabel });
+    setChecklist(null);
+    void apiFetch(`/api/admin/period-close-checklist?period_id=${id}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (json.success) setChecklist({ items: json.items ?? [], clean: !!json.clean });
+        else setChecklist({ items: [], clean: true, failed: true });
+      })
+      // Si el checklist falla, se puede cerrar igual: es un asistente, no
+      // una barrera nueva.
+      .catch(() => setChecklist({ items: [], clean: true, failed: true }));
   };
 
   const closedCount = managedPeriods.filter(p => p.status === 'closed').length;
@@ -303,7 +323,73 @@ export default function PeríodosPage() {
         />
       </Card>
 
-      {ConfirmModal}
+      {/* Diálogo de CIERRE con checklist de pendientes. */}
+      {closeTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Cerrar ${closeTarget.label}`}
+            className="w-full max-w-md rounded-xl border border-border bg-card shadow-[var(--elevation-3)] p-5 space-y-4 max-h-[85vh] overflow-y-auto"
+          >
+            <h2 className="font-semibold">Cerrar {closeTarget.label}</h2>
+            <p className="text-sm text-muted-foreground">
+              Al cerrar, los totales se congelan y el mes queda bloqueado para
+              edición. Antes de confirmar, esto es lo que quedó pendiente:
+            </p>
+
+            {!checklist && <p className="text-sm text-muted-foreground">Revisando pendientes…</p>}
+
+            {checklist?.failed && (
+              <p className="text-sm text-amber-600">
+                No se pudo revisar los pendientes — podés cerrar igual.
+              </p>
+            )}
+
+            {checklist && !checklist.failed && (
+              checklist.clean ? (
+                <p className="text-sm text-positive font-medium">
+                  ✓ Sin pendientes: egresos con respaldo, liquidez conciliada,
+                  sin órdenes aprobadas por pagar ni inversiones mixtas.
+                </p>
+              ) : (
+                <ul className="space-y-2">
+                  {checklist.items.filter((i) => i.count > 0).map((i) => (
+                    <li key={i.key} className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
+                      <p className="font-medium">
+                        {i.count} · {i.label}
+                      </p>
+                      {i.detail && (
+                        <p className="text-xs text-muted-foreground mt-1 break-words">{i.detail}</p>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => setCloseTarget(null)}
+                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmClose}
+                disabled={closing || !checklist}
+                className="px-4 py-2 rounded-lg bg-negative text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+              >
+                {closing
+                  ? 'Cerrando…'
+                  : checklist && !checklist.clean
+                    ? 'Cerrar de todos modos'
+                    : 'Cerrar período'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Diálogo de reapertura con motivo obligatorio (reemplaza al
           window.prompt nativo). El motivo queda en el Registro de Actividad
