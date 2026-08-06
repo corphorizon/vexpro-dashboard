@@ -108,6 +108,8 @@ export interface DataContextValue {
   getLiquidityData: () => LiquidityMovement[];
   getInvestmentsData: () => Investment[];
   computeSaldoChain: () => Map<string, SaldoInfo>;
+  /** Insumos canónicos de la cadena, con year/month/label/is_closed — para el forecast. */
+  getDistributionInputs: () => Array<PeriodDistInput & { year: number; month: number; label: string; isClosed: boolean }>;
   isPeriodAfterSaldoStart: (periodId: string) => boolean;
 
   // Direct data access
@@ -690,6 +692,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // en la fórmula única compartida (src/lib/distribution.ts). Correr la
     // cadena completa (no filtrada por saldoStart) garantiza que el arrastre
     // de deuda/reserva coincida con /socios.
+    //
+    // Los mismos inputs, enriquecidos con year/month/label/is_closed, se
+    // exponen como getDistributionInputs() para el forecast (/finanzas/
+    // forecast): la proyección appendea meses sintéticos a ESTOS insumos y
+    // corre la misma fórmula — una construcción paralela divergiría.
     const inputs: PeriodDistInput[] = periods.map(period => {
       const oi = oiIndex.get(period.id);
       const pfs = pfsIndex.get(period.id) || 0;
@@ -711,6 +718,45 @@ export function DataProvider({ children }: { children: ReactNode }) {
       chain.set(pid, { ...r, totalDistribuir: r.montoDistribuir });
     }
     return chain;
+  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
+
+  // Insumos de la cadena con metadata de período, para el forecast.
+  const getDistributionInputs = useCallback(() => {
+    const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
+    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p.amount]));
+    const pfwIndex = new Map<string, number>();
+    for (const w of withdrawals) {
+      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, (pfwIndex.get(w.period_id) || 0) + w.amount);
+    }
+    const expIndex = new Map<string, number>();
+    for (const e of expenses) {
+      expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + e.amount);
+    }
+    const invIndex = new Map<string, number>();
+    for (const inv of investments) {
+      if (!inv.date) continue;
+      const [y, m] = String(inv.date).split('-').map(Number);
+      const per = periods.find(p => p.year === y && p.month === m);
+      if (per) invIndex.set(per.id, (invIndex.get(per.id) || 0) + (Number(inv.profit) || 0));
+    }
+    return periods.map(period => {
+      const oi = oiIndex.get(period.id);
+      const pfs = pfsIndex.get(period.id) || 0;
+      const pfW = pfwIndex.get(period.id) || 0;
+      return {
+        periodId: period.id,
+        year: period.year,
+        month: period.month,
+        label: period.label ?? `${period.month}/${period.year}`,
+        isClosed: !!period.is_closed,
+        brokerPnl: oi?.broker_pnl || 0,
+        other: oi?.other || 0,
+        propFirmNetIncome: pfs - pfW,
+        investmentProfits: invIndex.get(period.id) || 0,
+        totalExpenses: expIndex.get(period.id) || 0,
+        reservePct: period.reserve_pct,
+      };
+    });
   }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
 
   // ─── Period summary (single) ───
@@ -1003,6 +1049,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getLiquidityData,
       getInvestmentsData,
       computeSaldoChain,
+    getDistributionInputs,
       isPeriodAfterSaldoStart,
 
       partners,
