@@ -42,6 +42,7 @@ import {
   Circle,
   ChevronLeft,
   ChevronRight,
+  ScrollText,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -132,6 +133,9 @@ const NAV_STRUCTURE: NavEntry[] = [
   // Auditoría is no longer in the tenant sidebar; it's only reachable from
   // the superadmin panel (per-company tab).
   { type: 'link', href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
+  // Registro de Actividad — arriba de todo lo que audita, no dentro de un
+  // grupo: aplica a los movimientos de TODOS los modulos, no de uno.
+  { type: 'link', href: '/logs', i18nKey: 'nav.logs', icon: ScrollText, module: 'logs' },
 ];
 
 // Mapa href → icono, derivado de NAV_STRUCTURE. Lo usa el modo flat (los

@@ -15,6 +15,7 @@ import type { Expense } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
+import { ExpenseReference } from '@/components/ui/expense-reference';
 import { ExpenseConcept } from '@/components/ui/expense-concept';
 import { Search, ArrowUpDown, ArrowDown, ArrowUp, Check, Download, Receipt } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -257,6 +258,7 @@ export default function EgresosPage() {
                     <th className="text-left py-2.5 px-3 text-muted-foreground font-medium w-8">#</th>
                     <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.concept')}</th>
                     <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Categoría</th>
+                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Referencia</th>
                     {/* Fecha opcional (migration-056). Columna angosta con
                         formato DD/MM — el año ya lo da el período — para no
                         ensanchar la tabla en móvil. */}
@@ -270,7 +272,7 @@ export default function EgresosPage() {
                 <tbody>
                   {filteredExpenses.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-8 text-center text-muted-foreground">
+                      <td colSpan={9} className="py-8 text-center text-muted-foreground">
                         {searchQuery ? t('expenses.noResults') : t('expenses.noExpenses')}
                       </td>
                     </tr>
@@ -291,6 +293,16 @@ export default function EgresosPage() {
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
+                      </td>
+                      {/* Referencia del pago: heredada de la orden cuando el
+                          egreso nace de una, o cargada a mano en /upload. */}
+                      <td className="py-2.5 px-3 max-w-[180px]">
+                        <ExpenseReference
+                          expenseId={expense.id}
+                          reference={expense.reference}
+                          attachmentName={expense.attachment_name}
+                          hasAttachment={!!expense.attachment_path}
+                        />
                       </td>
                       <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
                         {expense.expense_date ? formatDayMonth(expense.expense_date) : '—'}

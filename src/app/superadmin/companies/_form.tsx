@@ -3,27 +3,14 @@
 import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { LogoUploader } from '@/components/logo-uploader';
+import { MODULES } from '@/lib/modules';
 
-// Modules the sidebar knows about. Kept in sync with
-// scripts/db-admin/migrate-vexprofx.mjs CODE_MODULES.
-export const ALL_MODULES: { key: string; label: string }[] = [
-  { key: 'summary', label: 'Resumen general' },
-  { key: 'movements', label: 'Movimientos' },
-  { key: 'expenses', label: 'Egresos' },
-  { key: 'liquidity', label: 'Liquidez' },
-  { key: 'investments', label: 'Inversiones' },
-  { key: 'balances', label: 'Balances' },
-  { key: 'partners', label: 'Socios' },
-  { key: 'payment_orders', label: 'Órdenes de Pago' },
-  { key: 'upload', label: 'Carga de datos' },
-  { key: 'periods', label: 'Períodos' },
-  { key: 'hr', label: 'Recursos Humanos' },
-  { key: 'commissions', label: 'Comisiones' },
-  { key: 'risk', label: 'Risk Management' },
-  { key: 'reports', label: 'Reportes' },
-  { key: 'users', label: 'Usuarios' },
-  { key: 'ib_rebates', label: 'Configuración IBs' },
-];
+// Los módulos salen del registro único (src/lib/modules.ts). Antes era un
+// literal más — la cuarta copia de la misma lista — y esas copias se
+// desincronizaron entre sí.
+export const ALL_MODULES: { key: string; label: string }[] = MODULES.map(
+  (m) => ({ key: m.key, label: m.labelEs }),
+);
 
 export interface CompanyFormValues {
   name: string;

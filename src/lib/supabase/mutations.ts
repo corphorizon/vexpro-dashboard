@@ -106,7 +106,7 @@ export async function upsertWithdrawals(
 export async function upsertExpenses(
   _companyId: string,
   periodId: string,
-  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null; expense_date?: string | null; payment_order_id?: string | null }[]
+  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null; expense_date?: string | null; payment_order_id?: string | null; reference?: string | null; attachment_bucket?: string | null; attachment_path?: string | null; attachment_name?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_uploaded_at?: string | null }[]
 ): Promise<void> {
   // Guardado SERVER-SIDE vía /api/admin/expenses (2026-07-13). Antes esto
   // llamaba supabase.rpc() desde el browser y se colgaba >12s de forma
@@ -131,6 +131,16 @@ export async function upsertExpenses(
     // este payload. Si el vínculo con la orden de pago no viaja acá, el link
     // de "OP-2026-0001" en Egresos desaparece al primer guardado del mes.
     payment_order_id: e.payment_order_id || null,
+    // migration-060, mismo motivo que los dos de arriba: la RPC re-inserta el
+    // período entero desde este payload. Si la referencia y el adjunto no
+    // viajan acá, el comprobante del egreso se borra solo al guardar el mes.
+    reference: e.reference || null,
+    attachment_bucket: e.attachment_bucket || null,
+    attachment_path: e.attachment_path || null,
+    attachment_name: e.attachment_name || null,
+    attachment_mime: e.attachment_mime || null,
+    attachment_size: e.attachment_size ?? null,
+    attachment_uploaded_at: e.attachment_uploaded_at || null,
   }));
 
   const res = await apiFetch('/api/admin/expenses', {

@@ -146,6 +146,7 @@ const translations: Record<Locale, TranslationDict> = {
     'balances.carryOver': 'Carried over from previous month',
     'balances.totalConsolidated': 'Total Consolidated',
     'balances.totalHint': 'Sum of all channel balances',
+    'nav.logs': 'Activity Log',
 
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Channel ledger',
@@ -1367,6 +1368,7 @@ const translations: Record<Locale, TranslationDict> = {
     'balances.carryOver': 'Arrastrado del mes anterior',
     'balances.totalConsolidated': 'Total Consolidado',
     'balances.totalHint': 'Suma de todos los balances por canal',
+    'nav.logs': 'Registro de Actividad',
 
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Libro del canal',
