@@ -96,14 +96,13 @@ const translations: Record<Locale, TranslationDict> = {
 
     // Egresos
     'expenses.title': 'Expenses',
-    'expenses.subtitle': 'Operating expenses management',
+    'expenses.subtitle': 'Operating expenses overview',
     'expenses.search': 'Search expenses...',
     'expenses.concept': 'Concept',
     'expenses.amount': 'Amount',
     'expenses.paid': 'Paid',
     'expenses.pending': 'Pending',
     'expenses.status': 'Status',
-    'expenses.actions': 'Actions',
     'expenses.paidStatus': 'Paid',
     'expenses.pendingStatus': 'Pending',
 
@@ -371,8 +370,6 @@ const translations: Record<Locale, TranslationDict> = {
     'expenses.updateConfirm': 'Update expense "{concept}"?',
     'expenses.deleteConfirm': 'Delete expense "{concept}"?',
     'expenses.addedSuccess': 'Expense added successfully',
-    'expenses.updatedSuccess': 'Expense updated successfully',
-    'expenses.deletedSuccess': 'Expense deleted successfully',
 
     // Partners extras
     'partners.percentageWarning': 'Percentages add up to {pct}% instead of 100%. Review distribution.',
@@ -1255,14 +1252,13 @@ const translations: Record<Locale, TranslationDict> = {
 
     // Egresos
     'expenses.title': 'Egresos',
-    'expenses.subtitle': 'Gestión de egresos operativos',
+    'expenses.subtitle': 'Consulta de egresos operativos',
     'expenses.search': 'Buscar egresos...',
     'expenses.concept': 'Concepto',
     'expenses.amount': 'Monto',
     'expenses.paid': 'Pagado',
     'expenses.pending': 'Pendiente',
     'expenses.status': 'Estado',
-    'expenses.actions': 'Acciones',
     'expenses.paidStatus': 'Pagado',
     'expenses.pendingStatus': 'Pendiente',
 
@@ -1530,8 +1526,6 @@ const translations: Record<Locale, TranslationDict> = {
     'expenses.updateConfirm': 'Actualizar egreso "{concept}"?',
     'expenses.deleteConfirm': 'Eliminar egreso "{concept}"?',
     'expenses.addedSuccess': 'Egreso agregado exitosamente',
-    'expenses.updatedSuccess': 'Egreso actualizado exitosamente',
-    'expenses.deletedSuccess': 'Egreso eliminado exitosamente',
 
     // Partners extras
     'partners.percentageWarning': 'Los porcentajes suman {pct}% en lugar de 100%. Revisar distribución.',
