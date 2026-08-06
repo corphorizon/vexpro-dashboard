@@ -20,8 +20,10 @@
 -- En los dos casos, adivinar habría producido números que parecen correctos y
 -- no lo son. Es preferible dejarlos marcados y visibles.
 --
--- El SQL exacto quedó en el historial de migraciones de Supabase bajo los
--- nombres `investments_movement_type` y `liquidity_accounts`.
+-- SQL completo en el historial de Supabase (supabase_migrations.schema_migrations)
+-- bajo `investments_movement_type`, `liquidity_accounts` y
+-- `split_liquidity_movement`. Recuperable con:
+--   select statements from supabase_migrations.schema_migrations where name = '...';
 -- ─────────────────────────────────────────────────────────────────────────────
 
 -- Resultado del backfill sobre Vex Pro:
