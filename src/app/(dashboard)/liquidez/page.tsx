@@ -15,6 +15,8 @@ import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { Droplets, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import Link from 'next/link';
+import { Scale } from 'lucide-react';
 import { useRunningBalance } from '@/lib/use-running-balance';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -104,6 +106,16 @@ export default function LiquidezPage() {
         subtitle={t('liquidity.subtitle')}
         icon={Droplets}
         actions={
+          <div className="flex items-center gap-2">
+          {/* Conciliación: mientras haya movimientos sin cuenta MT, el saldo
+              por cuenta no es confiable. El acceso vive acá al lado. */}
+          <Link
+            href="/liquidez/conciliacion"
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+          >
+            <Scale className="w-4 h-4" />
+            <span className="hidden sm:inline">Conciliar</span>
+          </Link>
           <button
             onClick={() => verify2FA(() => {
               const headers = ['Fecha', 'Concepto', 'Descripción', '+', '-', 'Balance'];
@@ -116,6 +128,7 @@ export default function LiquidezPage() {
             <Download className="w-4 h-4" />
             <span className="hidden sm:inline">{t('common.csv')}</span>
           </button>
+          </div>
         }
       />
 

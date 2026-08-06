@@ -30,9 +30,41 @@ const money = (n: number) => `$${fmt(n)}`;
 const C = BRAND_RGB;
 
 /** Encabezado con banda navy, brandmark y stripe de acento. Devuelve la Y libre. */
+// ─────────────────────────────────────────────────────────────────────────────
+// Logo de la empresa para el encabezado.
+//
+// El bucket `company-logos` es público, así que alcanza con un fetch. Se
+// convierte a data URL porque jsPDF no acepta una URL remota en addImage.
+//
+// Devuelve null ante cualquier problema (404, CORS, SVG) — el encabezado cae
+// a las iniciales y el PDF se genera igual. Un logo roto nunca puede impedir
+// que salga un documento.
+//
+// jsPDF NO digiere SVG: si el logo de la empresa es .svg se descarta y se
+// usan las iniciales.
+// ─────────────────────────────────────────────────────────────────────────────
+export async function loadLogoDataUrl(url?: string | null): Promise<string | null> {
+  if (!url) return null;
+  if (/\.svg($|\?)/i.test(url)) return null;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    if (!/^image\/(png|jpeg|jpg|webp)$/i.test(blob.type)) return null;
+    return await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : null);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
 function pdfHeader(
   doc: jsPDF,
-  opts: { title: string; company: string; right?: string[] },
+  opts: { title: string; company: string; right?: string[]; logoDataUrl?: string | null },
 ): number {
   const w = doc.internal.pageSize.getWidth();
   doc.setFillColor(...C.primary);
@@ -40,20 +72,55 @@ function pdfHeader(
   doc.setFillColor(...C.accent);
   doc.rect(0, 30, w, 1.4, 'F');
 
-  // Brandmark: cuadro redondeado de acento con las iniciales de la empresa.
-  const initials = opts.company
-    .split(/\s+/)
-    .map((s) => s[0])
-    .filter(Boolean)
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-  doc.setFillColor(...C.accent);
-  doc.roundedRect(w - 14 - 13, 7, 13, 13, 2.5, 2.5, 'F');
-  doc.setTextColor(...C.white);
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
-  doc.text(initials, w - 14 - 6.5, 15.6, { align: 'center' });
+  // Marca de la empresa, arriba a la derecha. Con logo se dibuja CONTENIDO en
+  // una caja de 30x16 respetando la proporción — fijar ancho y alto deforma
+  // cualquier logo que no tenga esa relación exacta (fue el bug de los
+  // reportes). Sin logo, se cae a las iniciales en un cuadrito de acento.
+  const boxW = 30;
+  const boxH = 16;
+  const boxX = w - 14 - boxW;
+  const boxY = 7;
+
+  let logoPainted = false;
+  if (opts.logoDataUrl) {
+    try {
+      const props = doc.getImageProperties(opts.logoDataUrl);
+      if (props?.width && props?.height) {
+        const scale = Math.min(boxW / props.width, boxH / props.height);
+        const lw = props.width * scale;
+        const lh = props.height * scale;
+        doc.addImage(
+          opts.logoDataUrl,
+          (props.fileType || 'PNG').toUpperCase(),
+          boxX + boxW - lw, // pegado al margen derecho
+          boxY + (boxH - lh) / 2,
+          lw,
+          lh,
+          undefined,
+          'FAST',
+        );
+        logoPainted = true;
+      }
+    } catch {
+      logoPainted = false;
+    }
+  }
+
+  if (!logoPainted) {
+    const initials = opts.company
+      .split(/\s+/)
+      .map((s) => s[0])
+      .filter(Boolean)
+      .join('')
+      .slice(0, 2)
+      .toUpperCase();
+    doc.setFillColor(...C.accent);
+    doc.roundedRect(w - 14 - 13, 7, 13, 13, 2.5, 2.5, 'F');
+    doc.setTextColor(...C.white);
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.text(initials, w - 14 - 6.5, 15.6, { align: 'center' });
+  }
 
   doc.setTextColor(...C.white);
   doc.setFontSize(18);
@@ -150,6 +217,8 @@ function pdfFooter(doc: jsPDF, brand = 'Smart Dashboard') {
 
 interface PdfCommissionData {
   companyName: string;
+  /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
+  companyLogoUrl?: string | null;
   headName: string;
   headRole: string;
   headEmail: string;
@@ -182,10 +251,12 @@ interface PdfCommissionData {
   }[];
 }
 
-export function generateCommissionPDF(data: PdfCommissionData) {
+export async function generateCommissionPDF(data: PdfCommissionData) {
   const doc = new jsPDF('landscape', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.companyLogoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: 'Informe de Comisiones',
     company: data.companyName,
     right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
@@ -310,6 +381,8 @@ export function generateCommissionPDF(data: PdfCommissionData) {
 
 interface PdfIndividualData {
   companyName: string;
+  /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
+  companyLogoUrl?: string | null;
   periodLabel: string;
   name: string;
   email: string;
@@ -326,10 +399,12 @@ interface PdfIndividualData {
   total: number;
 }
 
-export function generateIndividualPDF(data: PdfIndividualData) {
+export async function generateIndividualPDF(data: PdfIndividualData) {
   const doc = new jsPDF('portrait', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.companyLogoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: 'Informe Individual de Comisiones',
     company: data.companyName,
     right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
@@ -413,6 +488,8 @@ export function generateIndividualPDF(data: PdfIndividualData) {
 
 interface PdfPnlData {
   companyName: string;
+  /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
+  companyLogoUrl?: string | null;
   periodLabel: string;
   name: string;
   email: string;
@@ -439,11 +516,13 @@ interface PdfPnlData {
   mode?: 'normal' | 'special';
 }
 
-export function generatePnlPDF(data: PdfPnlData) {
+export async function generatePnlPDF(data: PdfPnlData) {
   const isSpecial = data.mode === 'special';
   const doc = new jsPDF('portrait', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.companyLogoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: isSpecial ? 'Comisiones Individual - PnL Especial' : 'Comisiones Individual - PnL',
     company: data.companyName,
     right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
@@ -564,6 +643,8 @@ export function generatePnlPDF(data: PdfPnlData) {
 
 export interface PdfPartnerPeriodData {
   companyName: string;
+  /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
+  companyLogoUrl?: string | null;
   periodLabel: string;
   ingresosNetos: number;
   egresosNetos: number;
@@ -573,10 +654,12 @@ export interface PdfPartnerPeriodData {
   partners: { name: string; pct: number; amount: number }[];
 }
 
-export function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
+export async function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
   const doc = new jsPDF('portrait', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.companyLogoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: 'Distribucion a Socios',
     company: data.companyName,
     right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
@@ -655,16 +738,20 @@ export function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
 
 export interface PdfPartnerHistoryData {
   companyName: string;
+  /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
+  companyLogoUrl?: string | null;
   partnerNames: string[];
   rows: { periodLabel: string; amounts: number[]; total: number }[];
   partnerTotals: number[];
   grandTotal: number;
 }
 
-export function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
+export async function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
   const doc = new jsPDF('landscape', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.companyLogoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: 'Historial de Distribuciones',
     company: data.companyName,
     right: [`Generado: ${new Date().toLocaleDateString()}`],
@@ -719,6 +806,8 @@ export function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
 
 export interface PdfMonthlyCloseData {
   companyName: string;
+  /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
+  companyLogoUrl?: string | null;
   periodLabel: string;
   // Resultado operativo
   brokerPnl: number;
@@ -745,10 +834,12 @@ export interface PdfMonthlyCloseData {
   partners: { name: string; pct: number; amount: number }[];
 }
 
-export function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
+export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   const doc = new jsPDF('portrait', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.companyLogoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: 'Informe de Cierre Mensual',
     company: data.companyName,
     right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
@@ -842,6 +933,7 @@ export function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   // ─── Página 2: egresos + distribución ───
   doc.addPage();
   y = pdfHeader(doc, {
+    logoDataUrl,
     title: 'Informe de Cierre Mensual',
     company: data.companyName,
     right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
@@ -981,11 +1073,13 @@ function pdfNote(doc: jsPDF, text: string, y: number, margin = 14): number {
   return y + lines.length * 3.4 + 3;
 }
 
-export function generateChannelLedgerPDF(data: PdfChannelLedgerData) {
+export async function generateChannelLedgerPDF(data: PdfChannelLedgerData) {
   const L = LEDGER_T[data.locale ?? 'es'];
   const doc = new jsPDF('portrait', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.company.logoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: L.ledgerTitle,
     company: data.company.name,
     right: [
@@ -1051,18 +1145,20 @@ export function generateChannelLedgerPDF(data: PdfChannelLedgerData) {
 }
 
 export interface PdfChannelBalancesData {
-  company: { name: string };
+  company: { name: string; logoUrl?: string | null };
   asOf: string;
   channels: Array<{ label: string; isAuto: boolean; balance: number }>;
   total: number;
   locale?: LedgerLocale;
 }
 
-export function generateChannelBalancesPDF(data: PdfChannelBalancesData) {
+export async function generateChannelBalancesPDF(data: PdfChannelBalancesData) {
   const L = LEDGER_T[data.locale ?? 'es'];
   const doc = new jsPDF('portrait', 'mm', 'a4');
 
+  const logoDataUrl = await loadLogoDataUrl(data.company.logoUrl);
   let y = pdfHeader(doc, {
+    logoDataUrl,
     title: L.balancesTitle,
     company: data.company.name,
     right: [`${L.asOf} ${data.asOf}`, `${L.generated}: ${new Date().toLocaleDateString()}`],

@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
+import { computeInvestmentTotals, movementTypeLabel, inferMovementType } from '@/lib/investment-types';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
@@ -13,7 +14,7 @@ import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
-import { TrendingUp, Download, ChevronLeft, ChevronRight } from 'lucide-react';
+import { TrendingUp, Download, ChevronLeft, ChevronRight, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { useRunningBalance } from '@/lib/use-running-balance';
 
@@ -80,6 +81,10 @@ export default function InversionesPage() {
   const totalDeposits = filtered.reduce((s, i) => s + i.deposit, 0);
   const totalWithdrawals = filtered.reduce((s, i) => s + i.withdrawal, 0);
   const totalProfit = filtered.reduce((s, i) => s + i.profit, 0);
+
+  // Totales tipificados (migración 062). "Retiros" a secas mezclaba devolución
+  // de capital con cobro de ganancias; estos los separan.
+  const tot = useMemo(() => computeInvestmentTotals(filtered), [filtered]);
 
   // Agregado: resumen por responsable. Agrupa las filas del filtro actual
   // por `inv.responsible`, sumando deposits, withdrawals, profit y calculando
@@ -190,8 +195,20 @@ export default function InversionesPage() {
           icon={TrendingUp}
           tone="positive"
         />
-        <StatCard label="Aportes" value={formatCurrency(totalDeposits)} tone="info" />
-        <StatCard label="Retiros" value={formatCurrency(totalWithdrawals)} tone="negative" />
+        {/* Capital colocado = aportes − devoluciones. Es la plata que sigue
+            adentro, sin mezclar las ganancias cobradas. */}
+        <StatCard
+          label="Capital colocado"
+          value={formatCurrency(tot.capitalPlaced)}
+          hint={`Aportes ${formatCurrency(tot.contributions)} − devoluciones ${formatCurrency(tot.redemptions)}`}
+          tone="info"
+        />
+        <StatCard
+          label="Ganancia sin cobrar"
+          value={formatCurrency(tot.profitPending)}
+          hint={`Devengado ${formatCurrency(tot.profitAccrued)} − cobrado ${formatCurrency(tot.profitPaid)}`}
+          tone={tot.profitPending >= 0 ? 'positive' : 'warning'}
+        />
         {/* Profit puede ser negativo cuando una inversión pierde (se ingresa
             con signo − en /upload). La card cambia de tono según el signo. */}
         <StatCard
@@ -200,6 +217,21 @@ export default function InversionesPage() {
           tone={totalProfit >= 0 ? 'positive' : 'negative'}
         />
       </div>
+
+      {/* Las filas mixtas traen ganancia y retiro en el mismo renglón, así que
+          no se pueden atribuir a una sola categoría. Se avisa en vez de
+          esconderlas: son deuda del formato viejo. */}
+      {tot.mixedCount > 0 && (
+        <div className="flex gap-3 rounded-lg border border-warning/30 bg-warning/10 p-4">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" aria-hidden />
+          <p className="text-sm text-muted-foreground">
+            Hay <strong>{tot.mixedCount}</strong>{' '}
+            {tot.mixedCount === 1 ? 'movimiento' : 'movimientos'} que registran la ganancia
+            y su cobro en la misma fila, así que no suman a ninguna de las dos categorías
+            por separado. Conviene separarlos en dos movimientos.
+          </p>
+        </div>
+      )}
 
       {/* Resumen por responsable — respeta el mismo filtro de fecha activo.
           Se ignoran filas sin responsable. Ordenado por balance desc. */}

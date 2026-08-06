@@ -148,7 +148,35 @@ export async function POST(request: NextRequest) {
 
       // ── Periods ──
       case 'period_status': {
-        const { error } = await admin.from('periods').update({ is_closed: body.isClosed }).eq('id', body.periodId).eq('company_id', companyId);
+        // Migración 061: cerrar y reabrir NO son un update de un booleano.
+        // Cerrar congela los totales en closing_snapshot y activa el bloqueo
+        // de escrituras; reabrir exige un motivo y queda auditado. Un update
+        // crudo de `is_closed` se saltearía las dos cosas.
+        if (body.isClosed) {
+          const { error } = await admin.rpc('close_period', {
+            p_company_id: companyId,
+            p_period_id: body.periodId,
+            p_actor_id: auth.userId,
+            p_actor_name: auth.name || auth.email,
+          });
+          if (error) return fail(error, op);
+          return NextResponse.json({ success: true });
+        }
+
+        const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
+        if (!reason) {
+          return NextResponse.json(
+            { error: 'Reabrir un período cerrado requiere un motivo' },
+            { status: 400 },
+          );
+        }
+        const { error } = await admin.rpc('reopen_period', {
+          p_company_id: companyId,
+          p_period_id: body.periodId,
+          p_actor_id: auth.userId,
+          p_actor_name: auth.name || auth.email,
+          p_reason: reason,
+        });
         if (error) return fail(error, op);
         return NextResponse.json({ success: true });
       }

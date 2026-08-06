@@ -1157,6 +1157,7 @@ export default function ComisionesPage() {
     const { generateCommissionPDF } = await loadPdfExports();
     generateCommissionPDF({
       companyName: company?.name ?? 'Smart Dashboard',
+      companyLogoUrl: company?.logo_url ?? null,
       headName: headProfile.name,
       headRole: ROLE_LABEL[headProfile.role] || headProfile.role,
       headEmail: headProfile.email,
@@ -1583,6 +1584,7 @@ export default function ComisionesPage() {
                                   const { generateIndividualPDF } = await loadPdfExports();
                                   generateIndividualPDF({
                                     companyName: company?.name ?? 'Smart Dashboard',
+                                    companyLogoUrl: company?.logo_url ?? null,
                                     periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
                                     name: profile.name,
                                     email: profile.email,
@@ -1737,6 +1739,7 @@ export default function ComisionesPage() {
                                   const { generatePnlPDF } = await loadPdfExports();
                                   generatePnlPDF({
                                     companyName: company?.name ?? 'Smart Dashboard',
+                                    companyLogoUrl: company?.logo_url ?? null,
                                     periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
                                     name: profile.name,
                                     email: profile.email,
@@ -1912,6 +1915,7 @@ export default function ComisionesPage() {
                                     const { generatePnlPDF } = await loadPdfExports();
                                     generatePnlPDF({
                                       companyName: company?.name ?? 'Smart Dashboard',
+                                      companyLogoUrl: company?.logo_url ?? null,
                                       periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
                                       name: profile.name,
                                       email: profile.email,

@@ -1,0 +1,31 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migración 062 — Estructura en Inversiones y Liquidez (APLICADA a producción)
+--
+-- Las dos tablas tenían el mismo problema: columnas numéricas sueltas más un
+-- campo de texto libre haciendo de clasificador. Esto agrega la estructura
+-- que faltaba SIN tocar ningún importe — los saldos quedan idénticos.
+--
+--   Inversiones  → investments.movement_type (4 tipos + `mixed`)
+--   Liquidez     → tabla liquidity_accounts + liquidity_movements.account_id
+--
+-- LO QUE NO SE HIZO AUTOMÁTICAMENTE, a propósito:
+--
+--   · Las 2 filas de inversiones con ganancia Y retiro en el mismo renglón
+--     quedan como `mixed`. Partirlas exige inventar dos fechas y dos importes
+--     que nadie registró.
+--   · Los 8 movimientos de liquidez cuyo mt_account traía varias cuentas
+--     quedan con needs_split = true. Repartir el importe entre cuentas exige
+--     saber cuánto va a cada una, y ese dato no existe en ningún lado.
+--
+-- En los dos casos, adivinar habría producido números que parecen correctos y
+-- no lo son. Es preferible dejarlos marcados y visibles.
+--
+-- El SQL exacto quedó en el historial de migraciones de Supabase bajo los
+-- nombres `investments_movement_type` y `liquidity_accounts`.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+-- Resultado del backfill sobre Vex Pro:
+--   Inversiones: 8 capital_in · 7 capital_out · 6 profit_accrued ·
+--                4 profit_paid · 2 mixed
+--   Liquidez:    23 cuentas MT extraídas · 8 movimientos atribuidos ·
+--                8 a dividir · 19 sin cuenta · saldo intacto ($101.310,64)

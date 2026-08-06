@@ -21,8 +21,17 @@ async function postData<T = { success: boolean; id?: string }>(
 
 // ─── Period Status ───
 
-export async function updatePeriodStatus(periodId: string, isClosed: boolean): Promise<void> {
-  await postData('period_status', { periodId, isClosed });
+/**
+ * Cerrar congela los totales del período y bloquea sus escrituras (migr. 061).
+ * Reabrir EXIGE motivo: es deshacer un cierre contable y tiene que quedar
+ * dicho por qué. El servidor lo revalida — esto no es solo cosmética de UI.
+ */
+export async function updatePeriodStatus(
+  periodId: string,
+  isClosed: boolean,
+  reason?: string,
+): Promise<void> {
+  await postData('period_status', { periodId, isClosed, reason });
 }
 
 // ─── Period Reserve Percentage ───
@@ -299,7 +308,7 @@ export async function deleteLiquidityMovement(id: string): Promise<void> {
 
 export async function insertInvestment(
   companyId: string,
-  investment: { date: string; concept: string | null; responsible: string | null; deposit: number; withdrawal: number; profit: number; balance: number }
+  investment: { date: string; concept: string | null; responsible: string | null; deposit: number; withdrawal: number; profit: number; balance: number; movement_type?: string | null }
 ): Promise<string> {
   // id generado en el cliente para volver el INSERT idempotente y por lo tanto
   // reintentable (ver resilientWrite): si un intento se estanca en la red y se
