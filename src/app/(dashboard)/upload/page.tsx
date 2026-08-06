@@ -4,6 +4,7 @@ import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ExpenseReference } from '@/components/ui/expense-reference';
+import { ExpenseAttachmentInput, type ExpenseAttachment } from '@/components/ui/expense-attachment-input';
 import { ExpenseConcept } from '@/components/ui/expense-concept';
 import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
@@ -665,9 +666,9 @@ export default function UploadPage() {
 
   // UI state — shared confirmation dialog for destructive deletes.
   const { confirm, Modal: ConfirmModal } = useConfirm();
-  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '' });
+  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '', attachment: null as ExpenseAttachment | null });
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
-  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '' });
+  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '', attachment: null as ExpenseAttachment | null });
 
   // Egreso fijo recién editado, esperando que el usuario elija el alcance
   // ("solo este mes" / "este mes y los siguientes"). Ver FixedForwardDialog.
@@ -1440,16 +1441,16 @@ export default function UploadPage() {
       category: cat,
       expense_date: newExpense.expense_date || null, // vacío = sin fecha
       reference: newExpense.reference.trim() || null,
-      attachment_bucket: null,
-      attachment_path: null,
-      attachment_name: null,
-      attachment_mime: null,
-      attachment_size: null,
-      attachment_uploaded_at: null,
+      attachment_bucket: newExpense.attachment?.bucket ?? null,
+      attachment_path: newExpense.attachment?.path ?? null,
+      attachment_name: newExpense.attachment?.name ?? null,
+      attachment_mime: newExpense.attachment?.mime ?? null,
+      attachment_size: newExpense.attachment?.size ?? null,
+      attachment_uploaded_at: newExpense.attachment?.uploaded_at ?? null,
       payment_order_id: null, // egreso cargado a mano: no viene de una OP
     }];
     setExpensesRaw(next); // optimista
-    setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '' });
+    setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '', attachment: null });
     addConceptToHistory(newExpense.concept);
     if (cat) addCategoryToHistory(cat);
     void persistExpenses(next, previous, {
@@ -1461,7 +1462,12 @@ export default function UploadPage() {
   const startEditExpense = (exp: ExpenseRow) => {
     if (!userCanEdit) return;
     setEditingExpenseId(exp.id);
-    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed, category: exp.category ?? '', expense_date: exp.expense_date ?? '', reference: exp.reference ?? '' });
+    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed, category: exp.category ?? '', expense_date: exp.expense_date ?? '', reference: exp.reference ?? '',
+      attachment: exp.attachment_path
+        ? { bucket: exp.attachment_bucket ?? 'expense-attachments', path: exp.attachment_path,
+            name: exp.attachment_name ?? 'comprobante', mime: exp.attachment_mime ?? '',
+            size: exp.attachment_size ?? 0, uploaded_at: exp.attachment_uploaded_at ?? '' }
+        : null });
   };
 
   const saveEditExpense = () => {
@@ -1473,7 +1479,13 @@ export default function UploadPage() {
     const previous = expenses;
     const concept = editExpense.concept;
     const target = expenses.find(e => e.id === editingExpenseId);
-    const next = expenses.map(e => e.id === editingExpenseId ? { ...e, concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat, expense_date: editExpense.expense_date || null, reference: editExpense.reference.trim() || null } : e);
+    const next = expenses.map(e => e.id === editingExpenseId ? { ...e, concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat, expense_date: editExpense.expense_date || null, reference: editExpense.reference.trim() || null,
+      attachment_bucket: editExpense.attachment?.bucket ?? null,
+      attachment_path: editExpense.attachment?.path ?? null,
+      attachment_name: editExpense.attachment?.name ?? null,
+      attachment_mime: editExpense.attachment?.mime ?? null,
+      attachment_size: editExpense.attachment?.size ?? null,
+      attachment_uploaded_at: editExpense.attachment?.uploaded_at ?? null } : e);
     setExpensesRaw(next); // optimista
     if (cat) addCategoryToHistory(cat);
     setEditingExpenseId(null);
@@ -2334,6 +2346,14 @@ export default function UploadPage() {
                           onChange={e => setEditExpense(p => ({ ...p, reference: e.target.value }))}
                           className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
                         />
+                        {/* Un comprobante heredado de una orden de pago no se
+                            reemplaza desde acá: la fuente es la orden. */}
+                        <ExpenseAttachmentInput
+                          className="mt-1"
+                          value={editExpense.attachment}
+                          readOnly={editExpense.attachment?.bucket === 'payment-proofs'}
+                          onChange={a => setEditExpense(p => ({ ...p, attachment: a }))}
+                        />
                       </td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
@@ -2505,14 +2525,21 @@ export default function UploadPage() {
                 />
                 {/* Referencia del pago — opcional. Los egresos que nacen de una
                     orden la heredan sola; este campo es para los manuales. */}
-                <input
-                  aria-label="Referencia del egreso"
-                  title="Hash de la transacción, nº de operación o link al comprobante"
-                  value={newExpense.reference}
-                  onChange={e => setNewExpense(p => ({ ...p, reference: e.target.value }))}
-                  placeholder="Referencia"
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
+                <div>
+                  <input
+                    aria-label="Referencia del egreso"
+                    title="Hash de la transacción, nº de operación o link al comprobante"
+                    value={newExpense.reference}
+                    onChange={e => setNewExpense(p => ({ ...p, reference: e.target.value }))}
+                    placeholder="Referencia"
+                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <ExpenseAttachmentInput
+                    className="mt-1"
+                    value={newExpense.attachment}
+                    onChange={a => setNewExpense(p => ({ ...p, attachment: a }))}
+                  />
+                </div>
                 <input
                   type="number" step="0.01"
                   value={newExpense.amount}
