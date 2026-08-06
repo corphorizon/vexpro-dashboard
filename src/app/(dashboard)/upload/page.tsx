@@ -11,7 +11,7 @@ import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { LiquidityMovement, Investment } from '@/lib/types';
-import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical, Lock as LockIcon } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -110,6 +110,7 @@ import { FixedForwardDialog } from '@/components/ui/fixed-forward-dialog';
 import { SELECTABLE_MOVEMENT_TYPES, inferMovementType } from '@/lib/investment-types';
 import { formatDayMonth } from '@/lib/dates';
 import * as Sentry from '@sentry/nextjs';
+import Link from 'next/link';
 
 type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones' | 'documentos';
 
@@ -496,6 +497,12 @@ export default function UploadPage() {
   const selectedPeriodRef = useRef(selectedPeriod);
   useEffect(() => { selectedPeriodRef.current = selectedPeriod; }, [selectedPeriod]);
 
+  // Período cerrado (migración 061): el trigger de la base rechaza TODA
+  // escritura. Sin este flag, la pantalla dejaba editar normalmente y el
+  // autosave chocaba contra el trigger cada 3 segundos en bucle infinito de
+  // toasts genéricos (auditoría 2026-08-06, hallazgo prioritario).
+  const selectedPeriodIsClosed = !!periods.find((p) => p.id === selectedPeriod)?.is_closed;
+
   // Reload data when the PERIOD changes. Intentionally depends only on
   // `selectedPeriod` (and `dirtySection`). Earlier this effect also listed
   // the `loadXForPeriod` callbacks + raw `allExpenses` etc. as deps — but
@@ -753,6 +760,7 @@ export default function UploadPage() {
     //     y re-hidrataba el valor a medio tipear. Ingresos se guarda SOLO con
     //     "Guardar Todo". (Sigue en SAVE_HANDLED, así el botón manual lo persiste.)
     const AUTOSAVE_SECTIONS: DataSection[] = ['depositos', 'retiros'];
+    if (selectedPeriodIsClosed) return; // mes cerrado: el trigger rechazaría cada intento
     if (!AUTOSAVE_SECTIONS.some((s) => dirtySections.has(s))) return;
     if (savingAll) return; // queue up: re-fires when savingAll flips false
     const t = setTimeout(() => {
@@ -766,7 +774,7 @@ export default function UploadPage() {
     // captura `section`/estado por closure. No dependemos de `section`: cambiar
     // de pestaña ya no cancela un guardado pendiente (ese era el bug).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirtySections, savingAll]);
+  }, [dirtySections, savingAll, selectedPeriodIsClosed]);
 
   // ── End auto-save ─────────────────────────────────────────────────────
 
@@ -1838,6 +1846,14 @@ export default function UploadPage() {
       showError(t('upload.saveError', { error: message }));
       saveAllInFlightRef.current = false;
       setSavingAll(false);
+      // Excepción: si el rechazo es por PERÍODO CERRADO, mantener dirty solo
+      // alimentaría el bucle de reintentos del autosave (el trigger va a
+      // rechazar siempre). Se limpia y el sync re-hidrata la vista desde la
+      // base — el estado real del mes cerrado.
+      if (/per[ií]odo est[aá] cerrado/i.test(message)) {
+        for (const sec of Array.from(dirtySections)) clearDirty(sec as DataSection);
+        return;
+      }
       // dirty is intentionally NOT cleared on error — the user's
       // in-progress edits stay protected so they can retry without
       // re-entering everything. The granular dirty Set means this no
@@ -1908,6 +1924,21 @@ export default function UploadPage() {
 
       {/* Feedback lives in the floating ToastHost at bottom-right. Rendered
           at the end of this component so it sits above everything else. */}
+
+      {/* Mes cerrado: aviso fijo. Los totales están congelados y el trigger
+          de la base rechaza cualquier escritura; el autosave y el botón de
+          guardar quedan apagados. */}
+      {selectedPeriodIsClosed && (
+        <div className="flex gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
+          <LockIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" aria-hidden />
+          <p className="text-sm">
+            <strong>{periodLabel}</strong> está <strong>cerrado</strong>: sus totales quedaron
+            congelados y no admite cambios. Para corregir algo, reabrí el período en{' '}
+            <Link href="/periodos" className="underline font-medium">Períodos</Link> (queda
+            registrado con motivo) o cargá el movimiento en el período abierto.
+          </p>
+        </div>
+      )}
 
       {/* Section tabs */}
       <div className="flex gap-1 border-b border-border pb-0 overflow-x-auto">
@@ -3242,7 +3273,7 @@ export default function UploadPage() {
             ) : null}
             <button
               onClick={saveAll}
-              disabled={savingAll}
+              disabled={savingAll || selectedPeriodIsClosed}
               className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
               title={t('upload.saveNowTitle')}
             >

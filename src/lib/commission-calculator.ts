@@ -47,13 +47,23 @@ export function calculateCommission(
   commissionPct: number,
 ): Omit<CommissionCalcResult, 'profileId' | 'salary' | 'commissionPct' | 'totalEarnedDebt'> {
   if (netDepositCurrent === 0) {
+    // ND=0 significa dos cosas indistinguibles: "mes sin depósitos" o "el
+    // operador todavía no cargó el ND" (el default del input es 0). Por eso
+    // acá NO se paga nada — pagar sobre accumulatedIn convertiría cada fila
+    // sin cargar en un pago fantasma.
+    //
+    // Lo que SÍ estaba mal (auditoría 2026-08-06): accumulatedOut salía en 0
+    // y el acumulado arrastrado se DESTRUÍA — un BDM que venía con $50.000
+    // acumulados los perdía para siempre por un mes sin depósitos. Ahora el
+    // acumulado se conserva intacto y entra al cálculo del próximo mes con
+    // ND real.
     return {
       netDepositCurrent: 0,
       accumulatedIn,
       division: 0,
       commission: 0,
       realPayment: 0,
-      accumulatedOut: 0,
+      accumulatedOut: accumulatedIn,
     };
   }
 
@@ -251,13 +261,16 @@ export const BDM_PCT_TIERS: PctTier[] = [
 /** BDM commission percentage based on individual ND.
  *  If ND < $50,000, returns null so the caller can fall back to the profile default. */
 export function calculateBdmPctFromND(individualND: number, profilePct?: number): number {
+  let tierPct = 0;
   if (individualND >= 0) {
     for (const tier of BDM_PCT_TIERS) {
-      if (individualND >= tier.minND) return tier.pct;
+      if (individualND >= tier.minND) { tierPct = tier.pct; break; }
     }
   }
-  // Below all tiers or negative ND — use the profile's configured percentage
-  return profilePct ?? 0;
+  // El tier es un PISO por volumen, nunca un techo: un BDM con 7% negociado
+  // y ND de $120K cobraba al 5% de la tabla, en silencio (auditoría
+  // 2026-08-06). El % del perfil es el acuerdo; el tier solo puede mejorarlo.
+  return Math.max(tierPct, profilePct ?? 0);
 }
 
 // ---------------------------------------------------------------------------

@@ -15,7 +15,7 @@ import { useI18n } from '@/lib/i18n';
 import { updateCommercialProfile } from '@/lib/supabase/mutations';
 import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import type { CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus } from '@/lib/types';
-import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X, FileText, Upload, ExternalLink, Handshake, Trash2 } from 'lucide-react';
+import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X, FileText, Upload, ExternalLink, Handshake, Trash2, Calculator } from 'lucide-react';
 
 // Small adapter so callsites that used to render the raw `hire_date` string
 // when formatter returned null keep that behaviour. formatDate returns ''
@@ -215,42 +215,6 @@ export default function PerfilPage() {
     rows.push(['TOTAL', totalNetDeposit, '', '', totalPnlCurrent, '', '', totalCommissions, totalBonus, totalSalary, totalEarned]);
     downloadCSV(`resultados_${profileData.name.replace(/\s/g, '_')}.csv`, headers, rows);
   });
-
-  const handleSaveResult = () => {
-    const newResult: CommercialMonthlyResult = {
-      id: `mr-${Date.now()}`,
-      profile_id: profileId,
-      period_id: formPeriod,
-      net_deposit_current: formNetDepCurrent,
-      net_deposit_accumulated: formNetDepAccum,
-      net_deposit_total: formNetDepTotal,
-      pnl_current: formPnlCurrent,
-      pnl_accumulated: formPnlAccum,
-      pnl_total: formPnlTotal,
-      commissions_earned: formCommissions,
-      bonus: formBonus,
-      salary_paid: formSalary,
-      total_earned: formTotalEarned,
-      division: 0,
-      base_amount: 0,
-      real_payment: 0,
-      accumulated_out: 0,
-    };
-    setResults(prev => [...prev, newResult]);
-    setShowAddForm(false);
-    setSuccessMsg(t('hr.resultSaved'));
-    setTimeout(() => setSuccessMsg(''), 3000);
-    // Reset form
-    setFormNetDepCurrent(0);
-    setFormNetDepAccum(0);
-    setFormNetDepTotal(0);
-    setFormPnlCurrent(0);
-    setFormPnlAccum(0);
-    setFormPnlTotal(0);
-    setFormCommissions(0);
-    setFormBonus(0);
-    setFormSalary(0);
-  };
 
   return (
     <div className="space-y-6">
@@ -570,85 +534,29 @@ export default function PerfilPage() {
         </Card>
       )}
 
-      {/* Add Monthly Result Form */}
+      {/* El formulario "Agregar resultado mensual" se quitó (auditoría
+          2026-08-06): mostraba "Guardado" sin persistir NADA — solo hacía
+          setResults local y el dato desaparecía al recargar. Además dejaba
+          editar `bonus`, que en realidad guarda la deuda arrastrada del
+          cálculo de comisiones. Los resultados se generan y guardan en
+          /comisiones, donde el cálculo es el real. */}
       <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">{t('hr.addMonthlyResult')}</h2>
-          <button
-            onClick={() => setShowAddForm(!showAddForm)}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">{t('hr.addMonthlyResult')}</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Los resultados mensuales se calculan y guardan desde el módulo de
+              Comisiones — así lo guardado siempre coincide con la fórmula.
+            </p>
+          </div>
+          <Link
+            href="/comisiones"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
           >
-            <Plus className="w-4 h-4" />
-            {t('hr.addMonthlyResult')}
-          </button>
+            <Calculator className="w-4 h-4" />
+            Ir a Comisiones
+          </Link>
         </div>
-
-        {successMsg && (
-          <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-positive/10 text-positive text-sm">
-            <Check className="w-4 h-4" />
-            {successMsg}
-          </div>
-        )}
-
-        {showAddForm && (
-          <div className="border border-border rounded-lg p-4 bg-muted/30">
-            <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-3">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.selectPeriod')}</label>
-                <select aria-label={t('hr.selectPeriod')} value={formPeriod} onChange={e => setFormPeriod(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-                  {periods.map(p => (
-                    <option key={p.id} value={p.id}>{p.label}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.netDepActual')}</label>
-                <input aria-label={t('hr.netDepActual')} type="number" value={formNetDepCurrent} onChange={e => setFormNetDepCurrent(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.netDepAcumulado')}</label>
-                <input aria-label={t('hr.netDepAcumulado')} type="number" value={formNetDepAccum} onChange={e => setFormNetDepAccum(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.netDepTotal')}</label>
-                <input aria-label={t('hr.netDepTotal')} type="number" value={formNetDepTotal} onChange={e => setFormNetDepTotal(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.pnlCurrent')}</label>
-                <input aria-label={t('hr.pnlCurrent')} type="number" value={formPnlCurrent} onChange={e => setFormPnlCurrent(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.pnlAccumulated')}</label>
-                <input aria-label={t('hr.pnlAccumulated')} type="number" value={formPnlAccum} onChange={e => setFormPnlAccum(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.pnlTotal')}</label>
-                <input aria-label={t('hr.pnlTotal')} type="number" value={formPnlTotal} onChange={e => setFormPnlTotal(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.comisiones')}</label>
-                <input aria-label={t('hr.comisiones')} type="number" value={formCommissions} onChange={e => setFormCommissions(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.bonus')}</label>
-                <input aria-label={t('hr.bonus')} type="number" value={formBonus} onChange={e => setFormBonus(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.salarioLabel')}</label>
-                <input aria-label={t('hr.salarioLabel')} type="number" value={formSalary} onChange={e => setFormSalary(parseFloat(e.target.value) || 0)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.totalEarned')} ({t('hr.totalEarnedAuto')})</label>
-                <input aria-label={t('hr.totalEarned')} type="text" value={formatCurrency(formTotalEarned)} readOnly className="px-3 py-2 rounded-lg border border-border bg-muted text-sm font-medium" />
-              </div>
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button onClick={handleSaveResult} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90">
-                {t('common.save')}
-              </button>
-            </div>
-          </div>
-        )}
       </Card>
 
       {/* Monthly Results */}
