@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
+import { MODULE_KEY_SET } from '@/lib/modules';
+import { isBuiltInRole } from '@/lib/roles';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/update-company-user
@@ -34,40 +36,27 @@ const ALLOWED_FIELDS = [
 // string outside this set is rejected (defense against payload tampering
 // to escalate privileges). Custom roles created via /api/admin/custom-roles
 // are also accepted by prefix `custom:` so the existing UI keeps working.
-const ALLOWED_ROLES: ReadonlySet<string> = new Set([
-  'admin',
-  'auditor',
-  'hr',
-  'viewer',
-]);
+// Los roles válidos salen del registro único (src/lib/roles.ts), que refleja
+// el CHECK de company_users.role. La lista literal que había acá aceptaba
+// `viewer` (inexistente) y omitía socio/soporte/invitado, así que editar el
+// rol de la mitad de los usuarios devolvía 400.
+//
+// Los roles `custom:` ya NO se aceptan: la tabla no los admite y el insert
+// moría con un error de constraint. La función de roles personalizados sigue
+// pausada (ver el TODO en /usuarios) — cuando se retome hay que ampliar el
+// CHECK primero.
 function isAllowedRole(value: unknown): value is string {
-  if (typeof value !== 'string') return false;
-  if (ALLOWED_ROLES.has(value)) return true;
-  // Custom roles are namespaced. Empty namespace not allowed.
-  return value.startsWith('custom:') && value.length > 'custom:'.length;
+  return isBuiltInRole(value);
 }
 
-// Whitelist of module keys (mirrors `companies.active_modules` defaults).
-// Anything outside this list is silently dropped from allowed_modules so
-// a tampered payload can't grant access to internal/unknown routes.
-const VALID_MODULE_KEYS: ReadonlySet<string> = new Set([
-  'summary',
-  'movements',
-  'expenses',
-  'liquidity',
-  'investments',
-  'balances',
-  'partners',
-  'upload',
-  'payment_orders',
-  'periods',
-  'commissions',
-  'risk',
-  'hr',
-  'reports',
-  'users',
-  'settings',
-]);
+// Lista blanca de módulos: cualquier clave fuera de acá se descarta, para que
+// un payload manipulado no pueda otorgar acceso a rutas internas.
+//
+// Antes era un literal duplicado y le faltaba `ib_rebates`. Como el descarte
+// es SILENCIOSO, los seis usuarios que ya tenían ese módulo lo perdían sin
+// aviso apenas un admin les editaba cualquier otro campo. Ahora sale del
+// registro único (src/lib/modules.ts) y no puede volver a desincronizarse.
+const VALID_MODULE_KEYS = MODULE_KEY_SET;
 
 export async function POST(request: NextRequest) {
   try {

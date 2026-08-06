@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { randomBytes } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
+import { isBuiltInRole } from '@/lib/roles';
+import { sanitizeModuleKeys } from '@/lib/modules';
 import {
   generateAndSendInvite,
   resolveInviterName,
@@ -54,6 +56,17 @@ export async function POST(request: NextRequest) {
     if (!email || !name || !role) {
       return NextResponse.json(
         { success: false, error: 'Missing required fields: email, name, role' },
+        { status: 400 },
+      );
+    }
+
+    // El rol tiene que ser uno de los built-in (src/lib/roles.ts, espejo del
+    // CHECK de company_users.role). Sin esta guarda, un rol desconocido
+    // llegaba hasta el insert y reventaba con un error crudo de Postgres en
+    // vez de un mensaje entendible.
+    if (!isBuiltInRole(role)) {
+      return NextResponse.json(
+        { success: false, error: `Rol no válido: ${String(role)}` },
         { status: 400 },
       );
     }
@@ -134,7 +147,12 @@ export async function POST(request: NextRequest) {
         email: normalizedEmail,
         name: name.trim(),
         role,
-        allowed_modules: allowed_modules || ['summary'],
+        // Se filtran contra el registro de módulos, igual que en la edición:
+        // el payload llega del browser y podría traer claves inventadas
+        // (`audit`, rutas internas). Si no queda ninguna válida, 'summary'.
+        allowed_modules: sanitizeModuleKeys(allowed_modules).length > 0
+          ? sanitizeModuleKeys(allowed_modules)
+          : ['summary'],
         must_change_password: true,
       })
       .select()

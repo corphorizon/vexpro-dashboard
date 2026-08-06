@@ -5,6 +5,8 @@ import { createClient } from '@/lib/supabase/client';
 import { logAction } from '@/lib/audit-log';
 import { withActiveCompany } from '@/lib/api-fetch';
 import { getActiveCompanyId, subscribeActiveCompanyId } from '@/lib/active-company';
+import { MODULE_KEYS } from '@/lib/modules';
+import { isBuiltInRole } from '@/lib/roles';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole =
@@ -53,26 +55,12 @@ export interface User {
   preferred_language?: 'en' | 'es';
 }
 
-// ─── Built-in roles — single source of truth ─────────────────────────────
-// These are the roles accepted by the `company_users.role` CHECK constraint
-// in Postgres. Any UI that picks a role, any API that validates one, and
-// any permission function that branches on role MUST import from here.
-// Adding a new built-in role requires: (1) updating this list, (2) updating
-// the DB CHECK constraint via migration, (3) adding a case to any permission
-// matrix that covers roles exhaustively.
-export const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
-
-export type BuiltInRole = typeof BUILT_IN_ROLES[number];
-
-/** Human-readable labels for the 6 built-in roles — for selects/badges. */
-export const BUILT_IN_ROLE_LABELS: Record<BuiltInRole, string> = {
-  admin: 'Admin',
-  socio: 'Socio',
-  auditor: 'Auditor',
-  soporte: 'Soporte',
-  hr: 'HR',
-  invitado: 'Invitado',
-};
+// Los roles built-in viven en src/lib/roles.ts (sin React, para que los route
+// handlers puedan importarlos). Se reexportan acá para no romper los imports
+// existentes. Agregar un rol exige: (1) tocar roles.ts, (2) ampliar el CHECK
+// de company_users.role por migración, (3) revisar toda matriz de permisos
+// que enumere roles.
+export { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS, type BuiltInRole } from '@/lib/roles';
 
 export type LoginResult =
   | { success: true; needs2fa: false }
@@ -104,7 +92,9 @@ interface AuthState {
 //   · `audit`    — reserved for SUPERADMIN only. Tenants cannot grant the
 //     audit module to their users; platform-level audit lives inside the
 //     superadmin panel (/superadmin/companies/[id]).
-const ALL_MODULES = ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'payment_orders', 'commissions', 'reports', 'hr', 'risk', 'upload', 'periods', 'users'];
+// La lista vive en src/lib/modules.ts — era la cuarta copia de lo mismo y se
+// había desincronizado (le faltaba `ib_rebates`).
+const ALL_MODULES = MODULE_KEYS;
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -112,7 +102,7 @@ const supabase = createClient();
 
 /** Resolve a role string to its capability tier (base_role for custom roles). */
 async function resolveEffectiveRole(role: string, companyId: string): Promise<UserRole> {
-  if (BUILT_IN_ROLES.includes(role as typeof BUILT_IN_ROLES[number])) return role as UserRole;
+  if (isBuiltInRole(role)) return role;
   const { data } = await supabase
     .from('custom_roles')
     .select('base_role')
@@ -939,11 +929,7 @@ export function canEdit(user: User | null): boolean {
 // usuario con rol `socio` y todos los módulos marcados seguía recibiendo
 // "Permiso insuficiente — se requiere rol admin, auditor o hr" porque
 // los módulos ≠ permisos. Este helper alimenta un banner explicativo.
-export const WRITE_CAPABLE_ROLES = new Set(['admin', 'auditor', 'hr']);
-
-export function roleCanWrite(role: string): boolean {
-  return WRITE_CAPABLE_ROLES.has(role);
-}
+export { WRITE_CAPABLE_ROLES, roleCanWrite } from '@/lib/roles';
 
 export function canDelete(user: User | null): boolean {
   if (!user) return false;
@@ -978,21 +964,8 @@ export const ROLE_DEFAULT_MODULES: Record<string, string[]> = {
   invitado: ['summary'],
 };
 
-export const MODULE_LABELS: Record<string, string> = {
-  summary: 'Resumen',
-  movements: 'Movimientos',
-  expenses: 'Egresos',
-  liquidity: 'Liquidez',
-  investments: 'Inversiones',
-  balances: 'Balances',
-  partners: 'Socios',
-  commissions: 'Comisiones',
-  reports: 'Reportes',
-  hr: 'Recursos Humanos',
-  risk: 'Gestión de Riesgo',
-  upload: 'Carga de Datos',
-  periods: 'Períodos',
-  users: 'Usuarios',
-  ib_rebates: 'Configuración IBs',
-  // audit + settings intentionally omitted — see comment above ALL_MODULES.
-};
+// Re-export desde el registro único para no romper los imports existentes.
+// Antes era un objeto literal acá y le faltaba `payment_orders`, así que el
+// panel de roles no ofrecía Órdenes de Pago y /usuarios mostraba la clave
+// cruda en el chip del módulo.
+export { MODULE_LABELS } from '@/lib/modules';
