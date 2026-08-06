@@ -11,6 +11,7 @@ import {
   type ReactNode,
 } from 'react';
 import { useAuth } from '@/lib/auth-context';
+import { applySnapshotOverrides } from '@/lib/distribution-snapshot';
 import {
   getActiveCompanyId,
   subscribeActiveCompanyId,
@@ -110,6 +111,8 @@ export interface DataContextValue {
   computeSaldoChain: () => Map<string, SaldoInfo>;
   /** Insumos canónicos de la cadena, con year/month/label/is_closed — para el forecast. */
   getDistributionInputs: () => Array<PeriodDistInput & { year: number; month: number; label: string; isClosed: boolean }>;
+  /** Ediciones retroactivas detectadas en períodos cerrados (vacío = limpio). */
+  getSnapshotDrifts: () => import('@/lib/distribution-snapshot').SnapshotDrift[];
   isPeriodAfterSaldoStart: (periodId: string) => boolean;
 
   // Direct data access
@@ -712,7 +715,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
       };
     });
 
-    const canonical = computeDistributionChain(inputs);
+    // Períodos CERRADOS: mandan los insumos congelados en closing_snapshot,
+    // no las tablas vivas. Sin esto, editar una inversión fechada en un mes
+    // cerrado (o su reserve_pct) recalculaba el mes, la cadena posterior y lo
+    // ya distribuido (auditoría 2026-08-06, C2 — el snapshot era write-only).
+    const { inputs: frozen } = applySnapshotOverrides(periods, inputs);
+    const canonical = computeDistributionChain(frozen);
     const chain = new Map<string, SaldoInfo>();
     for (const [pid, r] of canonical) {
       chain.set(pid, { ...r, totalDistribuir: r.montoDistribuir });
@@ -739,7 +747,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const per = periods.find(p => p.year === y && p.month === m);
       if (per) invIndex.set(per.id, (invIndex.get(per.id) || 0) + (Number(inv.profit) || 0));
     }
-    return periods.map(period => {
+    const live = periods.map(period => {
       const oi = oiIndex.get(period.id);
       const pfs = pfsIndex.get(period.id) || 0;
       const pfW = pfwIndex.get(period.id) || 0;
@@ -757,6 +765,40 @@ export function DataProvider({ children }: { children: ReactNode }) {
         reservePct: period.reserve_pct,
       };
     });
+    // Mismo override que computeSaldoChain: cerrado ⇒ manda el congelador.
+    return applySnapshotOverrides(periods, live).inputs;
+  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
+
+  // Deriva snapshot-vs-vivo: en qué campos las tablas vivas de un período
+  // CERRADO ya no coinciden con lo congelado. Vacío = nadie tocó el pasado.
+  const getSnapshotDrifts = useCallback(() => {
+    const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
+    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p.amount]));
+    const pfwIndex = new Map<string, number>();
+    for (const w of withdrawals) {
+      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, (pfwIndex.get(w.period_id) || 0) + w.amount);
+    }
+    const expIndex = new Map<string, number>();
+    for (const e of expenses) {
+      expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + e.amount);
+    }
+    const invIndex = new Map<string, number>();
+    for (const inv of investments) {
+      if (!inv.date) continue;
+      const [y, m] = String(inv.date).split('-').map(Number);
+      const per = periods.find(p => p.year === y && p.month === m);
+      if (per) invIndex.set(per.id, (invIndex.get(per.id) || 0) + (Number(inv.profit) || 0));
+    }
+    const live = periods.map(period => ({
+      periodId: period.id,
+      brokerPnl: oiIndex.get(period.id)?.broker_pnl || 0,
+      other: oiIndex.get(period.id)?.other || 0,
+      propFirmNetIncome: (pfsIndex.get(period.id) || 0) - (pfwIndex.get(period.id) || 0),
+      investmentProfits: invIndex.get(period.id) || 0,
+      totalExpenses: expIndex.get(period.id) || 0,
+      reservePct: period.reserve_pct,
+    }));
+    return applySnapshotOverrides(periods, live).drifts;
   }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
 
   // ─── Period summary (single) ───
@@ -1050,6 +1092,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getInvestmentsData,
       computeSaldoChain,
     getDistributionInputs,
+    getSnapshotDrifts,
       isPeriodAfterSaldoStart,
 
       partners,
