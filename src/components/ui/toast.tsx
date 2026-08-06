@@ -25,7 +25,7 @@
 // One toast can be dismissed before its TTL by clicking it.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, X, AlertTriangle } from 'lucide-react';
 
 export type ToastKind = 'success' | 'error' | 'info';
@@ -63,11 +63,25 @@ export function useToasts() {
     setItems((prev) => [...prev, { id, kind, message }]);
   }, []);
 
-  const toast = {
-    success: (msg: string) => push('success', msg),
-    error: (msg: string) => push('error', msg),
-    info: (msg: string) => push('info', msg),
-  };
+  // useMemo NO es una optimización acá: es correctitud.
+  //
+  // Este objeto se recreaba en cada render, así que cualquier consumidor que
+  // lo pusiera en las dependencias de un useCallback obtenía una función nueva
+  // en cada render. Si ese callback además alimentaba un useEffect, el efecto
+  // volvía a dispararse, hacía setState, forzaba otro render... y quedaba un
+  // BUCLE INFINITO de peticiones. En el libro por canal eso dejaba la tabla
+  // colgada en "cargando" para siempre mientras martillaba la API.
+  //
+  // `push` ya es estable (useCallback sin dependencias), así que el objeto
+  // puede memorizarse una sola vez y no cambia nunca más.
+  const toast = useMemo(
+    () => ({
+      success: (msg: string) => push('success', msg),
+      error: (msg: string) => push('error', msg),
+      info: (msg: string) => push('info', msg),
+    }),
+    [push],
+  );
 
   const ToastHost = <ToastContainer items={items} onDismiss={dismiss} />;
 

@@ -244,15 +244,14 @@ export default function ChannelLedgerPage() {
       </Card>
 
       {/* Resumen del rango */}
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+      {/* Cuatro tarjetas, no cinco: la de transferencias internas se quitó
+          (pedido de Kevin). El dato sigue estando donde importa — cada
+          transferencia es una fila del libro, rotulada como tal, y se sigue
+          restando del saldo sin contarse como retiro del negocio. */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         <StatCard label={t('ledger.openingBalance')} value={formatCurrency(totals.opening)} />
         <StatCard label={t('ledger.inflows')} value={formatCurrency(totals.inflows)} tone="positive" />
         <StatCard label={t('ledger.outflows')} value={formatCurrency(totals.outflows)} tone="negative" />
-        <StatCard
-          label={t('ledger.internalTransfers')}
-          value={formatCurrency(totals.internalTransfers)}
-          hint={t('ledger.internalHint')}
-        />
         <StatCard
           label={t('ledger.closingBalance')}
           value={formatCurrency(totals.closing)}
