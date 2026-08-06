@@ -55,19 +55,35 @@ import {
   type PaymentOrderStatus,
 } from '@/lib/payment-orders/types';
 import {
+  deleteOrderAttachment,
   deletePaymentProof,
   getPaymentOrder,
+  orderAttachmentUrl,
   paymentProofUrl,
   transitionPaymentOrder,
+  uploadOrderAttachment,
   uploadPaymentProof,
   type TransitionOptions,
 } from '@/lib/payment-orders/api';
 
-type Dialog = null | 'submit' | 'approve' | 'reject' | 'cancel' | 'pay' | 'reopen' | 'removeProof';
+type Dialog =
+  | null
+  | 'submit'
+  | 'approve'
+  | 'reject'
+  | 'cancel'
+  | 'pay'
+  | 'reopen'
+  | 'removeProof'
+  | 'removeAttachment';
 
 /** Mismo tope que el endpoint — validar acá evita subir 30 MB para nada. */
 const MAX_PROOF_BYTES = 10 * 1024 * 1024;
 const PROOF_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
+
+/** Documento de respaldo: mismo tope, pero admite además Office (docx/xlsx). */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx';
 
 function formatFileSize(bytes: number | null): string {
   const n = Number(bytes) || 0;
@@ -213,6 +229,43 @@ export default function OrdenPagoDetallePage() {
       toast.error(err instanceof Error ? err.message : t('payOrders.proofError'));
     } finally {
       setProofBusy(false);
+    }
+  }
+
+  // ── Documento de respaldo (adjunto opcional) ──────────────────────────────
+  // OTRO adjunto, no el comprobante: acá va lo que JUSTIFICA la orden (factura,
+  // contrato, cotización). Bucket y endpoint propios.
+  const attachInputRef = useRef<HTMLInputElement>(null);
+  const [attachBusy, setAttachBusy] = useState(false);
+
+  async function onAttachmentPicked(file: File | null) {
+    if (!order || !file) return;
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      toast.error(t('payOrders.attachTooLarge'));
+      return;
+    }
+    setAttachBusy(true);
+    try {
+      setOrder(await uploadOrderAttachment(order.id, file));
+      toast.success(t('payOrders.attachUploadOk'));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('payOrders.attachError'));
+    } finally {
+      setAttachBusy(false);
+    }
+  }
+
+  async function removeAttachment() {
+    if (!order) return;
+    setAttachBusy(true);
+    try {
+      setOrder(await deleteOrderAttachment(order.id));
+      setDialog(null);
+      toast.success(t('payOrders.attachRemoveOk'));
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('payOrders.attachError'));
+    } finally {
+      setAttachBusy(false);
     }
   }
 
@@ -536,6 +589,102 @@ export default function OrdenPagoDetallePage() {
             <h2 className="text-base font-semibold">{t('payOrders.sectionNotes')}</h2>
             <p className="text-sm whitespace-pre-line text-muted-foreground">{order.notes || '—'}</p>
           </Card>
+
+          {/* ── Documento de respaldo (opcional) ──────────────────────── */}
+          {/* Compañero del concepto: la factura / contrato / cotización que
+              justifica el pago. Va acá y no al lado del comprobante para que
+              los dos adjuntos no se confundan nunca. */}
+          {(order.attachment_path || order.status !== 'cancelled') && (
+            <Card className="space-y-3">
+              <h2 className="text-base font-semibold flex items-center gap-2">
+                <FileText className="w-4 h-4 text-muted-foreground" />
+                {t('payOrders.attachSection')}
+              </h2>
+
+              {/* Un solo input oculto sirve para "adjuntar" y "reemplazar". */}
+              <input
+                ref={attachInputRef}
+                type="file"
+                accept={ATTACHMENT_ACCEPT}
+                className="sr-only"
+                onChange={(e) => {
+                  const file = e.target.files?.[0] ?? null;
+                  e.target.value = ''; // permite volver a elegir el mismo archivo
+                  void onAttachmentPicked(file);
+                }}
+              />
+
+              {order.attachment_path ? (
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium break-all">
+                      {order.attachment_name || t('payOrders.attachSection')}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-0.5">
+                      {formatFileSize(order.attachment_size)}
+                      {order.attachment_uploaded_at && (
+                        <>
+                          {' · '}
+                          {t('payOrders.attachUploaded', {
+                            date: formatDateTime(order.attachment_uploaded_at),
+                          })}
+                        </>
+                      )}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <a
+                      href={orderAttachmentUrl(order.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      aria-label={t('payOrders.attachViewAria')}
+                    >
+                      <Button variant="secondary">
+                        <ExternalLink className="w-4 h-4" />
+                        {t('payOrders.attachView')}
+                      </Button>
+                    </a>
+                    {/* Una orden anulada es un documento cerrado: se puede ver
+                        el respaldo, pero no cambiarlo. */}
+                    {order.status !== 'cancelled' && (
+                      <>
+                        <Button
+                          aria-label={t('payOrders.attachReplaceAria')}
+                          disabled={attachBusy}
+                          onClick={() => attachInputRef.current?.click()}
+                        >
+                          <Upload className="w-4 h-4" />
+                          {t('payOrders.attachReplace')}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          aria-label={t('payOrders.attachRemoveAria')}
+                          disabled={attachBusy}
+                          onClick={() => setDialog('removeAttachment')}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          {t('payOrders.attachRemove')}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                  <Button
+                    variant="secondary"
+                    aria-label={t('payOrders.attachAttach')}
+                    loading={attachBusy}
+                    onClick={() => attachInputRef.current?.click()}
+                  >
+                    <FileText className="w-4 h-4" />
+                    {t('payOrders.attachAttach')}
+                  </Button>
+                  <span className="text-xs text-muted-foreground">{t('payOrders.attachHint')}</span>
+                </div>
+              )}
+            </Card>
+          )}
         </div>
 
         {/* ── Historial ───────────────────────────────────────────────── */}
@@ -668,6 +817,16 @@ export default function OrdenPagoDetallePage() {
           message={t('payOrders.proofRemoveMessage')}
           confirmLabel={t('payOrders.proofRemove')}
           onConfirm={removeProof}
+          onClose={() => setDialog(null)}
+        />
+      )}
+
+      {dialog === 'removeAttachment' && (
+        <ConfirmDialog
+          title={t('payOrders.attachRemoveTitle')}
+          message={t('payOrders.attachRemoveMessage')}
+          confirmLabel={t('payOrders.attachRemove')}
+          onConfirm={removeAttachment}
           onClose={() => setDialog(null)}
         />
       )}

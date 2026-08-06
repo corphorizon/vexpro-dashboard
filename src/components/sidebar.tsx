@@ -40,8 +40,8 @@ import {
   FileSignature,
   Table,
   Circle,
-  PanelLeftClose,
-  PanelLeftOpen,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -310,11 +310,17 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
             so the header doesn't look broken.
             Prefer logo_url_white (designed for dark backgrounds) and fall
             back to logo_url when the tenant hasn't uploaded a white version. */}
-        <div className={cn('border-b border-slate-800', isCollapsed ? 'px-2 py-4' : 'px-5 py-6')}>
+        <div className={cn(
+          'border-b border-slate-800',
+          isCollapsed ? 'px-2 py-4 flex flex-col items-center gap-2' : 'px-5 py-6 flex items-center gap-2',
+        )}>
           <Link
             href="/"
             onClick={handleNavClick}
-            className="flex items-center justify-center"
+            className={cn(
+              'flex items-center justify-center min-w-0',
+              !isCollapsed && 'flex-1',
+            )}
             aria-label={company?.name || 'Inicio'}
             title={isCollapsed ? (company?.name || 'Inicio') : undefined}
           >
@@ -352,6 +358,28 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
               </span>
             )}
           </Link>
+
+          {/* Contraer / expandir — solo desktop (el drawer móvil no lo usa).
+              Expandido: a la derecha del logo. Contraído: debajo de la marca
+              compacta, centrado, para que quepa en los 64px del rail. */}
+          {onToggleCollapse && (
+            <button
+              type="button"
+              onClick={onToggleCollapse}
+              aria-label={collapseLabel}
+              title={collapseLabel}
+              aria-expanded={!isCollapsed}
+              className={cn(
+                'hidden lg:flex shrink-0 items-center justify-center rounded-lg',
+                'text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
+                isCollapsed ? 'w-9 h-9' : 'w-7 h-7',
+              )}
+            >
+              {isCollapsed
+                ? <ChevronRight className="w-4 h-4" />
+                : <ChevronLeft className="w-4 h-4" />}
+            </button>
+          )}
         </div>
 
         {/* Flat-menu heading (single-group users) — shows the group name
@@ -502,7 +530,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
             </div>
           )}
 
-          {/* Profile + Logout */}
+          {/* Perfil */}
           <Link
             href="/perfil"
             onClick={handleNavClick}
@@ -522,21 +550,6 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
             )} />
             {!isCollapsed && <span>{t('nav.profile')}</span>}
           </Link>
-          <button
-            onClick={handleLogout}
-            aria-label={t('nav.logout')}
-            title={isCollapsed ? t('nav.logout') : undefined}
-            className={cn(
-              'group flex items-center w-full rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all',
-              isCollapsed ? 'justify-center h-10' : 'gap-3 px-3 py-2',
-            )}
-          >
-            <LogOut className={cn(
-              'text-slate-400 group-hover:text-red-200 transition-colors',
-              isCollapsed ? 'w-5 h-5' : 'w-4 h-4',
-            )} />
-            {!isCollapsed && <span>{t('nav.logout')}</span>}
-          </button>
 
           {/* Theme + Language toggles — contraído se apilan en vertical y
               pierden el texto, conservando los aria-label. */}
@@ -584,27 +597,25 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
             </button>
           </div>
 
-          {/* Contraer / expandir — solo desktop (el drawer móvil no lo usa). */}
-          {onToggleCollapse && (
-            <div className="hidden lg:flex justify-center pt-2 mt-2 border-t border-slate-800">
-              <button
-                type="button"
-                onClick={onToggleCollapse}
-                aria-label={collapseLabel}
-                title={collapseLabel}
-                aria-expanded={!isCollapsed}
-                className={cn(
-                  'flex items-center rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
-                  isCollapsed ? 'justify-center w-9 h-9' : 'gap-1.5 px-2.5 py-1.5',
-                )}
-              >
-                {isCollapsed
-                  ? <PanelLeftOpen className="w-4 h-4" />
-                  : <PanelLeftClose className="w-4 h-4" />}
-                {!isCollapsed && collapseLabel}
-              </button>
-            </div>
-          )}
+          {/* Cerrar sesión — SIEMPRE el último control del sidebar
+              (pedido de Kevin: nada debajo). */}
+          <div className="pt-2 mt-2 border-t border-slate-800">
+            <button
+              onClick={handleLogout}
+              aria-label={t('nav.logout')}
+              title={isCollapsed ? t('nav.logout') : undefined}
+              className={cn(
+                'group flex items-center w-full rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all',
+                isCollapsed ? 'justify-center h-10' : 'gap-3 px-3 py-2',
+              )}
+            >
+              <LogOut className={cn(
+                'text-slate-400 group-hover:text-red-200 transition-colors',
+                isCollapsed ? 'w-5 h-5' : 'w-4 h-4',
+              )} />
+              {!isCollapsed && <span>{t('nav.logout')}</span>}
+            </button>
+          </div>
         </div>
       </aside>
     </>

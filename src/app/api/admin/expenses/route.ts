@@ -31,6 +31,8 @@ interface ExpenseRow {
   category?: string | null;
   /** 'YYYY-MM-DD' o null/'' — fecha opcional del egreso (migration-056). */
   expense_date?: string | null;
+  /** uuid de la orden de pago que originó el egreso, o null/'' si es manual. */
+  payment_order_id?: string | null;
 }
 
 // La fecha viaja como string del <input type="date">. Cualquier cosa que no
@@ -38,6 +40,14 @@ interface ExpenseRow {
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function normalizeDate(v: unknown): string | null {
   return typeof v === 'string' && ISO_DATE.test(v) ? v : null;
+}
+
+// Idem para el vínculo con la orden de pago: solo pasa un uuid válido o null.
+// Un '' llegaría a la RPC como cadena vacía y la RPC hace nullif(...)::uuid,
+// pero normalizar acá evita depender de eso y cualquier cast inválido.
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function normalizeUuid(v: unknown): string | null {
+  return typeof v === 'string' && UUID.test(v) ? v : null;
 }
 
 export async function POST(request: NextRequest) {
@@ -65,6 +75,10 @@ export async function POST(request: NextRequest) {
         // migration-056: la RPC borra e re-inserta el período entero desde
         // este payload — si la fecha no viaja acá se pierde en cada guardado.
         expense_date: normalizeDate(e.expense_date),
+        // Mismo razonamiento que expense_date: el DELETE+INSERT de la RPC
+        // reconstruye el período desde este payload, así que el vínculo con la
+        // orden de pago tiene que viajar o se pierde en cada guardado.
+        payment_order_id: normalizeUuid(e.payment_order_id),
       })),
     });
     if (error) return apiError('admin/expenses', error, { status: 500 });

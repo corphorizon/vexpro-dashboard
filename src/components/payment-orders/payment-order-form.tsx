@@ -21,7 +21,17 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus, Trash2, Wallet, Landmark, AlertTriangle, BookUser } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  Wallet,
+  Landmark,
+  AlertTriangle,
+  BookUser,
+  ExternalLink,
+  FileText,
+  Upload,
+} from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { useToasts } from '@/components/ui/toast';
@@ -46,6 +56,9 @@ import {
   updatePaymentOrder,
   transitionPaymentOrder,
   listBeneficiaries,
+  uploadOrderAttachment,
+  deleteOrderAttachment,
+  orderAttachmentUrl,
 } from '@/lib/payment-orders/api';
 
 const INPUT =
@@ -54,6 +67,18 @@ const INPUT_ERR = 'border-negative';
 
 const CURRENCIES = ['USD', 'USDT', 'EUR', 'GBP', 'ARS', 'MXN', 'BRL'];
 const OTHER_NETWORK = '__other__';
+
+/** Documento de respaldo — mismos límites que el endpoint (validar acá evita
+ *  subir 30 MB para nada). */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx';
+
+function formatFileSize(bytes: number | null): string {
+  const n = Number(bytes) || 0;
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
+  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+}
 
 function todayISO(): string {
   const d = new Date();
@@ -154,6 +179,49 @@ export function PaymentOrderForm({ mode, order }: Props) {
   );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<null | 'draft' | 'submit'>(null);
+
+  // ── Documento de respaldo (opcional) ───────────────────────────────────────
+  // En alta todavía no hay id de orden, así que el archivo se queda en state y
+  // se sube DESPUÉS de guardar, en su propio try: es un adjunto opcional, un
+  // fallo al subirlo nunca puede desandar ni bloquear la orden ya guardada.
+  // En edición se sigue el mismo camino para que "guardar" sea un solo gesto.
+  const attachInputRef = useRef<HTMLInputElement>(null);
+  const [attachFile, setAttachFile] = useState<File | null>(null);
+  const [attachRemoved, setAttachRemoved] = useState(false);
+  const [attachError, setAttachError] = useState('');
+  /** Adjunto ya guardado que sigue vigente (no lo pisó un archivo nuevo ni se marcó para quitar). */
+  const existingAttachment =
+    order?.attachment_path && !attachFile && !attachRemoved ? order : null;
+
+  function onAttachPicked(file: File | null) {
+    if (!file) return;
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setAttachFile(null);
+      setAttachError(t('payOrders.attachTooLarge'));
+      return;
+    }
+    setAttachError('');
+    setAttachRemoved(false);
+    setAttachFile(file);
+  }
+
+  /**
+   * Sincroniza el adjunto con la orden ya guardada. Devuelve el mensaje de
+   * error si algo falló — el caller lo muestra como aviso, NUNCA como fallo del
+   * guardado.
+   */
+  async function syncAttachment(orderId: string): Promise<string | null> {
+    try {
+      if (attachFile) {
+        await uploadOrderAttachment(orderId, attachFile);
+      } else if (attachRemoved && order?.attachment_path) {
+        await deleteOrderAttachment(orderId);
+      }
+      return null;
+    } catch (err) {
+      return err instanceof Error ? err.message : t('payOrders.attachError');
+    }
+  }
 
   const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
@@ -346,11 +414,19 @@ export function PaymentOrderForm({ mode, order }: Props) {
       const input = buildInput();
       const saved = mode === 'edit' && order ? await updatePaymentOrder(order.id, input) : await createPaymentOrder(input);
       const id = saved?.id ?? order?.id;
+
+      // El adjunto va DESPUÉS del guardado y antes de la transición: si falla,
+      // solo se avisa — la orden ya está guardada y no se toca.
+      const attachIssue = id ? await syncAttachment(id) : null;
+
       if (action === 'submit' && id) {
         await transitionPaymentOrder(id, 'pending');
         toast.success(t('payOrders.savedSubmitted'));
       } else {
         toast.success(t('payOrders.savedDraft'));
+      }
+      if (attachIssue) {
+        toast.error(t('payOrders.attachErrorAfterSave', { error: attachIssue }));
       }
       router.push(id ? `/ordenes-pago/${id}` : '/ordenes-pago');
       router.refresh();
@@ -801,6 +877,119 @@ export function PaymentOrderForm({ mode, order }: Props) {
             className={cn(INPUT, 'resize-y')}
             aria-label={t('payOrders.sectionNotes')}
           />
+
+          {/* ── Documento de respaldo (opcional) ─────────────────────────
+              Va pegado al concepto porque es su respaldo documental: la
+              factura, el contrato o la cotización que justifica el pago. NO
+              confundir con el comprobante de pago, que se adjunta al marcar
+              la orden como pagada. */}
+          <div className="border-t border-border pt-4 space-y-2">
+            <span className="block text-sm font-medium">{t('payOrders.attachLabel')}</span>
+
+            {/* Un solo input oculto sirve para "adjuntar" y "reemplazar". */}
+            <input
+              ref={attachInputRef}
+              type="file"
+              accept={ATTACHMENT_ACCEPT}
+              className="sr-only"
+              onChange={(e) => {
+                const file = e.target.files?.[0] ?? null;
+                e.target.value = ''; // permite volver a elegir el mismo archivo
+                onAttachPicked(file);
+              }}
+            />
+
+            {existingAttachment ? (
+              // Edición con adjunto ya guardado: no se muestra un picker vacío.
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium break-all">
+                    {existingAttachment.attachment_name || t('payOrders.attachSection')}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {formatFileSize(existingAttachment.attachment_size)}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <a
+                    href={orderAttachmentUrl(existingAttachment.id)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    aria-label={t('payOrders.attachViewAria')}
+                  >
+                    <Button type="button" variant="secondary">
+                      <ExternalLink className="w-4 h-4" />
+                      {t('payOrders.attachView')}
+                    </Button>
+                  </a>
+                  <Button
+                    type="button"
+                    aria-label={t('payOrders.attachReplaceAria')}
+                    onClick={() => attachInputRef.current?.click()}
+                  >
+                    <Upload className="w-4 h-4" />
+                    {t('payOrders.attachReplace')}
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    aria-label={t('payOrders.attachRemoveAria')}
+                    onClick={() => {
+                      setAttachFile(null);
+                      setAttachRemoved(true);
+                      setAttachError('');
+                    }}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    {t('payOrders.attachRemove')}
+                  </Button>
+                </div>
+              </div>
+            ) : attachFile ? (
+              // Archivo elegido y todavía sin subir: se sube al guardar.
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium break-all">{attachFile.name}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {formatFileSize(attachFile.size)} · {t('payOrders.attachPending')}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  aria-label={t('payOrders.attachClearAria')}
+                  onClick={() => {
+                    setAttachFile(null);
+                    setAttachError('');
+                  }}
+                >
+                  <Trash2 className="w-4 h-4" />
+                  {t('payOrders.attachRemove')}
+                </Button>
+              </div>
+            ) : (
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  aria-label={t('payOrders.attachAttach')}
+                  onClick={() => attachInputRef.current?.click()}
+                >
+                  <FileText className="w-4 h-4" />
+                  {t('payOrders.attachAttach')}
+                </Button>
+                {attachRemoved && order?.attachment_path && (
+                  <span className="text-xs text-warning">{t('payOrders.attachPendingRemove')}</span>
+                )}
+              </div>
+            )}
+
+            {attachError ? (
+              <p className="text-xs text-negative">{attachError}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">{t('payOrders.attachHint')}</p>
+            )}
+          </div>
         </Card>
 
         {/* ── Barra de acciones pegada abajo ────────────────────────────── */}

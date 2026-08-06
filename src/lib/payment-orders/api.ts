@@ -149,6 +149,48 @@ export function paymentProofUrl(orderId: string): string {
   return withActiveCompany(`/api/admin/payment-orders/${orderId}/proof`);
 }
 
+// ── Documento de respaldo (opcional) ────────────────────────────────────────
+// OJO: es OTRO adjunto, no el comprobante de arriba. Acá va la factura, el
+// contrato o la cotización que justifica la orden; el comprobante es la prueba
+// del pago ya hecho. Endpoints y buckets separados a propósito.
+
+/**
+ * Sube (o reemplaza) el documento de respaldo. PDF/PNG/JPG/WEBP/DOCX/XLSX, máx
+ * 10 MB — el servidor valida los magic bytes, no la extensión.
+ *
+ * OJO: no se setea Content-Type a mano. apiFetch solo lo agrega cuando el body
+ * es string, así que con FormData el browser pone el multipart con su boundary
+ * (fijarlo a mano rompe el parseo server-side).
+ */
+export async function uploadOrderAttachment(orderId: string, file: File): Promise<PaymentOrder> {
+  const body = new FormData();
+  body.append('file', file);
+  const { order } = await request<{ order: PaymentOrder }>(
+    `/api/admin/payment-orders/${orderId}/attachment`,
+    { method: 'POST', body },
+  );
+  return order;
+}
+
+/** Quita el documento (archivo + columnas). No permitido en órdenes anuladas. */
+export async function deleteOrderAttachment(orderId: string): Promise<PaymentOrder> {
+  const { order } = await request<{ order: PaymentOrder }>(
+    `/api/admin/payment-orders/${orderId}/attachment`,
+    { method: 'DELETE' },
+  );
+  return order;
+}
+
+/**
+ * URL de lectura del documento para un <a href> / window.open: el GET responde
+ * un 302 a una URL firmada de 10 minutos. Pasa por withActiveCompany porque una
+ * navegación directa no atraviesa apiFetch (el superadmin en modo "viendo como"
+ * necesita el ?company_id en la URL).
+ */
+export function orderAttachmentUrl(orderId: string): string {
+  return withActiveCompany(`/api/admin/payment-orders/${orderId}/attachment`);
+}
+
 // ── Libreta de beneficiarios ────────────────────────────────────────────────
 
 export async function listBeneficiaries(q?: string): Promise<PaymentBeneficiary[]> {

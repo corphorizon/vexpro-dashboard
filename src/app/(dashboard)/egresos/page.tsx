@@ -15,6 +15,7 @@ import type { Expense } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
+import { ExpenseConcept } from '@/components/ui/expense-concept';
 import { Search, ArrowUpDown, ArrowDown, ArrowUp, Check, Download, Receipt } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 
@@ -277,7 +278,11 @@ export default function EgresosPage() {
                   {filteredExpenses.map((expense, i) => (
                     <tr key={expense.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                       <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
-                      <td className="py-2.5 px-3">{expense.concept}</td>
+                      {/* Si el egreso vino de una orden de pago, el número de OP
+                          es link al detalle de la orden. */}
+                      <td className="py-2.5 px-3">
+                        <ExpenseConcept concept={expense.concept} paymentOrderId={expense.payment_order_id} />
+                      </td>
                       <td className="py-2.5 px-3">
                         {expense.category ? (
                           <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">

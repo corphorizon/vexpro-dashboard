@@ -106,6 +106,18 @@ export interface PaymentOrder {
   payment_proof_size: number | null;
   payment_proof_uploaded_at: string | null;
 
+  // Documento de respaldo — OPCIONAL y DISTINTO del comprobante de arriba:
+  // acá va lo que JUSTIFICA la orden (factura del proveedor, contrato,
+  // cotización), no la prueba de que el pago se hizo. Se guarda el PATH dentro
+  // del bucket privado `payment-attachments`: la lectura pasa por
+  // /api/admin/payment-orders/[id]/attachment, que valida sesión + empresa y
+  // emite una URL firmada de corta vida.
+  attachment_path: string | null;
+  attachment_name: string | null;
+  attachment_mime: string | null;
+  attachment_size: number | null;
+  attachment_uploaded_at: string | null;
+
   expense_id: string | null;
   updated_at: string;
 }

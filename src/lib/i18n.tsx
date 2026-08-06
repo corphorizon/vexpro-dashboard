@@ -195,6 +195,9 @@ const translations: Record<Locale, TranslationDict> = {
     'expenses.date': 'Date',
     'expenses.dateAria': 'Expense date (optional)',
     'expenses.dateHint': 'Optional — leave empty if the expense has no specific day',
+    // Link del egreso a la orden de pago que lo originó
+    'expenses.viewOrder': 'View payment order',
+    'expenses.viewOrderAria': 'View payment order {order}',
     // Edición de un egreso fijo con efecto hacia adelante
     'expenses.forwardTitle': 'This is a fixed expense',
     'expenses.forwardQuestion': 'From when should the change to "{concept}" apply?',
@@ -1162,6 +1165,30 @@ const translations: Record<Locale, TranslationDict> = {
     'payOrders.proofError': 'Could not upload the payment proof',
     'payOrders.proofErrorAfterPay': 'The payment was recorded, but the proof could not be uploaded: {error}. You can attach it from the order detail.',
     'payOrders.proofTooLarge': 'The file is too large (max 10 MB)',
+
+    // Supporting document (optional attachment) — NOT the payment proof:
+    // this is the invoice / contract / quote that justifies the order.
+    'payOrders.attachSection': 'Supporting document',
+    'payOrders.attachLabel': 'Supporting document (optional)',
+    'payOrders.attachHint': 'Invoice, contract or quote backing the payment. PDF, image or Office file, max 10 MB.',
+    'payOrders.attachView': 'View',
+    'payOrders.attachViewAria': 'Open the supporting document in a new tab',
+    'payOrders.attachReplace': 'Replace',
+    'payOrders.attachReplaceAria': 'Replace the supporting document',
+    'payOrders.attachRemove': 'Remove',
+    'payOrders.attachRemoveAria': 'Remove the supporting document',
+    'payOrders.attachClearAria': 'Discard the selected file',
+    'payOrders.attachAttach': 'Attach document',
+    'payOrders.attachPending': 'Will be uploaded when you save the order',
+    'payOrders.attachPendingRemove': 'It will be removed when you save the order.',
+    'payOrders.attachUploaded': 'Uploaded on {date}',
+    'payOrders.attachUploadOk': 'Supporting document attached',
+    'payOrders.attachRemoveOk': 'Supporting document removed',
+    'payOrders.attachRemoveTitle': 'Remove the supporting document?',
+    'payOrders.attachRemoveMessage': 'The file will be deleted. The order and its details stay untouched.',
+    'payOrders.attachError': 'Could not upload the supporting document',
+    'payOrders.attachErrorAfterSave': 'The order was saved, but the supporting document could not be uploaded: {error}. You can attach it from the order detail.',
+    'payOrders.attachTooLarge': 'The file is too large (max 10 MB)',
   },
 
   es: {
@@ -1351,6 +1378,9 @@ const translations: Record<Locale, TranslationDict> = {
     'expenses.date': 'Fecha',
     'expenses.dateAria': 'Fecha del egreso (opcional)',
     'expenses.dateHint': 'Opcional — déjala vacía si el egreso no tiene un día específico',
+    // Link del egreso a la orden de pago que lo originó
+    'expenses.viewOrder': 'Ver orden de pago',
+    'expenses.viewOrderAria': 'Ver orden de pago {order}',
     // Edición de un egreso fijo con efecto hacia adelante
     'expenses.forwardTitle': 'Este es un egreso fijo',
     'expenses.forwardQuestion': '¿Desde cuándo aplica el cambio en "{concept}"?',
@@ -2318,6 +2348,30 @@ const translations: Record<Locale, TranslationDict> = {
     'payOrders.proofError': 'No se pudo subir el comprobante',
     'payOrders.proofErrorAfterPay': 'El pago quedó registrado, pero el comprobante no se pudo subir: {error}. Podés adjuntarlo desde el detalle de la orden.',
     'payOrders.proofTooLarge': 'El archivo es demasiado grande (máx 10 MB)',
+
+    // Documento de respaldo (adjunto opcional) — NO es el comprobante de pago:
+    // acá va la factura / contrato / cotización que justifica la orden.
+    'payOrders.attachSection': 'Documento de respaldo',
+    'payOrders.attachLabel': 'Documento de respaldo (opcional)',
+    'payOrders.attachHint': 'Factura, contrato o cotización que respalda el pago. PDF, imagen u Office, máx 10 MB.',
+    'payOrders.attachView': 'Ver',
+    'payOrders.attachViewAria': 'Abrir el documento de respaldo en una pestaña nueva',
+    'payOrders.attachReplace': 'Reemplazar',
+    'payOrders.attachReplaceAria': 'Reemplazar el documento de respaldo',
+    'payOrders.attachRemove': 'Quitar',
+    'payOrders.attachRemoveAria': 'Quitar el documento de respaldo',
+    'payOrders.attachClearAria': 'Descartar el archivo seleccionado',
+    'payOrders.attachAttach': 'Adjuntar documento',
+    'payOrders.attachPending': 'Se sube al guardar la orden',
+    'payOrders.attachPendingRemove': 'Se quita al guardar la orden.',
+    'payOrders.attachUploaded': 'Subido el {date}',
+    'payOrders.attachUploadOk': 'Documento de respaldo adjuntado',
+    'payOrders.attachRemoveOk': 'Documento de respaldo eliminado',
+    'payOrders.attachRemoveTitle': '¿Quitar el documento de respaldo?',
+    'payOrders.attachRemoveMessage': 'Se borra el archivo. La orden y su detalle no se tocan.',
+    'payOrders.attachError': 'No se pudo subir el documento de respaldo',
+    'payOrders.attachErrorAfterSave': 'La orden se guardó, pero el documento de respaldo no se pudo subir: {error}. Podés adjuntarlo desde el detalle de la orden.',
+    'payOrders.attachTooLarge': 'El archivo es demasiado grande (máx 10 MB)',
   },
 };
 
