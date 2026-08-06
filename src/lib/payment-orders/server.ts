@@ -144,6 +144,29 @@ export function validateOrderInput(body: unknown): { error: string } | Validated
 }
 
 /**
+ * Verifica que un beneficiary_id pertenezca a la empresa del caller.
+ *
+ * Era el ÚNICO FK del payload que se aceptaba sin verificar (auditoría
+ * 2026-08-06): con el admin client (sin RLS), un id ajeno vinculaba la orden
+ * al beneficiario de otro tenant. Devuelve true si es null (beneficiario
+ * escrito a mano, sin fila en payment_beneficiaries).
+ */
+export async function beneficiaryBelongsToCompany(
+  admin: SupabaseClient,
+  companyId: string,
+  beneficiaryId: string | null | undefined,
+): Promise<boolean> {
+  if (!beneficiaryId) return true;
+  const { data } = await admin
+    .from('payment_beneficiaries')
+    .select('id')
+    .eq('id', beneficiaryId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  return !!data;
+}
+
+/**
  * Columnas de payment_orders derivadas del payload validado. No incluye
  * company_id, order_number, status ni el bloque de auditoría — esos los pone
  * el endpoint desde el token / la RPC, nunca el cliente.

@@ -13,12 +13,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 
 export async function POST(request: NextRequest) {
-  const auth = await verifyAdminAuth(request);
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
   if (auth instanceof NextResponse) return auth;
 
   let body: { walletId?: string | null };

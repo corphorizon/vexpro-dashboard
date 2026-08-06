@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import type { PaymentOrderStatus } from '@/lib/payment-orders/types';
@@ -11,6 +11,7 @@ import {
   normalizeOrder,
   normalizeOrders,
   orderFieldsFromInput,
+  beneficiaryBelongsToCompany,
   upsertBeneficiary,
   validateOrderInput,
 } from '@/lib/payment-orders/server';
@@ -37,7 +38,7 @@ const MAX_LIMIT = 500;
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();
@@ -83,7 +84,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json().catch(() => null);
@@ -94,6 +95,13 @@ export async function POST(request: NextRequest) {
 
     const admin = createAdminClient();
     const companyId = auth.companyId;
+    if (!(await beneficiaryBelongsToCompany(admin, auth.companyId, validated.input.beneficiary_id))) {
+      return NextResponse.json(
+        { success: false, error: 'Beneficiario no encontrado' },
+        { status: 404 },
+      );
+    }
+
     const fields = orderFieldsFromInput(validated);
 
     // ── Correlativo + insert, con reintento ante colisión ──

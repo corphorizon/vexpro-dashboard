@@ -20,7 +20,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 
@@ -28,7 +28,7 @@ import { serverAuditLog } from '@/lib/server-audit';
 const CENT = 0.01;
 
 async function guard(request: NextRequest) {
-  const auth = await verifyAdminAuth(request);
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
   if (auth instanceof NextResponse) return auth;
   if (auth.role === 'hr') {
     return NextResponse.json(

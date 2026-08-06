@@ -28,7 +28,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { requireAdmin: true });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 

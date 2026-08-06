@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { isEditable, STATUS_LABELS, type PaymentOrderStatus } from '@/lib/payment-orders/types';
@@ -10,6 +10,7 @@ import {
   beneficiaryPayloadFromOrder,
   normalizeOrder,
   orderFieldsFromInput,
+  beneficiaryBelongsToCompany,
   upsertBeneficiary,
   validateOrderInput,
 } from '@/lib/payment-orders/server';
@@ -32,7 +33,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function GET(request: NextRequest, { params }: Params) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 
@@ -63,7 +64,7 @@ export async function GET(request: NextRequest, { params }: Params) {
 
 export async function PATCH(request: NextRequest, { params }: Params) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 
@@ -99,6 +100,16 @@ export async function PATCH(request: NextRequest, { params }: Params) {
     const validated = validateOrderInput(body);
     if ('error' in validated) {
       return NextResponse.json({ success: false, error: validated.error }, { status: 400 });
+    }
+
+    // El beneficiario referenciado tiene que ser de ESTA empresa: el admin
+    // client no pasa por RLS, así que sin este chequeo un id ajeno vinculaba
+    // la orden al beneficiario de otro tenant (auditoría 2026-08-06).
+    if (!(await beneficiaryBelongsToCompany(admin, auth.companyId, validated.input.beneficiary_id))) {
+      return NextResponse.json(
+        { success: false, error: 'Beneficiario no encontrado' },
+        { status: 404 },
+      );
     }
 
     // Solo campos del payload: status, order_number, company_id y el bloque de
@@ -154,7 +165,7 @@ export async function PATCH(request: NextRequest, { params }: Params) {
 
 export async function DELETE(request: NextRequest, { params }: Params) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 

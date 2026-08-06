@@ -60,7 +60,7 @@ const VALID_MODULE_KEYS = MODULE_KEY_SET;
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { requireAdmin: true });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();

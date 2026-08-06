@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ interface Body {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const body = (await request.json()) as Body;

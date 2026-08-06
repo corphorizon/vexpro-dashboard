@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import {
@@ -64,7 +64,7 @@ export async function POST(
     // Aprobación abierta (decisión Kevin 2026-08-05): cualquier usuario con
     // acceso al módulo puede aprobar/rechazar, incluida su propia orden. La
     // trazabilidad (approved_by/at) reemplaza al bloqueo como control.
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const { id } = await params;

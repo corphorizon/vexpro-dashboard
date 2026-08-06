@@ -1,8 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 
-// Roles allowed to call /api/admin/* routes.
+// Roles allowed to call /api/admin/* routes (fallback histórico).
+//
+// AUDITORÍA 2026-08-06 (hallazgo A2): este set único era el ÚNICO control de
+// casi toda /api/admin/*, así que `hr` podía escribir egresos y órdenes de
+// pago, y `auditor` podía borrar perfiles de RRHH con su histórico de
+// comisiones. La exclusión de HR de las finanzas era solo de UI.
+//
+// Ahora cada ruta declara su dominio con `roles:`. Este fallback se mantiene
+// para las rutas de lectura genéricas que aún no lo pasan.
 const ADMIN_ROLES = ['admin', 'auditor', 'hr'];
+
+/** Rutas del dominio financiero: dinero. HR queda afuera. */
+export const FINANCE_ROLES = ['admin', 'auditor'] as const;
+/** Rutas del dominio RRHH: personas y sueldos. Auditor queda afuera. */
+export const HR_ROLES = ['admin', 'hr'] as const;
 
 export type VerifyAdminAuthOptions = {
   /**
@@ -12,6 +25,12 @@ export type VerifyAdminAuthOptions = {
    * (reset password, delete user, reset 2FA, update auth user).
    */
   requireAdmin?: boolean;
+  /**
+   * Set de roles que pueden llamar ESTA ruta (además del superadmin, que
+   * siempre pasa como 'admin'). Usar FINANCE_ROLES o HR_ROLES; sin esto se
+   * cae al fallback histórico admin/auditor/hr.
+   */
+  roles?: readonly string[];
 };
 
 export type AuthInfo = {
@@ -111,9 +130,10 @@ export async function verifyAdminAuth(
     );
   }
 
-  if (!ADMIN_ROLES.includes(profile.role)) {
+  const allowed = opts?.roles ?? ADMIN_ROLES;
+  if (!allowed.includes(profile.role)) {
     return NextResponse.json(
-      { success: false, error: 'Permiso insuficiente — se requiere rol admin, auditor o hr' },
+      { success: false, error: `Permiso insuficiente — se requiere rol ${allowed.join(' o ')}` },
       { status: 403 },
     );
   }
