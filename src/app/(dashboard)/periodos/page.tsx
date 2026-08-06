@@ -101,7 +101,20 @@ export default function PeríodosPage() {
         setUpdating(id);
         try {
           const isClosed = newStatus === 'closed';
-          await updatePeriodStatus(id, isClosed);
+          // Reabrir un período cerrado deshace un cierre contable: el motivo
+          // queda en el registro de actividad junto a quién lo hizo.
+          let reason: string | undefined;
+          if (!isClosed) {
+            const answer = window.prompt(
+              `Reabrir ${period.label} desbloquea la edición de ese mes y puede cambiar el saldo ya distribuido a los socios.\n\n¿Motivo?`,
+            );
+            if (answer === null || !answer.trim()) {
+              setUpdating(null);
+              return;
+            }
+            reason = answer.trim();
+          }
+          await updatePeriodStatus(id, isClosed, reason);
           await refresh();
           showSuccess(t('periods.statusChanged', { label: period.label, status: statusLabel }));
         } catch (err) {

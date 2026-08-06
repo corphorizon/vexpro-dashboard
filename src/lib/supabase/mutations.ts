@@ -21,8 +21,17 @@ async function postData<T = { success: boolean; id?: string }>(
 
 // ─── Period Status ───
 
-export async function updatePeriodStatus(periodId: string, isClosed: boolean): Promise<void> {
-  await postData('period_status', { periodId, isClosed });
+/**
+ * Cerrar congela los totales del período y bloquea sus escrituras (migr. 061).
+ * Reabrir EXIGE motivo: es deshacer un cierre contable y tiene que quedar
+ * dicho por qué. El servidor lo revalida — esto no es solo cosmética de UI.
+ */
+export async function updatePeriodStatus(
+  periodId: string,
+  isClosed: boolean,
+  reason?: string,
+): Promise<void> {
+  await postData('period_status', { periodId, isClosed, reason });
 }
 
 // ─── Period Reserve Percentage ───
