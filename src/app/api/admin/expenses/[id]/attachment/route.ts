@@ -33,6 +33,18 @@ export async function GET(
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;
+
+  // Una fila recién agregada en /upload todavía tiene id temporal (no es un
+  // uuid). Sin este corte, el .eq('id', ...) revienta en Postgres con un error
+  // de cast y devuelve 500 en lugar de un 404 limpio.
+  const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!UUID.test(id)) {
+    return NextResponse.json(
+      { success: false, error: 'Guardá el período para poder abrir el comprobante' },
+      { status: 404 },
+    );
+  }
+
   const admin = createAdminClient();
 
   const { data: expense, error } = await admin
