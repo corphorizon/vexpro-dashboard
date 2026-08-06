@@ -88,10 +88,25 @@ export async function upsertWithdrawals(
   periodId: string,
   withdrawals: { category: string; amount: number; description?: string | null }[]
 ): Promise<void> {
-  await postData('withdrawals', {
-    periodId,
-    rows: withdrawals.map(w => ({ category: w.category, amount: w.amount, description: w.description ?? null })),
-  });
+  // UNA fila por categoría (migración 065). /upload concatena la tabla base
+  // con los "extras" y podía mandar la misma categoría dos veces; con filas
+  // duplicadas, tres pantallas leían tres montos distintos del mismo mes
+  // (.find() tomaba la primera, el índice de la cadena la última y el
+  // consolidado las sumaba — auditoría 2026-08-06, C5). Se consolida acá,
+  // el único punto de paso, y el UNIQUE de la base lo garantiza para siempre.
+  const byCategory = new Map<string, { category: string; amount: number; description: string | null }>();
+  for (const w of withdrawals) {
+    const prev = byCategory.get(w.category);
+    if (prev) {
+      prev.amount += w.amount;
+      if (w.description) {
+        prev.description = prev.description ? `${prev.description} · ${w.description}` : w.description;
+      }
+    } else {
+      byCategory.set(w.category, { category: w.category, amount: w.amount, description: w.description ?? null });
+    }
+  }
+  await postData('withdrawals', { periodId, rows: [...byCategory.values()] });
 }
 
 // ─── Expenses (delete + reinsert for the period) ───

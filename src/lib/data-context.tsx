@@ -665,7 +665,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p.amount]));
     const pfwIndex = new Map<string, number>();
     for (const w of withdrawals) {
-      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, w.amount);
+      // Suma, no set: con filas duplicadas de categoría (posible antes de la
+      // migración 065) "la última gana" hacía que esta cadena difiera de
+      // getPeriodSummary y del consolidado. Sumar es la única lectura que
+      // coincide con las otras dos pase lo que pase.
+      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, (pfwIndex.get(w.period_id) || 0) + w.amount);
     }
     const expIndex = new Map<string, number>();
     for (const e of expenses) {
@@ -738,7 +742,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         .reduce((sum, w) => sum + w.amount, 0);
       const pfs = propFirmSale?.amount || 0;
       const p2p = p2pTransfer?.amount || 0;
-      const propFirmWithdrawal = periodWithdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+      // Suma (no .find): misma lectura que computeSaldoChain y el consolidado
+      // ante cualquier fila duplicada de categoría (auditoría C5, migr. 065).
+      const propFirmWithdrawal = periodWithdrawals.filter(w => w.category === 'prop_firm').reduce((s, w) => s + w.amount, 0);
       const propFirmNetIncome = pfs - propFirmWithdrawal;
 
       // Investment profits this month — sum `profit` of investments rows
@@ -833,7 +839,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const pfs = propFirmSales
         .filter(p => periodIds.includes(p.period_id))
         .reduce((s, p) => s + p.amount, 0);
-      const propFirmWithdrawal = consolidatedWithdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
+      const propFirmWithdrawal = consolidatedWithdrawals.filter(w => w.category === 'prop_firm').reduce((s, w) => s + w.amount, 0);
       const propFirmNetIncome = pfs - propFirmWithdrawal;
       const p2p = p2pTransfers
         .filter(p => periodIds.includes(p.period_id))
