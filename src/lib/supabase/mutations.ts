@@ -106,7 +106,7 @@ export async function upsertWithdrawals(
 export async function upsertExpenses(
   _companyId: string,
   periodId: string,
-  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null }[]
+  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null; expense_date?: string | null }[]
 ): Promise<void> {
   // Guardado SERVER-SIDE vía /api/admin/expenses (2026-07-13). Antes esto
   // llamaba supabase.rpc() desde el browser y se colgaba >12s de forma
@@ -124,6 +124,9 @@ export async function upsertExpenses(
     pending: e.pending,
     is_fixed: !!e.is_fixed,
     category: e.category ?? null,
+    // migration-056. La RPC re-inserta el período entero desde este payload:
+    // si la fecha no viaja acá, se pierde en el próximo guardado.
+    expense_date: e.expense_date || null,
   }));
 
   const res = await apiFetch('/api/admin/expenses', {
@@ -134,6 +137,42 @@ export async function upsertExpenses(
     const data = await res.json().catch(() => null);
     throw new Error(data?.error || `Error guardando egresos (${res.status})`);
   }
+}
+
+// ─── Egresos fijos: edición "de este mes en adelante" ───
+//
+// Kevin (2026-08-06): editar un egreso FIJO desde el mes que está mirando debe
+// cambiar ese mes y todos los siguientes, sin tocar los meses cerrados (sus
+// cifras ya se reportaron).
+//
+// El matching es por CONCEPTO viejo: `expenses` no guarda template_id, la
+// materialización de fijos empareja plantilla↔egreso por concepto (ver
+// materialize_fixed_expenses en migration-050). Por eso hay que mandar
+// `old_concept` aunque el usuario lo haya renombrado.
+export async function applyFixedExpenseForward(params: {
+  periodId: string;
+  oldConcept: string;
+  concept: string;
+  amount: number;
+  category?: string | null;
+  apply: 'this' | 'forward';
+}): Promise<{ updatedPeriods: number }> {
+  const res = await apiFetch('/api/admin/expenses/fixed-forward', {
+    method: 'POST',
+    body: JSON.stringify({
+      period_id: params.periodId,
+      old_concept: params.oldConcept,
+      concept: params.concept,
+      amount: params.amount,
+      category: params.category ?? null,
+      apply: params.apply,
+    }),
+  });
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new Error(data?.error || `Error propagando el egreso fijo (${res.status})`);
+  }
+  return { updatedPeriods: Number(data?.updatedPeriods ?? 0) };
 }
 
 // ─── Expense ordering (drag-and-drop in /upload) ───

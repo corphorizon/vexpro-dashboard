@@ -89,6 +89,8 @@ export interface TransitionOptions {
   payment_date?: string;
   /** Al pagar: generar el egreso en el período abierto. */
   create_expense?: boolean;
+  /** Categoría del egreso generado al pagar (opcional). */
+  expense_category?: string | null;
 }
 
 /**

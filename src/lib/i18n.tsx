@@ -40,6 +40,8 @@ const translations: Record<Locale, TranslationDict> = {
     'nav.audit': 'Audit Log',
     'nav.profile': 'Profile',
     'nav.logout': 'Sign Out',
+    'nav.collapse': 'Collapse menu',
+    'nav.expand': 'Expand menu',
 
     // Resumen
     'summary.title': 'General Summary',
@@ -190,6 +192,19 @@ const translations: Record<Locale, TranslationDict> = {
     'expenses.fixedBadge': 'Fixed',
     'expenses.fixedTemplates': 'Fixed Expense Templates',
     'expenses.fixedTemplatesHint': 'Manage recurring expenses that auto-load each period',
+    // Fecha opcional del egreso (migration-056)
+    'expenses.date': 'Date',
+    'expenses.dateAria': 'Expense date (optional)',
+    'expenses.dateHint': 'Optional — leave empty if the expense has no specific day',
+    // Edición de un egreso fijo con efecto hacia adelante
+    'expenses.forwardTitle': 'This is a fixed expense',
+    'expenses.forwardQuestion': 'From when should the change to "{concept}" apply?',
+    'expenses.forwardHint': 'Earlier months are never modified — their figures have already been reported.',
+    'expenses.forwardOnlyThis': 'This month only',
+    'expenses.forwardOnward': 'This month onward',
+    'expenses.forwardSuccess': 'Updated in this month and the next {count} months',
+    'expenses.forwardSuccessNone': 'Updated in this month — there are no later months yet',
+    'expenses.forwardError': 'The change could not be applied to later months: {error}',
 
     // Socios
     'partners.title': 'Partners',
@@ -1115,6 +1130,9 @@ const translations: Record<Locale, TranslationDict> = {
     'payOrders.payDate': 'Payment date',
     'payOrders.payCreateExpense': 'Also record it as an expense for the period',
     'payOrders.payCreateExpenseHint': 'Creates the matching expense in the open period so the books reflect the outflow.',
+    'payOrders.payExpenseCategory': 'Expense category',
+    'payOrders.payExpenseCategoryPlaceholder': 'e.g. Operating Expense',
+    'payOrders.payExpenseCategoryHint': 'Optional. Pick an existing one or type a new category.',
     'payOrders.errReference': 'Enter the payment reference',
     'payOrders.timeline': 'History',
     'payOrders.unknownUser': 'a deleted user',
@@ -1126,6 +1144,7 @@ const translations: Record<Locale, TranslationDict> = {
     'payOrders.tlCancelled': 'Voided by {who}',
     'payOrders.tlReason': 'Reason: {reason}',
     'payOrders.tlReference': 'Reference: {ref}',
+    'payOrders.tlReferenceLabel': 'Reference:',
     'payOrders.tlExpense': 'Recorded as an expense for the period',
     // Payment proof (optional attachment)
     'payOrders.proofSection': 'Payment proof',
@@ -1180,6 +1199,8 @@ const translations: Record<Locale, TranslationDict> = {
     'nav.audit': 'Auditoría',
     'nav.profile': 'Perfil',
     'nav.logout': 'Cerrar Sesión',
+    'nav.collapse': 'Contraer menú',
+    'nav.expand': 'Expandir menú',
 
     // Resumen
     'summary.title': 'Resumen General',
@@ -1330,6 +1351,19 @@ const translations: Record<Locale, TranslationDict> = {
     'expenses.fixedBadge': 'Fijo',
     'expenses.fixedTemplates': 'Plantillas de Egresos Fijos',
     'expenses.fixedTemplatesHint': 'Gestiona egresos recurrentes que se cargan automáticamente cada período',
+    // Fecha opcional del egreso (migration-056)
+    'expenses.date': 'Fecha',
+    'expenses.dateAria': 'Fecha del egreso (opcional)',
+    'expenses.dateHint': 'Opcional — déjala vacía si el egreso no tiene un día específico',
+    // Edición de un egreso fijo con efecto hacia adelante
+    'expenses.forwardTitle': 'Este es un egreso fijo',
+    'expenses.forwardQuestion': '¿Desde cuándo aplica el cambio en "{concept}"?',
+    'expenses.forwardHint': 'Los meses anteriores nunca se modifican — sus cifras ya se reportaron.',
+    'expenses.forwardOnlyThis': 'Solo este mes',
+    'expenses.forwardOnward': 'Este mes y los siguientes',
+    'expenses.forwardSuccess': 'Actualizado en este mes y {count} meses siguientes',
+    'expenses.forwardSuccessNone': 'Actualizado en este mes — todavía no hay meses posteriores',
+    'expenses.forwardError': 'No se pudo aplicar el cambio a los meses siguientes: {error}',
 
     // Socios
     'partners.title': 'Socios',
@@ -2255,6 +2289,9 @@ const translations: Record<Locale, TranslationDict> = {
     'payOrders.payDate': 'Fecha de pago',
     'payOrders.payCreateExpense': 'Registrar también como egreso del período',
     'payOrders.payCreateExpenseHint': 'Crea el egreso correspondiente en el período abierto para que los números reflejen la salida.',
+    'payOrders.payExpenseCategory': 'Categoría del egreso',
+    'payOrders.payExpenseCategoryPlaceholder': 'Ej. Operating Expense',
+    'payOrders.payExpenseCategoryHint': 'Opcional. Elegí una existente o escribí una nueva.',
     'payOrders.errReference': 'Ingresá la referencia de pago',
     'payOrders.timeline': 'Historial',
     'payOrders.unknownUser': 'un usuario eliminado',
@@ -2266,6 +2303,7 @@ const translations: Record<Locale, TranslationDict> = {
     'payOrders.tlCancelled': 'Anulada por {who}',
     'payOrders.tlReason': 'Motivo: {reason}',
     'payOrders.tlReference': 'Referencia: {ref}',
+    'payOrders.tlReferenceLabel': 'Referencia:',
     'payOrders.tlExpense': 'Registrada como egreso del período',
     // Comprobante de pago (adjunto opcional)
     'payOrders.proofSection': 'Comprobante de pago',

@@ -101,7 +101,10 @@ import {
   deleteInvestment as deleteInvMutation,
   upsertPropFirmSales,
   upsertP2PTransfers,
+  applyFixedExpenseForward,
 } from '@/lib/supabase/mutations';
+import { FixedForwardDialog } from '@/components/ui/fixed-forward-dialog';
+import { formatDayMonth } from '@/lib/dates';
 import * as Sentry from '@sentry/nextjs';
 
 type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones' | 'documentos';
@@ -118,7 +121,8 @@ const SECTION_KEYS: Record<DataSection, string> = {
 
 interface DepositRow { id: string; channel: string; amount: number; }
 interface WithdrawalRow { id: string; category: string; amount: number; }
-interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; }
+// expense_date (migration-056): 'YYYY-MM-DD' o null = sin fecha específica.
+interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; expense_date: string | null; }
 
 // ─── Sortable row wrapper (drag-and-drop reorder) ─────────────────────────
 // Wraps each expense <tr> so it can be dragged via the leading handle
@@ -368,6 +372,7 @@ export default function UploadPage() {
         pending: e.pending,
         is_fixed: !!e.is_fixed,
         category: e.category ?? null,
+        expense_date: e.expense_date ?? null,
       }));
     }
 
@@ -429,6 +434,8 @@ export default function UploadPage() {
       pending: tpl.amount,
       is_fixed: true,
       category: conceptCategoryMap.get(tpl.concept) ?? null,
+      // Las plantillas no tienen día: la fecha se pone a mano si hace falta.
+      expense_date: null,
     }));
   }, [allExpenses, expenseTemplates, expenseTemplateHidden, periods]);
 
@@ -632,9 +639,17 @@ export default function UploadPage() {
 
   // UI state — shared confirmation dialog for destructive deletes.
   const { confirm, Modal: ConfirmModal } = useConfirm();
-  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
+  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '' });
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
-  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
+  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '' });
+
+  // Egreso fijo recién editado, esperando que el usuario elija el alcance
+  // ("solo este mes" / "este mes y los siguientes"). Ver FixedForwardDialog.
+  // Se guarda el concepto VIEJO: es la clave con la que el backend encuentra la
+  // plantilla y las filas de los meses futuros (los egresos no tienen template_id).
+  const [forwardPending, setForwardPending] = useState<
+    { oldConcept: string; concept: string; amount: number; category: string | null } | null
+  >(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [savingAll, setSavingAll] = useState(false);
 
@@ -1397,9 +1412,10 @@ export default function UploadPage() {
       pending: pn,
       is_fixed: newExpense.is_fixed,
       category: cat,
+      expense_date: newExpense.expense_date || null, // vacío = sin fecha
     }];
     setExpensesRaw(next); // optimista
-    setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '' });
+    setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '' });
     addConceptToHistory(newExpense.concept);
     if (cat) addCategoryToHistory(cat);
     void persistExpenses(next, previous, {
@@ -1411,7 +1427,7 @@ export default function UploadPage() {
   const startEditExpense = (exp: ExpenseRow) => {
     if (!userCanEdit) return;
     setEditingExpenseId(exp.id);
-    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed, category: exp.category ?? '' });
+    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed, category: exp.category ?? '', expense_date: exp.expense_date ?? '' });
   };
 
   const saveEditExpense = () => {
@@ -1422,14 +1438,57 @@ export default function UploadPage() {
     const cat = editExpense.category.trim() || null;
     const previous = expenses;
     const concept = editExpense.concept;
-    const next = expenses.map(e => e.id === editingExpenseId ? { ...e, concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat } : e);
+    const target = expenses.find(e => e.id === editingExpenseId);
+    const next = expenses.map(e => e.id === editingExpenseId ? { ...e, concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat, expense_date: editExpense.expense_date || null } : e);
     setExpensesRaw(next); // optimista
     if (cat) addCategoryToHistory(cat);
     setEditingExpenseId(null);
-    void persistExpenses(next, previous, {
-      toast: t('upload.expenseUpdated'),
-      audit: { action: 'update', details: `Egreso ${concept}: $${amt.toLocaleString()}` },
-    });
+    void (async () => {
+      await persistExpenses(next, previous, {
+        toast: t('upload.expenseUpdated'),
+        audit: { action: 'update', details: `Egreso ${concept}: $${amt.toLocaleString()}` },
+      });
+      // Egreso fijo: el mes actual ya se guardó; ahora se pregunta el alcance.
+      // Solo si SIGUE siendo fijo tras la edición (destildar "fijo" es sacarlo
+      // del esquema recurrente, no propagarlo hacia adelante).
+      if (target?.is_fixed && editExpense.is_fixed) {
+        setForwardPending({
+          oldConcept: target.concept,
+          concept,
+          amount: amt,
+          category: cat,
+        });
+      }
+    })();
+  };
+
+  // Alcance elegido en el diálogo del egreso fijo.
+  //   'this'    → nada más que hacer: el guardado del mes ya corrió.
+  //   'forward' → plantilla + meses futuros ya materializados.
+  const applyExpenseForward = async (apply: 'this' | 'forward') => {
+    if (!forwardPending || apply === 'this') return;
+    try {
+      const { updatedPeriods } = await applyFixedExpenseForward({
+        periodId: selectedPeriodRef.current,
+        oldConcept: forwardPending.oldConcept,
+        concept: forwardPending.concept,
+        amount: forwardPending.amount,
+        category: forwardPending.category,
+        apply: 'forward',
+      });
+      showSuccess(
+        updatedPeriods > 0
+          ? t('expenses.forwardSuccess', { count: String(updatedPeriods) })
+          : t('expenses.forwardSuccessNone'),
+      );
+      if (user) {
+        logAction(user.id, user.name, 'update', 'expenses',
+          `Egreso fijo "${forwardPending.oldConcept}" propagado a ${updatedPeriods} mes(es) siguientes`);
+      }
+      await refreshSections(['egresos']);
+    } catch (err) {
+      showError(t('expenses.forwardError', { error: (err as Error).message }));
+    }
   };
 
   const toggleExpenseFixed = (id: string) => {
@@ -2154,13 +2213,16 @@ export default function UploadPage() {
             collisionDetection={closestCenter}
             onDragEnd={handleExpenseDragEnd}
           >
-          <table className="w-full text-sm min-w-[500px]">
+          <table className="w-full text-sm min-w-[560px]">
             <thead>
               <tr className="border-b border-border">
                 <th className="w-8 py-2.5 px-2" aria-label={t('upload.reorder')}></th>
                 <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">#</th>
                 <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
                 <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
+                {/* Fecha opcional (migration-056), DD/MM — el año lo da el
+                    período. La tabla ya scrollea en móvil (overflow-x-auto). */}
+                <th className="text-left py-2 px-2 text-muted-foreground font-medium w-16">{t('expenses.date')}</th>
                 <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.amount')}</th>
                 <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
                 <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
@@ -2174,7 +2236,7 @@ export default function UploadPage() {
             >
             <tbody>
               {expenses.length === 0 && (
-                <tr><td colSpan={9} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
+                <tr><td colSpan={10} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
               )}
               {pagedExpenses.map((exp, i) => (
                 <SortableExpenseRow
@@ -2219,6 +2281,15 @@ export default function UploadPage() {
                           )}
                         </div>
                       </td>
+                      <td className="py-2 px-2">
+                        <input
+                          type="date"
+                          aria-label={t('expenses.dateAria')}
+                          value={editExpense.expense_date}
+                          onChange={e => setEditExpense(p => ({ ...p, expense_date: e.target.value }))}
+                          className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
+                        />
+                      </td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.pending')} value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
@@ -2252,6 +2323,9 @@ export default function UploadPage() {
                           <span className="text-xs text-muted-foreground">—</span>
                         )}
                       </td>
+                      <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                        {exp.expense_date ? formatDayMonth(exp.expense_date) : '—'}
+                      </td>
                       <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(exp.amount)}</td>
                       <td className="py-2.5 px-3 text-right">{formatCurrency(exp.paid)}</td>
                       <td className="py-2.5 px-3 text-right">{formatCurrency(exp.pending)}</td>
@@ -2284,7 +2358,7 @@ export default function UploadPage() {
             {expenses.length > 0 && (
               <tfoot>
                 <tr className="font-bold bg-muted/50">
-                  <td className="py-3 px-3" colSpan={4}>{t('common.total')}</td>
+                  <td className="py-3 px-3" colSpan={5}>{t('common.total')}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
@@ -2307,7 +2381,7 @@ export default function UploadPage() {
           {userCanAdd && (
             <div className="mt-4 pt-4 border-t border-border">
               <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addExpense')}</h3>
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
                 <div className="md:col-span-2 relative">
                   <input
                     ref={conceptInputRef}
@@ -2362,6 +2436,15 @@ export default function UploadPage() {
                     <p className="text-[11px] text-muted-foreground mt-1 px-1">{t('upload.newCategoryHint')}</p>
                   )}
                 </div>
+                {/* Fecha opcional del egreso — vacía = sin día específico. */}
+                <input
+                  type="date"
+                  aria-label={t('expenses.dateAria')}
+                  title={t('expenses.dateHint')}
+                  value={newExpense.expense_date}
+                  onChange={e => setNewExpense(p => ({ ...p, expense_date: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                />
                 <input
                   type="number" step="0.01"
                   value={newExpense.amount}
@@ -3053,6 +3136,16 @@ export default function UploadPage() {
       </div>
 
       {ConfirmModal}
+
+      {/* Alcance de la edición de un egreso fijo (ver FixedForwardDialog). */}
+      {forwardPending && (
+        <FixedForwardDialog
+          concept={forwardPending.concept}
+          onChoose={applyExpenseForward}
+          onClose={() => setForwardPending(null)}
+        />
+      )}
+
       {ToastHost}
     </div>
   );

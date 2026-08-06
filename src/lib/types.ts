@@ -70,6 +70,11 @@ export interface Expense {
   category: string | null;
   sort_order: number;
   is_fixed?: boolean;
+  // Fecha específica del egreso (migration-056), 'YYYY-MM-DD'.
+  // null = "sin fecha específica, cuenta para el mes del período" — que es el
+  // estado de todas las filas anteriores a la feature. Nunca se rellena con
+  // una fecha inventada; vacío en la UI se guarda como null.
+  expense_date?: string | null;
 }
 
 export interface ExpenseTemplate {

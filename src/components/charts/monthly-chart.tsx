@@ -151,8 +151,13 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
         propFirm: propFirmW,
         other: otherW,
       });
+      // Prop firm fuera de los retiros (decisión Kevin 2026-08-06): es un
+      // circuito aparte que ya se refleja en Ingresos Operativos como neto
+      // (ventas − retiros). Sigue restándose dentro de computeDerivedBroker
+      // para no atribuirle al broker la parte del retiro API que fue prop
+      // firm, pero NO se vuelve a sumar al total.
       const consolidatedWithdrawals =
-        derivedBroker + storedBroker + ibCommissions + propFirmW + otherW;
+        derivedBroker + storedBroker + ibCommissions + otherW;
 
       return {
         name: period.label,

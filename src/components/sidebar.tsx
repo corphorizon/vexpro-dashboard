@@ -39,6 +39,9 @@ import {
   FileText,
   FileSignature,
   Table,
+  Circle,
+  PanelLeftClose,
+  PanelLeftOpen,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -131,12 +134,40 @@ const NAV_STRUCTURE: NavEntry[] = [
   { type: 'link', href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
 ];
 
+// Mapa href → icono, derivado de NAV_STRUCTURE. Lo usa el modo flat (los
+// items de module-groups no traen icono) cuando el sidebar está contraído:
+// en el rail solo hay iconos, así que cada destino necesita uno.
+const ICON_BY_HREF: Record<string, React.ComponentType<{ className?: string }>> = (() => {
+  const map: Record<string, React.ComponentType<{ className?: string }>> = {};
+  for (const entry of NAV_STRUCTURE) {
+    if (entry.type === 'link') {
+      map[entry.href] = entry.icon;
+    } else {
+      for (const child of entry.children) map[child.href] = child.icon;
+    }
+  }
+  return map;
+})();
+
+/** Hasta dos iniciales del nombre — avatar del footer en modo contraído. */
+function userInitials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map(part => part.charAt(0).toUpperCase())
+    .join('') || '?';
+}
+
 interface SidebarProps {
   mobileOpen?: boolean;
   onClose?: () => void;
+  /** Rail solo-iconos (desktop). El estado vive en el layout. */
+  collapsed?: boolean;
+  onToggleCollapse?: () => void;
 }
 
-export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
+export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onToggleCollapse }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
@@ -157,6 +188,11 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   };
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>(getInitialOpen);
+
+  // El rail contraído es SOLO desktop: cuando el drawer móvil está abierto
+  // mostramos siempre el menú completo (no regresamos el comportamiento móvil).
+  const isCollapsed = collapsed && !mobileOpen;
+  const collapseLabel = isCollapsed ? t('nav.expand') : t('nav.collapse');
 
   const toggleSection = (key: string) => {
     setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
@@ -197,6 +233,32 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
       pathname === item.href ||
       (item.href !== '/' && pathname.startsWith(item.href + '/'));
     const Icon = item.icon;
+    const label = t(item.i18nKey);
+
+    // Rail contraído: solo icono, centrado, con `title` nativo como tooltip.
+    if (isCollapsed) {
+      return (
+        <Link
+          key={item.href}
+          href={item.href}
+          onClick={handleNavClick}
+          title={label}
+          aria-label={label}
+          className={cn(
+            'group flex items-center justify-center h-10 rounded-lg transition-all',
+            isActive
+              ? 'bg-[var(--color-primary)] text-white shadow-sm'
+              : 'text-slate-300 hover:bg-slate-800 hover:text-white',
+          )}
+        >
+          <Icon className={cn(
+            'w-5 h-5 shrink-0 transition-colors',
+            isActive ? 'text-white' : 'text-slate-400 group-hover:text-white',
+          )} />
+        </Link>
+      );
+    }
+
     return (
       <Link
         key={item.href}
@@ -237,8 +299,9 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
       */}
       <aside
         className={cn(
-          'w-64 flex flex-col min-h-screen bg-slate-900 border-r border-slate-800 text-slate-200',
-          'hidden lg:flex',
+          'flex flex-col min-h-screen bg-slate-900 border-r border-slate-800 text-slate-200',
+          'hidden lg:flex transition-[width,padding] duration-200',
+          isCollapsed ? 'w-16' : 'w-64',
           mobileOpen && '!flex fixed inset-y-0 left-0 z-50 shadow-2xl'
         )}
       >
@@ -247,14 +310,24 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
             so the header doesn't look broken.
             Prefer logo_url_white (designed for dark backgrounds) and fall
             back to logo_url when the tenant hasn't uploaded a white version. */}
-        <div className="px-5 py-6 border-b border-slate-800">
+        <div className={cn('border-b border-slate-800', isCollapsed ? 'px-2 py-4' : 'px-5 py-6')}>
           <Link
             href="/"
             onClick={handleNavClick}
             className="flex items-center justify-center"
             aria-label={company?.name || 'Inicio'}
+            title={isCollapsed ? (company?.name || 'Inicio') : undefined}
           >
-            {(company?.logo_url_white || company?.logo_url) ? (
+            {isCollapsed ? (
+              // Marca compacta: el logo ancho no entra en el rail.
+              <CompanyLogo
+                name={company?.name || 'Dashboard'}
+                logoUrl={company?.logo_url_white || company?.logo_url}
+                colorPrimary={company?.color_primary}
+                className="w-10 h-10"
+                initialsClassName="text-sm"
+              />
+            ) : (company?.logo_url_white || company?.logo_url) ? (
               // Native <img> on purpose — tenant logos come from arbitrary
               // URLs and we don't want to force every domain into the
               // Next.js image allow-list.
@@ -283,7 +356,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
 
         {/* Flat-menu heading (single-group users) — shows the group name
             above the links so the user knows which area they're in. */}
-        {useFlatMenu && flatGroup && (
+        {useFlatMenu && flatGroup && !isCollapsed && (
           <div className="px-5 pt-4 pb-2">
             <p className="text-[10px] uppercase tracking-[0.15em] text-slate-400">
               {flatGroup.labelEs}
@@ -292,12 +365,39 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
         )}
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto custom-scrollbar">
+        <nav className={cn(
+          'flex-1 space-y-1 overflow-y-auto custom-scrollbar',
+          isCollapsed ? 'p-2' : 'p-3',
+        )}>
           {/* Flat mode: direct list of accessible items, no collapsibles,
               slightly roomier padding for easier clicking. */}
           {useFlatMenu && flatGroup ? (
             flatItems.map((item) => {
               const isActive = pathname === item.href;
+              // Contraído: mismos items y mismo orden, solo que como iconos.
+              if (isCollapsed) {
+                const FlatIcon = ICON_BY_HREF[item.href] ?? Circle;
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={handleNavClick}
+                    title={item.labelEs}
+                    aria-label={item.labelEs}
+                    className={cn(
+                      'group flex items-center justify-center h-10 rounded-lg transition-all',
+                      isActive
+                        ? 'bg-[var(--color-primary)] text-white shadow-sm'
+                        : 'text-slate-300 hover:bg-slate-800 hover:text-white',
+                    )}
+                  >
+                    <FlatIcon className={cn(
+                      'w-5 h-5 shrink-0 transition-colors',
+                      isActive ? 'text-white' : 'text-slate-400 group-hover:text-white',
+                    )} />
+                  </Link>
+                );
+              }
               return (
                 <Link
                   key={item.href}
@@ -325,6 +425,20 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
               hasModuleAccess(user, c.module, company?.active_modules),
             );
             if (visibleChildren.length === 0) return null;
+
+            // Rail contraído: sin fila de sección (no hay sitio para el label
+            // ni el chevron). Aplanamos y mostramos los hijos accesibles como
+            // iconos, así todo destino sigue a un clic. Sin fly-out.
+            if (isCollapsed) {
+              return (
+                <div
+                  key={section.i18nKey}
+                  className="space-y-1 pt-1 mt-1 border-t border-slate-800/70 first:border-t-0 first:mt-0 first:pt-0"
+                >
+                  {visibleChildren.map(child => renderLink(child))}
+                </div>
+              );
+            }
 
             const isOpen = openSections[section.i18nKey] ?? false;
             const hasActiveChild = visibleChildren.some(c => pathname === c.href || pathname.startsWith(c.href + '/'));
@@ -369,9 +483,17 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
         </nav>
 
         {/* Footer */}
-        <div className="p-3 border-t border-slate-800 space-y-2">
-          {/* User info */}
-          {user && (
+        <div className={cn('border-t border-slate-800 space-y-2', isCollapsed ? 'p-2' : 'p-3')}>
+          {/* User info — contraído: solo las iniciales del usuario. */}
+          {user && isCollapsed && (
+            <div
+              className="mx-auto w-9 h-9 rounded-full bg-slate-800 text-slate-200 flex items-center justify-center text-[11px] font-semibold"
+              title={`${user.name} · ${ROLE_LABELS[user.role] || user.role}`}
+            >
+              {userInitials(user.name)}
+            </div>
+          )}
+          {user && !isCollapsed && (
             <div className="px-3 pb-2 text-center">
               <p className="text-xs font-medium text-slate-200 truncate">{user.name}</p>
               <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">
@@ -384,36 +506,59 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
           <Link
             href="/perfil"
             onClick={handleNavClick}
+            title={isCollapsed ? t('nav.profile') : undefined}
+            aria-label={t('nav.profile')}
             className={cn(
-              'group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
+              'group flex items-center rounded-lg text-sm font-medium transition-all',
+              isCollapsed ? 'justify-center h-10' : 'gap-3 px-3 py-2',
               pathname === '/perfil'
                 ? 'bg-[var(--color-primary)] text-white'
                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
             )}
           >
-            <UserCircle className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
-            <span>{t('nav.profile')}</span>
+            <UserCircle className={cn(
+              'text-slate-400 group-hover:text-white transition-colors',
+              isCollapsed ? 'w-5 h-5' : 'w-4 h-4',
+            )} />
+            {!isCollapsed && <span>{t('nav.profile')}</span>}
           </Link>
           <button
             onClick={handleLogout}
             aria-label={t('nav.logout')}
-            className="group flex items-center gap-3 w-full px-3 py-2 rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all"
+            title={isCollapsed ? t('nav.logout') : undefined}
+            className={cn(
+              'group flex items-center w-full rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all',
+              isCollapsed ? 'justify-center h-10' : 'gap-3 px-3 py-2',
+            )}
           >
-            <LogOut className="w-4 h-4 text-slate-400 group-hover:text-red-200 transition-colors" />
-            <span>{t('nav.logout')}</span>
+            <LogOut className={cn(
+              'text-slate-400 group-hover:text-red-200 transition-colors',
+              isCollapsed ? 'w-5 h-5' : 'w-4 h-4',
+            )} />
+            {!isCollapsed && <span>{t('nav.logout')}</span>}
           </button>
 
-          {/* Theme + Language toggles */}
-          <div className="flex items-center justify-center gap-1 pt-2 mt-2 border-t border-slate-800">
+          {/* Theme + Language toggles — contraído se apilan en vertical y
+              pierden el texto, conservando los aria-label. */}
+          <div className={cn(
+            'pt-2 mt-2 border-t border-slate-800',
+            isCollapsed
+              ? 'flex flex-col items-center gap-1'
+              : 'flex items-center justify-center gap-1',
+          )}>
             <button
               onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
               aria-label={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
+              title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className={cn(
+                'flex items-center rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
+                isCollapsed ? 'justify-center w-9 h-9' : 'gap-1.5 px-2.5 py-1.5',
+              )}
             >
               {resolvedTheme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-              {resolvedTheme === 'dark' ? 'Light' : 'Dark'}
+              {!isCollapsed && (resolvedTheme === 'dark' ? 'Light' : 'Dark')}
             </button>
-            <span className="text-slate-700">|</span>
+            {!isCollapsed && <span className="text-slate-700">|</span>}
             <button
               onClick={() => {
                 const next = locale === 'es' ? 'en' : 'es';
@@ -428,12 +573,38 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
                 }).catch(() => {});
               }}
               aria-label="Change language"
-              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all"
+              title="Change language"
+              className={cn(
+                'flex items-center rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
+                isCollapsed ? 'justify-center w-9 h-9' : 'gap-1.5 px-2.5 py-1.5',
+              )}
             >
               <Globe className="w-3.5 h-3.5" />
-              {locale === 'es' ? 'EN' : 'ES'}
+              {!isCollapsed && (locale === 'es' ? 'EN' : 'ES')}
             </button>
           </div>
+
+          {/* Contraer / expandir — solo desktop (el drawer móvil no lo usa). */}
+          {onToggleCollapse && (
+            <div className="hidden lg:flex justify-center pt-2 mt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                aria-label={collapseLabel}
+                title={collapseLabel}
+                aria-expanded={!isCollapsed}
+                className={cn(
+                  'flex items-center rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
+                  isCollapsed ? 'justify-center w-9 h-9' : 'gap-1.5 px-2.5 py-1.5',
+                )}
+              >
+                {isCollapsed
+                  ? <PanelLeftOpen className="w-4 h-4" />
+                  : <PanelLeftClose className="w-4 h-4" />}
+                {!isCollapsed && collapseLabel}
+              </button>
+            </div>
+          )}
         </div>
       </aside>
     </>

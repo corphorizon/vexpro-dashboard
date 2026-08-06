@@ -452,9 +452,10 @@ export async function generatePaymentOrderPDF(
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6.2);
     const ref = order.payment_reference
-      ? `${L.reference} ${order.payment_reference}`
+      ? `${L.reference} ${shortenReference(order.payment_reference)}`
       : formatDate(order.paid_at, order.locale);
-    doc.text(doc.splitTextToSize(ref, 54), MARGIN + 4, totalBarY + 9.4);
+    // Máx 2 líneas dentro del sello (13mm de alto): más desbordaría el recuadro.
+    doc.text(doc.splitTextToSize(ref, 54).slice(0, 2), MARGIN + 4, totalBarY + 9.4);
   }
 
   y = totalBarY + 11 + 6;
@@ -568,6 +569,30 @@ export async function generatePaymentOrderPDF(
     return;
   }
   return doc.output('blob');
+}
+
+/**
+ * Acorta la referencia de pago para el sello. Kevin a veces pega el hash y a
+ * veces la URL completa del explorer (~90 chars): sin acortar, el texto se
+ * derrama fuera del recuadro. De una URL nos quedamos con el hash (el último
+ * segmento largo del path) y, si sigue siendo largo, se elide por el medio —
+ * el principio y el final son lo que se compara contra el explorer.
+ */
+function shortenReference(raw: string, max = 42): string {
+  let value = raw.trim();
+  try {
+    const u = new URL(value);
+    if (u.protocol === 'http:' || u.protocol === 'https:') {
+      const seg = u.pathname.split('/').filter(Boolean).sort((a, b) => b.length - a.length)[0];
+      if (seg) value = seg;
+    }
+  } catch {
+    // No es URL — se usa tal cual.
+  }
+  if (value.length <= max) return value;
+  const head = Math.ceil((max - 1) / 2);
+  const tail = Math.floor((max - 1) / 2);
+  return `${value.slice(0, head)}…${value.slice(-tail)}`;
 }
 
 /** Marca de agua diagonal para los estados que invalidan el documento. */

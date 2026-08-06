@@ -17,7 +17,8 @@ import {
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/payment-orders/[id]/transition
-//   body: { to, reason?, payment_reference?, payment_date?, create_expense? }
+//   body: { to, reason?, payment_reference?, payment_date?, create_expense?,
+//           expense_category? }
 //
 // Único punto por el que cambia el estado de una orden. Concentra los tres
 // controles que le dan valor al documento:
@@ -41,6 +42,8 @@ interface TransitionBody {
   payment_reference?: string | null;
   payment_date?: string | null;
   create_expense?: boolean;
+  /** Categoría del egreso generado (solo aplica con create_expense). */
+  expense_category?: string | null;
 }
 
 export async function POST(
@@ -217,7 +220,7 @@ export async function POST(
         order_number: result.order_number,
         beneficiary_name: result.beneficiary_name,
         total: result.total,
-      });
+      }, body?.expense_category ?? null);
       warning = w;
       if (expenseId) {
         const { data: linked } = await admin

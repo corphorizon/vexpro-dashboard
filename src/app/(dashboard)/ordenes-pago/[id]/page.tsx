@@ -562,7 +562,28 @@ export default function OrdenPagoDetallePage() {
                 )}
                 <p className="text-sm font-medium leading-snug">{ev.title}</p>
                 {ev.when && <p className="text-xs text-muted-foreground mt-0.5">{ev.when}</p>}
-                {ev.detail && <p className="text-xs text-muted-foreground mt-1">{ev.detail}</p>}
+                {ev.detail && (
+                  <p className="text-xs text-muted-foreground mt-1 break-words">{ev.detail}</p>
+                )}
+                {ev.reference && (
+                  <p className="text-xs text-muted-foreground mt-1 min-w-0">
+                    <span className="block">{t('payOrders.tlReferenceLabel')}</span>
+                    {/* break-all: un hash o una URL de explorer no tienen
+                        espacios, así que sin esto desbordan la tarjeta. */}
+                    {isUrl(ev.reference) ? (
+                      <a
+                        href={ev.reference}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-info hover:underline break-all"
+                      >
+                        {ev.reference}
+                      </a>
+                    ) : (
+                      <span className="break-all font-mono">{ev.reference}</span>
+                    )}
+                  </p>
+                )}
               </li>
             ))}
           </ol>
@@ -660,7 +681,22 @@ interface TimelineEvent {
   title: string;
   when?: string;
   detail?: string;
+  /** Referencia de pago: se renderiza aparte porque puede ser una URL
+   *  (link clickeable) y suele ser larga (necesita corte de palabra). */
+  reference?: string;
   tone: 'positive' | 'negative' | 'warning' | 'neutral';
+}
+
+/** ¿La referencia es un link? Kevin a veces pega el hash y a veces la URL del
+ *  explorer; cuando es URL conviene que se pueda abrir de un clic. Solo
+ *  http/https — nada de javascript: ni data:. */
+function isUrl(value: string): boolean {
+  try {
+    const u = new URL(value.trim());
+    return u.protocol === 'http:' || u.protocol === 'https:';
+  } catch {
+    return false;
+  }
 }
 
 function buildTimeline(o: PaymentOrder, t: (k: string, p?: Record<string, string>) => string): TimelineEvent[] {
@@ -694,7 +730,7 @@ function buildTimeline(o: PaymentOrder, t: (k: string, p?: Record<string, string
     events.push({
       title: t('payOrders.tlPaid', { who: who(o.paid_by_name) }),
       when: formatDateTime(o.paid_at),
-      detail: o.payment_reference ? t('payOrders.tlReference', { ref: o.payment_reference }) : undefined,
+      reference: o.payment_reference || undefined,
       tone: 'positive',
     });
   }
@@ -843,15 +879,32 @@ function PayDialog({
   busy: boolean;
   defaultDate: string;
   onConfirm: (
-    payload: { payment_reference: string; payment_date: string; create_expense: boolean },
+    payload: {
+      payment_reference: string;
+      payment_date: string;
+      create_expense: boolean;
+      expense_category?: string | null;
+    },
     proofFile: File | null,
   ) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
+  const { allExpenses } = useData();
   const [reference, setReference] = useState('');
   const [date, setDate] = useState(defaultDate);
   const [createExpense, setCreateExpense] = useState(true);
+  const [expenseCategory, setExpenseCategory] = useState('');
+  // Categorías ya usadas por la empresa — se ofrecen como sugerencia para no
+  // fragmentar el catálogo con variantes tipeadas a mano ("SaaS"/"saas"/…).
+  const categoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of allExpenses) {
+      const c = (e.category ?? '').trim();
+      if (c) set.add(c);
+    }
+    return [...set].sort((a, b) => a.localeCompare(b));
+  }, [allExpenses]);
   const [proofFile, setProofFile] = useState<File | null>(null);
   const [error, setError] = useState('');
   const [fileError, setFileError] = useState('');
@@ -928,6 +981,28 @@ function PayDialog({
         </span>
       </label>
 
+      {/* La categoría solo tiene sentido si el egreso se va a crear. */}
+      {createExpense && (
+        <label className="block">
+          <span className="block text-sm font-medium mb-1.5">{t('payOrders.payExpenseCategory')}</span>
+          <input
+            list="payorder-expense-categories"
+            value={expenseCategory}
+            onChange={(e) => setExpenseCategory(e.target.value)}
+            placeholder={t('payOrders.payExpenseCategoryPlaceholder')}
+            className={INPUT}
+          />
+          <datalist id="payorder-expense-categories">
+            {categoryOptions.map((c) => (
+              <option key={c} value={c} />
+            ))}
+          </datalist>
+          <span className="block text-xs text-muted-foreground mt-1">
+            {t('payOrders.payExpenseCategoryHint')}
+          </span>
+        </label>
+      )}
+
       <div className="flex justify-end gap-3 pt-2">
         <Button onClick={onClose} disabled={busy}>
           {t('payOrders.cancel')}
@@ -941,7 +1016,12 @@ function PayDialog({
               return;
             }
             onConfirm(
-              { payment_reference: reference.trim(), payment_date: date, create_expense: createExpense },
+              {
+                payment_reference: reference.trim(),
+                payment_date: date,
+                create_expense: createExpense,
+                expense_category: createExpense ? expenseCategory.trim() || null : null,
+              },
               proofFile,
             );
           }}

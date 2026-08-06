@@ -53,6 +53,18 @@ export function formatDate(input: DateLike): string {
 }
 
 /**
+ * Numeric day/month without the year: "21/04".
+ *
+ * Para columnas donde el año ya está implícito por el contexto (la fecha de un
+ * egreso dentro de un período mensual). Mantiene la tabla angosta en móvil.
+ */
+export function formatDayMonth(input: DateLike): string {
+  const d = toDate(input);
+  if (!d) return '';
+  return `${pad2(d.getDate())}/${pad2(d.getMonth() + 1)}`;
+}
+
+/**
  * Numeric DMY + 24h time: "21/04/2026 14:30".
  */
 export function formatDateTime(input: DateLike): string {

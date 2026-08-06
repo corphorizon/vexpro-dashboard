@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { formatDate, formatDateTime, formatDateRelative } from './dates';
+import { formatDate, formatDayMonth, formatDateTime, formatDateRelative } from './dates';
 
 // BUG-06: una fecha-solo "YYYY-MM-DD" debe mostrarse tal cual (fecha de
 // calendario), sin correrse al día anterior en husos negativos (LatAm). El
@@ -46,5 +46,18 @@ describe('formatDateRelative', () => {
     const out = formatDateRelative('2026-06-07');
     expect(out).not.toBe('');
     expect(out).toContain('2026');
+  });
+});
+
+describe('formatDayMonth', () => {
+  it('DD/MM sin año, zero-padded', () => {
+    expect(formatDayMonth('2026-06-07')).toBe('07/06');
+  });
+  it('no se corre de día en husos negativos (mismo fix que formatDate)', () => {
+    expect(formatDayMonth('2026-01-01')).toBe('01/01');
+  });
+  it('nullish → vacío (egreso sin fecha específica)', () => {
+    expect(formatDayMonth(null)).toBe('');
+    expect(formatDayMonth('')).toBe('');
   });
 });
