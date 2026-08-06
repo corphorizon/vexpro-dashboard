@@ -19,13 +19,14 @@
 // outlook strips them anyway).
 //
 // Colour palette matches the dashboard:
-//   Primary navy:  #1E3A5F
-//   Accent blue:   #3B82F6
-//   Emerald:       #10B981 (positive)
-//   Red:           #EF4444 (negative)
-//   Slate body:    #334155
+//   Primary navy:  ${BRAND_HEX.primary}
+//   Accent blue:   ${BRAND_HEX.accent}
+//   Emerald:       ${BRAND_HEX.positive} (positive)
+//   Red:           ${BRAND_HEX.negative} (negative)
+//   Slate body:    ${BRAND_HEX.inkSoft}
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { BRAND_HEX } from '@/lib/brand';
 import type { ReportData } from './data';
 import { formatCurrency } from '@/lib/utils';
 import type { EmailLocale } from '@/lib/email-i18n';
@@ -294,11 +295,11 @@ function pctVariation(current: number, previous: number): number | null {
 
 function variationTag(pct: number | null, locale: EmailLocale, invertColor = false): string {
   if (pct === null || !isFinite(pct)) {
-    return `<span style="color:#94a3b8;font-size:12px;">${lt(locale, 'noComparison')}</span>`;
+    return `<span style="color:${BRAND_HEX.mutedLight};font-size:12px;">${lt(locale, 'noComparison')}</span>`;
   }
   const rounded = Math.round(pct * 10) / 10;
   const positive = invertColor ? rounded < 0 : rounded >= 0;
-  const color = positive ? '#10B981' : '#EF4444';
+  const color = positive ? BRAND_HEX.positive : BRAND_HEX.negative;
   const arrow = rounded >= 0 ? '▲' : '▼';
   return `<span style="color:${color};font-weight:600;font-size:12px;">${arrow} ${rounded > 0 ? '+' : ''}${rounded}% ${lt(locale, 'vsPrevMonth')}</span>`;
 }
@@ -364,17 +365,17 @@ function renderKpi(
   hint?: string,
 ): string {
   const colors: Record<typeof tone, string> = {
-    positive: '#10B981',
-    negative: '#EF4444',
-    neutral: '#334155',
-    info: '#3B82F6',
+    positive: BRAND_HEX.positive,
+    negative: BRAND_HEX.negative,
+    neutral: BRAND_HEX.inkSoft,
+    info: BRAND_HEX.accent,
   };
   return `
     <td align="center" valign="top" style="padding:10px;width:33%;">
-      <div style="background:#F8FAFC;border:1px solid #E2E8F0;border-radius:8px;padding:16px;">
-        <div style="font-size:11px;color:#64748B;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">${escapeHtml(label)}</div>
+      <div style="background:${BRAND_HEX.surface};border:1px solid ${BRAND_HEX.border};border-radius:8px;padding:16px;">
+        <div style="font-size:11px;color:${BRAND_HEX.muted};text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">${escapeHtml(label)}</div>
         <div style="font-size:22px;color:${colors[tone]};font-weight:700;margin-top:6px;">${escapeHtml(value)}</div>
-        ${hint ? `<div style="font-size:11px;color:#64748B;margin-top:4px;">${hint}</div>` : ''}
+        ${hint ? `<div style="font-size:11px;color:${BRAND_HEX.muted};margin-top:4px;">${hint}</div>` : ''}
       </div>
     </td>
   `;
@@ -389,7 +390,7 @@ function renderTable(
   const thead = headers
     .map(
       (h, i) => `
-    <th style="text-align:${i === 0 ? 'left' : 'right'};padding:8px 12px;background:#1E3A5F;color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">${escapeHtml(h)}</th>
+    <th style="text-align:${i === 0 ? 'left' : 'right'};padding:8px 12px;background:${BRAND_HEX.primary};color:#fff;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;font-weight:600;">${escapeHtml(h)}</th>
   `,
     )
     .join('');
@@ -398,24 +399,24 @@ function renderTable(
     ? rows
         .map(
           (r, ri) => `
-      <tr style="background:${ri % 2 === 0 ? '#fff' : '#F8FAFC'};">
-        ${r.map((c, i) => `<td style="text-align:${i === 0 ? 'left' : 'right'};padding:8px 12px;font-size:13px;border-bottom:1px solid #E2E8F0;color:#334155;">${escapeHtml(c)}</td>`).join('')}
+      <tr style="background:${ri % 2 === 0 ? '#fff' : BRAND_HEX.surface};">
+        ${r.map((c, i) => `<td style="text-align:${i === 0 ? 'left' : 'right'};padding:8px 12px;font-size:13px;border-bottom:1px solid ${BRAND_HEX.border};color:${BRAND_HEX.inkSoft};">${escapeHtml(c)}</td>`).join('')}
       </tr>
     `,
         )
         .join('')
-    : `<tr><td colspan="${headers.length}" style="padding:12px;text-align:center;color:#64748B;font-size:12px;font-style:italic;">${lt(locale, 'noDataInPeriod')}</td></tr>`;
+    : `<tr><td colspan="${headers.length}" style="padding:12px;text-align:center;color:${BRAND_HEX.muted};font-size:12px;font-style:italic;">${lt(locale, 'noDataInPeriod')}</td></tr>`;
 
   const foot = totalRow
     ? `
     <tr style="background:#F1F5F9;font-weight:700;">
-      ${totalRow.map((c, i) => `<td style="text-align:${i === 0 ? 'left' : 'right'};padding:10px 12px;font-size:13px;color:#1E3A5F;">${escapeHtml(c)}</td>`).join('')}
+      ${totalRow.map((c, i) => `<td style="text-align:${i === 0 ? 'left' : 'right'};padding:10px 12px;font-size:13px;color:${BRAND_HEX.primary};">${escapeHtml(c)}</td>`).join('')}
     </tr>
   `
     : '';
 
   return `
-    <table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:1px solid #E2E8F0;border-radius:8px;overflow:hidden;">
+    <table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:1px solid ${BRAND_HEX.border};border-radius:8px;overflow:hidden;">
       <thead><tr>${thead}</tr></thead>
       <tbody>${tbody}${foot}</tbody>
     </table>
@@ -461,12 +462,12 @@ function renderBalancesByChannelSection(
 
   const emptyNote =
     b.channels.length === 0
-      ? `<p style="font-size:12px;color:#64748B;font-style:italic;margin:6px 0 0 0;">${lt(locale, 'noVisibleChannels')}</p>`
+      ? `<p style="font-size:12px;color:${BRAND_HEX.muted};font-style:italic;margin:6px 0 0 0;">${lt(locale, 'noVisibleChannels')}</p>`
       : '';
 
   return `
     ${sectionHeader(primary, '🏦', lt(locale, 'balancesTitle'))}
-    <p style="font-size:11px;color:#64748B;margin:0 0 8px 0;">${lt(locale, 'asOf', { date: escapeHtml(b.asOf) })}</p>
+    <p style="font-size:11px;color:${BRAND_HEX.muted};margin:0 0 8px 0;">${lt(locale, 'asOf', { date: escapeHtml(b.asOf) })}</p>
     ${b.channels.length ? renderTable([lt(locale, 'channel'), lt(locale, 'type'), lt(locale, 'balance')], rows, locale, totalRow) : ''}
     ${emptyNote}
   `;
@@ -516,12 +517,12 @@ function renderDepositsWithdrawalsSection(
     <table cellspacing="0" cellpadding="0" style="width:100%;margin-bottom:16px;">${kpiRow}</table>
 
     <div style="margin-bottom:16px;">
-      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">${lt(locale, 'depositsByChannel')}</h3>
+      <h3 style="font-size:14px;color:${BRAND_HEX.inkSoft};margin:0 0 8px 0;">${lt(locale, 'depositsByChannel')}</h3>
       ${renderTable([lt(locale, 'channel'), '#', lt(locale, 'amount')], depositsRows, locale, [lt(locale, 'total'), '', formatCurrency(d.range.total_deposits)])}
     </div>
 
     <div>
-      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">${lt(locale, 'withdrawalsByCategory')}</h3>
+      <h3 style="font-size:14px;color:${BRAND_HEX.inkSoft};margin:0 0 8px 0;">${lt(locale, 'withdrawalsByCategory')}</h3>
       ${renderTable([lt(locale, 'category'), '#', lt(locale, 'amount')], withdrawalsRows, locale, [lt(locale, 'total'), '', formatCurrency(d.range.total_withdrawals)])}
     </div>
   `;
@@ -529,7 +530,7 @@ function renderDepositsWithdrawalsSection(
 
 function renderCrmUsersSection(data: ReportData, primary: string, locale: EmailLocale): string {
   const u = data.crm_users;
-  const title = `${lt(locale, 'crmUsersTitle')}${u.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
+  const title = `${lt(locale, 'crmUsersTitle')}${u.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
   const numLocale = locale === 'es' ? 'es' : 'en';
   return `
     ${sectionHeader(primary, '👥', title)}
@@ -572,7 +573,7 @@ function renderBrokerPnlSection(
     </tr>
   `;
 
-  const title = `Broker P&amp;L${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
+  const title = `Broker P&amp;L${p.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
   return `
     ${sectionHeader(primary, '📈', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">${kpiRow}</table>
@@ -587,12 +588,12 @@ function renderPropTradingSection(data: ReportData, primary: string, locale: Ema
     formatCurrency(prod.amount),
   ]);
 
-  const title = `${lt(locale, 'propTradingTitle')}${p.isMock ? ' <span style="font-size:11px;color:#F59E0B;font-weight:normal;">· mock</span>' : ''}`;
+  const title = `${lt(locale, 'propTradingTitle')}${p.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
   return `
     ${sectionHeader(primary, '🎯', title)}
 
     <div style="margin-bottom:16px;">
-      <h3 style="font-size:14px;color:#334155;margin:0 0 8px 0;">${lt(locale, 'productsSold')}</h3>
+      <h3 style="font-size:14px;color:${BRAND_HEX.inkSoft};margin:0 0 8px 0;">${lt(locale, 'productsSold')}</h3>
       ${renderTable([lt(locale, 'product'), lt(locale, 'quantity'), lt(locale, 'amount')], productRows, locale, [lt(locale, 'totalOfRange'), '', formatCurrency(p.total_sales_range)])}
     </div>
 
@@ -662,7 +663,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   const { data, cadence, companyName, companyLogoUrl } = params;
   const locale = params.locale ?? 'en';
   const sections = params.sections ?? ALL_SECTIONS_ON;
-  const primary = normalizeHex(params.primaryColor) ?? '#1E3A5F';
+  const primary = normalizeHex(params.primaryColor) ?? BRAND_HEX.primary;
   const title = reportTitle(cadence, locale);
   const syncStamp = formatSyncTimestamp(params.lastSyncedAt, locale);
   const rangeLabel =
@@ -673,7 +674,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   const failureNote =
     data.failures.length > 0
       ? `
-    <div style="margin:16px 0;padding:12px;background:#FEF3C7;border:1px solid #F59E0B;border-radius:8px;color:#92400E;font-size:12px;">
+    <div style="margin:16px 0;padding:12px;background:#FEF3C7;border:1px solid ${BRAND_HEX.warning};border-radius:8px;color:#92400E;font-size:12px;">
       ${lt(locale, 'failureNote', { failures: data.failures.join(', ') })}
     </div>
   `
@@ -698,7 +699,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>${escapeHtml(title)}</title>
 </head>
-<body style="margin:0;padding:0;background:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#334155;">
+<body style="margin:0;padding:0;background:#F1F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:${BRAND_HEX.inkSoft};">
   <table cellspacing="0" cellpadding="0" style="width:100%;background:#F1F5F9;padding:24px 0;">
     <tr>
       <td align="center">
@@ -737,15 +738,15 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
 
           <!-- Dark footer -->
           <tr>
-            <td style="padding:24px 32px;background:#0F172A;color:#CBD5E1;font-size:11px;text-align:center;">
+            <td style="padding:24px 32px;background:${BRAND_HEX.ink};color:#CBD5E1;font-size:11px;text-align:center;">
               <div style="font-weight:600;color:#ffffff;font-size:12px;margin-bottom:10px;">${escapeHtml(companyName)}</div>
               <img src="${DASHBOARD_URL}/brand/logo-white.png" alt="Smart Dashboard" width="140" style="max-width:140px;height:auto;display:inline-block;margin:4px 0 10px 0;opacity:0.9;" />
               <br />
               ${lt(locale, 'generatedBy')}
               <a href="${DASHBOARD_URL}" style="color:#93C5FD;text-decoration:none;">Smart Dashboard</a>.
-              ${syncStamp ? `<br /><span style="color:#94A3B8;font-size:10px;">${lt(locale, 'dataUpdated', { stamp: escapeHtml(syncStamp) })}</span>` : ''}
+              ${syncStamp ? `<br /><span style="color:${BRAND_HEX.mutedLight};font-size:10px;">${lt(locale, 'dataUpdated', { stamp: escapeHtml(syncStamp) })}</span>` : ''}
               <br />
-              <span style="color:#94A3B8;font-size:10px;">${lt(locale, 'unsubscribe')}</span>
+              <span style="color:${BRAND_HEX.mutedLight};font-size:10px;">${lt(locale, 'unsubscribe')}</span>
             </td>
           </tr>
 

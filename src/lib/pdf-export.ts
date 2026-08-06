@@ -1,6 +1,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatNumber } from '@/lib/utils';
+import { BRAND_RGB, type RGB } from '@/lib/brand';
 
 /** jspdf-autotable adds `lastAutoTable` to the doc but doesn't ship types for it. */
 interface AutoTableDoc extends jsPDF {
@@ -24,19 +25,9 @@ const money = (n: number) => `$${fmt(n)}`;
 // Da a todos los informes el mismo look que la app (navy + azul, tarjetas KPI
 // blancas con acento lateral, encabezado con brandmark y stripe de acento).
 // ═══════════════════════════════════════════════════════════════════════════════
-type RGB = [number, number, number];
-const C = {
-  primary: [30, 58, 95] as RGB, // #1E3A5F
-  accent: [59, 130, 246] as RGB, // #3B82F6
-  ink: [15, 23, 42] as RGB, // #0F172A
-  muted: [100, 116, 139] as RGB, // #64748B
-  border: [226, 232, 240] as RGB, // #E2E8F0
-  surface: [248, 250, 252] as RGB, // #F8FAFC
-  positive: [5, 150, 105] as RGB, // #059669 (emerald-600, legible en papel)
-  negative: [220, 38, 38] as RGB, // #DC2626
-  warning: [217, 119, 6] as RGB, // #D97706
-  white: [255, 255, 255] as RGB,
-};
+// La paleta vive en src/lib/brand.ts (origen único). Antes estos hex estaban
+// duplicados acá y en globals.css, email-template.ts y reports/pdf.ts.
+const C = BRAND_RGB;
 
 /** Encabezado con banda navy, brandmark y stripe de acento. Devuelve la Y libre. */
 function pdfHeader(

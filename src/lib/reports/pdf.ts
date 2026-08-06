@@ -15,6 +15,7 @@
 import type { ReportData, ReportBucket, ReportDepositRow, ReportWithdrawalRow } from './data';
 import type { ReportCadence } from './email-template';
 import jsPDF from 'jspdf';
+import { BRAND_RGB, hexToRgb } from '@/lib/brand';
 import autoTable from 'jspdf-autotable';
 
 export interface ReportSectionToggles {
@@ -73,19 +74,7 @@ function fmtDateEs(iso: string): string {
   return `${d} ${MONTHS_ES[m - 1]} ${y}`;
 }
 
-function hexToRgb(hex: string | null | undefined): [number, number, number] {
-  const fallback: [number, number, number] = [30, 58, 95]; // #1E3A5F
-  if (!hex) return fallback;
-  const s = hex.trim();
-  let h = s.startsWith('#') ? s.slice(1) : s;
-  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
-  if (!/^[0-9a-fA-F]{6}$/.test(h)) return fallback;
-  return [
-    parseInt(h.slice(0, 2), 16),
-    parseInt(h.slice(2, 4), 16),
-    parseInt(h.slice(4, 6), 16),
-  ];
-}
+
 
 function titleForCadence(cadence: ReportCadence): string {
   if (cadence === 'daily') return 'Reporte Financiero Diario';
@@ -124,6 +113,48 @@ async function assetToDataUrl(url: string): Promise<string | null> {
     });
   } catch {
     return null;
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Dibuja una imagen CONTENIDA en una caja, respetando su relación de aspecto.
+//
+// Antes cada addImage fijaba ancho Y alto (140x80 en la portada, 90x24 y 60x14
+// en los pies). jsPDF estira la imagen hasta llenar esa caja, así que todo
+// logo que no midiera exactamente esa proporción salía deformado — que es
+// justo lo que se veía mal en los reportes. Los logos de marca vienen en
+// proporciones muy distintas (cuadrados, horizontales, isotipos), así que
+// fijar las dos medidas nunca podía funcionar.
+//
+// Ahora se leen las medidas reales y se escala por el lado que primero toca
+// el borde, centrando el resultado dentro de la caja.
+// ─────────────────────────────────────────────────────────────────────────────
+function drawImageContained(
+  doc: jsPDF,
+  dataUrl: string,
+  boxX: number,
+  boxY: number,
+  boxW: number,
+  boxH: number,
+): boolean {
+  try {
+    const props = doc.getImageProperties(dataUrl);
+    if (!props?.width || !props?.height) return false;
+
+    const scale = Math.min(boxW / props.width, boxH / props.height);
+    const w = props.width * scale;
+    const h = props.height * scale;
+    const x = boxX + (boxW - w) / 2;
+    const y = boxY + (boxH - h) / 2;
+
+    // El formato sale de las props: forzar 'PNG' sobre un JPEG hacía fallar
+    // el addImage y caer al texto de respaldo.
+    const format = (props.fileType || 'PNG').toUpperCase();
+    doc.addImage(dataUrl, format, x, y, w, h, undefined, 'FAST');
+    return true;
+  } catch {
+    return false;
   }
 }
 
@@ -177,7 +208,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     // Coloured bar with white label
     doc.setFillColor(primary[0], primary[1], primary[2]);
     doc.roundedRect(MARGIN_X, cursorY, pageWidth - MARGIN_X * 2, 28, 4, 4, 'F');
-    doc.setTextColor(255, 255, 255);
+    doc.setTextColor(...BRAND_RGB.white);
     doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
     doc.text(label, MARGIN_X + 12, cursorY + 18);
@@ -185,7 +216,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
   };
 
   const addSubHeader = (label: string) => {
-    doc.setTextColor(51, 65, 85); // slate-700
+    doc.setTextColor(...BRAND_RGB.inkSoft); // slate-700
     doc.setFontSize(10);
     doc.setFont('helvetica', 'bold');
     doc.text(label, MARGIN_X, cursorY);
@@ -197,16 +228,16 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     const boxH = 54;
     kpis.forEach((k, i) => {
       const x = MARGIN_X + i * (boxW + 12);
-      doc.setFillColor(248, 250, 252); // slate-50
-      doc.setDrawColor(226, 232, 240); // slate-200
+      doc.setFillColor(...BRAND_RGB.surface); // slate-50
+      doc.setDrawColor(...BRAND_RGB.border); // slate-200
       doc.roundedRect(x, cursorY, boxW, boxH, 4, 4, 'FD');
-      doc.setTextColor(100, 116, 139); // slate-500
+      doc.setTextColor(...BRAND_RGB.muted); // slate-500
       doc.setFontSize(8);
       doc.setFont('helvetica', 'bold');
       doc.text(k.label.toUpperCase(), x + 10, cursorY + 16);
-      if (k.tone === 'ok') doc.setTextColor(16, 185, 129); // emerald-500
-      else if (k.tone === 'bad') doc.setTextColor(239, 68, 68); // red-500
-      else doc.setTextColor(15, 23, 42); // slate-900
+      if (k.tone === 'ok') doc.setTextColor(...BRAND_RGB.positive); // emerald-500
+      else if (k.tone === 'bad') doc.setTextColor(...BRAND_RGB.negative); // red-500
+      else doc.setTextColor(...BRAND_RGB.ink); // slate-900
       doc.setFontSize(14);
       doc.setFont('helvetica', 'bold');
       doc.text(k.value, x + 10, cursorY + 38);
@@ -276,7 +307,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     addSectionHeader('Balances por Canal');
     const b = data.balances_by_channel;
     if (b.channels.length === 0) {
-      doc.setTextColor(100, 116, 139);
+      doc.setTextColor(...BRAND_RGB.muted);
       doc.setFontSize(10);
       doc.setFont('helvetica', 'italic');
       doc.text('No hay canales visibles configurados.', MARGIN_X, cursorY);
@@ -407,18 +438,13 @@ function drawCoverPage(doc: jsPDF, p: CoverParams): void {
 
   // Company logo or name — centred vertically in top third.
   const logoTop = 130;
-  if (p.companyLogoDataUrl) {
-    try {
-      // jsPDF wants the image to be reasonably sized; 140x80 works well for logos.
-      doc.addImage(p.companyLogoDataUrl, 'PNG', centerX - 70, logoTop, 140, 80, undefined, 'FAST');
-    } catch {
-      // fallthrough to text
-      doc.setTextColor(p.primary[0], p.primary[1], p.primary[2]);
-      doc.setFontSize(28);
-      doc.setFont('helvetica', 'bold');
-      doc.text(p.companyName, centerX, logoTop + 40, { align: 'center' });
-    }
-  } else {
+  // La caja es el LÍMITE, no el tamaño: el logo se ajusta adentro sin
+  // deformarse, sea cuadrado, horizontal o un isotipo.
+  const drewLogo =
+    !!p.companyLogoDataUrl &&
+    drawImageContained(doc, p.companyLogoDataUrl, centerX - 100, logoTop, 200, 90);
+
+  if (!drewLogo) {
     doc.setTextColor(p.primary[0], p.primary[1], p.primary[2]);
     doc.setFontSize(28);
     doc.setFont('helvetica', 'bold');
@@ -426,7 +452,7 @@ function drawCoverPage(doc: jsPDF, p: CoverParams): void {
   }
 
   // Title.
-  doc.setTextColor(15, 23, 42);
+  doc.setTextColor(...BRAND_RGB.ink);
   doc.setFontSize(22);
   doc.setFont('helvetica', 'bold');
   doc.text(p.title, centerX, logoTop + 160, { align: 'center' });
@@ -437,7 +463,7 @@ function drawCoverPage(doc: jsPDF, p: CoverParams): void {
   doc.line(centerX - 80, logoTop + 180, centerX + 80, logoTop + 180);
 
   // Period.
-  doc.setTextColor(71, 85, 105);
+  doc.setTextColor(...BRAND_RGB.inkSoft);
   doc.setFontSize(13);
   doc.setFont('helvetica', 'normal');
   doc.text(
@@ -448,7 +474,7 @@ function drawCoverPage(doc: jsPDF, p: CoverParams): void {
   );
 
   // Generated on.
-  doc.setTextColor(100, 116, 139);
+  doc.setTextColor(...BRAND_RGB.muted);
   doc.setFontSize(10);
   const now = new Date();
   doc.text(
@@ -459,29 +485,16 @@ function drawCoverPage(doc: jsPDF, p: CoverParams): void {
   );
 
   // Footer on cover — Smart Dashboard brand logo + confidentiality note.
-  if (p.brandLogoDataUrl) {
-    try {
-      doc.addImage(
-        p.brandLogoDataUrl,
-        'PNG',
-        centerX - 45,
-        pageHeight - 70,
-        90,
-        24,
-        undefined,
-        'FAST',
-      );
-    } catch {
-      doc.setTextColor(148, 163, 184);
-      doc.setFontSize(9);
-      doc.text('Smart Dashboard', centerX, pageHeight - 50, { align: 'center' });
-    }
-  } else {
-    doc.setTextColor(148, 163, 184);
+  const drewBrand =
+    !!p.brandLogoDataUrl &&
+    drawImageContained(doc, p.brandLogoDataUrl, centerX - 60, pageHeight - 74, 120, 30);
+
+  if (!drewBrand) {
+    doc.setTextColor(...BRAND_RGB.mutedLight);
     doc.setFontSize(9);
     doc.text('Smart Dashboard', centerX, pageHeight - 50, { align: 'center' });
   }
-  doc.setTextColor(148, 163, 184);
+  doc.setTextColor(...BRAND_RGB.mutedLight);
   doc.setFontSize(9);
   doc.text('Documento confidencial', centerX, pageHeight - 30, { align: 'center' });
 }
@@ -502,29 +515,16 @@ function drawFooter(doc: jsPDF, p: FooterParams): void {
   const MARGIN_X = 40;
 
   // Divider line.
-  doc.setDrawColor(226, 232, 240);
+  doc.setDrawColor(...BRAND_RGB.border);
   doc.setLineWidth(0.5);
   doc.line(MARGIN_X, pageHeight - 40, pageWidth - MARGIN_X, pageHeight - 40);
 
   // Small Smart Dashboard logo, bottom-centre above the text line.
   if (p.brandLogoDataUrl) {
-    try {
-      doc.addImage(
-        p.brandLogoDataUrl,
-        'PNG',
-        pageWidth / 2 - 30,
-        pageHeight - 36,
-        60,
-        14,
-        undefined,
-        'FAST',
-      );
-    } catch {
-      // fallthrough — text footer still renders
-    }
+    drawImageContained(doc, p.brandLogoDataUrl, pageWidth / 2 - 40, pageHeight - 37, 80, 16);
   }
 
-  doc.setTextColor(100, 116, 139);
+  doc.setTextColor(...BRAND_RGB.muted);
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
   doc.text(`${p.companyName} · Smart Dashboard`, MARGIN_X, pageHeight - 26);
