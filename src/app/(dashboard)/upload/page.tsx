@@ -11,7 +11,7 @@ import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import type { LiquidityMovement, Investment } from '@/lib/types';
-import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical, Lock as LockIcon } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical, Lock as LockIcon, Upload } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -111,6 +111,7 @@ import { SELECTABLE_MOVEMENT_TYPES, inferMovementType } from '@/lib/investment-t
 import { formatDayMonth } from '@/lib/dates';
 import * as Sentry from '@sentry/nextjs';
 import Link from 'next/link';
+import { apiFetch } from '@/lib/api-fetch';
 
 type DataSection = 'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones';
 
@@ -1426,6 +1427,69 @@ export default function UploadPage() {
     }
   };
 
+  // ── Import CSV/Excel de egresos (QW9) ──────────────────────────────────
+  // El endpoint SOLO parsea y valida; las filas entran por el MISMO camino
+  // que el alta manual (persistExpenses) — así respetan el trigger de período
+  // cerrado, el sync de plantillas y el payload completo de columnas.
+  const [importOpen, setImportOpen] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    rows: Array<{ concept: string; category: string | null; expense_date: string | null; amount: number; paid: number; pending: number; reference: string | null }>;
+    errors: Array<{ row: number; error: string }>;
+    truncated?: boolean;
+  } | null>(null);
+
+  const handleImportFile = async (file: File) => {
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await apiFetch('/api/admin/expenses/import', { method: 'POST', body: fd });
+      const json = await res.json();
+      if (json.success) setImportResult({ rows: json.rows ?? [], errors: json.errors ?? [], truncated: json.truncated });
+      else showError(json.error ?? 'No se pudo leer el archivo');
+    } catch {
+      showError('No se pudo leer el archivo');
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const confirmImport = () => {
+    if (!importResult || importResult.rows.length === 0) return;
+    const previous = expenses;
+    const stamp = Date.now();
+    const next: ExpenseRow[] = [
+      ...expenses,
+      ...importResult.rows.map((r, i) => ({
+        id: `exp-import-${stamp}-${i}`,
+        concept: r.concept,
+        amount: r.amount,
+        paid: r.paid,
+        pending: r.pending,
+        is_fixed: false,
+        category: r.category,
+        expense_date: r.expense_date,
+        reference: r.reference,
+        attachment_bucket: null,
+        attachment_path: null,
+        attachment_name: null,
+        attachment_mime: null,
+        attachment_size: null,
+        attachment_uploaded_at: null,
+        payment_order_id: null,
+      })),
+    ];
+    setExpensesRaw(next);
+    setImportOpen(false);
+    setImportResult(null);
+    void persistExpenses(next, previous, {
+      toast: `${importResult.rows.length} egresos importados`,
+      audit: { action: 'create', details: `Import de ${importResult.rows.length} egresos desde archivo` },
+    });
+  };
+
   const addExpense = () => {
     if (!userCanAdd || !company || !newExpense.concept || !newExpense.amount) return;
     const amt = parseAmount(newExpense.amount);
@@ -2475,7 +2539,16 @@ export default function UploadPage() {
           {/* Add expense form */}
           {userCanAdd && (
             <div className="mt-4 pt-4 border-t border-border">
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addExpense')}</h3>
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-sm font-semibold flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addExpense')}</h3>
+                <button
+                  onClick={() => { setImportOpen(true); setImportResult(null); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted transition-colors"
+                >
+                  <Upload className="w-3.5 h-3.5" />
+                  Importar Excel/CSV
+                </button>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-8 gap-3">
                 <div className="md:col-span-2 relative">
                   <input
@@ -3206,6 +3279,110 @@ export default function UploadPage() {
           onChoose={applyExpenseForward}
           onClose={() => setForwardPending(null)}
         />
+      )}
+
+      {/* Diálogo de import de egresos: elegir archivo → preview con errores
+          por fila → confirmar. Las filas entran por persistExpenses, el mismo
+          camino que el alta manual. */}
+      {importOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Importar egresos"
+            className="w-full max-w-lg rounded-xl border border-border bg-card shadow-[var(--elevation-3)] p-5 space-y-4 max-h-[85vh] overflow-y-auto"
+          >
+            <h2 className="font-semibold">Importar egresos — {periodLabel}</h2>
+            <p className="text-sm text-muted-foreground">
+              Excel (.xlsx) o CSV con encabezados en la primera fila. Columnas:{' '}
+              <strong>Concepto</strong> y <strong>Monto</strong> obligatorias;
+              Categoría, Fecha, Pagado, Pendiente y Referencia opcionales.
+              Nada se guarda hasta que confirmes.
+            </p>
+
+            <input
+              type="file"
+              accept=".xlsx,.csv"
+              aria-label="Archivo de egresos"
+              disabled={importing}
+              onChange={(e) => {
+                const f = e.target.files?.[0];
+                if (f) void handleImportFile(f);
+                e.target.value = '';
+              }}
+              className="block w-full text-sm file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-[var(--color-primary)] file:text-white file:text-sm file:font-medium hover:file:opacity-90"
+            />
+
+            {importing && <p className="text-sm text-muted-foreground">Leyendo archivo…</p>}
+
+            {importResult && (
+              <div className="space-y-3">
+                <p className="text-sm">
+                  <strong className="text-positive">{importResult.rows.length}</strong>{' '}
+                  {importResult.rows.length === 1 ? 'fila lista' : 'filas listas'} ·{' '}
+                  <span className={importResult.errors.length ? 'text-negative font-medium' : 'text-muted-foreground'}>
+                    {importResult.errors.length} con error
+                  </span>
+                  {importResult.truncated && (
+                    <span className="text-amber-600"> · el archivo superaba 500 filas y se recortó</span>
+                  )}
+                </p>
+
+                {importResult.errors.length > 0 && (
+                  <div className="max-h-36 overflow-y-auto rounded-lg border border-negative/30 bg-negative/5 p-3 text-xs space-y-1">
+                    {importResult.errors.map((e) => (
+                      <p key={e.row}><strong>Fila {e.row}:</strong> {e.error}</p>
+                    ))}
+                  </div>
+                )}
+
+                {importResult.rows.length > 0 && (
+                  <div className="max-h-40 overflow-y-auto rounded-lg border border-border text-xs">
+                    <table className="w-full">
+                      <thead>
+                        <tr className="text-left text-muted-foreground border-b border-border">
+                          <th className="px-2 py-1.5">Concepto</th>
+                          <th className="px-2 py-1.5 text-right">Monto</th>
+                          <th className="px-2 py-1.5 text-right">Pagado</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importResult.rows.slice(0, 8).map((r, i) => (
+                          <tr key={i} className="border-b border-border/50 last:border-0">
+                            <td className="px-2 py-1.5 truncate max-w-[220px]">{r.concept}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.amount)}</td>
+                            <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.paid)}</td>
+                          </tr>
+                        ))}
+                        {importResult.rows.length > 8 && (
+                          <tr><td colSpan={3} className="px-2 py-1.5 text-muted-foreground">
+                            … y {importResult.rows.length - 8} más
+                          </td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                onClick={() => { setImportOpen(false); setImportResult(null); }}
+                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmImport}
+                disabled={!importResult || importResult.rows.length === 0 || savingExpenses}
+                className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {savingExpenses ? 'Guardando…' : `Agregar ${importResult?.rows.length ?? 0} egresos`}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {ToastHost}
