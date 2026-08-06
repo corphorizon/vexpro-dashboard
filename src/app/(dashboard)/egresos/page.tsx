@@ -320,7 +320,10 @@ export default function EgresosPage() {
                 </tbody>
                 <tfoot>
                   <tr className="font-bold bg-muted/50">
-                    <td className="py-3 px-3" colSpan={4}>TOTAL</td>
+                    {/* 5 = #, Concepto, Categoría, Referencia y Fecha: con 4,
+                        los totales caían corridos una columna a la izquierda
+                        (el de Monto bajo Fecha — auditoría 2026-08-06). */}
+                    <td className="py-3 px-3" colSpan={5}>TOTAL</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalExpenses)}</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPaid)}</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPending)}</td>

@@ -6,7 +6,7 @@ import {
 } from 'recharts';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
-import { isDerivedBrokerPeriod, computeDerivedBroker } from '@/lib/broker-logic';
+import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
 import { apiFetch } from '@/lib/api-fetch';
 import { ChevronLeft, ChevronRight, BarChart3 } from 'lucide-react';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -140,24 +140,16 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
       // "baked into" the API total so we subtract them out first, then add
       // them back so the chart bar equals the sum of all categories visible
       // to the user in /resumen-general.
-      const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount ?? 0;
-      const propFirmW = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount ?? 0;
-      const otherW = summary.withdrawals.find((w) => w.category === 'other')?.amount ?? 0;
       const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;
 
-      const derivedBroker = computeDerivedBroker({
-        apiWithdrawalsTotal: api.withdrawals,
-        ibCommissions,
-        propFirm: propFirmW,
-        other: otherW,
-      });
-      // Prop firm fuera de los retiros (decisión Kevin 2026-08-06): es un
-      // circuito aparte que ya se refleja en Ingresos Operativos como neto
-      // (ventas − retiros). Sigue restándose dentro de computeDerivedBroker
-      // para no atribuirle al broker la parte del retiro API que fue prop
-      // firm, pero NO se vuelve a sumar al total.
-      const consolidatedWithdrawals =
-        derivedBroker + storedBroker + ibCommissions + otherW;
+      // Fórmula CANÓNICA de /movimientos y /balances (decisión Kevin
+      // 2026-06-06): retiros mostrados = API + broker manual. Las categorías
+      // manuales IB/prop firm/otros son informativas y NO se suman — los
+      // retiros reales ya están en la API. Este gráfico usaba la fórmula
+      // vieja (derivedBroker + categorías), descartada como bug el
+      // 2026-06-07: apenas prop_firm > 0, la barra no coincidía con ninguna
+      // otra pantalla (auditoría 2026-08-06, C6).
+      const consolidatedWithdrawals = api.withdrawals + storedBroker;
 
       return {
         name: period.label,

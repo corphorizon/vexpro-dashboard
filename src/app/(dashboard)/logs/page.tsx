@@ -151,15 +151,24 @@ export default function LogsPage() {
   // El CSV exporta lo que se ve con los filtros actuales, no solo la página:
   // exportar 50 de 900 filas sin decirlo sería engañoso.
   const exportCsv = async () => {
-    const qs = new URLSearchParams({ from, to, page: '1', limit: '200' });
-    if (moduleKey) qs.set('module', moduleKey);
-    if (action) qs.set('action', action);
-    if (userFilter) qs.set('user', userFilter);
-    if (q.trim()) qs.set('q', q.trim());
+    // Pagina hasta traer TODO lo que matchea los filtros: antes cortaba en
+    // 200 filas sin avisar, así que "exportar" 900 registros devolvía 200 y
+    // el CSV mentía (auditoría 2026-08-06). Tope de seguridad: 50 páginas
+    // (10.000 filas) para no colgar el navegador con un rango descomunal.
+    const all: LogRow[] = [];
+    for (let p = 1; p <= 50; p++) {
+      const qs = new URLSearchParams({ from, to, page: String(p), limit: '200' });
+      if (moduleKey) qs.set('module', moduleKey);
+      if (action) qs.set('action', action);
+      if (userFilter) qs.set('user', userFilter);
+      if (q.trim()) qs.set('q', q.trim());
 
-    const res = await apiFetch(`/api/admin/audit-log?${qs}`);
-    const json = await res.json();
-    const all: LogRow[] = json.entries ?? [];
+      const res = await apiFetch(`/api/admin/audit-log?${qs}`);
+      const json = await res.json();
+      const batch: LogRow[] = json.entries ?? [];
+      all.push(...batch);
+      if (batch.length < 200 || all.length >= (json.total ?? 0)) break;
+    }
 
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const csv = [

@@ -450,11 +450,22 @@ export default function SociosPage() {
         </div>
       )}
 
-      {/* Percentage warning */}
+      {/* Percentage warning — con el MONTO que queda sin dueño, no solo el
+          %. Con 95% asignado, el 5% del monto a distribuir no va a nadie y
+          antes se evaporaba sin que ninguna cifra lo mostrara (auditoría
+          2026-08-06, QW8). */}
       {percentageMismatch && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-warning/10 border border-warning/30 text-warning text-sm font-medium">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          {t('partners.percentageWarning', { pct: (totalPercentage * 100).toFixed(1) })}
+          <span>
+            {t('partners.percentageWarning', { pct: (totalPercentage * 100).toFixed(1) })}
+            {totalPercentage < 1 && totalToDistribute > 0 && (
+              <>
+                {' '}— <strong>{formatCurrency(round2(totalToDistribute * (1 - totalPercentage)))}</strong>{' '}
+                de este período quedan <strong>sin asignar a ningún socio</strong>.
+              </>
+            )}
+          </span>
         </div>
       )}
 
