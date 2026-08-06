@@ -16,7 +16,8 @@ import { useI18n } from '@/lib/i18n';
 import { Droplets, Download, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import Link from 'next/link';
-import { Scale } from 'lucide-react';
+import { apiFetch } from '@/lib/api-fetch';
+import { Scale, AlertTriangle } from 'lucide-react';
 import { useRunningBalance } from '@/lib/use-running-balance';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -85,6 +86,42 @@ export default function LiquidezPage() {
   const totalWithdrawals = filtered.reduce((s, m) => s + m.withdrawal, 0);
 
   // Pagination — reset to page 0 whenever filter or data changes
+  // ── Desglose por cuenta MT (migración 062) ────────────────────────────
+  // Se reusa el endpoint de conciliación: ya devuelve el catálogo, el saldo
+  // por cuenta y lo pendiente. Un endpoint aparte sería una segunda copia del
+  // mismo cálculo, que en este proyecto siempre termina divergiendo.
+  const [accounts, setAccounts] = useState<Array<{ id: string; mt_number: string; label: string | null }>>([]);
+  const [balancesByAccount, setBalancesByAccount] = useState<Record<string, number>>({});
+  const [pendingCount, setPendingCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/admin/liquidity-reconcile')
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancelled || !json.success) return;
+        setAccounts(json.accounts ?? []);
+        setBalancesByAccount(json.balancesByAccount ?? {});
+        setPendingCount((json.pending ?? []).length);
+      })
+      .catch(() => { /* el desglose es un extra: si falla, la página sigue */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  // Solo las cuentas con movimientos: el catálogo tiene 23 y mostrar las
+  // vacías llenaría la pantalla de ceros sin información.
+  const accountRows = useMemo(() => {
+    return accounts
+      .map((a) => ({ ...a, balance: balancesByAccount[a.id] ?? 0 }))
+      .filter((a) => Math.abs(a.balance) > 0.005)
+      .sort((a, b) => b.balance - a.balance);
+  }, [accounts, balancesByAccount]);
+
+  const assignedTotal = useMemo(
+    () => accountRows.reduce((s, a) => s + a.balance, 0),
+    [accountRows],
+  );
+
   const [page, setPage] = useState(0);
   useEffect(() => { setPage(0); }, [filter, liquidityData.length]);
 
@@ -131,6 +168,56 @@ export default function LiquidezPage() {
           </div>
         }
       />
+
+      {/* Desglose por cuenta MT. Mientras queden movimientos sin atribuir, el
+          desglose NO cuadra con el saldo total — decirlo es la diferencia
+          entre una tabla útil y una que engaña. */}
+      {(accountRows.length > 0 || pendingCount > 0) && (
+        <Card className="p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h2 className="text-sm font-semibold">Saldo por cuenta MT</h2>
+            {pendingCount > 0 && (
+              <Link
+                href="/liquidez/conciliacion"
+                className="inline-flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300 hover:underline"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" />
+                {pendingCount} {pendingCount === 1 ? 'movimiento sin atribuir' : 'movimientos sin atribuir'} — conciliar
+              </Link>
+            )}
+          </div>
+
+          {accountRows.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Todavía no hay movimientos atribuidos a una cuenta. Empezá por la conciliación.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+                {accountRows.map((a) => (
+                  <div key={a.id} className="rounded-lg border border-border p-3">
+                    <p className="text-xs text-muted-foreground truncate" title={a.label ?? undefined}>
+                      {a.mt_number}{a.label ? ` · ${a.label}` : ''}
+                    </p>
+                    <p className={cn('font-semibold tabular-nums mt-0.5',
+                      a.balance >= 0 ? '' : 'text-negative')}>
+                      {formatCurrency(a.balance)}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground mt-3 tabular-nums">
+                Atribuido: {formatCurrency(assignedTotal)} de {formatCurrency(lastBalance)} total
+                {Math.abs(assignedTotal - lastBalance) > 0.01 && (
+                  <> · <span className="text-amber-700 dark:text-amber-300">
+                    faltan {formatCurrency(lastBalance - assignedTotal)} por atribuir
+                  </span></>
+                )}
+              </p>
+            </>
+          )}
+        </Card>
+      )}
 
       {/* Filter */}
       <div className="flex flex-wrap items-center gap-3">
