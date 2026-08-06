@@ -6,7 +6,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Badge } from '@/components/ui/badge';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
-import { useAuth, canEdit, canDelete } from '@/lib/auth-context';
+import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -14,13 +14,9 @@ import { formatDate, formatDayMonth } from '@/lib/dates';
 import type { Expense } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
-import { upsertExpenses, applyFixedExpenseForward } from '@/lib/supabase/mutations';
-import { FixedForwardDialog } from '@/components/ui/fixed-forward-dialog';
-import { logAction } from '@/lib/audit-log';
-import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
-import { useConfirm } from '@/lib/use-confirm';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
-import { Search, ArrowUpDown, ArrowDown, ArrowUp, Edit2, Trash2, Check, X, Download, Receipt, Loader2 } from 'lucide-react';
+import { ExpenseConcept } from '@/components/ui/expense-concept';
+import { Search, ArrowUpDown, ArrowDown, ArrowUp, Check, Download, Receipt } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 
 type SortState = 'default' | 'desc' | 'asc';
@@ -36,53 +32,22 @@ export default function EgresosPage() {
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
-  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, company, refreshSections } = useData();
-  const userCanEdit = canEdit(user);
-  const userCanDelete = canDelete(user);
+  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses } = useData();
 
   const [showPreoperativo, setShowPreoperativo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortState, setSortState] = useState<SortState>('default');
 
-  // Expenses local state (initialized from demo data based on period)
-  const [expensesOverrides, setExpensesOverrides] = useState<Record<string, Expense[]>>({});
-
-  // Edit state
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editForm, setEditForm] = useState({ concept: '', amount: '', paid: '', pending: '', expense_date: '' });
-
-  // Egreso fijo recién editado, a la espera de que el usuario elija el alcance
-  // ("solo este mes" vs "este mes y los siguientes"). Se arma DESPUÉS de que el
-  // guardado normal del mes actual salió bien; guardamos el concepto VIEJO
-  // porque es la clave con la que el backend encuentra la plantilla y las filas
-  // futuras (los egresos no tienen template_id).
-  const [forwardPending, setForwardPending] = useState<
-    { oldConcept: string; concept: string; amount: number; category: string | null } | null
-  >(null);
-
-  // Add expense removed — expenses loaded via "Carga de Datos"
-
-  // Shared confirmation dialog — replaces the inline modal + askConfirmation
-  // helper. Same semantics, centralized styling.
-  const { confirm, Modal: ConfirmModal } = useConfirm();
-
-  // Success message — auto-clears, cleanup-safe (see use-auto-clear-message).
-  const [successMsg, showSuccess] = useAutoClearMessage(3000);
+  // Pantalla de SOLO CONSULTA: toda la edición de egresos (crear, editar,
+  // marcar pagado, eliminar, propagar egresos fijos) vive en "Carga de Datos".
 
   // Get summary based on period mode
   const summary = mode === 'consolidated'
     ? getConsolidatedSummary(selectedPeriodIds)
     : getPeriodSummary(selectedPeriodId);
 
-  // Build a stable key for current period selection
-  const periodKey = mode === 'consolidated' ? selectedPeriodIds.join(',') : selectedPeriodId;
-
-  // Get current expenses (with overrides applied)
-  const currentExpenses = useMemo(() => {
-    if (!summary) return [];
-    if (expensesOverrides[periodKey]) return expensesOverrides[periodKey];
-    return summary.expenses;
-  }, [summary, expensesOverrides, periodKey]);
+  // Egresos del período seleccionado (lectura directa del data-context).
+  const currentExpenses = useMemo<Expense[]>(() => summary?.expenses ?? [], [summary]);
 
   // Filter and sort expenses
   const filteredExpenses = useMemo(() => {
@@ -123,182 +88,6 @@ export default function EgresosPage() {
   };
 
   // Sort icon now extracted as top-level component
-
-  // Error banner (red) — kept separate from the success (green) one so the
-  // user knows at a glance whether a save worked.
-  const [errorMsg, showError] = useAutoClearMessage(4500);
-  const [saving, setSaving] = useState(false);
-
-  // Editing mutations ONLY make sense for a single period. In consolidated
-  // mode we don't know which period the edit belongs to, so we disable the
-  // actions in the UI (see `editingDisabled` below).
-  const editingDisabled = mode === 'consolidated';
-
-  // Persist `nextList` to Supabase. We run the delete+reinsert helper and
-  // then call `refresh()` so the data-context reloads.
-  //
-  // Fixed 2026-04-22: refresh() used to be awaited inside the try block,
-  // which meant a slow context-reload kept the save button spinning even
-  // after the DB write succeeded. Now refresh runs in background and the
-  // button releases as soon as the real save is done.
-  const persistExpenses = async (nextList: Expense[]) => {
-    if (!company || !selectedPeriodId) return;
-    setSaving(true);
-    try {
-      await upsertExpenses(company.id, selectedPeriodId, nextList.map(e => ({
-        concept: e.concept,
-        amount: e.amount,
-        paid: e.paid,
-        pending: e.pending,
-        is_fixed: !!e.is_fixed,
-        category: e.category ?? null,
-        expense_date: e.expense_date ?? null,
-      })));
-      // Clear the optimistic override — next read pulls from the refreshed
-      // data-context so we never show stale numbers.
-      setExpensesOverrides(prev => {
-        const next = { ...prev };
-        delete next[periodKey];
-        return next;
-      });
-      // Background refresh — the caller doesn't wait on the full context
-      // reload. If it fails we log but the save itself already succeeded.
-      // B1: refresh selectivo — solo egresos (2 queries), no toda la empresa.
-      void refreshSections(['egresos']).catch((err) => {
-        console.warn('[persistExpenses] background refresh failed:', err);
-      });
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  // --- Edit expense ---
-  const startEdit = (expense: Expense) => {
-    if (!userCanEdit || editingDisabled) return;
-    setEditingId(expense.id);
-    setEditForm({
-      concept: expense.concept,
-      amount: String(expense.amount),
-      paid: String(expense.paid),
-      pending: String(expense.pending),
-      // <input type="date"> exige 'YYYY-MM-DD'; sin fecha, string vacío.
-      expense_date: expense.expense_date ?? '',
-    });
-  };
-
-  const saveEdit = async () => {
-    if (!editingId) return;
-    // Explicit NaN/negative guards — parseFloat silently turned "abc" into
-    // NaN which then collapsed to 0 and looked like a successful save.
-    const amt = parseFloat(editForm.amount);
-    const pd = parseFloat(editForm.paid);
-    const pnRaw = parseFloat(editForm.pending);
-    if (Number.isNaN(amt) || amt < 0) { showError('Monto inválido'); return; }
-    if (Number.isNaN(pd) || pd < 0)   { showError('Pagado inválido'); return; }
-    const pn = Number.isNaN(pnRaw) ? Math.max(0, amt - pd) : pnRaw;
-    if (pn < 0) { showError('Pendiente inválido'); return; }
-    if (!editForm.concept.trim()) { showError('Concepto requerido'); return; }
-
-    // Vacío = sin fecha específica. Nunca se inventa un día.
-    const nextDate = editForm.expense_date || null;
-
-    const edited = currentExpenses.find(e => e.id === editingId);
-    const newConcept = editForm.concept.trim();
-    const nextList = currentExpenses.map(e => e.id === editingId
-      ? { ...e, concept: newConcept, amount: amt, paid: pd, pending: pn, expense_date: nextDate }
-      : e
-    );
-    setEditingId(null);
-    try {
-      await persistExpenses(nextList);
-      if (user) logAction(user.id, user.name, 'update', 'expenses', `Egreso ${editForm.concept}: $${amt.toLocaleString()}`);
-      showSuccess(t('expenses.updatedSuccess'));
-      // Si era un egreso FIJO, el mes actual ya quedó guardado; ahora se
-      // pregunta el alcance. Nunca se propaga en silencio.
-      if (edited?.is_fixed) {
-        setForwardPending({
-          oldConcept: edited.concept,
-          concept: newConcept,
-          amount: amt,
-          category: edited.category ?? null,
-        });
-      }
-    } catch (err) {
-      showError(`Error guardando: ${(err as Error).message}`);
-    }
-  };
-
-  // Alcance elegido en el diálogo del egreso fijo.
-  //   'this'    → nada más que hacer: el guardado del mes ya corrió.
-  //   'forward' → plantilla + meses futuros ya materializados.
-  const applyForward = async (apply: 'this' | 'forward') => {
-    if (!forwardPending || !selectedPeriodId) return;
-    if (apply === 'this') return;
-    try {
-      const { updatedPeriods } = await applyFixedExpenseForward({
-        periodId: selectedPeriodId,
-        oldConcept: forwardPending.oldConcept,
-        concept: forwardPending.concept,
-        amount: forwardPending.amount,
-        category: forwardPending.category,
-        apply: 'forward',
-      });
-      showSuccess(
-        updatedPeriods > 0
-          ? t('expenses.forwardSuccess', { count: String(updatedPeriods) })
-          : t('expenses.forwardSuccessNone'),
-      );
-      if (user) {
-        logAction(user.id, user.name, 'update', 'expenses',
-          `Egreso fijo "${forwardPending.oldConcept}" propagado a ${updatedPeriods} mes(es) siguientes`);
-      }
-      // Refresco selectivo — la pantalla refleja el cambio sin recargar.
-      void refreshSections(['egresos']).catch((err) => {
-        console.warn('[applyForward] background refresh failed:', err);
-      });
-    } catch (err) {
-      showError(t('expenses.forwardError', { error: (err as Error).message }));
-    }
-  };
-
-  const cancelEdit = () => {
-    setEditingId(null);
-  };
-
-  // --- Marcar como pagado (un click, sin abrir edición) ---
-  // Pedido de Kevin 2026-06-20: pagar un egreso era abrir el modo edición,
-  // copiar el monto al campo pagado y guardar. Esto lo hace en un click:
-  // paid = amount, pending = 0. Reusa persistExpenses (optimista + atómico).
-  const markAsPaid = async (expense: Expense) => {
-    if (!userCanEdit || editingDisabled) return;
-    if (expense.pending <= 0) return; // ya está pagado
-    const nextList = currentExpenses.map(e => e.id === expense.id
-      ? { ...e, paid: e.amount, pending: 0 }
-      : e
-    );
-    try {
-      await persistExpenses(nextList);
-      if (user) logAction(user.id, user.name, 'update', 'expenses', `Egreso marcado como pagado: ${expense.concept} ($${expense.amount.toLocaleString()})`);
-      showSuccess(`"${expense.concept}" marcado como pagado`);
-    } catch (err) {
-      showError(`Error marcando como pagado: ${(err as Error).message}`);
-    }
-  };
-
-  // --- Delete expense ---
-  const handleDelete = (expense: Expense) => {
-    if (!userCanDelete || editingDisabled) return;
-    confirm(t('expenses.deleteConfirm', { concept: expense.concept }), async () => {
-      const nextList = currentExpenses.filter(e => e.id !== expense.id);
-      try {
-        await persistExpenses(nextList);
-        if (user) logAction(user.id, user.name, 'delete', 'expenses', `Egreso eliminado: ${expense.concept}`);
-        showSuccess(t('expenses.deletedSuccess'));
-      } catch (err) {
-        showError(`Error eliminando: ${(err as Error).message}`);
-      }
-    }, { tone: 'danger', confirmLabel: t('common.delete') });
-  };
 
   if (!summary) {
     return (
@@ -361,33 +150,6 @@ export default function EgresosPage() {
           </>
         }
       />
-
-      {/* Success / error banners — saving toast stays visible until the
-          persist round-trip finishes so the user has feedback on slow
-          networks. */}
-      {successMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-positive/10 text-positive text-sm font-medium" aria-live="polite">
-          <Check className="w-4 h-4" />
-          {successMsg}
-        </div>
-      )}
-      {errorMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="assertive">
-          <X className="w-4 h-4" />
-          {errorMsg}
-        </div>
-      )}
-      {saving && (
-        <div className="flex items-center gap-2 px-4 py-2 rounded-lg bg-info/10 text-blue-700 dark:text-blue-300 text-xs font-medium" aria-live="polite">
-          <Loader2 className="w-3.5 h-3.5 animate-spin" />
-          Guardando…
-        </div>
-      )}
-      {editingDisabled && (userCanEdit || userCanDelete) && (
-        <div className="px-3 py-2 rounded-lg border border-amber-300/60 bg-warning/10/30 text-amber-800 dark:text-amber-300 text-xs">
-          Edición desactivada en modo consolidado — selecciona un solo mes para editar o eliminar egresos.
-        </div>
-      )}
 
       {showPreoperativo ? (
         <Card>
@@ -503,144 +265,44 @@ export default function EgresosPage() {
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
                     <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.status')}</th>
-                    {(userCanEdit || userCanDelete) && (
-                      <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.actions')}</th>
-                    )}
                   </tr>
                 </thead>
                 <tbody>
                   {filteredExpenses.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="py-8 text-center text-muted-foreground">
+                      <td colSpan={8} className="py-8 text-center text-muted-foreground">
                         {searchQuery ? t('expenses.noResults') : t('expenses.noExpenses')}
                       </td>
                     </tr>
                   )}
                   {filteredExpenses.map((expense, i) => (
                     <tr key={expense.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                      {editingId === expense.id ? (
-                        <>
-                          <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
-                          <td className="py-2.5 px-3">
-                            <input
-                              value={editForm.concept}
-                              onChange={e => setEditForm(p => ({ ...p, concept: e.target.value }))}
-                              className="w-full px-2 py-1 rounded border border-border text-sm"
-                            />
-                          </td>
-                          <td className="py-2.5 px-3 text-xs text-muted-foreground">
-                            {/* Category editing happens in /upload; read-only here */}
-                            {expense.category || '—'}
-                          </td>
-                          <td className="py-2 px-2">
-                            <input
-                              type="date"
-                              aria-label={t('expenses.dateAria')}
-                              value={editForm.expense_date}
-                              onChange={e => setEditForm(p => ({ ...p, expense_date: e.target.value }))}
-                              className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
-                            />
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editForm.amount}
-                              onChange={e => setEditForm(p => ({ ...p, amount: e.target.value }))}
-                              className="w-full text-right px-2 py-1 rounded border border-border text-sm"
-                            />
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editForm.paid}
-                              onChange={e => setEditForm(p => ({ ...p, paid: e.target.value }))}
-                              className="w-full text-right px-2 py-1 rounded border border-border text-sm"
-                            />
-                          </td>
-                          <td className="py-2.5 px-3">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={editForm.pending}
-                              onChange={e => setEditForm(p => ({ ...p, pending: e.target.value }))}
-                              className="w-full text-right px-2 py-1 rounded border border-border text-sm"
-                            />
-                          </td>
-                          <td></td>
-                          <td className="py-2.5 px-3 text-center">
-                            <div className="flex justify-center gap-1">
-                              <button onClick={saveEdit} className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
-                              <button onClick={cancelEdit} className="p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
-                            </div>
-                          </td>
-                        </>
-                      ) : (
-                        <>
-                          <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
-                          <td className="py-2.5 px-3">{expense.concept}</td>
-                          <td className="py-2.5 px-3">
-                            {expense.category ? (
-                              <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                                {expense.category}
-                              </span>
-                            ) : (
-                              <span className="text-xs text-muted-foreground">—</span>
-                            )}
-                          </td>
-                          <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
-                            {expense.expense_date ? formatDayMonth(expense.expense_date) : '—'}
-                          </td>
-                          <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
-                          <td className="py-2.5 px-3 text-right">{formatCurrency(expense.paid)}</td>
-                          <td className="py-2.5 px-3 text-right">{formatCurrency(expense.pending)}</td>
-                          <td className="py-2.5 px-3 text-center">
-                            <Badge variant={expense.pending === 0 ? 'success' : 'warning'}>
-                              {expense.pending === 0 ? t('expenses.paidStatus') : t('expenses.pendingStatus')}
-                            </Badge>
-                          </td>
-                          {(userCanEdit || userCanDelete) && (
-                            <td className="py-2.5 px-3 text-center">
-                              <div className="flex justify-center gap-1">
-                                {userCanEdit && expense.pending > 0 && (
-                                  <button
-                                    onClick={() => markAsPaid(expense)}
-                                    disabled={editingDisabled}
-                                    className="p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                                    title={editingDisabled ? 'Selecciona un solo mes' : 'Marcar como pagado'}
-                                    aria-label={`Marcar ${expense.concept} como pagado`}
-                                  >
-                                    <Check className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                                {userCanEdit && (
-                                  <button
-                                    onClick={() => startEdit(expense)}
-                                    disabled={editingDisabled}
-                                    className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                                    title={editingDisabled ? 'Selecciona un solo mes' : t('common.edit')}
-                                    aria-label={t('common.edit')}
-                                  >
-                                    <Edit2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                                {userCanDelete && (
-                                  <button
-                                    onClick={() => handleDelete(expense)}
-                                    disabled={editingDisabled}
-                                    className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed"
-                                    title={editingDisabled ? 'Selecciona un solo mes' : t('common.delete')}
-                                    aria-label={t('common.delete')}
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          )}
-                        </>
-                      )}
+                      <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
+                      {/* Si el egreso vino de una orden de pago, el número de OP
+                          es link al detalle de la orden. */}
+                      <td className="py-2.5 px-3">
+                        <ExpenseConcept concept={expense.concept} paymentOrderId={expense.payment_order_id} />
+                      </td>
+                      <td className="py-2.5 px-3">
+                        {expense.category ? (
+                          <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                            {expense.category}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
+                      <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                        {expense.expense_date ? formatDayMonth(expense.expense_date) : '—'}
+                      </td>
+                      <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(expense.amount)}</td>
+                      <td className="py-2.5 px-3 text-right">{formatCurrency(expense.paid)}</td>
+                      <td className="py-2.5 px-3 text-right">{formatCurrency(expense.pending)}</td>
+                      <td className="py-2.5 px-3 text-center">
+                        <Badge variant={expense.pending === 0 ? 'success' : 'warning'}>
+                          {expense.pending === 0 ? t('expenses.paidStatus') : t('expenses.pendingStatus')}
+                        </Badge>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -651,7 +313,6 @@ export default function EgresosPage() {
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPaid)}</td>
                     <td className="py-3 px-3 text-right">{formatCurrency(totalPending)}</td>
                     <td></td>
-                    {(userCanEdit || userCanDelete) && <td></td>}
                   </tr>
                 </tfoot>
               </table>
@@ -660,17 +321,6 @@ export default function EgresosPage() {
             {/* Note: expenses are loaded via "Carga de Datos" section */}
           </Card>
         </>
-      )}
-
-      {ConfirmModal}
-
-      {/* Alcance de la edición de un egreso fijo (ver FixedForwardDialog). */}
-      {forwardPending && (
-        <FixedForwardDialog
-          concept={forwardPending.concept}
-          onChoose={applyForward}
-          onClose={() => setForwardPending(null)}
-        />
       )}
     </div>
   );

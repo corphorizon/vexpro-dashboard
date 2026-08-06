@@ -3,6 +3,7 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { ExpenseConcept } from '@/components/ui/expense-concept';
 import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
@@ -122,7 +123,9 @@ const SECTION_KEYS: Record<DataSection, string> = {
 interface DepositRow { id: string; channel: string; amount: number; }
 interface WithdrawalRow { id: string; category: string; amount: number; }
 // expense_date (migration-056): 'YYYY-MM-DD' o null = sin fecha específica.
-interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; expense_date: string | null; }
+// payment_order_id: orden de pago que originó el egreso (null = manual). Tiene
+// que viajar en el payload de guardado o el DELETE+INSERT de la RPC lo borra.
+interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; expense_date: string | null; payment_order_id: string | null; }
 
 // ─── Sortable row wrapper (drag-and-drop reorder) ─────────────────────────
 // Wraps each expense <tr> so it can be dragged via the leading handle
@@ -373,6 +376,7 @@ export default function UploadPage() {
         is_fixed: !!e.is_fixed,
         category: e.category ?? null,
         expense_date: e.expense_date ?? null,
+        payment_order_id: e.payment_order_id ?? null,
       }));
     }
 
@@ -436,6 +440,8 @@ export default function UploadPage() {
       category: conceptCategoryMap.get(tpl.concept) ?? null,
       // Las plantillas no tienen día: la fecha se pone a mano si hace falta.
       expense_date: null,
+      // Una plantilla fija no nace de una orden de pago.
+      payment_order_id: null,
     }));
   }, [allExpenses, expenseTemplates, expenseTemplateHidden, periods]);
 
@@ -1413,6 +1419,7 @@ export default function UploadPage() {
       is_fixed: newExpense.is_fixed,
       category: cat,
       expense_date: newExpense.expense_date || null, // vacío = sin fecha
+      payment_order_id: null, // egreso cargado a mano: no viene de una OP
     }];
     setExpensesRaw(next); // optimista
     setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '' });
@@ -2304,15 +2311,20 @@ export default function UploadPage() {
                   ) : (
                     <>
                       <td className="py-2.5 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
+                      {/* Solo en la vista de lectura: si el egreso salió de una
+                          orden de pago, el número de OP linkea a su detalle.
+                          Dentro del modo edición el concepto es un <input> y
+                          no lleva link. */}
                       <td className="py-2.5 px-3">
-                        <span className="inline-flex items-center gap-1.5">
-                          {exp.concept}
-                          {exp.is_fixed && (
+                        <ExpenseConcept
+                          concept={exp.concept}
+                          paymentOrderId={exp.payment_order_id}
+                          suffix={exp.is_fixed ? (
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 uppercase">
                               {t('expenses.fixedBadge')}
                             </span>
-                          )}
-                        </span>
+                          ) : null}
+                        />
                       </td>
                       <td className="py-2.5 px-3">
                         {exp.category ? (

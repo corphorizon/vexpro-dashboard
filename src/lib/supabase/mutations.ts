@@ -106,7 +106,7 @@ export async function upsertWithdrawals(
 export async function upsertExpenses(
   _companyId: string,
   periodId: string,
-  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null; expense_date?: string | null }[]
+  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null; expense_date?: string | null; payment_order_id?: string | null }[]
 ): Promise<void> {
   // Guardado SERVER-SIDE vía /api/admin/expenses (2026-07-13). Antes esto
   // llamaba supabase.rpc() desde el browser y se colgaba >12s de forma
@@ -127,6 +127,10 @@ export async function upsertExpenses(
     // migration-056. La RPC re-inserta el período entero desde este payload:
     // si la fecha no viaja acá, se pierde en el próximo guardado.
     expense_date: e.expense_date || null,
+    // Mismo motivo que expense_date: la RPC re-inserta el período entero desde
+    // este payload. Si el vínculo con la orden de pago no viaja acá, el link
+    // de "OP-2026-0001" en Egresos desaparece al primer guardado del mes.
+    payment_order_id: e.payment_order_id || null,
   }));
 
   const res = await apiFetch('/api/admin/expenses', {

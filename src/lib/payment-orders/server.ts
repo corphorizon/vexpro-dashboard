@@ -361,6 +361,9 @@ export async function createExpenseForPaidOrder(
       pending: 0,
       is_fixed: false,
       category: str(category) || null,
+      // Vínculo egreso → orden, para que Egresos pueda linkear al detalle de la
+      // OP. La orden guarda además expense_id (vínculo inverso) desde el caller.
+      payment_order_id: order.id,
     })
     .select('id')
     .maybeSingle();

@@ -75,6 +75,12 @@ export interface Expense {
   // estado de todas las filas anteriores a la feature. Nunca se rellena con
   // una fecha inventada; vacío en la UI se guarda como null.
   expense_date?: string | null;
+  // Orden de pago que originó este egreso (null = egreso cargado a mano).
+  // Se setea al marcar pagada una OP y sirve para linkear el egreso al detalle
+  // de la orden desde Egresos. OJO: replace_period_expenses borra y re-inserta
+  // el período entero desde el payload del cliente — si esta columna no viaja
+  // en ese payload, el vínculo se pierde en el próximo guardado.
+  payment_order_id?: string | null;
 }
 
 export interface ExpenseTemplate {

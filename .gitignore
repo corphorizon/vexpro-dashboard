@@ -63,3 +63,10 @@ Thumbs.db
 # playwright
 /test-results/
 /playwright-report/
+
+# Copias que genera la sincronización de carpetas (iCloud/Dropbox añaden " 2"
+# al nombre ante un conflicto). Se colaron 19 de estas en el repo vía `git add
+# -A`, incluida una sonda temporal con lógica de descifrado de credenciales.
+* 2.*
+* 3.*
+* copy.*
