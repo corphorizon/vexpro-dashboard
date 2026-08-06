@@ -46,6 +46,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'commissions',    labelEs: 'Comisiones',         labelEn: 'Commissions' },
   { key: 'risk',           labelEs: 'Gestión de Riesgo',  labelEn: 'Risk Management' },
   { key: 'users',          labelEs: 'Usuarios',           labelEn: 'Users' },
+  { key: 'logs',           labelEs: 'Registro de Actividad', labelEn: 'Activity Log' },
 ];
 
 /**
