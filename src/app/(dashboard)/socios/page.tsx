@@ -323,6 +323,7 @@ export default function SociosPage() {
                 const { generatePartnerPeriodPDF } = await import('@/lib/pdf-export');
                 generatePartnerPeriodPDF({
                   companyName: company?.name ?? '',
+                  companyLogoUrl: company?.logo_url ?? null,
                   periodLabel: currentPeriod?.label ?? '',
                   ingresosNetos: currentChain?.ingresosNetos ?? 0,
                   egresosNetos: currentChain?.egresosNetos ?? 0,
@@ -397,6 +398,7 @@ export default function SociosPage() {
                 const { generateMonthlyClosePDF } = await import('@/lib/pdf-export');
                 generateMonthlyClosePDF({
                   companyName: company?.name ?? '',
+                  companyLogoUrl: company?.logo_url ?? null,
                   periodLabel: currentPeriod.label ?? `${currentPeriod.year}-${pad(currentPeriod.month)}`,
                   brokerPnl: sum.operatingIncome?.broker_pnl ?? 0,
                   propFirmNet: sum.propFirmNetIncome ?? 0,
@@ -691,6 +693,7 @@ export default function SociosPage() {
                   const partnerTotals = partners.map((_, idx) => round2(rows.reduce((s, r) => s + r.amounts[idx], 0)));
                   generatePartnerHistoryPDF({
                     companyName: company?.name ?? '',
+                    companyLogoUrl: company?.logo_url ?? null,
                     partnerNames: partners.map((p) => p.name),
                     rows,
                     partnerTotals,

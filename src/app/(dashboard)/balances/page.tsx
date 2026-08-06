@@ -817,7 +817,7 @@ export default function BalancesPage() {
             <button
               onClick={() =>
                 generateChannelBalancesPDF({
-                  company: { name: company?.name ?? 'Dashboard' },
+                  company: { name: company?.name ?? 'Dashboard', logoUrl: company?.logo_url ?? null },
                   asOf: selectedDate,
                   channels: visibleChannels.map((ch) => ({
                     label: ch.label,
