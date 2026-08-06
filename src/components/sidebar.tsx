@@ -96,6 +96,8 @@ const NAV_STRUCTURE: NavEntry[] = [
       // columnas y meses ocultables, totales al pie. Misma puerta de
       // módulo que reports (ambos son vistas ejecutivas).
       { href: '/finanzas/consolidado', i18nKey: 'nav.consolidado', icon: Table, module: 'reports' },
+      // Forecast (tanda 5 de la auditoría): la única vista forward-looking.
+      { href: '/finanzas/forecast', i18nKey: 'nav.forecast', icon: TrendingUp, module: 'reports' },
     ],
   },
 
