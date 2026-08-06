@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -18,7 +18,7 @@ const BOOL_FIELDS = [
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const body = (await request.json()) as Record<string, unknown>;

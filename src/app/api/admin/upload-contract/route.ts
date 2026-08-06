@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 const BUCKET = 'contracts';
@@ -61,7 +61,7 @@ function sniffContract(bytes: Uint8Array): { ext: string; mime: string } | null 
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const formData = await request.formData();

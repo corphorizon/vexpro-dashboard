@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { logIbRebateHistory } from '../_history';
 import { apiError } from '@/lib/api-error';
 
@@ -22,7 +22,7 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 
@@ -110,7 +110,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 

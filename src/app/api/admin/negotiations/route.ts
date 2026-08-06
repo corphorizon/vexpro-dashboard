@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { sanitizeDbError } from '@/lib/errors';
 
 // GET    — list negotiations  ?profile_id=... (optional)
@@ -10,7 +10,7 @@ import { sanitizeDbError } from '@/lib/errors';
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const { searchParams } = new URL(request.url);
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();

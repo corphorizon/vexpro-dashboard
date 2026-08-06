@@ -4,7 +4,7 @@
 // POST { channel_key, snapshot_date, amount, source? }
 //   → Upsert one row of channel_balances. Service-role write so the call
 //     bypasses RLS — auth is enforced at the route layer via
-//     `verifyAdminAuth(request)` (admin / auditor / hr OR superadmin
+//     `verifyAdminAuth(request, { roles: FINANCE_ROLES })` (admin / auditor / hr OR superadmin
 //     viewing-as via ?company_id=). Audited.
 //
 // Why an explicit endpoint instead of the previous browser-side
@@ -15,12 +15,12 @@
 //      shared with the cron path. The service-role write here is the same
 //      path the daily 00:00 UTC snapshot already uses.
 //   3. Tenant scoping for "viewing as" superadmins is a single helper
-//      (`verifyAdminAuth(request)`) instead of trusting RLS through the
+//      (`verifyAdminAuth(request, { roles: FINANCE_ROLES })`) instead of trusting RLS through the
 //      browser client.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 
@@ -35,7 +35,7 @@ type Body = {
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function POST(request: NextRequest) {
-  const auth = await verifyAdminAuth(request);
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
   if (auth instanceof NextResponse) return auth;
 
   // Only admin/auditor are allowed to write balances. HR roles can hit other
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
 // returned a Next.js default 405 that leaked endpoint existence to
 // unauthenticated callers.
 async function reject(request: NextRequest) {
-  const auth = await verifyAdminAuth(request);
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
   if (auth instanceof NextResponse) return auth;
   return NextResponse.json(
     { success: false, error: 'Método no permitido' },

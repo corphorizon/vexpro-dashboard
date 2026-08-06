@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -19,9 +19,30 @@ import { apiError } from '@/lib/api-error';
 // del token. Las RPC replace_period_* tienen bypass de service_role.
 // ---------------------------------------------------------------------------
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SANITIZADO DE PAYLOADS (auditoría 2026-08-06, hallazgo crítico).
+//
+// Antes: `.insert({ ...stripProtected(body.movement), company_id: companyId })` — el spread va
+// DESPUÉS, así que un body con company_id de otra empresa GANABA y escribía
+// cross-tenant con el cliente service-role (sin RLS que lo atrape). El
+// comentario del archivo afirmaba lo contrario. Y `.update(body.updates)`
+// aceptaba pisar id/company_id/created_at.
+//
+// Ahora: el spread va PRIMERO y company_id del token lo pisa; los updates
+// pasan por stripProtected. Defensa central, no por operación.
+// ─────────────────────────────────────────────────────────────────────────────
+const PROTECTED_KEYS = ['id', 'company_id', 'created_at', 'updated_at'];
+
+function stripProtected(input: unknown): Record<string, unknown> {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
+  const out: Record<string, unknown> = { ...(input as Record<string, unknown>) };
+  for (const k of PROTECTED_KEYS) delete out[k];
+  return out;
+}
+
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
     const companyId = auth.companyId;
     const admin = createAdminClient();
@@ -86,13 +107,13 @@ export async function POST(request: NextRequest) {
       // ── Liquidity movements ──
       case 'liquidity_insert': {
         const { data, error } = await admin.from('liquidity_movements')
-          .insert({ company_id: companyId, ...body.movement }).select('id').single();
+          .insert({ ...stripProtected(body.movement), company_id: companyId }).select('id').single();
         if (error) return fail(error, op);
         return NextResponse.json({ success: true, id: data.id });
       }
       case 'liquidity_update': {
         const { data, error } = await admin.from('liquidity_movements')
-          .update(body.updates).eq('id', body.id).eq('company_id', companyId).select('id');
+          .update(stripProtected(body.updates)).eq('id', body.id).eq('company_id', companyId).select('id');
         if (error) return fail(error, op);
         if (!data?.length) return NextResponse.json({ error: 'No se actualizó ninguna fila' }, { status: 404 });
         return NextResponse.json({ success: true });
@@ -106,13 +127,13 @@ export async function POST(request: NextRequest) {
       // ── Investments ──
       case 'investment_insert': {
         const { data, error } = await admin.from('investments')
-          .insert({ company_id: companyId, ...body.investment }).select('id').single();
+          .insert({ ...stripProtected(body.investment), company_id: companyId }).select('id').single();
         if (error) return fail(error, op);
         return NextResponse.json({ success: true, id: data.id });
       }
       case 'investment_update': {
         const { data, error } = await admin.from('investments')
-          .update(body.updates).eq('id', body.id).eq('company_id', companyId).select('id');
+          .update(stripProtected(body.updates)).eq('id', body.id).eq('company_id', companyId).select('id');
         if (error) return fail(error, op);
         if (!data?.length) return NextResponse.json({ error: 'No se actualizó ninguna fila' }, { status: 404 });
         return NextResponse.json({ success: true });
@@ -132,7 +153,7 @@ export async function POST(request: NextRequest) {
       }
       case 'partner_update': {
         const { data, error } = await admin.from('partners')
-          .update(body.updates).eq('id', body.id).eq('company_id', companyId).select('id');
+          .update(stripProtected(body.updates)).eq('id', body.id).eq('company_id', companyId).select('id');
         if (error) return fail(error, op);
         if (!data?.length) return NextResponse.json({ error: 'No se actualizó ninguna fila' }, { status: 404 });
         return NextResponse.json({ success: true });
@@ -181,12 +202,37 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: true });
       }
       case 'period_reserve': {
-        const { error } = await admin.from('periods').update({ reserve_pct: body.reservePct }).eq('id', body.periodId).eq('company_id', companyId);
+        // La reserva es un multiplicador de la fórmula de distribución: un
+        // valor fuera de 0..1 produce montos negativos o infla la reserva Nx.
+        // La única validación vivía en el cliente (auditoría, hallazgo C4).
+        const pct = Number(body.reservePct);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 1) {
+          return NextResponse.json(
+            { error: 'reserve_pct debe estar entre 0 y 1' },
+            { status: 400 },
+          );
+        }
+        const { error } = await admin.from('periods').update({ reserve_pct: pct }).eq('id', body.periodId).eq('company_id', companyId);
         if (error) return fail(error, op);
         return NextResponse.json({ success: true });
       }
       case 'period_reserve_all': {
-        const { error } = await admin.from('periods').update({ reserve_pct: body.reservePct }).eq('company_id', companyId);
+        const pct = Number(body.reservePct);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 1) {
+          return NextResponse.json(
+            { error: 'reserve_pct debe estar entre 0 y 1' },
+            { status: 400 },
+          );
+        }
+        // Solo períodos ABIERTOS: sin este filtro, "aplicar a todos"
+        // reescribía la reserva de meses cerrados y recalculaba
+        // retroactivamente lo que ya se distribuyó a los socios — la
+        // operación con mayor blast radius del producto (hallazgo C4).
+        const { error } = await admin
+          .from('periods')
+          .update({ reserve_pct: pct })
+          .eq('company_id', companyId)
+          .eq('is_closed', false);
         if (error) return fail(error, op);
         return NextResponse.json({ success: true });
       }
