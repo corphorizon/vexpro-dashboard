@@ -38,7 +38,12 @@ import {
   ToggleRight,
   Pin,
   PinOff,
+  BookOpen,
+  FileDown,
 } from 'lucide-react';
+import Link from 'next/link';
+import { hasLedger, isAutoLedger } from '@/lib/channel-ledger';
+import { generateChannelBalancesPDF } from '@/lib/pdf-export';
 
 // Icon lookup keyed by channel_key — only built-ins have a dedicated icon.
 // Custom channels render without one (Wallet default fallback in the row).
@@ -74,7 +79,7 @@ function todayISO(): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function BalancesPage() {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { user } = useAuth();
   const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData } = useData();
   const { selectedPeriodId } = usePeriod();
@@ -90,6 +95,10 @@ export default function BalancesPage() {
   const [pinnedWallets, setPinnedWallets] = useState<PinnedCoinsbuyWallet[]>([]);
   const [showCoinsbuyModal, setShowCoinsbuyModal] = useState(false);
   const [showChannelConfig, setShowChannelConfig] = useState(false);
+  // Saldo del libro por canal al cierre de la fecha seleccionada (migración
+  // 059). Es la fuente de verdad para el histórico; el saldo en vivo de los
+  // canales por API sigue saliendo de la API en el momento.
+  const [ledgerBalances, setLedgerBalances] = useState<Record<string, number>>({});
   const [channelConfigRows, setChannelConfigRows] = useState<ChannelConfigRow[]>([]);
   const isAdmin = user?.role === 'admin';
   // Access-control result is computed here but the early return happens at
@@ -489,27 +498,48 @@ export default function BalancesPage() {
   // the movements table on the fly, so we use that directly.
   const isToday = selectedDate === todayISO();
 
+  // Saldo del libro al cierre de la fecha elegida (migración 059).
+  useEffect(() => {
+    if (!company?.id) return;
+    let cancelled = false;
+    apiFetch(`/api/admin/channel-ledger/balances?asof=${selectedDate}`)
+      .then((r) => r.json())
+      .then((json: { success?: boolean; balances?: Record<string, number> }) => {
+        if (!cancelled && json.success) setLedgerBalances(json.balances ?? {});
+      })
+      .catch(() => {
+        // Sin libro cargado, cada canal cae a su snapshot histórico.
+        if (!cancelled) setLedgerBalances({});
+      });
+    return () => { cancelled = true; };
+  }, [company?.id, selectedDate]);
+
   const getChannelValue = (key: string): number => {
     if (key === 'liquidez') return liquidityBalance;
     if (key === 'inversiones') return investmentsBalance;
 
     const snap = snapshots.find((s) => s.channel_key === key);
+    const ledger = ledgerBalances[key];
 
+    // Canales por API: el saldo EN VIVO es lo que devuelve la API en este
+    // momento (decisión de Kevin). El libro manda para cualquier fecha
+    // pasada, porque cierra exacto contra el saldo real de ese día.
     if (key === 'coinsbuy') {
-      // Today → live aggregate (sum of pinned wallets right now).
       if (isToday) return pinnedWalletsTotal;
-      // Past date → historical snapshot, or 0 if none.
+      if (ledger !== undefined) return ledger;
       if (snap && snap.source) return snap.amount;
       return 0;
     }
     if (key === 'unipayment') {
-      // UniPayment is API-only. Manual snapshots are no longer accepted
-      // (any legacy rows are filtered out below).
-      // Today → live; past → snapshot.
       if (isToday) return unipaymentBalance;
+      if (ledger !== undefined) return ledger;
       if (snap && snap.source === 'api') return snap.amount;
       return 0;
     }
+
+    // Canales manuales: el libro es la única fuente de verdad. El snapshot
+    // queda solo como respaldo para canales que todavía no abrieron libro.
+    if (ledger !== undefined) return ledger;
     return snap?.amount ?? 0;
   };
 
@@ -784,6 +814,27 @@ export default function BalancesPage() {
             >
               <RefreshCw className={`w-4 h-4 ${loadingSnap ? 'animate-spin' : ''}`} />
             </button>
+            <button
+              onClick={() =>
+                generateChannelBalancesPDF({
+                  company: { name: company?.name ?? 'Dashboard' },
+                  asOf: selectedDate,
+                  channels: visibleChannels.map((ch) => ({
+                    label: ch.label,
+                    isAuto: isAutoLedger(ch.key) || ch.type === 'auto',
+                    balance: getChannelValue(ch.key),
+                  })),
+                  total: visibleChannels.reduce((s, ch) => s + getChannelValue(ch.key), 0),
+                  locale: locale === 'en' ? 'en' : 'es',
+                })
+              }
+              disabled={visibleChannels.length === 0}
+              className="inline-flex items-center gap-1.5 h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
+              title={t('ledger.exportPdf')}
+            >
+              <FileDown className="w-4 h-4" />
+              <span className="hidden sm:inline">PDF</span>
+            </button>
             {isAdmin && (
               <button
                 onClick={() => setShowChannelConfig(true)}
@@ -869,15 +920,31 @@ export default function BalancesPage() {
                       <span className={`font-semibold text-base ${value >= 0 ? '' : 'text-negative'}`}>
                         {formatCurrency(value)}
                       </span>
-                      {((!isAuto && !isCoinsbuy) || canOverride) && userCanAdd && (
-                        <button
-                          onClick={() => startEdit(ch.key)}
+                      {/* El saldo de un canal con libro ya no se sobreescribe
+                          a mano: se carga un asiento. Dejar las dos vías
+                          significaría dos fuentes de verdad para el mismo
+                          número. La edición directa sobrevive solo para
+                          canales sin libro. */}
+                      {hasLedger(ch.key) ? (
+                        <Link
+                          href={`/balances/libro/${encodeURIComponent(ch.key)}`}
                           className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                          aria-label={t('common.edit')}
-                          title={canOverride ? t('balances.manualOverrideTitle') : t('balances.editBalance')}
+                          aria-label={`${t('ledger.openBook')} — ${ch.label}`}
+                          title={t('ledger.openBook')}
                         >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
+                          <BookOpen className="w-3.5 h-3.5" />
+                        </Link>
+                      ) : (
+                        ((!isAuto && !isCoinsbuy) || canOverride) && userCanAdd && (
+                          <button
+                            onClick={() => startEdit(ch.key)}
+                            className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                            aria-label={t('common.edit')}
+                            title={canOverride ? t('balances.manualOverrideTitle') : t('balances.editBalance')}
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                        )
                       )}
                       {isCoinsbuy && isAdmin && (
                         <button

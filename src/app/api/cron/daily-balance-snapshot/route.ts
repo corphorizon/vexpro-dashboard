@@ -3,6 +3,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
 import { fetchFairpayBalances } from '@/lib/api-integrations/fairpay/balances';
+import { syncChannelLedgerDay, type LedgerSyncResult } from '@/lib/channel-ledger-sync';
+import { previousDay } from '@/lib/channel-ledger';
 
 // The channel_balances table has RLS enabled; writes from the cron can't
 // pass through the normal `supabase` client (no cookie → no user). This
@@ -73,6 +75,11 @@ export async function GET(request: NextRequest) {
   // very start of 2026-04-19 (≡ end of 2026-04-18).
   const today = new Date().toISOString().slice(0, 10);
 
+  // El snapshot escrito hoy a las 00:00 UTC ES el cierre de ayer, así que los
+  // asientos del libro se fechan ayer. Fecharlos hoy correría el libro un día
+  // y "saldo al 5 de agosto" mostraría cómo cerró el 4.
+  const ledgerDate = previousDay(today);
+
   const { data: companies, error: listError } = await admin
     .from('companies')
     .select('id, name');
@@ -104,6 +111,10 @@ export async function GET(request: NextRequest) {
       company_id: company.id,
       company_name: company.name,
     };
+
+    // Asientos del libro por canal. Se acumulan acá y se reportan en la
+    // respuesta del cron para poder auditar el ajuste de cada día.
+    const ledger: LedgerSyncResult[] = [];
 
     // ── Coinsbuy ──
     // Pass company.id so the fetcher picks up per-tenant credentials from
@@ -159,6 +170,10 @@ export async function GET(request: NextRequest) {
         await adminUpsertChannelBalance(admin, company.id, today, 'coinsbuy', totalForAggregate, 'api');
         entry.coinsbuy = totalForAggregate;
         entry.coinsbuy_pinned_wallets = perWallet;
+
+        ledger.push(
+          await syncChannelLedgerDay(admin, company.id, 'coinsbuy', ledgerDate, totalForAggregate),
+        );
       }
     } catch (err) {
       entry.coinsbuy_error = err instanceof Error ? err.message : 'Unknown error';
@@ -209,11 +224,16 @@ export async function GET(request: NextRequest) {
         );
         await adminUpsertChannelBalance(admin, company.id, today, 'unipayment', total, 'api');
         entry.unipayment = total;
+
+        ledger.push(
+          await syncChannelLedgerDay(admin, company.id, 'unipayment', ledgerDate, total),
+        );
       }
     } catch (err) {
       entry.unipayment_error = err instanceof Error ? err.message : 'Unknown error';
     }
 
+    if (ledger.length > 0) entry.ledger = ledger;
     return entry;
   };
 
@@ -222,6 +242,7 @@ export async function GET(request: NextRequest) {
   return NextResponse.json({
     success: true,
     snapshot_date: today,
+    ledger_date: ledgerDate,
     companies_processed: results.length,
     results,
   });

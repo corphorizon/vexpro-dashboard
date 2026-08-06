@@ -537,8 +537,11 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
             title={isCollapsed ? t('nav.profile') : undefined}
             aria-label={t('nav.profile')}
             className={cn(
-              'group flex items-center rounded-lg text-sm font-medium transition-all',
-              isCollapsed ? 'justify-center h-10' : 'gap-3 px-3 py-2',
+              // Centrado en ambos estados: el resto del footer (avatar,
+              // nombre, tema/idioma) ya va centrado y estos dos quedaban
+              // pegados a la izquierda, rompiendo el eje del bloque.
+              'group flex items-center justify-center rounded-lg text-sm font-medium transition-all',
+              isCollapsed ? 'h-10' : 'gap-2 px-3 py-2',
               pathname === '/perfil'
                 ? 'bg-[var(--color-primary)] text-white'
                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
@@ -605,8 +608,8 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
               aria-label={t('nav.logout')}
               title={isCollapsed ? t('nav.logout') : undefined}
               className={cn(
-                'group flex items-center w-full rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all',
-                isCollapsed ? 'justify-center h-10' : 'gap-3 px-3 py-2',
+                'group flex items-center justify-center w-full rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all',
+                isCollapsed ? 'h-10' : 'gap-2 px-3 py-2',
               )}
             >
               <LogOut className={cn(

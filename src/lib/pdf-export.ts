@@ -911,3 +911,195 @@ export function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   pdfFooter(doc);
   doc.save(`Cierre_Mensual_${data.periodLabel.replace(/\s/g, '_')}.pdf`);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Libro de balances por canal (migración 059)
+//
+// Dos documentos:
+//   · generateChannelLedgerPDF   → el libro de UN canal, con saldo corrido.
+//   · generateChannelBalancesPDF → el resumen de TODOS los canales a una fecha.
+//
+// Bilingües por llamada (no por idioma de UI), igual que las órdenes de pago:
+// el PDF suele salir de la app para mandárselo a alguien que no la usa.
+// jsPDF con fuentes estándar soporta tildes y ñ (WinAnsi) — verificado.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+type LedgerLocale = 'es' | 'en';
+
+const LEDGER_T = {
+  es: {
+    ledgerTitle: 'Libro del canal', balancesTitle: 'Balances por Canal',
+    generated: 'Generado', period: 'Período', asOf: 'Al',
+    opening: 'Saldo inicial', inflows: 'Ingresos', outflows: 'Retiros',
+    internal: 'Transferencias internas', closing: 'Saldo final',
+    date: 'Fecha', concept: 'Concepto', reference: 'Referencia',
+    inflow: 'Ingreso', outflow: 'Egreso', balance: 'Saldo',
+    detail: 'Detalle del libro', summary: 'Resumen del período',
+    channel: 'Canal', type: 'Tipo', auto: 'Automático', manual: 'Manual',
+    total: 'Total consolidado', channels: 'Canales',
+    autoNote: 'Libro escrito automaticamente cada dia a las 00:00 UTC con los datos de la API del proveedor. El saldo de cierre coincide con el saldo real reportado por el proveedor.',
+    internalNote: 'Las transferencias internas mueven el saldo del canal pero quedan fuera de Retiros Totales: son movimientos entre wallets propias, no retiros del negocio.',
+  },
+  en: {
+    ledgerTitle: 'Channel ledger', balancesTitle: 'Balances by Channel',
+    generated: 'Generated', period: 'Period', asOf: 'As of',
+    opening: 'Opening balance', inflows: 'Inflows', outflows: 'Withdrawals',
+    internal: 'Internal transfers', closing: 'Closing balance',
+    date: 'Date', concept: 'Concept', reference: 'Reference',
+    inflow: 'Inflow', outflow: 'Outflow', balance: 'Balance',
+    detail: 'Ledger detail', summary: 'Period summary',
+    channel: 'Channel', type: 'Type', auto: 'Automatic', manual: 'Manual',
+    total: 'Total consolidated', channels: 'Channels',
+    autoNote: 'Ledger written automatically every day at 00:00 UTC from the provider API. The closing balance matches the real balance reported by the provider.',
+    internalNote: 'Internal transfers move the channel balance but stay out of Total Withdrawals: they are movements between your own wallets, not business withdrawals.',
+  },
+} as const;
+
+export interface PdfLedgerRow {
+  entry_date: string;
+  concept: string;
+  category: string | null;
+  reference: string | null;
+  kind: 'opening' | 'in' | 'out';
+  amount: number;
+  balance: number;
+}
+
+export interface PdfChannelLedgerData {
+  company: { name: string; logoUrl?: string | null; colorPrimary?: string | null };
+  channelLabel: string;
+  isAuto: boolean;
+  from: string;
+  to: string;
+  rows: PdfLedgerRow[];
+  totals: {
+    opening: number; inflows: number; outflows: number;
+    internalTransfers: number; adjustments: number; closing: number;
+  };
+  locale?: LedgerLocale;
+}
+
+/** Nota al pie de una seccion, en gris chico. Devuelve la Y libre. */
+function pdfNote(doc: jsPDF, text: string, y: number, margin = 14): number {
+  const w = doc.internal.pageSize.getWidth();
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.4);
+  doc.setTextColor(...C.muted);
+  const lines = doc.splitTextToSize(text, w - margin * 2);
+  doc.text(lines, margin, y);
+  return y + lines.length * 3.4 + 3;
+}
+
+export function generateChannelLedgerPDF(data: PdfChannelLedgerData) {
+  const L = LEDGER_T[data.locale ?? 'es'];
+  const doc = new jsPDF('portrait', 'mm', 'a4');
+
+  let y = pdfHeader(doc, {
+    title: L.ledgerTitle,
+    company: data.company.name,
+    right: [
+      data.channelLabel,
+      `${L.period}: ${data.from} - ${data.to}`,
+      `${L.generated}: ${new Date().toLocaleDateString()}`,
+    ],
+  });
+
+  // ─── Resumen del período ───
+  y = pdfSection(doc, `${L.summary} - ${data.channelLabel}`, y);
+  y = pdfCards(doc, y, [
+    { label: L.opening, value: money(data.totals.opening) },
+    { label: L.inflows, value: money(data.totals.inflows), tone: 'positive' },
+    { label: L.outflows, value: money(data.totals.outflows), tone: 'negative' },
+    { label: L.closing, value: money(data.totals.closing), tone: 'primary' },
+  ]);
+
+  if (data.totals.internalTransfers > 0) {
+    y = pdfNote(doc, `${L.internal}: ${money(data.totals.internalTransfers)}. ${L.internalNote}`, y);
+  }
+  if (data.isAuto) {
+    y = pdfNote(doc, L.autoNote, y);
+  }
+
+  // ─── Detalle ───
+  y = pdfSection(doc, L.detail, y + 3);
+  autoTable(doc, {
+    startY: y,
+    head: [[L.date, L.concept, L.reference, L.inflow, L.outflow, L.balance]],
+    body: data.rows.map((r) => [
+      r.entry_date,
+      r.concept,
+      // Las referencias suelen ser hashes o URLs largas: sin recortar,
+      // autotable ensancha la columna y desarma el resto de la tabla.
+      r.reference ? (r.reference.length > 28 ? `${r.reference.slice(0, 27)}...` : r.reference) : '-',
+      r.kind !== 'out' ? money(r.amount) : '',
+      r.kind === 'out' ? money(r.amount) : '',
+      money(r.balance),
+    ]),
+    foot: [['', L.closing, '', '', '', money(data.totals.closing)]],
+    theme: 'striped',
+    styles: { fontSize: 8, cellPadding: 2.4 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: {
+      0: { cellWidth: 20 },
+      2: { cellWidth: 38 },
+      3: { halign: 'right', textColor: C.positive },
+      4: { halign: 'right', textColor: C.negative },
+      5: { halign: 'right', fontStyle: 'bold' },
+    },
+    margin: { left: 14, right: 14 },
+    // columnStyles.halign NO se aplica al foot de autotable: hay que forzarlo.
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 5) h.cell.styles.halign = 'right';
+    },
+  });
+
+  pdfFooter(doc);
+  doc.save(`Libro_${data.channelLabel.replace(/\s+/g, '_')}_${data.from}_${data.to}.pdf`);
+}
+
+export interface PdfChannelBalancesData {
+  company: { name: string };
+  asOf: string;
+  channels: Array<{ label: string; isAuto: boolean; balance: number }>;
+  total: number;
+  locale?: LedgerLocale;
+}
+
+export function generateChannelBalancesPDF(data: PdfChannelBalancesData) {
+  const L = LEDGER_T[data.locale ?? 'es'];
+  const doc = new jsPDF('portrait', 'mm', 'a4');
+
+  let y = pdfHeader(doc, {
+    title: L.balancesTitle,
+    company: data.company.name,
+    right: [`${L.asOf} ${data.asOf}`, `${L.generated}: ${new Date().toLocaleDateString()}`],
+  });
+
+  y = pdfCards(doc, y, [
+    { label: L.total, value: money(data.total), tone: 'primary' },
+    { label: L.channels, value: String(data.channels.length), tone: 'accent' },
+  ]);
+
+  y = pdfSection(doc, L.balancesTitle, y + 2);
+  autoTable(doc, {
+    startY: y,
+    head: [[L.channel, L.type, L.balance]],
+    body: data.channels.map((c) => [c.label, c.isAuto ? L.auto : L.manual, money(c.balance)]),
+    foot: [[L.total, '', money(data.total)]],
+    theme: 'striped',
+    styles: { fontSize: 9.5, cellPadding: 3 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right', fontStyle: 'bold' } },
+    margin: { left: 14, right: 14 },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 2) h.cell.styles.halign = 'right';
+    },
+  });
+
+  pdfFooter(doc);
+  doc.save(`Balances_por_Canal_${data.asOf}.pdf`);
+}
