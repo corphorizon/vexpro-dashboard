@@ -69,11 +69,18 @@ export function StatCard({ label, value, hint, icon: Icon, tone = 'neutral', emp
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">{label}</div>
-          <p className={cn(
-            'font-bold tabular-nums mt-1 truncate',
-            emphasis ? 'text-3xl sm:text-4xl' : 'text-2xl',
-            s.value,
-          )}>
+          {/* `truncate` evita que un número largo rompa la grilla, pero a
+              text-4xl un saldo de seis cifras se cortaba ("$10,87…"). El
+              tamaño de énfasis baja un escalón y crece recién en pantallas
+              anchas; el title deja ver el valor completo al pasar el mouse. */}
+          <p
+            title={typeof value === 'string' ? value : undefined}
+            className={cn(
+              'font-bold tabular-nums mt-1 truncate',
+              emphasis ? 'text-2xl sm:text-3xl' : 'text-2xl',
+              s.value,
+            )}
+          >
             {value}
           </p>
           {hint && (
