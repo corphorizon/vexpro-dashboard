@@ -3,6 +3,7 @@
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { ExpenseReference } from '@/components/ui/expense-reference';
 import { ExpenseConcept } from '@/components/ui/expense-concept';
 import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
@@ -125,7 +126,7 @@ interface WithdrawalRow { id: string; category: string; amount: number; }
 // expense_date (migration-056): 'YYYY-MM-DD' o null = sin fecha específica.
 // payment_order_id: orden de pago que originó el egreso (null = manual). Tiene
 // que viajar en el payload de guardado o el DELETE+INSERT de la RPC lo borra.
-interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; expense_date: string | null; payment_order_id: string | null; }
+interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; expense_date: string | null; payment_order_id: string | null; reference: string | null; attachment_bucket: string | null; attachment_path: string | null; attachment_name: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_uploaded_at: string | null; }
 
 // ─── Sortable row wrapper (drag-and-drop reorder) ─────────────────────────
 // Wraps each expense <tr> so it can be dragged via the leading handle
@@ -377,6 +378,18 @@ export default function UploadPage() {
         category: e.category ?? null,
         expense_date: e.expense_date ?? null,
         payment_order_id: e.payment_order_id ?? null,
+        // migration-060 — la RPC re-inserta el período entero desde este
+        // payload: si la referencia no viaja acá, se borra sola al guardar.
+        reference: e.reference ?? null,
+        // El adjunto tambien tiene que dar la vuelta completa. Un egreso que
+        // heredo el comprobante de una orden de pago perderia el archivo al
+        // primer guardado del mes si estos campos no viajaran de ida y vuelta.
+        attachment_bucket: e.attachment_bucket ?? null,
+        attachment_path: e.attachment_path ?? null,
+        attachment_name: e.attachment_name ?? null,
+        attachment_mime: e.attachment_mime ?? null,
+        attachment_size: e.attachment_size ?? null,
+        attachment_uploaded_at: e.attachment_uploaded_at ?? null,
       }));
     }
 
@@ -440,6 +453,13 @@ export default function UploadPage() {
       category: conceptCategoryMap.get(tpl.concept) ?? null,
       // Las plantillas no tienen día: la fecha se pone a mano si hace falta.
       expense_date: null,
+      reference: null,
+      attachment_bucket: null,
+      attachment_path: null,
+      attachment_name: null,
+      attachment_mime: null,
+      attachment_size: null,
+      attachment_uploaded_at: null,
       // Una plantilla fija no nace de una orden de pago.
       payment_order_id: null,
     }));
@@ -645,9 +665,9 @@ export default function UploadPage() {
 
   // UI state — shared confirmation dialog for destructive deletes.
   const { confirm, Modal: ConfirmModal } = useConfirm();
-  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '' });
+  const [newExpense, setNewExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '' });
   const [editingExpenseId, setEditingExpenseId] = useState<string | null>(null);
-  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '' });
+  const [editExpense, setEditExpense] = useState({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '' });
 
   // Egreso fijo recién editado, esperando que el usuario elija el alcance
   // ("solo este mes" / "este mes y los siguientes"). Ver FixedForwardDialog.
@@ -1419,10 +1439,17 @@ export default function UploadPage() {
       is_fixed: newExpense.is_fixed,
       category: cat,
       expense_date: newExpense.expense_date || null, // vacío = sin fecha
+      reference: newExpense.reference.trim() || null,
+      attachment_bucket: null,
+      attachment_path: null,
+      attachment_name: null,
+      attachment_mime: null,
+      attachment_size: null,
+      attachment_uploaded_at: null,
       payment_order_id: null, // egreso cargado a mano: no viene de una OP
     }];
     setExpensesRaw(next); // optimista
-    setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '' });
+    setNewExpense({ concept: '', amount: '', paid: '', pending: '', is_fixed: false, category: '', expense_date: '', reference: '' });
     addConceptToHistory(newExpense.concept);
     if (cat) addCategoryToHistory(cat);
     void persistExpenses(next, previous, {
@@ -1434,7 +1461,7 @@ export default function UploadPage() {
   const startEditExpense = (exp: ExpenseRow) => {
     if (!userCanEdit) return;
     setEditingExpenseId(exp.id);
-    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed, category: exp.category ?? '', expense_date: exp.expense_date ?? '' });
+    setEditExpense({ concept: exp.concept, amount: String(exp.amount), paid: String(exp.paid), pending: String(exp.pending), is_fixed: !!exp.is_fixed, category: exp.category ?? '', expense_date: exp.expense_date ?? '', reference: exp.reference ?? '' });
   };
 
   const saveEditExpense = () => {
@@ -1446,7 +1473,7 @@ export default function UploadPage() {
     const previous = expenses;
     const concept = editExpense.concept;
     const target = expenses.find(e => e.id === editingExpenseId);
-    const next = expenses.map(e => e.id === editingExpenseId ? { ...e, concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat, expense_date: editExpense.expense_date || null } : e);
+    const next = expenses.map(e => e.id === editingExpenseId ? { ...e, concept, amount: amt, paid: pd, pending: pn, is_fixed: editExpense.is_fixed, category: cat, expense_date: editExpense.expense_date || null, reference: editExpense.reference.trim() || null } : e);
     setExpensesRaw(next); // optimista
     if (cat) addCategoryToHistory(cat);
     setEditingExpenseId(null);
@@ -2230,6 +2257,7 @@ export default function UploadPage() {
                 {/* Fecha opcional (migration-056), DD/MM — el año lo da el
                     período. La tabla ya scrollea en móvil (overflow-x-auto). */}
                 <th className="text-left py-2 px-2 text-muted-foreground font-medium w-16">{t('expenses.date')}</th>
+                <th className="text-left py-2 px-2 text-muted-foreground font-medium">Referencia</th>
                 <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.amount')}</th>
                 <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
                 <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
@@ -2243,7 +2271,7 @@ export default function UploadPage() {
             >
             <tbody>
               {expenses.length === 0 && (
-                <tr><td colSpan={10} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
+                <tr><td colSpan={11} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
               )}
               {pagedExpenses.map((exp, i) => (
                 <SortableExpenseRow
@@ -2297,6 +2325,16 @@ export default function UploadPage() {
                           className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
                         />
                       </td>
+                      {/* Referencia del pago: hash, nº de operación o link. */}
+                      <td className="py-2 px-2">
+                        <input
+                          aria-label="Referencia del egreso"
+                          placeholder="hash o link"
+                          value={editExpense.reference}
+                          onChange={e => setEditExpense(p => ({ ...p, reference: e.target.value }))}
+                          className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
+                        />
+                      </td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
                       <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.pending')} value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
@@ -2338,6 +2376,14 @@ export default function UploadPage() {
                       <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
                         {exp.expense_date ? formatDayMonth(exp.expense_date) : '—'}
                       </td>
+                      <td className="py-2 px-2 max-w-[160px]">
+                        <ExpenseReference
+                          expenseId={exp.id}
+                          reference={exp.reference}
+                          attachmentName={exp.attachment_name}
+                          hasAttachment={!!exp.attachment_path}
+                        />
+                      </td>
                       <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(exp.amount)}</td>
                       <td className="py-2.5 px-3 text-right">{formatCurrency(exp.paid)}</td>
                       <td className="py-2.5 px-3 text-right">{formatCurrency(exp.pending)}</td>
@@ -2370,7 +2416,7 @@ export default function UploadPage() {
             {expenses.length > 0 && (
               <tfoot>
                 <tr className="font-bold bg-muted/50">
-                  <td className="py-3 px-3" colSpan={5}>{t('common.total')}</td>
+                  <td className="py-3 px-3" colSpan={6}>{t('common.total')}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
                   <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
@@ -2393,7 +2439,7 @@ export default function UploadPage() {
           {userCanAdd && (
             <div className="mt-4 pt-4 border-t border-border">
               <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addExpense')}</h3>
-              <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-8 gap-3">
                 <div className="md:col-span-2 relative">
                   <input
                     ref={conceptInputRef}
@@ -2455,6 +2501,16 @@ export default function UploadPage() {
                   title={t('expenses.dateHint')}
                   value={newExpense.expense_date}
                   onChange={e => setNewExpense(p => ({ ...p, expense_date: e.target.value }))}
+                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                />
+                {/* Referencia del pago — opcional. Los egresos que nacen de una
+                    orden la heredan sola; este campo es para los manuales. */}
+                <input
+                  aria-label="Referencia del egreso"
+                  title="Hash de la transacción, nº de operación o link al comprobante"
+                  value={newExpense.reference}
+                  onChange={e => setNewExpense(p => ({ ...p, reference: e.target.value }))}
+                  placeholder="Referencia"
                   className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <input

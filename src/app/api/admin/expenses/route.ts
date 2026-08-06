@@ -33,6 +33,29 @@ interface ExpenseRow {
   expense_date?: string | null;
   /** uuid de la orden de pago que originó el egreso, o null/'' si es manual. */
   payment_order_id?: string | null;
+  /** Traza del pago (migration-060): referencia en texto y archivo adjunto. */
+  reference?: string | null;
+  attachment_bucket?: string | null;
+  attachment_path?: string | null;
+  attachment_name?: string | null;
+  attachment_mime?: string | null;
+  attachment_size?: number | null;
+  attachment_uploaded_at?: string | null;
+}
+
+/** Texto saneado: recorta y convierte vacío en null. */
+function str(v: unknown): string | null {
+  return typeof v === 'string' && v.trim() !== '' ? v.trim() : null;
+}
+
+/**
+ * El bucket no puede venir libre del cliente: es parte de la URL firmada que
+ * después se genera, y aceptar cualquier valor permitiría apuntar a un bucket
+ * ajeno. Solo dos son válidos.
+ */
+const ALLOWED_ATTACHMENT_BUCKETS = new Set(['expense-attachments', 'payment-proofs']);
+function normalizeBucket(v: unknown): string | null {
+  return typeof v === 'string' && ALLOWED_ATTACHMENT_BUCKETS.has(v) ? v : null;
 }
 
 // La fecha viaja como string del <input type="date">. Cualquier cosa que no
@@ -79,6 +102,14 @@ export async function POST(request: NextRequest) {
         // reconstruye el período desde este payload, así que el vínculo con la
         // orden de pago tiene que viajar o se pierde en cada guardado.
         payment_order_id: normalizeUuid(e.payment_order_id),
+        // migration-060 — misma razón que los dos de arriba.
+        reference: str(e.reference),
+        attachment_bucket: normalizeBucket(e.attachment_bucket),
+        attachment_path: str(e.attachment_path),
+        attachment_name: str(e.attachment_name),
+        attachment_mime: str(e.attachment_mime),
+        attachment_size: typeof e.attachment_size === 'number' ? e.attachment_size : null,
+        attachment_uploaded_at: str(e.attachment_uploaded_at),
       })),
     });
     if (error) return apiError('admin/expenses', error, { status: 500 });

@@ -220,6 +220,14 @@ export async function POST(
         order_number: result.order_number,
         beneficiary_name: result.beneficiary_name,
         total: result.total,
+        // Se pasa la traza del pago para que el egreso la herede (migr. 060).
+        payment_reference: result.payment_reference,
+        payment_date: result.payment_date,
+        payment_proof_path: result.payment_proof_path,
+        payment_proof_name: result.payment_proof_name,
+        payment_proof_mime: result.payment_proof_mime,
+        payment_proof_size: result.payment_proof_size,
+        payment_proof_uploaded_at: result.payment_proof_uploaded_at,
       }, body?.expense_category ?? null);
       warning = w;
       if (expenseId) {

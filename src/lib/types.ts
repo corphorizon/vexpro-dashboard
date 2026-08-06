@@ -81,6 +81,22 @@ export interface Expense {
   // el período entero desde el payload del cliente — si esta columna no viaja
   // en ese payload, el vínculo se pierde en el próximo guardado.
   payment_order_id?: string | null;
+
+  // Traza del pago (migration-060). Misma pareja que en las órdenes de pago:
+  // referencia en texto (hash, nº de operación o link) y archivo adjunto.
+  // Cuando el egreso nace de una OP se heredan de esa orden.
+  //
+  // MISMA TRAMPA que expense_date y payment_order_id: replace_period_expenses
+  // borra y re-inserta el período entero desde el payload del cliente. Si
+  // estos campos no viajan ahí, se pierden en el próximo guardado del mes.
+  reference?: string | null;
+  /** Bucket del adjunto: 'expense-attachments' o 'payment-proofs' si vino de una OP. */
+  attachment_bucket?: string | null;
+  attachment_path?: string | null;
+  attachment_name?: string | null;
+  attachment_mime?: string | null;
+  attachment_size?: number | null;
+  attachment_uploaded_at?: string | null;
 }
 
 export interface ExpenseTemplate {

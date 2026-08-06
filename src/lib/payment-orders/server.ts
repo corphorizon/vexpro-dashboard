@@ -323,7 +323,20 @@ export function expenseConcept(orderNumber: string, beneficiaryName: string): st
 export async function createExpenseForPaidOrder(
   admin: SupabaseClient,
   companyId: string,
-  order: { id: string; order_number: string; beneficiary_name: string; total: number },
+  order: {
+    id: string;
+    order_number: string;
+    beneficiary_name: string;
+    total: number;
+    /** Traza del pago: se copia al egreso para no cargarla dos veces. */
+    payment_reference?: string | null;
+    payment_date?: string | null;
+    payment_proof_path?: string | null;
+    payment_proof_name?: string | null;
+    payment_proof_mime?: string | null;
+    payment_proof_size?: number | null;
+    payment_proof_uploaded_at?: string | null;
+  },
   /** Categoría del egreso a registrar. Opcional: null = sin categoría, igual
    *  que un egreso cargado a mano sin elegirla. */
   category?: string | null,
@@ -364,6 +377,23 @@ export async function createExpenseForPaidOrder(
       // Vínculo egreso → orden, para que Egresos pueda linkear al detalle de la
       // OP. La orden guarda además expense_id (vínculo inverso) desde el caller.
       payment_order_id: order.id,
+
+      // La fecha del egreso es la del PAGO, no la de hoy: si la orden se marca
+      // pagada con unos días de atraso, fecharla hoy la manda al período
+      // equivocado.
+      expense_date: str(order.payment_date) || null,
+
+      // Traza heredada de la orden (migración 060). Es la misma plata, así
+      // que duplicar la carga a mano solo abriría la puerta a que difieran.
+      reference: str(order.payment_reference) || null,
+      // El archivo NO se copia: el egreso apunta al comprobante original en
+      // el bucket de la orden. Por eso hace falta guardar cuál es.
+      attachment_bucket: order.payment_proof_path ? 'payment-proofs' : null,
+      attachment_path: str(order.payment_proof_path) || null,
+      attachment_name: str(order.payment_proof_name) || null,
+      attachment_mime: str(order.payment_proof_mime) || null,
+      attachment_size: order.payment_proof_size ?? null,
+      attachment_uploaded_at: str(order.payment_proof_uploaded_at) || null,
     })
     .select('id')
     .maybeSingle();
