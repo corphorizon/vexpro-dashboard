@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { createAdminClient } from '@/lib/supabase/admin';
-import { AUTO_CATEGORIES, previousDay } from '@/lib/channel-ledger';
+import { AUTO_CATEGORIES, previousDay, resolveInternalTransfers } from '@/lib/channel-ledger';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -160,17 +160,26 @@ export async function syncChannelLedgerDay(
   if (day.withdrawals > CENT) {
     lines.push({ entry_date: entryDate, kind: 'out', concept: 'Retiros del día', category: AUTO_CATEGORIES.withdrawals, amount: day.withdrawals });
   }
-  if (day.internal > CENT) {
+
+  // ── Internas + ajuste: decide el saldo real del custodio ───────────────
+  // Una interna entre dos wallets FIJADAS no mueve el agregado: asentarla
+  // como salida y revertirla con un ajuste gigante era ficción contable (el
+  // 06/08 el guard abortó el día entero por $35.000 que fueron 1079→1705).
+  // resolveInternalTransfers contrasta los dos candidatos contra actualClose.
+  const baseWithoutInternal = priorBalance + manualDelta + day.deposits - day.withdrawals;
+  const { internalLeftAggregate, adjustment } = resolveInternalTransfers({
+    baseWithoutInternal,
+    internal: day.internal,
+    actualClose,
+  });
+
+  if (day.internal > CENT && internalLeftAggregate) {
     lines.push({
       entry_date: entryDate, kind: 'out', concept: 'Transferencias internas',
       category: AUTO_CATEGORIES.internal, amount: day.internal,
-      notes: 'Movimiento entre wallets propias: mueve el saldo del canal pero queda fuera de Retiros Totales.',
+      notes: 'Movimiento hacia una wallet propia fuera del agregado: mueve el saldo del canal pero queda fuera de Retiros Totales.',
     });
   }
-
-  // ── Ajuste que cierra contra el saldo real ─────────────────────────────
-  const computed = priorBalance + manualDelta + day.deposits - day.withdrawals - day.internal;
-  const adjustment = actualClose - computed;
   if (Math.abs(adjustment) > CENT) {
     lines.push({
       entry_date: entryDate,

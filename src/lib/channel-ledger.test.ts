@@ -9,6 +9,7 @@ import {
   previousDay,
   signedAmount,
   type LedgerEntry,
+  resolveInternalTransfers,
 } from './channel-ledger';
 
 // Fábrica mínima: los tests solo miran fecha, tipo, categoría y monto.
@@ -184,5 +185,38 @@ describe('validateEntry', () => {
 
   it('rechaza fechas mal formadas', () => {
     expect(validateEntry({ ...ok, entry_date: '06/08/2026' })).toMatch(/fecha/i);
+  });
+});
+
+describe('resolveInternalTransfers', () => {
+  // Caso real 2026-08-04: $70.000 internos que SÍ salieron del agregado
+  // (destino: wallet no fijada). El ajuste correcto es el de comisiones.
+  it('detecta la interna que salió del agregado (04/08 real)', () => {
+    const r = resolveInternalTransfers({
+      baseWithoutInternal: 527_159.81 + 46_604.88 - 18_594.24, // 555.170,45
+      internal: 70_000,
+      actualClose: 527_159.81 + 46_604.88 - 18_594.24 - 70_000 - 1.07,
+    });
+    expect(r.internalLeftAggregate).toBe(true);
+    expect(r.adjustment).toBeCloseTo(-1.07, 2);
+  });
+
+  // Caso real 2026-08-06: $35.000 de 1079 → 1705, AMBAS fijadas. La plata
+  // nunca salió; asentar la interna habría creado un par ficticio de ±35K.
+  it('detecta la interna entre wallets fijadas (06/08 real)', () => {
+    const base = 573_884.41 + 38_397.58 + 37_870.99 - 91_063.68; // 559.089,30
+    const r = resolveInternalTransfers({
+      baseWithoutInternal: base,
+      internal: 35_000,
+      actualClose: 559_084.37,
+    });
+    expect(r.internalLeftAggregate).toBe(false);
+    expect(r.adjustment).toBeCloseTo(-4.93, 2);
+  });
+
+  it('sin internas, el ajuste es directo', () => {
+    const r = resolveInternalTransfers({ baseWithoutInternal: 1000, internal: 0, actualClose: 998 });
+    expect(r.internalLeftAggregate).toBe(false);
+    expect(r.adjustment).toBe(-2);
   });
 });
