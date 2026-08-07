@@ -236,3 +236,36 @@ export function validateEntry(input: Partial<LedgerEntryInput>): string | null {
   if (input.amount === 0) return 'El monto tiene que ser mayor que cero';
   return null;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ¿La transferencia interna salió del agregado o se movió entre wallets
+// fijadas?
+//
+// `internal = true` mezcla dos casos que el libro debe tratar distinto
+// (auditoría 2026-08-06, integraciones):
+//   · destino NO fijado → la plata SÍ salió del agregado ⇒ línea 'internal'.
+//   · destino fijado    → la plata NUNCA salió ⇒ NINGUNA línea (asentarla y
+//     revertirla con un ajuste gigante es ficción contable — pasó el 30/07
+//     con $174.835/$169.999, y el 06/08 el guard abortó por esto).
+//
+// La API no persiste la wallet destino, pero no hace falta: el saldo REAL del
+// custodio decide. Se calculan los dos candidatos y gana el que deja el
+// ajuste chico. Si ninguno cierra (interna parcial, dato roto), se devuelve
+// el de menor ajuste y el umbral del caller aborta el día — revisión humana.
+// ─────────────────────────────────────────────────────────────────────────────
+export function resolveInternalTransfers(params: {
+  /** prior + manuales del día + depósitos − retiros (SIN tocar la interna). */
+  baseWithoutInternal: number;
+  internal: number;
+  actualClose: number;
+}): { internalLeftAggregate: boolean; adjustment: number } {
+  const { baseWithoutInternal, internal, actualClose } = params;
+  if (internal <= 0) {
+    return { internalLeftAggregate: false, adjustment: actualClose - baseWithoutInternal };
+  }
+  const adjIfLeft = actualClose - (baseWithoutInternal - internal);
+  const adjIfStayed = actualClose - baseWithoutInternal;
+  return Math.abs(adjIfLeft) <= Math.abs(adjIfStayed)
+    ? { internalLeftAggregate: true, adjustment: adjIfLeft }
+    : { internalLeftAggregate: false, adjustment: adjIfStayed };
+}
