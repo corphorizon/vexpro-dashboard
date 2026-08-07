@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseAmount, computeExpensePending } from './upload-calculations';
+import { parseAmount, computeExpensePending, findInvalidAmount } from './upload-calculations';
 
 // Estos helpers reemplazan la cuenta inline que estaba repetida en cada handler
 // de /upload. Los tests fijan la semántica EXACTA del original para que la
@@ -47,5 +47,21 @@ describe('computeExpensePending', () => {
 
   it('puede dar pendiente negativo si pagado > monto (sin clamp, como el original)', () => {
     expect(computeExpensePending('100', '150', '')).toBe(-50);
+  });
+});
+
+describe('findInvalidAmount', () => {
+  it('atrapa el texto que parseAmount convertiría en 0 silencioso', () => {
+    expect(findInvalidAmount('abc')).toBe('abc');
+    expect(findInvalidAmount(',')).toBe(',');
+    expect(findInvalidAmount('100', '..5')).toBe('..5');
+  });
+
+  it('vacío o espacios significa "sin valor", no un error', () => {
+    expect(findInvalidAmount('', '   ', undefined, null)).toBeNull();
+  });
+
+  it('acepta números bien formados y numbers directos', () => {
+    expect(findInvalidAmount('1500.25', '-3', 42)).toBeNull();
   });
 });

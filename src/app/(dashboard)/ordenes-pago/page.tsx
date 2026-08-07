@@ -21,6 +21,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useToasts } from '@/components/ui/toast';
 import { StatusBadge } from '@/components/payment-orders/status-badge';
 import { useI18n } from '@/lib/i18n';
+import { useAuth } from '@/lib/auth-context';
+import { roleCanWriteFinance } from '@/lib/roles';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
@@ -41,6 +43,9 @@ const FILTERS: { value: Filter; key: string }[] = [
 
 export default function OrdenesPagoPage() {
   const { t } = useI18n();
+  const { user } = useAuth();
+  // El servidor rechaza el alta a roles fuera de finanzas: no dibujar el botón.
+  const canAct = roleCanWriteFinance(user?.effective_role ?? '');
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
 
@@ -132,12 +137,14 @@ export default function OrdenesPagoPage() {
         subtitle={t('payOrders.subtitle')}
         icon={FileText}
         actions={
-          <Link href="/ordenes-pago/nueva">
-            <Button variant="primary">
-              <Plus className="w-4 h-4" />
-              {t('payOrders.new')}
-            </Button>
-          </Link>
+          canAct ? (
+            <Link href="/ordenes-pago/nueva">
+              <Button variant="primary">
+                <Plus className="w-4 h-4" />
+                {t('payOrders.new')}
+              </Button>
+            </Link>
+          ) : undefined
         }
       />
 
@@ -287,12 +294,14 @@ export default function OrdenesPagoPage() {
                     title={t('payOrders.emptyTitle')}
                     description={t('payOrders.emptyDesc')}
                     action={
-                      <Link href="/ordenes-pago/nueva">
-                        <Button variant="primary">
-                          <Plus className="w-4 h-4" />
-                          {t('payOrders.new')}
-                        </Button>
-                      </Link>
+                      canAct ? (
+                        <Link href="/ordenes-pago/nueva">
+                          <Button variant="primary">
+                            <Plus className="w-4 h-4" />
+                            {t('payOrders.new')}
+                          </Button>
+                        </Link>
+                      ) : undefined
                     }
                   />
                 )

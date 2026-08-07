@@ -19,6 +19,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/lib/auth-context';
+import { useI18n } from '@/lib/i18n';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -153,16 +154,31 @@ const CHANNEL_LABEL: Record<string, string> = {
   coinsbuy: 'Coinsbuy',
   fairpay: 'FairPay',
   unipayment: 'UniPayment',
-  other: 'Otros',
 };
 const CATEGORY_LABEL: Record<string, string> = {
-  ib_commissions: 'Comisiones IB',
   broker: 'Broker',
   prop_firm: 'Prop Firm',
-  other: 'Otros',
   p2p: 'P2P Transfer',
   coinsbuy_api: 'Coinsbuy (API)',
 };
+const CHANNEL_LABEL_KEY: Record<string, string> = {
+  other: 'reports.labelOther',
+};
+const CATEGORY_LABEL_KEY: Record<string, string> = {
+  ib_commissions: 'reports.categoryIbCommissions',
+  other: 'reports.labelOther',
+};
+
+function resolveLabel(
+  raw: string,
+  literals: Record<string, string>,
+  keys: Record<string, string>,
+  t: (key: string, params?: Record<string, string>) => string,
+): string {
+  const k = keys[raw];
+  if (k) return t(k);
+  return literals[raw] ?? raw;
+}
 
 // ─── Utility: % variation with safe zero division ──────────────────────
 
@@ -172,8 +188,9 @@ function pctVariation(current: number, previous: number): number | null {
 }
 
 function VariationBadge({ pct }: { pct: number | null }) {
+  const { t } = useI18n();
   if (pct === null || !isFinite(pct)) {
-    return <span className="text-xs text-muted-foreground">sin comparativa</span>;
+    return <span className="text-xs text-muted-foreground">{t('reports.noComparison')}</span>;
   }
   const rounded = Math.round(pct * 10) / 10;
   const positive = rounded >= 0;
@@ -182,8 +199,7 @@ function VariationBadge({ pct }: { pct: number | null }) {
   return (
     <span className={`inline-flex items-center gap-1 text-xs ${cls}`}>
       <Icon className="w-3 h-3" />
-      {rounded > 0 ? '+' : ''}
-      {rounded}% vs mes anterior
+      {t('reports.variationVsPrevMonth', { pct: `${rounded > 0 ? '+' : ''}${rounded}` })}
     </span>
   );
 }
@@ -195,6 +211,7 @@ function VariationBadge({ pct }: { pct: number | null }) {
 export default function ReportesPage() {
   const { user } = useAuth();
   const { company } = useData();
+  const { t } = useI18n();
   const canAccess = useModuleAccess('reports');
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
 
@@ -225,14 +242,14 @@ export default function ReportesPage() {
       const qs = new URLSearchParams({ from, to });
       const res = await apiFetch(`/api/reports/consolidated?${qs}`);
       const json = (await res.json()) as ReportResponse;
-      if (!json.success) throw new Error('No se pudo cargar el reporte');
+      if (!json.success) throw new Error(t('reports.errorLoad'));
       setData(json);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Error cargando reporte');
+      setError(err instanceof Error ? err.message : t('reports.errorGeneric'));
     } finally {
       setLoading(false);
     }
-  }, [from, to]);
+  }, [from, to, t]);
 
   useEffect(() => {
     void load();
@@ -324,7 +341,7 @@ export default function ReportesPage() {
   if (!canAccess) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">Sin acceso al módulo de Reportes</p>
+        <p className="text-muted-foreground">{t('reports.noAccess')}</p>
       </div>
     );
   }
@@ -349,8 +366,8 @@ export default function ReportesPage() {
       )}
 
       <PageHeader
-        title="Reportes"
-        subtitle="Resumen operativo por período"
+        title={t('reports.title')}
+        subtitle={t('reports.subtitle')}
         icon={BarChart3}
         actions={
           <div className="flex gap-2">
@@ -359,7 +376,7 @@ export default function ReportesPage() {
                 onClick={() => setSendOpen(true)}
                 className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm hover:opacity-90"
               >
-                <Send className="w-4 h-4" /> Enviar Reporte
+                <Send className="w-4 h-4" /> {t('reports.send')}
               </button>
             )}
             <button
@@ -367,7 +384,7 @@ export default function ReportesPage() {
               disabled={!data}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50"
             >
-              <FileSpreadsheet className="w-4 h-4" /> CSV
+              <FileSpreadsheet className="w-4 h-4" /> {t('common.csv')}
             </button>
             <button
               onClick={handleExportPDF}
@@ -385,7 +402,7 @@ export default function ReportesPage() {
         <div className="flex flex-col lg:flex-row lg:items-center gap-4 justify-between">
           <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Desde</span>
+              <span className="text-muted-foreground">{t('reports.from')}</span>
               <input
                 type="date"
                 value={from}
@@ -397,7 +414,7 @@ export default function ReportesPage() {
               />
             </label>
             <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Hasta</span>
+              <span className="text-muted-foreground">{t('reports.to')}</span>
               <input
                 type="date"
                 value={to}
@@ -414,7 +431,7 @@ export default function ReportesPage() {
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm hover:bg-muted"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              Actualizar
+              {t('reports.refresh')}
             </button>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -428,19 +445,19 @@ export default function ReportesPage() {
                     : 'border border-border hover:bg-muted'
                 }`}
               >
-                {r === 'today' && 'Hoy'}
-                {r === 'yesterday' && 'Ayer'}
-                {r === 'last7' && 'Últimos 7 días'}
-                {r === 'thisMonth' && 'Este mes'}
-                {r === 'prevMonth' && 'Mes anterior'}
+                {r === 'today' && t('reports.rangeToday')}
+                {r === 'yesterday' && t('reports.rangeYesterday')}
+                {r === 'last7' && t('reports.rangeLast7')}
+                {r === 'thisMonth' && t('reports.rangeThisMonth')}
+                {r === 'prevMonth' && t('reports.rangePrevMonth')}
               </button>
             ))}
           </div>
         </div>
         {anyMock && (
           <p className="mt-3 text-xs text-warning">
-            · Algunos datos provienen de <strong>mock</strong> (Orion CRM sin credenciales). Configúralas en{' '}
-            <em>Superadmin → Empresa → APIs externas</em> para ver datos reales.
+            {t('reports.mockPrefix')}<strong>mock</strong>{t('reports.mockMiddle')}
+            <em>{t('reports.externalApisPath')}</em>{t('reports.mockSuffix')}
           </p>
         )}
       </Card>
@@ -459,35 +476,35 @@ export default function ReportesPage() {
           <Card>
             <div className="flex items-center gap-2 mb-4">
               <Wallet className="w-5 h-5 text-muted-foreground" />
-              <h2 className="text-lg font-semibold">Depósitos y Retiros</h2>
+              <h2 className="text-lg font-semibold">{t('reports.depositsWithdrawals')}</h2>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
               {/* Deposits by channel */}
               <div>
-                <h3 className="text-sm font-medium mb-2">Depósitos por canal</h3>
+                <h3 className="text-sm font-medium mb-2">{t('reports.depositsByChannel')}</h3>
                 <TableList
                   rows={data.deposits_withdrawals.range.deposits.map((d) => ({
-                    label: CHANNEL_LABEL[d.channel] ?? d.channel,
+                    label: resolveLabel(d.channel, CHANNEL_LABEL, CHANNEL_LABEL_KEY, t),
                     count: d.count,
                     amount: d.amount,
                   }))}
                   totalAmount={data.deposits_withdrawals.range.total_deposits}
-                  emptyLabel="Sin depósitos en el período"
+                  emptyLabel={t('reports.noDepositsInPeriod')}
                 />
               </div>
 
               {/* Withdrawals by category */}
               <div>
-                <h3 className="text-sm font-medium mb-2">Retiros por categoría</h3>
+                <h3 className="text-sm font-medium mb-2">{t('reports.withdrawalsByCategory')}</h3>
                 <TableList
                   rows={data.deposits_withdrawals.range.withdrawals.map((w) => ({
-                    label: CATEGORY_LABEL[w.category] ?? w.category,
+                    label: resolveLabel(w.category, CATEGORY_LABEL, CATEGORY_LABEL_KEY, t),
                     count: w.count,
                     amount: w.amount,
                   }))}
                   totalAmount={data.deposits_withdrawals.range.total_withdrawals}
-                  emptyLabel="Sin retiros en el período"
+                  emptyLabel={t('reports.noWithdrawalsInPeriod')}
                 />
               </div>
             </div>
@@ -495,23 +512,25 @@ export default function ReportesPage() {
             {/* Range net + monthly context */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard
-                label="Depósito Neto del rango"
+                label={t('reports.netDepositRange')}
                 value={formatCurrency(rangeNet)}
                 tone={rangeNet >= 0 ? 'positive' : 'negative'}
                 hint={
                   netRangePctOfMonth === null
-                    ? 'sin referencia mensual'
-                    : `${Math.round(netRangePctOfMonth * 10) / 10}% del mes actual`
+                    ? t('reports.noMonthlyReference')
+                    : t('reports.pctOfCurrentMonth', {
+                        pct: String(Math.round(netRangePctOfMonth * 10) / 10),
+                      })
                 }
               />
               <StatCard
-                label="Depósito Neto mes actual"
+                label={t('reports.netDepositMonth')}
                 value={formatCurrency(monthNet)}
                 tone={monthNet >= 0 ? 'positive' : 'negative'}
                 hint={<VariationBadge pct={monthVsPrev} />}
               />
               <StatCard
-                label="Depósito Neto mes anterior"
+                label={t('reports.netDepositPrevMonth')}
                 value={formatCurrency(prevNet)}
                 tone="neutral"
               />
@@ -523,24 +542,24 @@ export default function ReportesPage() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Wallet className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">Balances por Canal</h2>
+                <h2 className="text-lg font-semibold">{t('balances.byChannel')}</h2>
               </div>
               <span className="text-xs text-muted-foreground">
-                al {data.balances_by_channel.asOf}
+                {t('reports.asOf', { date: data.balances_by_channel.asOf })}
               </span>
             </div>
             {data.balances_by_channel.channels.length === 0 ? (
               <p className="text-sm text-muted-foreground py-6 text-center">
-                No hay canales visibles. Configúralos en <strong>Finanzas → Balances</strong>.
+                {t('reports.noChannels')}<strong>{t('reports.financeBalancesPath')}</strong>.
               </p>
             ) : (
               <div className="rounded-lg border border-border overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                     <tr className="border-b border-border">
-                      <th className="text-left py-2.5 px-3 font-medium">Canal</th>
-                      <th className="text-left py-2.5 px-3 font-medium">Tipo</th>
-                      <th className="text-right py-2.5 px-3 font-medium">Balance</th>
+                      <th className="text-left py-2.5 px-3 font-medium">{t('reports.channel')}</th>
+                      <th className="text-left py-2.5 px-3 font-medium">{t('reports.type')}</th>
+                      <th className="text-right py-2.5 px-3 font-medium">{t('reports.balance')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -550,12 +569,16 @@ export default function ReportesPage() {
                           {c.label}
                           {c.isCustom && (
                             <span className="ml-2 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                              Personalizado
+                              {t('reports.custom')}
                             </span>
                           )}
                         </td>
                         <td className="px-3 py-2 text-xs text-muted-foreground capitalize">
-                          {c.type === 'auto' ? 'Automático' : c.type === 'api' ? 'API' : 'Manual'}
+                          {c.type === 'auto'
+                            ? t('reports.typeAuto')
+                            : c.type === 'api'
+                              ? t('reports.typeApi')
+                              : t('reports.typeManual')}
                         </td>
                         <td
                           className={`px-3 py-2 text-right font-medium ${
@@ -570,7 +593,7 @@ export default function ReportesPage() {
                   <tfoot className="bg-muted/30 font-bold">
                     <tr className="border-t border-border">
                       <td className="px-3 py-2" colSpan={2}>
-                        Total Consolidado
+                        {t('reports.totalConsolidated')}
                       </td>
                       <td
                         className={`px-3 py-2 text-right ${
@@ -593,26 +616,26 @@ export default function ReportesPage() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Users className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">Usuarios CRM</h2>
+                <h2 className="text-lg font-semibold">{t('reports.crmUsers')}</h2>
               </div>
-              {data.crm_users.isMock && <Badge variant="warning">· mock</Badge>}
+              {data.crm_users.isMock && <Badge variant="warning">{t('reports.mockBadge')}</Badge>}
             </div>
             {!data.crm_users.connected && !data.crm_users.isMock ? (
               <NotConnectedNotice />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <StatCard
-                  label="Nuevos en el rango"
+                  label={t('reports.newInRange')}
                   value={data.crm_users.new_users_in_range.toLocaleString('es')}
                   tone="info"
                 />
                 <StatCard
-                  label="Nuevos este mes"
+                  label={t('reports.newThisMonth')}
                   value={data.crm_users.new_users_this_month.toLocaleString('es')}
                   tone="info"
                 />
                 <StatCard
-                  label="Total en plataforma"
+                  label={t('reports.totalOnPlatform')}
                   value={data.crm_users.total_users.toLocaleString('es')}
                   tone="primary"
                 />
@@ -625,32 +648,34 @@ export default function ReportesPage() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <TrendingUp className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">Broker P&L</h2>
+                <h2 className="text-lg font-semibold">{t('summary.brokerPnl')}</h2>
               </div>
-              {data.broker_pnl.isMock && <Badge variant="warning">· mock</Badge>}
+              {data.broker_pnl.isMock && <Badge variant="warning">{t('reports.mockBadge')}</Badge>}
             </div>
             {!data.broker_pnl.connected && !data.broker_pnl.isMock ? (
               <NotConnectedNotice />
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <StatCard
-                  label="P&L del rango"
+                  label={t('reports.pnlRange')}
                   value={formatCurrency(data.broker_pnl.pnl_range)}
                   tone={data.broker_pnl.pnl_range >= 0 ? 'positive' : 'negative'}
                   hint={
                     brokerPnlRangePctOfMonth === null
-                      ? 'sin referencia mensual'
-                      : `${Math.round(brokerPnlRangePctOfMonth * 10) / 10}% del mes actual`
+                      ? t('reports.noMonthlyReference')
+                      : t('reports.pctOfCurrentMonth', {
+                          pct: String(Math.round(brokerPnlRangePctOfMonth * 10) / 10),
+                        })
                   }
                 />
                 <StatCard
-                  label="P&L mes actual"
+                  label={t('reports.pnlMonth')}
                   value={formatCurrency(data.broker_pnl.pnl_month)}
                   tone={data.broker_pnl.pnl_month >= 0 ? 'positive' : 'negative'}
                   hint={<VariationBadge pct={brokerPnlMonthVsPrev} />}
                 />
                 <StatCard
-                  label="P&L mes anterior"
+                  label={t('reports.pnlPrevMonth')}
                   value={formatCurrency(data.broker_pnl.pnl_prev_month)}
                   tone="neutral"
                 />
@@ -663,9 +688,9 @@ export default function ReportesPage() {
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <BarChart3 className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">Prop Trading Firm</h2>
+                <h2 className="text-lg font-semibold">{t('reports.propTradingFirm')}</h2>
               </div>
-              {data.prop_trading.isMock && <Badge variant="warning">· mock</Badge>}
+              {data.prop_trading.isMock && <Badge variant="warning">{t('reports.mockBadge')}</Badge>}
             </div>
 
             {!data.prop_trading.connected && !data.prop_trading.isMock ? (
@@ -674,19 +699,19 @@ export default function ReportesPage() {
               <>
             {/* Products table */}
             <div className="mb-4">
-              <h3 className="text-sm font-medium mb-2">Productos vendidos en el rango</h3>
+              <h3 className="text-sm font-medium mb-2">{t('reports.productsSoldInRange')}</h3>
               {data.prop_trading.products.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-3">
-                  Sin ventas en el período seleccionado
+                  {t('reports.noSalesInPeriod')}
                 </p>
               ) : (
                 <div className="rounded-lg border border-border overflow-x-auto">
                   <table className="w-full text-sm">
                     <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr className="border-b border-border">
-                        <th className="text-left py-2.5 px-3 font-medium">Producto</th>
-                        <th className="text-right py-2.5 px-3 font-medium">Cantidad</th>
-                        <th className="text-right py-2.5 px-3 font-medium">Monto</th>
+                        <th className="text-left py-2.5 px-3 font-medium">{t('reports.product')}</th>
+                        <th className="text-right py-2.5 px-3 font-medium">{t('reports.quantity')}</th>
+                        <th className="text-right py-2.5 px-3 font-medium">{t('common.amount')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -700,7 +725,7 @@ export default function ReportesPage() {
                     </tbody>
                     <tfoot className="bg-muted/30 font-medium">
                       <tr className="border-t border-border">
-                        <td className="px-3 py-2">Total</td>
+                        <td className="px-3 py-2">{t('common.total')}</td>
                         <td></td>
                         <td className="px-3 py-2 text-right">
                           {formatCurrency(data.prop_trading.total_sales_range)}
@@ -715,25 +740,31 @@ export default function ReportesPage() {
             {/* Stats grid */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard
-                label="Ventas del rango"
+                label={t('reports.salesRange')}
                 value={formatCurrency(data.prop_trading.total_sales_range)}
                 tone="info"
-                hint={`Mes: ${formatCurrency(data.prop_trading.total_sales_month)}`}
+                hint={t('reports.monthHint', {
+                  amount: formatCurrency(data.prop_trading.total_sales_month),
+                })}
               />
               <StatCard
-                label="Retiros Prop Firm"
+                label={t('reports.propFirmWithdrawals')}
                 value={formatCurrency(data.prop_trading.prop_withdrawals_range)}
                 tone="warning"
-                hint={`${data.prop_trading.prop_withdrawals_count_range} retiros`}
+                hint={t('reports.withdrawalsCount', {
+                  count: String(data.prop_trading.prop_withdrawals_count_range),
+                })}
               />
               <StatCard
-                label="P&L del rango"
+                label={t('reports.pnlRange')}
                 value={formatCurrency(data.prop_trading.pnl_range)}
                 tone={data.prop_trading.pnl_range >= 0 ? 'positive' : 'negative'}
                 hint={
                   propPnlRangePctOfMonth === null
-                    ? 'sin referencia mensual'
-                    : `${Math.round(propPnlRangePctOfMonth * 10) / 10}% del mes`
+                    ? t('reports.noMonthlyReference')
+                    : t('reports.pctOfMonth', {
+                        pct: String(Math.round(propPnlRangePctOfMonth * 10) / 10),
+                      })
                 }
               />
             </div>
@@ -741,13 +772,13 @@ export default function ReportesPage() {
             {/* Monthly comparison */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
               <StatCard
-                label="P&L Prop Firm — mes actual"
+                label={t('reports.propPnlMonth')}
                 value={formatCurrency(data.prop_trading.pnl_month)}
                 tone={data.prop_trading.pnl_month >= 0 ? 'positive' : 'negative'}
                 hint={<VariationBadge pct={propPnlMonthVsPrev} />}
               />
               <StatCard
-                label="P&L Prop Firm — mes anterior"
+                label={t('reports.propPnlPrevMonth')}
                 value={formatCurrency(data.prop_trading.pnl_prev_month)}
                 tone="neutral"
               />
@@ -760,12 +791,12 @@ export default function ReportesPage() {
 
       {!loading && !data && !error && (
         <Card className="text-sm text-muted-foreground text-center py-6">
-          Sin datos para el período seleccionado.{' '}
+          {t('reports.noDataForPeriod')}{' '}
           <button
             onClick={() => void load()}
             className="underline text-primary dark:text-accent"
           >
-            Reintentar
+            {t('reports.retry')}
           </button>
         </Card>
       )}
@@ -784,6 +815,7 @@ function TableList({
   totalAmount: number;
   emptyLabel: string;
 }) {
+  const { t } = useI18n();
   if (rows.length === 0) {
     return <p className="text-sm text-muted-foreground py-3">{emptyLabel}</p>;
   }
@@ -792,9 +824,9 @@ function TableList({
       <table className="w-full text-sm">
         <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
           <tr className="border-b border-border">
-            <th className="text-left py-2.5 px-3 font-medium">Canal / Cat</th>
+            <th className="text-left py-2.5 px-3 font-medium">{t('reports.channelCat')}</th>
             <th className="text-right py-2.5 px-3 font-medium">#</th>
-            <th className="text-right py-2.5 px-3 font-medium">Monto</th>
+            <th className="text-right py-2.5 px-3 font-medium">{t('common.amount')}</th>
           </tr>
         </thead>
         <tbody>
@@ -808,7 +840,7 @@ function TableList({
         </tbody>
         <tfoot className="bg-muted/30 font-semibold">
           <tr className="border-t border-border">
-            <td className="px-3 py-2">Total</td>
+            <td className="px-3 py-2">{t('common.total')}</td>
             <td></td>
             <td className="px-3 py-2 text-right">{formatCurrency(totalAmount)}</td>
           </tr>
@@ -819,11 +851,12 @@ function TableList({
 }
 
 function NotConnectedNotice() {
+  const { t } = useI18n();
   return (
     <div className="rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
-      <p className="text-sm font-medium text-foreground">Orion CRM no conectado</p>
+      <p className="text-sm font-medium text-foreground">{t('reports.crmNotConnected')}</p>
       <p className="text-xs text-muted-foreground mt-1">
-        Configura las credenciales en <em>Superadmin → Empresa → APIs externas</em> para ver datos reales.
+        {t('reports.crmNotConnectedHint')}<em>{t('reports.externalApisPath')}</em>{t('reports.mockSuffix')}
       </p>
     </div>
   );

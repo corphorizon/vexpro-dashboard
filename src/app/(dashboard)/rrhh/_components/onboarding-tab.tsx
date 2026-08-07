@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Search, CheckCircle2, AlertCircle, X } from 'lucide-react';
 import type { CommercialProfile } from '@/lib/types';
 import { apiFetch } from '@/lib/api-fetch';
+import { useI18n } from '@/lib/i18n';
 
 // ─── Tipos locales ─────────────────────────────────────────────────────────
 type ChecklistRow = {
@@ -20,12 +21,12 @@ type ChecklistRow = {
 type BoolKey = 'propuesta' | 'acepto_propuesta' | 'contrato' | 'acepto_contrato' | 'accesos';
 
 // Columnas del checklist tal cual el Excel de "Proceso de contratación".
-const BOOL_COLS: { key: BoolKey; label: string }[] = [
-  { key: 'propuesta', label: 'Propuesta' },
-  { key: 'acepto_propuesta', label: 'Acepto' },
-  { key: 'contrato', label: 'Contrato' },
-  { key: 'acepto_contrato', label: 'Acepto' },
-  { key: 'accesos', label: 'Accesos' },
+const BOOL_COLS: { key: BoolKey; labelKey: string }[] = [
+  { key: 'propuesta', labelKey: 'onboarding.colProposal' },
+  { key: 'acepto_propuesta', labelKey: 'onboarding.colAccepted' },
+  { key: 'contrato', labelKey: 'onboarding.colContract' },
+  { key: 'acepto_contrato', labelKey: 'onboarding.colAccepted' },
+  { key: 'accesos', labelKey: 'onboarding.colAccess' },
 ];
 
 const emptyRow = (profile_id: string): ChecklistRow => ({
@@ -39,6 +40,7 @@ function isFired(p: CommercialProfile) {
 }
 
 export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
+  const { t } = useI18n();
   const [rows, setRows] = useState<Map<string, ChecklistRow>>(new Map());
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -105,9 +107,9 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json.success) throw new Error(json.error || 'save failed');
     } catch {
-      setToast({ type: 'error', msg: 'No se pudo guardar. ¿Ya corriste la migración en la base?' });
+      setToast({ type: 'error', msg: t('onboarding.saveError') });
     }
-  }, []);
+  }, [t]);
 
   const toggle = useCallback((profileId: string, key: BoolKey) => {
     const r = getRow(profileId);
@@ -136,25 +138,25 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
         <div className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm ${toast.type === 'error' ? 'bg-negative/10 text-negative' : 'bg-positive/10 text-positive'}`}>
           {toast.type === 'error' ? <AlertCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
           <span className="flex-1">{toast.msg}</span>
-          <button onClick={() => setToast(null)} aria-label="Cerrar"><X className="w-4 h-4" /></button>
+          <button onClick={() => setToast(null)} aria-label={t('common.close')}><X className="w-4 h-4" /></button>
         </div>
       )}
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
         <div>
-          <h2 className="text-lg font-semibold">Check List Onboarding</h2>
+          <h2 className="text-lg font-semibold">{t('onboarding.title')}</h2>
           <p className="text-xs text-muted-foreground mt-0.5">
-            {completedCount} de {sorted.length} con el proceso completo · marca cada paso y se guarda solo.
+            {t('onboarding.progress', { done: String(completedCount), total: String(sorted.length) })}
           </p>
         </div>
         <div className="relative flex-1 sm:w-64 sm:max-w-xs">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <input
-            aria-label="Buscar comercial"
+            aria-label={t('onboarding.searchAriaLabel')}
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Buscar por nombre o email..."
+            placeholder={t('onboarding.searchPlaceholder')}
             className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
           />
         </div>
@@ -163,23 +165,23 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
       {loadError && (
         <div className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm bg-warning/10 text-warning">
           <AlertCircle className="w-4 h-4" />
-          No se pudo cargar el checklist. Verifica que la tabla <code>onboarding_checklist</code> exista en la base.
+          {t('onboarding.loadErrorPre')} <code>onboarding_checklist</code> {t('onboarding.loadErrorPost')}
         </div>
       )}
 
       {loading ? (
-        <div className="py-16 text-center text-sm text-muted-foreground">Cargando checklist…</div>
+        <div className="py-16 text-center text-sm text-muted-foreground">{t('onboarding.loading')}</div>
       ) : (
         <div className="border border-border rounded-lg overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border bg-muted/50">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium sticky left-0 bg-muted/50 min-w-[200px]">Nombre</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium sticky left-0 bg-muted/50 min-w-[200px]">{t('common.name')}</th>
                 {BOOL_COLS.map((c, i) => (
-                  <th key={`${c.key}-${i}`} className="text-center py-2.5 px-2 text-muted-foreground font-medium whitespace-nowrap">{c.label}</th>
+                  <th key={`${c.key}-${i}`} className="text-center py-2.5 px-2 text-muted-foreground font-medium whitespace-nowrap">{t(c.labelKey)}</th>
                 ))}
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap min-w-[120px]">Salario Fijo</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap min-w-[160px]">Sponsor</th>
+                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap min-w-[120px]">{t('onboarding.colFixedSalary')}</th>
+                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap min-w-[160px]">{t('onboarding.colSponsor')}</th>
               </tr>
             </thead>
             <tbody>
@@ -196,7 +198,7 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
                     <td className="py-2 px-3 sticky left-0 bg-card">
                       <div className={`font-medium ${fired ? 'line-through text-muted-foreground' : ''}`}>
                         {p.name}
-                        {fired && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground no-underline">despedido</span>}
+                        {fired && <span className="ml-1.5 text-[10px] uppercase tracking-wide text-muted-foreground no-underline">{t('onboarding.firedBadge')}</span>}
                       </div>
                       <div className="text-xs text-muted-foreground">{p.email}</div>
                     </td>
@@ -204,7 +206,7 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
                       <td key={`${c.key}-${i}`} className="text-center py-2 px-2">
                         <input
                           type="checkbox"
-                          aria-label={`${c.label} — ${p.name}`}
+                          aria-label={`${t(c.labelKey)} — ${p.name}`}
                           checked={r[c.key]}
                           onChange={() => toggle(p.id, c.key)}
                           className="w-4 h-4 rounded border-border accent-[var(--color-primary)] cursor-pointer"
@@ -217,7 +219,7 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
                         type="number"
                         step="0.01"
                         defaultValue={salarioVal === '' ? '' : String(salarioVal)}
-                        aria-label={`Salario fijo — ${p.name}`}
+                        aria-label={`${t('onboarding.colFixedSalary')} — ${p.name}`}
                         onBlur={(e) => {
                           const raw = e.target.value.trim();
                           const parsed = raw === '' ? null : Number(raw);
@@ -232,7 +234,7 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
                         key={`spo-${p.id}`}
                         type="text"
                         defaultValue={sponsorVal}
-                        aria-label={`Sponsor — ${p.name}`}
+                        aria-label={`${t('onboarding.colSponsor')} — ${p.name}`}
                         placeholder="—"
                         onBlur={(e) => {
                           const raw = e.target.value.trim();
@@ -246,7 +248,7 @@ export function OnboardingTab({ profiles }: { profiles: CommercialProfile[] }) {
                 );
               })}
               {filtered.length === 0 && (
-                <tr><td colSpan={BOOL_COLS.length + 3} className="py-10 text-center text-sm text-muted-foreground">Sin resultados.</td></tr>
+                <tr><td colSpan={BOOL_COLS.length + 3} className="py-10 text-center text-sm text-muted-foreground">{t('onboarding.noResults')}</td></tr>
               )}
             </tbody>
           </table>

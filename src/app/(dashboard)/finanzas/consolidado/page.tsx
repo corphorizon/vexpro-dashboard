@@ -31,6 +31,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import { useAuth } from '@/lib/auth-context';
 import { hasModuleAccess } from '@/lib/auth-context';
+import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { withActiveCompany } from '@/lib/api-fetch';
@@ -64,7 +65,7 @@ interface PeriodRowContext {
 
 interface ColumnDef {
   key: string;
-  label: string;
+  labelKey: string;
   compute: (ctx: PeriodRowContext) => number;
   total: 'sum' | 'last' | 'none';
   kind: 'pos' | 'neg' | 'neutral';
@@ -103,6 +104,7 @@ export default function ConsolidadoPage() {
     isPeriodAfterSaldoStart,
   } = useData();
   const { user } = useAuth();
+  const { t } = useI18n();
 
   // Module gate: aprovecha el de "reports" porque la página vive bajo
   // /finanzas (mismo cluster ejecutivo). Si la empresa no tiene reports
@@ -220,7 +222,7 @@ export default function ConsolidadoPage() {
     () => [
       {
         key: 'totalDeposits',
-        label: 'Depósitos',
+        labelKey: 'consolidated.colDeposits',
         // API (Coinsbuy + FairPay + UniPayment) + manual. Antes solo
         // se mostraba el manual (`summary.totalDeposits`) y los meses
         // sin entrada manual aparecían como $0 aunque la API tuviera
@@ -231,7 +233,7 @@ export default function ConsolidadoPage() {
       },
       {
         key: 'totalWithdrawals',
-        label: 'Retiros',
+        labelKey: 'consolidated.colWithdrawals',
         // API + manual (broker como Coinsbuy supplement). Misma lógica
         // que el card "Retiros Totales" en /movimientos.
         compute: (c) => {
@@ -244,7 +246,7 @@ export default function ConsolidadoPage() {
       },
       {
         key: 'netDeposit',
-        label: 'Depósito Neto',
+        labelKey: 'consolidated.colNetDeposit',
         compute: (c) => {
           const deposits = c.apiDeposits + (c.summary?.totalDeposits ?? 0);
           const manualBroker =
@@ -257,35 +259,35 @@ export default function ConsolidadoPage() {
       },
       {
         key: 'brokerPnl',
-        label: 'Broker P&L',
+        labelKey: 'summary.brokerPnl',
         compute: (c) => c.summary?.operatingIncome?.broker_pnl ?? 0,
         total: 'sum',
         kind: 'neutral',
       },
       {
         key: 'propFirmNet',
-        label: 'Balance Prop Firm',
+        labelKey: 'consolidated.colPropFirmBalance',
         compute: (c) => c.summary?.propFirmNetIncome ?? 0,
         total: 'sum',
         kind: 'neutral',
       },
       {
         key: 'investmentProfits',
-        label: 'Profits Inversión',
+        labelKey: 'consolidated.colInvestmentProfits',
         compute: (c) => c.summary?.investmentProfits ?? 0,
         total: 'sum',
         kind: 'neutral',
       },
       {
         key: 'operatingExpenses',
-        label: 'Egresos Operativos',
+        labelKey: 'consolidated.colOperatingExpenses',
         compute: (c) => c.summary?.totalExpenses ?? 0,
         total: 'sum',
         kind: 'neg',
       },
       {
         key: 'reservaPeriodo',
-        label: 'Reserva del Período',
+        labelKey: 'consolidated.colPeriodReserve',
         compute: (c) => {
           if (!c.summary) return 0;
           if (!isPeriodAfterSaldoStart(c.periodId)) return 0;
@@ -299,42 +301,42 @@ export default function ConsolidadoPage() {
       },
       {
         key: 'reservaAcumulada',
-        label: 'Reserva Acumulada',
+        labelKey: 'consolidated.colAccumulatedReserve',
         compute: (c) => c.saldoInfo?.reservaAcumulada ?? 0,
         total: 'last',
         kind: 'neutral',
       },
       {
         key: 'montoDistribuir',
-        label: 'Monto a Distribuir',
+        labelKey: 'consolidated.colAmountToDistribute',
         compute: (c) => (c.saldoInfo?.montoDistribuir ?? 0) * 0.9,
         total: 'sum',
         kind: 'pos',
       },
       {
         key: 'p2p',
-        label: 'Transferencia P2P',
+        labelKey: 'consolidated.colP2pTransfer',
         compute: (c) => c.summary?.p2pTransfer ?? 0,
         total: 'sum',
         kind: 'neutral',
       },
       {
         key: 'propFirmSales',
-        label: 'Ventas Prop Firm',
+        labelKey: 'consolidated.colPropFirmSales',
         compute: (c) => c.summary?.propFirmSales ?? 0,
         total: 'sum',
         kind: 'pos',
       },
       {
         key: 'expensesPaid',
-        label: 'Egresos Pagados',
+        labelKey: 'consolidated.colExpensesPaid',
         compute: (c) => c.summary?.totalExpensesPaid ?? 0,
         total: 'sum',
         kind: 'neutral',
       },
       {
         key: 'expensesPending',
-        label: 'Egresos Pendientes',
+        labelKey: 'consolidated.colExpensesPending',
         compute: (c) => c.summary?.totalExpensesPending ?? 0,
         total: 'sum',
         kind: 'neg',
@@ -372,7 +374,7 @@ export default function ConsolidadoPage() {
   }, [visibleColumns, visiblePeriodContexts]);
 
   const handleExportCsv = () => {
-    const headers = ['Mes', ...visibleColumns.map((c) => c.label)];
+    const headers = [t('consolidated.month'), ...visibleColumns.map((c) => t(c.labelKey))];
     const rows = visiblePeriodContexts.map((ctx) => [
       ctx.periodLabel,
       ...visibleColumns.map((c) => c.compute(ctx).toFixed(2)),
@@ -393,12 +395,12 @@ export default function ConsolidadoPage() {
   if (!canAccess) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-        <p className="text-muted-foreground">Sin acceso al módulo Consolidado</p>
+        <p className="text-muted-foreground">{t('consolidated.noAccess')}</p>
         <Link
           href="/"
           className="text-sm underline text-primary hover:text-primary/80"
         >
-          Volver al inicio
+          {t('consolidated.backHome')}
         </Link>
       </div>
     );
@@ -407,26 +409,26 @@ export default function ConsolidadoPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Consolidados"
-        subtitle="Indicadores financieros mes a mes, columnas y meses ocultables, total final automático."
+        title={t('consolidated.title')}
+        subtitle={t('consolidated.subtitle')}
         icon={Table}
         actions={
           <>
             <button
               onClick={() => setShowSettings((s) => !s)}
               className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-              title="Mostrar / ocultar columnas y meses"
+              title={t('consolidated.toggleTitle')}
             >
               {showSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              <span className="hidden sm:inline">Columnas y meses</span>
+              <span className="hidden sm:inline">{t('consolidated.columnsAndMonths')}</span>
             </button>
             <button
               onClick={handleExportCsv}
               className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-              title="Exportar CSV con columnas/meses visibles"
+              title={t('consolidated.exportCsvTitle')}
             >
               <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">CSV</span>
+              <span className="hidden sm:inline">{t('common.csv')}</span>
             </button>
           </>
         }
@@ -436,7 +438,7 @@ export default function ConsolidadoPage() {
       {showSettings && (
         <Card className="p-4 space-y-4">
           <section>
-            <h3 className="text-sm font-semibold mb-2">Columnas</h3>
+            <h3 className="text-sm font-semibold mb-2">{t('consolidated.columns')}</h3>
             <div className="flex flex-wrap gap-2">
               {columns.map((c) => {
                 const isHidden = hiddenCols.has(c.key);
@@ -452,14 +454,14 @@ export default function ConsolidadoPage() {
                     }
                   >
                     {isHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
-                    {c.label}
+                    {t(c.labelKey)}
                   </button>
                 );
               })}
             </div>
           </section>
           <section>
-            <h3 className="text-sm font-semibold mb-2">Meses</h3>
+            <h3 className="text-sm font-semibold mb-2">{t('consolidated.months')}</h3>
             <div className="flex flex-wrap gap-2">
               {periodContexts.map((ctx) => {
                 const isHidden = hiddenMonths.has(ctx.periodId);
@@ -491,14 +493,14 @@ export default function ConsolidadoPage() {
             <thead className="bg-muted/50 sticky top-0">
               <tr className="border-b border-border">
                 <th className="text-left py-2.5 px-3 text-muted-foreground font-medium sticky left-0 bg-muted/50 z-10 border-r border-border whitespace-nowrap">
-                  Mes
+                  {t('consolidated.month')}
                 </th>
                 {visibleColumns.map((c) => (
                   <th
                     key={c.key}
                     className="text-right py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap"
                   >
-                    {c.label}
+                    {t(c.labelKey)}
                   </th>
                 ))}
               </tr>
@@ -510,8 +512,7 @@ export default function ConsolidadoPage() {
                     colSpan={visibleColumns.length + 1}
                     className="py-8 text-center text-muted-foreground"
                   >
-                    Sin meses visibles. Activa al menos uno desde el panel de
-                    &quot;Columnas y meses&quot;.
+                    {t('consolidated.noVisibleMonths')}
                   </td>
                 </tr>
               )}
@@ -547,19 +548,19 @@ export default function ConsolidadoPage() {
               <tfoot className="bg-muted/40">
                 <tr className="font-semibold border-t-2 border-border">
                   <td className="py-2.5 px-3 sticky left-0 bg-muted/40 border-r border-border whitespace-nowrap">
-                    Total
+                    {t('common.total')}
                   </td>
                   {visibleColumns.map((c) => {
-                    const t = totals.get(c.key);
+                    const value = totals.get(c.key);
                     return (
                       <td
                         key={c.key}
                         className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap"
                       >
-                        {t == null ? '—' : formatCurrency(t)}
+                        {value == null ? '—' : formatCurrency(value)}
                         {c.total === 'last' && (
                           <span className="block text-[10px] font-normal text-muted-foreground">
-                            (último mes)
+                            {t('consolidated.lastMonthNote')}
                           </span>
                         )}
                       </td>
@@ -573,9 +574,7 @@ export default function ConsolidadoPage() {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        El total al pie suma los meses visibles. Para columnas como
-        &quot;Reserva Acumulada&quot; usamos el valor del último mes visible
-        (no la suma) porque acumula período tras período.
+        {t('consolidated.footerNote')}
       </p>
     </div>
   );
