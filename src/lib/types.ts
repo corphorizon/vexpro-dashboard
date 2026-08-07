@@ -23,6 +23,12 @@ export interface Period {
   month: number;
   label: string | null;
   is_closed: boolean;
+  /**
+   * Insumos congelados al cerrar (migración 061). Cuando el período está
+   * cerrado, la cadena usa ESTO y no las tablas vivas — ver
+   * src/lib/distribution-snapshot.ts.
+   */
+  closing_snapshot?: import('./distribution-snapshot').ClosingSnapshot | null;
   reserve_pct: number;
 }
 

@@ -39,7 +39,7 @@ export default function SociosPage() {
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const isAdmin = canEdit(user);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { periods, partners, partnerDistributions, getPeriodSummary, company, refresh } = useData();
+  const { periods, partners, partnerDistributions, getPeriodSummary, getDistributionInputs, getSnapshotDrifts, company, refresh } = useData();
 
   // ─── Partner management state ───
   const [showPartnerForm, setShowPartnerForm] = useState(false);
@@ -80,21 +80,20 @@ export default function SociosPage() {
   // data-context.computeSaldoChain (/balances). Ahora ambas usan
   // computeDistributionChain (src/lib/distribution.ts, con tests). El
   // reparto real a socios (más abajo) sale de este chain.
-  const periodChain = useMemo(() => {
-    const inputs: PeriodDistInput[] = periods.map((period) => {
-      const pSum = getPeriodSummary(period.id);
-      return {
-        periodId: period.id,
-        brokerPnl: pSum?.operatingIncome?.broker_pnl || 0,
-        other: pSum?.operatingIncome?.other || 0,
-        propFirmNetIncome: pSum?.propFirmNetIncome || 0,
-        investmentProfits: pSum?.investmentProfits || 0,
-        totalExpenses: pSum?.totalExpenses || 0,
-        reservePct: period.reserve_pct,
-      };
-    });
-    return computeDistributionChain(inputs);
-  }, [periods, getPeriodSummary]);
+  // FUENTE ÚNICA: los insumos salen de getDistributionInputs() del
+  // data-context — el mismo constructor que usa computeSaldoChain y el
+  // forecast, ya con el override de snapshot para períodos cerrados. Esta
+  // pantalla tenía su propio constructor (vía getPeriodSummary), la segunda
+  // copia que la auditoría 2026-08-06 marcó como riesgo de divergencia.
+  const periodChain = useMemo(
+    () => computeDistributionChain(getDistributionInputs()),
+    [getDistributionInputs],
+  );
+
+  // Ediciones retroactivas sobre meses cerrados: el número mostrado sale del
+  // snapshot (estable), pero si las tablas vivas ya difieren conviene saberlo
+  // — alguien tocó el pasado y hay que decidir si reabrir o revertir.
+  const snapshotDrifts = useMemo(() => getSnapshotDrifts(), [getSnapshotDrifts]);
 
   // Get current period's chain data
   const currentChain = mode === 'single' ? periodChain.get(selectedPeriodId) : null;
@@ -447,6 +446,33 @@ export default function SociosPage() {
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="polite">
           <AlertTriangle className="w-4 h-4" />
           {errorMsg}
+        </div>
+      )}
+
+      {/* Deriva snapshot-vs-vivo: alguien editó datos de un mes CERRADO. El
+          número mostrado sigue siendo el congelado (estable), pero esto no
+          debe pasar desapercibido: o se reabre el período con motivo, o se
+          revierte la edición. */}
+      {snapshotDrifts.length > 0 && (
+        <div className="flex gap-3 rounded-lg border border-negative/30 bg-negative/5 p-4">
+          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-negative" />
+          <div className="text-sm">
+            <p className="font-medium text-negative">
+              Hay datos editados en {new Set(snapshotDrifts.map((d) => d.periodLabel)).size}{' '}
+              {new Set(snapshotDrifts.map((d) => d.periodLabel)).size === 1 ? 'período cerrado' : 'períodos cerrados'} — los montos mostrados siguen siendo los congelados al cierre.
+            </p>
+            <ul className="mt-1 text-xs text-muted-foreground space-y-0.5">
+              {snapshotDrifts.slice(0, 6).map((d, i) => (
+                <li key={i}>
+                  {d.periodLabel} · {d.field}: congelado {formatCurrency(d.frozen)} vs actual {formatCurrency(d.live)}
+                </li>
+              ))}
+              {snapshotDrifts.length > 6 && <li>… y {snapshotDrifts.length - 6} más</li>}
+            </ul>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Para que el cambio cuente, reabrí el período en Períodos (queda registrado) y volvé a cerrarlo.
+            </p>
+          </div>
         </div>
       )}
 
