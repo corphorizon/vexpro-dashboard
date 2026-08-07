@@ -20,6 +20,7 @@ import {
 import { useModuleAccess } from '@/lib/use-module-access';
 import { apiFetch } from '@/lib/api-fetch';
 import { moduleLabel } from '@/lib/modules';
+import { useI18n } from '@/lib/i18n';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Button } from '@/components/ui/button';
@@ -53,37 +54,32 @@ function todayISO(): string {
 // aparecen orígenes técnicos (auth, integrations_sync, api_transactions) y
 // claves con sufijo (balances_channel_config). moduleLabel() traduce los que
 // conoce; el resto se muestra legible en vez de con guiones bajos.
-function prettyModule(key: string): string {
-  const known = moduleLabel(key);
-  if (known !== key) return known;
-  const EXTRA: Record<string, string> = {
-    auth: 'Autenticación',
-    integrations_sync: 'Sincronización de APIs',
-    api_transactions: 'Transacciones API',
-    finance: 'Finanzas',
-    deposits: 'Depósitos',
-    withdrawals: 'Retiros',
-    income: 'Ingresos',
-    'payment-orders': 'Órdenes de Pago',
-    payment_orders: 'Órdenes de Pago',
-    channel_ledger: 'Libro por Canal',
-    reports_send: 'Envío de Reportes',
-    reports_config: 'Configuración de Reportes',
-    balances_channel_config: 'Configuración de Canales',
-    balances_channel_balance: 'Balance de Canal',
-  };
-  return EXTRA[key] ?? key.replace(/[_-]/g, ' ');
-}
+const MODULE_EXTRA_KEYS: Record<string, string> = {
+  auth: 'logs.module.auth',
+  integrations_sync: 'logs.module.integrationsSync',
+  api_transactions: 'logs.module.apiTransactions',
+  finance: 'logs.module.finance',
+  deposits: 'logs.module.deposits',
+  withdrawals: 'logs.module.withdrawals',
+  income: 'logs.module.income',
+  'payment-orders': 'logs.module.paymentOrders',
+  payment_orders: 'logs.module.paymentOrders',
+  channel_ledger: 'logs.module.channelLedger',
+  reports_send: 'logs.module.reportsSend',
+  reports_config: 'logs.module.reportsConfig',
+  balances_channel_config: 'logs.module.channelConfig',
+  balances_channel_balance: 'logs.module.channelBalance',
+};
 
-const ACTION_LABELS: Record<string, string> = {
-  create: 'Creación',
-  update: 'Modificación',
-  delete: 'Eliminación',
-  login: 'Inicio de sesión',
-  logout: 'Cierre de sesión',
-  export: 'Exportación',
-  view: 'Consulta',
-  sync: 'Sincronización',
+const ACTION_KEYS: Record<string, string> = {
+  create: 'logs.action.create',
+  update: 'logs.action.update',
+  delete: 'logs.action.delete',
+  login: 'logs.action.login',
+  logout: 'logs.action.logout',
+  export: 'logs.action.export',
+  view: 'logs.action.view',
+  sync: 'logs.action.sync',
 };
 
 function actionTone(action: string): 'success' | 'danger' | 'warning' | 'neutral' {
@@ -97,6 +93,7 @@ const PAGE_SIZE = 50;
 
 export default function LogsPage() {
   const accessDenied = !useModuleAccess('logs');
+  const { t, locale } = useI18n();
 
   const [from, setFrom] = useState(todayISO);
   const [to, setTo] = useState(todayISO);
@@ -110,6 +107,18 @@ export default function LogsPage() {
   const [total, setTotal] = useState(0);
   const [facets, setFacets] = useState<Facets>({ modules: [], actions: [], users: [] });
   const [loading, setLoading] = useState(true);
+
+  const prettyModule = useCallback((key: string): string => {
+    const known = moduleLabel(key, locale);
+    if (known !== key) return known;
+    const extra = MODULE_EXTRA_KEYS[key];
+    return extra ? t(extra) : key.replace(/[_-]/g, ' ');
+  }, [t, locale]);
+
+  const actionLabel = useCallback(
+    (a: string): string => (ACTION_KEYS[a] ? t(ACTION_KEYS[a]) : a),
+    [t],
+  );
 
   // Un cambio de filtro tiene que volver a la página 1: si estabas en la 4 y
   // el nuevo filtro devuelve 12 resultados, la 4 sale vacía y parece un bug.
@@ -172,11 +181,14 @@ export default function LogsPage() {
 
     const esc = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
     const csv = [
-      ['Fecha', 'Usuario', 'Acción', 'Módulo', 'Detalle', 'IP'].map(esc).join(','),
+      [
+        t('common.date'), t('logs.colUser'), t('logs.colAction'),
+        t('logs.colModule'), t('logs.colDetails'), t('logs.colIp'),
+      ].map(esc).join(','),
       ...all.map((r) => [
         new Date(r.created_at).toLocaleString(),
         r.user_name ?? '',
-        ACTION_LABELS[r.action] ?? r.action,
+        actionLabel(r.action),
         prettyModule(r.module),
         r.details ?? '',
         r.ip_address ?? '',
@@ -188,7 +200,7 @@ export default function LogsPage() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `registro-actividad_${from}_${to}.csv`;
+    a.download = `${t('logs.csvFilename')}_${from}_${to}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -197,18 +209,20 @@ export default function LogsPage() {
 
   const summary = useMemo(() => {
     if (loading) return '…';
-    if (total === 0) return 'Sin registros';
+    if (total === 0) return t('logs.noRecords');
     const desde = (page - 1) * PAGE_SIZE + 1;
     const hasta = Math.min(page * PAGE_SIZE, total);
-    return `${desde}–${hasta} de ${total}`;
-  }, [loading, total, page]);
+    return t('logs.rangeSummary', {
+      from: String(desde), to: String(hasta), total: String(total),
+    });
+  }, [loading, total, page, t]);
 
   if (accessDenied) {
     return (
       <EmptyState
         icon={ScrollText}
-        title="403 · Acceso restringido"
-        description="No tenés acceso al registro de actividad."
+        title={t('logs.accessDeniedTitle')}
+        description={t('logs.accessDeniedDesc')}
       />
     );
   }
@@ -216,16 +230,16 @@ export default function LogsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Registro de Actividad"
-        subtitle="Quién hizo qué, cuándo y desde dónde"
+        title={t('nav.logs')}
+        subtitle={t('logs.subtitle')}
         icon={ScrollText}
         actions={
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={resetFilters}>
-              <RotateCcw className="w-4 h-4" /> Hoy
+              <RotateCcw className="w-4 h-4" /> {t('logs.today')}
             </Button>
             <Button variant="secondary" size="sm" onClick={exportCsv} disabled={total === 0}>
-              <FileDown className="w-4 h-4" /> CSV
+              <FileDown className="w-4 h-4" /> {t('common.csv')}
             </Button>
           </div>
         }
@@ -235,52 +249,52 @@ export default function LogsPage() {
       <Card className="p-4">
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Desde</span>
+            <span className="text-xs text-muted-foreground">{t('logs.from')}</span>
             <input type="date" value={from} className={selectCls}
               onChange={(e) => { setFrom(e.target.value); resetPage(); }} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Hasta</span>
+            <span className="text-xs text-muted-foreground">{t('logs.to')}</span>
             <input type="date" value={to} className={selectCls}
               onChange={(e) => { setTo(e.target.value); resetPage(); }} />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Módulo</span>
+            <span className="text-xs text-muted-foreground">{t('logs.colModule')}</span>
             <select value={moduleKey} className={selectCls}
               onChange={(e) => { setModuleKey(e.target.value); resetPage(); }}>
-              <option value="">Todos</option>
+              <option value="">{t('common.all')}</option>
               {facets.modules.map((m) => (
                 <option key={m} value={m}>{prettyModule(m)}</option>
               ))}
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Acción</span>
+            <span className="text-xs text-muted-foreground">{t('logs.colAction')}</span>
             <select value={action} className={selectCls}
               onChange={(e) => { setAction(e.target.value); resetPage(); }}>
-              <option value="">Todas</option>
+              <option value="">{t('logs.allActions')}</option>
               {facets.actions.map((a) => (
-                <option key={a} value={a}>{ACTION_LABELS[a] ?? a}</option>
+                <option key={a} value={a}>{actionLabel(a)}</option>
               ))}
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Usuario</span>
+            <span className="text-xs text-muted-foreground">{t('logs.colUser')}</span>
             <select value={userFilter} className={selectCls}
               onChange={(e) => { setUserFilter(e.target.value); resetPage(); }}>
-              <option value="">Todos</option>
+              <option value="">{t('common.all')}</option>
               {facets.users.map((u) => (
                 <option key={u} value={u}>{u}</option>
               ))}
             </select>
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">Buscar en el detalle</span>
+            <span className="text-xs text-muted-foreground">{t('logs.searchLabel')}</span>
             <div className="relative">
               <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
               <input
                 value={q}
-                placeholder="OP-2026-0007, monto…"
+                placeholder={t('logs.searchPlaceholder')}
                 className={`${selectCls} w-full pl-8`}
                 onChange={(e) => { setQ(e.target.value); resetPage(); }}
               />
@@ -294,14 +308,14 @@ export default function LogsPage() {
         <div className="flex items-center justify-between px-4 py-3 border-b border-border">
           <span className="text-xs text-muted-foreground tabular-nums">{summary}</span>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" aria-label="Página anterior"
+            <Button variant="ghost" size="icon" aria-label={t('logs.prevPage')}
               disabled={page <= 1 || loading} onClick={() => setPage((p) => p - 1)}>
               <ChevronLeft className="w-4 h-4" />
             </Button>
             <span className="text-xs text-muted-foreground tabular-nums px-1">
               {page} / {totalPages}
             </span>
-            <Button variant="ghost" size="icon" aria-label="Página siguiente"
+            <Button variant="ghost" size="icon" aria-label={t('logs.nextPage')}
               disabled={page >= totalPages || loading} onClick={() => setPage((p) => p + 1)}>
               <ChevronRight className="w-4 h-4" />
             </Button>
@@ -312,12 +326,12 @@ export default function LogsPage() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
-                <th className="px-4 py-3 font-medium whitespace-nowrap">Fecha</th>
-                <th className="px-4 py-3 font-medium">Usuario</th>
-                <th className="px-4 py-3 font-medium">Acción</th>
-                <th className="px-4 py-3 font-medium">Módulo</th>
-                <th className="px-4 py-3 font-medium">Detalle</th>
-                <th className="px-4 py-3 font-medium">IP</th>
+                <th className="px-4 py-3 font-medium whitespace-nowrap">{t('common.date')}</th>
+                <th className="px-4 py-3 font-medium">{t('logs.colUser')}</th>
+                <th className="px-4 py-3 font-medium">{t('logs.colAction')}</th>
+                <th className="px-4 py-3 font-medium">{t('logs.colModule')}</th>
+                <th className="px-4 py-3 font-medium">{t('logs.colDetails')}</th>
+                <th className="px-4 py-3 font-medium">{t('logs.colIp')}</th>
               </tr>
             </thead>
             <tbody>
@@ -330,8 +344,8 @@ export default function LogsPage() {
                   <td colSpan={6} className="p-0">
                     <EmptyState
                       icon={ScrollText}
-                      title="Sin actividad"
-                      description="No hay registros con estos filtros. Probá ampliando el rango de fechas."
+                      title={t('logs.emptyTitle')}
+                      description={t('logs.emptyDesc')}
                     />
                   </td>
                 </tr>
@@ -345,7 +359,7 @@ export default function LogsPage() {
                   <td className="px-4 py-3 whitespace-nowrap">{r.user_name ?? '—'}</td>
                   <td className="px-4 py-3">
                     <Badge variant={actionTone(r.action)}>
-                      {ACTION_LABELS[r.action] ?? r.action}
+                      {actionLabel(r.action)}
                     </Badge>
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">{prettyModule(r.module)}</td>

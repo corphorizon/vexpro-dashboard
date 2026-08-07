@@ -12,10 +12,9 @@ import { createClient } from '@/lib/supabase/server';
 // para las rutas de lectura genéricas que aún no lo pasan.
 const ADMIN_ROLES = ['admin', 'auditor', 'hr'];
 
-/** Rutas del dominio financiero: dinero. HR queda afuera. */
-export const FINANCE_ROLES = ['admin', 'auditor'] as const;
-/** Rutas del dominio RRHH: personas y sueldos. Auditor queda afuera. */
-export const HR_ROLES = ['admin', 'hr'] as const;
+// Los dominios (FINANCE_ROLES/HR_ROLES) viven en roles.ts — registro único
+// que también lee la UI para no dibujar botones que este archivo rechazaría.
+export { FINANCE_ROLES, HR_ROLES } from '@/lib/roles';
 
 export type VerifyAdminAuthOptions = {
   /**

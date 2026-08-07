@@ -25,6 +25,7 @@ import { useAuth, canAdd } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { apiFetch } from '@/lib/api-fetch';
 import { formatCurrency } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { Button } from '@/components/ui/button';
@@ -46,6 +47,7 @@ export default function LiquidityReconcilePage() {
   const accessDenied = !useModuleAccess('liquidity');
   const canWrite = canAdd(user);
   const { toast, ToastHost } = useToasts();
+  const { t } = useI18n();
 
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [pending, setPending] = useState<Pending[]>([]);
@@ -68,14 +70,14 @@ export default function LiquidityReconcilePage() {
         setAccounts(json.accounts ?? []);
         setPending(json.pending ?? []);
       } else {
-        toast.error(json.error ?? 'No se pudo cargar la conciliación');
+        toast.error(json.error ?? t('reconcile.loadError'));
       }
     } catch {
-      toast.error('No se pudo cargar la conciliación');
+      toast.error(t('reconcile.loadError'));
     } finally {
       setLoading(false);
     }
-  }, [toast]);
+  }, [toast, t]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -98,15 +100,15 @@ export default function LiquidityReconcilePage() {
       await load();
       return true;
     }
-    toast.error(json.error ?? 'No se pudo guardar');
+    toast.error(json.error ?? t('reconcile.saveError'));
     return false;
   };
 
   const assign = async (mov: Pending) => {
     const account_id = choice[mov.id];
-    if (!account_id) { toast.error('Elegí una cuenta'); return; }
+    if (!account_id) { toast.error(t('reconcile.chooseAccountError')); return; }
     setBusyId(mov.id);
-    await post({ action: 'assign', id: mov.id, account_id }, 'Movimiento atribuido');
+    await post({ action: 'assign', id: mov.id, account_id }, t('reconcile.assigned'));
     setBusyId(null);
   };
 
@@ -134,8 +136,8 @@ export default function LiquidityReconcilePage() {
 
   const confirmSplit = async (mov: Pending) => {
     const { ok } = splitTotals(mov);
-    if (!ok) { toast.error('Las partes tienen que sumar el importe original'); return; }
-    if (parts.some((p) => !p.account_id)) { toast.error('Falta elegir cuenta en alguna parte'); return; }
+    if (!ok) { toast.error(t('reconcile.sumMismatch')); return; }
+    if (parts.some((p) => !p.account_id)) { toast.error(t('reconcile.missingAccount')); return; }
     setBusyId(mov.id);
     const done = await post({
       action: 'split',
@@ -145,7 +147,7 @@ export default function LiquidityReconcilePage() {
         deposit: Number(p.deposit) || 0,
         withdrawal: Number(p.withdrawal) || 0,
       })),
-    }, 'Movimiento dividido');
+    }, t('reconcile.splitDone'));
     if (done) { setSplitting(null); setParts([]); }
     setBusyId(null);
   };
@@ -159,12 +161,12 @@ export default function LiquidityReconcilePage() {
       body: JSON.stringify({ action: 'create_account', mt_number: num }),
     });
     const json = await res.json();
-    if (json.success) { setNewAccount(''); toast.success(`Cuenta ${num} agregada`); await load(); }
-    else toast.error(json.error ?? 'No se pudo crear la cuenta');
+    if (json.success) { setNewAccount(''); toast.success(t('reconcile.accountAdded', { number: num })); await load(); }
+    else toast.error(json.error ?? t('reconcile.accountCreateError'));
   };
 
   if (accessDenied) {
-    return <EmptyState icon={Scale} title="403 · Acceso restringido" description="No tenés acceso a Liquidez." />;
+    return <EmptyState icon={Scale} title={t('reconcile.accessDeniedTitle')} description={t('reconcile.accessDeniedDesc')} />;
   }
 
   return (
@@ -172,20 +174,20 @@ export default function LiquidityReconcilePage() {
       {ToastHost}
 
       <PageHeader
-        title="Conciliación de Liquidez"
-        subtitle="Atribuir cada movimiento a su cuenta MT"
+        title={t('reconcile.title')}
+        subtitle={t('reconcile.subtitle')}
         icon={Scale}
         actions={
           <Link href="/liquidez" className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground">
-            <ArrowLeft className="w-4 h-4" /> Volver a Liquidez
+            <ArrowLeft className="w-4 h-4" /> {t('reconcile.backToLiquidity')}
           </Link>
         }
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <StatCard label="Sin cuenta" value={String(totals.sinCuenta)} tone={totals.sinCuenta ? 'warning' : 'positive'} />
-        <StatCard label="A dividir" value={String(totals.aDividir)} tone={totals.aDividir ? 'warning' : 'positive'} />
-        <StatCard label="Monto pendiente" value={formatCurrency(totals.monto)} />
+        <StatCard label={t('reconcile.statNoAccount')} value={String(totals.sinCuenta)} tone={totals.sinCuenta ? 'warning' : 'positive'} />
+        <StatCard label={t('reconcile.statToSplit')} value={String(totals.aDividir)} tone={totals.aDividir ? 'warning' : 'positive'} />
+        <StatCard label={t('reconcile.statPendingAmount')} value={formatCurrency(totals.monto)} />
       </div>
 
       {/* Alta rápida de cuenta: si un movimiento pertenece a una cuenta que no
@@ -194,19 +196,19 @@ export default function LiquidityReconcilePage() {
         <Card className="p-4">
           <div className="flex flex-wrap items-end gap-3">
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">Agregar cuenta MT</span>
+              <span className="text-xs text-muted-foreground">{t('reconcile.addAccountLabel')}</span>
               <input
                 className={INPUT}
                 value={newAccount}
-                placeholder="Nº de cuenta"
+                placeholder={t('reconcile.accountNumberPlaceholder')}
                 onChange={(e) => setNewAccount(e.target.value)}
               />
             </label>
             <Button variant="secondary" size="sm" onClick={createAccount} disabled={!newAccount.trim()}>
-              <Plus className="w-4 h-4" /> Agregar
+              <Plus className="w-4 h-4" /> {t('common.add')}
             </Button>
             <span className="text-xs text-muted-foreground ml-auto">
-              {accounts.length} cuentas en el catálogo
+              {t('reconcile.accountsInCatalog', { count: String(accounts.length) })}
             </span>
           </div>
         </Card>
@@ -217,8 +219,8 @@ export default function LiquidityReconcilePage() {
       {!loading && pending.length === 0 && (
         <EmptyState
           icon={Check}
-          title="Todo conciliado"
-          description="Cada movimiento de liquidez está atribuido a su cuenta MT. Ya se puede leer el saldo por cuenta con confianza."
+          title={t('reconcile.allDoneTitle')}
+          description={t('reconcile.allDoneDesc')}
         />
       )}
 
@@ -239,13 +241,13 @@ export default function LiquidityReconcilePage() {
                   )}
                   {mov.needs_split && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/10 text-amber-700 dark:text-amber-300 border border-warning/30">
-                      <AlertTriangle className="w-3 h-3" /> Varias cuentas
+                      <AlertTriangle className="w-3 h-3" /> {t('reconcile.multipleAccounts')}
                     </span>
                   )}
                 </div>
                 {mov.mt_account && (
                   <p className="text-xs text-muted-foreground mt-1 break-all">
-                    Cuentas en el registro original: {mov.mt_account}
+                    {t('reconcile.originalAccounts', { accounts: mov.mt_account })}
                   </p>
                 )}
                 {mov.notes && <p className="text-xs text-muted-foreground mt-0.5">{mov.notes}</p>}
@@ -258,7 +260,7 @@ export default function LiquidityReconcilePage() {
                     value={choice[mov.id] ?? ''}
                     onChange={(e) => setChoice((c) => ({ ...c, [mov.id]: e.target.value }))}
                   >
-                    <option value="">Elegir cuenta…</option>
+                    <option value="">{t('reconcile.chooseAccount')}</option>
                     {accounts.map((a) => (
                       <option key={a.id} value={a.id}>
                         {a.mt_number}{a.label ? ` · ${a.label}` : ''}
@@ -266,10 +268,10 @@ export default function LiquidityReconcilePage() {
                     ))}
                   </select>
                   <Button size="sm" variant="primary" loading={busyId === mov.id} onClick={() => assign(mov)}>
-                    <Check className="w-4 h-4" /> Atribuir
+                    <Check className="w-4 h-4" /> {t('reconcile.assign')}
                   </Button>
                   <Button size="sm" variant="secondary" onClick={() => beginSplit(mov)}>
-                    <Split className="w-4 h-4" /> Dividir
+                    <Split className="w-4 h-4" /> {t('reconcile.split')}
                   </Button>
                 </div>
               )}
@@ -284,19 +286,19 @@ export default function LiquidityReconcilePage() {
                       value={part.account_id}
                       onChange={(e) => setParts((ps) => ps.map((p, j) => j === i ? { ...p, account_id: e.target.value } : p))}
                     >
-                      <option value="">Cuenta…</option>
+                      <option value="">{t('reconcile.accountOption')}</option>
                       {accounts.map((a) => (
                         <option key={a.id} value={a.id}>{a.mt_number}</option>
                       ))}
                     </select>
                     <input
                       type="number" step="0.01" min="0" inputMode="decimal"
-                      className={INPUT} placeholder="Depósito" value={part.deposit}
+                      className={INPUT} placeholder={t('reconcile.deposit')} value={part.deposit}
                       onChange={(e) => setParts((ps) => ps.map((p, j) => j === i ? { ...p, deposit: e.target.value } : p))}
                     />
                     <input
                       type="number" step="0.01" min="0" inputMode="decimal"
-                      className={INPUT} placeholder="Retiro" value={part.withdrawal}
+                      className={INPUT} placeholder={t('reconcile.withdrawal')} value={part.withdrawal}
                       onChange={(e) => setParts((ps) => ps.map((p, j) => j === i ? { ...p, withdrawal: e.target.value } : p))}
                     />
                   </div>
@@ -304,17 +306,21 @@ export default function LiquidityReconcilePage() {
 
                 <div className="flex flex-wrap items-center gap-3 pt-1">
                   <Button size="sm" variant="ghost" onClick={() => setParts((ps) => [...ps, { account_id: '', deposit: '', withdrawal: '' }])}>
-                    <Plus className="w-4 h-4" /> Otra cuenta
+                    <Plus className="w-4 h-4" /> {t('reconcile.anotherAccount')}
                   </Button>
                   {/* El descuadre se avisa mientras se escribe, no recién al
                       guardar: es lo único que impide partir mal. */}
                   <span className={`text-xs tabular-nums ${st?.ok ? 'text-positive' : 'text-negative'}`}>
-                    Partes: {formatCurrency(st?.dep ?? 0)} dep · {formatCurrency(st?.wit ?? 0)} ret
-                    {' — original: '}{formatCurrency(mov.deposit)} dep · {formatCurrency(mov.withdrawal)} ret
+                    {t('reconcile.partsSummary', {
+                      dep: formatCurrency(st?.dep ?? 0),
+                      wit: formatCurrency(st?.wit ?? 0),
+                      origDep: formatCurrency(mov.deposit),
+                      origWit: formatCurrency(mov.withdrawal),
+                    })}
                   </span>
                   <div className="ml-auto flex gap-2">
                     <Button size="sm" variant="secondary" onClick={() => { setSplitting(null); setParts([]); }}>
-                      Cancelar
+                      {t('common.cancel')}
                     </Button>
                     <Button
                       size="sm" variant="primary"
@@ -322,7 +328,7 @@ export default function LiquidityReconcilePage() {
                       disabled={!st?.ok}
                       onClick={() => confirmSplit(mov)}
                     >
-                      Dividir
+                      {t('reconcile.split')}
                     </Button>
                   </div>
                 </div>

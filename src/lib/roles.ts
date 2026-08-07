@@ -56,3 +56,16 @@ export const WRITE_CAPABLE_ROLES: ReadonlySet<string> = new Set(['admin', 'audit
 export function roleCanWrite(role: string): boolean {
   return WRITE_CAPABLE_ROLES.has(role);
 }
+
+/**
+ * Dominios de escritura. Los usa el servidor (verifyAdminAuth) Y la UI: un
+ * botón de acción que el servidor va a rechazar con 403 no debe dibujarse.
+ * Viven acá y no en api-auth.ts porque este archivo no arrastra next/server
+ * y puede importarse desde componentes cliente.
+ */
+export const FINANCE_ROLES = ['admin', 'auditor'] as const;
+export const HR_ROLES = ['admin', 'hr'] as const;
+
+export function roleCanWriteFinance(role: string): boolean {
+  return (FINANCE_ROLES as readonly string[]).includes(role);
+}

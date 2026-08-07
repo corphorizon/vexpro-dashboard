@@ -88,6 +88,7 @@ import {
 } from '@/lib/broker-logic';
 import {
   parseAmount,
+  findInvalidAmount,
   computeExpensePending,
 } from '@/lib/upload-calculations';
 import {
@@ -1040,6 +1041,8 @@ export default function UploadPage() {
   const addLiquidityRow = () => {
     if (!userCanAdd || !company || !newLiq.date || !newLiq.user_email) return;
     if (savingLiq) return;
+    const badLiq = findInvalidAmount(newLiq.deposit, newLiq.withdrawal);
+    if (badLiq !== null) { showError(t('upload.invalidAmount', { value: badLiq })); return; }
     const dep = parseAmount(newLiq.deposit);
     const wth = parseAmount(newLiq.withdrawal);
     (async () => {
@@ -1086,6 +1089,8 @@ export default function UploadPage() {
   const saveEditLiq = () => {
     if (!editingLiqId) return;
     if (savingLiq) return;
+    const badEditLiq = findInvalidAmount(editLiq.deposit, editLiq.withdrawal);
+    if (badEditLiq !== null) { showError(t('upload.invalidAmount', { value: badEditLiq })); return; }
     const dep = parseAmount(editLiq.deposit);
     const wth = parseAmount(editLiq.withdrawal);
     (async () => {
@@ -1149,6 +1154,8 @@ export default function UploadPage() {
   const addInvestmentRow = () => {
     if (!userCanAdd || !company || !newInv.date) return;
     if (savingInv) return;
+    const badInv = findInvalidAmount(newInv.deposit, newInv.withdrawal, newInv.profit);
+    if (badInv !== null) { showError(t('upload.invalidAmount', { value: badInv })); return; }
     const dep = parseAmount(newInv.deposit);
     const wth = parseAmount(newInv.withdrawal);
     const prf = parseAmount(newInv.profit);
@@ -1203,6 +1210,8 @@ export default function UploadPage() {
   const saveEditInv = () => {
     if (!editingInvId) return;
     if (savingInv) return;
+    const badEditInv = findInvalidAmount(editInv.deposit, editInv.withdrawal, editInv.profit);
+    if (badEditInv !== null) { showError(t('upload.invalidAmount', { value: badEditInv })); return; }
     const dep = parseAmount(editInv.deposit);
     const wth = parseAmount(editInv.withdrawal);
     const prf = parseAmount(editInv.profit);
@@ -1492,6 +1501,8 @@ export default function UploadPage() {
 
   const addExpense = () => {
     if (!userCanAdd || !company || !newExpense.concept || !newExpense.amount) return;
+    const badExp = findInvalidAmount(newExpense.amount, newExpense.paid, newExpense.pending);
+    if (badExp !== null) { showError(t('upload.invalidAmount', { value: badExp })); return; }
     const amt = parseAmount(newExpense.amount);
     const pd = parseAmount(newExpense.paid);
     const pn = computeExpensePending(newExpense.amount, newExpense.paid, newExpense.pending);
@@ -1538,6 +1549,8 @@ export default function UploadPage() {
 
   const saveEditExpense = () => {
     if (!editingExpenseId) return;
+    const badEditExp = findInvalidAmount(editExpense.amount, editExpense.paid, editExpense.pending);
+    if (badEditExp !== null) { showError(t('upload.invalidAmount', { value: badEditExp })); return; }
     const amt = parseAmount(editExpense.amount);
     const pd = parseAmount(editExpense.paid);
     const pn = computeExpensePending(editExpense.amount, editExpense.paid, editExpense.pending);

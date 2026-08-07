@@ -24,6 +24,25 @@ export function parseAmount(raw: string | number | null | undefined): number {
 }
 
 /**
+ * Detecta el caso que parseAmount se traga en silencio: el usuario ESCRIBIÓ
+ * algo pero no parsea a número ("abc", "12..5", ","), y guardarlo lo
+ * convertiría en un 0 que nadie pidió (auditoría 2026-08-06 R1). Vacío o solo
+ * espacios NO es inválido: significa "sin valor" a propósito.
+ *
+ * Devuelve el primer texto inválido, o null si todos los campos están bien.
+ */
+export function findInvalidAmount(
+  ...values: Array<string | number | null | undefined>
+): string | null {
+  for (const raw of values) {
+    if (typeof raw !== 'string') continue;
+    const s = raw.trim();
+    if (s !== '' && !Number.isFinite(parseFloat(s))) return s;
+  }
+  return null;
+}
+
+/**
  * Pendiente de un gasto. Si el usuario escribió un pendiente explícito (>0) se
  * respeta; si lo dejó vacío/0 se deriva como `amount - paid`.
  *

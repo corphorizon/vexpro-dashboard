@@ -12,6 +12,7 @@ import type {
 import { DEFAULT_THRESHOLDS } from '@/lib/ib-rebates/types';
 import { computeAlert } from '@/lib/ib-rebates/alerts';
 import { apiFetch } from '@/lib/api-fetch';
+import { useI18n } from '@/lib/i18n';
 
 // ─── Tipos locales ────────────────────────────────────────────────────────
 
@@ -45,6 +46,7 @@ type ChangeIntent = 'edit' | 'upgrade' | 'downgrade';
 // ─── Componente principal ─────────────────────────────────────────────────
 
 export function IbRebatesTab() {
+  const { t } = useI18n();
   const [configs, setConfigs] = useState<IbRebateConfig[]>([]);
   const [thresholds, setThresholds] = useState<IbRebateThresholds>({
     company_id: '',
@@ -135,7 +137,7 @@ export function IbRebatesTab() {
           body: JSON.stringify({ ...form, changeType: pendingIntent }),
         });
         const data = await res.json();
-        if (!data.success) { alert(data.error || 'Error al guardar'); return; }
+        if (!data.success) { alert(data.error || t('ibRebates.errorSave')); return; }
       } else {
         const res = await apiFetch('/api/admin/ib-rebates', {
           method: 'POST',
@@ -143,12 +145,12 @@ export function IbRebatesTab() {
           body: JSON.stringify(form),
         });
         const data = await res.json();
-        if (!data.success) { alert(data.error || 'Error al crear'); return; }
+        if (!data.success) { alert(data.error || t('ibRebates.errorCreate')); return; }
       }
       closeForm();
       loadAll();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error');
+      alert(err instanceof Error ? err.message : t('ibRebates.errorGeneric'));
     }
   };
 
@@ -156,8 +158,8 @@ export function IbRebatesTab() {
 
   const handleToggleGoals = async (c: IbRebateConfig) => {
     const msg = c.goals_met
-      ? `¿Quitar marca de "cumplió metas" a ${c.username}?`
-      : `¿Marcar que ${c.username} cumplió metas?`;
+      ? t('ibRebates.confirmUnsetGoals', { username: c.username })
+      : t('ibRebates.confirmSetGoals', { username: c.username });
     if (!confirm(msg)) return;
     try {
       const res = await apiFetch(`/api/admin/ib-rebates/${c.id}`, {
@@ -169,12 +171,12 @@ export function IbRebatesTab() {
       if (!data.success) { alert(data.error); return; }
       loadAll();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error');
+      alert(err instanceof Error ? err.message : t('ibRebates.errorGeneric'));
     }
   };
 
   const handleDelete = async (c: IbRebateConfig) => {
-    if (!confirm(`¿Eliminar configuración de ${c.username}? Esta acción no se puede deshacer.`)) return;
+    if (!confirm(t('ibRebates.confirmDelete', { username: c.username }))) return;
     try {
       const res = await apiFetch(`/api/admin/ib-rebates/${c.id}`, {
         method: 'DELETE',
@@ -183,7 +185,7 @@ export function IbRebatesTab() {
       if (!data.success) { alert(data.error); return; }
       loadAll();
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error');
+      alert(err instanceof Error ? err.message : t('ibRebates.errorGeneric'));
     }
   };
 
@@ -214,7 +216,7 @@ export function IbRebatesTab() {
     return (
       <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${colors[alert.level]}`}>
         <Icon className="w-3.5 h-3.5" />
-        {alert.message} ({alert.daysSince}d)
+        {t(`ibRebates.alert.${alert.mode}.${alert.level}`)} ({t('ibRebates.daysShort', { days: String(alert.daysSince) })})
       </span>
     );
   };
@@ -223,14 +225,14 @@ export function IbRebatesTab() {
     if (type === 'upgrade') {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-800 border border-blue-300 dark:bg-blue-900/30 dark:text-blue-300">
-          <ChevronUp className="w-3 h-3" />Upgraded
+          <ChevronUp className="w-3 h-3" />{t('ibRebates.badgeUpgraded')}
         </span>
       );
     }
     if (type === 'downgrade') {
       return (
         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-900/30 dark:text-purple-300">
-          <ChevronDown className="w-3 h-3" />Downgraded
+          <ChevronDown className="w-3 h-3" />{t('ibRebates.badgeDowngraded')}
         </span>
       );
     }
@@ -238,7 +240,7 @@ export function IbRebatesTab() {
   };
 
   if (loading) {
-    return <div className="p-8 text-center text-muted-foreground">Cargando configuraciones...</div>;
+    return <div className="p-8 text-center text-muted-foreground">{t('ibRebates.loading')}</div>;
   }
 
   // ─── Render ─────────────────────────────────────────────────────────────
@@ -251,7 +253,7 @@ export function IbRebatesTab() {
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
           <input
             type="text"
-            placeholder="Buscar por username..."
+            placeholder={t('ibRebates.searchPlaceholder')}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
@@ -262,30 +264,30 @@ export function IbRebatesTab() {
           onChange={(e) => setFilterAlert(e.target.value as FilterAlert)}
           className="px-3 py-2 rounded-lg border border-border bg-card text-sm"
         >
-          <option value="all">Todos los estados</option>
-          <option value="green">🟢 OK</option>
-          <option value="yellow">🟡 Alerta</option>
-          <option value="orange">🟠 Naranja</option>
-          <option value="red">🔴 Pendiente revisar</option>
-          <option value="goals_met">🟦 Cumplió metas</option>
+          <option value="all">{t('ibRebates.filterAll')}</option>
+          <option value="green">{t('ibRebates.filterGreen')}</option>
+          <option value="yellow">{t('ibRebates.filterYellow')}</option>
+          <option value="orange">{t('ibRebates.filterOrange')}</option>
+          <option value="red">{t('ibRebates.filterRed')}</option>
+          <option value="goals_met">{t('ibRebates.filterGoalsMet')}</option>
         </select>
         <button
           onClick={() => setShowImport(true)}
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted"
         >
-          <Upload className="w-4 h-4" /> Importar Excel
+          <Upload className="w-4 h-4" /> {t('ibRebates.importExcel')}
         </button>
         <button
           onClick={() => setShowThresholds(true)}
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted"
         >
-          <Settings className="w-4 h-4" /> Umbrales
+          <Settings className="w-4 h-4" /> {t('ibRebates.thresholds')}
         </button>
         <button
           onClick={openCreate}
           className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
         >
-          <Plus className="w-4 h-4" /> Nueva configuración
+          <Plus className="w-4 h-4" /> {t('ibRebates.newConfig')}
         </button>
       </div>
 
@@ -294,19 +296,19 @@ export function IbRebatesTab() {
         <table className="w-full text-sm min-w-[1100px]">
           <thead className="bg-muted/50 text-xs text-muted-foreground">
             <tr className="border-b border-border">
-              <th className="text-left py-2.5 px-3 font-medium">Username</th>
-              <th className="text-left py-2.5 px-3 font-medium">Fecha original</th>
-              <th className="text-left py-2.5 px-3 font-medium">Última actualización</th>
+              <th className="text-left py-2.5 px-3 font-medium">{t('ibRebates.colUsername')}</th>
+              <th className="text-left py-2.5 px-3 font-medium">{t('ibRebates.colOriginalDate')}</th>
+              <th className="text-left py-2.5 px-3 font-medium">{t('ibRebates.colLastUpdate')}</th>
               <th className="text-center py-2.5 px-3 font-medium">STP</th>
               <th className="text-center py-2.5 px-3 font-medium">ECN</th>
               <th className="text-center py-2.5 px-3 font-medium">CENT</th>
               <th className="text-center py-2.5 px-3 font-medium">PRO</th>
               <th className="text-center py-2.5 px-3 font-medium">VIP</th>
               <th className="text-center py-2.5 px-3 font-medium">ELITE</th>
-              <th className="text-center py-2.5 px-3 font-medium">Sint.</th>
+              <th className="text-center py-2.5 px-3 font-medium">{t('ibRebates.colSynthetic')}</th>
               <th className="text-center py-2.5 px-3 font-medium">PropFirm</th>
-              <th className="text-left py-2.5 px-3 font-medium">Estado</th>
-              <th className="text-right py-2.5 px-3 font-medium">Acciones</th>
+              <th className="text-left py-2.5 px-3 font-medium">{t('common.status')}</th>
+              <th className="text-right py-2.5 px-3 font-medium">{t('common.actions')}</th>
             </tr>
           </thead>
           <tbody>
@@ -315,8 +317,8 @@ export function IbRebatesTab() {
                 <td colSpan={13}>
                   <EmptyState
                     compact
-                    title="Sin configuraciones de rebate"
-                    description="Agregá la primera configuración para empezar a calcular rebates IB."
+                    title={t('ibRebates.emptyTitle')}
+                    description={t('ibRebates.emptyDesc')}
                   />
                 </td>
               </tr>
@@ -334,7 +336,7 @@ export function IbRebatesTab() {
                         {new Date(c.last_update_date).toLocaleDateString()}
                       </span>
                       {c.last_update_date !== c.original_config_date && (
-                        <span className="text-[10px] text-muted-foreground">(modificada)</span>
+                        <span className="text-[10px] text-muted-foreground">{t('ibRebates.modified')}</span>
                       )}
                     </div>
                   </td>
@@ -352,7 +354,7 @@ export function IbRebatesTab() {
                       {renderChangeTypeBadge(c.last_change_type)}
                       {c.goals_met && (
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-900/30 dark:text-sky-300">
-                          <CheckCircle2 className="w-3 h-3" /> Cumplió metas
+                          <CheckCircle2 className="w-3 h-3" /> {t('ibRebates.goalsMet')}
                         </span>
                       )}
                     </div>
@@ -361,42 +363,42 @@ export function IbRebatesTab() {
                     <div className="inline-flex items-center gap-1">
                       <button
                         onClick={() => openEdit(c, 'edit')}
-                        title="Editar"
+                        title={t('common.edit')}
                         className="p-1.5 rounded hover:bg-muted"
                       >
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => openEdit(c, 'upgrade')}
-                        title="Upgrade (subir niveles)"
+                        title={t('ibRebates.upgradeTitle')}
                         className="p-1.5 rounded hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600"
                       >
                         <ChevronUp className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => openEdit(c, 'downgrade')}
-                        title="Downgrade (bajar niveles)"
+                        title={t('ibRebates.downgradeTitle')}
                         className="p-1.5 rounded hover:bg-purple-50 dark:hover:bg-purple-950/40 text-purple-600"
                       >
                         <ChevronDown className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleToggleGoals(c)}
-                        title={c.goals_met ? 'Quitar metas' : 'Marcar metas cumplidas'}
+                        title={c.goals_met ? t('ibRebates.unsetGoals') : t('ibRebates.setGoals')}
                         className="p-1.5 rounded hover:bg-muted"
                       >
                         <CheckCircle2 className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleViewHistory(c.id)}
-                        title="Ver historial"
+                        title={t('ibRebates.viewHistory')}
                         className="p-1.5 rounded hover:bg-muted"
                       >
                         <History className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => handleDelete(c)}
-                        title="Eliminar"
+                        title={t('common.delete')}
                         className="p-1.5 rounded hover:bg-red-50 text-red-600 dark:hover:bg-red-950/40"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -458,12 +460,13 @@ function FormModal({
   onClose: () => void;
   onSubmit: (e: React.FormEvent) => void;
 }) {
+  const { t } = useI18n();
   const titleByIntent: Record<ChangeIntent, string> = {
-    edit: 'Editar configuración',
-    upgrade: 'Upgrade — subir niveles',
-    downgrade: 'Downgrade — bajar niveles',
+    edit: t('ibRebates.formTitleEdit'),
+    upgrade: t('ibRebates.formTitleUpgrade'),
+    downgrade: t('ibRebates.formTitleDowngrade'),
   };
-  const heading = !editingId ? 'Nueva configuración' : titleByIntent[intent];
+  const heading = !editingId ? t('ibRebates.newConfig') : titleByIntent[intent];
 
   return (
     <div
@@ -477,19 +480,19 @@ function FormModal({
       >
         <div className="flex items-center justify-between">
           <h3 className="text-lg font-semibold">{heading}</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Cerrar">
+          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
             <X className="w-4 h-4" />
           </button>
         </div>
         {editingId && (
           <p className="text-xs text-muted-foreground">
-            Al guardar, la fecha se reinicia a hoy y se registra como{' '}
-            <strong>{intent}</strong> en el historial.
+            {t('ibRebates.formEditHintPre')}{' '}
+            <strong>{intent}</strong> {t('ibRebates.formEditHintPost')}
           </p>
         )}
         <div className="grid grid-cols-2 gap-3">
           <label className="block">
-            <span className="text-xs font-medium block mb-1">Username</span>
+            <span className="text-xs font-medium block mb-1">{t('ibRebates.colUsername')}</span>
             <input
               required
               value={form.username}
@@ -498,7 +501,7 @@ function FormModal({
             />
           </label>
           <label className="block">
-            <span className="text-xs font-medium block mb-1">Archivo (referencia)</span>
+            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldFile')}</span>
             <input
               value={form.archivo}
               onChange={(e) => setForm({ ...form, archivo: e.target.value })}
@@ -507,7 +510,7 @@ function FormModal({
           </label>
           <label className="block">
             <span className="text-xs font-medium block mb-1">
-              {editingId ? 'Fecha (no se modifica al editar)' : 'Fecha de configuración'}
+              {editingId ? t('ibRebates.fieldDateLocked') : t('ibRebates.fieldDate')}
             </span>
             <input
               type="date"
@@ -519,7 +522,7 @@ function FormModal({
             />
             {editingId && (
               <p className="text-[10px] text-muted-foreground mt-1">
-                Al guardar, &quot;Última actualización&quot; pasa a hoy. La fecha original queda intacta.
+                {t('ibRebates.fieldDateHint')}
               </p>
             )}
           </label>
@@ -537,7 +540,7 @@ function FormModal({
             </label>
           ))}
           <label className="block">
-            <span className="text-xs font-medium block mb-1">Sintéticos (Nivel)</span>
+            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldSyntheticLevel')}</span>
             <input
               type="number"
               value={form.syntheticos_level}
@@ -546,7 +549,7 @@ function FormModal({
             />
           </label>
           <label className="block">
-            <span className="text-xs font-medium block mb-1">PropFirm (Nivel)</span>
+            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldPropfirmLevel')}</span>
             <input
               type="number"
               value={form.propfirm_level}
@@ -555,7 +558,7 @@ function FormModal({
             />
           </label>
           <label className="block col-span-2">
-            <span className="text-xs font-medium block mb-1">Notas (opcional)</span>
+            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldNotes')}</span>
             <textarea
               value={form.notes}
               onChange={(e) => setForm({ ...form, notes: e.target.value })}
@@ -570,13 +573,13 @@ function FormModal({
             onClick={onClose}
             className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted"
           >
-            Cancelar
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
             className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
           >
-            {editingId ? 'Guardar' : 'Crear'}
+            {editingId ? t('common.save') : t('ibRebates.create')}
           </button>
         </div>
       </form>
@@ -591,6 +594,7 @@ function ThresholdsModal({
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const { t } = useI18n();
   const [form, setForm] = useState({
     initial_yellow_days: thresholds.initial_yellow_days,
     initial_red_days: thresholds.initial_red_days,
@@ -625,18 +629,18 @@ function ThresholdsModal({
         className="bg-card rounded-xl shadow-xl p-6 max-w-md w-full space-y-3"
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Umbrales de alerta</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Cerrar">
+          <h3 className="text-lg font-semibold">{t('ibRebates.thresholdsTitle')}</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
             <X className="w-4 h-4" />
           </button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Ajusta los días para cada nivel de alerta.
+          {t('ibRebates.thresholdsHint')}
         </p>
         <div className="space-y-3">
-          <p className="text-sm font-medium">Modo inicial (configs nuevas o solo editadas)</p>
+          <p className="text-sm font-medium">{t('ibRebates.modeInitial')}</p>
           <label className="block">
-            <span className="text-xs">Días para 🟡 amarillo (alertar net deposit)</span>
+            <span className="text-xs">{t('ibRebates.daysYellowInitial')}</span>
             <input
               type="number"
               value={form.initial_yellow_days}
@@ -645,7 +649,7 @@ function ThresholdsModal({
             />
           </label>
           <label className="block">
-            <span className="text-xs">Días para 🔴 rojo (pendiente revisar)</span>
+            <span className="text-xs">{t('ibRebates.daysRedInitial')}</span>
             <input
               type="number"
               value={form.initial_red_days}
@@ -653,9 +657,9 @@ function ThresholdsModal({
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
             />
           </label>
-          <p className="text-sm font-medium pt-2">Modo recurrente (después de upgrade/downgrade)</p>
+          <p className="text-sm font-medium pt-2">{t('ibRebates.modeRecurring')}</p>
           <label className="block">
-            <span className="text-xs">Días para 🟡 amarillo</span>
+            <span className="text-xs">{t('ibRebates.daysYellow')}</span>
             <input
               type="number"
               value={form.recurring_yellow_days}
@@ -664,7 +668,7 @@ function ThresholdsModal({
             />
           </label>
           <label className="block">
-            <span className="text-xs">Días para 🟠 naranja</span>
+            <span className="text-xs">{t('ibRebates.daysOrange')}</span>
             <input
               type="number"
               value={form.recurring_orange_days}
@@ -673,7 +677,7 @@ function ThresholdsModal({
             />
           </label>
           <label className="block">
-            <span className="text-xs">Días para 🔴 rojo</span>
+            <span className="text-xs">{t('ibRebates.daysRed')}</span>
             <input
               type="number"
               value={form.recurring_red_days}
@@ -688,14 +692,14 @@ function ThresholdsModal({
             onClick={onClose}
             className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted"
           >
-            Cancelar
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
             disabled={saving}
             className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
           >
-            {saving ? 'Guardando...' : 'Guardar'}
+            {saving ? t('common.saving') : t('common.save')}
           </button>
         </div>
       </form>
@@ -709,6 +713,7 @@ function ImportModal({
   onClose: () => void;
   onImported: () => void;
 }) {
+  const { t } = useI18n();
   const [file, setFile] = useState<File | null>(null);
   const [mode, setMode] = useState<'skip' | 'update'>('skip');
   const [uploading, setUploading] = useState(false);
@@ -741,20 +746,20 @@ function ImportModal({
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div onClick={(e) => e.stopPropagation()} className="bg-card rounded-xl shadow-xl p-6 max-w-md w-full space-y-3">
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Importar Excel masivo</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Cerrar">
+          <h3 className="text-lg font-semibold">{t('ibRebates.importTitle')}</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
             <X className="w-4 h-4" />
           </button>
         </div>
         {result ? (
           <div className="space-y-2 text-sm">
-            <p>Total filas leídas: <strong>{result.total}</strong></p>
-            <p>Insertadas: <strong className="text-emerald-600">{result.inserted}</strong></p>
-            <p>Actualizadas: <strong className="text-blue-600">{result.updated}</strong></p>
-            <p>Omitidas (duplicados): <strong className="text-yellow-600">{result.skipped}</strong></p>
+            <p>{t('ibRebates.importTotal')} <strong>{result.total}</strong></p>
+            <p>{t('ibRebates.importInserted')} <strong className="text-emerald-600">{result.inserted}</strong></p>
+            <p>{t('ibRebates.importUpdated')} <strong className="text-blue-600">{result.updated}</strong></p>
+            <p>{t('ibRebates.importSkipped')} <strong className="text-yellow-600">{result.skipped}</strong></p>
             {result.errors.length > 0 && (
               <div className="rounded p-2 bg-red-50 border border-red-200 text-xs max-h-32 overflow-y-auto dark:bg-red-950/40 dark:border-red-900">
-                <p className="font-medium text-red-800 dark:text-red-300 mb-1">Errores:</p>
+                <p className="font-medium text-red-800 dark:text-red-300 mb-1">{t('ibRebates.importErrors')}</p>
                 {result.errors.map((er, i) => <p key={i}>{er}</p>)}
               </div>
             )}
@@ -762,13 +767,13 @@ function ImportModal({
               onClick={onImported}
               className="w-full mt-3 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
             >
-              Cerrar
+              {t('common.close')}
             </button>
           </div>
         ) : (
           <form onSubmit={submit} className="space-y-3">
             <p className="text-xs text-muted-foreground">
-              Columnas esperadas: Archivo | Fecha | Username | STP | ECN | CENT | PRO | VIP | ELITE | Sintéticos | PropFirm.
+              {t('ibRebates.importColumns')}
             </p>
             <input
               type="file"
@@ -778,14 +783,14 @@ function ImportModal({
               className="w-full text-sm"
             />
             <label className="block">
-              <span className="text-xs font-medium block mb-1">Si username ya existe</span>
+              <span className="text-xs font-medium block mb-1">{t('ibRebates.importModeLabel')}</span>
               <select
                 value={mode}
                 onChange={(e) => setMode(e.target.value as 'skip' | 'update')}
                 className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
               >
-                <option value="skip">Omitir (no tocar)</option>
-                <option value="update">Actualizar con datos del Excel</option>
+                <option value="skip">{t('ibRebates.importModeSkip')}</option>
+                <option value="update">{t('ibRebates.importModeUpdate')}</option>
               </select>
             </label>
             <div className="flex justify-end gap-2 pt-2">
@@ -794,14 +799,14 @@ function ImportModal({
                 onClick={onClose}
                 className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted"
               >
-                Cancelar
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
                 disabled={uploading || !file}
                 className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
-                {uploading ? 'Importando...' : 'Importar'}
+                {uploading ? t('ibRebates.importing') : t('ibRebates.importAction')}
               </button>
             </div>
           </form>
@@ -817,6 +822,7 @@ function HistoryModal({
   entries: IbRebateHistoryEntry[];
   onClose: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
       <div
@@ -824,25 +830,25 @@ function HistoryModal({
         className="bg-card rounded-xl shadow-xl p-6 max-w-2xl w-full space-y-3 max-h-[90vh] overflow-y-auto"
       >
         <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">Historial de cambios</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label="Cerrar">
+          <h3 className="text-lg font-semibold">{t('ibRebates.historyTitle')}</h3>
+          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
             <X className="w-4 h-4" />
           </button>
         </div>
         {entries.length === 0 ? (
-          <EmptyState compact title="Sin historial" description="Los cálculos guardados van a aparecer acá." />
+          <EmptyState compact title={t('ibRebates.historyEmptyTitle')} description={t('ibRebates.historyEmptyDesc')} />
         ) : (
           <div className="space-y-2">
             {entries.map((e) => (
               <div key={e.id} className="rounded-lg border border-border p-3 text-sm">
                 <div className="flex justify-between mb-1">
-                  <span className="font-medium capitalize">{e.change_type}</span>
+                  <span className="font-medium capitalize">{t(`ibRebates.changeType.${e.change_type}`)}</span>
                   <span className="text-xs text-muted-foreground">
                     {new Date(e.created_at).toLocaleString()}
                   </span>
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Por: {e.changed_by_name || 'Desconocido'}
+                  {t('ibRebates.historyBy', { name: e.changed_by_name || t('ibRebates.unknownUser') })}
                 </p>
                 {e.notes && <p className="text-xs mt-1">{e.notes}</p>}
               </div>
@@ -854,7 +860,7 @@ function HistoryModal({
             onClick={onClose}
             className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
           >
-            Cerrar
+            {t('common.close')}
           </button>
         </div>
       </div>
