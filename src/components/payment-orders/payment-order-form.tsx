@@ -138,7 +138,11 @@ function initialState(order: PaymentOrder | undefined, fallbackCurrency: string)
     beneficiary_tax_id: order?.beneficiary_tax_id ?? '',
     beneficiary_email: order?.beneficiary_email ?? '',
     beneficiary_country: order?.beneficiary_country ?? '',
-    save_beneficiary: false,
+    // Encendido por defecto (pedido de Kevin 2026-08-08): el beneficiario y su
+    // medio de pago quedan en la libreta sin gesto extra, y editar la wallet
+    // en una orden convierte ese dato en el nuevo default. Se puede apagar
+    // para un pago excepcional que no deba pisar la libreta.
+    save_beneficiary: true,
     currency: order?.currency ?? fallbackCurrency,
     fees: order ? String(order.fees ?? 0) : '',
     payment_method: order?.payment_method ?? 'crypto',
@@ -515,6 +519,17 @@ export function PaymentOrderForm({ mode, order }: Props) {
                   setBenHighlight(0);
                 }}
                 onFocus={() => setBenOpen(true)}
+                onBlur={() => {
+                  // Tipear el nombre completo sin clickear la sugerencia debe
+                  // comportarse igual que elegirla: si hay match exacto en la
+                  // libreta y aún no está vinculado, se vincula y el medio de
+                  // pago aparece por defecto. Solo en blur y solo si no está
+                  // ya vinculado — así no pisa una wallet editada a propósito.
+                  const q = form.beneficiary_name.trim().toLowerCase();
+                  if (!q) return;
+                  const exact = beneficiaries.find((b) => b.name.trim().toLowerCase() === q);
+                  if (exact && form.beneficiary_id !== exact.id) pickBeneficiary(exact);
+                }}
                 onKeyDown={(e) => {
                   if (!benOpen || benMatches.length === 0) return;
                   if (e.key === 'ArrowDown') {
