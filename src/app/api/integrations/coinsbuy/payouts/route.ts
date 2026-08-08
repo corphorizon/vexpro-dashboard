@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAdminAuth } from '@/lib/api-auth';
@@ -12,9 +12,9 @@ import { fetchCoinsbuyPayoutsV3 } from '@/lib/api-integrations/coinsbuy/payouts'
 //   to=YYYY-MM-DDTHH:mm:ss+00:00
 // ---------------------------------------------------------------------------
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const url = new URL(request.url);

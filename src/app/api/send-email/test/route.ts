@@ -12,7 +12,7 @@ import { et, resolveUserLocale } from '@/lib/email-i18n';
 // ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
-  const auth = await verifyAdminAuth();
+  const auth = await verifyAdminAuth(request);
   if (auth instanceof NextResponse) return auth;
 
   if (process.env.NODE_ENV === 'production') {

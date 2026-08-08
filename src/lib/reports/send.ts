@@ -155,6 +155,28 @@ export async function sendReportsForCadence(
     return Array.isArray(c.active_modules) && c.active_modules.includes('reports');
   });
 
+  // Superadmins de plataforma (pedido Kevin 2026-08-08): reciben el reporte
+  // de TODAS las empresas — supervisan el grupo entero y no viven en
+  // company_users, así que el filtro por tenant nunca los alcanzaba. Se
+  // consultan una sola vez y se suman a cada empresa, deduplicados por email.
+  const { data: platformRows } = await admin
+    .from('platform_users')
+    .select('id, user_id, email, name, preferred_language');
+  const superadmins = ((platformRows ?? []) as Array<{
+    id: string; user_id: string; email: string | null; name: string | null;
+    preferred_language: string | null;
+  }>)
+    .filter((p): p is typeof p & { email: string } => !!p.email)
+    .map((p) => ({
+      id: p.id,
+      user_id: p.user_id,
+      email: p.email,
+      name: p.name ?? p.email,
+      allowed_modules: ['reports'],
+      status: 'active',
+      preferred_language: p.preferred_language,
+    }));
+
   const details: SendReportsResult['details'] = [];
   let emails_sent = 0;
   let emails_failed = 0;
@@ -205,6 +227,16 @@ export async function sendReportsForCadence(
           u.allowed_modules.some((m) => FINANZAS_MODULES.includes(m)) &&
           !optedOut.has(u.id),
       );
+
+      // Superadmins al final, deduplicados por email por si alguno también
+      // existiera como usuario del tenant. El opt-out por cadencia les aplica
+      // igual (su id de platform_users puede entrar en cadenceDisabledUsers).
+      const tenantEmails = new Set(recipients.map((r) => (r.email ?? '').toLowerCase()));
+      for (const sa of superadmins) {
+        if (optedOut.has(sa.id)) continue;
+        if (tenantEmails.has((sa.email ?? '').toLowerCase())) continue;
+        recipients.push(sa);
+      }
       entry.recipients = recipients.length;
 
       if (recipients.length === 0) {
