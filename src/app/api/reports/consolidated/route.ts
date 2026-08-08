@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { buildReportData } from '@/lib/reports/data';
 
@@ -10,9 +10,9 @@ import { buildReportData } from '@/lib/reports/data';
 // skinny — every business rule lives in `src/lib/reports/data.ts`.
 // ---------------------------------------------------------------------------
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const url = new URL(request.url);
