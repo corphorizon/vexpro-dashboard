@@ -25,7 +25,7 @@ import { apiError } from '@/lib/api-error';
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAuth();
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
