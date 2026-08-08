@@ -67,5 +67,9 @@ export const FINANCE_ROLES = ['admin', 'auditor'] as const;
 export const HR_ROLES = ['admin', 'hr'] as const;
 
 export function roleCanWriteFinance(role: string): boolean {
-  return (FINANCE_ROLES as readonly string[]).includes(role);
+  // El superadmin de plataforma llega al cliente con effective_role
+  // 'superadmin' (no figura en FINANCE_ROLES porque esa lista alimenta el
+  // CHECK de company_users), pero el servidor lo trata como 'admin' en toda
+  // ruta de finanzas — mismo criterio que canAdd/canEdit en auth-context.
+  return role === 'superadmin' || (FINANCE_ROLES as readonly string[]).includes(role);
 }
