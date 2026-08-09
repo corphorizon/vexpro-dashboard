@@ -51,6 +51,11 @@ export interface ChannelConfigRow {
   is_visible: boolean;
   is_custom: boolean;
   sort_order: number;
+  // Dónde está la plata (migración 070). Opcionales porque las filas viejas
+  // del cache local del cliente pueden no traerlos todavía.
+  location_type?: string | null;
+  business_unit_id?: string | null;
+  holder?: string | null;
 }
 
 /**

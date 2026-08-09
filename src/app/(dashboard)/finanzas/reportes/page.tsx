@@ -20,6 +20,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
+import { features } from '@/lib/business-model';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
@@ -212,6 +213,9 @@ export default function ReportesPage() {
   const { user } = useAuth();
   const { company } = useData();
   const { t } = useI18n();
+  // Una consultora no tiene depósitos ni retiros: esa sección saldría en cero
+  // todos los días.
+  const { movements: showFlows } = features(company?.business_model);
   const canAccess = useModuleAccess('reports');
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
 
@@ -473,6 +477,7 @@ export default function ReportesPage() {
       {data && (
         <>
           {/* SECTION 1 — Deposits & Withdrawals */}
+          {showFlows && (
           <Card>
             <div className="flex items-center gap-2 mb-4">
               <Wallet className="w-5 h-5 text-muted-foreground" />
@@ -536,6 +541,8 @@ export default function ReportesPage() {
               />
             </div>
           </Card>
+
+          )}
 
           {/* SECTION 2 — Balances por Canal */}
           <Card>

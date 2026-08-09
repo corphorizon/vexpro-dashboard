@@ -11,6 +11,7 @@
 //   3. Upsert helper (used by /api/reports/config)
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { blockedReportSections } from '@/lib/business-model';
 import { createAdminClient } from '@/lib/supabase/admin';
 
 export interface ReportSections {
@@ -124,15 +125,32 @@ function rowToConfig(row: Row): ReportConfig {
  */
 export async function loadReportConfig(companyId: string): Promise<ReportConfig> {
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from('report_configs')
-    .select(
-      'include_deposits_withdrawals, include_balances_by_channel, include_crm_users, include_broker_pnl, include_prop_trading, cadence_daily_enabled, cadence_weekly_enabled, cadence_monthly_enabled, cadence_disabled_users, updated_at, updated_by',
-    )
-    .eq('company_id', companyId)
-    .maybeSingle();
-  if (error || !data) return DEFAULT_REPORT_CONFIG;
-  return rowToConfig(data as Row);
+  const [configRes, companyRes] = await Promise.all([
+    admin
+      .from('report_configs')
+      .select(
+        'include_deposits_withdrawals, include_balances_by_channel, include_crm_users, include_broker_pnl, include_prop_trading, cadence_daily_enabled, cadence_weekly_enabled, cadence_monthly_enabled, cadence_disabled_users, updated_at, updated_by',
+      )
+      .eq('company_id', companyId)
+      .maybeSingle(),
+    admin.from('companies').select('business_model').eq('id', companyId).maybeSingle(),
+  ]);
+
+  const config = configRes.error || !configRes.data
+    ? DEFAULT_REPORT_CONFIG
+    : rowToConfig(configRes.data as Row);
+
+  // El modelo de negocio manda sobre la configuración: mandarle a una
+  // consultora "Depósitos y retiros: $0" todos los días es peor que no
+  // mandarle nada, y su config podría tenerlo encendido por el default.
+  const blocked = blockedReportSections(companyRes.data?.business_model);
+  if (blocked.length === 0) return config;
+
+  const sections = { ...config.sections };
+  for (const key of blocked) {
+    if (key in sections) sections[key as keyof ReportSections] = false;
+  }
+  return { ...config, sections };
 }
 
 export interface SaveReportConfigInput {

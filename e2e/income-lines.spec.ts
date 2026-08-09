@@ -27,7 +27,10 @@ test('una factura sin cobrar suma al facturado pero no a lo distribuible', async
     .from('periods').select('id').eq('company_id', COMPANY)
     .order('year', { ascending: false }).order('month', { ascending: false })
     .limit(1).single();
-  await db.from('income_lines').delete().eq('period_id', period!.id);
+  // Limpieza por la RPC y no por DELETE: el total cobrado vive materializado
+  // en operating_income.other y un borrado directo lo dejaría en el valor
+  // viejo, moviéndole la distribución al spec que corra después.
+  await db.rpc('replace_income_lines', { p_company_id: COMPANY, p_period_id: period!.id, p_lines: [] });
 
   await login(page);
   await page.goto('/upload');
@@ -61,5 +64,5 @@ test('una factura sin cobrar suma al facturado pero no a lo distribuible', async
     .from('operating_income').select('other').eq('period_id', period!.id).single();
   expect(Number(oi!.other), 'la cadena estaría repartiendo plata no cobrada').toBe(2000);
 
-  await db.from('income_lines').delete().eq('period_id', period!.id);
+  await db.rpc('replace_income_lines', { p_company_id: COMPANY, p_period_id: period!.id, p_lines: [] });
 });

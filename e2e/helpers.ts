@@ -105,3 +105,37 @@ export async function expectStatValue(
 export async function openUploadSection(page: Page, name: string): Promise<void> {
   await page.getByRole('button', { name, exact: true }).click();
 }
+
+// ─── Superadmin en modo "viendo como" ────────────────────────────────────────
+// Los superadmins reales viven en `platform_users` de la base compartida y sus
+// credenciales no se usan en los tests. Lo que SÍ se puede reproducir sin
+// tocar la base es el lado cliente, que es donde estaban los bugs: el perfil
+// se resuelve `company_users` → `platform_users`, así que devolvemos [] en la
+// primera y una fila de plataforma en la segunda. El resultado es un `user`
+// con role='superadmin', is_superadmin=true y company_id=null — exactamente
+// lo que ve la UI de Kevin. El servidor sigue autenticando al admin real.
+export async function actAsSuperadminClient(page: Page, companyId: string): Promise<void> {
+  await page.route('**/rest/v1/company_users*', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    await route.fulfill({ status: 200, contentType: 'application/json', body: '[]' });
+  });
+  await page.route('**/rest/v1/platform_users*', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify([
+        {
+          id: 'e2e-platform-user',
+          user_id: 'e2e-platform-user',
+          email: 'e2e-superadmin@e2e-test.local',
+          name: 'E2E Superadmin',
+          twofa_enabled: true,
+          force_2fa_setup: false,
+        },
+      ]),
+    });
+  });
+  await page.addInitScript((cid) => {
+    localStorage.setItem('horizon.superadmin.activeCompanyId', cid as string);
+  }, companyId);
+}

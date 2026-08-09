@@ -22,8 +22,31 @@ import {
   type ChannelType,
 } from '@/lib/channel-configs';
 import { apiError } from '@/lib/api-error';
+import { isLocationType } from '@/lib/cash-locations';
 
 const BUILTIN_KEYS = new Set(BUILTIN_CHANNELS.map((c) => c.key));
+
+const CONFIG_COLUMNS =
+  'id, channel_key, custom_label, channel_type, is_visible, is_custom, sort_order, location_type, business_unit_id, holder';
+
+/**
+ * El admin client saltea RLS, así que aceptar un business_unit_id del body sin
+ * verificar de qué empresa es permitiría colgar una ubicación propia de la
+ * unidad de otro inquilino (IDOR). Devuelve la unidad validada o null.
+ */
+async function belongsToCompany(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  unitId: string,
+): Promise<boolean> {
+  const { data } = await admin
+    .from('business_units')
+    .select('id')
+    .eq('id', unitId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+  return Boolean(data);
+}
 
 async function resolveCompanyAndAuth(
   explicitCompanyId: string | null,
@@ -52,7 +75,7 @@ export async function GET(request: NextRequest) {
   const admin = createAdminClient();
   const { data, error } = await admin
     .from('channel_configs')
-    .select('id, channel_key, custom_label, channel_type, is_visible, is_custom, sort_order')
+    .select(CONFIG_COLUMNS)
     .eq('company_id', ctx.companyId)
     .order('sort_order', { ascending: true });
 
@@ -80,11 +103,17 @@ export async function POST(request: NextRequest) {
       custom_label,
       is_visible,
       sort_order,
+      location_type,
+      business_unit_id,
+      holder,
     } = body as {
       channel_key?: string;
       custom_label?: string | null;
       is_visible?: boolean;
       sort_order?: number;
+      location_type?: string;
+      business_unit_id?: string | null;
+      holder?: string | null;
     };
     if (!channel_key || typeof channel_key !== 'string') {
       return NextResponse.json({ success: false, error: 'channel_key requerido' }, { status: 400 });
@@ -102,13 +131,51 @@ export async function POST(request: NextRequest) {
       is_visible: typeof is_visible === 'boolean' ? is_visible : true,
       updated_at: new Date().toISOString(),
     };
-    if (!apiChannel) {
+    // `custom_label` OMITIDO ≠ `custom_label: null`. Antes cualquier upsert
+    // que no lo mandara (el toggle de visibilidad del modal, y desde hoy el
+    // guardado de tipo/holder de la tarjeta de ubicaciones) lo pisaba con
+    // null: un canal personalizado perdía su nombre y pasaba a mostrarse
+    // como `custom_<uuid>`. Mismo criterio que location_type/holder.
+    if (!apiChannel && custom_label !== undefined) {
       payload.custom_label = typeof custom_label === 'string' ? custom_label.trim() || null : null;
     }
     if (typeof sort_order === 'number') payload.sort_order = sort_order;
     if (isBuiltin) {
       payload.channel_type = builtin!.type;
       payload.is_custom = false;
+    } else {
+      // Una clave que no es built-in ES un canal personalizado. Fijarlo acá
+      // deja el flag coherente aunque el upsert termine insertando (y sin él
+      // la acción `delete`, que filtra por is_custom=true, no lo encontraría).
+      payload.is_custom = true;
+    }
+
+    // Dónde está la plata (migración 070). Los tres campos son opcionales:
+    // omitirlos deja intacto lo que ya estaba, para que el toggle de
+    // visibilidad no borre la clasificación de la ubicación.
+    if (location_type !== undefined) {
+      if (!isLocationType(location_type)) {
+        return NextResponse.json(
+          { success: false, error: 'Tipo de ubicación no válido' },
+          { status: 400 },
+        );
+      }
+      payload.location_type = location_type;
+    }
+    if (business_unit_id !== undefined) {
+      if (business_unit_id === null || business_unit_id === '') {
+        payload.business_unit_id = null;
+      } else if (await belongsToCompany(admin, ctx.companyId, business_unit_id)) {
+        payload.business_unit_id = business_unit_id;
+      } else {
+        return NextResponse.json(
+          { success: false, error: 'La unidad de negocio no existe en esta empresa' },
+          { status: 400 },
+        );
+      }
+    }
+    if (holder !== undefined) {
+      payload.holder = typeof holder === 'string' ? holder.trim() || null : null;
     }
 
     const { error } = await admin
@@ -122,7 +189,14 @@ export async function POST(request: NextRequest) {
       user_id: ctx.userId,
       action: 'update',
       module: 'balances_channel_config',
-      details: JSON.stringify({ channel_key, is_visible, custom_label }),
+      details: JSON.stringify({
+        channel_key,
+        is_visible,
+        custom_label,
+        location_type: payload.location_type,
+        business_unit_id: payload.business_unit_id,
+        holder: payload.holder,
+      }),
     });
     return NextResponse.json({ success: true });
   }

@@ -945,6 +945,22 @@ export function canDelete(user: User | null): boolean {
   return user.effective_role === 'admin';
 }
 
+/**
+ * "Es admin de esta empresa" para gates de UI que el servidor exige estrictos
+ * (los que rechazan a auditor/hr, p.ej. /api/admin/channel-configs).
+ *
+ * Existe porque `user.role === 'admin'` escrito a mano es el bug recurrente
+ * de este repo: un superadmin en modo viewing-as llega con role
+ * 'superadmin' (no tiene fila en company_users) y esos gates lo dejaban
+ * afuera. Kevin lo reportó en Balances — no le aparecía "Configurar", así
+ * que no podía quitar ni agregar canales. Usar SIEMPRE este helper.
+ */
+export function isCompanyAdmin(user: User | null): boolean {
+  if (!user) return false;
+  if (user.is_superadmin) return true;
+  return user.effective_role === 'admin';
+}
+
 export const ROLE_LABELS: Record<string, string> = {
   admin: 'Admin',
   socio: 'Socio',
