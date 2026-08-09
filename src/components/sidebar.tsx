@@ -44,6 +44,7 @@ import {
   ChevronLeft,
   ChevronRight,
   ScrollText,
+  Contact,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -89,6 +90,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
       { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
       { href: '/socios', i18nKey: 'nav.partners', icon: Briefcase, module: 'partners' },
+      { href: '/clientes', i18nKey: 'nav.clients', icon: Contact, module: 'clients' },
       { href: '/ordenes-pago', i18nKey: 'nav.paymentOrders', icon: FileSignature, module: 'payment_orders' },
       { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
       { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },

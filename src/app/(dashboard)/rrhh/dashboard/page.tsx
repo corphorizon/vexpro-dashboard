@@ -11,6 +11,7 @@ import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { useAuth } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
+import { features } from '@/lib/business-model';
 import { formatCurrency, cn } from '@/lib/utils';
 import {
   Users,
@@ -33,6 +34,10 @@ const PayrollTrendChart = dynamic(
   () => import('@/components/charts/hr-charts').then((m) => m.PayrollTrendChart),
   { ssr: false, loading: chartLoading },
 );
+const EmployeePayrollChart = dynamic(
+  () => import('@/components/charts/hr-charts').then((m) => m.EmployeePayrollChart),
+  { ssr: false, loading: chartLoading },
+);
 const DepartmentDonut = dynamic(
   () => import('@/components/charts/hr-charts').then((m) => m.DepartmentDonut),
   { ssr: false, loading: chartLoading },
@@ -50,6 +55,7 @@ export default function DashboardPage() {
   const { user } = useAuth();
   const { selectedPeriodId } = usePeriod();
   const {
+    company,
     commercialProfiles,
     employees,
     getResultsByPeriod,
@@ -57,6 +63,10 @@ export default function DashboardPage() {
     periods,
     monthlyResults,
   } = useData();
+
+  // Sin equipo comercial no hay perfiles, comisiones, top performers ni
+  // equipos: RRHH es la ficha de empleados y nada más.
+  const { commercialTeam } = features(company?.business_model);
 
   // ─── Commercial profiles stats ───
   const profileStats = useMemo(() => {
@@ -82,7 +92,12 @@ export default function DashboardPage() {
     const departments = [...deptMap.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([name, count]) => ({ name, count }));
-    return { total: employees.length, active, inactive, probation, departments };
+    // Nómina mensual comprometida: el sueldo de quien está trabajando hoy
+    // (el período de prueba se cobra igual).
+    const monthlySalaries = employees
+      .filter((e) => e.status !== 'inactive')
+      .reduce((sum, e) => sum + (Number(e.salary) || 0), 0);
+    return { total: employees.length, active, inactive, probation, departments, monthlySalaries };
   }, [employees]);
 
   // ─── Period results ───
@@ -169,23 +184,32 @@ export default function DashboardPage() {
       <PageHeader
         title={t('hrDash.title')}
         subtitle={t('hrDash.subtitle')}
-        actions={<PeriodSelector />}
+        // El período solo alimenta comisiones y equipos: sin equipo comercial
+        // no queda nada en la pantalla que reaccione al cambiarlo.
+        actions={commercialTeam ? <PeriodSelector /> : undefined}
       />
 
       {/* KPI Row 1 — People count */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
-              <Users className="w-5 h-5 text-violet-500" />
+      <div
+        className={cn(
+          'grid grid-cols-1 gap-4',
+          commercialTeam ? 'md:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3',
+        )}
+      >
+        {commercialTeam && (
+          <Card>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
+                <Users className="w-5 h-5 text-violet-500" />
+              </div>
+              <CardTitle>{t('hrDash.totalProfiles')}</CardTitle>
             </div>
-            <CardTitle>{t('hrDash.totalProfiles')}</CardTitle>
-          </div>
-          <CardValue>{profileStats.active.length}</CardValue>
-          <p className="text-xs text-muted-foreground mt-1">
-            {profileStats.inactive.length} {t('hrDash.inactiveProfiles').toLowerCase()}
-          </p>
-        </Card>
+            <CardValue>{profileStats.active.length}</CardValue>
+            <p className="text-xs text-muted-foreground mt-1">
+              {profileStats.inactive.length} {t('hrDash.inactiveProfiles').toLowerCase()}
+            </p>
+          </Card>
+        )}
 
         <Card>
           <div className="flex items-center gap-3 mb-3">
@@ -206,49 +230,78 @@ export default function DashboardPage() {
             <div className="p-2 rounded-lg bg-positive/10">
               <DollarSign className="w-5 h-5 text-emerald-500" />
             </div>
-            <CardTitle>{t('hrDash.totalPayroll')}</CardTitle>
+            <CardTitle>{commercialTeam ? t('hrDash.totalPayroll') : t('hrDash.monthlySalaries')}</CardTitle>
           </div>
-          <CardValue>{formatCurrency(payroll.total)}</CardValue>
-          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-            <div className="flex justify-between">
-              <span>{t('hrDash.totalCommissions')}</span>
-              <span>{formatCurrency(payroll.totalCommissions)}</span>
-            </div>
-            <div className="flex justify-between">
-              <span>{t('hrDash.totalSalaries')}</span>
-              <span>{formatCurrency(payroll.totalSalaries)}</span>
-            </div>
-          </div>
+          {commercialTeam ? (
+            <>
+              <CardValue>{formatCurrency(payroll.total)}</CardValue>
+              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                <div className="flex justify-between">
+                  <span>{t('hrDash.totalCommissions')}</span>
+                  <span>{formatCurrency(payroll.totalCommissions)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>{t('hrDash.totalSalaries')}</span>
+                  <span>{formatCurrency(payroll.totalSalaries)}</span>
+                </div>
+              </div>
+            </>
+          ) : (
+            <>
+              <CardValue>{formatCurrency(empStats.monthlySalaries)}</CardValue>
+              <p className="text-xs text-muted-foreground mt-1">{t('hrDash.monthlySalariesHint')}</p>
+            </>
+          )}
         </Card>
 
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-warning/10">
-              <UserCog className="w-5 h-5 text-amber-500" />
+        {commercialTeam ? (
+          <Card>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-lg bg-warning/10">
+                <UserCog className="w-5 h-5 text-amber-500" />
+              </div>
+              <CardTitle>{t('hrDash.byRole')}</CardTitle>
             </div>
-            <CardTitle>{t('hrDash.byRole')}</CardTitle>
-          </div>
-          <div className="space-y-2 mt-1">
-            <div className="flex justify-between items-center">
-              <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.sales_manager)}>
-                {t('hrDash.salesManagers')}
-              </span>
-              <span className="font-semibold text-sm">{profileStats.salesManagers.length}</span>
+            <div className="space-y-2 mt-1">
+              <div className="flex justify-between items-center">
+                <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.sales_manager)}>
+                  {t('hrDash.salesManagers')}
+                </span>
+                <span className="font-semibold text-sm">{profileStats.salesManagers.length}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.head)}>
+                  {t('hrDash.heads')}
+                </span>
+                <span className="font-semibold text-sm">{profileStats.heads.length}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.bdm)}>
+                  {t('hrDash.bdms')}
+                </span>
+                <span className="font-semibold text-sm">{profileStats.bdms.length}</span>
+              </div>
             </div>
-            <div className="flex justify-between items-center">
-              <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.head)}>
-                {t('hrDash.heads')}
-              </span>
-              <span className="font-semibold text-sm">{profileStats.heads.length}</span>
+          </Card>
+        ) : (
+          <Card>
+            <div className="flex items-center gap-3 mb-3">
+              <div className="p-2 rounded-lg bg-warning/10">
+                <UserCog className="w-5 h-5 text-amber-500" />
+              </div>
+              <CardTitle>{t('hrDash.departmentsCount')}</CardTitle>
             </div>
-            <div className="flex justify-between items-center">
-              <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.bdm)}>
-                {t('hrDash.bdms')}
-              </span>
-              <span className="font-semibold text-sm">{profileStats.bdms.length}</span>
-            </div>
-          </div>
-        </Card>
+            <CardValue>{empStats.departments.length}</CardValue>
+            <p className="text-xs text-muted-foreground mt-1">
+              {empStats.departments[0]
+                ? t('hrDash.largestDepartment', {
+                    name: empStats.departments[0].name,
+                    count: String(empStats.departments[0].count),
+                  })
+                : t('hrDash.noData')}
+            </p>
+          </Card>
+        )}
       </div>
 
       {/* Row 2 — Charts: evolución de nómina + distribución por departamento */}
@@ -258,22 +311,33 @@ export default function DashboardPage() {
             <div className="p-2 rounded-lg bg-accent/10">
               <TrendingUp className="w-5 h-5 text-accent" />
             </div>
-            <h2 className="font-semibold">Nómina por período</h2>
+            <h2 className="font-semibold">{t('hrDash.payrollByPeriod')}</h2>
           </div>
-          <PayrollTrendChart periods={periods} monthlyResults={monthlyResults} />
+          {commercialTeam ? (
+            <PayrollTrendChart periods={periods} monthlyResults={monthlyResults} />
+          ) : (
+            <EmployeePayrollChart
+              periods={periods}
+              employees={employees}
+              seriesLabel={t('hrDash.totalSalaries')}
+              emptyTitle={t('hrDash.noPayroll')}
+              emptyDescription={t('hrDash.noPayrollHint')}
+            />
+          )}
         </Card>
         <Card>
           <div className="flex items-center gap-3 mb-4">
             <div className="p-2 rounded-lg bg-primary/10">
               <Users className="w-5 h-5 text-primary dark:text-accent" />
             </div>
-            <h2 className="font-semibold">Empleados por departamento</h2>
+            <h2 className="font-semibold">{t('hrDash.employeesByDept')}</h2>
           </div>
           <DepartmentDonut departments={empStats.departments} />
         </Card>
       </div>
 
-      {/* Row 3 — Top Performers + Team Summary */}
+      {/* Row 3 — Top Performers + Team Summary (solo con equipo comercial) */}
+      {commercialTeam && (
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         {/* Top Performers */}
         <Card>
@@ -352,6 +416,7 @@ export default function DashboardPage() {
           />
         </Card>
       </div>
+      )}
     </div>
   );
 }

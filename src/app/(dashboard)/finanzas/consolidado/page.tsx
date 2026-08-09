@@ -55,7 +55,10 @@ interface PeriodRowContext {
   periodLabel: string;
   // datos pre-calculados para evitar repetir el getPeriodSummary
   summary: ReturnType<ReturnType<typeof useData>['getPeriodSummary']>;
-  saldoInfo: { reservaPeriodo: number; reservaAcumulada: number; montoDistribuir: number } | null;
+  saldoInfo: {
+    reservaPeriodo: number; reservaAcumulada: number; montoDistribuir: number;
+    ingresosNetos: number; saldoAFavor: number;
+  } | null;
   // API totales del mes (Coinsbuy + FairPay + UniPayment). Llenado desde
   // /api/integrations/period-totals que ya respeta pinned_coinsbuy_wallets.
   // Sumado a `summary.totalDeposits` (manual) para mostrar el monto real.
@@ -203,6 +206,8 @@ export default function ConsolidadoPage() {
             reservaPeriodo: saldoEntry.reserveThisPeriod,
             reservaAcumulada: saldoEntry.reserveAccumulated,
             montoDistribuir: saldoEntry.montoDistribuir,
+            ingresosNetos: saldoEntry.ingresosNetos,
+            saldoAFavor: saldoEntry.saldoAFavor,
           }
         : null;
       const key = `${p.year}-${String(p.month).padStart(2, '0')}`;
@@ -280,6 +285,20 @@ export default function ConsolidadoPage() {
         kind: 'neutral',
       },
       {
+        key: 'operatingIncome',
+        labelKey: 'consolidated.colOperatingIncome',
+        compute: (c) => c.saldoInfo?.ingresosNetos ?? 0,
+        total: 'sum',
+        kind: 'pos',
+      },
+      {
+        key: 'monthResult',
+        labelKey: 'consolidated.colMonthResult',
+        compute: (c) => c.saldoInfo?.saldoAFavor ?? 0,
+        total: 'sum',
+        kind: 'neutral',
+      },
+      {
         key: 'operatingExpenses',
         labelKey: 'consolidated.colOperatingExpenses',
         compute: (c) => c.summary?.totalExpenses ?? 0,
@@ -289,13 +308,16 @@ export default function ConsolidadoPage() {
       {
         key: 'reservaPeriodo',
         labelKey: 'consolidated.colPeriodReserve',
+        // La cadena YA calculó la reserva con el % real de cada período. Acá
+        // se recalculaba con 10% fijo y el "monto a distribuir" con ×0,9:
+        // para Vex Pro y AP Markets coincidía de casualidad (usan 10%), pero
+        // Horizon tiene meses al 15%, 50%, 12,31%, 11,74% y 0% — esas cifras
+        // salían falsas. Una segunda fórmula que diverge de la real es el modo
+        // de falla número uno de este repo.
         compute: (c) => {
           if (!c.summary) return 0;
           if (!isPeriodAfterSaldoStart(c.periodId)) return 0;
-          // 10% del total a distribuir (calculado igual que la página /socios)
-          const md = c.saldoInfo?.montoDistribuir ?? 0;
-          const pct = 0.10;
-          return md * pct;
+          return c.saldoInfo?.reservaPeriodo ?? 0;
         },
         total: 'sum',
         kind: 'neutral',
@@ -310,7 +332,9 @@ export default function ConsolidadoPage() {
       {
         key: 'montoDistribuir',
         labelKey: 'consolidated.colAmountToDistribute',
-        compute: (c) => (c.saldoInfo?.montoDistribuir ?? 0) * 0.9,
+        // montoDistribuir ya viene NETO de reserva desde la cadena; el ×0,9
+        // le descontaba un 10% por segunda vez.
+        compute: (c) => c.saldoInfo?.montoDistribuir ?? 0,
         total: 'sum',
         kind: 'pos',
       },

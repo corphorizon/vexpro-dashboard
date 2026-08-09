@@ -71,6 +71,8 @@ export interface CashLocation {
   /** Para 'loan', a quién se le prestó; para 'bank', el banco. */
   holder: string | null;
   is_visible: boolean;
+  /** Propia del usuario: solo estas se pueden eliminar (las base se archivan). */
+  is_custom?: boolean;
   sort_order: number;
   /** Saldo actual del libro de esa ubicación. */
   balance: number;

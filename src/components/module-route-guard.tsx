@@ -24,6 +24,7 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/inversiones(\/|$)/, 'investments'],
   [/^\/balances(\/|$)/, 'balances'],
   [/^\/socios(\/|$)/, 'partners'],
+  [/^\/clientes(\/|$)/, 'clients'],
   [/^\/upload(\/|$)/, 'upload'],
   [/^\/periodos(\/|$)/, 'periods'],
   [/^\/rrhh(\/|$)/, 'hr'],

@@ -166,6 +166,13 @@ export function AdminHome() {
   // Una consultora no tiene depósitos de clientes: la fila 1 queda solo con
   // Egresos y el grid pasa a una columna para no dejar celdas vacías.
   const showNetDeposit = features(company?.business_model).netDeposit;
+  // Los ingresos operativos del mes: en una empresa de servicios es el número
+  // que reemplaza al Depósito Neto (que allí siempre sería cero).
+  const operatingIncomeMonth =
+    (currentSummary?.operatingIncome?.broker_pnl ?? 0) +
+    (currentSummary?.operatingIncome?.other ?? 0) +
+    (currentSummary?.propFirmNetIncome ?? 0) +
+    (currentSummary?.investmentProfits ?? 0);
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -184,11 +191,11 @@ export function AdminHome() {
             (depositos and retiros sit together so net deposit "story" reads
              left-to-right). All values consolidate API + manual. */}
       {loading && !currentSummary ? (
-        <SkeletonRow n={showNetDeposit ? 4 : 1} />
+        <SkeletonRow n={showNetDeposit ? 4 : 3} />
       ) : hasFinance ? (
         <section className={showNetDeposit
           ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4'
-          : 'grid grid-cols-1 gap-4'}
+          : 'grid grid-cols-1 sm:grid-cols-3 gap-4'}
         >
           {showNetDeposit && (
             <>
@@ -214,6 +221,14 @@ export function AdminHome() {
               />
             </>
           )}
+          {!showNetDeposit && (
+            <StatCard
+              label="Ingresos · mes"
+              value={formatCurrency(operatingIncomeMonth)}
+              icon={TrendingUp}
+              tone="positive"
+            />
+          )}
           <StatCard
             label="Egresos · mes"
             value={formatCurrency(currentSummary?.totalExpenses ?? 0)}
@@ -221,6 +236,14 @@ export function AdminHome() {
             tone="warning"
             hint={deltaHint(expensesDelta, /* invertColor */ true)}
           />
+          {!showNetDeposit && (
+            <StatCard
+              label="Neto · mes"
+              value={formatCurrency(operatingIncomeMonth - (currentSummary?.totalExpenses ?? 0))}
+              icon={Wallet}
+              tone={operatingIncomeMonth - (currentSummary?.totalExpenses ?? 0) >= 0 ? 'positive' : 'negative'}
+            />
+          )}
         </section>
       ) : null}
 

@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
+import { features } from '@/lib/business-model';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 import { useAuth, canAdd, isCompanyAdmin } from '@/lib/auth-context';
@@ -83,6 +84,7 @@ export default function BalancesPage() {
   const { t, locale } = useI18n();
   const { user } = useAuth();
   const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData } = useData();
+  const { movements: showFlows } = features(company?.business_model);
   const { selectedPeriodId } = usePeriod();
   const userCanAdd = canAdd(user);
 
@@ -170,7 +172,17 @@ export default function BalancesPage() {
       const montoDistribuir = saldoInfo?.totalDistribuir ?? 0;
 
       // Base net deposit from manual entries in /upload.
-      let netDeposit = summary.netDeposit;
+      //
+      // En una empresa de servicios NO hay depósitos ni retiros de clientes:
+      // el Net Deposit sería 0 en todos los meses y el acumulado caería a
+      // "menos todos los egresos de la historia" — un número enorme, rojo y
+      // falso (Kevin lo vio en -$356.870). Lo que entra en su caja son los
+      // ingresos operativos cobrados, así que la fila del mes se arma con eso.
+      let netDeposit = showFlows
+        ? summary.netDeposit
+        : (summary.operatingIncome?.broker_pnl ?? 0) +
+          (summary.operatingIncome?.other ?? 0) +
+          summary.propFirmNetIncome + summary.investmentProfits;
 
       // For derived-broker periods (Abr 2026+), replicate the EXACT formula
       // that /movimientos uses — la fuente de verdad. Si esto diverge, el
@@ -194,7 +206,7 @@ export default function BalancesPage() {
       // un Net Deposit menor en Balances que en Movimientos. Para VexPro
       // (ib=prop=other=0) ambas daban igual, pero era un bug latente que
       // afectaba el Monto a Distribuir apenas alguien cargara esas categorías.
-      if (isDerivedBrokerPeriod({ year: p.year, month: p.month })) {
+      if (showFlows && isDerivedBrokerPeriod({ year: p.year, month: p.month })) {
         const ymKey = `${p.year}-${String(p.month).padStart(2, '0')}`;
         const api = apiMonthly[ymKey];
         if (api) {
@@ -225,7 +237,7 @@ export default function BalancesPage() {
       });
     }
     return rows;
-  }, [periods, getPeriodSummary, computeSaldoChain, apiMonthly]);
+  }, [periods, getPeriodSummary, computeSaldoChain, apiMonthly, showFlows]);
 
   // The month shown in "Balance Actual Disponible". Starts tracking the
   // globally selected period, but the user can override it from the in-card

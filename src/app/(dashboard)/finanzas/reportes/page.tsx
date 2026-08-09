@@ -33,6 +33,8 @@ import { downloadCSV } from '@/lib/csv-export';
 // import { downloadReportPDF } from '@/lib/reports/pdf';
 import { ReportsConfigPanel } from './config-panel';
 import { SendReportModal } from './send-modal';
+import { CompanyReportSections, useCompanyReport } from './company-sections';
+import { companyReportCsvRows } from '@/lib/reports/company-report';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /finanzas/reportes — Operational financial report for a date range.
@@ -214,8 +216,11 @@ export default function ReportesPage() {
   const { company } = useData();
   const { t } = useI18n();
   // Una consultora no tiene depósitos ni retiros: esa sección saldría en cero
-  // todos los días.
+  // todos los días. Y las que quedaban en pie —balances por canal, usuarios
+  // del CRM, P&L, prop firm— tampoco son su negocio: para ella el reporte es
+  // facturación, egresos, resultado y dónde está la plata.
   const { movements: showFlows } = features(company?.business_model);
+  const isCompanyModel = !showFlows;
   const canAccess = useModuleAccess('reports');
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
 
@@ -259,6 +264,19 @@ export default function ReportesPage() {
     void load();
   }, [load]);
 
+  // Los saldos salen del mismo endpoint que ya trajo la página: el reporte de
+  // la empresa no puede mostrar una caja distinta a la de sus propios canales.
+  const channelBalances = useMemo(
+    () =>
+      (data?.balances_by_channel.channels ?? []).map((c) => ({
+        key: c.key,
+        label: c.label,
+        amount: c.amount,
+      })),
+    [data],
+  );
+  const companyReport = useCompanyReport(from, to, channelBalances, isCompanyModel);
+
   // Derive UI values.
   const rangeNet = data?.deposits_withdrawals.range.net_deposit ?? 0;
   const monthNet = data?.deposits_withdrawals.month.net_deposit ?? 0;
@@ -291,8 +309,13 @@ export default function ReportesPage() {
 
   // ── Export handlers ────────────────────────────────────────────────
   const handleExportCSV = () => verify2FA(() => {
-    if (!data) return;
     const headers = ['Sección', 'Métrica', 'Valor'];
+    if (isCompanyModel) {
+      if (!companyReport) return;
+      downloadCSV(`reporte_${from}_${to}.csv`, headers, companyReportCsvRows(companyReport));
+      return;
+    }
+    if (!data) return;
     const rows: (string | number)[][] = [
       ['Período', 'Desde', from],
       ['Período', 'Hasta', to],
@@ -319,9 +342,11 @@ export default function ReportesPage() {
     downloadCSV(`reporte_${from}_${to}.csv`, headers, rows);
   });
 
+  const exportsReady = isCompanyModel ? !!data && !!companyReport : !!data;
+
   const handleExportPDF = () =>
     verify2FA(() => {
-      if (!data) return;
+      if (!exportsReady || !data) return;
       // Company theme — primary colour + logo data-URL (fetched from the
       // CSS custom property if possible). The PDF generator handles fallbacks.
       const cssPrimary =
@@ -336,6 +361,9 @@ export default function ReportesPage() {
           companyName: company?.name ?? 'Smart Dashboard',
           companyLogoDataUrl: null, // logos served via URL, not inlined
           primaryColor: cssPrimary || null,
+          // Con esto el generador reemplaza las secciones de broker por las
+          // de la empresa: misma portada, mismo pie, mismo archivo.
+          companyReport: companyReport ?? undefined,
         });
       })();
     });
@@ -385,14 +413,14 @@ export default function ReportesPage() {
             )}
             <button
               onClick={handleExportCSV}
-              disabled={!data}
+              disabled={!exportsReady}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50"
             >
               <FileSpreadsheet className="w-4 h-4" /> {t('common.csv')}
             </button>
             <button
               onClick={handleExportPDF}
-              disabled={!data}
+              disabled={!exportsReady}
               className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50"
             >
               <FileText className="w-4 h-4" /> PDF
@@ -474,7 +502,12 @@ export default function ReportesPage() {
 
       {loading && !data && <Skeleton />}
 
-      {data && (
+      {/* Modelo 'company': el reporte del broker no aplica — se reemplaza
+          entero por facturación, egresos, resultado y dónde está la plata. */}
+      {isCompanyModel &&
+        (data && companyReport ? <CompanyReportSections report={companyReport} /> : <Skeleton />)}
+
+      {data && !isCompanyModel && (
         <>
           {/* SECTION 1 — Deposits & Withdrawals */}
           {showFlows && (

@@ -1,7 +1,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // /api/admin/channel-ledger
 //
-// GET  ?channel_key=&from=&to=   → asientos del libro de un canal.
+// GET  ?channel_key=&from=&to=        → asientos del libro de un canal.
+// GET  ?business_unit_id=&from=&to=   → asientos de TODAS las ubicaciones de
+//      una unidad de negocio (libro consolidado).
 // POST { action: 'create' | 'update' | 'delete', ... }
 //
 // Los canales por API (coinsbuy / unipayment) son SOLO LECTURA acá: su libro
@@ -24,6 +26,9 @@ import {
 
 const SELECT_COLS =
   'id, company_id, channel_key, entry_date, kind, source, concept, category, reference, amount, notes, created_by, created_at, updated_at';
+
+/** Un id mal formado revienta en Postgres (22P02); se corta antes con un 400. */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Escrituras: mismo criterio que `canAdd` en el cliente (admin o auditor).
@@ -48,16 +53,56 @@ export async function GET(request: NextRequest) {
 
   const params = request.nextUrl.searchParams;
   const channelKey = params.get('channel_key');
+  const businessUnitId = params.get('business_unit_id');
   const from = params.get('from');
   const to = params.get('to');
 
   const admin = createAdminClient();
+
+  // ── Libro consolidado de una unidad de negocio ─────────────────────────
+  // La unidad no guarda asientos propios: son los de sus ubicaciones. Hay que
+  // resolver primero qué channel_key le pertenecen, y ese lookup va filtrado
+  // por empresa igual que todo lo demás — sin eso, un id de otro tenant
+  // devolvería sus canales.
+  let unitChannelKeys: string[] | null = null;
+  if (businessUnitId) {
+    if (!UUID_RE.test(businessUnitId)) {
+      return NextResponse.json(
+        { success: false, error: 'Unidad de negocio inválida' },
+        { status: 400 },
+      );
+    }
+    const { data: configs, error: configError } = await admin
+      .from('channel_configs')
+      .select('channel_key')
+      .eq('company_id', auth.companyId)
+      .eq('business_unit_id', businessUnitId);
+
+    if (configError) return apiError('admin/channel-ledger', configError, { status: 500 });
+
+    unitChannelKeys = (configs ?? [])
+      .map((row) => row.channel_key as string)
+      .filter((key) => hasLedger(key));
+
+    // Unidad sin ubicaciones (o solo con canales que no llevan libro): no es
+    // un error, es un libro vacío. Se corta acá para no mandar un `in ()`.
+    if (unitChannelKeys.length === 0) {
+      return NextResponse.json({
+        success: true,
+        entries: [],
+        priorEntries: [],
+        channelKeys: [],
+      });
+    }
+  }
+
   let query = admin
     .from('channel_ledger_entries')
     .select(SELECT_COLS)
     .eq('company_id', auth.companyId);
 
-  if (channelKey) query = query.eq('channel_key', channelKey);
+  if (unitChannelKeys) query = query.in('channel_key', unitChannelKeys);
+  else if (channelKey) query = query.eq('channel_key', channelKey);
   if (from) query = query.gte('entry_date', from);
   if (to) query = query.lte('entry_date', to);
 
@@ -72,13 +117,16 @@ export async function GET(request: NextRequest) {
   if (error) return apiError('admin/channel-ledger', error, { status: 500 });
 
   let opening: unknown[] = [];
-  if (from && channelKey) {
-    const { data: op } = await admin
+  if (from && (channelKey || unitChannelKeys)) {
+    let priorQuery = admin
       .from('channel_ledger_entries')
       .select(SELECT_COLS)
       .eq('company_id', auth.companyId)
-      .eq('channel_key', channelKey)
       .lt('entry_date', from);
+    priorQuery = unitChannelKeys
+      ? priorQuery.in('channel_key', unitChannelKeys)
+      : priorQuery.eq('channel_key', channelKey!);
+    const { data: op } = await priorQuery;
     opening = op ?? [];
   }
 
@@ -88,6 +136,9 @@ export async function GET(request: NextRequest) {
     // Asientos anteriores al rango, para que el front calcule el saldo de
     // arranque sin tener que traerse el libro entero.
     priorEntries: opening,
+    // Ubicaciones de la unidad, incluidas las que no tienen ni un asiento:
+    // el desglose por ubicación tiene que poder mostrarlas en cero.
+    ...(unitChannelKeys ? { channelKeys: unitChannelKeys } : {}),
   });
 }
 
