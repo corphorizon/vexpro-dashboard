@@ -59,6 +59,7 @@ export default function EditCompanyPage() {
         active_modules: data.active_modules || [],
         status: (data.status as 'active' | 'inactive') || 'active',
         reserve_pct: data.reserve_pct ?? 0.1,
+        business_model: data.business_model ?? 'broker',
         currency: data.currency || 'USD',
       });
     })();

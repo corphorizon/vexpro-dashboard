@@ -26,6 +26,7 @@ const DEFAULT_VALUES: CompanyFormValues = {
   ),
   status: 'active',
   reserve_pct: 0.1,
+  business_model: 'broker',
   currency: 'USD',
 };
 
