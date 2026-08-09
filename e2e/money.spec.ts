@@ -87,10 +87,21 @@ test.describe.serial('Flujos de dinero (tenant e2e-test)', () => {
     await expectStatValue(page, 'Pendiente', fmtUSD(EXPENSE_AMOUNT));
     await expectStatValue(page, 'Pagado', fmtUSD(0));
 
-    // Mark as paid (check button) → paid $200.25 / pending $0.00
-    await page.getByRole('button', { name: 'Marcar E2E gasto como pagado' }).click();
+    // Mark as paid. /egresos is read-only ("Consulta de egresos operativos"):
+    // the per-row check button lives in the Egresos tab of /upload, so go back
+    // there to act, then re-check the numbers on /egresos.
+    await page.goto('/upload');
+    await openUploadSection(page, 'Egresos');
 
-    await expectStatValue(page, 'Pagado', fmtUSD(EXPENSE_AMOUNT));
+    const markPaid = page.getByRole('button', { name: 'Marcar E2E gasto como pagado' });
+    await expect(markPaid).toBeVisible({ timeout: 60_000 });
+    await markPaid.click();
+
+    await expect(page.getByText('"E2E gasto" marcado como pagado').first()).toBeVisible();
+
+    // Verify on /egresos: paid $200.25 / pending $0.00
+    await page.goto('/egresos');
+    await expectStatValue(page, 'Pagado', fmtUSD(EXPENSE_AMOUNT), { timeout: 60_000 });
     await expectStatValue(page, 'Pendiente', fmtUSD(0));
   });
 
