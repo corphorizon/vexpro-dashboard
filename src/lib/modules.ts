@@ -37,6 +37,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'investments',    labelEs: 'Inversiones',        labelEn: 'Investments' },
   { key: 'balances',       labelEs: 'Balances',           labelEn: 'Balances' },
   { key: 'partners',       labelEs: 'Socios',             labelEn: 'Partners' },
+  { key: 'clients',        labelEs: 'Clientes',           labelEn: 'Clients' },
   { key: 'payment_orders', labelEs: 'Órdenes de Pago',    labelEn: 'Payment Orders' },
   { key: 'upload',         labelEs: 'Carga de Datos',     labelEn: 'Data Upload' },
   { key: 'periods',        labelEs: 'Períodos',           labelEn: 'Periods' },

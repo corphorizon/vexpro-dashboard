@@ -16,11 +16,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   Banknote,
+  Archive,
   BookOpen,
   Building2,
   Check,
   HandCoins,
   Pencil,
+  Trash2,
   RefreshCw,
   Wallet,
   X,
@@ -107,6 +109,7 @@ export function CashLocationsCard({ channels, configRows, getValue, onChanged, c
         business_unit_id: row?.business_unit_id ?? null,
         holder: row?.holder ?? null,
         is_visible: ch.isVisible,
+        is_custom: ch.isCustom,
         sort_order: ch.sortOrder,
         balance: getValue(ch.key),
       };
@@ -116,6 +119,60 @@ export function CashLocationsCard({ channels, configRows, getValue, onChanged, c
   const summary = useMemo(() => summarize(locations, units), [locations, units]);
   const byUnit = useMemo(() => groupByUnit(locations, units), [locations, units]);
   const byType = useMemo(() => groupByType(locations), [locations]);
+
+  /**
+   * Archivar = ocultar. Las pasarelas y los canales base NO se borran: su
+   * libro y su histórico siguen existiendo y borrarlos dejaría asientos
+   * huérfanos. Solo las ubicaciones propias (is_custom) se pueden eliminar,
+   * y únicamente si su saldo es cero — si no, se estaría escondiendo plata.
+   */
+  const setArchived = async (loc: CashLocation & { is_custom?: boolean }, archived: boolean) => {
+    setSaving(true);
+    setStatus(null);
+    try {
+      const res = await apiFetch('/api/admin/channel-configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'upsert',
+          channel_key: loc.channel_key,
+          is_visible: !archived,
+        }),
+      });
+      const json = (await res.json()) as { success: boolean; error?: string };
+      if (!json.success) throw new Error(json.error ?? t('cash.saveError'));
+      setStatus({ kind: 'ok', msg: archived ? t('cash.archived') : t('cash.unarchived') });
+      onChanged();
+    } catch (err) {
+      setStatus({ kind: 'err', msg: err instanceof Error ? err.message : t('cash.saveError') });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeLocation = async (loc: CashLocation & { is_custom?: boolean }) => {
+    if (Math.abs(loc.balance) > 0.009) {
+      setStatus({ kind: 'err', msg: t('cash.deleteNeedsZero') });
+      return;
+    }
+    setSaving(true);
+    setStatus(null);
+    try {
+      const res = await apiFetch('/api/admin/channel-configs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'delete', key: loc.channel_key }),
+      });
+      const json = (await res.json()) as { success: boolean; error?: string };
+      if (!json.success) throw new Error(json.error ?? t('cash.saveError'));
+      setStatus({ kind: 'ok', msg: t('cash.deleted') });
+      onChanged();
+    } catch (err) {
+      setStatus({ kind: 'err', msg: err instanceof Error ? err.message : t('cash.saveError') });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const startEdit = (loc: CashLocation) => {
     setStatus(null);
@@ -245,7 +302,17 @@ export function CashLocationsCard({ channels, configRows, getValue, onChanged, c
             <div className="flex items-center justify-between gap-3 px-3 py-2 bg-muted/40">
               <div className="flex items-center gap-2 min-w-0">
                 <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                <p className="font-medium truncate">{group.unit?.name ?? t('cash.noUnit')}</p>
+                {group.unit ? (
+                  <Link
+                    href={`/balances/unidad/${encodeURIComponent(group.unit.id)}`}
+                    className="font-medium truncate hover:text-accent hover:underline"
+                    title={t('unitLedger.openBook')}
+                  >
+                    {group.unit.name}
+                  </Link>
+                ) : (
+                  <p className="font-medium truncate">{t('cash.noUnit')}</p>
+                )}
                 <span
                   className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
                     group.unit && !group.unit.counts_to_fund
@@ -303,6 +370,30 @@ export function CashLocationsCard({ channels, configRows, getValue, onChanged, c
                             aria-label={`${t('cash.editLocation')} — ${loc.label}`}
                           >
                             <Pencil className="w-4 h-4" />
+                          </button>
+                        )}
+                        {canManage && (
+                          <button
+                            type="button"
+                            onClick={() => setArchived(loc, loc.is_visible)}
+                            disabled={saving}
+                            className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-muted disabled:opacity-40"
+                            title={loc.is_visible ? t('cash.archive') : t('cash.unarchive')}
+                            aria-label={`${loc.is_visible ? t('cash.archive') : t('cash.unarchive')} — ${loc.label}`}
+                          >
+                            <Archive className="w-4 h-4" />
+                          </button>
+                        )}
+                        {canManage && loc.is_custom && (
+                          <button
+                            type="button"
+                            onClick={() => removeLocation(loc)}
+                            disabled={saving}
+                            className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-negative hover:bg-negative/10 disabled:opacity-40"
+                            title={t('cash.deleteLocation')}
+                            aria-label={`${t('cash.deleteLocation')} — ${loc.label}`}
+                          >
+                            <Trash2 className="w-4 h-4" />
                           </button>
                         )}
                       </div>
