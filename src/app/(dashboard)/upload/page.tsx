@@ -296,7 +296,26 @@ export default function UploadPage() {
   // the section that was saved — preserving any cross-section work-in-
   // progress the user may have started before clicking "Guardar todo".
   const [dirtySections, setDirtySectionsRaw] = useState<Set<DataSection>>(() => new Set());
+
+  // Contador de PULSACIONES, no de secciones sucias.
+  //
+  // `dirtySections` está memoizado a propósito (si la sección ya está sucia
+  // devuelve el MISMO Set), así que su identidad no cambia entre tecla y
+  // tecla. El debounce del autosave dependía solo de él: se armaba con el
+  // primer carácter y NUNCA se reiniciaba, así que a los 3 s guardaba lo
+  // tipeado hasta ahí y el re-sync re-hidrataba el input con eso. Escribir
+  // "12345" a ritmo humano dejaba "1" guardado — reportado por Kevin y
+  // reproducido en e2e/upload-autosave.spec.ts.
+  //
+  // Este contador cambia en CADA edición, de ahí que el timer se reinicie de
+  // verdad. Los ticks por sección permiten además saber si el usuario siguió
+  // escribiendo mientras el guardado estaba en vuelo.
+  const [editTick, setEditTick] = useState(0);
+  const sectionTicksRef = useRef<Record<string, number>>({});
+
   const markDirty = useCallback((s: DataSection) => {
+    sectionTicksRef.current[s] = (sectionTicksRef.current[s] ?? 0) + 1;
+    setEditTick((n) => n + 1);
     setDirtySectionsRaw(prev => {
       if (prev.has(s)) return prev;
       const next = new Set(prev);
@@ -744,11 +763,11 @@ export default function UploadPage() {
     // Exclusiones:
     //   · egresos → persiste por-acción (persistExpenses); su dirty transitorio
     //     es un mutex, no un pendiente.
-    //   · ingresos (Kevin 2026-07-13) → son inputs numéricos que se escriben a
-    //     mano (broker_pnl, other); autosalvar a los 3s interrumpía la escritura
-    //     y re-hidrataba el valor a medio tipear. Ingresos se guarda SOLO con
-    //     "Guardar Todo". (Sigue en SAVE_HANDLED, así el botón manual lo persiste.)
-    const AUTOSAVE_SECTIONS: DataSection[] = ['depositos', 'retiros'];
+    //   · ingresos volvió al autosave (2026-08-09): se había excluido porque
+    //     "autosalvar a los 3s interrumpía la escritura y re-hidrataba el valor
+    //     a medio tipear" — ese era el bug del debounce que nunca se
+    //     reiniciaba, ahora arreglado de raíz (ver editTick).
+    const AUTOSAVE_SECTIONS: DataSection[] = ['depositos', 'retiros', 'ingresos'];
     if (selectedPeriodIsClosed) return; // mes cerrado: el trigger rechazaría cada intento
     if (!AUTOSAVE_SECTIONS.some((s) => dirtySections.has(s))) return;
     if (savingAll) return; // queue up: re-fires when savingAll flips false
@@ -763,7 +782,7 @@ export default function UploadPage() {
     // captura `section`/estado por closure. No dependemos de `section`: cambiar
     // de pestaña ya no cancela un guardado pendiente (ese era el bug).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirtySections, savingAll, selectedPeriodIsClosed]);
+  }, [dirtySections, savingAll, selectedPeriodIsClosed, editTick]);
 
   // ── End auto-save ─────────────────────────────────────────────────────
 
@@ -1801,6 +1820,11 @@ export default function UploadPage() {
     const SAVE_HANDLED: DataSection[] = ['depositos', 'retiros', 'ingresos'];
     const targets = SAVE_HANDLED.filter((s) => dirtySections.has(s) || s === section);
 
+    // Foto de los contadores de edición ANTES de escribir: al terminar se
+    // compara para saber qué secciones el usuario siguió editando mientras
+    // tanto (esas no se pueden re-hidratar sin borrarle lo tipeado).
+    const ticksAtSave: Record<string, number> = { ...sectionTicksRef.current };
+
     // Guarda UNA sección y devuelve su mensaje de éxito. Las mutaciones son
     // atómicas/idempotentes, así que el solapamiento entre secciones (p.ej.
     // 'ingresos' y 'retiros' ambas escriben withdrawals desde el mismo estado)
@@ -1895,8 +1919,15 @@ export default function UploadPage() {
       );
       if (ok) {
         for (const sec of saved) {
+          // Limpiar dirty dispara el re-sync, que re-hidrata la sección desde
+          // la base. Si el usuario siguió escribiendo mientras se guardaba,
+          // eso le borraría lo tipeado: la sección queda sucia, el autosave
+          // vuelve a disparar y lo persiste completo en la pasada siguiente.
+          if (sectionTicksRef.current[sec] !== ticksAtSave[sec]) continue;
           clearDirty(sec);
-          if (sec === 'ingresos') clearDirty('retiros');
+          if (sec === 'ingresos' && sectionTicksRef.current['retiros'] === ticksAtSave['retiros']) {
+            clearDirty('retiros');
+          }
         }
       } else {
         showError(t('upload.savedReloadWarning'));

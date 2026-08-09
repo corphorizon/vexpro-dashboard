@@ -191,6 +191,32 @@ export function orderAttachmentUrl(orderId: string): string {
   return withActiveCompany(`/api/admin/payment-orders/${orderId}/attachment`);
 }
 
+// ── Conceptos ya facturados a un beneficiario ───────────────────────────────
+
+export interface LineSuggestion {
+  description: string;
+  lastUnitValue: number | null;
+}
+
+/**
+ * Conceptos usados antes con este beneficiario, del más reciente al más
+ * viejo. Se pasa id Y nombre porque las órdenes anteriores a la libreta no
+ * tienen beneficiary_id: sin el nombre no sugerirían nada.
+ */
+export async function listLineSuggestions(params: {
+  beneficiaryId?: string | null;
+  name?: string | null;
+}): Promise<LineSuggestion[]> {
+  const qs = new URLSearchParams();
+  if (params.beneficiaryId) qs.set('beneficiary_id', params.beneficiaryId);
+  if (params.name?.trim()) qs.set('name', params.name.trim());
+  if (![...qs.keys()].length) return [];
+  const { suggestions } = await request<{ suggestions: LineSuggestion[] }>(
+    `/api/admin/payment-orders/line-suggestions?${qs.toString()}`,
+  );
+  return suggestions ?? [];
+}
+
 // ── Libreta de beneficiarios ────────────────────────────────────────────────
 
 export async function listBeneficiaries(q?: string): Promise<PaymentBeneficiary[]> {

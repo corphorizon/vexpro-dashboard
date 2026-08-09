@@ -56,6 +56,8 @@ import {
   updatePaymentOrder,
   transitionPaymentOrder,
   listBeneficiaries,
+  listLineSuggestions,
+  type LineSuggestion,
   uploadOrderAttachment,
   deleteOrderAttachment,
   orderAttachmentUrl,
@@ -247,6 +249,30 @@ export function PaymentOrderForm({ mode, order }: Props) {
       alive = false;
     };
   }, []);
+
+  // ── Conceptos ya facturados a este beneficiario ────────────────────────────
+  // Se recargan cada vez que cambia el beneficiario elegido. Es una ayuda:
+  // si el fetch falla, el campo sigue siendo texto libre.
+  const [lineSuggestions, setLineSuggestions] = useState<LineSuggestion[]>([]);
+  const benKey = `${form.beneficiary_id ?? ''}|${form.beneficiary_name.trim().toLowerCase()}`;
+  useEffect(() => {
+    const [id, name] = benKey.split('|');
+    if (!id && name.length < 3) {
+      setLineSuggestions([]);
+      return;
+    }
+    let alive = true;
+    // Pequeño respiro: sin esto se dispararía una consulta por tecla mientras
+    // se escribe el nombre a mano.
+    const timer = setTimeout(() => {
+      listLineSuggestions({ beneficiaryId: id || null, name: form.beneficiary_name })
+        .then((rows) => { if (alive) setLineSuggestions(rows); })
+        .catch(() => { if (alive) setLineSuggestions([]); });
+    }, 350);
+    return () => { alive = false; clearTimeout(timer); };
+    // form.beneficiary_name entra vía benKey; incluirlo dispararía de más.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [benKey]);
 
   const [benOpen, setBenOpen] = useState(false);
   const [benHighlight, setBenHighlight] = useState(0);
@@ -645,6 +671,14 @@ export function PaymentOrderForm({ mode, order }: Props) {
             <div className="col-span-1" />
           </div>
 
+          {/* Un solo datalist para todas las líneas: el navegador lo comparte por
+              id y los conceptos sugeridos son los mismos en cada fila. */}
+          <datalist id="payorder-line-suggestions">
+            {lineSuggestions.map((sg) => (
+              <option key={sg.description} value={sg.description} />
+            ))}
+          </datalist>
+
           <div className="space-y-3 sm:space-y-2">
             {lines.map((line, i) => {
               const amount = computeLineAmount({ unitValue: num(line.unitValue), quantity: num(line.quantity) });
@@ -661,7 +695,21 @@ export function PaymentOrderForm({ mode, order }: Props) {
                     </span>
                     <input
                       value={line.description}
-                      onChange={(e) => updateLine(line.key, { description: e.target.value })}
+                      list="payorder-line-suggestions"
+                      onChange={(e) => {
+                        const description = e.target.value;
+                        // Elegir un concepto ya usado trae su último importe,
+                        // pero SOLO si el campo está vacío: nunca pisa un
+                        // número que el usuario ya escribió.
+                        const hit = lineSuggestions.find(
+                          (sg) => sg.description.toLowerCase() === description.trim().toLowerCase(),
+                        );
+                        const patch: Partial<LineDraft> = { description };
+                        if (hit?.lastUnitValue != null && !line.unitValue.trim()) {
+                          patch.unitValue = String(hit.lastUnitValue);
+                        }
+                        updateLine(line.key, patch);
+                      }}
                       placeholder={t('payOrders.linePlaceholder')}
                       className={cn(INPUT, descErr && INPUT_ERR)}
                       aria-label={`${t('payOrders.lineDescription')} ${i + 1}`}
