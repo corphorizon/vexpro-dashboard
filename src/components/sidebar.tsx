@@ -8,6 +8,7 @@ import { apiFetch } from '@/lib/api-fetch';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { CompanyLogo } from '@/components/company-logo';
+import { NotificationBell } from '@/components/notifications/notification-bell';
 import { getAccessibleGroups, getAccessibleItems } from '@/lib/module-groups';
 import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
@@ -534,6 +535,13 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
               </p>
             </div>
           )}
+
+          {/* Notificaciones — en desktop no hay header, así que la campanita
+              vive acá; el panel se abre hacia arriba porque el bloque está
+              pegado al pie de la pantalla. */}
+          <div className={cn(isCollapsed && 'flex justify-center')}>
+            <NotificationBell variant="sidebar" collapsed={isCollapsed} />
+          </div>
 
           {/* Perfil */}
           <Link

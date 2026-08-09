@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// Notificaciones por email de las órdenes de pago (QW11, auditoría 2026-08-06).
+// Notificaciones de las órdenes de pago (QW11, auditoría 2026-08-06).
 //
 // Antes había que ENTRAR a mirar la lista: nadie se enteraba de que tenía una
 // orden esperando aprobación ni de que la suya fue aprobada o rechazada.
@@ -8,6 +8,8 @@
 //   · draft → pending    ⇒ email a los ADMINS de la empresa ("hay una orden
 //     esperando aprobación"), menos al emisor si es admin.
 //   · → approved/rejected ⇒ email al CREADOR de la orden.
+//   · → paid              ⇒ solo bandeja: el creador se enteraba del pago
+//     únicamente si volvía a abrir la orden.
 //
 // SIEMPRE fire-and-forget: un fallo de SendGrid jamás puede bloquear una
 // transición de tesorería. El idioma sale de preferred_language del
@@ -15,6 +17,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { notify } from '@/lib/notifications/notify';
 import type { PaymentOrder, PaymentOrderStatus } from './types';
 
 const T = {
@@ -63,6 +66,47 @@ const money = (n: number, currency: string) =>
   `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
 
 /**
+ * `created_by` apunta a auth.users (FK de la migración 054), pero la pantalla
+ * de detalle lo compara TAMBIÉN contra company_users.id, así que hay órdenes
+ * guardadas con el id de membresía. La bandeja se indexa por auth.users: ante
+ * la duda se devuelve null y no se emite nada — avisarle al usuario equivocado
+ * es peor que no avisar.
+ */
+async function resolveCreatorAuthId(
+  admin: SupabaseClient,
+  companyId: string,
+  createdBy: string | null,
+): Promise<string | null> {
+  if (!createdBy) return null;
+
+  const { data: byAuth } = await admin
+    .from('company_users')
+    .select('user_id')
+    .eq('company_id', companyId)
+    .eq('user_id', createdBy)
+    .maybeSingle();
+  if (byAuth?.user_id) return byAuth.user_id as string;
+
+  const { data: byMembership } = await admin
+    .from('company_users')
+    .select('user_id')
+    .eq('company_id', companyId)
+    .eq('id', createdBy)
+    .maybeSingle();
+  if (byMembership?.user_id) return byMembership.user_id as string;
+
+  // Un superadmin de plataforma no tiene fila en company_users, y desde el
+  // 2026-08-08 crea órdenes en cualquier empresa: sin esta rama se quedaría
+  // sin los avisos de su propia orden.
+  const { data: byPlatform } = await admin
+    .from('platform_users')
+    .select('user_id')
+    .eq('user_id', createdBy)
+    .maybeSingle();
+  return (byPlatform?.user_id as string | null) ?? null;
+}
+
+/**
  * Dispara las notificaciones de una transición. NUNCA lanza: cualquier error
  * se loguea y la transición sigue su curso.
  */
@@ -74,7 +118,36 @@ export async function notifyOrderTransition(
   actorName: string,
 ): Promise<void> {
   try {
-    if (to !== 'pending' && to !== 'approved' && to !== 'rejected') return;
+    if (to !== 'pending' && to !== 'approved' && to !== 'rejected' && to !== 'paid') return;
+
+    // Una sola resolución del creador para los dos canales: el mail y la
+    // bandeja tienen que hablarle al mismo usuario.
+    const creatorId = await resolveCreatorAuthId(admin, companyId, order.created_by);
+    const link = `/ordenes-pago/${order.id}`;
+
+    if (to === 'pending') {
+      await notify(admin, {
+        companyId,
+        type: 'order.pending',
+        params: {
+          number: order.order_number,
+          amount: money(order.total, order.currency),
+          beneficiary: order.beneficiary_name,
+        },
+        link,
+        excludeUserIds: creatorId ? [creatorId] : [],
+      });
+    } else if (creatorId) {
+      const type = to === 'approved' ? 'order.approved' : to === 'rejected' ? 'order.rejected' : 'order.paid';
+      const params =
+        to === 'approved' ? { number: order.order_number, actor: actorName }
+        : to === 'rejected' ? { number: order.order_number, reason: order.rejection_reason ?? '—' }
+        : { number: order.order_number, reference: order.payment_reference ?? '—' };
+      await notify(admin, { companyId, type, params, link, targetUserIds: [creatorId] });
+    }
+
+    // El pago solo va a la bandeja: no hay plantilla de email para "pagada".
+    if (to === 'paid') return;
 
     // Import dinámico: emailService arrastra sgMail y estas rutas no lo
     // necesitan en el camino caliente (mismo criterio que invite-user).
@@ -91,7 +164,7 @@ export async function notifyOrderTransition(
         .eq('status', 'active');
       const admins = ((data ?? []) as Recipient[])
         // El emisor no necesita enterarse de su propia orden.
-        .filter((a) => a.user_id !== order.created_by);
+        .filter((a) => a.user_id !== creatorId);
 
       await Promise.allSettled(admins.map((a) => {
         const L = T[a.preferred_language === 'es' ? 'es' : 'en'];
@@ -109,12 +182,12 @@ export async function notifyOrderTransition(
     }
 
     // approved / rejected → al creador.
-    if (!order.created_by) return;
+    if (!creatorId) return;
     const { data: creator } = await admin
       .from('company_users')
       .select('email, name, preferred_language, user_id')
       .eq('company_id', companyId)
-      .eq('user_id', order.created_by)
+      .eq('user_id', creatorId)
       .maybeSingle();
     if (!creator?.email) return;
 

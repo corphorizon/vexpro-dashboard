@@ -11,6 +11,8 @@ import {
   ipFromRequest,
 } from '@/lib/invite-user';
 import { apiError } from '@/lib/api-error';
+import { serverAuditLog } from '@/lib/server-audit';
+import { notify } from '@/lib/notifications/notify';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/create-user
@@ -165,6 +167,28 @@ export async function POST(request: NextRequest) {
       console.error('[admin/create-user] membership insert failed:', memErr.message);
       return apiError('admin/create-user', memErr, { status: 500, clientMessage: 'No se pudo crear el perfil' });
     }
+
+    // El alta se registra acá y no después del invite: la membresía ya existe
+    // y da acceso aunque el correo nunca salga.
+    const actor = auth.name || auth.email;
+    const target = name.trim() || normalizedEmail;
+
+    await serverAuditLog(adminClient, {
+      companyId: company_id,
+      actorId: auth.userId,
+      actorName: actor,
+      action: 'create',
+      module: 'users',
+      details: `Usuario creado: ${target} (rol ${role})`,
+    });
+
+    void notify(adminClient, {
+      companyId: company_id,
+      type: 'security.user_created',
+      params: { actor, target, role },
+      link: '/usuarios',
+      excludeUserIds: [auth.userId],
+    });
 
     // ─── Send invite via shared helper ───────────────────────────────
     const inviterName = await resolveInviterName(adminClient, auth.userId);

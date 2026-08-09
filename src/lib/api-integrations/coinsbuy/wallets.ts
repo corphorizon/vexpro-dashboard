@@ -116,6 +116,8 @@ export async function fetchCoinsbuyWallets(
   isMock: boolean;
   fetchedAt: string;
   error?: string;
+  /** No hay credenciales para este tenant: no es una falla que valga avisar. */
+  notConfigured?: boolean;
 }> {
   const now = new Date().toISOString();
 
@@ -128,6 +130,7 @@ export async function fetchCoinsbuyWallets(
       isMock: false,
       fetchedAt: now,
       error: 'Coinsbuy no está configurado (faltan credenciales en el servidor)',
+      notConfigured: true,
     };
   }
 

@@ -60,6 +60,8 @@ export async function fetchUnipaymentBalances(
   isMock: boolean;
   fetchedAt: string;
   error?: string;
+  /** No hay credenciales para este tenant: no es una falla que valga avisar. */
+  notConfigured?: boolean;
 }> {
   const now = new Date().toISOString();
 
@@ -69,6 +71,7 @@ export async function fetchUnipaymentBalances(
       isMock: false,
       fetchedAt: now,
       error: 'UniPayment no está configurado (faltan credenciales)',
+      notConfigured: true,
     };
   }
 

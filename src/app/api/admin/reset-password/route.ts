@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
+import { serverAuditLog } from '@/lib/server-audit';
+import { notify } from '@/lib/notifications/notify';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/reset-password
@@ -34,7 +36,7 @@ export async function POST(request: NextRequest) {
     // Verify the email belongs to a user in the caller's company
     const { data: companyUser } = await adminClient
       .from('company_users')
-      .select('user_id')
+      .select('user_id, name, email')
       .eq('email', email)
       .eq('company_id', auth.companyId)
       .maybeSingle();
@@ -65,6 +67,29 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[AdminAPI] Password reset for user_id: ${companyUser.user_id}`);
+
+    // Ni la contraseña nueva ni ningún fragmento de ella salen de acá: los
+    // params se guardan en la base y se muestran en pantalla.
+    const actor = auth.name || auth.email;
+    const target = companyUser.name || companyUser.email || email;
+
+    await serverAuditLog(adminClient, {
+      companyId: auth.companyId,
+      actorId: auth.userId,
+      actorName: actor,
+      action: 'update',
+      module: 'users',
+      details: `Contraseña reseteada para ${target}`,
+    });
+
+    void notify(adminClient, {
+      companyId: auth.companyId,
+      type: 'security.password_reset',
+      params: { actor, target },
+      link: '/usuarios',
+      excludeUserIds: [auth.userId],
+    });
+
     return NextResponse.json({ success: true });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

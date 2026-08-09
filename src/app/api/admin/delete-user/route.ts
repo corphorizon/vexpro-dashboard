@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
+import { serverAuditLog } from '@/lib/server-audit';
+import { notify } from '@/lib/notifications/notify';
 
 // Redact emails before logging — server logs are visible in Vercel dashboard.
 function redactEmail(email: string | null | undefined): string {
@@ -39,7 +41,7 @@ export async function POST(request: NextRequest) {
     //    the caller's company to prevent cross-tenant deletion.
     const { data: profile, error: lookupError } = await adminClient
       .from('company_users')
-      .select('user_id, email')
+      .select('user_id, email, name')
       .eq('id', companyUserId)
       .eq('company_id', auth.companyId)
       .maybeSingle();
@@ -67,6 +69,29 @@ export async function POST(request: NextRequest) {
       console.error('[AdminAPI] Error deleting company_users record:', deleteProfileError.message);
       return apiError('admin/delete-user', deleteProfileError, { status: 500 });
     }
+
+    // Se registra al caer la membresía, no al final: el borrado del auth user
+    // puede fallar y devolver un 200 con warning, pero el acceso ya se perdió
+    // y eso es lo que hay que poder auditar.
+    const actor = auth.name || auth.email;
+    const target = profile.name || profile.email || companyUserId;
+
+    await serverAuditLog(adminClient, {
+      companyId: auth.companyId,
+      actorId: auth.userId,
+      actorName: actor,
+      action: 'delete',
+      module: 'users',
+      details: `Usuario eliminado: ${target}`,
+    });
+
+    void notify(adminClient, {
+      companyId: auth.companyId,
+      type: 'security.user_deleted',
+      params: { actor, target },
+      link: '/usuarios',
+      excludeUserIds: [auth.userId],
+    });
 
     // 3. Delete the auth user so the email can be reused.
     //    Tolerate "user not found" — the auth side may already be gone.

@@ -4,6 +4,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { encryptSecret, lastChars } from '@/lib/crypto';
 import { sanitizeDbError } from '@/lib/errors';
 import { apiError } from '@/lib/api-error';
+import { serverAuditLog } from '@/lib/server-audit';
+import { notify } from '@/lib/notifications/notify';
 
 // ---------------------------------------------------------------------------
 // /api/admin/api-credentials
@@ -39,12 +41,12 @@ const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'o
  */
 async function resolveCompanyAndAuth(
   explicitCompanyId: string | null,
-): Promise<{ companyId: string; userId: string } | NextResponse> {
+): Promise<{ companyId: string; userId: string; actorName: string } | NextResponse> {
   if (explicitCompanyId) {
     // Explicit target → must be superadmin.
     const sa = await verifySuperadminAuth();
     if (sa instanceof NextResponse) return sa;
-    return { companyId: explicitCompanyId, userId: sa.userId };
+    return { companyId: explicitCompanyId, userId: sa.userId, actorName: sa.name || sa.email };
   }
   // Implicit target → regular admin flow.
   const admin = await verifyAdminAuth();
@@ -55,7 +57,38 @@ async function resolveCompanyAndAuth(
       { status: 403 },
     );
   }
-  return { companyId: admin.companyId, userId: admin.userId };
+  return { companyId: admin.companyId, userId: admin.userId, actorName: admin.name || admin.email };
+}
+
+/**
+ * Rastro de un cambio de credencial. Nunca recibe el secreto ni el last_four:
+ * el aviso viaja a la bandeja de varios admins y el audit log se exporta.
+ */
+async function recordCredentialChange(
+  adminClient: ReturnType<typeof createAdminClient>,
+  ctx: { companyId: string; userId: string; actorName: string },
+  provider: string,
+  action: 'update' | 'delete',
+) {
+  await serverAuditLog(adminClient, {
+    companyId: ctx.companyId,
+    actorId: ctx.userId,
+    actorName: ctx.actorName,
+    action,
+    module: 'settings',
+    details: action === 'delete'
+      ? `Credencial eliminada: ${provider}`
+      : `Credencial guardada/reemplazada: ${provider}`,
+  });
+
+  void notify(adminClient, {
+    companyId: ctx.companyId,
+    type: 'security.api_credentials',
+    params: { actor: ctx.actorName, target: provider, provider },
+    // Sin link: las credenciales se gestionan desde el panel de superadmin,
+    // que no es una ruta a la que se pueda mandar a un admin de empresa.
+    excludeUserIds: [ctx.userId],
+  });
 }
 
 export async function GET(request: NextRequest) {
@@ -160,6 +193,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(sanitizeDbError(error, 'api-credentials:upsert'), { status: 500 });
     }
 
+    await recordCredentialChange(adminClient, ctx, provider, 'update');
     return NextResponse.json({ success: true });
   }
 
@@ -173,6 +207,7 @@ export async function POST(request: NextRequest) {
     if (error) {
       return NextResponse.json(sanitizeDbError(error, 'api-credentials:delete'), { status: 500 });
     }
+    await recordCredentialChange(adminClient, ctx, provider, 'delete');
     return NextResponse.json({ success: true });
   }
 

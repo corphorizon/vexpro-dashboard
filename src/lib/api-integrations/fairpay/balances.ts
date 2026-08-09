@@ -37,6 +37,8 @@ export interface FairpayBalanceResult {
    * distinguish "not configured" from "configured but FairPay didn't
    * cooperate" for better alerting. */
   endpointMissing?: boolean;
+  /** No hay credenciales para este tenant: no es una falla que valga avisar. */
+  notConfigured?: boolean;
 }
 
 // FairPay's docs show responses shaped like `{ status, code, data: { ... } }`,
@@ -91,7 +93,11 @@ export async function fetchFairpayBalances(
   companyId?: string | null,
 ): Promise<FairpayBalanceResult> {
   if (!(await isFairpayEnabled(companyId))) {
-    return { balances: [], error: 'FairPay no está configurado para esta empresa' };
+    return {
+      balances: [],
+      error: 'FairPay no está configurado para esta empresa',
+      notConfigured: true,
+    };
   }
 
   try {

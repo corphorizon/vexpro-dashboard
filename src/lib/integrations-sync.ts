@@ -64,6 +64,43 @@ function defaultWindow(): { from: string; to: string } {
   return { from: iso(from), to: iso(to) };
 }
 
+/** Nombre legible del proveedor. Coinsbuy reporta dos datasets (depósitos y
+ *  payouts) que salen del MISMO fetch: en el aviso tienen que ser uno solo. */
+const PROVIDER_LABELS: Record<string, string> = {
+  'coinsbuy-deposits': 'Coinsbuy',
+  'coinsbuy-withdrawals': 'Coinsbuy',
+  fairpay: 'FairPay',
+  unipayment: 'UniPayment',
+  orion_crm: 'Orion CRM',
+};
+
+/**
+ * Un aviso por empresa y por día con los proveedores CONFIGURADOS que
+ * fallaron. Los 'skipped' (sin credenciales) no entran: avisar todos los días
+ * de un proveedor que el tenant decidió no usar entrena a ignorar la bandeja.
+ */
+async function notifyFailedProviders(details: SyncProviderResult[]): Promise<void> {
+  const failedByCompany = new Map<string, Set<string>>();
+  for (const d of details) {
+    if (d.status !== 'error') continue;
+    const set = failedByCompany.get(d.company_id) ?? new Set<string>();
+    set.add(PROVIDER_LABELS[d.provider] ?? d.provider);
+    failedByCompany.set(d.company_id, set);
+  }
+  if (failedByCompany.size === 0) return;
+
+  const admin = createAdminClient();
+  for (const [companyId, providers] of failedByCompany) {
+    await notify(admin, {
+      companyId,
+      type: 'sync.failed',
+      params: { providers: [...providers].join(', ') },
+      link: '/movimientos',
+      dedupeKey: dailyKey(`sync:${companyId}`),
+    });
+  }
+}
+
 /**
  * Run the sync for every active tenant that has the `movements` module
  * enabled. Per-provider failures are isolated and reported in `details`,
@@ -115,7 +152,14 @@ export async function runExternalApiSync(opts: {
             });
             const out: SyncProviderResult[] = [];
             for (const ds of [cb.deposits, cb.payouts]) {
-              if (ds.status === 'error') {
+              if (ds.notConfigured) {
+                out.push({
+                  company_id: company.id,
+                  company_name: company.name,
+                  provider: ds.slug,
+                  status: 'skipped',
+                });
+              } else if (ds.status === 'error') {
                 out.push({
                   company_id: company.id,
                   company_name: company.name,
@@ -161,6 +205,16 @@ export async function runExternalApiSync(opts: {
               to: window.to,
               companyId: company.id,
             });
+            if (ds.notConfigured) {
+              return [
+                {
+                  company_id: company.id,
+                  company_name: company.name,
+                  provider: 'fairpay',
+                  status: 'skipped' as const,
+                },
+              ];
+            }
             if (ds.status === 'error') {
               return [
                 {
@@ -205,6 +259,16 @@ export async function runExternalApiSync(opts: {
               to: window.to,
               companyId: company.id,
             });
+            if (ds.notConfigured) {
+              return [
+                {
+                  company_id: company.id,
+                  company_name: company.name,
+                  provider: 'unipayment',
+                  status: 'skipped' as const,
+                },
+              ];
+            }
             if (ds.status === 'error') {
               return [
                 {
@@ -306,6 +370,8 @@ export async function runExternalApiSync(opts: {
   const details = perTenant.flat();
   const apisOk = details.filter((d) => d.status === 'ok').length;
   const apisFailed = details.filter((d) => d.status === 'error').length;
+
+  await notifyFailedProviders(details);
 
   // Audit log: a single row summarising the run, plus structured details
   // in `details`. Used by the report cron to verify a fresh sync exists.
