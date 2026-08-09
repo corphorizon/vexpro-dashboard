@@ -3,6 +3,8 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { clearAttempts } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
+import { serverAuditLog } from '@/lib/server-audit';
+import { notify } from '@/lib/notifications/notify';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/reset-user-2fa
@@ -36,7 +38,7 @@ export async function POST(request: NextRequest) {
     // Verify the target user is in the caller's company
     const { data: companyUser } = await adminClient
       .from('company_users')
-      .select('id, company_id')
+      .select('id, company_id, name, email')
       .eq('user_id', userId)
       .eq('company_id', auth.companyId)
       .maybeSingle();
@@ -71,6 +73,28 @@ export async function POST(request: NextRequest) {
     // Clear any outstanding rate-limit counters for this user
     await clearAttempts(adminClient, { key: companyUser.id, kind: 'verify-2fa' });
     await clearAttempts(adminClient, { key: userId, kind: 'verify-pin' });
+
+    // Desactivar el segundo factor de otro usuario es la operación con la que
+    // se toma una cuenta ajena; hasta ahora no dejaba ninguna traza.
+    const actor = auth.name || auth.email;
+    const target = companyUser.name || companyUser.email || userId;
+
+    await serverAuditLog(adminClient, {
+      companyId: auth.companyId,
+      actorId: auth.userId,
+      actorName: actor,
+      action: 'update',
+      module: 'users',
+      details: `2FA reseteado para ${target}`,
+    });
+
+    void notify(adminClient, {
+      companyId: auth.companyId,
+      type: 'security.twofa_reset',
+      params: { actor, target },
+      link: '/usuarios',
+      excludeUserIds: [auth.userId],
+    });
 
     return NextResponse.json({ success: true });
   } catch (err: unknown) {

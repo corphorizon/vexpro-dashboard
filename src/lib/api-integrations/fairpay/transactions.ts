@@ -106,6 +106,7 @@ export async function fetchFairpayDeposits(
       status: 'error',
       isMock: false,
       errorMessage: 'FairPay no está configurado (falta FAIRPAY_API_KEY)',
+      notConfigured: true,
     };
   }
 

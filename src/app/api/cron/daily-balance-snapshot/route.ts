@@ -5,6 +5,7 @@ import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balan
 import { fetchFairpayBalances } from '@/lib/api-integrations/fairpay/balances';
 import { syncChannelLedgerDay, type LedgerSyncResult } from '@/lib/channel-ledger-sync';
 import { previousDay } from '@/lib/channel-ledger';
+import { notify, dailyKey } from '@/lib/notifications/notify';
 
 // The channel_balances table has RLS enabled; writes from the cron can't
 // pass through the normal `supabase` client (no cookie → no user). This
@@ -122,6 +123,10 @@ export async function GET(request: NextRequest) {
     // respuesta del cron para poder auditar el ajuste de cada día.
     const ledger: LedgerSyncResult[] = [];
 
+    // Canales que quedaron sin asentar hoy (snapshot no escrito o asiento
+    // abortado). Se avisan al final, ya con el libro procesado.
+    const failures: Array<{ channel: string; date: string; reason: string }> = [];
+
     // ── Coinsbuy ──
     // Pass company.id so the fetcher picks up per-tenant credentials from
     // api_credentials (falling back to env when that tenant hasn't uploaded
@@ -140,6 +145,9 @@ export async function GET(request: NextRequest) {
       const cb = await fetchCoinsbuyWallets(company.id);
       if (cb.error) {
         entry.coinsbuy_error = cb.error;
+        if (!cb.notConfigured) {
+          failures.push({ channel: 'coinsbuy', date: ledgerDate, reason: cb.error });
+        }
       } else {
         // Load pinned wallet selection for this tenant.
         const { data: pinned } = await admin
@@ -195,7 +203,9 @@ export async function GET(request: NextRequest) {
         );
       }
     } catch (err) {
-      entry.coinsbuy_error = err instanceof Error ? err.message : 'Unknown error';
+      const reason = err instanceof Error ? err.message : 'Unknown error';
+      entry.coinsbuy_error = reason;
+      failures.push({ channel: 'coinsbuy', date: ledgerDate, reason });
     }
 
     // ── FairPay ──
@@ -207,6 +217,9 @@ export async function GET(request: NextRequest) {
       const fp = await fetchFairpayBalances(company.id);
       if (fp.error) {
         entry.fairpay_error = fp.error;
+        if (!fp.notConfigured) {
+          failures.push({ channel: 'fairpay', date: ledgerDate, reason: fp.error });
+        }
         if (fp.endpointMissing) {
           // Endpoint todavía desconocido — capturar a Sentry una sola vez
           // por día por tenant para que el operador lo vea sin spamearse.
@@ -228,7 +241,9 @@ export async function GET(request: NextRequest) {
         entry.fairpay = total;
       }
     } catch (err) {
-      entry.fairpay_error = err instanceof Error ? err.message : 'Unknown error';
+      const reason = err instanceof Error ? err.message : 'Unknown error';
+      entry.fairpay_error = reason;
+      failures.push({ channel: 'fairpay', date: ledgerDate, reason });
     }
 
     // ── UniPayment ──
@@ -236,6 +251,9 @@ export async function GET(request: NextRequest) {
       const up = await fetchUnipaymentBalances(company.id);
       if (up.error) {
         entry.unipayment_error = up.error;
+        if (!up.notConfigured) {
+          failures.push({ channel: 'unipayment', date: ledgerDate, reason: up.error });
+        }
       } else {
         const total = (up.balances ?? []).reduce(
           (s, b: { availableBalance?: number }) => s + (b.availableBalance ?? 0),
@@ -249,10 +267,32 @@ export async function GET(request: NextRequest) {
         );
       }
     } catch (err) {
-      entry.unipayment_error = err instanceof Error ? err.message : 'Unknown error';
+      const reason = err instanceof Error ? err.message : 'Unknown error';
+      entry.unipayment_error = reason;
+      failures.push({ channel: 'unipayment', date: ledgerDate, reason });
     }
 
     if (ledger.length > 0) entry.ledger = ledger;
+
+    // El asiento abortado por MAX_ADJUSTMENT llega hasta acá como
+    // `l.error`: es el caso del 2026-08-07 (Coinsbuy, transferencia interna
+    // de $35.000) que solo dejaba rastro en Sentry.
+    for (const l of ledger) {
+      if (l.error) failures.push({ channel: l.channel_key, date: l.entry_date, reason: l.error });
+    }
+
+    // Un aviso por canal y por día: el dedupe deja pasar el primer motivo y
+    // descarta los siguientes del mismo canal.
+    for (const f of failures) {
+      await notify(admin, {
+        companyId: company.id,
+        type: 'ledger.not_posted',
+        params: { channel: f.channel, date: f.date, reason: f.reason },
+        link: '/balances',
+        dedupeKey: dailyKey(`ledger:${company.id}:${f.channel}`),
+      });
+    }
+
     return entry;
   };
 

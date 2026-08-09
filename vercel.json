@@ -37,6 +37,10 @@
     {
       "path": "/api/cron/monthly-financial-report",
       "schedule": "5 0 1 * *"
+    },
+    {
+      "path": "/api/cron/notification-sweep",
+      "schedule": "30 7 * * *"
     }
   ]
 }

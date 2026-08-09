@@ -7,6 +7,7 @@ import { Sidebar } from '@/components/sidebar';
 import { CompanyLogo } from '@/components/company-logo';
 import { ViewingAsBanner } from '@/components/viewing-as-banner';
 import { ModuleRouteGuard } from '@/components/module-route-guard';
+import { NotificationBell } from '@/components/notifications/notification-bell';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { PeriodProvider } from '@/lib/period-context';
 import { DataProvider } from '@/lib/data-context';
@@ -51,6 +52,7 @@ function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
 
         {/* Right: utilities */}
         <div className="flex items-center gap-1">
+          <NotificationBell variant="topbar" />
           <button
             onClick={() => setLocale(locale === 'es' ? 'en' : 'es')}
             className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"

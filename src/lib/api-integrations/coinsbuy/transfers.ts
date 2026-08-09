@@ -96,11 +96,15 @@ export async function fetchCoinsbuyTransfers(
   // real. Set COINSBUY_CLIENT_ID / COINSBUY_CLIENT_SECRET in .env.local to
   // enable the live path (or upload per-tenant creds via superadmin).
   if (!(await isCoinsbuyV3Enabled(companyId))) {
-    const error: Pick<ProviderDataset, 'fetchedAt' | 'status' | 'isMock' | 'errorMessage'> = {
+    const error: Pick<
+      ProviderDataset,
+      'fetchedAt' | 'status' | 'isMock' | 'errorMessage' | 'notConfigured'
+    > = {
       fetchedAt: now,
       status: 'error',
       isMock: false,
       errorMessage: 'Coinsbuy no está configurado (faltan credenciales en el servidor)',
+      notConfigured: true,
     };
     return {
       deposits: {

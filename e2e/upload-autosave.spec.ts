@@ -18,16 +18,31 @@ test('un monto largo tipeado despacio se guarda entero', async ({ page }) => {
   await page.goto('/upload');
   await page.waitForTimeout(3000);
 
-  const input = page.locator('input[type="number"]').first();
+  // Anclado al canal por su etiqueta: "el primer input" cambiaba de fila
+  // según cómo viniera ordenada la tabla, y tras recargar el assert podía
+  // estar mirando otro canal.
+  const input = page.getByRole('row', { name: /Coinsbuy/ }).locator('input[type="number"]');
+  // Vaciar primero: pressSequentially AGREGA al valor existente, y si otro
+  // spec dejó un monto cargado el resultado sería un número distinto (o
+  // inválido, que en type=number se lee como cadena vacía).
+  await input.fill('');
   await input.click();
   await input.pressSequentially('12345', { delay: 250 });
 
-  // Autosave (3 s tras la última tecla) + refresh.
-  await page.waitForTimeout(6000);
+  // Hay que ESPERAR de verdad: el debounce dispara 3 s después de la última
+  // tecla. Un poll sobre el input se cumpliría al instante (el valor local ya
+  // está escrito) y recargaríamos antes de que el guardado salga.
+  await page.waitForTimeout(7000);
   expect(await input.inputValue(), 'el autosave pisó el valor a medio tipear').toBe('12345');
 
-  // Y quedó realmente en la base.
+  // Y sobrevive a recargar. Se espera con poll porque la pantalla pinta
+  // primero desde el caché de arranque y revalida después (fase 4b): el
+  // valor correcto puede tardar un instante en aparecer.
   await page.reload();
-  await page.waitForTimeout(4000);
-  expect(await page.locator('input[type="number"]').first().inputValue()).toBe('12345');
+  await expect
+    .poll(() => page.getByRole('row', { name: /Coinsbuy/ }).locator('input[type="number"]').inputValue(), {
+      message: 'el monto no quedó guardado',
+      timeout: 20_000,
+    })
+    .toBe('12345');
 });

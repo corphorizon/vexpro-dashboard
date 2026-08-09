@@ -33,6 +33,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { sendNotificationEmail } from '@/services/emailService';
 import { et, isEmailLocale, type EmailLocale } from '@/lib/email-i18n';
+import { notify, dailyKey } from '@/lib/notifications/notify';
 
 const SPANISH_MONTHS_SHORT = [
   'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
@@ -213,6 +214,16 @@ export async function GET(request: NextRequest) {
           `[cron/create-new-period] materialize_fixed_expenses falló para ${c.name}:`,
           matErr,
         );
+        // El período SÍ quedó creado, así que no es el mismo hecho que un
+        // alta fallida; va con el mismo tipo porque la acción que espera al
+        // admin es idéntica (entrar a /periodos y cargar los fijos a mano).
+        await notify(admin, {
+          companyId: c.id,
+          type: 'period.not_created',
+          params: { month: `${label} — egresos fijos` },
+          link: '/periodos',
+          dedupeKey: dailyKey(`period-fixed:${c.id}:${targetYear}-${targetMonth}`),
+        });
       }
 
       // 4. Audit. Best-effort.
@@ -289,18 +300,31 @@ export async function GET(request: NextRequest) {
         outcome: 'error',
         error: err instanceof Error ? err.message : String(err),
       });
+      // Sin período no hay dónde cargar nada: el catch dejaba el fallo solo
+      // en el JSON de respuesta, que nadie lee.
+      await notify(admin, {
+        companyId: c.id,
+        type: 'period.not_created',
+        params: { month: labelFor(targetYear, targetMonth) },
+        link: '/periodos',
+        dedupeKey: dailyKey(`period:${c.id}:${targetYear}-${targetMonth}`),
+      });
     }
   }
 
+  const errorCount = results.filter((r) => r.outcome === 'error').length;
+
   const summary = {
-    success: true,
+    // El período es la unidad sobre la que trabaja todo el dashboard: si
+    // alguna empresa se quedó sin él, la corrida NO fue exitosa.
+    success: errorCount === 0,
     target: { year: targetYear, month: targetMonth, label: labelFor(targetYear, targetMonth) },
     dryRun,
     counts: {
       processed: results.length,
       created: results.filter((r) => r.outcome === 'created').length,
       skipped: results.filter((r) => r.outcome === 'skipped_exists').length,
-      errors: results.filter((r) => r.outcome === 'error').length,
+      errors: errorCount,
     },
     results,
   };
