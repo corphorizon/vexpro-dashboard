@@ -17,6 +17,7 @@ import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
+import { features } from '@/lib/business-model';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt, ChevronDown, ChevronRight, ClipboardCheck } from 'lucide-react';
 import { FireModal } from '@/components/fire-modal';
@@ -790,8 +791,17 @@ export default function RRHHPage() {
   // 'ib_rebates' en allowed_modules. Comparte el módulo padre 'hr' para
   // poder vivir bajo /rrhh sin abrir un módulo top-level nuevo.
   const hasIbRebatesAccess = useModuleAccess('ib_rebates');
+  // Una empresa de servicios lleva empleados y nada más: sin fuerza comercial
+  // no hay perfiles, negociaciones, rebates de IB ni onboarding que mostrar.
+  const hasCommercialTeam = features(company?.business_model).commercialTeam;
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
-  const [tab, setTab] = useState<Tab>('commercial');
+  const [tab, setTab] = useState<Tab>(hasCommercialTeam ? 'commercial' : 'employees');
+  // `company` puede llegar después del primer render: si la pestaña que quedó
+  // activa no existe para el modelo, se cae a Empleados en vez de dejar la
+  // pantalla en blanco.
+  useEffect(() => {
+    if (!hasCommercialTeam && tab !== 'employees') setTab('employees');
+  }, [hasCommercialTeam, tab]);
   // Restaurar la pestaña activa después de un reload disparado por una acción
   // (ej. despedir, que recarga la página). Flag de un solo uso: se lee y se
   // borra, así una navegación normal a /rrhh sigue cayendo en 'commercial'.
@@ -1439,7 +1449,7 @@ export default function RRHHPage() {
       />
 
       {/* KPI Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className={cn('grid grid-cols-1 gap-4', hasCommercialTeam && 'md:grid-cols-3')}>
         <Card>
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 rounded-lg bg-info/10"><Users className="w-5 h-5 text-blue-500" /></div>
@@ -1447,6 +1457,8 @@ export default function RRHHPage() {
           </div>
           <p className="text-2xl font-bold">{employees.length}</p>
         </Card>
+        {hasCommercialTeam && (
+        <>
         <Card>
           <div className="flex items-center gap-3 mb-2">
             <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50"><Briefcase className="w-5 h-5 text-violet-500" /></div>
@@ -1461,6 +1473,8 @@ export default function RRHHPage() {
           </div>
           <p className="text-2xl font-bold">{formatCurrency(totalCommissionsFiltered)}</p>
         </Card>
+        </>
+        )}
       </div>
 
       {/* Tabs */}
@@ -1475,6 +1489,8 @@ export default function RRHHPage() {
           <Users className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.employees')}
         </button>
+        {hasCommercialTeam && (
+        <>
         <button
           onClick={() => setTab('commercial')}
           className={cn(
@@ -1517,13 +1533,15 @@ export default function RRHHPage() {
           <ClipboardCheck className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.onboardingTab')}
         </button>
+        </>
+        )}
       </div>
 
       {/* ═══════════ IB REBATES TAB ═══════════ */}
-      {tab === 'ib_rebates' && hasIbRebatesAccess && <IbRebatesTab />}
+      {tab === 'ib_rebates' && hasIbRebatesAccess && hasCommercialTeam && <IbRebatesTab />}
 
       {/* ═══════════ ONBOARDING CHECKLIST TAB ═══════════ */}
-      {tab === 'onboarding' && <OnboardingTab profiles={profiles} />}
+      {tab === 'onboarding' && hasCommercialTeam && <OnboardingTab profiles={profiles} />}
 
       {/* ═══════════ EMPLOYEES TAB ═══════════ */}
       {tab === 'employees' && (
@@ -1733,7 +1751,7 @@ export default function RRHHPage() {
       )}
 
       {/* ═══════════ COMMERCIAL FORCE TAB ═══════════ */}
-      {tab === 'commercial' && (
+      {tab === 'commercial' && hasCommercialTeam && (
         <div className="space-y-6">
           {/* Period Filter */}
           <Card>
@@ -1947,7 +1965,7 @@ export default function RRHHPage() {
       )}
 
       {/* ═══════════ NEGOTIATIONS TAB ═══════════ */}
-      {tab === 'negotiations' && (
+      {tab === 'negotiations' && hasCommercialTeam && (
         <div className="space-y-4">
           {/* Toolbar */}
           <Card>

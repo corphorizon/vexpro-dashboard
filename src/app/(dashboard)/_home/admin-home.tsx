@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { StatCard } from '@/components/ui/stat-card';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
+import { features } from '@/lib/business-model';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { formatCurrency } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-fetch';
@@ -160,8 +161,11 @@ export function AdminHome() {
   }, [company?.id]);
 
   // ── Module availability shortcuts ──────────────────────────────────────
-  const has = (m: string) => hasModuleAccess(user, m, company?.active_modules);
+  const has = (m: string) => hasModuleAccess(user, m, company?.active_modules, company?.business_model);
   const hasFinance = has('movements');
+  // Una consultora no tiene depósitos de clientes: la fila 1 queda solo con
+  // Egresos y el grid pasa a una columna para no dejar celdas vacías.
+  const showNetDeposit = features(company?.business_model).netDeposit;
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -180,29 +184,36 @@ export function AdminHome() {
             (depositos and retiros sit together so net deposit "story" reads
              left-to-right). All values consolidate API + manual. */}
       {loading && !currentSummary ? (
-        <SkeletonRow n={4} />
+        <SkeletonRow n={showNetDeposit ? 4 : 1} />
       ) : hasFinance ? (
-        <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            label="Depósito Neto · mes"
-            value={formatCurrency(cur.netDeposit)}
-            icon={Wallet}
-            tone={cur.netDeposit >= 0 ? 'positive' : 'negative'}
-            hint={deltaHint(netDepositDelta)}
-          />
-          <StatCard
-            label="Depósitos · mes"
-            value={formatCurrency(cur.deposits)}
-            icon={ArrowDownCircle}
-            tone="info"
-          />
-          <StatCard
-            label="Retiros · mes"
-            value={formatCurrency(cur.withdrawals)}
-            icon={ArrowUpCircle}
-            tone="warning"
-            hint={deltaHint(withdrawalsDelta, /* invertColor */ true)}
-          />
+        <section className={showNetDeposit
+          ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4'
+          : 'grid grid-cols-1 gap-4'}
+        >
+          {showNetDeposit && (
+            <>
+              <StatCard
+                label="Depósito Neto · mes"
+                value={formatCurrency(cur.netDeposit)}
+                icon={Wallet}
+                tone={cur.netDeposit >= 0 ? 'positive' : 'negative'}
+                hint={deltaHint(netDepositDelta)}
+              />
+              <StatCard
+                label="Depósitos · mes"
+                value={formatCurrency(cur.deposits)}
+                icon={ArrowDownCircle}
+                tone="info"
+              />
+              <StatCard
+                label="Retiros · mes"
+                value={formatCurrency(cur.withdrawals)}
+                icon={ArrowUpCircle}
+                tone="warning"
+                hint={deltaHint(withdrawalsDelta, /* invertColor */ true)}
+              />
+            </>
+          )}
           <StatCard
             label="Egresos · mes"
             value={formatCurrency(currentSummary?.totalExpenses ?? 0)}

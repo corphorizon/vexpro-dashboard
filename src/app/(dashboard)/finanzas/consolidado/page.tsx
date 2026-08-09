@@ -109,7 +109,7 @@ export default function ConsolidadoPage() {
   // Module gate: aprovecha el de "reports" porque la página vive bajo
   // /finanzas (mismo cluster ejecutivo). Si la empresa no tiene reports
   // habilitado, redirigimos al inicio.
-  const canAccess = hasModuleAccess(user, 'reports', company?.active_modules ?? null);
+  const canAccess = hasModuleAccess(user, 'reports', company?.active_modules ?? null, company?.business_model);
 
   const [hiddenCols, setHiddenColsState] = useState<Set<string>>(() => loadSet(STORAGE_HIDDEN_COLS));
   const [hiddenMonths, setHiddenMonthsState] = useState<Set<string>>(() => loadSet(STORAGE_HIDDEN_MONTHS));

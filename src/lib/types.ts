@@ -11,6 +11,12 @@ export interface Company {
   color_secondary: string;
   currency: string;
   active_modules: string[];
+  /**
+   * 'broker' (default) opera cuentas de clientes; 'company' factura servicios.
+   * Qué apaga cada uno vive en src/lib/business-model.ts — acá solo viaja el
+   * valor.
+   */
+  business_model: string;
   /** Tenant-specific Coinsbuy wallet to pre-select in /movimientos.
    *  Null = UI picks the first wallet returned by the API. */
   default_wallet_id: string | null;

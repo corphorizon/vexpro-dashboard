@@ -34,8 +34,8 @@ export default function HomePage() {
   const router = useRouter();
 
   const groups = useMemo(
-    () => getAccessibleGroups(user, company?.active_modules),
-    [user, company?.active_modules],
+    () => getAccessibleGroups(user, company?.active_modules, company?.business_model),
+    [user, company?.active_modules, company?.business_model],
   );
 
   // Resolve the target page for non-admin roles. Null means "render AdminHome

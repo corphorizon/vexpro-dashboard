@@ -46,8 +46,10 @@ export function QuickAccess({ heading = 'Accesos rápidos' }: { heading?: string
   const { company } = useData();
 
   const visible = useMemo(() => {
-    return ENTRIES.filter((e) => hasModuleAccess(user, e.module, company?.active_modules));
-  }, [user, company?.active_modules]);
+    return ENTRIES.filter((e) =>
+      hasModuleAccess(user, e.module, company?.active_modules, company?.business_model),
+    );
+  }, [user, company?.active_modules, company?.business_model]);
 
   if (visible.length === 0) return null;
 

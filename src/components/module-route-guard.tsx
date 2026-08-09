@@ -60,7 +60,7 @@ export function ModuleRouteGuard({ children }: { children: React.ReactNode }) {
 
   // Superadmin bypass is baked into hasModuleAccess. For normal users this
   // enforces both user.allowed_modules AND company.active_modules.
-  if (hasModuleAccess(user, moduleKey, company?.active_modules)) {
+  if (hasModuleAccess(user, moduleKey, company?.active_modules, company?.business_model)) {
     return <>{children}</>;
   }
 

@@ -90,10 +90,11 @@ export const MODULE_GROUPS: ModuleGroup[] = [
 export function getAccessibleGroups(
   user: User | null,
   activeModules: string[] | null | undefined,
+  businessModel?: unknown,
 ): ModuleGroup[] {
   if (!user) return [];
   return MODULE_GROUPS.filter((g) =>
-    g.items.some((item) => hasModuleAccess(user, item.module, activeModules)),
+    g.items.some((item) => hasModuleAccess(user, item.module, activeModules, businessModel)),
   );
 }
 
@@ -106,7 +107,10 @@ export function getAccessibleItems(
   user: User | null,
   group: ModuleGroup,
   activeModules: string[] | null | undefined,
+  businessModel?: unknown,
 ): ModuleGroupItem[] {
   if (!user) return [];
-  return group.items.filter((item) => hasModuleAccess(user, item.module, activeModules));
+  return group.items.filter((item) =>
+    hasModuleAccess(user, item.module, activeModules, businessModel),
+  );
 }

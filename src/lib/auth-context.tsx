@@ -6,6 +6,7 @@ import { logAction } from '@/lib/audit-log';
 import { withActiveCompany } from '@/lib/api-fetch';
 import { getActiveCompanyId, subscribeActiveCompanyId } from '@/lib/active-company';
 import { MODULE_KEYS } from '@/lib/modules';
+import { moduleAllowedForModel } from '@/lib/business-model';
 import { isBuiltInRole } from '@/lib/roles';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -870,13 +871,20 @@ export function useAuth() {
  *
  * Backward compatible: call sites that don't pass `activeModules` keep the
  * original user-only semantics.
+ *
+ * `businessModel` es una tercera capa, anterior a las otras dos: un módulo que
+ * el modelo de negocio no contempla no existe para NADIE —  ni para el
+ * superadmin, porque no hay datos detrás. Omitirlo equivale a 'broker', el
+ * default histórico, así que los call sites viejos no cambian de conducta.
  */
 export function hasModuleAccess(
   user: User | null,
   module: string,
   activeModules?: string[] | null,
+  businessModel?: unknown,
 ): boolean {
   if (!user) return false;
+  if (!moduleAllowedForModel(businessModel, module)) return false;
   // Platform superadmin sees everything — tenant filters don't apply.
   if (user.is_superadmin) return true;
 
