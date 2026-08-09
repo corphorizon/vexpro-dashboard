@@ -114,7 +114,13 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebarCollapsed}
       />
-      <main className="flex-1 min-w-0 overflow-auto pt-14 lg:pt-0 transition-[width,padding] duration-200">
+      {/* `relative` NO es decorativo: sin él, cualquier hijo con
+          position:absolute (los inputs de archivo `sr-only`, que están en 9
+          pantallas) toma al <body> como contenedor de bloque, ESCAPA del
+          overflow de este main y estira el documento. El síntoma era una
+          segunda barra de scroll: al bajar, el shell entero subía y dejaba
+          cientos de píxeles en blanco bajo la barra lateral. */}
+      <main className="relative flex-1 min-w-0 overflow-auto pt-14 lg:pt-0 transition-[width,padding] duration-200">
         <ViewingAsBanner />
         <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
           <ErrorBoundary>
