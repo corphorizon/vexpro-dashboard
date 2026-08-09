@@ -20,5 +20,5 @@ import { useData } from '@/lib/data-context';
 export function useModuleAccess(module: string): boolean {
   const { user } = useAuth();
   const { company } = useData();
-  return hasModuleAccess(user, module, company?.active_modules);
+  return hasModuleAccess(user, module, company?.active_modules, company?.business_model);
 }

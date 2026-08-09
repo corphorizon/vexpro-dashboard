@@ -13,6 +13,7 @@ import { PeriodSelector } from '@/components/period-selector';
 import dynamic from 'next/dynamic';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
+import { features } from '@/lib/business-model';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { downloadExcel, downloadPDF } from '@/lib/export-utils';
@@ -55,6 +56,9 @@ export default function ResumenPage() {
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { getPeriodSummary, getConsolidatedSummary, periods, company } = useData();
+  // Una consultora no mueve fondos de clientes: sin depósitos, "Net Deposit" y
+  // el P&L del broker no significan nada y se van de la pantalla (y del export).
+  const { netDeposit: showNetDeposit, brokerPnl: showBrokerPnl } = features(company?.business_model);
 
   const summary = mode === 'consolidated'
     ? getConsolidatedSummary(selectedPeriodIds)
@@ -134,9 +138,13 @@ export default function ResumenPage() {
 
   const exportHeaders = ['Metrica', 'Valor'];
   const exportRows: (string | number)[][] = [
-    ['Depósitos Totales', consolidatedDeposits],
-    ['Retiros Totales', consolidatedWithdrawals],
-    ['Net Deposit', consolidatedNetDeposit],
+    ...(showNetDeposit
+      ? ([
+          ['Depósitos Totales', consolidatedDeposits],
+          ['Retiros Totales', consolidatedWithdrawals],
+          ['Net Deposit', consolidatedNetDeposit],
+        ] as (string | number)[][])
+      : []),
     ['Egresos Operativos', summary.totalExpenses],
     ['Ingresos Operativos', totalIncome],
     ['Balance Total', balanceDisponible],
@@ -197,25 +205,32 @@ export default function ResumenPage() {
 
       {/* KPI Cards — StatCard compartido con tonos semánticos: el color
           codifica significado (entrada/salida/resultado), no decoración. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label={t('summary.deposits')}
-          value={formatCurrency(consolidatedDeposits)}
-          icon={ArrowDownCircle}
-          tone="info"
-        />
-        <StatCard
-          label={t('summary.withdrawals')}
-          value={formatCurrency(consolidatedWithdrawals)}
-          icon={ArrowUpCircle}
-          tone="negative"
-        />
-        <StatCard
-          label={<>{t('summary.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} /></>}
-          value={formatCurrency(consolidatedNetDeposit)}
-          icon={DollarSign}
-          tone={consolidatedNetDeposit >= 0 ? 'positive' : 'negative'}
-        />
+      <div className={showNetDeposit
+        ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'
+        : 'grid grid-cols-1 gap-4'}
+      >
+        {showNetDeposit && (
+          <>
+            <StatCard
+              label={t('summary.deposits')}
+              value={formatCurrency(consolidatedDeposits)}
+              icon={ArrowDownCircle}
+              tone="info"
+            />
+            <StatCard
+              label={t('summary.withdrawals')}
+              value={formatCurrency(consolidatedWithdrawals)}
+              icon={ArrowUpCircle}
+              tone="negative"
+            />
+            <StatCard
+              label={<>{t('summary.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} /></>}
+              value={formatCurrency(consolidatedNetDeposit)}
+              icon={DollarSign}
+              tone={consolidatedNetDeposit >= 0 ? 'positive' : 'negative'}
+            />
+          </>
+        )}
         <StatCard
           label={t('summary.expenses')}
           value={formatCurrency(summary.totalExpenses)}
@@ -237,7 +252,7 @@ export default function ResumenPage() {
             {formatCurrency(totalIncome)}
           </CardValue>
           <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-            {summary.propFirmNetIncome !== 0 && (
+            {showBrokerPnl && summary.propFirmNetIncome !== 0 && (
               <div className="flex justify-between">
                 <span>Balance Prop Firm</span>
                 <span>{formatCurrency(summary.propFirmNetIncome)}</span>
@@ -249,7 +264,7 @@ export default function ResumenPage() {
                 <span>{formatCurrency(summary.investmentProfits)}</span>
               </div>
             )}
-            {income && (
+            {showBrokerPnl && income && (
               <div className="flex justify-between">
                 <span>{t('summary.brokerPnl')}</span>
                 <span>{formatCurrency(income.broker_pnl)}</span>

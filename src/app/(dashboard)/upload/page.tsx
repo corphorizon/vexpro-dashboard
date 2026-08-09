@@ -117,6 +117,7 @@ import {
 import { FixedForwardDialog } from '@/components/ui/fixed-forward-dialog';
 import { SELECTABLE_MOVEMENT_TYPES, inferMovementType } from '@/lib/investment-types';
 import { formatDayMonth } from '@/lib/dates';
+import { uploadSections, defaultUploadSection, features } from '@/lib/business-model';
 import * as Sentry from '@sentry/nextjs';
 import Link from 'next/link';
 import { apiFetch } from '@/lib/api-fetch';
@@ -281,7 +282,29 @@ export default function UploadPage() {
   const userCanDelete = canDelete(user);
 
   const [selectedPeriod, setSelectedPeriod] = useState(periods[periods.length - 1]?.id || '');
-  const [section, setSection] = useState<DataSection>('depositos');
+
+  // ── Pestañas según el modelo de negocio ───────────────────────────────
+  // El registro decide cuáles existen y en qué orden: para un broker devuelve
+  // el mismo orden de siempre (su pantalla no se mueve) y para una consultora
+  // arranca por Ingresos, sin Depósitos ni Retiros.
+  const allowedSections = useMemo(
+    () => uploadSections(company?.business_model) as DataSection[],
+    [company?.business_model],
+  );
+  const [section, setSection] = useState<DataSection>(
+    () => defaultUploadSection(company?.business_model) as DataSection,
+  );
+  // Prop Firm y P&L del broker viven dentro de la pestaña Ingresos aunque
+  // pertenezcan al negocio de broker: se apagan por feature, no por pestaña.
+  const modelFeatures = features(company?.business_model);
+  const showBrokerPnl = modelFeatures.brokerPnl;
+  const showWithdrawals = modelFeatures.withdrawals;
+  // `company` llega después del primer render (y cambia si un superadmin salta
+  // de empresa): sin este reajuste la pestaña activa puede quedar apuntando a
+  // una sección que el modelo no tiene y la pantalla se ve vacía.
+  useEffect(() => {
+    if (!allowedSections.includes(section)) setSection(allowedSections[0]);
+  }, [allowedSections, section]);
 
   // ── Dirty-state tracker for "Guardar Todo" sections ───────────────────
   // Egresos / Depósitos / Retiros / Ingresos keep unsaved changes in local
@@ -779,7 +802,10 @@ export default function UploadPage() {
     //     "autosalvar a los 3s interrumpía la escritura y re-hidrataba el valor
     //     a medio tipear" — ese era el bug del debounce que nunca se
     //     reiniciaba, ahora arreglado de raíz (ver editTick).
-    const AUTOSAVE_SECTIONS: DataSection[] = ['depositos', 'retiros', 'ingresos'];
+    //   · las secciones que el modelo de la empresa no tiene: nunca hay estado
+    //     que persistir y guardarlas sobrescribiría con vacío.
+    const AUTOSAVE_SECTIONS: DataSection[] = (['depositos', 'retiros', 'ingresos'] as DataSection[])
+      .filter((s) => allowedSections.includes(s));
     if (selectedPeriodIsClosed) return; // mes cerrado: el trigger rechazaría cada intento
     if (!AUTOSAVE_SECTIONS.some((s) => dirtySections.has(s))) return;
     if (savingAll) return; // queue up: re-fires when savingAll flips false
@@ -794,7 +820,7 @@ export default function UploadPage() {
     // captura `section`/estado por closure. No dependemos de `section`: cambiar
     // de pestaña ya no cancela un guardado pendiente (ese era el bug).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dirtySections, savingAll, selectedPeriodIsClosed, editTick]);
+  }, [dirtySections, savingAll, selectedPeriodIsClosed, editTick, allowedSections]);
 
   // ── End auto-save ─────────────────────────────────────────────────────
 
@@ -1918,8 +1944,10 @@ export default function UploadPage() {
           ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
         ];
         await upsertOperatingIncome(company.id, periodId, income);
-        await upsertPropFirmSales(company.id, periodId, propFirmAmount);
-        await upsertWithdrawals(company.id, periodId, combinedWithdrawals);
+        // Prop firm y retiros los edita esta pestaña solo en el modelo broker;
+        // en una consultora ni siquiera se muestran, así que no se escriben.
+        if (showBrokerPnl) await upsertPropFirmSales(company.id, periodId, propFirmAmount);
+        if (showWithdrawals) await upsertWithdrawals(company.id, periodId, combinedWithdrawals);
 
         if (user) {
           const propFirmWdr = withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
@@ -2030,7 +2058,10 @@ export default function UploadPage() {
     // guarda la unión de las secciones dirty + la visible.
     // Egresos NO entra: persiste por-acción (persistExpenses) y usa 'egresos'
     // dirty como mutex del sync-effect — batchearlo acá crearía una carrera.
-    const SAVE_HANDLED: DataSection[] = ['depositos', 'retiros', 'ingresos'];
+    // Las secciones ajenas al modelo de negocio tampoco entran: no hay pestaña
+    // que las haya editado.
+    const SAVE_HANDLED: DataSection[] = (['depositos', 'retiros', 'ingresos'] as DataSection[])
+      .filter((s) => allowedSections.includes(s));
     const targets = SAVE_HANDLED.filter((s) => dirtySections.has(s) || s === section);
 
     // Foto de los contadores de edición ANTES de escribir: al terminar se
@@ -2067,8 +2098,8 @@ export default function UploadPage() {
           ...withdrawalExtras.map(w => ({ category: w.category, amount: w.amount, description: w.description || null })),
         ];
         await upsertOperatingIncome(companyId, periodId, income);
-        await upsertPropFirmSales(companyId, periodId, propFirmAmount);
-        await upsertWithdrawals(companyId, periodId, combinedWithdrawals);
+        if (showBrokerPnl) await upsertPropFirmSales(companyId, periodId, propFirmAmount);
+        if (showWithdrawals) await upsertWithdrawals(companyId, periodId, combinedWithdrawals);
         if (user) logAction(user.id, user.name, 'update', 'income', `Ingresos operativos guardados para ${periodLabel}`);
         return t('upload.incomeSavedOk');
       }
@@ -2242,7 +2273,7 @@ export default function UploadPage() {
 
       {/* Section tabs */}
       <div className="flex gap-1 border-b border-border pb-0 overflow-x-auto">
-        {(Object.keys(SECTION_KEYS) as DataSection[]).map(s => (
+        {allowedSections.map(s => (
           <button
             key={s}
             onClick={() => setSection(s)}
@@ -2954,21 +2985,23 @@ export default function UploadPage() {
         <Card>
           <h2 className="text-lg font-semibold mb-4">{t('upload.operatingIncome')} — {periodLabel}</h2>
           <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="text-sm text-muted-foreground mb-1 block">{t('movements.brokerPnlBookB')}</label>
-                {userCanAdd ? (
-                  <input
-                    type="number" step="0.01"
-                    value={income.broker_pnl || ''}
-                    onChange={e => setIncome(p => ({ ...p, broker_pnl: parseFloat(e.target.value) || 0 }))}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                    placeholder="0.00"
-                  />
-                ) : (
-                  <p className="text-lg font-bold">{formatCurrency(income.broker_pnl)}</p>
-                )}
-              </div>
+            <div className={showBrokerPnl ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4'}>
+              {showBrokerPnl && (
+                <div>
+                  <label className="text-sm text-muted-foreground mb-1 block">{t('movements.brokerPnlBookB')}</label>
+                  {userCanAdd ? (
+                    <input
+                      type="number" step="0.01"
+                      value={income.broker_pnl || ''}
+                      onChange={e => setIncome(p => ({ ...p, broker_pnl: parseFloat(e.target.value) || 0 }))}
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      placeholder="0.00"
+                    />
+                  ) : (
+                    <p className="text-lg font-bold">{formatCurrency(income.broker_pnl)}</p>
+                  )}
+                </div>
+              )}
               {/* "Otros ingresos" con detalle cargado es un campo DERIVADO: el
                   servidor lo sobreescribe con la suma de lo cobrado en cada
                   guardado del detalle, así que editarlo a mano se perdería. */}
@@ -3202,6 +3235,7 @@ export default function UploadPage() {
                 yet live. Net flows into Total Ingresos below. Mirror of the
                 same fields visible in Depósitos (ventas) and Retiros
                 (retiros), wired to the same state. */}
+            {showBrokerPnl && (
             <div className="pt-3 border-t border-border">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-sm font-semibold">Prop Firm</h3>
@@ -3258,6 +3292,7 @@ export default function UploadPage() {
                 </span>
               </div>
             </div>
+            )}
 
             <div className="flex items-center justify-between pt-4 border-t border-border">
               <div>

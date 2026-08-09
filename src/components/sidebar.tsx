@@ -218,20 +218,23 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
   // RRHH, Risk, or Config), render a simplified sidebar: no collapsibles,
   // a group heading at the top, and the group's items listed directly.
   // Admin and superadmin always see the full collapsible structure.
-  const accessibleGroups = getAccessibleGroups(user, company?.active_modules);
+  const accessibleGroups = getAccessibleGroups(user, company?.active_modules, company?.business_model);
   const useFlatMenu =
     user !== null &&
     !user.is_superadmin &&
     user.effective_role !== 'admin' &&
     accessibleGroups.length === 1;
   const flatGroup = useFlatMenu ? accessibleGroups[0] : null;
-  const flatItems = flatGroup ? getAccessibleItems(user, flatGroup, company?.active_modules) : [];
+  const flatItems = flatGroup
+    ? getAccessibleItems(user, flatGroup, company?.active_modules, company?.business_model)
+    : [];
 
   const renderLink = (item: NavLink, indent = false) => {
     // Sidebar respects BOTH the user's allowed_modules AND the tenant's
     // active_modules — a deactivated module never shows, even to admins.
-    // Superadmins bypass (handled inside hasModuleAccess).
-    if (!hasModuleAccess(user, item.module, company?.active_modules)) return null;
+    // Superadmins bypass (handled inside hasModuleAccess) — salvo lo que el
+    // modelo de negocio de la empresa no contempla, que no se muestra a nadie.
+    if (!hasModuleAccess(user, item.module, company?.active_modules, company?.business_model)) return null;
     // Match exacto O prefijo de ruta hija — así /movimientos/desglose/[slug]
     // mantiene iluminado el leaf "Movimientos" (antes solo se iluminaba la
     // sección y el usuario perdía la ubicación). Guard: '/' solo exacto.
@@ -456,7 +459,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
 
             const section = entry as NavSection;
             const visibleChildren = section.children.filter(c =>
-              hasModuleAccess(user, c.module, company?.active_modules),
+              hasModuleAccess(user, c.module, company?.active_modules, company?.business_model),
             );
             if (visibleChildren.length === 0) return null;
 
