@@ -36,6 +36,12 @@ test('superadmin: Balances le ofrece administrar canales y ubicaciones', async (
   // `next dev` compila /balances a demanda y el primer hit puede tardar más
   // que el timeout del expect — se precompila antes de mirar la UI.
   await page.request.get('/balances', { timeout: 120_000 });
+  // El panel de configuración abre pidiendo canales, unidades y su reparto:
+  // en `next dev` cada endpoint compila la primera vez que lo tocan y ese
+  // arranque se come el timeout del expect.
+  for (const url of ['/api/admin/channel-configs', '/api/admin/business-units', '/api/admin/location-units']) {
+    await page.request.get(url, { timeout: 120_000 });
+  }
   await actAsSuperadminClient(page, COMPANY);
   await page.goto('/balances');
 
@@ -60,6 +66,12 @@ test('ocultar un canal propio no le borra el nombre', async ({ page }) => {
 
   await login(page);
   await page.request.get('/balances', { timeout: 120_000 });
+  // El panel de configuración abre pidiendo canales, unidades y su reparto:
+  // en `next dev` cada endpoint compila la primera vez que lo tocan y ese
+  // arranque se come el timeout del expect.
+  for (const url of ['/api/admin/channel-configs', '/api/admin/business-units', '/api/admin/location-units']) {
+    await page.request.get(url, { timeout: 120_000 });
+  }
   await page.goto('/balances');
   await page.getByRole('button', { name: 'Configurar', exact: true }).click();
   await expect(page.getByText('Configurar Balances por Canal')).toBeVisible({ timeout: 30_000 });

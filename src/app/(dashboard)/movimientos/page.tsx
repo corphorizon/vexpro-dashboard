@@ -18,6 +18,7 @@ import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { usePeriod } from '@/lib/period-context';
+import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
@@ -49,7 +50,7 @@ export default function MovimientosPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, periods, company } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, periods, company, loading } = useData();
 
   const summary =
     mode === 'consolidated'
@@ -172,6 +173,9 @@ export default function MovimientosPage() {
         );
       });
 
+  // Sin períodos no hay nada que mostrar: devolver null dejaba la pantalla en
+  // blanco, sin explicación ni salida.
+  if (!loading && periods.length === 0) return <NoPeriodsState />;
   if (!summary) return null;
 
   // ─── Consolidación API + manual ───

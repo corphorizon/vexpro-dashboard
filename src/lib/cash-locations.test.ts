@@ -92,6 +92,38 @@ describe('summarize', () => {
     expect(s.liquid).toBe(700);
   });
 
+  // El reparto cambia de quién es la plata, no cuánta hay: el total y el
+  // patrimonio tienen que salir iguales con o sin porcentajes.
+  it('el reparto por porcentaje no cambia el total ni parte el fondo de más', () => {
+    const horizon = unit({ id: 'u1', name: 'Horizon', counts_to_fund: true });
+    const exura = unit({ id: 'u2', name: 'Exura', counts_to_fund: false, sort_order: 1 });
+    const s = summarize([
+      loc({
+        business_unit_id: 'u1',
+        unit_shares: [
+          { business_unit_id: 'u1', share: 0.6 },
+          { business_unit_id: 'u2', share: 0.4 },
+        ],
+        balance: 10_000,
+      }),
+    ], [horizon, exura]);
+
+    expect(s.total).toBe(10_000);
+    expect(s.fund).toBe(6_000);
+    expect(s.outsideFund).toBe(4_000);
+  });
+
+  it('con partes que no suman 1 el sobrante entra al fondo', () => {
+    const exura = unit({ id: 'u2', name: 'Exura', counts_to_fund: false });
+    const s = summarize([
+      loc({ unit_shares: [{ business_unit_id: 'u2', share: 0.25 }], balance: 4_000 }),
+    ], [exura]);
+
+    expect(s.outsideFund).toBe(1_000);
+    expect(s.fund).toBe(3_000);
+    expect(s.fund + s.outsideFund).toBe(s.total);
+  });
+
   it('sin ubicaciones da todo en cero', () => {
     expect(summarize([], [])).toEqual({ liquid: 0, lent: 0, total: 0, fund: 0, outsideFund: 0 });
   });
@@ -110,6 +142,51 @@ describe('agrupaciones', () => {
     expect(g[0].total).toBe(350);
     expect(g[1].unit?.name).toBe('Exura');
     expect(g[g.length - 1].unit).toBeNull();
+  });
+
+  it('reparte una ubicación compartida entre sus unidades', () => {
+    const g = groupByUnit([
+      loc({
+        business_unit_id: 'u1',
+        unit_shares: [
+          { business_unit_id: 'u1', share: 0.6 },
+          { business_unit_id: 'u2', share: 0.4 },
+        ],
+        balance: 10_000,
+      }),
+    ], [unit({ id: 'u1', name: 'Horizon', sort_order: 0 }), unit({ id: 'u2', name: 'Exura', sort_order: 1 })]);
+
+    expect(g[0].total).toBe(6_000);
+    expect(g[1].total).toBe(4_000);
+    // El saldo entero sigue disponible: la fila muestra su parte, no miente
+    // sobre cuánta plata hay en esa wallet.
+    expect(g[0].locations[0].fullBalance).toBe(10_000);
+    expect(g[0].locations[0].balance).toBe(6_000);
+  });
+
+  it('lo que falta para el 100% queda sin unidad, no se evapora', () => {
+    const g = groupByUnit([
+      loc({ unit_shares: [{ business_unit_id: 'u1', share: 0.7 }], balance: 1_000 }),
+    ], [unit({ id: 'u1', name: 'Horizon' })]);
+
+    expect(g[0].total).toBe(700);
+    expect(g[g.length - 1].unit).toBeNull();
+    expect(g[g.length - 1].total).toBe(300);
+  });
+
+  it('un reparto que se pasa del 100% se normaliza', () => {
+    const g = groupByUnit([
+      loc({
+        unit_shares: [
+          { business_unit_id: 'u1', share: 1 },
+          { business_unit_id: 'u2', share: 1 },
+        ],
+        balance: 900,
+      }),
+    ], [unit({ id: 'u1', sort_order: 0 }), unit({ id: 'u2', sort_order: 1 })]);
+
+    expect(g[0].total + g[1].total).toBe(900);
+    expect(g[0].total).toBe(450);
   });
 
   it('agrupa por tipo en el orden del catálogo', () => {

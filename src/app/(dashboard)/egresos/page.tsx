@@ -8,6 +8,7 @@ import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
+import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { formatDate, formatDayMonth } from '@/lib/dates';
@@ -33,7 +34,7 @@ export default function EgresosPage() {
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
-  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, preoperativeExpenses, periods, loading } = useData();
 
   const [showPreoperativo, setShowPreoperativo] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -89,6 +90,10 @@ export default function EgresosPage() {
   };
 
   // Sort icon now extracted as top-level component
+
+  // Sin períodos no hay nada que cargar: un esqueleto eterno haría creer
+  // que el sistema está trabajando.
+  if (!loading && periods.length === 0) return <NoPeriodsState />;
 
   if (!summary) {
     return (

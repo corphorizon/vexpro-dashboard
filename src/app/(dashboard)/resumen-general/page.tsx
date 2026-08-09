@@ -12,6 +12,7 @@ import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { PeriodSelector } from '@/components/period-selector';
 import dynamic from 'next/dynamic';
 import { usePeriod } from '@/lib/period-context';
+import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { features } from '@/lib/business-model';
 import { formatCurrency } from '@/lib/utils';
@@ -55,7 +56,7 @@ export default function ResumenPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, periods, company } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, periods, company, loading } = useData();
   // Una consultora no mueve fondos de clientes: sin depósitos, "Net Deposit" y
   // el P&L del broker no significan nada y se van de la pantalla (y del export).
   const { netDeposit: showNetDeposit, brokerPnl: showBrokerPnl } = features(company?.business_model);
@@ -82,6 +83,10 @@ export default function ResumenPage() {
 
   // Skeleton while the data-context hasn't produced a summary yet. A blank
   // page mid-load (what used to show) felt like the app was broken.
+  // Sin períodos no hay nada que cargar: un esqueleto eterno haría creer
+  // que el sistema está trabajando.
+  if (!loading && periods.length === 0) return <NoPeriodsState />;
+
   if (!summary) {
     return (
       <div className="space-y-6">

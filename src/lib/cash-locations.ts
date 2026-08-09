@@ -62,12 +62,23 @@ export interface BusinessUnit {
   sort_order: number;
 }
 
+/** Una unidad dueña de una ubicación y en qué proporción (0..1). */
+export interface UnitShare {
+  business_unit_id: string;
+  share: number;
+}
+
 export interface CashLocation {
   /** Clave del libro: la misma que usa channel_ledger_entries. */
   channel_key: string;
   label: string;
   location_type: LocationType;
   business_unit_id: string | null;
+  /**
+   * Reparto entre varias unidades (migración 071). Vacío o ausente = manda
+   * `business_unit_id`, que es como quedaron todas las ubicaciones viejas.
+   */
+  unit_shares?: UnitShare[] | null;
   /** Para 'loan', a quién se le prestó; para 'bank', el banco. */
   holder: string | null;
   is_visible: boolean;
@@ -95,6 +106,37 @@ function round2(n: number): number {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/**
+ * Cómo se reparte una ubicación entre sus unidades dueñas. Siempre devuelve
+ * partes que suman exactamente 1, porque de eso depende que el desglose por
+ * unidad cierre contra el total.
+ *
+ * · Sin filas de reparto manda `business_unit_id` (compatibilidad).
+ * · Si las partes se pasan del 100% se normalizan: si no, el desglose sumaría
+ *   más plata de la que hay.
+ * · Si les falta para el 100%, el resto queda sin unidad en vez de repartirse
+ *   solo — durante una reasignación hay estados intermedios y esa plata tiene
+ *   que seguir viéndose en algún lado.
+ */
+export function allocateShares(loc: CashLocation): Array<{ unitId: string | null; share: number }> {
+  const rows = (loc.unit_shares ?? [])
+    .filter((r) => r && r.business_unit_id && Number(r.share) > 0)
+    .map((r) => ({ unitId: r.business_unit_id as string | null, share: Number(r.share) }));
+
+  if (rows.length === 0) return [{ unitId: loc.business_unit_id ?? null, share: 1 }];
+
+  const sum = rows.reduce((s, r) => s + r.share, 0);
+  if (sum > 1) return rows.map((r) => ({ unitId: r.unitId, share: r.share / sum }));
+
+  const rest = 1 - sum;
+  return rest > 1e-9 ? [...rows, { unitId: null, share: rest }] : rows;
+}
+
+/** Suma cruda de las partes cargadas — la UI avisa cuando no da 1. */
+export function sharesTotal(shares: UnitShare[] | null | undefined): number {
+  return (shares ?? []).reduce((s, r) => s + (Number(r.share) || 0), 0);
+}
+
 export function summarize(locations: CashLocation[], units: BusinessUnit[]): CashSummary {
   const fundUnits = new Set(units.filter((u) => u.counts_to_fund).map((u) => u.id));
   let liquid = 0, lent = 0, fund = 0, outsideFund = 0;
@@ -107,8 +149,11 @@ export function summarize(locations: CashLocation[], units: BusinessUnit[]): Cas
     // Sin unidad asignada la plata igual existe: entra al fondo, que es el
     // saldo general de la empresa. Dejarla afuera la haría desaparecer del
     // ahorro real sin que nadie lo note.
-    if (!loc.business_unit_id || fundUnits.has(loc.business_unit_id)) fund += balance;
-    else outsideFund += balance;
+    for (const part of allocateShares(loc)) {
+      const amount = balance * part.share;
+      if (!part.unitId || fundUnits.has(part.unitId)) fund += amount;
+      else outsideFund += amount;
+    }
   }
 
   return {
@@ -120,18 +165,37 @@ export function summarize(locations: CashLocation[], units: BusinessUnit[]): Cas
   };
 }
 
+/**
+ * Una ubicación vista desde una de sus unidades dueñas: `balance` es ya la
+ * parte que le toca, no el saldo entero.
+ */
+export interface AllocatedLocation extends CashLocation {
+  share: number;
+  /** Saldo completo de la ubicación, del que `balance` es una porción. */
+  fullBalance: number;
+}
+
 /** Agrupa por unidad de negocio para el desglose. Sin unidad va al final. */
 export function groupByUnit(
   locations: CashLocation[],
   units: BusinessUnit[],
-): Array<{ unit: BusinessUnit | null; locations: CashLocation[]; total: number }> {
+): Array<{ unit: BusinessUnit | null; locations: AllocatedLocation[]; total: number }> {
   const byId = new Map(units.map((u) => [u.id, u]));
-  const groups = new Map<string, CashLocation[]>();
+  const groups = new Map<string, AllocatedLocation[]>();
   for (const loc of locations) {
-    const key = loc.business_unit_id ?? '';
-    const arr = groups.get(key);
-    if (arr) arr.push(loc);
-    else groups.set(key, [loc]);
+    const full = Number(loc.balance) || 0;
+    for (const part of allocateShares(loc)) {
+      const key = part.unitId ?? '';
+      const entry: AllocatedLocation = {
+        ...loc,
+        share: part.share,
+        fullBalance: full,
+        balance: full * part.share,
+      };
+      const arr = groups.get(key);
+      if (arr) arr.push(entry);
+      else groups.set(key, [entry]);
+    }
   }
   return [...groups.entries()]
     .map(([id, locs]) => ({

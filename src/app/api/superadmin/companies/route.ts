@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { normalizeBusinessModel } from '@/lib/business-model';
+import { periodLabel } from '@/lib/utils';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { sanitizeDbError } from '@/lib/errors';
@@ -120,6 +121,27 @@ export async function POST(request: NextRequest) {
         { success: false, error: 'No fue posible crear la entidad' },
         { status: 500 },
       );
+    }
+
+    // Una empresa sin períodos no es usable: /egresos, /balances, /movimientos
+    // y el resumen dependen del período seleccionado y se quedaban en un
+    // esqueleto de carga eterno (le pasó a Exura Prime el 2026-08-09). El cron
+    // mensual recién crearía el primero el día 1, así que nace con el del mes
+    // en curso.
+    //
+    // Best-effort: si falla, la entidad YA está creada y el admin puede
+    // crearlo a mano desde /periodos — no tiene sentido tirar el alta entera.
+    const now = new Date();
+    const { error: periodError } = await admin.from('periods').insert({
+      company_id: created.id,
+      year: now.getUTCFullYear(),
+      month: now.getUTCMonth() + 1,
+      label: periodLabel(now.getUTCFullYear(), now.getUTCMonth() + 1),
+      is_closed: false,
+      reserve_pct: reserve_pct ?? 0.1,
+    });
+    if (periodError) {
+      console.error('[superadmin/companies:create] período inicial:', periodError.message);
     }
 
     return NextResponse.json({ success: true, company: created });

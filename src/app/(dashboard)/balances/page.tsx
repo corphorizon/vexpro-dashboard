@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { features } from '@/lib/business-model';
+import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 import { useAuth, canAdd, isCompanyAdmin } from '@/lib/auth-context';
@@ -22,39 +23,20 @@ import {
   type ResolvedChannel,
 } from '@/lib/channel-configs';
 import { ChannelConfigModal } from './channel-config-modal';
-import { CashLocationsCard } from './cash-locations-card';
+import { ChannelBalancesCard } from './channel-balances-card';
 import {
   Wallet,
-  Calendar,
   RefreshCw,
-  Save,
-  TrendingUp,
-  Droplets,
-  Plug,
   Edit2,
-  Settings2,
-  Check,
   X,
   AlertTriangle,
   ToggleLeft,
   ToggleRight,
   Pin,
   PinOff,
-  BookOpen,
-  FileDown,
 } from 'lucide-react';
-import Link from 'next/link';
-import { hasLedger, isAutoLedger } from '@/lib/channel-ledger';
+import { isAutoLedger } from '@/lib/channel-ledger';
 import { generateChannelBalancesPDF } from '@/lib/pdf-export';
-
-// Icon lookup keyed by channel_key — only built-ins have a dedicated icon.
-// Custom channels render without one (Wallet default fallback in the row).
-const CHANNEL_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  coinsbuy: Plug,
-  unipayment: Plug,
-  inversiones: TrendingUp,
-  liquidez: Droplets,
-};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Channel list is now resolved dynamically from channel_configs (see
@@ -83,7 +65,7 @@ function todayISO(): string {
 export default function BalancesPage() {
   const { t, locale } = useI18n();
   const { user } = useAuth();
-  const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData } = useData();
+  const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData, loading } = useData();
   const { movements: showFlows } = features(company?.business_model);
   const { selectedPeriodId } = usePeriod();
   const userCanAdd = canAdd(user);
@@ -91,8 +73,6 @@ export default function BalancesPage() {
   const [selectedDate, setSelectedDate] = useState<string>(todayISO());
   const [snapshots, setSnapshots] = useState<ChannelBalance[]>([]);
   const [loadingSnap, setLoadingSnap] = useState(false);
-  const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Record<string, string>>({}); // pending edits per channel key
   const [errMsg, setErrMsg] = useState<string | null>(null);
   const [okMsg, setOkMsg] = useState<string | null>(null);
   const [pinnedWallets, setPinnedWallets] = useState<PinnedCoinsbuyWallet[]>([]);
@@ -484,7 +464,6 @@ export default function BalancesPage() {
     try {
       const data = await fetchChannelBalances(company.id, selectedDate);
       setSnapshots(data);
-      setEditing({});
     } catch (err) {
       setErrMsg(err instanceof Error ? err.message : 'Error cargando snapshots');
     } finally {
@@ -561,29 +540,16 @@ export default function BalancesPage() {
     return snap?.amount ?? 0;
   };
 
-  const startEdit = (key: string) => {
-    if (!userCanAdd) return;
-    setEditing(prev => ({ ...prev, [key]: String(getChannelValue(key)) }));
-  };
-
-  const cancelEdit = (key: string) => {
-    setEditing(prev => {
-      const { [key]: _omit, ...rest } = prev;
-      return rest;
-    });
-  };
-
-  const saveEdit = async (key: string) => {
+  // Carga manual del saldo de un canal sin libro. La tarjeta unificada es la
+  // dueña del formulario; acá vive la escritura porque también recarga los
+  // snapshots de la fecha elegida.
+  const saveChannelBalance = async (key: string, value: number) => {
     if (!company) return;
-    const raw = editing[key] ?? '';
-    const value = parseFloat(raw);
     // Reject NaN / Infinity explicitly — `|| 0` would silently turn a bad
     // input into a real save of "0", which is data corruption.
     if (!Number.isFinite(value)) {
-      setErrMsg(t('balances.invalidNumber'));
-      return;
+      throw new Error(t('balances.invalidNumber'));
     }
-    setSavingKey(key);
     setErrMsg(null);
     try {
       // Server-side write via the admin endpoint (service-role + audit log).
@@ -615,7 +581,6 @@ export default function BalancesPage() {
       } catch (refreshErr) {
         console.warn('[balances] refresh after save failed:', refreshErr);
       }
-      cancelEdit(key);
       setOkMsg(t('balances.savedOk'));
       setTimeout(() => setOkMsg(null), 4000);
     } catch (err) {
@@ -626,15 +591,25 @@ export default function BalancesPage() {
             ? err.message
             : t('balances.saveErrorGeneric');
       setErrMsg(msg);
-    } finally {
-      setSavingKey(null);
+      throw new Error(msg);
     }
   };
 
-  // Total consolidado — suma SOLO los canales visibles (los ocultados con
-  // el toggle en el modal "Configurar" no aportan al total). Cambios se
-  // recalculan instantáneamente al cerrar el modal, vía loadChannelConfigs.
-  const totalConsolidado = visibleChannels.reduce((sum, c) => sum + getChannelValue(c.key), 0);
+  const exportChannelsPdf = () => {
+    generateChannelBalancesPDF({
+      company: { name: company?.name ?? 'Dashboard', logoUrl: company?.logo_url ?? null },
+      asOf: selectedDate,
+      channels: visibleChannels.map((ch) => ({
+        label: ch.label,
+        isAuto: isAutoLedger(ch.key) || ch.type === 'auto',
+        balance: getChannelValue(ch.key),
+      })),
+      // Total consolidado — suma SOLO los canales visibles (los ocultados con
+      // el toggle en el modal "Configurar" no aportan al total).
+      total: visibleChannels.reduce((s, ch) => s + getChannelValue(ch.key), 0),
+      locale: locale === 'en' ? 'en' : 'es',
+    });
+  };
 
   // ─── Section C: Coinsbuy Wallets (state + fetch declared above) ───
 
@@ -645,6 +620,10 @@ export default function BalancesPage() {
       </div>
     );
   }
+
+  // Una empresa recién creada no tiene períodos: sin este corte la pantalla
+  // arma tarjetas y tablas vacías sobre un chain sin filas.
+  if (!loading && periods.length === 0) return <NoPeriodsState />;
 
   return (
     <div className="space-y-6">
@@ -666,15 +645,63 @@ export default function BalancesPage() {
         </div>
       )}
 
-      {/* ═══════════ DÓNDE ESTÁ LA PLATA ═══════════
+      {/* ═══════════ BALANCES POR CANAL ═══════════
           Va primero porque es la pregunta que el módulo responde antes que
           ninguna otra: cuánto se puede usar hoy y cuánto está afuera. */}
-      <CashLocationsCard
+      <ChannelBalancesCard
         channels={visibleChannels}
         configRows={channelConfigRows}
         getValue={getChannelValue}
         onChanged={loadChannelConfigs}
         canManage={isAdmin}
+        canEditBalance={userCanAdd}
+        selectedDate={selectedDate}
+        onSelectedDate={setSelectedDate}
+        reloading={loadingSnap}
+        onReload={loadSnapshots}
+        onExportPdf={exportChannelsPdf}
+        onConfigure={() => setShowChannelConfig(true)}
+        onSaveBalance={saveChannelBalance}
+        extraActions={(key) =>
+          key === 'coinsbuy' && isAdmin ? (
+            <button
+              onClick={() => setShowCoinsbuyModal(true)}
+              className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-accent hover:bg-accent/10"
+              aria-label={t('balances.editWallets')}
+              title={t('balances.chooseCoinsbuyWallets')}
+            >
+              <Edit2 className="w-4 h-4" />
+            </button>
+          ) : null
+        }
+        extraRows={(key) =>
+          key === 'coinsbuy' && pinnedWallets.length > 0 ? (
+            <div className="ml-6 mt-2 space-y-1">
+              {pinnedWallets.map((pw) => {
+                const wData = wallets.find((wl) => wl.id === pw.wallet_id);
+                return (
+                  <div
+                    key={pw.wallet_id}
+                    className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border/50 bg-positive/5"
+                  >
+                    <div className="flex items-center gap-2 min-w-0 flex-1">
+                      <Wallet className="w-3.5 h-3.5 text-positive shrink-0" />
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium truncate">{pw.wallet_label}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {wData?.currencyCode ?? 'USDT'} · Wallet #{pw.wallet_id}
+                        </p>
+                      </div>
+                    </div>
+                    <span className="font-semibold text-sm tabular-nums">
+                      {formatCurrency(getPinnedWalletBalance(pw.wallet_id))}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : null
+        }
       />
 
       {/* ═══════════ SECTION A: RESUMEN DEL MES ═══════════ */}
@@ -806,237 +833,6 @@ export default function BalancesPage() {
         ) : (
           <p className="text-center text-muted-foreground py-8">{t('balances.noData')}</p>
         )}
-      </Card>
-
-      {/* ═══════════ SECTION B: BALANCES POR CANAL ═══════════ */}
-      <Card>
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
-              <Plug className="w-5 h-5 text-violet-500" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold">{t('balances.byChannel')}</h2>
-              <p className="text-xs text-muted-foreground">
-                {t('balances.byChannelHint')}
-              </p>
-            </div>
-          </div>
-          {/* Day filter — in-card. Picks a specific day to view the snapshot
-              of how every channel closed. Cron writes daily snapshots at
-              00:00 UTC so historical days are queryable. */}
-          <div className="flex items-center gap-2">
-            <Calendar className="w-4 h-4 text-muted-foreground" />
-            <input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="h-9 px-3 text-base sm:text-sm rounded-lg border border-border bg-card focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-              aria-label={t('balances.snapshotDate')}
-            />
-            <button
-              onClick={loadSnapshots}
-              disabled={loadingSnap}
-              className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-              title={t('balances.reload')}
-              aria-label={t('balances.reload')}
-            >
-              <RefreshCw className={`w-4 h-4 ${loadingSnap ? 'animate-spin' : ''}`} />
-            </button>
-            <button
-              onClick={() =>
-                generateChannelBalancesPDF({
-                  company: { name: company?.name ?? 'Dashboard', logoUrl: company?.logo_url ?? null },
-                  asOf: selectedDate,
-                  channels: visibleChannels.map((ch) => ({
-                    label: ch.label,
-                    isAuto: isAutoLedger(ch.key) || ch.type === 'auto',
-                    balance: getChannelValue(ch.key),
-                  })),
-                  total: visibleChannels.reduce((s, ch) => s + getChannelValue(ch.key), 0),
-                  locale: locale === 'en' ? 'en' : 'es',
-                })
-              }
-              disabled={visibleChannels.length === 0}
-              className="inline-flex items-center gap-1.5 h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-              title={t('ledger.exportPdf')}
-            >
-              <FileDown className="w-4 h-4" />
-              <span className="hidden sm:inline">PDF</span>
-            </button>
-            {isAdmin && (
-              <button
-                onClick={() => setShowChannelConfig(true)}
-                className="inline-flex items-center gap-1.5 h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors"
-                title={t('balances.configureChannels')}
-              >
-                <Settings2 className="w-4 h-4" />
-                <span className="hidden sm:inline">{t('balances.configure')}</span>
-              </button>
-            )}
-          </div>
-        </div>
-
-        {visibleChannels.length === 0 && (
-          <p className="text-sm text-muted-foreground py-6 text-center">
-            {t('balances.noVisibleChannelsPre')} <strong>{t('balances.configure')}</strong> {t('balances.noVisibleChannelsPost')}
-          </p>
-        )}
-
-        <div className="space-y-2">
-          {visibleChannels.map((ch) => {
-            const value = getChannelValue(ch.key);
-            const isEditing = editing[ch.key] !== undefined;
-            const isAuto = ch.type === 'auto';
-            const isCoinsbuy = ch.key === 'coinsbuy';
-            // Built-in flag: historical `allowManualOverride` lived in the
-            // old static CHANNELS array; none of the current built-ins set it.
-            const canOverride = false;
-            const Icon = CHANNEL_ICONS[ch.key];
-
-            return (
-              <div key={ch.key}>
-              <div
-                className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
-              >
-                <div className="flex items-center gap-3 min-w-0 flex-1">
-                  {Icon && <Icon className="w-4 h-4 text-muted-foreground shrink-0" />}
-                  <div className="min-w-0">
-                    <p className="font-medium truncate">{ch.label}</p>
-                    <p className="text-xs text-muted-foreground truncate">{ch.description}</p>
-                  </div>
-                  {isAuto && !canOverride && (
-                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-info/10 text-blue-700 dark:text-blue-300 border border-info/30">
-                      {t('balances.autoBadge')}
-                    </span>
-                  )}
-                  {canOverride && (
-                    <span className="hidden sm:inline-block px-2 py-0.5 rounded-full text-[10px] font-medium bg-warning/10 text-amber-700 dark:text-amber-300 border border-warning/30">
-                      API + manual
-                    </span>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-2">
-                  {isEditing ? (
-                    <>
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={editing[ch.key]}
-                        onChange={(e) => setEditing(prev => ({ ...prev, [ch.key]: e.target.value }))}
-                        className="w-32 px-2 py-1 rounded border border-border text-base sm:text-sm text-right"
-                        autoFocus
-                      />
-                      <button
-                        onClick={() => saveEdit(ch.key)}
-                        disabled={savingKey === ch.key}
-                        className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-50"
-                        aria-label={t('common.save')}
-                      >
-                        {savingKey === ch.key ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                      </button>
-                      <button
-                        onClick={() => cancelEdit(ch.key)}
-                        className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded"
-                        aria-label={t('common.cancel')}
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </>
-                  ) : (
-                    <>
-                      <span className={`font-semibold text-base ${value >= 0 ? '' : 'text-negative'}`}>
-                        {formatCurrency(value)}
-                      </span>
-                      {/* El saldo de un canal con libro ya no se sobreescribe
-                          a mano: se carga un asiento. Dejar las dos vías
-                          significaría dos fuentes de verdad para el mismo
-                          número. La edición directa sobrevive solo para
-                          canales sin libro. */}
-                      {hasLedger(ch.key) ? (
-                        <Link
-                          href={`/balances/libro/${encodeURIComponent(ch.key)}`}
-                          className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                          aria-label={`${t('ledger.openBook')} — ${ch.label}`}
-                          title={t('ledger.openBook')}
-                        >
-                          <BookOpen className="w-3.5 h-3.5" />
-                        </Link>
-                      ) : (
-                        ((!isAuto && !isCoinsbuy) || canOverride) && userCanAdd && (
-                          <button
-                            onClick={() => startEdit(ch.key)}
-                            className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                            aria-label={t('common.edit')}
-                            title={canOverride ? t('balances.manualOverrideTitle') : t('balances.editBalance')}
-                          >
-                            <Edit2 className="w-3.5 h-3.5" />
-                          </button>
-                        )
-                      )}
-                      {isCoinsbuy && isAdmin && (
-                        <button
-                          onClick={() => setShowCoinsbuyModal(true)}
-                          className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
-                          aria-label={t('balances.editWallets')}
-                          title={t('balances.chooseCoinsbuyWallets')}
-                        >
-                          <Edit2 className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </div>
-
-              {/* Pinned wallet sub-rows under Coinsbuy */}
-              {isCoinsbuy && pinnedWallets.length > 0 && (
-                <div className="ml-6 mt-1 space-y-1">
-                  {pinnedWallets.map((pw) => {
-                    const wBalance = getPinnedWalletBalance(pw.wallet_id);
-                    const wData = wallets.find(wl => wl.id === pw.wallet_id);
-                    return (
-                      <div
-                        key={pw.wallet_id}
-                        className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border/50 bg-emerald-50/30 dark:bg-emerald-950/10"
-                      >
-                        <div className="flex items-center gap-2 min-w-0 flex-1">
-                          <Wallet className="w-3.5 h-3.5 text-emerald-500 shrink-0" />
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium truncate">{pw.wallet_label}</p>
-                            <p className="text-[10px] text-muted-foreground">
-                              {wData?.currencyCode ?? 'USDT'} · Wallet #{pw.wallet_id}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="font-semibold text-sm tabular-nums">
-                          {formatCurrency(wBalance)}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Total consolidado */}
-        <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-              {t('balances.totalConsolidated')}
-            </p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              {t('balances.totalHint')}
-            </p>
-          </div>
-          <p className={`text-2xl font-bold ${totalConsolidado >= 0 ? 'text-positive' : 'text-negative'}`}>
-            {formatCurrency(totalConsolidado)}
-          </p>
-        </div>
       </Card>
 
       {/* Modal: channel visibility / rename / add custom (admin only).
