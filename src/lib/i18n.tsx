@@ -9,6 +9,9 @@ type TranslationDict = Record<string, string>;
 
 const translations: Record<Locale, TranslationDict> = {
   en: {
+    'noPeriods.title': 'No periods yet',
+    'noPeriods.description': 'This company has no accounting periods. Create the first one and the screens start filling up.',
+    'noPeriods.action': 'Create first period',
     // Modelo empresa: RRHH sin equipo comercial y reportes de consultora
     'hrDash.monthlySalaries': 'Monthly salaries',
     'hrDash.monthlySalariesHint': 'Salaries of the staff currently on payroll',
@@ -1782,6 +1785,9 @@ const translations: Record<Locale, TranslationDict> = {
   },
 
   es: {
+    'noPeriods.title': 'Todavía no hay períodos',
+    'noPeriods.description': 'Esta empresa no tiene períodos contables. Creá el primero y las pantallas empiezan a llenarse.',
+    'noPeriods.action': 'Crear el primer período',
     // Modelo empresa: RRHH sin equipo comercial y reportes de consultora
     'hrDash.monthlySalaries': 'Salarios mensuales',
     'hrDash.monthlySalariesHint': 'Sueldos del personal que hoy está en nómina',

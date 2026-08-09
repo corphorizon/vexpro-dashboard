@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { features } from '@/lib/business-model';
+import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 import { useAuth, canAdd, isCompanyAdmin } from '@/lib/auth-context';
@@ -83,7 +84,7 @@ function todayISO(): string {
 export default function BalancesPage() {
   const { t, locale } = useI18n();
   const { user } = useAuth();
-  const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData } = useData();
+  const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData, loading } = useData();
   const { movements: showFlows } = features(company?.business_model);
   const { selectedPeriodId } = usePeriod();
   const userCanAdd = canAdd(user);
@@ -645,6 +646,10 @@ export default function BalancesPage() {
       </div>
     );
   }
+
+  // Una empresa recién creada no tiene períodos: sin este corte la pantalla
+  // arma tarjetas y tablas vacías sobre un chain sin filas.
+  if (!loading && periods.length === 0) return <NoPeriodsState />;
 
   return (
     <div className="space-y-6">
