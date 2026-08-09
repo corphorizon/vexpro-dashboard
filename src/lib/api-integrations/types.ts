@@ -140,6 +140,13 @@ export interface ProviderDataset<T extends ProviderTransaction = ProviderTransac
   status: FetchStatus;
   isMock: boolean;
   errorMessage?: string;
+  /**
+   * El proveedor no tiene credenciales para este tenant. Va aparte de
+   * `status` porque para la UI sigue siendo un 'error' (no hay datos que
+   * mostrar), pero para el cron NO lo es: un tenant que no usa FairPay no
+   * puede generar avisos de sincronización todos los días.
+   */
+  notConfigured?: boolean;
 }
 
 // ── Totals (filtered by accepted status) ──

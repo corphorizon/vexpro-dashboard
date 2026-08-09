@@ -115,6 +115,7 @@ export async function fetchUnipaymentDepositsV2(
       status: 'error',
       isMock: false,
       errorMessage: 'UniPayment no está configurado (faltan credenciales)',
+      notConfigured: true,
     };
   }
 

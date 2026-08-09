@@ -29,6 +29,7 @@ import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-
 import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
 import { isOrionCrmConfigured } from '@/lib/api-integrations/orion-crm/auth';
 import { persistDataset } from '@/lib/api-integrations/persistence';
+import { notify, dailyKey } from '@/lib/notifications/notify';
 
 export interface SyncProviderResult {
   company_id: string;
