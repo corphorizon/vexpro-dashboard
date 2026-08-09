@@ -276,7 +276,9 @@ export default function UploadPage() {
   const { t } = useI18n();
   const { user } = useAuth();
   const { periods, allDeposits, allWithdrawals, allExpenses, expenseTemplates, expenseTemplateHidden, allOperatingIncome, allPropFirmSales, allP2PTransfers, getLiquidityData, getInvestmentsData, company, refresh, refreshSections } = useData();
-  const isAdmin = user?.role === 'admin';
+  // (No hay `isAdmin` acá a propósito: los gates de esta pantalla son
+  // canAdd/canEdit/canDelete, que sí contemplan al superadmin en modo
+  // "viendo como". `user.role === 'admin'` a mano lo dejaba afuera.)
   const userCanAdd = canAdd(user);
   const userCanEdit = canEdit(user);
   const userCanDelete = canDelete(user);
@@ -1763,13 +1765,26 @@ export default function UploadPage() {
     previousList: IncomeLine[],
     opts: { toast: string; audit?: { action: 'create' | 'update' | 'delete'; details: string } },
   ) => {
-    if (!company) return;
+    // Cada corte tiene que DECIR por qué. Kevin (2026-08-09) reportó que al
+    // confirmar una fila "no pasaba nada": un `return` mudo acá deja al
+    // usuario sin forma de diagnosticar nada, y encima con la fila ya
+    // cambiada en pantalla por el update optimista.
+    if (!company) {
+      setIncomeLines(previousList);
+      showError(t('income.noCompany'));
+      return;
+    }
     if (selectedPeriodIsClosed) {
       setIncomeLines(previousList); // el trigger de la DB lo rechazaría igual
       showError(t('income.periodClosed'));
       return;
     }
     const periodId = selectedPeriodRef.current;
+    if (!periodId) {
+      setIncomeLines(previousList);
+      showError(t('income.noPeriod'));
+      return;
+    }
     setSavingIncomeLines(true);
     try {
       const payload: IncomeLineInput[] = nextList.map((l, i) => ({
@@ -1828,7 +1843,12 @@ export default function UploadPage() {
   };
 
   const addIncomeLine = () => {
-    if (!userCanAdd || !company || !newIncomeLine.concept || !newIncomeLine.amount) return;
+    if (!userCanAdd) return; // sin permiso el botón ni se dibuja
+    if (!company) { showError(t('income.noCompany')); return; }
+    if (!newIncomeLine.concept.trim() || !newIncomeLine.amount) {
+      showError(t('income.conceptRequired'));
+      return;
+    }
     if (!incomeAmountsAreValid(newIncomeLine)) return;
     const amt = parseAmount(newIncomeLine.amount);
     const rec = parseAmount(newIncomeLine.received);
@@ -1871,7 +1891,7 @@ export default function UploadPage() {
   };
 
   const saveEditIncomeLine = () => {
-    if (!editingIncomeLineId) return;
+    if (!editingIncomeLineId) { showError(t('income.notEditing')); return; }
     if (!incomeAmountsAreValid(editIncomeLine)) return;
     const amt = parseAmount(editIncomeLine.amount);
     const rec = parseAmount(editIncomeLine.received);

@@ -5,7 +5,7 @@ import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
-import { useAuth, canAdd } from '@/lib/auth-context';
+import { useAuth, canAdd, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
@@ -21,6 +21,7 @@ import {
   type ResolvedChannel,
 } from '@/lib/channel-configs';
 import { ChannelConfigModal } from './channel-config-modal';
+import { CashLocationsCard } from './cash-locations-card';
 import {
   Wallet,
   Calendar,
@@ -100,7 +101,12 @@ export default function BalancesPage() {
   // canales por API sigue saliendo de la API en el momento.
   const [ledgerBalances, setLedgerBalances] = useState<Record<string, number>>({});
   const [channelConfigRows, setChannelConfigRows] = useState<ChannelConfigRow[]>([]);
-  const isAdmin = user?.role === 'admin';
+  // OJO: NO comparar `user.role === 'admin'` a mano. El superadmin en modo
+  // "viendo como" no tiene fila en company_users y llega con role
+  // 'superadmin', así que esa comparación le escondía "Configurar",
+  // "Unidades de negocio" y la edición de ubicaciones — o sea que no podía
+  // ni quitar ni agregar canales (Kevin, 2026-08-09).
+  const isAdmin = isCompanyAdmin(user);
   // Access-control result is computed here but the early return happens at
   // the bottom of the component — pulling it up before the rest of the
   // hooks would violate the Rules of Hooks on re-renders where access
@@ -647,6 +653,17 @@ export default function BalancesPage() {
           {errMsg}
         </div>
       )}
+
+      {/* ═══════════ DÓNDE ESTÁ LA PLATA ═══════════
+          Va primero porque es la pregunta que el módulo responde antes que
+          ninguna otra: cuánto se puede usar hoy y cuánto está afuera. */}
+      <CashLocationsCard
+        channels={visibleChannels}
+        configRows={channelConfigRows}
+        getValue={getChannelValue}
+        onChanged={loadChannelConfigs}
+        canManage={isAdmin}
+      />
 
       {/* ═══════════ SECTION A: RESUMEN DEL MES ═══════════ */}
       <Card>

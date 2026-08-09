@@ -185,6 +185,14 @@ export default async function globalSetup() {
     'financial_status',
     'liquidity_movements',
     'investments',
+    // Las tablas nuevas también se limpian: una línea de ingreso que
+    // sobreviva materializa su cobrado en operating_income.other y mueve la
+    // distribución que T3 verifica al centavo.
+    'income_lines',
+    'channel_ledger_entries',
+    'channel_configs',
+    'business_units',
+    'notifications',
     'partners',
     'periods',
   ];

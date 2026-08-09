@@ -4,6 +4,7 @@ import React, { useMemo, useState, useEffect } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
+import { features } from '@/lib/business-model';
 import { useData } from '@/lib/data-context';
 import { usePeriod } from '@/lib/period-context';
 import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
@@ -37,7 +38,11 @@ interface MonthTotals {
 
 export const MonthlyChart = React.memo(function MonthlyChart() {
   const { mode, selectedPeriodIds } = usePeriod();
-  const { periods, getPeriodSummary } = useData();
+  const { periods, getPeriodSummary, company } = useData();
+  // Una empresa de servicios no tiene depósitos ni retiros: su evolución es
+  // ingresos contra egresos. Dejar esas dos series vacías pintaba una leyenda
+  // que prometía datos que nunca iban a existir.
+  const { movements: showFlows } = features(company?.business_model);
 
   // Responsive: detect mobile
   const [isMobile, setIsMobile] = useState(false);
@@ -151,6 +156,14 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
       // otra pantalla (auditoría 2026-08-06, C6).
       const consolidatedWithdrawals = api.withdrawals + storedBroker;
 
+      if (!showFlows) {
+        const oi = summary.operatingIncome;
+        const ingresos =
+          (oi?.broker_pnl ?? 0) + (oi?.other ?? 0) +
+          summary.propFirmNetIncome + summary.investmentProfits;
+        return { name: period.label, Ingresos: ingresos, Egresos: summary.totalExpenses };
+      }
+
       return {
         name: period.label,
         Depósitos: consolidatedDeposits,
@@ -158,7 +171,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
         Egresos: summary.totalExpenses,
       };
     });
-  }, [visiblePeriods, getPeriodSummary, apiMonths]);
+  }, [visiblePeriods, getPeriodSummary, apiMonths, showFlows]);
 
   return (
     <div>
@@ -208,9 +221,15 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
             {/* Colores via tokens semánticos: entrada=info, salida=negative,
                 gasto=warning — flipan solos en dark mode (antes hex crudos
                 que quedaban apagados sobre fondo oscuro). */}
-            <Bar dataKey="Depósitos" fill="var(--info)" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="Retiros" fill="var(--negative)" radius={[4, 4, 0, 0]} />
-            <Bar dataKey="Egresos" fill="var(--warning)" radius={[4, 4, 0, 0]} />
+            {showFlows ? (
+              <>
+                <Bar dataKey="Depósitos" fill="var(--info)" radius={[4, 4, 0, 0]} maxBarSize={64} />
+                <Bar dataKey="Retiros" fill="var(--negative)" radius={[4, 4, 0, 0]} maxBarSize={64} />
+              </>
+            ) : (
+              <Bar dataKey="Ingresos" fill="var(--positive)" radius={[4, 4, 0, 0]} maxBarSize={64} />
+            )}
+            <Bar dataKey="Egresos" fill="var(--warning)" radius={[4, 4, 0, 0]} maxBarSize={64} />
           </BarChart>
         </ResponsiveContainer>
       )}

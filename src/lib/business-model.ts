@@ -60,6 +60,12 @@ export interface BusinessModelFeatures {
   netDeposit: boolean;
   /** P&L del broker y ventas de prop firm como fuente de ingresos. */
   brokerPnl: boolean;
+  /** Pantalla de Movimientos: depósitos y retiros por período y canal. */
+  movements: boolean;
+  /** Cuentas de liquidez (MT) y su conciliación. */
+  liquidity: boolean;
+  /** Inversiones activas y su rendimiento. */
+  investments: boolean;
   /** Detalle de ingresos por concepto y cliente (facturación). */
   incomeLines: boolean;
   /** Gestión de riesgo: revisión de retiros, cuentas MT, wallets externas. */
@@ -78,6 +84,9 @@ export const BUSINESS_MODEL_FEATURES: Record<BusinessModel, BusinessModelFeature
     withdrawals: true,
     netDeposit: true,
     brokerPnl: true,
+    movements: true,
+    liquidity: true,
+    investments: true,
     // Un broker también puede facturar servicios sueltos; no molesta y da
     // el mismo detalle que ya tienen los egresos.
     incomeLines: true,
@@ -89,6 +98,13 @@ export const BUSINESS_MODEL_FEATURES: Record<BusinessModel, BusinessModelFeature
     withdrawals: false,
     netDeposit: false,
     brokerPnl: false,
+    // Movimientos son depósitos y retiros de clientes; liquidez son cuentas
+    // MT del broker; inversiones es rendimiento de trading. Una consultora
+    // no tiene nada de eso — la plata que sí tiene se ve en Balances, con
+    // su ubicación (wallet, banco, prestada).
+    movements: false,
+    liquidity: false,
+    investments: false,
     incomeLines: true,
     riskManagement: false,
     commercialTeam: false,
@@ -105,6 +121,9 @@ export function blockedModules(model: unknown): string[] {
   const blocked: string[] = [];
   if (!f.riskManagement) blocked.push('risk');
   if (!f.commercialTeam) blocked.push('commissions', 'ib_rebates');
+  if (!f.movements) blocked.push('movements');
+  if (!f.liquidity) blocked.push('liquidity');
+  if (!f.investments) blocked.push('investments');
   return blocked;
 }
 
@@ -132,10 +151,42 @@ export function uploadSections(model: unknown): string[] {
     sections.push('egresos', 'ingresos', 'liquidez', 'inversiones');
     return sections;
   }
-  return ['ingresos', 'egresos', 'liquidez', 'inversiones'];
+  const sections = ['ingresos', 'egresos'];
+  if (f.liquidity) sections.push('liquidez');
+  if (f.investments) sections.push('inversiones');
+  return sections;
 }
 
 /** Sección inicial: la primera que el modelo admite. */
 export function defaultUploadSection(model: unknown): string {
   return uploadSections(model)[0];
+}
+
+/**
+ * Secciones del reporte por email que el modelo NO admite. El reporte las
+ * omite aunque la configuración de la empresa las tenga encendidas: mandar
+ * "Depósitos y retiros" en cero todos los días es peor que no mandarlo.
+ */
+export function blockedReportSections(model: unknown): string[] {
+  const f = features(model);
+  const blocked: string[] = [];
+  if (!f.movements) blocked.push('deposits_withdrawals');
+  if (!f.brokerPnl) blocked.push('broker_pnl', 'prop_trading');
+  return blocked;
+}
+
+/**
+ * Columnas del consolidado que el modelo no admite. Se filtran ANTES de las
+ * que el usuario ocultó a mano: una columna que su negocio no tiene no debería
+ * ni aparecer en el selector.
+ */
+export function blockedConsolidatedColumns(model: unknown): string[] {
+  const f = features(model);
+  const blocked: string[] = [];
+  if (!f.deposits) blocked.push('totalDeposits');
+  if (!f.withdrawals) blocked.push('totalWithdrawals', 'p2p');
+  if (!f.netDeposit) blocked.push('netDeposit');
+  if (!f.brokerPnl) blocked.push('brokerPnl', 'propFirmNet', 'propFirmSales');
+  if (!f.investments) blocked.push('investmentProfits');
+  return blocked;
 }

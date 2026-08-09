@@ -9,6 +9,7 @@ import {
   blockedModules,
   moduleAllowedForModel,
 } from './business-model';
+import { blockedReportSections } from './business-model';
 import { MODULES } from './modules';
 
 describe('modelo de negocio', () => {
@@ -24,8 +25,8 @@ describe('modelo de negocio', () => {
   it('un broker conserva TODO lo que tenía', () => {
     const f = features('broker');
     expect(f).toEqual({
-      deposits: true, withdrawals: true, netDeposit: true,
-      brokerPnl: true, incomeLines: true,
+      deposits: true, withdrawals: true, netDeposit: true, brokerPnl: true,
+      movements: true, liquidity: true, investments: true, incomeLines: true,
       riskManagement: true, commercialTeam: true,
     });
     expect(blockedModules('broker')).toEqual([]);
@@ -37,6 +38,9 @@ describe('modelo de negocio', () => {
     expect(f.withdrawals).toBe(false);
     expect(f.netDeposit).toBe(false);
     expect(f.riskManagement).toBe(false);
+    expect(f.movements).toBe(false);
+    expect(f.liquidity).toBe(false);
+    expect(f.investments).toBe(false);
     // Pero sí factura: el detalle de ingresos es su contabilidad.
     expect(f.incomeLines).toBe(true);
   });
@@ -51,7 +55,7 @@ describe('pestañas de carga', () => {
   });
 
   it('la empresa arranca por Ingresos y no ve depósitos ni retiros', () => {
-    expect(uploadSections('company')).toEqual(['ingresos', 'egresos', 'liquidez', 'inversiones']);
+    expect(uploadSections('company')).toEqual(['ingresos', 'egresos']);
     expect(defaultUploadSection('company')).toBe('ingresos');
   });
 
@@ -66,6 +70,9 @@ describe('módulos bloqueados', () => {
     expect(blocked).toContain('risk');
     expect(blocked).toContain('commissions');
     expect(blocked).toContain('ib_rebates');
+    expect(blocked).toContain('movements');
+    expect(blocked).toContain('liquidity');
+    expect(blocked).toContain('investments');
     expect(moduleAllowedForModel('company', 'risk')).toBe(false);
     // RRHH sigue accesible: la empresa lleva empleados, no comerciales.
     expect(moduleAllowedForModel('company', 'hr')).toBe(true);
@@ -80,5 +87,19 @@ describe('módulos bloqueados', () => {
         expect(known, `${model} bloquea ${key}`).toContain(key);
       }
     }
+  });
+});
+
+describe('secciones del reporte por email', () => {
+  it('el broker las recibe todas', () => {
+    expect(blockedReportSections('broker')).toEqual([]);
+  });
+
+  // Mandar "Depósitos y retiros: $0" todos los días es peor que no mandarlo.
+  it('la empresa no recibe las de broker', () => {
+    const blocked = blockedReportSections('company');
+    expect(blocked).toContain('deposits_withdrawals');
+    expect(blocked).toContain('broker_pnl');
+    expect(blocked).toContain('prop_trading');
   });
 });

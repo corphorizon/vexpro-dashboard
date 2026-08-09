@@ -15,7 +15,7 @@ import {
   Pin,
   PinOff,
 } from 'lucide-react';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { computeProviderTotals } from '@/lib/api-integrations/totals';
 import { apiFetch } from '@/lib/api-fetch';
@@ -130,7 +130,10 @@ interface BannerProps {
 export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange, onAfterLiveSync }: BannerProps = {}) {
   const { user } = useAuth();
   const { company } = useData();
-  const isAdmin = user?.role === 'admin';
+  // isCompanyAdmin y no `user.role === 'admin'`: el superadmin en modo
+  // "viendo como" llega con role 'superadmin' y quedaba sin selector de
+  // wallet (mismo bug que escondía "Configurar" en Balances).
+  const isAdmin = isCompanyAdmin(user);
 
   const [mode, setMode] = useState<FilterMode>('month');
   const [month, setMonth] = useState<string>(currentMonthStr());

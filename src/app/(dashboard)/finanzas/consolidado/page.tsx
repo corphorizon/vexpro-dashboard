@@ -30,6 +30,7 @@ import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import { useAuth } from '@/lib/auth-context';
+import { blockedConsolidatedColumns } from '@/lib/business-model';
 import { hasModuleAccess } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
@@ -345,9 +346,17 @@ export default function ConsolidadoPage() {
     [isPeriodAfterSaldoStart],
   );
 
+  // Las columnas que el modelo de negocio no contempla se van antes que el
+  // filtro manual: no tiene sentido ofrecer "Net Deposit" en el selector de
+  // una consultora que no tiene depósitos.
+  const modelColumns = useMemo(() => {
+    const blocked = new Set(blockedConsolidatedColumns(company?.business_model));
+    return columns.filter((c) => !blocked.has(c.key));
+  }, [columns, company?.business_model]);
+
   const visibleColumns = useMemo(
-    () => columns.filter((c) => !hiddenCols.has(c.key)),
-    [columns, hiddenCols],
+    () => modelColumns.filter((c) => !hiddenCols.has(c.key)),
+    [modelColumns, hiddenCols],
   );
   const visiblePeriodContexts = useMemo(
     () => periodContexts.filter((c) => !hiddenMonths.has(c.periodId)),
@@ -440,7 +449,7 @@ export default function ConsolidadoPage() {
           <section>
             <h3 className="text-sm font-semibold mb-2">{t('consolidated.columns')}</h3>
             <div className="flex flex-wrap gap-2">
-              {columns.map((c) => {
+              {modelColumns.map((c) => {
                 const isHidden = hiddenCols.has(c.key);
                 return (
                   <button

@@ -207,7 +207,7 @@ export default function ResumenPage() {
           codifica significado (entrada/salida/resultado), no decoración. */}
       <div className={showNetDeposit
         ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'
-        : 'grid grid-cols-1 gap-4'}
+        : 'grid grid-cols-1 md:grid-cols-3 gap-4'}
       >
         {showNetDeposit && (
           <>
@@ -231,16 +231,32 @@ export default function ResumenPage() {
             />
           </>
         )}
+        {!showNetDeposit && (
+          <StatCard
+            label={t('summary.operatingIncome')}
+            value={formatCurrency(totalIncome)}
+            icon={TrendingUp}
+            tone="positive"
+          />
+        )}
         <StatCard
           label={t('summary.expenses')}
           value={formatCurrency(summary.totalExpenses)}
           icon={Receipt}
           tone="warning"
         />
+        {!showNetDeposit && (
+          <StatCard
+            label={<>{t('summary.balance')} <InfoTip text={GLOSSARY.netoOperativo} /></>}
+            value={formatCurrency(balanceDisponible)}
+            icon={Wallet}
+            tone={balanceDisponible >= 0 ? 'positive' : 'negative'}
+          />
+        )}
       </div>
 
       {/* Second row */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className={showNetDeposit ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'hidden'}>
         <Card>
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 rounded-lg bg-primary/10">
