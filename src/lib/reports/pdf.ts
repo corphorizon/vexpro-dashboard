@@ -13,6 +13,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ReportData, ReportBucket, ReportDepositRow, ReportWithdrawalRow } from './data';
+import { UNASSIGNED_CLIENT_KEY, UNCATEGORIZED, type CompanyReport } from './company-report';
+import { LOCATION_TYPE_LABELS } from '@/lib/cash-locations';
 import type { ReportCadence } from './email-template';
 import jsPDF from 'jspdf';
 import { BRAND_RGB, hexToRgb } from '@/lib/brand';
@@ -36,6 +38,13 @@ export interface DownloadReportPdfParams {
   /** Hex colour (`#rrggbb` / `#rgb`) — defaults to #1E3A5F if missing or bad. */
   primaryColor?: string | null;
   sections?: ReportSectionToggles;
+  /**
+   * Reporte de una empresa de servicios. Cuando viene, REEMPLAZA las secciones
+   * de broker: son las de un negocio que no tiene depósitos ni P&L. La
+   * portada, el pie y la paginación son los mismos — el destinatario recibe
+   * el mismo documento, con el contenido de su modelo.
+   */
+  companyReport?: CompanyReport;
   /** When omitted, derived from company/range. */
   fileName?: string;
 }
@@ -165,6 +174,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     companyName,
     companyLogoDataUrl,
     primaryColor,
+    companyReport,
     sections = {
       deposits_withdrawals: true,
       balances_by_channel: true,
@@ -173,6 +183,16 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
       prop_trading: true,
     },
   } = params;
+
+  const brokerSections: ReportSectionToggles = companyReport
+    ? {
+        deposits_withdrawals: false,
+        balances_by_channel: false,
+        crm_users: false,
+        broker_pnl: false,
+        prop_trading: false,
+      }
+    : sections;
 
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -245,6 +265,14 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     cursorY += boxH + 18;
   };
 
+  const addEmptyNote = (text: string) => {
+    doc.setTextColor(...BRAND_RGB.muted);
+    doc.setFontSize(10);
+    doc.setFont('helvetica', 'italic');
+    doc.text(text, MARGIN_X, cursorY);
+    cursorY += 24;
+  };
+
   const renderAutoTable = (
     head: string[][],
     body: (string | number)[][],
@@ -273,7 +301,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
   };
 
   // ─── Section: Depósitos y Retiros ───
-  if (sections.deposits_withdrawals) {
+  if (brokerSections.deposits_withdrawals) {
     addSectionHeader('Depósitos y Retiros');
     const d = data.deposits_withdrawals;
     const monthVsPrev = pctVariation(d.month.net_deposit, d.prev_month.net_deposit);
@@ -303,7 +331,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
   }
 
   // ─── Section: Balances por Canal ───
-  if (sections.balances_by_channel) {
+  if (brokerSections.balances_by_channel) {
     addSectionHeader('Balances por Canal');
     const b = data.balances_by_channel;
     if (b.channels.length === 0) {
@@ -326,7 +354,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
   }
 
   // ─── Section: Usuarios CRM ───
-  if (sections.crm_users && (data.crm_users.connected || data.crm_users.isMock)) {
+  if (brokerSections.crm_users && (data.crm_users.connected || data.crm_users.isMock)) {
     addSectionHeader('Usuarios CRM');
     addKpiRow([
       { label: 'Nuevos en el rango', value: data.crm_users.new_users_in_range.toLocaleString('es') },
@@ -336,7 +364,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
   }
 
   // ─── Section: Broker P&L ───
-  if (sections.broker_pnl && (data.broker_pnl.connected || data.broker_pnl.isMock)) {
+  if (brokerSections.broker_pnl && (data.broker_pnl.connected || data.broker_pnl.isMock)) {
     addSectionHeader('Broker P&L');
     const p = data.broker_pnl;
     const monthVsPrev = pctVariation(p.pnl_month, p.pnl_prev_month);
@@ -352,7 +380,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
   }
 
   // ─── Section: Prop Trading ───
-  if (sections.prop_trading && (data.prop_trading.connected || data.prop_trading.isMock)) {
+  if (brokerSections.prop_trading && (data.prop_trading.connected || data.prop_trading.isMock)) {
     addSectionHeader('Prop Trading Firm');
     const p = data.prop_trading;
     addKpiRow([
@@ -371,6 +399,122 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     }
   }
 
+  // ─── Secciones de una empresa de servicios ───
+  if (companyReport) {
+    const r = companyReport;
+
+    addSectionHeader('Facturación del período');
+    addKpiRow([
+      { label: 'Total facturado', value: fmtCurrency(r.billing.billed) },
+      { label: 'Cobrado', value: fmtCurrency(r.billing.collected), tone: 'ok' },
+      {
+        label: 'Por cobrar',
+        value: fmtCurrency(r.billing.pending),
+        tone: r.billing.pending > 0 ? 'bad' : 'neutral',
+      },
+    ]);
+    if (r.billing.clients.length === 0) {
+      addEmptyNote('Sin facturación en el período.');
+    } else {
+      addSubHeader('Por cliente');
+      renderAutoTable(
+        [['Cliente', 'Facturado', 'Cobrado', 'Por cobrar']],
+        r.billing.clients.map((c) => [
+          c.key === UNASSIGNED_CLIENT_KEY ? 'Sin cliente' : c.name,
+          fmtCurrency(c.billed),
+          fmtCurrency(c.collected),
+          fmtCurrency(c.pending),
+        ]),
+        [[
+          'Total',
+          fmtCurrency(r.billing.billed),
+          fmtCurrency(r.billing.collected),
+          fmtCurrency(r.billing.pending),
+        ]],
+      );
+    }
+
+    addSectionHeader('Egresos del período');
+    addKpiRow([
+      { label: 'Total', value: fmtCurrency(r.expenses.total) },
+      { label: 'Pagado', value: fmtCurrency(r.expenses.paid), tone: 'ok' },
+      {
+        label: 'Pendiente',
+        value: fmtCurrency(r.expenses.pending),
+        tone: r.expenses.pending > 0 ? 'bad' : 'neutral',
+      },
+    ]);
+    if (r.expenses.categories.length === 0) {
+      addEmptyNote('Sin egresos en el período.');
+    } else {
+      addSubHeader('Por categoría');
+      renderAutoTable(
+        [['Categoría', '#', 'Monto', 'Pendiente']],
+        r.expenses.categories.map((c) => [
+          c.category === UNCATEGORIZED ? 'Sin categoría' : c.category,
+          String(c.count),
+          fmtCurrency(c.amount),
+          fmtCurrency(c.pending),
+        ]),
+        [['Total', '', fmtCurrency(r.expenses.total), fmtCurrency(r.expenses.pending)]],
+      );
+    }
+
+    addSectionHeader('Resultado del período');
+    addKpiRow([
+      {
+        label: 'Resultado de caja',
+        value: fmtCurrency(r.result.cashResult),
+        tone: r.result.cashResult >= 0 ? 'ok' : 'bad',
+      },
+      {
+        label: 'Saldo a favor',
+        value: fmtCurrency(r.result.saldoAFavor),
+        tone: r.result.saldoAFavor >= 0 ? 'ok' : 'bad',
+      },
+      { label: 'A distribuir', value: fmtCurrency(r.result.montoDistribuir) },
+    ]);
+    renderAutoTable(
+      [['Concepto', 'Monto']],
+      [
+        ['Cobrado a clientes', fmtCurrency(r.result.collected)],
+        ['Egresos pagados', fmtCurrency(r.result.paidExpenses)],
+        ['Ingresos netos', fmtCurrency(r.result.ingresosNetos)],
+        ['Egresos netos', fmtCurrency(r.result.egresosNetos)],
+        ['Reserva del período', fmtCurrency(r.result.reserveThisPeriod)],
+      ],
+      [['Monto a distribuir', fmtCurrency(r.result.montoDistribuir)]],
+    );
+
+    addSectionHeader('Dónde está el dinero');
+    addKpiRow([
+      { label: 'Disponible', value: fmtCurrency(r.cash.summary.liquid), tone: 'ok' },
+      {
+        label: 'Prestado',
+        value: fmtCurrency(r.cash.summary.lent),
+        tone: r.cash.summary.lent > 0 ? 'bad' : 'neutral',
+      },
+      { label: 'Total', value: fmtCurrency(r.cash.summary.total) },
+    ]);
+    const cashRows = r.cash.byUnit.flatMap((g) =>
+      g.locations.map((l) => [
+        l.holder ? `${l.label} · ${l.holder}` : l.label,
+        LOCATION_TYPE_LABELS[l.location_type].es,
+        g.unit?.name ?? 'Sin unidad',
+        fmtCurrency(l.balance),
+      ]),
+    );
+    if (cashRows.length === 0) {
+      addEmptyNote('Sin ubicaciones configuradas.');
+    } else {
+      renderAutoTable(
+        [['Ubicación', 'Tipo', 'Unidad', 'Saldo']],
+        cashRows,
+        [['Total', '', '', fmtCurrency(r.cash.summary.total)]],
+      );
+    }
+  }
+
   // ─── Footer on every page ───
   const totalPages = doc.getNumberOfPages();
   for (let i = 1; i <= totalPages; i++) {
@@ -379,9 +523,10 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
   }
 
   // ─── Download ───
+  const range = companyReport?.range ?? data.range;
   const fileName =
     params.fileName ??
-    `reporte_${companyName.replace(/\s+/g, '_')}_${data.range.from}_${data.range.to}.pdf`;
+    `reporte_${companyName.replace(/\s+/g, '_')}_${range.from}_${range.to}.pdf`;
   doc.save(fileName);
 }
 

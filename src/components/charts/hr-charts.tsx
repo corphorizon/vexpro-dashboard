@@ -8,7 +8,7 @@ import {
 import { EmptyState } from '@/components/ui/empty-state';
 import { formatCurrency } from '@/lib/utils';
 import { BarChart3, PieChart as PieIcon } from 'lucide-react';
-import type { Period, CommercialMonthlyResult } from '@/lib/types';
+import type { Period, CommercialMonthlyResult, Employee } from '@/lib/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Charts del dashboard de RRHH (rediseño UX, tanda 3).
@@ -27,6 +27,52 @@ const TOOLTIP_STYLE = {
   fontSize: '12px',
   boxShadow: 'var(--elevation-2)',
 } as const;
+
+// ─── Barras de nómina: base compartida por los dos modelos de empresa ───
+
+interface PayrollSeries {
+  key: string;
+  fill: string;
+}
+
+function PayrollBars({
+  data,
+  series,
+}: {
+  data: Array<Record<string, string | number>>;
+  series: PayrollSeries[];
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={280}>
+      <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+        <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
+        <YAxis
+          tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
+          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+          width={52}
+        />
+        <Tooltip
+          formatter={(value, name) => [formatCurrency(Number(value)), name]}
+          contentStyle={TOOLTIP_STYLE}
+          cursor={{ fill: 'var(--muted)', opacity: 0.5 }}
+        />
+        <Legend wrapperStyle={{ fontSize: '12px' }} />
+        {series.map((s, i) => (
+          <Bar
+            key={s.key}
+            dataKey={s.key}
+            stackId="nomina"
+            fill={s.fill}
+            // Solo la serie de arriba lleva el redondeo: si lo llevaran todas,
+            // la pila se ve como barras sueltas encastradas.
+            radius={i === series.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+          />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
 
 // ─── Nómina por período: comisiones + sueldos apilados ───
 
@@ -68,26 +114,61 @@ export function PayrollTrendChart({
   }
 
   return (
-    <ResponsiveContainer width="100%" height={280}>
-      <BarChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 5 }}>
-        <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-        <XAxis dataKey="name" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
-        <YAxis
-          tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }}
-          tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
-          width={52}
-        />
-        <Tooltip
-          formatter={(value, name) => [formatCurrency(Number(value)), name]}
-          contentStyle={TOOLTIP_STYLE}
-          cursor={{ fill: 'var(--muted)', opacity: 0.5 }}
-        />
-        <Legend wrapperStyle={{ fontSize: '12px' }} />
-        <Bar dataKey="Comisiones" stackId="nomina" fill="var(--accent)" radius={[0, 0, 0, 0]} />
-        <Bar dataKey="Sueldos" stackId="nomina" fill="var(--muted-foreground)" radius={[4, 4, 0, 0]} />
-      </BarChart>
-    </ResponsiveContainer>
+    <PayrollBars
+      data={data}
+      series={[
+        { key: 'Comisiones', fill: 'var(--accent)' },
+        { key: 'Sueldos', fill: 'var(--muted-foreground)' },
+      ]}
+    />
   );
+}
+
+// ─── Nómina por período de una empresa de servicios ───
+//
+// Sin equipo comercial no hay `commercial_monthly_results`: la única nómina
+// que existe es el sueldo de los empleados. Como la ficha de empleado no
+// guarda fecha de baja, la curva se arma con el personal HOY activo según su
+// fecha de alta — o sea, "cómo fue creciendo la nómina con las altas". Contar
+// a los inactivos hasta el infinito inflaría todos los meses viejos; suponer
+// una fecha de baja sería inventarla.
+
+export function EmployeePayrollChart({
+  periods,
+  employees,
+  seriesLabel,
+  emptyTitle,
+  emptyDescription,
+  maxPeriods = 8,
+}: {
+  periods: Period[];
+  employees: Employee[];
+  seriesLabel: string;
+  emptyTitle: string;
+  emptyDescription: string;
+  maxPeriods?: number;
+}) {
+  const data = useMemo(() => {
+    const staff = employees
+      .filter((e) => e.status !== 'inactive' && e.salary)
+      .map((e) => {
+        const [y, m] = String(e.start_date ?? '').split('-').map(Number);
+        return { salary: Number(e.salary) || 0, since: y && m ? y * 12 + m : 0 };
+      });
+    const ordered = [...periods].sort((a, b) => a.year - b.year || a.month - b.month);
+    const rows = ordered.map((p) => {
+      const order = p.year * 12 + p.month;
+      const total = staff.reduce((s, e) => (e.since <= order ? s + e.salary : s), 0);
+      return { name: p.label ?? `${p.month}/${p.year}`, [seriesLabel]: total };
+    });
+    return rows.filter((r) => Number(r[seriesLabel]) > 0).slice(-maxPeriods);
+  }, [periods, employees, seriesLabel, maxPeriods]);
+
+  if (data.length === 0) {
+    return <EmptyState compact icon={BarChart3} title={emptyTitle} description={emptyDescription} />;
+  }
+
+  return <PayrollBars data={data} series={[{ key: seriesLabel, fill: 'var(--accent)' }]} />;
 }
 
 // ─── Distribución de empleados activos por departamento (donut) ───
