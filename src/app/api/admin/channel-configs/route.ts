@@ -22,7 +22,7 @@ import {
   type ChannelType,
 } from '@/lib/channel-configs';
 import { apiError } from '@/lib/api-error';
-import { isLocationType } from '@/lib/cash-locations';
+import { DEFAULT_LOCATION_TYPE, isLocationType } from '@/lib/cash-locations';
 
 const BUILTIN_KEYS = new Set(BUILTIN_CHANNELS.map((c) => c.key));
 
@@ -202,14 +202,32 @@ export async function POST(request: NextRequest) {
   }
 
   if (action === 'create_custom') {
-    const { label, initial_balance, as_of } = body as {
+    const { label, initial_balance, as_of, location_type, business_unit_id, holder } = body as {
       label?: string;
       initial_balance?: number;
       as_of?: string;
+      location_type?: string;
+      business_unit_id?: string | null;
+      holder?: string | null;
     };
     const clean = (label ?? '').trim();
     if (!clean) {
       return NextResponse.json({ success: false, error: 'El nombre del canal es requerido' }, { status: 400 });
+    }
+    if (location_type !== undefined && !isLocationType(location_type)) {
+      return NextResponse.json({ success: false, error: 'Tipo de ubicación no válido' }, { status: 400 });
+    }
+    // Sin esto no habría forma de dar de alta un "Préstamo a X": el alta
+    // creaba el lugar y el tipo había que ponérselo después, en otra pantalla.
+    let unitId: string | null = null;
+    if (business_unit_id) {
+      if (!(await belongsToCompany(admin, ctx.companyId, business_unit_id))) {
+        return NextResponse.json(
+          { success: false, error: 'La unidad de negocio no existe en esta empresa' },
+          { status: 400 },
+        );
+      }
+      unitId = business_unit_id;
     }
     const channel_key = newCustomChannelKey();
     const channel_type: ChannelType = 'manual';
@@ -222,6 +240,9 @@ export async function POST(request: NextRequest) {
       is_visible: true,
       is_custom: true,
       sort_order: 200,
+      location_type: location_type ?? DEFAULT_LOCATION_TYPE,
+      business_unit_id: unitId,
+      holder: typeof holder === 'string' ? holder.trim() || null : null,
     });
     if (error) {
       return apiError('admin/channel-configs', error, { status: 500 });
@@ -251,7 +272,7 @@ export async function POST(request: NextRequest) {
       user_id: ctx.userId,
       action: 'create',
       module: 'balances_channel_config',
-      details: JSON.stringify({ channel_key, label: clean, initial_balance }),
+      details: JSON.stringify({ channel_key, label: clean, initial_balance, location_type, business_unit_id: unitId, holder }),
     });
     return NextResponse.json({ success: true, channel_key });
   }
@@ -279,6 +300,14 @@ export async function POST(request: NextRequest) {
     // Also clean up any stored balances for this key so they don't linger.
     await admin
       .from('channel_balances')
+      .delete()
+      .eq('company_id', ctx.companyId)
+      .eq('channel_key', channel_key);
+    // El reparto por unidad no tiene FK contra channel_configs (la clave es
+    // texto libre), así que sin este borrado quedarían filas huérfanas que
+    // reaparecerían si alguien reusa la misma clave.
+    await admin
+      .from('location_business_units')
       .delete()
       .eq('company_id', ctx.companyId)
       .eq('channel_key', channel_key);

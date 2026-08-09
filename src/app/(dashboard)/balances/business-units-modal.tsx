@@ -9,7 +9,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, RefreshCw, Save, ToggleLeft, ToggleRight, Trash2, X } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowRightLeft, Plus, RefreshCw, Save, ToggleLeft, ToggleRight, Trash2, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import type { BusinessUnit } from '@/lib/cash-locations';
@@ -218,6 +219,16 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
                       <span className="whitespace-nowrap">{t('cash.countsToFund')}</span>
                     </button>
                     <div className="flex items-center gap-1">
+                      {/* Segunda puerta al libro consolidado: desde acá también
+                          se llega, sin tener que volver a la tarjeta. */}
+                      <Link
+                        href={`/balances/unidad/${encodeURIComponent(u.id)}`}
+                        className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border hover:bg-muted transition-colors whitespace-nowrap"
+                        title={t('unitLedger.openBook')}
+                      >
+                        <ArrowRightLeft className="w-3.5 h-3.5" />
+                        {t('cash.viewMovements')}
+                      </Link>
                       <button
                         onClick={() => save(u)}
                         disabled={!dirty || savingId === u.id}
