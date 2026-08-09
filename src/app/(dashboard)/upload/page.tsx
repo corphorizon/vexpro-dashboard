@@ -92,6 +92,13 @@ import {
   computeExpensePending,
 } from '@/lib/upload-calculations';
 import {
+  computeIncomeTotals,
+  computeIncomePending,
+  groupByClient,
+  type IncomeLine,
+  type IncomeLineInput,
+} from '@/lib/income-lines';
+import {
   upsertDeposits,
   upsertWithdrawals,
   upsertExpenses,
@@ -185,6 +192,11 @@ function SortableExpenseRow({
   );
 }
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
+
+// Estado de los inputs del detalle de ingresos: strings, porque el usuario
+// puede estar escribiendo "12." y eso no es un número todavía.
+interface IncomeLineForm { concept: string; client: string; amount: string; received: string; pending: string }
+const EMPTY_INCOME_LINE: IncomeLineForm = { concept: '', client: '', amount: '', received: '', pending: '' };
 
 const INITIAL_DEPOSITS: DepositRow[] = [
   { id: 'd1', channel: 'coinsbuy', amount: 0 },
@@ -1677,6 +1689,207 @@ export default function UploadPage() {
     });
   };
 
+  // ── Detalle de ingresos por concepto ───────────────────────────────────
+  //
+  // Espejo de la tabla de egresos: misma alta inline, misma edición por fila,
+  // mismo borrado. Persiste POR ACCIÓN igual que persistExpenses, pero el POST
+  // manda SIEMPRE el período completo — la RPC borra e inserta en una sola
+  // transacción y deja operating_income.other en la suma de lo COBRADO.
+  //
+  // NO usa dirtySections: 'ingresos' es el bucket de broker P&L / otros / prop
+  // firm, y marcarlo dirty acá haría que al limpiarlo el sync-effect pise
+  // ediciones sin guardar de esos campos. El detalle vive en su propio estado
+  // y se re-lee del servidor después de cada guardado.
+  const [incomeLines, setIncomeLines] = useState<IncomeLine[]>([]);
+  const [savingIncomeLines, setSavingIncomeLines] = useState(false);
+  const [newIncomeLine, setNewIncomeLine] = useState<IncomeLineForm>(EMPTY_INCOME_LINE);
+  const [editingIncomeLineId, setEditingIncomeLineId] = useState<string | null>(null);
+  const [editIncomeLine, setEditIncomeLine] = useState<IncomeLineForm>(EMPTY_INCOME_LINE);
+
+  const loadIncomeLines = useCallback(async (periodId: string): Promise<IncomeLine[] | null> => {
+    if (!periodId) return [];
+    try {
+      const res = await apiFetch(`/api/admin/income-lines?period_id=${encodeURIComponent(periodId)}`);
+      const json = await res.json();
+      return json.success ? ((json.lines ?? []) as IncomeLine[]) : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (section !== 'ingresos') return;
+    let cancelled = false;
+    void (async () => {
+      const lines = await loadIncomeLines(selectedPeriod);
+      // `cancelled` evita que una respuesta lenta del período anterior pise
+      // el detalle del período que el usuario ya tiene en pantalla.
+      if (!cancelled && lines) setIncomeLines(lines);
+    })();
+    return () => { cancelled = true; };
+  }, [section, selectedPeriod, loadIncomeLines]);
+
+  const incomeTotals = useMemo(() => computeIncomeTotals(incomeLines), [incomeLines]);
+  const incomeByClient = useMemo(() => groupByClient(incomeLines), [incomeLines]);
+
+  const persistIncomeLines = async (
+    nextList: IncomeLine[],
+    previousList: IncomeLine[],
+    opts: { toast: string; audit?: { action: 'create' | 'update' | 'delete'; details: string } },
+  ) => {
+    if (!company) return;
+    if (selectedPeriodIsClosed) {
+      setIncomeLines(previousList); // el trigger de la DB lo rechazaría igual
+      showError(t('income.periodClosed'));
+      return;
+    }
+    const periodId = selectedPeriodRef.current;
+    setSavingIncomeLines(true);
+    try {
+      const payload: IncomeLineInput[] = nextList.map((l, i) => ({
+        concept: l.concept,
+        client: l.client,
+        amount: l.amount,
+        received: l.received,
+        pending: l.pending,
+        category: l.category,
+        reference: l.reference,
+        income_date: l.income_date,
+        sort_order: i,
+      }));
+      const res = await withRowTimeout(
+        apiFetch('/api/admin/income-lines', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ period_id: periodId, lines: payload }),
+        }),
+        t('upload.opSaveExpense'),
+      );
+      const json = await res.json();
+      if (!json.success) throw new Error(json.error ?? 'Error');
+      // El servidor materializa operating_income.other con lo cobrado; se
+      // refleja con el setter Raw para no marcar 'ingresos' sucio y disparar
+      // el autosave de los otros campos.
+      setIncomeRaw(p => ({ ...p, other: Number(json.received) || 0 }));
+      if (user && opts.audit) {
+        logAction(user.id, user.name, opts.audit.action, 'income', opts.audit.details);
+      }
+      showSuccess(opts.toast);
+      await refreshSections(['ingresos']);
+      const fresh = await loadIncomeLines(periodId); // ids reales en vez de los optimistas
+      if (fresh) setIncomeLines(fresh);
+    } catch (err) {
+      setIncomeLines(previousList); // rollback a lo que hay en DB
+      Sentry.captureException(err, {
+        tags: { area: 'upload.persistIncomeLines' },
+        extra: { periodId },
+      });
+      showError(t('income.saveError', { error: (err as Error).message }));
+    } finally {
+      setSavingIncomeLines(false);
+    }
+  };
+
+  /** Valida los tres montos de una línea. Devuelve true si puede guardarse. */
+  const incomeAmountsAreValid = (form: IncomeLineForm): boolean => {
+    const bad = findInvalidAmount(form.amount, form.received, form.pending);
+    if (bad !== null) { showError(t('upload.invalidAmount', { value: bad })); return false; }
+    if (parseAmount(form.received) > parseAmount(form.amount) + 0.01) {
+      showError(t('income.receivedOverAmount'));
+      return false;
+    }
+    return true;
+  };
+
+  const addIncomeLine = () => {
+    if (!userCanAdd || !company || !newIncomeLine.concept || !newIncomeLine.amount) return;
+    if (!incomeAmountsAreValid(newIncomeLine)) return;
+    const amt = parseAmount(newIncomeLine.amount);
+    const rec = parseAmount(newIncomeLine.received);
+    const pnd = computeIncomePending(newIncomeLine.amount, newIncomeLine.received, newIncomeLine.pending);
+    const previous = incomeLines;
+    const next: IncomeLine[] = [...incomeLines, {
+      id: `inc-${Date.now()}`,
+      company_id: company.id,
+      period_id: selectedPeriodRef.current,
+      concept: newIncomeLine.concept,
+      client: newIncomeLine.client.trim() || null,
+      amount: amt,
+      received: rec,
+      pending: pnd,
+      category: null,
+      reference: null,
+      income_date: null,
+      sort_order: incomeLines.length,
+      created_at: '',
+      updated_at: '',
+    }];
+    setIncomeLines(next); // optimista
+    setNewIncomeLine(EMPTY_INCOME_LINE);
+    void persistIncomeLines(next, previous, {
+      toast: t('income.lineAdded'),
+      audit: { action: 'create', details: `Ingreso creado: ${newIncomeLine.concept}, monto: $${amt.toLocaleString()}` },
+    });
+  };
+
+  const startEditIncomeLine = (line: IncomeLine) => {
+    if (!userCanEdit) return;
+    setEditingIncomeLineId(line.id);
+    setEditIncomeLine({
+      concept: line.concept,
+      client: line.client ?? '',
+      amount: String(line.amount),
+      received: String(line.received),
+      pending: String(line.pending),
+    });
+  };
+
+  const saveEditIncomeLine = () => {
+    if (!editingIncomeLineId) return;
+    if (!incomeAmountsAreValid(editIncomeLine)) return;
+    const amt = parseAmount(editIncomeLine.amount);
+    const rec = parseAmount(editIncomeLine.received);
+    const pnd = computeIncomePending(editIncomeLine.amount, editIncomeLine.received, editIncomeLine.pending);
+    const concept = editIncomeLine.concept;
+    const previous = incomeLines;
+    const next = incomeLines.map(l => l.id === editingIncomeLineId
+      ? { ...l, concept, client: editIncomeLine.client.trim() || null, amount: amt, received: rec, pending: pnd }
+      : l);
+    setIncomeLines(next); // optimista
+    setEditingIncomeLineId(null);
+    void persistIncomeLines(next, previous, {
+      toast: t('income.lineUpdated'),
+      audit: { action: 'update', details: `Ingreso ${concept}: $${amt.toLocaleString()}` },
+    });
+  };
+
+  const markIncomeCollected = (id: string) => {
+    if (!userCanEdit) return;
+    const target = incomeLines.find(l => l.id === id);
+    if (!target || target.pending <= 0) return;
+    const previous = incomeLines;
+    const next = incomeLines.map(l => l.id === id ? { ...l, received: l.amount, pending: 0 } : l);
+    setIncomeLines(next); // optimista
+    void persistIncomeLines(next, previous, {
+      toast: t('income.lineUpdated'),
+      audit: { action: 'update', details: `Ingreso marcado como cobrado: ${target.concept} ($${target.amount.toLocaleString()})` },
+    });
+  };
+
+  const deleteIncomeLine = (id: string) => {
+    if (!userCanDelete) return;
+    const line = incomeLines.find(l => l.id === id);
+    askConfirmation(t('income.deleteConfirm', { concept: line?.concept ?? '' }), () => {
+      const previous = incomeLines;
+      const next = incomeLines.filter(l => l.id !== id);
+      setIncomeLines(next); // optimista
+      void persistIncomeLines(next, previous, {
+        toast: t('income.lineDeleted'),
+        audit: { action: 'delete', details: `Ingreso eliminado: ${line?.concept ?? ''}` },
+      });
+    });
+  };
+
   // Income handler
   //
   // Saves three things in one click — they share a tab in the UI so users
@@ -2756,9 +2969,12 @@ export default function UploadPage() {
                   <p className="text-lg font-bold">{formatCurrency(income.broker_pnl)}</p>
                 )}
               </div>
+              {/* "Otros ingresos" con detalle cargado es un campo DERIVADO: el
+                  servidor lo sobreescribe con la suma de lo cobrado en cada
+                  guardado del detalle, así que editarlo a mano se perdería. */}
               <div>
                 <label className="text-sm text-muted-foreground mb-1 block">{t('upload.other')}</label>
-                {userCanAdd ? (
+                {userCanAdd && incomeLines.length === 0 ? (
                   <input
                     type="number" step="0.01"
                     value={income.other || ''}
@@ -2767,9 +2983,219 @@ export default function UploadPage() {
                     placeholder="0.00"
                   />
                 ) : (
-                  <p className="text-lg font-bold">{formatCurrency(income.other)}</p>
+                  <p className="text-lg font-bold">{formatCurrency(incomeLines.length > 0 ? incomeTotals.received : income.other)}</p>
+                )}
+                {incomeLines.length > 0 && (
+                  <p className="text-[11px] text-muted-foreground mt-1">{t('income.otherFromDetail')}</p>
                 )}
               </div>
+            </div>
+
+            {/* Detalle por concepto — mismas columnas, alta inline y edición
+                por fila que la tabla de Egresos, para que el equipo no tenga
+                que aprender dos tablas distintas. */}
+            <div className="pt-4 border-t border-border">
+              <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
+                <h3 className="text-sm font-semibold">{t('income.detailTitle')}</h3>
+                {savingIncomeLines && (
+                  <span className="text-xs text-muted-foreground">{t('common.saving')}</span>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-3">{t('income.detailHint')}</p>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-4">
+                <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">{t('income.invoiced')}</p>
+                  <p className="text-base font-bold tabular-nums">{formatCurrency(incomeTotals.amount)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">{t('income.received')}</p>
+                  <p className="text-base font-bold tabular-nums text-positive">{formatCurrency(incomeTotals.received)}</p>
+                </div>
+                <div className="rounded-lg border border-border bg-muted/30 px-3 py-2">
+                  <p className="text-[11px] text-muted-foreground">{t('income.pendingAmount')}</p>
+                  <p className="text-base font-bold tabular-nums">{formatCurrency(incomeTotals.pending)}</p>
+                </div>
+              </div>
+
+              {incomeByClient.length > 0 && (
+                <details className="mb-4 rounded-lg border border-border">
+                  <summary className="cursor-pointer px-3 py-2.5 text-sm font-medium select-none">
+                    {t('income.byClient')}
+                  </summary>
+                  <ul className="border-t border-border divide-y divide-border/50">
+                    {incomeByClient.map(({ client, totals }) => (
+                      <li key={client} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 px-3 py-2 text-sm">
+                        {/* groupByClient rotula en español los sin cliente; acá
+                            se traduce para no filtrar ese literal a la UI. */}
+                        <span className="font-medium">{client === 'Sin asignar' ? t('income.unassignedClient') : client}</span>
+                        <span className="text-xs text-muted-foreground tabular-nums">
+                          {t('income.invoiced')} {formatCurrency(totals.amount)} · {t('income.received')} {formatCurrency(totals.received)} · {t('income.pendingAmount')} {formatCurrency(totals.pending)}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+
+              <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+                <table className="w-full text-sm min-w-[560px]">
+                  <thead>
+                    <tr className="border-b border-border">
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">#</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('income.concept')}</th>
+                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('income.client')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('income.invoiced')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('income.received')}</th>
+                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('income.pendingAmount')}</th>
+                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.status')}</th>
+                      {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {incomeLines.length === 0 && (
+                      <tr>
+                        <td colSpan={8} className="py-8 text-center text-muted-foreground">
+                          {t('income.empty')} {userCanAdd && t('income.emptyHint')}
+                        </td>
+                      </tr>
+                    )}
+                    {incomeLines.map((line, i) => (
+                      <tr key={line.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                        {editingIncomeLineId === line.id ? (
+                          <>
+                            <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
+                            <td className="py-2.5 px-3">
+                              <input aria-label={t('income.conceptAria')} value={editIncomeLine.concept} onChange={e => setEditIncomeLine(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm bg-background" />
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <input aria-label={t('income.clientAria')} value={editIncomeLine.client} onChange={e => setEditIncomeLine(p => ({ ...p, client: e.target.value }))} placeholder={t('income.clientPlaceholder')} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm bg-background" />
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <input type="number" step="0.01" aria-label={t('income.amountAria')} value={editIncomeLine.amount} onChange={e => setEditIncomeLine(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm bg-background" />
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <input type="number" step="0.01" aria-label={t('income.receivedAria')} value={editIncomeLine.received} onChange={e => setEditIncomeLine(p => ({ ...p, received: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm bg-background" />
+                            </td>
+                            <td className="py-2.5 px-3">
+                              <input type="number" step="0.01" aria-label={t('income.pendingAria')} value={editIncomeLine.pending} onChange={e => setEditIncomeLine(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm bg-background" />
+                              {/* Lo que se guardará si el pendiente queda vacío. */}
+                              <p className="text-right text-[11px] text-muted-foreground mt-0.5 tabular-nums">
+                                {formatCurrency(computeIncomePending(editIncomeLine.amount, editIncomeLine.received, editIncomeLine.pending))}
+                              </p>
+                            </td>
+                            <td></td>
+                            <td className="py-2.5 px-3 text-center">
+                              <div className="flex justify-center gap-1">
+                                <button onClick={saveEditIncomeLine} disabled={savingIncomeLines} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-50" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
+                                <button onClick={() => setEditingIncomeLineId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
+                              </div>
+                            </td>
+                          </>
+                        ) : (
+                          <>
+                            <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
+                            <td className="py-2.5 px-3 font-medium">{line.concept}</td>
+                            <td className="py-2.5 px-3">
+                              {line.client ? (
+                                <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                                  {line.client}
+                                </span>
+                              ) : (
+                                <span className="text-xs text-muted-foreground">—</span>
+                              )}
+                            </td>
+                            <td className="py-2.5 px-3 text-right font-medium tabular-nums">{formatCurrency(line.amount)}</td>
+                            <td className="py-2.5 px-3 text-right tabular-nums">{formatCurrency(line.received)}</td>
+                            <td className="py-2.5 px-3 text-right tabular-nums">{formatCurrency(line.pending)}</td>
+                            <td className="py-2.5 px-3 text-center">
+                              <Badge variant={line.pending === 0 ? 'success' : 'warning'}>
+                                {line.pending === 0 ? t('income.collectedStatus') : t('income.pendingStatus')}
+                              </Badge>
+                            </td>
+                            {(userCanEdit || userCanDelete) && (
+                              <td className="py-2.5 px-3 text-center">
+                                <div className="flex justify-center gap-1">
+                                  {userCanEdit && line.pending > 0 && (
+                                    <button onClick={() => markIncomeCollected(line.id)} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" title={t('income.markCollected')} aria-label={t('income.markCollectedAria', { concept: line.concept })}><Check className="w-3.5 h-3.5" /></button>
+                                  )}
+                                  {userCanEdit && (
+                                    <button onClick={() => startEditIncomeLine(line)} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
+                                  )}
+                                  {userCanDelete && (
+                                    <button onClick={() => deleteIncomeLine(line.id)} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
+                                  )}
+                                </div>
+                              </td>
+                            )}
+                          </>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                  {incomeLines.length > 0 && (
+                    <tfoot>
+                      <tr className="font-bold bg-muted/50">
+                        <td className="py-3 px-3" colSpan={3}>{t('common.total')}</td>
+                        <td className="py-2.5 px-3 text-right tabular-nums">{formatCurrency(incomeTotals.amount)}</td>
+                        <td className="py-2.5 px-3 text-right tabular-nums">{formatCurrency(incomeTotals.received)}</td>
+                        <td className="py-2.5 px-3 text-right tabular-nums">{formatCurrency(incomeTotals.pending)}</td>
+                        <td colSpan={2}></td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
+              </div>
+
+              {userCanAdd && (
+                <div className="mt-4 pt-4 border-t border-border">
+                  <h4 className="text-sm font-semibold flex items-center gap-2 mb-3"><Plus className="w-4 h-4" /> {t('income.addLine')}</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
+                    <div className="md:col-span-2">
+                      <input
+                        aria-label={t('income.conceptAria')}
+                        value={newIncomeLine.concept}
+                        onChange={e => setNewIncomeLine(p => ({ ...p, concept: e.target.value }))}
+                        placeholder={t('income.conceptPlaceholder')}
+                        className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                      />
+                    </div>
+                    <input
+                      aria-label={t('income.clientAria')}
+                      value={newIncomeLine.client}
+                      onChange={e => setNewIncomeLine(p => ({ ...p, client: e.target.value }))}
+                      placeholder={t('income.clientPlaceholder')}
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                    />
+                    <input
+                      type="number" step="0.01"
+                      aria-label={t('income.amountAria')}
+                      value={newIncomeLine.amount}
+                      onChange={e => setNewIncomeLine(p => ({ ...p, amount: e.target.value }))}
+                      placeholder={t('income.invoiced')}
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                    />
+                    <input
+                      type="number" step="0.01"
+                      aria-label={t('income.receivedAria')}
+                      value={newIncomeLine.received}
+                      onChange={e => setNewIncomeLine(p => ({ ...p, received: e.target.value }))}
+                      placeholder={t('income.received')}
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                    />
+                    <button
+                      onClick={addIncomeLine}
+                      disabled={!newIncomeLine.concept || !newIncomeLine.amount || savingIncomeLines || selectedPeriodIsClosed}
+                      className="min-h-[44px] px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+                    >
+                      {savingIncomeLines ? t('common.saving') : t('common.add')}
+                    </button>
+                  </div>
+                  <p className="text-[11px] text-muted-foreground mt-2 tabular-nums">
+                    {t('income.pendingAmount')}: {formatCurrency(computeIncomePending(newIncomeLine.amount, newIncomeLine.received, newIncomeLine.pending))}
+                  </p>
+                </div>
+              )}
             </div>
 
             {/* Prop Firm — manual entry while the Orion CRM endpoint is not
