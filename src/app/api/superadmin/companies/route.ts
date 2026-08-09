@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { normalizeBusinessModel } from '@/lib/business-model';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { sanitizeDbError } from '@/lib/errors';
@@ -39,6 +40,7 @@ export async function POST(request: NextRequest) {
       reserve_pct,
       currency,
       status,
+      business_model,
     } = body as {
       name?: string;
       slug?: string;
@@ -50,6 +52,7 @@ export async function POST(request: NextRequest) {
       reserve_pct?: number;
       currency?: string;
       status?: 'active' | 'inactive';
+      business_model?: string;
     };
 
     if (!name || name.trim().length < 2) {
@@ -98,6 +101,9 @@ export async function POST(request: NextRequest) {
         reserve_pct: reserve_pct ?? 0.1,
         currency: currency || 'USD',
         status: status || 'active',
+        // Un valor invalido cae al default en vez de romper el alta con el
+        // CHECK de la tabla.
+        business_model: normalizeBusinessModel(business_model),
         created_by: auth.userId,
       })
       .select('id, name, slug, subdomain, logo_url, color_primary, color_secondary, active_modules, reserve_pct, currency, status, created_at')

@@ -4,6 +4,12 @@ import { useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { LogoUploader } from '@/components/logo-uploader';
 import { MODULES } from '@/lib/modules';
+import {
+  BUSINESS_MODELS,
+  BUSINESS_MODEL_LABELS,
+  BUSINESS_MODEL_DESCRIPTIONS,
+  normalizeBusinessModel,
+} from '@/lib/business-model';
 
 // Los módulos salen del registro único (src/lib/modules.ts). Antes era un
 // literal más — la cuarta copia de la misma lista — y esas copias se
@@ -25,6 +31,7 @@ export interface CompanyFormValues {
   status: 'active' | 'inactive';
   reserve_pct: number;
   currency: string;
+  business_model: string;
   slug?: string;   // only present when editing (read-only)
 }
 
@@ -172,6 +179,23 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
             onChange={(e) => setValues({ ...values, reserve_pct: parseFloat(e.target.value) || 0 })}
             className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
           />
+        </Field>
+        {/* El modelo decide qué pantallas ve la empresa: un broker opera
+            cuentas de clientes y una empresa de servicios factura. Cambiarlo
+            no toca ningún dato, solo qué se muestra. */}
+        <Field label="Modelo de negocio">
+          <select
+            value={values.business_model}
+            onChange={(e) => setValues({ ...values, business_model: e.target.value })}
+            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
+          >
+            {BUSINESS_MODELS.map((m) => (
+              <option key={m} value={m}>{BUSINESS_MODEL_LABELS[m].es}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground mt-1">
+            {BUSINESS_MODEL_DESCRIPTIONS[normalizeBusinessModel(values.business_model)].es}
+          </p>
         </Field>
         <Field label="Estado">
           <select

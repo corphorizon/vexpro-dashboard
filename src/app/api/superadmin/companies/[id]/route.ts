@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { isBusinessModel } from '@/lib/business-model';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
@@ -25,7 +26,7 @@ export async function PATCH(
     const FIELDS = [
       'name', 'logo_url', 'logo_url_white', 'color_primary', 'color_secondary',
       'active_modules', 'reserve_pct', 'currency', 'status',
-      'default_wallet_id',
+      'default_wallet_id', 'business_model',
     ] as const;
     for (const f of FIELDS) {
       if (f in body) allowed[f] = (body as Record<string, unknown>)[f];
@@ -34,6 +35,15 @@ export async function PATCH(
     if (Object.keys(allowed).length === 0) {
       return NextResponse.json(
         { success: false, error: 'Ningún campo válido para actualizar' },
+        { status: 400 },
+      );
+    }
+
+    // Un modelo fuera del catálogo lo rechazaría el CHECK de la tabla con un
+    // error crudo de Postgres; mejor un mensaje que se entienda.
+    if ('business_model' in allowed && !isBusinessModel(allowed.business_model)) {
+      return NextResponse.json(
+        { success: false, error: 'El modelo de negocio no es válido' },
         { status: 400 },
       );
     }
