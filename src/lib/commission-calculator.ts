@@ -1,12 +1,9 @@
+import { round2 } from './utils';
 import type { CommercialProfile, CommercialMonthlyResult, Period } from '@/lib/types';
 
 // ---------------------------------------------------------------------------
 // Rounding helper — avoid float precision issues in monetary calculations
 // ---------------------------------------------------------------------------
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
 
 // ---------------------------------------------------------------------------
 // Commission calculation result for a single user in a single period
