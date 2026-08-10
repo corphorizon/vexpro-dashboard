@@ -20,6 +20,7 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/resumen-general(\/|$)/, 'summary'],
   [/^\/movimientos(\/|$)/, 'movements'],
   [/^\/egresos(\/|$)/, 'expenses'],
+  [/^\/ingresos(\/|$)/, 'income'],
   [/^\/liquidez(\/|$)/, 'liquidity'],
   [/^\/inversiones(\/|$)/, 'investments'],
   [/^\/balances(\/|$)/, 'balances'],

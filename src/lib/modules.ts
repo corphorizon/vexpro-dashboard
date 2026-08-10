@@ -33,6 +33,7 @@ export const MODULES: ModuleDef[] = [
   { key: 'summary',        labelEs: 'Resumen',            labelEn: 'Summary' },
   { key: 'movements',      labelEs: 'Movimientos',        labelEn: 'Movements' },
   { key: 'expenses',       labelEs: 'Egresos',            labelEn: 'Expenses' },
+  { key: 'income',         labelEs: 'Ingresos',           labelEn: 'Income' },
   { key: 'liquidity',      labelEs: 'Liquidez',           labelEn: 'Liquidity' },
   { key: 'investments',    labelEs: 'Inversiones',        labelEn: 'Investments' },
   { key: 'balances',       labelEs: 'Balances',           labelEn: 'Balances' },
