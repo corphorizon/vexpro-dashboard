@@ -9,10 +9,16 @@
 // porque un consolidado que sumara por su cuenta terminaría discrepando del
 // libro de cada ubicación.
 //
-// SOLO LECTURA a propósito: las ubicaciones mezclan canales automáticos
-// (pasarelas que escribe el cron) con canales manuales, y editar acá obligaría
-// a decidir fila por fila cuál se puede tocar. El alta y la edición siguen
+// LA TABLA es de solo lectura a propósito: las ubicaciones mezclan canales
+// automáticos (pasarelas que escribe el cron) con canales manuales, y editar
+// fila por fila acá obligaría a decidir cuál se puede tocar. La EDICIÓN sigue
 // viviendo en el libro de cada ubicación, a un click de distancia.
+//
+// El ALTA, en cambio, sí se puede disparar desde acá (pedido de Kevin: "en las
+// empresas necesito la forma de alimentar el libro"). No es una excepción a lo
+// anterior: un asiento nuevo no tiene ambigüedad de origen, solo hace falta
+// saber en qué ubicación cae. Si la unidad tiene una sola ubicación manual se
+// asume esa; si tiene varias se pregunta; las pasarelas nunca se ofrecen.
 //
 // UBICACIONES COMPARTIDAS (migración 071 / auditoría 2026-08, A5)
 // Una wallet puede pertenecer a varias unidades con porcentaje. El endpoint
@@ -24,9 +30,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Building2, FileDown, Lock, Wallet } from 'lucide-react';
+import { ArrowLeft, Building2, FileDown, Lock, Plus, Wallet } from 'lucide-react';
+import { useAuth, canAdd } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
 import { apiFetch } from '@/lib/api-fetch';
@@ -38,6 +45,8 @@ import {
   computeTotals,
   balanceAsOf,
   autoCategoryLabel,
+  isAutoLedger,
+  hasLedger,
   AUTO_CATEGORIES,
   type LedgerEntry,
   type LedgerTotals,
@@ -48,6 +57,8 @@ import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToasts } from '@/components/ui/toast';
+import { LedgerEntryDialog } from '@/components/balances/ledger-entry-dialog';
+import { LedgerLocationPicker } from '@/components/balances/ledger-location-picker';
 import { generateChannelLedgerPDF } from '@/lib/pdf-export';
 
 function monthRange(): { from: string; to: string } {
@@ -61,12 +72,16 @@ function monthRange(): { from: string; to: string } {
 
 export default function BusinessUnitLedgerPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const unitId = decodeURIComponent(params.id ?? '');
 
   const { t, locale } = useI18n();
+  const { user } = useAuth();
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
   const lang = locale === 'en' ? 'en' : 'es';
+
+  const canWrite = canAdd(user);
 
   const [range, setRange] = useState(monthRange);
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
@@ -78,6 +93,9 @@ export default function BusinessUnitLedgerPage() {
   const [unit, setUnit] = useState<BusinessUnit | null>(null);
   const [unitMissing, setUnitMissing] = useState(false);
   const [loading, setLoading] = useState(true);
+  /** Ubicación elegida para el alta; null = no hay diálogo de asiento abierto. */
+  const [entryChannel, setEntryChannel] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
 
   // ── Nombre de la unidad ────────────────────────────────────────────────
   useEffect(() => {
@@ -210,6 +228,30 @@ export default function BusinessUnitLedgerPage() {
     [perLocation],
   );
 
+  // Ubicaciones donde SÍ se puede escribir a mano. Es el mismo criterio que
+  // usa el libro por canal (y que valida el endpoint): las pasarelas las
+  // escribe el cron y los canales sin libro no tienen dónde asentar.
+  const manualLocations = useMemo(
+    () =>
+      perLocation
+        .filter((l) => hasLedger(l.key) && !isAutoLedger(l.key))
+        .map((l) => ({ key: l.key, label: l.label, balance: l.balance })),
+    [perLocation],
+  );
+
+  const handleAddEntry = () => {
+    // Sin ubicación manual no hay dónde asentar: el botón lleva a "Dónde está
+    // el dinero", que es donde se crea o se asigna una.
+    if (manualLocations.length === 0) {
+      router.push('/balances');
+      return;
+    }
+    // Con una sola ubicación manual preguntar sería un click de trámite: no
+    // hay otra respuesta posible.
+    if (manualLocations.length === 1) setEntryChannel(manualLocations[0].key);
+    else setPickerOpen(true);
+  };
+
   const sharePct = (share: number) => String(Math.round(share * 1000) / 10);
 
   const unitName = unit?.name ?? t('unitLedger.title');
@@ -277,6 +319,11 @@ export default function BusinessUnitLedgerPage() {
             <Button variant="secondary" size="sm" onClick={handleExport} disabled={rows.length === 0}>
               <FileDown className="w-4 h-4" /> {t('unitLedger.exportPdf')}
             </Button>
+            {canWrite && (
+              <Button variant="primary" size="sm" onClick={handleAddEntry}>
+                <Plus className="w-4 h-4" /> {t('unitLedger.addEntry')}
+              </Button>
+            )}
           </div>
         }
       />
@@ -285,6 +332,19 @@ export default function BusinessUnitLedgerPage() {
         <Lock className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
         <p className="text-sm text-muted-foreground">{t('unitLedger.readOnlyNotice')}</p>
       </div>
+
+      {/* Aviso explícito: el botón existe pero no hay dónde asentar todavía. */}
+      {canWrite && manualLocations.length === 0 && (
+        <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4">
+          <Wallet className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+          <p className="text-sm text-muted-foreground">
+            {t('unitLedger.noManualLocationNotice')}{' '}
+            <Link href="/balances" className="text-accent hover:underline">
+              {t('unitLedger.goToCashLocations')}
+            </Link>
+          </p>
+        </div>
+      )}
 
       {/* Rango */}
       <Card className="p-4">
@@ -460,6 +520,30 @@ export default function BusinessUnitLedgerPage() {
           </table>
         </div>
       </Card>
+
+      <LedgerLocationPicker
+        open={pickerOpen}
+        locations={manualLocations}
+        onPick={(key) => {
+          setPickerOpen(false);
+          setEntryChannel(key);
+        }}
+        onClose={() => setPickerOpen(false)}
+      />
+
+      {/* entry=null: desde acá solo se dan de alta asientos; editar sigue
+          siendo cosa del libro de la ubicación. */}
+      <LedgerEntryDialog
+        open={entryChannel !== null}
+        channelKey={entryChannel ?? ''}
+        entry={null}
+        onClose={() => setEntryChannel(null)}
+        onSaved={() => {
+          setEntryChannel(null);
+          toast.success(t('unitLedger.entrySaved'));
+          void loadEntries();
+        }}
+      />
     </div>
   );
 }

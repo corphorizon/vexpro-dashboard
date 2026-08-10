@@ -38,6 +38,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
       { module: 'summary',     href: '/resumen-general', labelEs: 'Resumen General' },
       { module: 'movements',   href: '/movimientos',     labelEs: 'Movimientos' },
       { module: 'expenses',    href: '/egresos',         labelEs: 'Egresos' },
+      { module: 'income',      href: '/ingresos',        labelEs: 'Ingresos' },
       { module: 'liquidity',   href: '/liquidez',        labelEs: 'Liquidez' },
       { module: 'investments', href: '/inversiones',     labelEs: 'Inversiones' },
       { module: 'balances',    href: '/balances',        labelEs: 'Balances' },

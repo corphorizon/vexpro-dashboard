@@ -85,6 +85,9 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/resumen-general', i18nKey: 'nav.generalSummary', icon: BarChart3, module: 'summary' },
       { href: '/movimientos', i18nKey: 'nav.movements', icon: ArrowLeftRight, module: 'movements' },
       { href: '/egresos', i18nKey: 'nav.expenses', icon: Receipt, module: 'expenses' },
+      // Consulta de ingresos operativos — el espejo de Egresos; la carga sigue
+      // viviendo en "Carga de Datos".
+      { href: '/ingresos', i18nKey: 'nav.income', icon: TrendingUp, module: 'income' },
       { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
       { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
       { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
