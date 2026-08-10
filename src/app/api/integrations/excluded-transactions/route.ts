@@ -16,7 +16,10 @@ import { apiError } from '@/lib/api-error';
 // existir antes que su deposit row, generando falsos positivos).
 // ---------------------------------------------------------------------------
 
-const ALLOWED_ROLES = ['admin', 'socio'];
+// 'socio' figuraba acá desde el origen pero era inalcanzable: nunca estuvo en
+// ADMIN_ROLES, así que verifyAdminAuth lo rechazaba antes de llegar. La ruta
+// ya declara FINANCE_ROLES; este segundo filtro solo conserva el caso admin.
+const ALLOWED_ROLES = ['admin'];
 
 export async function GET(request: NextRequest) {
   try {
