@@ -7,6 +7,9 @@ import {
   summarize,
   groupByUnit,
   groupByType,
+  primaryUnitId,
+  unitShareOfLocation,
+  unitLocationShares,
   type BusinessUnit,
   type CashLocation,
 } from './cash-locations';
@@ -197,5 +200,110 @@ describe('agrupaciones', () => {
     ]);
     expect(g.map((x) => x.type)).toEqual(['gateway', 'loan']);
     expect(g[0]).toEqual({ type: 'gateway', total: 1_250, count: 2 });
+  });
+});
+
+// ── Reparto de una ubicación entre unidades (auditoría 2026-08, A5) ────────
+// El libro por unidad resolvía sus canales solo por
+// channel_configs.business_unit_id: una wallet 50/50 aparecía entera en una
+// unidad y en ninguna otra.
+
+describe('primaryUnitId', () => {
+  it('la principal es la de MAYOR parte, no la primera cargada', () => {
+    expect(primaryUnitId([
+      { business_unit_id: 'u1', share: 0.3 },
+      { business_unit_id: 'u2', share: 0.7 },
+    ])).toBe('u2');
+  });
+
+  it('con empate manda la primera', () => {
+    expect(primaryUnitId([
+      { business_unit_id: 'u1', share: 0.5 },
+      { business_unit_id: 'u2', share: 0.5 },
+    ])).toBe('u1');
+  });
+
+  it('sin reparto no hay principal', () => {
+    expect(primaryUnitId([])).toBeNull();
+    expect(primaryUnitId(null)).toBeNull();
+  });
+});
+
+describe('unitShareOfLocation', () => {
+  it('devuelve la parte de la unidad', () => {
+    expect(unitShareOfLocation('u2', [
+      { business_unit_id: 'u1', share: 0.5 },
+      { business_unit_id: 'u2', share: 0.5 },
+    ], 'u1')).toBe(0.5);
+  });
+
+  it('una unidad ajena al reparto no ve nada', () => {
+    expect(unitShareOfLocation('u3', [{ business_unit_id: 'u1', share: 1 }], 'u1')).toBe(0);
+  });
+
+  it('sin filas de reparto manda channel_configs', () => {
+    expect(unitShareOfLocation('u1', [], 'u1')).toBe(1);
+    expect(unitShareOfLocation('u1', null, 'u2')).toBe(0);
+  });
+
+  it('un reparto que se pasa del 100% se prorratea (igual que allocateShares)', () => {
+    expect(unitShareOfLocation('u1', [
+      { business_unit_id: 'u1', share: 1 },
+      { business_unit_id: 'u2', share: 1 },
+    ], null)).toBe(0.5);
+  });
+});
+
+describe('unitLocationShares', () => {
+  const configs = [
+    { channel_key: 'wallet_ab', business_unit_id: 'u1' },
+    { channel_key: 'banco_u1', business_unit_id: 'u1' },
+    { channel_key: 'banco_u2', business_unit_id: 'u2' },
+    { channel_key: 'sin_unidad', business_unit_id: null },
+  ];
+  const shares = [
+    { channel_key: 'wallet_ab', business_unit_id: 'u1', share: 0.5 },
+    { channel_key: 'wallet_ab', business_unit_id: 'u2', share: 0.5 },
+  ];
+
+  it('la unidad principal ya no ve el 100% de una wallet compartida', () => {
+    const m = unitLocationShares('u1', configs, shares);
+    expect(m.get('wallet_ab')).toBe(0.5);
+  });
+
+  it('la otra unidad ahora SÍ ve la wallet compartida', () => {
+    const m = unitLocationShares('u2', configs, shares);
+    expect(m.get('wallet_ab')).toBe(0.5);
+    expect(m.get('banco_u2')).toBe(1);
+  });
+
+  it('las dos partes suman exactamente la ubicación entera', () => {
+    const a = unitLocationShares('u1', configs, shares).get('wallet_ab') ?? 0;
+    const b = unitLocationShares('u2', configs, shares).get('wallet_ab') ?? 0;
+    expect(a + b).toBe(1);
+  });
+
+  it('no devuelve las ubicaciones de otra unidad', () => {
+    const m = unitLocationShares('u1', configs, shares);
+    expect(m.has('banco_u2')).toBe(false);
+    expect(m.has('sin_unidad')).toBe(false);
+    expect(m.get('banco_u1')).toBe(1);
+  });
+
+  it('dedup: una ubicación con reparto Y fallback aparece una sola vez', () => {
+    const m = unitLocationShares('u1', configs, [
+      { channel_key: 'banco_u1', business_unit_id: 'u1', share: 1 },
+    ]);
+    expect([...m.keys()].filter((k) => k === 'banco_u1')).toHaveLength(1);
+    expect(m.get('banco_u1')).toBe(1);
+  });
+
+  it('con reparto cargado, el fallback de channel_configs NO suma de nuevo', () => {
+    // wallet_ab tiene business_unit_id = u1 en channel_configs, pero el
+    // reparto explícito le da 0.5: manda el reparto.
+    const m = unitLocationShares('u1', configs, [
+      { channel_key: 'wallet_ab', business_unit_id: 'u2', share: 1 },
+    ]);
+    expect(m.has('wallet_ab')).toBe(false);
   });
 });

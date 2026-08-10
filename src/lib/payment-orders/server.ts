@@ -337,11 +337,89 @@ export function expenseConcept(orderNumber: string, beneficiaryName: string): st
   return full.length <= 120 ? full : `${full.slice(0, 117)}…`;
 }
 
+// ── ¿En qué período entra el egreso? ────────────────────────────────────────
+
+export interface ExpensePeriodRow {
+  id: string;
+  year: number;
+  month: number;
+  is_closed: boolean;
+}
+
+const MONTHS_ES = [
+  'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
+];
+
+function periodLabel(year: number, month: number): string {
+  return `${MONTHS_ES[month - 1] ?? month} ${year}`;
+}
+
+/** El período abierto más reciente — el fallback histórico. */
+function latestOpen(periods: ExpensePeriodRow[]): ExpensePeriodRow | null {
+  return periods
+    .filter((p) => !p.is_closed)
+    .sort((a, b) => (b.year - a.year) || (b.month - a.month))[0] ?? null;
+}
+
 /**
- * Crea el egreso correspondiente a una orden pagada, en el período ABIERTO más
- * reciente de la empresa. Si no hay período abierto NO es un error: la orden se
- * marca pagada igual y se devuelve un warning para que la UI se lo diga al
- * usuario (cargarlo a mano es preferible a bloquear el pago).
+ * Período contable del egreso de una orden pagada.
+ *
+ * POR QUÉ NO "el último período abierto" (auditoría 2026-08, A3): una orden
+ * marcada pagada con atraso —o cargada a principio de mes por un pago del mes
+ * anterior— mandaba su egreso al último período abierto, o sea al MES
+ * EQUIVOCADO. El egreso ya se fecha con `payment_date` (expense_date), así que
+ * el período tenía que salir de ahí también: si no, la fecha del egreso y el
+ * mes que lo contabiliza dicen cosas distintas y la cadena de socios reparte
+ * sobre un mes que no gastó esa plata.
+ *
+ * Si el período del pago no existe o está cerrado se cae al último abierto —
+ * bloquear el pago sería peor — pero SIEMPRE con warning: ese desvío tiene que
+ * llegar al usuario, que es el único que puede decidir si reabre el mes.
+ *
+ * Pura a propósito: es una regla de dinero y se testea sin Supabase.
+ */
+export function pickExpensePeriod(
+  periods: ExpensePeriodRow[],
+  paymentDate: string | null | undefined,
+): { periodId: string | null; warning: string | null } {
+  const fallback = latestOpen(periods);
+  const noOpenWarning =
+    'La orden quedó marcada como pagada, pero no hay un período abierto: el egreso no se registró automáticamente.';
+
+  const match = /^(\d{4})-(\d{2})/.exec(String(paymentDate ?? ''));
+  if (!match) {
+    // Sin fecha de pago no hay mes que respetar: se mantiene el comportamiento
+    // histórico (último abierto).
+    if (!fallback) return { periodId: null, warning: noOpenWarning };
+    return { periodId: fallback.id, warning: null };
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const exact = periods.find((p) => p.year === year && p.month === month) ?? null;
+
+  if (exact && !exact.is_closed) return { periodId: exact.id, warning: null };
+
+  if (!fallback) return { periodId: null, warning: noOpenWarning };
+
+  const reason = exact
+    ? `el período ${periodLabel(year, month)} está cerrado`
+    : `no existe el período ${periodLabel(year, month)}`;
+  return {
+    periodId: fallback.id,
+    warning:
+      `El egreso se registró en ${periodLabel(fallback.year, fallback.month)} porque ${reason}. ` +
+      'Revisalo: la fecha del pago corresponde a otro mes.',
+  };
+}
+
+/**
+ * Crea el egreso correspondiente a una orden pagada, en el período de la FECHA
+ * DE PAGO (ver pickExpensePeriod). Si ese período no existe o está cerrado cae
+ * al último abierto con un warning; si no hay ninguno abierto NO es un error:
+ * la orden se marca pagada igual y se devuelve el warning para que la UI se lo
+ * diga al usuario (cargarlo a mano es preferible a bloquear el pago).
  */
 export async function createExpenseForPaidOrder(
   admin: SupabaseClient,
@@ -364,25 +442,23 @@ export async function createExpenseForPaidOrder(
    *  que un egreso cargado a mano sin elegirla. */
   category?: string | null,
 ): Promise<{ expenseId: string | null; warning: string | null }> {
-  const { data: period, error: periodErr } = await admin
+  // Se traen TODOS los períodos (no solo los abiertos): para saber si el mes
+  // del pago existe-pero-está-cerrado hay que poder verlo.
+  const { data: periodRows, error: periodErr } = await admin
     .from('periods')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('is_closed', false)
-    .order('year', { ascending: false })
-    .order('month', { ascending: false })
-    .limit(1)
-    .maybeSingle();
+    .select('id, year, month, is_closed')
+    .eq('company_id', companyId);
 
   if (periodErr) {
-    console.error('[payment-orders] período abierto:', periodErr.message);
+    console.error('[payment-orders] períodos:', periodErr.message);
   }
-  if (!period?.id) {
-    return {
-      expenseId: null,
-      warning:
-        'La orden quedó marcada como pagada, pero no hay un período abierto: el egreso no se registró automáticamente.',
-    };
+
+  const { periodId, warning: periodWarning } = pickExpensePeriod(
+    (periodRows ?? []) as ExpensePeriodRow[],
+    order.payment_date,
+  );
+  if (!periodId) {
+    return { expenseId: null, warning: periodWarning };
   }
 
   const total = num(order.total);
@@ -390,7 +466,7 @@ export async function createExpenseForPaidOrder(
     .from('expenses')
     .insert({
       company_id: companyId,
-      period_id: period.id,
+      period_id: periodId,
       concept: expenseConcept(order.order_number, order.beneficiary_name),
       amount: total,
       paid: total,
@@ -430,7 +506,9 @@ export async function createExpenseForPaidOrder(
     };
   }
 
-  return { expenseId: expense.id as string, warning: null };
+  // El warning del período (mes cerrado / inexistente) viaja aunque el egreso
+  // se haya creado bien: el usuario tiene que enterarse de que fue a otro mes.
+  return { expenseId: expense.id as string, warning: periodWarning };
 }
 
 // ── Nombre del actor ────────────────────────────────────────────────────────

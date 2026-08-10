@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   computeIncomeTotals,
   computeIncomePending,
@@ -108,5 +110,75 @@ describe('groupByClient', () => {
     const g = groupByClient([line({ client: null }), line({ client: '   ' })]);
     expect(g).toHaveLength(1);
     expect(g[0].client).toBe('Sin asignar');
+  });
+});
+
+// ── Pendiente: la regla que faltaba (auditoría 2026-08, B6) ────────────────
+// `pending` se persistía y se sumaba en las cuentas por cobrar sin ninguna
+// validación: un tipeo lo inflaba y nada lo señalaba.
+describe('validateIncomeLine — pendiente', () => {
+  it('acepta el pendiente derivado de facturado − cobrado', () => {
+    expect(validateIncomeLine({ concept: 'X', amount: 1_000, received: 400, pending: 600 }))
+      .toBeNull();
+  });
+
+  it('acepta el pendiente omitido', () => {
+    expect(validateIncomeLine({ concept: 'X', amount: 1_000, received: 1_000 })).toBeNull();
+  });
+
+  it('rechaza un pendiente negativo', () => {
+    expect(validateIncomeLine({ concept: 'X', amount: 1_000, received: 0, pending: -1 }))
+      .toMatch(/pendiente no puede ser negativo/);
+  });
+
+  it('rechaza un pendiente mayor que lo que falta cobrar', () => {
+    expect(validateIncomeLine({ concept: 'X', amount: 1_000, received: 400, pending: 6_000 }))
+      .toMatch(/pendiente no puede superar/);
+  });
+
+  it('tolera un centavo de redondeo', () => {
+    expect(validateIncomeLine({ concept: 'X', amount: 100, received: 33.33, pending: 66.67 }))
+      .toBeNull();
+  });
+
+  it('rechaza un pendiente no numérico', () => {
+    expect(validateIncomeLine({
+      concept: 'X', amount: 100, received: 0, pending: Number.NaN,
+    })).toMatch(/pendiente no es un número/);
+  });
+});
+
+// ── Migración 073: la RPC no puede volver a pisar el "otros ingresos" manual ─
+// (auditoría 2026-08, A4). La lógica vive en SQL, así que lo que se fija acá
+// es el contrato del archivo: que exista la rama de preservación, que sea
+// condicional a "el período NO tenía líneas" y que no se haya perdido la
+// materialización del total. Un CREATE OR REPLACE que se olvide de cualquiera
+// de las tres cosas vuelve a borrar plata.
+describe('migración 073 — preserva el other manual', () => {
+  const sql = readFileSync(
+    join(process.cwd(), 'supabase', 'migration-073-preserve-manual-other.sql'),
+    'utf8',
+  );
+
+  it('reemplaza la RPC de la 068', () => {
+    expect(sql).toMatch(/create or replace function public\.replace_income_lines/);
+  });
+
+  it('lee el estado previo ANTES del delete', () => {
+    const readIdx = sql.indexOf('into v_had_lines');
+    const deleteIdx = sql.indexOf('delete from public.income_lines');
+    expect(readIdx).toBeGreaterThan(-1);
+    expect(deleteIdx).toBeGreaterThan(readIdx);
+  });
+
+  it('preserva solo cuando no había líneas y el other manual es positivo', () => {
+    expect(sql).toMatch(/if not v_had_lines and coalesce\(v_manual_other, 0\) > 0 then/);
+    expect(sql).toContain('Otros ingresos (histórico)');
+    expect(sql).toMatch(/-1\s*\n?\s*\);/);
+  });
+
+  it('sigue materializando lo COBRADO en operating_income.other', () => {
+    expect(sql).toMatch(/select coalesce\(sum\(received\), 0\) into v_received/);
+    expect(sql).toMatch(/do update set other = excluded\.other/);
   });
 });

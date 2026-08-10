@@ -63,18 +63,6 @@ export default function SociosPage() {
   const currentPeriod = mode === 'single' ? periods.find(p => p.id === selectedPeriodId) : null;
   const RESERVE_PCT = currentPeriod?.reserve_pct ?? 0.10;
 
-  // Get operating income for current view
-  const summary = mode === 'single' ? getPeriodSummary(selectedPeriodId) : null;
-  const ingresosNetos = (summary?.operatingIncome
-    ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
-    : 0)
-    + (summary?.propFirmNetIncome || 0)
-    + (summary?.investmentProfits || 0);
-  const egresosNetos = summary?.totalExpenses || 0;
-
-  // Saldo a Favor = Ingresos Netos - Egresos Netos
-  const saldoAFavor = ingresosNetos - egresosNetos;
-
   // ─── Distribución por período — FÓRMULA CANÓNICA COMPARTIDA (BUG-01) ───
   // Antes esta lógica vivía inline acá y una versión DIVERGENTE en
   // data-context.computeSaldoChain (/balances). Ahora ambas usan
@@ -101,6 +89,16 @@ export default function SociosPage() {
   const accumulatedReserve = currentChain?.reserveAccumulated ?? 0;
   const carryDebt = currentChain?.deudaArrastradaEntrada ?? 0;
   const totalToDistribute = currentChain?.montoDistribuir ?? 0;
+
+  // Ingresos / Egresos / Saldo a Favor de las StatCards: salen de la MISMA
+  // cadena que el reparto, no de las tablas vivas (auditoría 2026-08, B2).
+  // Leerlos de getPeriodSummary hacía que en un mes CERRADO las tarjetas
+  // mostraran los números de hoy mientras la reserva, la deuda y el monto a
+  // distribuir de la misma pantalla seguían mostrando los congelados: la
+  // resta de las dos primeras tarjetas no daba la tercera.
+  const ingresosNetos = currentChain?.ingresosNetos ?? 0;
+  const egresosNetos = currentChain?.egresosNetos ?? 0;
+  const saldoAFavor = currentChain?.saldoAFavor ?? 0;
 
   const distributions = mode === 'consolidated'
     ? (() => {

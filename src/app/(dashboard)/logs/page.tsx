@@ -69,6 +69,8 @@ const MODULE_EXTRA_KEYS: Record<string, string> = {
   reports_config: 'logs.module.reportsConfig',
   balances_channel_config: 'logs.module.channelConfig',
   balances_channel_balance: 'logs.module.channelBalance',
+  balances_business_units: 'logs.module.businessUnits',
+  balances_location_units: 'logs.module.locationUnits',
 };
 
 const ACTION_KEYS: Record<string, string> = {

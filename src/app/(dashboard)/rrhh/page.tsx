@@ -15,7 +15,7 @@ import type { Employee, CommercialProfile, CommercialMonthlyResult, Negotiation,
 import { createCommercialProfile, updateCommercialProfile, deleteCommercialProfile, deleteEmployee, createEmployee, updateEmployee } from '@/lib/supabase/mutations';
 import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { features } from '@/lib/business-model';
 import { useExport2FA } from '@/components/verify-2fa-modal';
@@ -413,7 +413,7 @@ function ProfileForm({ onClose, editing, companyId }: { onClose: () => void; edi
                 <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wide">
                   {t('hr.terminationSection')}
                 </label>
-                {editing?.status === 'inactive' && editing?.termination_date && authUser?.effective_role === 'admin' && (
+                {editing?.status === 'inactive' && editing?.termination_date && isCompanyAdmin(authUser) && (
                   <button
                     type="button"
                     onClick={async () => {
@@ -971,7 +971,7 @@ export default function RRHHPage() {
   // ─── Fire / Reinstate state ───
   // `firingProfile` opens the <FireModal />; `reinstatingProfile` enables
   // the inline OK/No confirm next to the profile's row. Reinstating is
-  // admin-only both client-side (button is gated by user.effective_role)
+  // admin-only both client-side (button is gated by isCompanyAdmin)
   // and server-side (ALLOWED_FIELDS + RLS). We use the silent refresh() of
   // DataProvider after a fire/reinstate — NOT window.location.reload —
   // so the user keeps scroll, tab, modals, etc.
@@ -995,7 +995,7 @@ export default function RRHHPage() {
   };
 
   const handleReinstate = async (profile: CommercialProfile) => {
-    if (user?.effective_role !== 'admin') return;
+    if (!isCompanyAdmin(user)) return;
     setReinstating(true);
     try {
       await updateCommercialProfile(profile.id, {
@@ -1674,7 +1674,7 @@ export default function RRHHPage() {
                           )}
 
                           {/* Reincorporar: admin-only, y solo si está despedido. */}
-                          {emp.source === 'commercial' && emp.originalProfile && emp.status === 'fired' && user?.effective_role === 'admin' && (
+                          {emp.source === 'commercial' && emp.originalProfile && emp.status === 'fired' && isCompanyAdmin(user) && (
                             reinstatingProfile?.id === emp.originalProfile.id ? (
                               <div className="flex items-center gap-1">
                                 <button

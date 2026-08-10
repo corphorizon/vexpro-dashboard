@@ -5,14 +5,16 @@ import { serverAuditLog } from '@/lib/server-audit';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
-// POST   /api/superadmin/companies/:id/logo?variant=color|white  → upload
-// DELETE /api/superadmin/companies/:id/logo?variant=color|white  → clear
+// POST   /api/superadmin/companies/:id/logo?variant=color|white|icon  → upload
+// DELETE /api/superadmin/companies/:id/logo?variant=color|white|icon  → clear
 //
-// Two logo slots per tenant:
+// Three logo slots per tenant:
 //   · variant='color' (default) → companies.logo_url
 //     Used on light backgrounds (login, emails, PDFs).
 //   · variant='white'           → companies.logo_url_white
 //     Used on dark backgrounds (sidebar header, superadmin).
+//   · variant='icon'            → companies.logo_icon_url (migración 072)
+//     Isotipo cuadrado para el sidebar contraído (64px de ancho).
 //
 // Upload accepts PNG / SVG / JPG / WEBP, max 2MB. Content-type is verified
 // server-side by:
@@ -24,13 +26,26 @@ import { apiError } from '@/lib/api-error';
 // read + no anon write (writes go through this service-role route).
 // ---------------------------------------------------------------------------
 
-type LogoVariant = 'color' | 'white';
+type LogoVariant = 'color' | 'white' | 'icon';
+type LogoColumn = 'logo_url' | 'logo_url_white' | 'logo_icon_url';
+
+const COLUMN_BY_VARIANT: Record<LogoVariant, LogoColumn> = {
+  color: 'logo_url',
+  white: 'logo_url_white',
+  icon: 'logo_icon_url',
+};
+const VARIANT_LABEL: Record<LogoVariant, string> = {
+  color: 'color',
+  white: 'blanco',
+  icon: 'isotipo',
+};
+
 function parseVariant(url: URL): LogoVariant {
   const v = url.searchParams.get('variant');
-  return v === 'white' ? 'white' : 'color';
+  return v === 'white' || v === 'icon' ? v : 'color';
 }
-function columnFor(v: LogoVariant): 'logo_url' | 'logo_url_white' {
-  return v === 'white' ? 'logo_url_white' : 'logo_url';
+function columnFor(v: LogoVariant): LogoColumn {
+  return COLUMN_BY_VARIANT[v];
 }
 
 const BUCKET = 'company-logos';
@@ -160,7 +175,7 @@ export async function POST(
     // Verify the company exists before uploading.
     const { data: company } = await admin
       .from('companies')
-      .select('id, name, logo_url, logo_url_white')
+      .select('id, name, logo_url, logo_url_white, logo_icon_url')
       .eq('id', companyId)
       .maybeSingle();
     if (!company) {
@@ -219,7 +234,7 @@ export async function POST(
       actorName: auth.name || auth.email,
       action: 'update',
       module: 'companies',
-      details: `Superadmin actualizó el logo ${variant === 'white' ? 'blanco' : 'color'} de ${company.name} (${sniffed.ext.toUpperCase()}, ${(file.size / 1024).toFixed(1)} KB)`,
+      details: `Superadmin actualizó el logo ${VARIANT_LABEL[variant]} de ${company.name} (${sniffed.ext.toUpperCase()}, ${(file.size / 1024).toFixed(1)} KB)`,
     });
 
     return NextResponse.json({ success: true, url: publicUrl });
@@ -243,7 +258,7 @@ export async function DELETE(
 
     const { data: company } = await admin
       .from('companies')
-      .select('id, name, logo_url, logo_url_white')
+      .select('id, name, logo_url, logo_url_white, logo_icon_url')
       .eq('id', companyId)
       .maybeSingle();
     if (!company) {
@@ -281,7 +296,7 @@ export async function DELETE(
       actorName: auth.name || auth.email,
       action: 'delete',
       module: 'companies',
-      details: `Superadmin eliminó el logo ${variant === 'white' ? 'blanco' : 'color'} de ${company.name}`,
+      details: `Superadmin eliminó el logo ${VARIANT_LABEL[variant]} de ${company.name}`,
     });
 
     return NextResponse.json({ success: true });

@@ -25,6 +25,14 @@ import type { AppNotification } from '@/lib/notifications/catalog';
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 100;
 
+/**
+ * El `company_id` termina interpolado dentro de un `.or()` de PostgREST, que es
+ * un mini-lenguaje con comas y paréntesis: un valor con `,` inyecta condiciones
+ * extra en el filtro. Acá la RLS impide cualquier fuga, pero el patrón no puede
+ * quedar como ejemplo copiable, así que se valida la forma antes de armar el or.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: NextRequest) {
   try {
     const supabase = await createClient();
@@ -48,7 +56,12 @@ export async function GET(request: NextRequest) {
     // Filtro de empresa: solo tiene efecto para quien recibe de varias
     // (el superadmin). Se dejan pasar las de company_id null, que son avisos
     // de plataforma y no pertenecen a ningún tenant.
-    if (companyId) query = query.or(`company_id.eq.${companyId},company_id.is.null`);
+    if (companyId) {
+      if (!UUID_RE.test(companyId)) {
+        return NextResponse.json({ success: false, error: 'Empresa inválida' }, { status: 400 });
+      }
+      query = query.or(`company_id.eq.${companyId},company_id.is.null`);
+    }
 
     const { data, error } = await query;
     if (error) return apiError('notifications GET', error, { status: 500 });

@@ -2,8 +2,8 @@
 // /api/admin/channel-configs
 //
 // GET                               → list all channel_configs rows for the
-//                                     caller's company (admins see their own
-//                                     company; superadmin can pass ?company_id=…).
+//                                     caller's company (cualquier miembro;
+//                                     superadmin debe pasar ?company_id=…).
 // POST { action:'upsert', ... }     → create or update one channel_config.
 // POST { action:'delete', key }     → delete a custom channel (is_custom=true).
 //                                     Built-ins can't be deleted.
@@ -14,7 +14,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, verifyAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import {
   newCustomChannelKey,
@@ -68,15 +68,19 @@ async function resolveCompanyAndAuth(
 }
 
 export async function GET(request: NextRequest) {
-  const explicit = request.nextUrl.searchParams.get('company_id');
-  const ctx = await resolveCompanyAndAuth(explicit);
-  if (ctx instanceof NextResponse) return ctx;
+  // Lectura abierta a cualquier miembro de la empresa. El gate admin-estricto
+  // que había acá no protegía nada (la RLS ya deja leer la tabla al tenant) y
+  // en cambio degradaba la UI: sin estas filas el auditor veía las claves
+  // crudas del canal en vez de su etiqueta. Las escrituras (POST) siguen
+  // siendo admin-only vía resolveCompanyAndAuth.
+  const auth = await verifyAuth(request);
+  if (auth instanceof NextResponse) return auth;
 
   const admin = createAdminClient();
   const { data, error } = await admin
     .from('channel_configs')
     .select(CONFIG_COLUMNS)
-    .eq('company_id', ctx.companyId)
+    .eq('company_id', auth.companyId)
     .order('sort_order', { ascending: true });
 
   if (error) {

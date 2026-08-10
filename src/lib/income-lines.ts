@@ -100,6 +100,20 @@ export function validateIncomeLine(input: Partial<IncomeLineInput>): string | nu
   // Cobrar de más casi siempre es un tipeo (un dígito de más) y descuadra la
   // cadena en silencio, porque lo cobrado es lo que se reparte.
   if (received > amount + 0.01) return 'El cobrado no puede superar al monto facturado';
+  // El pendiente NO se validaba (auditoría 2026-08, B6). Se persiste tal cual
+  // viene y computeIncomeTotals lo suma, así que un pendiente inventado —o
+  // negativo— descuadraba las cuentas por cobrar sin que nada lo señalara.
+  // El techo es lo que falta cobrar: facturado − cobrado (+1 centavo de
+  // tolerancia, igual que la regla de arriba).
+  const pending = Number(input.pending ?? 0);
+  if (!Number.isFinite(pending)) return 'El pendiente no es un número válido';
+  if (pending < 0) return 'El pendiente no puede ser negativo';
+  // `Math.max(0, …)`: cuando el cobrado supera al facturado por redondeo, la
+  // resta da negativa y sin el piso hasta un pendiente de 0 quedaría fuera de
+  // rango por un error de coma flotante.
+  if (pending > Math.max(0, amount - received) + 0.01) {
+    return 'El pendiente no puede superar lo que falta cobrar (facturado − cobrado)';
+  }
   return null;
 }
 

@@ -158,11 +158,16 @@ export default function BalancesPage() {
       // "menos todos los egresos de la historia" — un número enorme, rojo y
       // falso (Kevin lo vio en -$356.870). Lo que entra en su caja son los
       // ingresos operativos cobrados, así que la fila del mes se arma con eso.
+      //
+      // El número sale de la CADENA (saldoInfo.ingresosNetos), no de una suma
+      // propia sobre las tablas vivas (auditoría 2026-08, B3): la cadena ya
+      // aplica el override de snapshot de los períodos cerrados, así que
+      // reimplementar la suma acá hacía que un mes cerrado mostrara ingresos
+      // de hoy junto a un Monto a Distribuir congelado — dos números de la
+      // misma fila calculados sobre realidades distintas.
       let netDeposit = showFlows
         ? summary.netDeposit
-        : (summary.operatingIncome?.broker_pnl ?? 0) +
-          (summary.operatingIncome?.other ?? 0) +
-          summary.propFirmNetIncome + summary.investmentProfits;
+        : (saldoInfo?.ingresosNetos ?? 0);
 
       // For derived-broker periods (Abr 2026+), replicate the EXACT formula
       // that /movimientos uses — la fuente de verdad. Si esto diverge, el
@@ -201,7 +206,9 @@ export default function BalancesPage() {
         }
       }
 
-      const egresos = summary.totalExpenses;
+      // Mismo motivo: los egresos del mes son los de la cadena (congelados si
+      // el período está cerrado), no el total vivo de la tabla de egresos.
+      const egresos = saldoInfo?.egresosNetos ?? summary.totalExpenses;
       const balanceMes = netDeposit - egresos - montoDistribuir;
       const saldoInicial = acumulado;
       acumulado = saldoInicial + balanceMes;

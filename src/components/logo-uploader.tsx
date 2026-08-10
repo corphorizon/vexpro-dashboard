@@ -4,6 +4,7 @@ import { useRef, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { Upload, Trash2, Loader2, AlertCircle } from 'lucide-react';
 import { CompanyLogo } from './company-logo';
+import { LogoCropper } from './logo-cropper';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LogoUploader
@@ -14,6 +15,10 @@ import { CompanyLogo } from './company-logo';
 // without uploading — we only upload once the entity has an id.
 //
 // Accepts PNG/SVG/JPG/WEBP, max 2MB. Server does authoritative validation.
+//
+// Antes de subir se abre el recorte (LogoCropper): los archivos llegan con
+// márgenes enormes y el isotipo TIENE que ser cuadrado. Se saltea para SVG
+// (rasterizar un vector es perderlo) y el modal ofrece "subir sin recortar".
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ACCEPTED = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
@@ -26,11 +31,14 @@ interface Props {
   colorPrimary: string;
   logoUrl: string | null;
   onChange: (nextUrl: string | null) => void;
-  /** 'color' (default, for light backgrounds) or 'white' (for dark surfaces
-   *  like the sidebar). Controls which column the API writes to. */
-  variant?: 'color' | 'white';
+  /** 'color' (default, for light backgrounds), 'white' (dark surfaces like the
+   *  sidebar) or 'icon' (isotipo cuadrado). Controls which column the API
+   *  writes to. */
+  variant?: 'color' | 'white' | 'icon';
   /** Preview background — the white logo needs a dark preview to be visible. */
   previewTone?: 'light' | 'dark';
+  /** Proporción del recorte. El isotipo va cuadrado sí o sí. */
+  aspect?: 'free' | 'square';
 }
 
 export function LogoUploader({
@@ -41,11 +49,37 @@ export function LogoUploader({
   onChange,
   variant = 'color',
   previewTone = 'light',
+  aspect = 'free',
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Archivo elegido esperando recorte. Null = no hay modal abierto. */
+  const [pending, setPending] = useState<File | null>(null);
+
+  /** Valida y decide: SVG va directo, el resto pasa por el recorte. */
+  const pick = (file: File) => {
+    if (!companyId) {
+      setError('Guarda la organización antes de subir un logo.');
+      return;
+    }
+    if (!ACCEPTED.includes(file.type.toLowerCase()) && !/\.(png|jpe?g|webp|svg)$/i.test(file.name)) {
+      setError('Solo PNG, SVG, JPG o WEBP.');
+      return;
+    }
+    if (file.size > MAX_BYTES) {
+      setError('El archivo supera 2MB.');
+      return;
+    }
+    setError(null);
+    const isSvg = file.type.toLowerCase() === 'image/svg+xml' || /\.svg$/i.test(file.name);
+    if (isSvg) {
+      void upload(file);
+      return;
+    }
+    setPending(file);
+  };
 
   const upload = async (file: File) => {
     if (!companyId) {
@@ -72,6 +106,7 @@ export function LogoUploader({
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       onChange(json.url as string);
+      setPending(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error subiendo logo');
     } finally {
@@ -106,7 +141,7 @@ export function LogoUploader({
     e.preventDefault();
     setDragging(false);
     const file = e.dataTransfer.files?.[0];
-    if (file) void upload(file);
+    if (file) pick(file);
   };
 
   return (
@@ -122,7 +157,7 @@ export function LogoUploader({
                 <img src={logoUrl} alt={companyName} className="w-full h-full object-contain" />
               ) : (
                 <span className="text-white text-xs text-center opacity-60">
-                  Versión blanca
+                  {variant === 'icon' ? 'Isotipo' : 'Versión blanca'}
                 </span>
               )}
             </div>
@@ -174,7 +209,7 @@ export function LogoUploader({
               className="hidden"
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) void upload(f);
+                if (f) pick(f);
                 // Reset so re-selecting the same file fires onChange.
                 e.target.value = '';
               }}
@@ -211,6 +246,17 @@ export function LogoUploader({
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
           <span>{error}</span>
         </div>
+      )}
+
+      {pending && (
+        <LogoCropper
+          file={pending}
+          aspect={aspect}
+          busy={busy}
+          onCancel={() => setPending(null)}
+          onConfirm={(cropped) => void upload(cropped)}
+          onUseOriginal={() => void upload(pending)}
+        />
       )}
     </div>
   );

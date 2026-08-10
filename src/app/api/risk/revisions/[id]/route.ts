@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -15,7 +15,9 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request);
+    // Dominio finanzas (ver el GET/POST de ../route.ts): un `hr` no borra
+    // revisiones de riesgo.
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 

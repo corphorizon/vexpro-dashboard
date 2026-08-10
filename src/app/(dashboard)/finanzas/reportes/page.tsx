@@ -18,7 +18,7 @@ import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { StatCard } from '@/components/ui/stat-card';
 import { Badge } from '@/components/ui/badge';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { features } from '@/lib/business-model';
 import { useModuleAccess } from '@/lib/use-module-access';
@@ -234,7 +234,7 @@ export default function ReportesPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sendOpen, setSendOpen] = useState(false);
-  const isAdmin = user?.effective_role === 'admin';
+  const isAdmin = isCompanyAdmin(user);
 
   const applyQuickRange = (kind: QuickRange) => {
     const r = computeQuickRange(kind);

@@ -13,6 +13,14 @@
 // (pasarelas que escribe el cron) con canales manuales, y editar acá obligaría
 // a decidir fila por fila cuál se puede tocar. El alta y la edición siguen
 // viviendo en el libro de cada ubicación, a un click de distancia.
+//
+// UBICACIONES COMPARTIDAS (migración 071 / auditoría 2026-08, A5)
+// Una wallet puede pertenecer a varias unidades con porcentaje. El endpoint
+// devuelve la parte de cada ubicación y acá se aplica a los TOTALES y al saldo
+// por ubicación — sin eso, una wallet 50/50 sumaba entera en las dos unidades.
+// Los ASIENTOS, en cambio, se listan completos: un depósito de $10.000 en una
+// wallet compartida fue de $10.000, y mostrar $5.000 sería inventar un
+// movimiento que no ocurrió. La nota de "compartida" explica la diferencia.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -32,6 +40,7 @@ import {
   autoCategoryLabel,
   AUTO_CATEGORIES,
   type LedgerEntry,
+  type LedgerTotals,
 } from '@/lib/channel-ledger';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -63,6 +72,8 @@ export default function BusinessUnitLedgerPage() {
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [priorEntries, setPriorEntries] = useState<LedgerEntry[]>([]);
   const [unitChannelKeys, setUnitChannelKeys] = useState<string[]>([]);
+  /** Parte de cada ubicación que le corresponde a esta unidad (1 = exclusiva). */
+  const [shares, setShares] = useState<Record<string, number>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
   const [unit, setUnit] = useState<BusinessUnit | null>(null);
   const [unitMissing, setUnitMissing] = useState(false);
@@ -118,6 +129,7 @@ export default function BusinessUnitLedgerPage() {
         setEntries(json.entries ?? []);
         setPriorEntries(json.priorEntries ?? []);
         setUnitChannelKeys(json.channelKeys ?? []);
+        setShares(json.shares ?? {});
       } else {
         toast.error(json.error ?? t('unitLedger.loadError'));
       }
@@ -142,25 +154,63 @@ export default function BusinessUnitLedgerPage() {
     return all.filter((r) => r.entry_date >= range.from && r.entry_date <= range.to);
   }, [priorEntries, entries, range.from, range.to]);
 
-  const totals = useMemo(
-    () => computeTotals([...priorEntries, ...entries], range.from, range.to),
-    [priorEntries, entries, range.from, range.to],
+  const shareOf = useCallback(
+    (key: string) => {
+      const s = Number(shares[key]);
+      return Number.isFinite(s) && s > 0 ? Math.min(s, 1) : 1;
+    },
+    [shares],
   );
+
+  const allKeys = useMemo(() => {
+    const keys = new Set<string>(unitChannelKeys);
+    for (const e of priorEntries) keys.add(e.channel_key);
+    for (const e of entries) keys.add(e.channel_key);
+    return [...keys];
+  }, [unitChannelKeys, priorEntries, entries]);
+
+  // Totales del rango PONDERADOS por la parte de cada ubicación: si una wallet
+  // es 50% de esta unidad, solo la mitad de su saldo y de sus flujos es de
+  // esta unidad. Se calcula canal por canal (computeTotals sobre el subconjunto)
+  // y se suma ponderado — sumar todo y ponderar después daría cualquier cosa
+  // apenas dos ubicaciones tengan porcentajes distintos.
+  const totals = useMemo<LedgerTotals>(() => {
+    const all = [...priorEntries, ...entries];
+    const acc: LedgerTotals = {
+      opening: 0, inflows: 0, outflows: 0, internalTransfers: 0, adjustments: 0, closing: 0,
+    };
+    for (const key of allKeys) {
+      const t = computeTotals(all.filter((e) => e.channel_key === key), range.from, range.to);
+      const s = shareOf(key);
+      acc.opening += t.opening * s;
+      acc.inflows += t.inflows * s;
+      acc.outflows += t.outflows * s;
+      acc.internalTransfers += t.internalTransfers * s;
+      acc.adjustments += t.adjustments * s;
+      acc.closing += t.closing * s;
+    }
+    return acc;
+  }, [priorEntries, entries, allKeys, shareOf, range.from, range.to]);
 
   // Saldo de cada ubicación al cierre del rango. Se listan también las
   // ubicaciones sin un solo asiento: que estén en cero es información.
   const perLocation = useMemo(() => {
     const all = [...priorEntries, ...entries];
-    const keys = new Set<string>(unitChannelKeys);
-    for (const e of all) keys.add(e.channel_key);
-    return [...keys]
-      .map((key) => ({
-        key,
-        label: labelOf(key),
-        balance: balanceAsOf(all.filter((e) => e.channel_key === key), range.to),
-      }))
+    return allKeys
+      .map((key) => {
+        const full = balanceAsOf(all.filter((e) => e.channel_key === key), range.to);
+        const share = shareOf(key);
+        return { key, label: labelOf(key), share, fullBalance: full, balance: full * share };
+      })
       .sort((a, b) => a.label.localeCompare(b.label));
-  }, [priorEntries, entries, unitChannelKeys, labelOf, range.to]);
+  }, [priorEntries, entries, allKeys, labelOf, shareOf, range.to]);
+
+  const hasSharedLocations = useMemo(
+    () => perLocation.some((l) => l.share < 1),
+    [perLocation],
+  );
+
+  const sharePct = (share: number) => String(Math.round(share * 1000) / 10);
 
   const unitName = unit?.name ?? t('unitLedger.title');
 
@@ -171,7 +221,12 @@ export default function BusinessUnitLedgerPage() {
         logoUrl: company?.logo_url ?? null,
         colorPrimary: company?.color_primary ?? null,
       },
-      channelLabel: unitName,
+      // Con ubicaciones compartidas el resumen del PDF va prorrateado y el
+      // detalle no (igual que en pantalla): el rótulo lo dice para que el que
+      // recibe el archivo no intente cuadrarlos.
+      channelLabel: hasSharedLocations
+        ? `${unitName} · ${t('unitLedger.sharedNoticeShort')}`
+        : unitName,
       isAuto: false,
       from: range.from,
       to: range.to,
@@ -281,7 +336,17 @@ export default function BusinessUnitLedgerPage() {
               >
                 <span className="flex items-center gap-2 min-w-0">
                   <Wallet className="w-4 h-4 text-muted-foreground shrink-0" />
-                  <span className="truncate">{loc.label}</span>
+                  <span className="min-w-0">
+                    <span className="block truncate">{loc.label}</span>
+                    {loc.share < 1 && (
+                      <span className="block text-xs text-muted-foreground">
+                        {t('unitLedger.sharedOf', {
+                          pct: sharePct(loc.share),
+                          total: formatCurrency(loc.fullBalance),
+                        })}
+                      </span>
+                    )}
+                  </span>
                 </span>
                 <span className="font-semibold tabular-nums shrink-0">{formatCurrency(loc.balance)}</span>
               </Link>
@@ -289,6 +354,14 @@ export default function BusinessUnitLedgerPage() {
           </div>
         )}
       </Card>
+
+      {/* Ubicaciones compartidas: el resumen va prorrateado, los asientos no. */}
+      {hasSharedLocations && (
+        <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4">
+          <Wallet className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+          <p className="text-sm text-muted-foreground">{t('unitLedger.sharedNotice')}</p>
+        </div>
+      )}
 
       {/* Libro consolidado */}
       <Card className="p-0 overflow-hidden">
@@ -347,6 +420,14 @@ export default function BusinessUnitLedgerPage() {
                         >
                           {labelOf(row.channel_key)}
                         </Link>
+                        {/* El importe de la fila es el del movimiento REAL, no
+                            la parte de esta unidad: el badge evita leerlo como
+                            si el 100% le correspondiera. */}
+                        {shareOf(row.channel_key) < 1 && (
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            {t('unitLedger.sharedBadge', { pct: sharePct(shareOf(row.channel_key)) })}
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium">{autoLabel ?? row.concept}</div>

@@ -43,10 +43,12 @@ export type AuthInfo = {
 };
 
 /**
- * When the caller is a platform superadmin, company_id can be passed via
- * query string (?company_id=...) or JSON body (company_id). This mirrors
- * the pattern already used by /api/admin/api-credentials and lets superadmins
- * call tenant-scoped endpoints while "viewing as" that tenant.
+ * When the caller is a platform superadmin, company_id se lee ÚNICAMENTE del
+ * query string (?company_id=...). El body NO se mira: leerlo obligaría a
+ * consumir el stream de la request y las rutas ya no podrían hacer
+ * `await request.json()` después. Si un endpoint necesita que el superadmin
+ * apunte a un tenant, la URL debe llevar `?company_id=<id>` aunque el body
+ * repita el dato — mandarlo solo en el body devuelve 400.
  *
  * Returns the resolved companyId string or null if not provided.
  */

@@ -8,6 +8,7 @@ import {
   relativeLuminance,
   readableTextOn,
 } from './brand';
+import { buildBrandPalette } from './brand-color';
 
 describe('hexToRgb', () => {
   it('convierte forma larga y corta', () => {
@@ -62,15 +63,24 @@ describe('globals.css coincide con la paleta', () => {
     'utf8',
   );
 
-  /** Lee la primera declaración de una variable (bloque :root, tema claro). */
+  /**
+   * Lee la primera declaración de una variable (bloque :root, tema claro).
+   * Las variables de marca ya no son un hex suelto sino
+   * `var(--brand-…, #RESPALDO)`: lo que interesa comparar es el respaldo.
+   */
   function cssVar(name: string): string | null {
-    const m = css.match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,8})`));
+    const m = css.match(
+      new RegExp(`${name}:\\s*(?:var\\([^,)]+,\\s*)?(#[0-9a-fA-F]{3,8})`),
+    );
     return m ? m[1].toUpperCase() : null;
   }
 
   const PARES: Array<[string, string]> = [
-    ['--color-primary', BRAND_HEX.primary],
-    ['--accent', BRAND_HEX.accent],
+    // El primario y el acento pasan por la corrección de contraste
+    // (brand-color.ts), así que el respaldo del CSS es la VARIANTE clara, no
+    // el hex de la paleta. Los respaldos se verifican en brand-color.test.ts.
+    ['--color-primary', buildBrandPalette(BRAND_HEX.primary).light],
+    ['--accent', buildBrandPalette(BRAND_HEX.accent).light],
     ['--positive', BRAND_HEX.positive],
     ['--negative', BRAND_HEX.negative],
     ['--warning', BRAND_HEX.warning],

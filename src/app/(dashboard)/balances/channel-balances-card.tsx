@@ -51,6 +51,7 @@ import {
   isAutomatic,
   isLiquid,
   normalizeLocationType,
+  primaryUnitId,
   summarize,
   type BusinessUnit,
   type CashLocation,
@@ -301,8 +302,10 @@ export function ChannelBalancesCard({
           is_visible: loc.is_visible,
           location_type: draft.location_type,
           // La unidad principal sigue viviendo en channel_configs para las
-          // pantallas que la leen sin saber del reparto.
-          business_unit_id: draft.shares[0]?.business_unit_id ?? null,
+          // pantallas que la leen sin saber del reparto. Es la de MAYOR parte,
+          // no la primera del array: con un reparto 30/70, guardar la primera
+          // cargada dejaba la ubicación registrada bajo la unidad del 30%.
+          business_unit_id: primaryUnitId(draft.shares),
           holder: draft.holder,
         }),
       });

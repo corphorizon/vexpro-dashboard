@@ -1729,6 +1729,18 @@ export default function UploadPage() {
   // ediciones sin guardar de esos campos. El detalle vive en su propio estado
   // y se re-lee del servidor después de cada guardado.
   const [incomeLines, setIncomeLines] = useState<IncomeLine[]>([]);
+  /**
+   * Período al que pertenece `incomeLines`. Vacío = no hay una carga
+   * confirmada (nunca se cargó, o la carga falló).
+   *
+   * POR QUÉ EXISTE (auditoría 2026-08, A2): el POST manda SIEMPRE el período
+   * completo y la RPC borra e inserta. Si el estado quedó con las líneas del
+   * mes anterior —porque la carga del mes nuevo falló y devolvió null— la
+   * siguiente acción del usuario escribía la facturación de marzo dentro de
+   * abril, y de paso borraba la de abril. Sin este centinela el bug es
+   * invisible: la pantalla muestra líneas plausibles del mes equivocado.
+   */
+  const [incomeLinesPeriodId, setIncomeLinesPeriodId] = useState<string>('');
   const [savingIncomeLines, setSavingIncomeLines] = useState(false);
   const [newIncomeLine, setNewIncomeLine] = useState<IncomeLineForm>(EMPTY_INCOME_LINE);
   const [editingIncomeLineId, setEditingIncomeLineId] = useState<string | null>(null);
@@ -1748,13 +1760,28 @@ export default function UploadPage() {
   useEffect(() => {
     if (section !== 'ingresos') return;
     let cancelled = false;
+    // Vaciar ANTES de pedir: mientras la respuesta viaja, la pantalla no
+    // puede seguir mostrando el detalle del mes anterior como si fuera el de
+    // este. Si además la carga falla, quedarse con las líneas viejas es lo
+    // que permitía escribirlas en el mes equivocado.
+    setIncomeLines([]);
+    setIncomeLinesPeriodId('');
     void (async () => {
       const lines = await loadIncomeLines(selectedPeriod);
       // `cancelled` evita que una respuesta lenta del período anterior pise
       // el detalle del período que el usuario ya tiene en pantalla.
-      if (!cancelled && lines) setIncomeLines(lines);
+      if (cancelled) return;
+      if (lines) {
+        setIncomeLines(lines);
+        setIncomeLinesPeriodId(selectedPeriod);
+      } else {
+        // Un fallo mudo dejaba la tabla vacía y al usuario creyendo que el mes
+        // no tiene ingresos cargados.
+        showError(t('income.loadError'));
+      }
     })();
     return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section, selectedPeriod, loadIncomeLines]);
 
   const incomeTotals = useMemo(() => computeIncomeTotals(incomeLines), [incomeLines]);
@@ -1783,6 +1810,15 @@ export default function UploadPage() {
     if (!periodId) {
       setIncomeLines(previousList);
       showError(t('income.noPeriod'));
+      return;
+    }
+    // El estado en pantalla tiene que ser el del período al que vamos a
+    // escribir. Si no coincide (cambio de mes con la carga a medias, o carga
+    // fallida), el POST reemplazaría el detalle de ESE mes con el del otro:
+    // facturación duplicada acá y borrada allá. Se corta antes de escribir.
+    if (incomeLinesPeriodId !== periodId) {
+      setIncomeLines(previousList);
+      showError(t('income.periodMismatch'));
       return;
     }
     setSavingIncomeLines(true);
@@ -1818,7 +1854,10 @@ export default function UploadPage() {
       showSuccess(opts.toast);
       await refreshSections(['ingresos']);
       const fresh = await loadIncomeLines(periodId); // ids reales en vez de los optimistas
-      if (fresh) setIncomeLines(fresh);
+      if (fresh) {
+        setIncomeLines(fresh);
+        setIncomeLinesPeriodId(periodId);
+      }
     } catch (err) {
       setIncomeLines(previousList); // rollback a lo que hay en DB
       Sentry.captureException(err, {

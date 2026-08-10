@@ -7,6 +7,9 @@ export interface Company {
   /** Optional white/monochrome logo for use on dark backgrounds (sidebar).
    *  Falls back to logo_url when null. */
   logo_url_white: string | null;
+  /** Isotipo cuadrado (migración 072) para superficies angostas: el sidebar
+   *  contraído. Null = se muestra la inicial del nombre. */
+  logo_icon_url: string | null;
   color_primary: string;
   color_secondary: string;
   currency: string;

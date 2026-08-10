@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { fetchCoinsbuyPayoutsV3 } from '@/lib/api-integrations/coinsbuy/payouts';
 
 // ---------------------------------------------------------------------------
@@ -14,7 +14,8 @@ import { fetchCoinsbuyPayoutsV3 } from '@/lib/api-integrations/coinsbuy/payouts'
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    // Dominio finanzas: movimientos de la pasarela cripto.
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const url = new URL(request.url);

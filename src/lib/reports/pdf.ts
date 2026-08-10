@@ -346,7 +346,9 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
         b.channels.map((c) => [
           c.label,
           c.type === 'auto' ? 'Automático' : c.type === 'api' ? 'API' : 'Manual',
-          fmtCurrency(c.amount),
+          // Sin dato (ni libro ni snapshot) se imprime 's/d': un $0,00 se
+          // leería como "la cuenta está vacía".
+          c.source === 'missing' ? 's/d' : fmtCurrency(c.amount),
         ]),
         [['Total Consolidado', '', fmtCurrency(b.total)]],
       );

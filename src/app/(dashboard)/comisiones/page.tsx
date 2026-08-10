@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { useData } from '@/lib/data-context';
 import type { CommercialMonthlyResult } from '@/lib/types';
-import { useAuth } from '@/lib/auth-context';
+import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
@@ -776,7 +776,7 @@ export default function ComisionesPage() {
   const [recalcInProgress, setRecalcInProgress] = useState(false);
 
   const handleRecalcHistory = useCallback(async () => {
-    if (user?.effective_role !== 'admin') {
+    if (!isCompanyAdmin(user)) {
       setToast({ type: 'error', msg: t('comm.recalcHistoryAdminOnly') });
       setTimeout(() => setToast(null), 4000);
       return;
@@ -1826,7 +1826,7 @@ export default function ComisionesPage() {
                   {t('comm.sectionPnLSpecial')}
                   <span className="text-xs text-muted-foreground font-normal">({pnlSpecialBdms.length})</span>
                 </h3>
-                {user?.effective_role === 'admin' && (
+                {isCompanyAdmin(user) && (
                   <button
                     onClick={() => handleRecalcHistory()}
                     disabled={recalcInProgress}

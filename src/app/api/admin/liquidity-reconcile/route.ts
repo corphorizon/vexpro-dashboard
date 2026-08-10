@@ -104,6 +104,14 @@ export async function POST(request: NextRequest) {
       }
       return apiError('liquidity-reconcile', error, { status: 500 });
     }
+    await serverAuditLog(admin, {
+      companyId: auth.companyId,
+      actorId: auth.userId,
+      actorName: auth.name || auth.email,
+      action: 'create',
+      module: 'liquidity',
+      details: `Cuenta de liquidez ${num} creada${data?.label ? ` (${data.label})` : ''}`,
+    });
     return NextResponse.json({ success: true, account: data });
   }
 
