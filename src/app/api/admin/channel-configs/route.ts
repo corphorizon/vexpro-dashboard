@@ -4,6 +4,8 @@
 // GET                               → list all channel_configs rows for the
 //                                     caller's company (cualquier miembro;
 //                                     superadmin debe pasar ?company_id=…).
+//                                     Cada fila trae su `unit_shares` (el
+//                                     reparto de la migración 071).
 // POST { action:'upsert', ... }     → create or update one channel_config.
 // POST { action:'delete', key }     → delete a custom channel (is_custom=true).
 //                                     Built-ins can't be deleted.
@@ -22,7 +24,8 @@ import {
   type ChannelType,
 } from '@/lib/channel-configs';
 import { apiError } from '@/lib/api-error';
-import { DEFAULT_LOCATION_TYPE, isLocationType } from '@/lib/cash-locations';
+import { DEFAULT_LOCATION_TYPE, isLocationType, type UnitShare } from '@/lib/cash-locations';
+import type { ChannelConfigRow } from '@/lib/channel-configs';
 
 const BUILTIN_KEYS = new Set(BUILTIN_CHANNELS.map((c) => c.key));
 
@@ -77,16 +80,51 @@ export async function GET(request: NextRequest) {
   if (auth instanceof NextResponse) return auth;
 
   const admin = createAdminClient();
-  const { data, error } = await admin
-    .from('channel_configs')
-    .select(CONFIG_COLUMNS)
-    .eq('company_id', auth.companyId)
-    .order('sort_order', { ascending: true });
+  // El reparto viaja PEGADO a la configuración, no en un endpoint aparte.
+  // Cuando había que pedirlo por separado, cada pantalla nueva se olvidaba de
+  // hacerlo y atribuía la ubicación entera a su unidad principal: el reporte de
+  // empresa mostraba una wallet 60/40 como 100% de una sola unidad mientras
+  // /balances la repartía bien (auditoría 2026-08, B1/C6). Si el contrato lo
+  // incluye siempre, ningún consumidor puede omitirlo.
+  const [configs, shares] = await Promise.all([
+    admin
+      .from('channel_configs')
+      .select(CONFIG_COLUMNS)
+      .eq('company_id', auth.companyId)
+      .order('sort_order', { ascending: true }),
+    admin
+      .from('location_business_units')
+      .select('channel_key, business_unit_id, share')
+      .eq('company_id', auth.companyId),
+  ]);
 
-  if (error) {
-    return apiError('admin/channel-configs', error, { status: 500 });
+  if (configs.error) {
+    return apiError('admin/channel-configs', configs.error, { status: 500 });
   }
-  return NextResponse.json({ success: true, rows: data ?? [] });
+  if (shares.error) {
+    return apiError('admin/channel-configs shares', shares.error, { status: 500 });
+  }
+
+  const sharesByKey = new Map<string, UnitShare[]>();
+  for (const row of shares.data ?? []) {
+    if (!row?.channel_key || !row.business_unit_id) continue;
+    const entry: UnitShare = {
+      business_unit_id: row.business_unit_id,
+      share: Number(row.share) || 0,
+    };
+    const arr = sharesByKey.get(row.channel_key);
+    if (arr) arr.push(entry);
+    else sharesByKey.set(row.channel_key, [entry]);
+  }
+
+  // `unit_shares: []` y no `null` cuando no hay reparto: así el consumidor
+  // distingue "no hay filas" (manda business_unit_id) de "no me lo mandaron".
+  const rows: ChannelConfigRow[] = (configs.data ?? []).map((r) => ({
+    ...(r as ChannelConfigRow),
+    unit_shares: sharesByKey.get(r.channel_key) ?? [],
+  }));
+
+  return NextResponse.json({ success: true, rows });
 }
 
 export async function POST(request: NextRequest) {

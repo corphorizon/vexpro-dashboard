@@ -118,7 +118,6 @@ export function ChannelBalancesCard({
   const lang = locale === 'en' ? 'en' : 'es';
 
   const [units, setUnits] = useState<BusinessUnit[]>([]);
-  const [shareRows, setShareRows] = useState<Array<UnitShare & { channel_key: string }>>([]);
   const [showUnits, setShowUnits] = useState(false);
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
@@ -137,34 +136,25 @@ export function ChannelBalancesCard({
     }
   }, []);
 
-  const loadShares = useCallback(async () => {
-    try {
-      const res = await apiFetch('/api/admin/location-units');
-      const json = (await res.json()) as {
-        success: boolean;
-        rows?: Array<UnitShare & { channel_key: string }>;
-      };
-      if (json.success) setShareRows(json.rows ?? []);
-    } catch {
-      // Sin reparto cargado manda channel_configs.business_unit_id.
-    }
-  }, []);
-
   useEffect(() => {
     loadUnits();
-    loadShares();
-  }, [loadUnits, loadShares]);
+  }, [loadUnits]);
 
+  // El reparto viene con `configRows`: desde que
+  // `GET /api/admin/channel-configs` lo devuelve, el fetch aparte a
+  // /api/admin/location-units era un segundo request pidiendo lo mismo y una
+  // segunda copia del dato que se podía desincronizar de la primera. Tras
+  // guardar, `onChanged()` recarga la configuración y con ella el reparto.
   const sharesByKey = useMemo(() => {
     const map = new Map<string, UnitShare[]>();
-    for (const row of shareRows) {
-      const arr = map.get(row.channel_key);
-      const entry = { business_unit_id: row.business_unit_id, share: Number(row.share) };
-      if (arr) arr.push(entry);
-      else map.set(row.channel_key, [entry]);
+    for (const row of configRows) {
+      const shares = (row.unit_shares ?? [])
+        .filter((s) => s?.business_unit_id)
+        .map((s) => ({ business_unit_id: s.business_unit_id, share: Number(s.share) || 0 }));
+      if (shares.length > 0) map.set(row.channel_key, shares);
     }
     return map;
-  }, [shareRows]);
+  }, [configRows]);
 
   const locations: CashLocation[] = useMemo(() => {
     const rowByKey = new Map(configRows.map((r) => [r.channel_key, r]));
@@ -257,7 +247,6 @@ export function ChannelBalancesCard({
       const json = (await res.json()) as { success: boolean; error?: string };
       if (!json.success) throw new Error(json.error ?? t('cash.saveError'));
       setStatus({ kind: 'ok', msg: t('cash.deleted') });
-      await loadShares();
       onChanged();
     } catch (err) {
       setStatus({ kind: 'err', msg: err instanceof Error ? err.message : t('cash.saveError') });
@@ -322,7 +311,7 @@ export function ChannelBalancesCard({
 
       cancelEdit();
       setStatus({ kind: 'ok', msg: t('cash.saved') });
-      await loadShares();
+      // Recarga la configuración, que ahora trae también el reparto.
       onChanged();
     } catch (err) {
       setStatus({ kind: 'err', msg: err instanceof Error ? err.message : t('cash.saveError') });
@@ -766,7 +755,8 @@ export function ChannelBalancesCard({
           onClose={() => setShowUnits(false)}
           onChanged={() => {
             loadUnits();
-            loadShares();
+            // Borrar una unidad borra en cascada sus filas de reparto, así que
+            // la configuración también hay que releerla.
             onChanged();
           }}
         />

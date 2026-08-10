@@ -12,6 +12,22 @@ import { apiError } from '@/lib/api-error';
 // avoid breaking bookmarks / integrations.
 // ---------------------------------------------------------------------------
 
+/**
+ * ¿La entidad NO era 'company' todavía? Solo entonces el cambio de modelo
+ * apaga datos que hoy cuentan — re-guardar el mismo modelo no debe avisar nada.
+ */
+async function isChangingToCompany(
+  admin: ReturnType<typeof createAdminClient>,
+  id: string,
+): Promise<boolean> {
+  const { data } = await admin
+    .from('companies')
+    .select('business_model')
+    .eq('id', id)
+    .maybeSingle();
+  return (data?.business_model ?? 'broker') !== 'company';
+}
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -56,6 +72,45 @@ export async function PATCH(
     }
 
     const admin = createAdminClient();
+
+    // ── Aviso de datos que dejan de contar ──────────────────────────────────
+    // Pasar a 'company' apaga el P&L de broker y el circuito de prop firm en
+    // la cadena de distribución (ver la neutralización en
+    // src/lib/distribution-inputs.ts) y esconde depósitos/retiros de toda
+    // pantalla. Si la entidad ya tiene esa data cargada, el cambio le mueve
+    // el "Monto a Distribuir" sin que ninguna pantalla explique por qué. Se
+    // avisa ANTES de que pase por sorpresa; no bloquea el cambio.
+    let warning: string | null = null;
+    if (allowed.business_model === 'company' && (await isChangingToCompany(admin, id))) {
+      const countOf = async (table: string) => {
+        const { count } = await admin
+          .from(table)
+          .select('id', { count: 'exact', head: true })
+          .eq('company_id', id);
+        return count ?? 0;
+      };
+      const [deps, withs, pfs] = await Promise.all([
+        countOf('deposits'),
+        countOf('withdrawals'),
+        countOf('prop_firm_sales'),
+      ]);
+      if (deps + withs + pfs > 0) {
+        const partes = [
+          deps > 0 ? `${deps} depósito${deps === 1 ? '' : 's'}` : null,
+          withs > 0 ? `${withs} retiro${withs === 1 ? '' : 's'}` : null,
+          pfs > 0 ? `${pfs} venta${pfs === 1 ? '' : 's'} de prop firm` : null,
+        ].filter(Boolean) as string[];
+        const detalle =
+          partes.length > 1
+            ? `${partes.slice(0, -1).join(', ')} y ${partes[partes.length - 1]}`
+            : partes[0];
+        warning =
+          `La empresa tiene ${detalle} cargados que dejarán de contar en la ` +
+          `distribución y de verse en las pantallas. Los períodos ya cerrados ` +
+          `conservan sus insumos congelados.`;
+      }
+    }
+
     const { data, error } = await admin
       .from('companies')
       .update({ ...allowed, updated_at: new Date().toISOString() })
@@ -67,7 +122,7 @@ export async function PATCH(
       return apiError('superadmin/companies/[id]', error, { status: 404, clientMessage: 'No se encontró la entidad' });
     }
 
-    return NextResponse.json({ success: true, company: data });
+    return NextResponse.json({ success: true, company: data, ...(warning ? { warning } : {}) });
   } catch (err) {
     return apiError('superadmin/companies/[id]', err, { status: 500 });
   }

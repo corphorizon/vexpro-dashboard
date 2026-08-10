@@ -15,6 +15,8 @@
 // Import-safe desde cliente y servidor: no toca Supabase ni React.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { round2 } from './utils';
+
 export const LOCATION_TYPES = ['gateway', 'wallet', 'bank', 'cash', 'trading', 'loan'] as const;
 export type LocationType = (typeof LOCATION_TYPES)[number];
 
@@ -100,10 +102,6 @@ export interface CashSummary {
   fund: number;
   /** Saldo de las unidades que se llevan aparte. */
   outsideFund: number;
-}
-
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
 /**

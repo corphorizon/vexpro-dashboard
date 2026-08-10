@@ -71,6 +71,7 @@ import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 import * as Sentry from '@sentry/nextjs';
 import { LOAD_TIMEOUT_MS, LOAD_WATCHDOG_MS, LOAD_MAX_RETRIES } from '@/lib/config';
 import { computeDistributionChain, type PeriodDistInput } from '@/lib/distribution';
+import { buildDistributionInputs } from '@/lib/distribution-inputs';
 
 // Magic numbers centralized in src/lib/config.ts (Sprint 3 quick win
 // 2026-06-06). Tuning them no longer means grepping the codebase.
@@ -664,56 +665,32 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
   // ─── Saldo chain computation ───
 
-  const computeSaldoChain = useCallback((): Map<string, SaldoInfo> => {
-    // Índices O(1) de las primitivas por período.
-    const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
-    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p.amount]));
-    const pfwIndex = new Map<string, number>();
-    for (const w of withdrawals) {
-      // Suma, no set: con filas duplicadas de categoría (posible antes de la
-      // migración 065) "la última gana" hacía que esta cadena difiera de
-      // getPeriodSummary y del consolidado. Sumar es la única lectura que
-      // coincide con las otras dos pase lo que pase.
-      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, (pfwIndex.get(w.period_id) || 0) + w.amount);
-    }
-    const expIndex = new Map<string, number>();
-    for (const e of expenses) {
-      expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + e.amount);
-    }
-    // investmentProfits por período — las inversiones son date-keyed (no
-    // period_id): se asignan al período cuyo año/mes coincide con inv.date.
-    // Misma lógica que getPeriodSummary.investmentProfits.
-    const invIndex = new Map<string, number>();
-    for (const inv of investments) {
-      if (!inv.date) continue;
-      const [y, m] = String(inv.date).split('-').map(Number);
-      const per = periods.find(p => p.year === y && p.month === m);
-      if (per) invIndex.set(per.id, (invIndex.get(per.id) || 0) + (Number(inv.profit) || 0));
-    }
+  // Fuentes de la cadena, en un solo lugar: las tres derivadas de abajo
+  // (cadena, insumos del forecast, deriva de snapshot) construyen sus insumos
+  // con el MISMO constructor. Ver src/lib/distribution-inputs.ts.
+  const distSources = useMemo(
+    () => ({
+      operatingIncome,
+      propFirmSales,
+      withdrawals,
+      expenses,
+      investments,
+      businessModel: company?.business_model,
+    }),
+    [operatingIncome, propFirmSales, withdrawals, expenses, investments, company?.business_model],
+  );
 
-    // Construir inputs canónicos EN ORDEN sobre TODOS los períodos y delegar
-    // en la fórmula única compartida (src/lib/distribution.ts). Correr la
-    // cadena completa (no filtrada por saldoStart) garantiza que el arrastre
-    // de deuda/reserva coincida con /socios.
+  const computeSaldoChain = useCallback((): Map<string, SaldoInfo> => {
+    // Inputs canónicos EN ORDEN sobre TODOS los períodos, delegando en la
+    // fórmula única compartida (src/lib/distribution.ts). Correr la cadena
+    // completa (no filtrada por saldoStart) garantiza que el arrastre de
+    // deuda/reserva coincida con /socios.
     //
-    // Los mismos inputs, enriquecidos con year/month/label/is_closed, se
-    // exponen como getDistributionInputs() para el forecast (/finanzas/
-    // forecast): la proyección appendea meses sintéticos a ESTOS insumos y
-    // corre la misma fórmula — una construcción paralela divergiría.
-    const inputs: PeriodDistInput[] = periods.map(period => {
-      const oi = oiIndex.get(period.id);
-      const pfs = pfsIndex.get(period.id) || 0;
-      const pfW = pfwIndex.get(period.id) || 0;
-      return {
-        periodId: period.id,
-        brokerPnl: oi?.broker_pnl || 0,
-        other: oi?.other || 0,
-        propFirmNetIncome: pfs - pfW,
-        investmentProfits: invIndex.get(period.id) || 0,
-        totalExpenses: expIndex.get(period.id) || 0,
-        reservePct: period.reserve_pct,
-      };
-    });
+    // Los mismos inputs se exponen como getDistributionInputs() para el
+    // forecast (/finanzas/forecast): la proyección appendea meses sintéticos
+    // a ESTOS insumos y corre la misma fórmula — una construcción paralela
+    // divergiría.
+    const inputs: PeriodDistInput[] = buildDistributionInputs(periods, distSources);
 
     // Períodos CERRADOS: mandan los insumos congelados en closing_snapshot,
     // no las tablas vivas. Sin esto, editar una inversión fechada en un mes
@@ -726,80 +703,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
       chain.set(pid, { ...r, totalDistribuir: r.montoDistribuir });
     }
     return chain;
-  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
+  }, [periods, distSources]);
 
   // Insumos de la cadena con metadata de período, para el forecast.
   const getDistributionInputs = useCallback(() => {
-    const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
-    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p.amount]));
-    const pfwIndex = new Map<string, number>();
-    for (const w of withdrawals) {
-      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, (pfwIndex.get(w.period_id) || 0) + w.amount);
-    }
-    const expIndex = new Map<string, number>();
-    for (const e of expenses) {
-      expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + e.amount);
-    }
-    const invIndex = new Map<string, number>();
-    for (const inv of investments) {
-      if (!inv.date) continue;
-      const [y, m] = String(inv.date).split('-').map(Number);
-      const per = periods.find(p => p.year === y && p.month === m);
-      if (per) invIndex.set(per.id, (invIndex.get(per.id) || 0) + (Number(inv.profit) || 0));
-    }
-    const live = periods.map(period => {
-      const oi = oiIndex.get(period.id);
-      const pfs = pfsIndex.get(period.id) || 0;
-      const pfW = pfwIndex.get(period.id) || 0;
-      return {
-        periodId: period.id,
-        year: period.year,
-        month: period.month,
-        label: period.label ?? `${period.month}/${period.year}`,
-        isClosed: !!period.is_closed,
-        brokerPnl: oi?.broker_pnl || 0,
-        other: oi?.other || 0,
-        propFirmNetIncome: pfs - pfW,
-        investmentProfits: invIndex.get(period.id) || 0,
-        totalExpenses: expIndex.get(period.id) || 0,
-        reservePct: period.reserve_pct,
-      };
-    });
+    const live = buildDistributionInputs(periods, distSources);
     // Mismo override que computeSaldoChain: cerrado ⇒ manda el congelador.
     return applySnapshotOverrides(periods, live).inputs;
-  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
+  }, [periods, distSources]);
 
   // Deriva snapshot-vs-vivo: en qué campos las tablas vivas de un período
   // CERRADO ya no coinciden con lo congelado. Vacío = nadie tocó el pasado.
   const getSnapshotDrifts = useCallback(() => {
-    const oiIndex = new Map(operatingIncome.map(o => [o.period_id, o]));
-    const pfsIndex = new Map(propFirmSales.map(p => [p.period_id, p.amount]));
-    const pfwIndex = new Map<string, number>();
-    for (const w of withdrawals) {
-      if (w.category === 'prop_firm') pfwIndex.set(w.period_id, (pfwIndex.get(w.period_id) || 0) + w.amount);
-    }
-    const expIndex = new Map<string, number>();
-    for (const e of expenses) {
-      expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + e.amount);
-    }
-    const invIndex = new Map<string, number>();
-    for (const inv of investments) {
-      if (!inv.date) continue;
-      const [y, m] = String(inv.date).split('-').map(Number);
-      const per = periods.find(p => p.year === y && p.month === m);
-      if (per) invIndex.set(per.id, (invIndex.get(per.id) || 0) + (Number(inv.profit) || 0));
-    }
-    const live = periods.map(period => ({
-      periodId: period.id,
-      brokerPnl: oiIndex.get(period.id)?.broker_pnl || 0,
-      other: oiIndex.get(period.id)?.other || 0,
-      propFirmNetIncome: (pfsIndex.get(period.id) || 0) - (pfwIndex.get(period.id) || 0),
-      investmentProfits: invIndex.get(period.id) || 0,
-      totalExpenses: expIndex.get(period.id) || 0,
-      reservePct: period.reserve_pct,
-    }));
+    const live = buildDistributionInputs(periods, distSources);
     return applySnapshotOverrides(periods, live).drifts;
-  }, [periods, expenses, operatingIncome, propFirmSales, withdrawals, investments]);
+  }, [periods, distSources]);
 
   // ─── Period summary (single) ───
 
@@ -1225,6 +1143,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
       getLiquidityData,
       getInvestmentsData,
       computeSaldoChain,
+      getDistributionInputs,
+      getSnapshotDrifts,
       isPeriodAfterSaldoStart,
       partners,
       partnerDistributions,

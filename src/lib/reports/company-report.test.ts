@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   UNCATEGORIZED,
+  buildCash,
   buildExpenses,
   buildResult,
   companyReportCsvRows,
   periodsInRange,
   type CompanyReport,
 } from './company-report';
+import type { BusinessUnit, CashLocation } from '@/lib/cash-locations';
 
 const periods = [
   { id: 'jun', year: 2026, month: 6, label: 'Jun 26' },
@@ -57,6 +59,77 @@ describe('buildResult', () => {
   });
 });
 
+describe('buildCash', () => {
+  const units: BusinessUnit[] = [
+    { id: 'u1', company_id: 'c', name: 'Brokerage', counts_to_fund: true, is_active: true, sort_order: 0 },
+    { id: 'u2', company_id: 'c', name: 'Inmuebles', counts_to_fund: false, is_active: true, sort_order: 1 },
+  ];
+
+  const shared: CashLocation = {
+    channel_key: 'wallet_externa',
+    label: 'Wallet Externa',
+    location_type: 'wallet',
+    // La unidad principal es u1, pero el reparto real es 60/40: el reporte no
+    // puede atribuirle el 100% a u1 solo porque es la que quedó en la config.
+    business_unit_id: 'u1',
+    unit_shares: [
+      { business_unit_id: 'u1', share: 0.6 },
+      { business_unit_id: 'u2', share: 0.4 },
+    ],
+    holder: null,
+    is_visible: true,
+    sort_order: 0,
+    balance: 1000,
+  };
+
+  it('reparte una ubicación compartida 60/40 sin tocar el total', () => {
+    const cash = buildCash([shared], units);
+
+    const u1 = cash.byUnit.find((g) => g.unit?.id === 'u1');
+    const u2 = cash.byUnit.find((g) => g.unit?.id === 'u2');
+    expect(u1?.total).toBe(600);
+    expect(u2?.total).toBe(400);
+
+    // Cada lado conserva el saldo entero para poder decir "60% de $1.000".
+    expect(u1?.locations[0]).toMatchObject({ share: 0.6, balance: 600, fullBalance: 1000 });
+    expect(u2?.locations[0]).toMatchObject({ share: 0.4, balance: 400, fullBalance: 1000 });
+
+    // El total y el desglose por tipo siguen viendo la ubicación una sola vez.
+    expect(cash.summary.total).toBe(1000);
+    expect(cash.summary.liquid).toBe(1000);
+    expect(cash.byType).toEqual([{ type: 'wallet', total: 1000, count: 1 }]);
+
+    // Fondo vs aparte: u1 cuenta al fondo, u2 no.
+    expect(cash.summary.fund).toBe(600);
+    expect(cash.summary.outsideFund).toBe(400);
+
+    // El desglose por unidad suma exactamente el total.
+    expect(cash.byUnit.reduce((s, g) => s + g.total, 0)).toBe(1000);
+  });
+
+  it('sin reparto cargado manda business_unit_id', () => {
+    const cash = buildCash([{ ...shared, unit_shares: [] }], units);
+    expect(cash.byUnit).toHaveLength(1);
+    expect(cash.byUnit[0].unit?.id).toBe('u1');
+    expect(cash.byUnit[0].total).toBe(1000);
+  });
+
+  it('el CSV lista la compartida una vez por unidad, con su parte', () => {
+    const cash = buildCash([shared], units);
+    const report: CompanyReport = {
+      range: { from: '2026-08-01', to: '2026-08-09' },
+      periods: [],
+      billing: { billed: 0, collected: 0, pending: 0, clientCount: 0, withDebt: 0, clients: [] },
+      expenses: buildExpenses([]),
+      result: buildResult(0, 0, []),
+      cash,
+    };
+    const rows = companyReportCsvRows(report);
+    expect(rows).toContainEqual(['Dinero · Ubicaciones', 'Wallet Externa (Brokerage) · 60%', 600]);
+    expect(rows).toContainEqual(['Dinero · Ubicaciones', 'Wallet Externa (Inmuebles) · 40%', 400]);
+  });
+});
+
 describe('companyReportCsvRows', () => {
   it('exporta las cuatro secciones', () => {
     const report: CompanyReport = {
@@ -89,6 +162,8 @@ describe('companyReportCsvRows', () => {
                 is_visible: true,
                 sort_order: 0,
                 balance: 500,
+                share: 1,
+                fullBalance: 500,
               },
             ],
           },
