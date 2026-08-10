@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -20,7 +20,9 @@ const ALLOWED_ROLES = ['admin', 'socio'];
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    // Dominio finanzas: excluir transacciones mueve los números de los
+    // reportes. El fallback histórico se lo permitía a `hr`.
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();
@@ -42,7 +44,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    // Dominio finanzas: excluir transacciones mueve los números de los
+    // reportes. El fallback histórico se lo permitía a `hr`.
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     // Los superadmins (platform_users) en modo "viewing as" llegan acá con

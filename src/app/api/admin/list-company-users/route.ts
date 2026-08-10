@@ -15,6 +15,13 @@ import { apiError } from '@/lib/api-error';
 //   · tenant admin/auditor/hr → companyId from JWT
 //   · superadmin              → companyId from ?company_id=<uuid>
 //
+// Se queda en el fallback ADMIN_ROLES a propósito: la lista de miembros no es
+// de finanzas ni de RRHH — la consume auth-context para resolver nombres de
+// actor en TODA la app (logs, órdenes, legajos), así que atarla a un dominio
+// dejaría media UI mostrando ids en vez de nombres. Lo sensible (secretos 2FA)
+// nunca se selecciona, y las mutaciones de usuario viven en rutas aparte con
+// `requireAdmin: true`.
+//
 // Response shape mirrors `User` in src/lib/auth-context.tsx so the client
 // can drop the result straight into state. `twofa_secret` is never selected.
 // ---------------------------------------------------------------------------

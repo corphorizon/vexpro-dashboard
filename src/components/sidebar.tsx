@@ -7,7 +7,6 @@ import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-fetch';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
-import { CompanyLogo } from '@/components/company-logo';
 import { NotificationBell } from '@/components/notifications/notification-bell';
 import { getAccessibleGroups, getAccessibleItems } from '@/lib/module-groups';
 import { useTheme } from '@/lib/theme-context';
@@ -258,7 +257,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
           className={cn(
             'group flex items-center justify-center h-10 rounded-lg transition-all',
             isActive
-              ? 'bg-[var(--color-primary)] text-white shadow-sm'
+              ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
               : 'text-slate-300 hover:bg-slate-800 hover:text-white',
           )}
         >
@@ -279,7 +278,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
           'group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
           indent && 'ml-3 pl-3 border-l border-slate-700/60',
           isActive
-            ? 'bg-[var(--color-primary)] text-white shadow-sm'
+            ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
             : 'text-slate-300 hover:bg-slate-800 hover:text-white'
         )}
       >
@@ -320,39 +319,61 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
             is configured we fall back to the company name as typography
             so the header doesn't look broken.
             Prefer logo_url_white (designed for dark backgrounds) and fall
-            back to logo_url when the tenant hasn't uploaded a white version. */}
+            back to logo_url when the tenant hasn't uploaded a white version.
+
+            Contraído usa el isotipo (logo_icon_url, migración 072): el logo
+            ancho metido en 64px se veía como un cuadrado en blanco. */}
         <div className={cn(
           'border-b border-slate-800',
-          isCollapsed ? 'px-2 py-4 flex flex-col items-center gap-2' : 'px-5 py-6 flex items-center gap-2',
+          isCollapsed ? 'px-2 py-4 flex flex-col items-center gap-2' : 'px-4 py-6 flex items-center gap-3',
         )}>
           <Link
             href="/"
             onClick={handleNavClick}
             className={cn(
-              'flex items-center justify-center min-w-0',
-              !isCollapsed && 'flex-1',
+              'flex items-center min-w-0',
+              isCollapsed ? 'justify-center' : 'flex-1 justify-start',
             )}
             aria-label={company?.name || 'Inicio'}
             title={isCollapsed ? (company?.name || 'Inicio') : undefined}
           >
             {isCollapsed ? (
-              // Marca compacta: el logo ancho no entra en el rail.
-              <CompanyLogo
-                name={company?.name || 'Dashboard'}
-                logoUrl={company?.logo_url_white || company?.logo_url}
-                colorPrimary={company?.color_primary}
-                className="w-10 h-10"
-                initialsClassName="text-sm"
-              />
+              company?.logo_icon_url ? (
+                // Isotipo: sin fondo blanco: el archivo trae su propio fondo
+                // (o transparencia) y un cuadrado blanco detrás lo tapaba.
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={company.logo_icon_url}
+                  alt={company?.name ?? ''}
+                  className="w-10 h-10 object-contain"
+                  onError={(e) => {
+                    const el = e.currentTarget;
+                    el.style.display = 'none';
+                  }}
+                />
+              ) : (
+                // Sin isotipo se mantiene el comportamiento de siempre: la
+                // inicial sobre el primario, con la variante que se ve sobre
+                // el slate del sidebar (que es oscuro en los dos temas).
+                <span
+                  className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-semibold text-white"
+                  style={{ backgroundColor: 'var(--brand-on-dark-surface)' }}
+                  aria-hidden="true"
+                >
+                  {(company?.name || 'D').trim().charAt(0).toUpperCase()}
+                </span>
+              )
             ) : (company?.logo_url_white || company?.logo_url) ? (
               // Native <img> on purpose — tenant logos come from arbitrary
               // URLs and we don't want to force every domain into the
               // Next.js image allow-list.
+              // Alto generoso + ancho completo de la columna: antes el
+              // max-w-[180px] achicaba cualquier logo horizontal a ~36px.
               // eslint-disable-next-line @next/next/no-img-element
               <img
                 src={company?.logo_url_white || company?.logo_url || ''}
                 alt={company?.name ?? ''}
-                className="h-14 max-w-[180px] w-auto object-contain"
+                className="h-16 w-full object-contain object-left"
                 onError={(e) => {
                   // Fail gracefully: swap for name text if the URL 404s.
                   const el = e.currentTarget;
@@ -426,7 +447,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
                     className={cn(
                       'group flex items-center justify-center h-10 rounded-lg transition-all',
                       isActive
-                        ? 'bg-[var(--color-primary)] text-white shadow-sm'
+                        ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
                         : 'text-slate-300 hover:bg-slate-800 hover:text-white',
                     )}
                   >
@@ -445,7 +466,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
                   className={cn(
                     'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
                     isActive
-                      ? 'bg-[var(--color-primary)] text-white shadow-sm'
+                      ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
                       : 'text-slate-300 hover:bg-slate-800 hover:text-white',
                   )}
                 >
@@ -561,7 +582,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
               'group flex items-center justify-center rounded-lg text-sm font-medium transition-all',
               isCollapsed ? 'h-10' : 'gap-2 px-3 py-2',
               pathname === '/perfil'
-                ? 'bg-[var(--color-primary)] text-white'
+                ? 'bg-[var(--brand-on-dark-surface)] text-white'
                 : 'text-slate-300 hover:bg-slate-800 hover:text-white'
             )}
           >

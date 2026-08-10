@@ -14,9 +14,25 @@
    ═════════════════════════════════════════════════════════════════════════ */
 
 :root {
-  /* ── Marca ── */
-  --color-primary: #1E3A5F;      /* navy — identidad, headers, botón primario */
-  --color-secondary: #3B82F6;    /* azul — acento interactivo */
+  /* ── Marca ──
+     El color que carga cada empresa NO se usa crudo: src/lib/brand-color.ts
+     deriva variantes con contraste WCAG garantizado y src/lib/theme-apply.ts
+     las inyecta como `--brand-*`. Acá se elige la variante del tema (la del
+     bloque .dark pisa a esta). Los respaldos son la marca del producto, para
+     cuando no hay empresa activa — están calculados con la misma lib y hay un
+     test (brand-color.test.ts) que los recalcula y falla si se desfasan. */
+  --color-primary: var(--brand-primary-light, #1E3A5F);    /* relleno + tinta en claro */
+  --color-secondary: var(--brand-secondary-light, #3472D8);
+  /* Tinta de marca para texto/íconos; en oscuro NO es el mismo valor que el
+     relleno, porque un relleno que aguanta texto blanco encima es demasiado
+     oscuro para leerse como texto. */
+  --brand-ink: var(--brand-primary-ink-light, #1E3A5F);
+  /* Blanco o negro según la luminancia del relleno: el texto sobre el primario
+     no siempre puede ser blanco (marcas pastel). */
+  --brand-on-primary: var(--brand-primary-fg-light, #FFFFFF);
+  /* Superficies SIEMPRE oscuras (sidebar), que no siguen el tema: se declara
+     solo acá y .dark no la pisa a propósito. */
+  --brand-on-dark-surface: var(--brand-primary-dark, #506582);
 
   /* ── Superficies y texto ── */
   --background: #F8FAFC;
@@ -26,7 +42,7 @@
   --border: #E2E8F0;
   --muted: #F1F5F9;
   --muted-foreground: #64748B;
-  --accent: #3B82F6;
+  --accent: var(--brand-secondary-light, #3472D8);
 
   /* ── Semánticos (dinero / estado) ── */
   --positive: #059669;           /* emerald-600 — ganancia, éxito */
@@ -57,7 +73,13 @@
   --border: #334155;
   --muted: #263548;
   --muted-foreground: #B8C4D4;
-  --accent: #60A5FA;
+  /* Marca en oscuro: relleno aclarado lo justo para verse sobre el fondo sin
+     dejar ilegible el `text-white` que la UI escribe encima, y tinta aparte. */
+  --color-primary: var(--brand-primary-dark, #506582);
+  --color-secondary: var(--brand-secondary-dark, #3472D8);
+  --brand-ink: var(--brand-primary-ink-dark, #8191A5);
+  --brand-on-primary: var(--brand-primary-fg-dark, #FFFFFF);
+  --accent: var(--brand-secondary-ink-dark, #4F8FF7);
   --positive: #34D399;
   --negative: #F87171;
   --warning: #FBBF24;
@@ -83,6 +105,10 @@
   --color-info: var(--info);
   --color-primary: var(--color-primary);
   --color-secondary: var(--color-secondary);
+  /* text-brand-ink / bg-brand-on-primary — las variantes con contraste
+     garantizado, para no volver a escribir `text-primary dark:text-accent`. */
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-on-primary: var(--brand-on-primary);
 
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system, sans-serif;
 

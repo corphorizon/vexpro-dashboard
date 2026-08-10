@@ -453,10 +453,12 @@ function renderBalancesByChannelSection(
   const b = data.balances_by_channel;
   const typeLabel = (t: 'api' | 'manual' | 'auto') =>
     t === 'api' ? lt(locale, 'typeApi') : t === 'auto' ? lt(locale, 'typeAuto') : lt(locale, 'typeManual');
+  // `missing` = no hubo ni libro ni snapshot para ese canal. Mostrar $0,00
+  // afirmaría que la cuenta está vacía, que no es lo mismo que no saberlo.
   const rows = b.channels.map((c) => [
     c.label,
     typeLabel(c.type),
-    formatCurrency(c.amount),
+    c.source === 'missing' ? 's/d' : formatCurrency(c.amount),
   ]);
   const totalRow: string[] = [lt(locale, 'totalConsolidated'), '', formatCurrency(b.total)];
 
@@ -781,7 +783,8 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
     ...(data.balances_by_channel.channels.length === 0
       ? [`  ${lt(locale, 'textNoVisibleChannels')}`]
       : data.balances_by_channel.channels.map(
-          (c) => `  ${c.label.padEnd(28, ' ')} ${formatCurrency(c.amount)}`,
+          (c) =>
+            `  ${c.label.padEnd(28, ' ')} ${c.source === 'missing' ? 's/d' : formatCurrency(c.amount)}`,
         )),
     `  ${'TOTAL'.padEnd(28, ' ')} ${formatCurrency(data.balances_by_channel.total)}`,
     ``,

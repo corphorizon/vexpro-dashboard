@@ -73,6 +73,12 @@ create trigger trg_guard_closed_period
 -- ---------------------------------------------------------------------------
 -- Reemplazo atómico del período + materialización del total.
 --
+-- ⚠ SUPERSEDIDA POR LA MIGRACIÓN 073 (preserve-manual-other). La versión de
+-- acá pisa `operating_income.other` en la PRIMERA carga de detalle, borrando
+-- el "otros ingresos" que el usuario venía cargando a mano. La 073 hace
+-- CREATE OR REPLACE de esta misma función preservando ese monto como línea.
+-- Cualquier cambio a la RPC va en la 073, no acá.
+--
 -- Borra e inserta (mismo patrón que replace_period_expenses) y deja
 -- operating_income.other en la suma de lo COBRADO. Las dos cosas en la misma
 -- transacción: si se separaran, un fallo entre medio dejaría el detalle y el

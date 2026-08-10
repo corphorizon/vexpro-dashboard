@@ -4,9 +4,21 @@
 // Reconstructs the same list the /balances page renders, but without the
 // client-side hooks. Reads:
 //   · channel_configs         — per-company visibility + custom channels
+//   · channel_ledger_entries  — saldo del LIBRO vía RPC get_channel_ledger_balances
 //   · channel_balances        — latest snapshot per key (daily cron writes these)
 //   · liquidity_movements     — sum → `liquidez`
 //   · investments             — sum → `inversiones`
+//
+// PRIORIDAD DE FUENTES (auditoría 2026-08, A1): el libro manda sobre el
+// snapshot. /balances (getChannelValue) ya lee el libro primero; este builder
+// leía SOLO channel_balances, así que toda ubicación manual operada por libro
+// —bancos, préstamos, wallets cargadas a mano— salía en $0 o con un saldo de
+// hasta 30 días de antigüedad en el reporte, el PDF y el email. Dos pantallas
+// del mismo saldo que no coinciden es peor que no tener reporte.
+//
+// Y cuando NO hay ni libro ni snapshot en la ventana, la fila sale marcada
+// `source: 'missing'` en vez de un 0 mudo (mejora C8): un cero que en realidad
+// es "no hay dato" se lee como "esta cuenta está vacía".
 //
 // Never throws: on any failure returns `{ channels: [], total: 0 }` so a
 // flaky source doesn't take the whole report down.
@@ -14,16 +26,50 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { resolveChannels, type ChannelConfigRow, type ResolvedChannel } from '@/lib/channel-configs';
+import { hasLedger } from '@/lib/channel-ledger';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
+
+/**
+ * De dónde salió el número de la fila.
+ *   · `ledger`   — saldo corrido del libro por canal (la fuente preferida).
+ *   · `live`     — snapshot que acaba de escribir la API del proveedor.
+ *   · `snapshot` — último snapshot diario dentro de la ventana de 30 días.
+ *   · `computed` — reconstruido desde su propio módulo (liquidez/inversiones).
+ *   · `missing`  — NO hay dato. El amount es 0 pero no significa "cuenta vacía".
+ */
+export type ReportChannelSource = 'live' | 'snapshot' | 'computed' | 'ledger' | 'missing';
 
 export interface ReportChannelBalanceRow {
   key: string;
   label: string;
   type: 'api' | 'manual' | 'auto';
   amount: number;
-  source: 'live' | 'snapshot' | 'computed';
+  source: ReportChannelSource;
   isCustom: boolean;
+}
+
+/**
+ * Elige el saldo de un canal entre las dos fuentes, con la MISMA prioridad que
+ * `getChannelValue` en /balances. Pura a propósito: es la regla que la
+ * auditoría encontró divergente, así que tiene que poder testearse sin
+ * Supabase de por medio.
+ */
+export function pickChannelAmount(params: {
+  channelKey: string;
+  /** Saldo del libro al cierre de `asOf`, o undefined si el canal no tiene. */
+  ledgerBalance?: number;
+  /** Último snapshot dentro de la ventana, o undefined si no hay. */
+  snapshot?: { amount: number; source: string };
+}): { amount: number; source: ReportChannelSource } {
+  const { channelKey, ledgerBalance, snapshot } = params;
+  if (hasLedger(channelKey) && ledgerBalance !== undefined && Number.isFinite(ledgerBalance)) {
+    return { amount: ledgerBalance, source: 'ledger' };
+  }
+  if (snapshot) {
+    return { amount: snapshot.amount, source: snapshot.source === 'api' ? 'live' : 'snapshot' };
+  }
+  return { amount: 0, source: 'missing' };
 }
 
 export interface ReportBalancesByChannel {
@@ -100,6 +146,26 @@ export async function buildBalancesByChannel(
     for (const r of snapRows ?? []) {
       if (!latestSnap.has(r.channel_key)) {
         latestSnap.set(r.channel_key, { amount: Number(r.amount) || 0, source: r.source });
+      }
+    }
+
+    // 2b. Saldo del LIBRO por canal al cierre de `asOf`. Es la fuente
+    //     preferida: /balances la prioriza y el reporte tiene que decir lo
+    //     mismo. La RPC devuelve una fila por canal con asientos; los canales
+    //     sin libro simplemente no aparecen y caen al snapshot.
+    const ledgerByKey = new Map<string, number>();
+    const { data: ledgerRows, error: ledgerError } = await admin.rpc('get_channel_ledger_balances', {
+      p_company_id: companyId,
+      p_asof: asOf,
+    });
+    if (ledgerError) {
+      // No es fatal: se degrada a los snapshots, que es exactamente el
+      // comportamiento anterior a este fix.
+      console.error('[reports/balances-by-channel] libro:', ledgerError.message);
+    } else {
+      for (const r of (ledgerRows ?? []) as Array<{ channel_key: string; balance: number | string }>) {
+        const n = Number(r.balance);
+        if (Number.isFinite(n)) ledgerByKey.set(r.channel_key, n);
       }
     }
 
@@ -217,27 +283,36 @@ export async function buildBalancesByChannel(
       if (ch.key === 'coinsbuy' && pinnedWallets.length > 0) {
         // Expand into one row per pinned wallet.
         for (const pw of pinnedWallets) {
-          const snap = latestSnap.get(`coinsbuy:${pw.wallet_id}`);
+          const key = `coinsbuy:${pw.wallet_id}`;
+          const picked = pickChannelAmount({
+            channelKey: key,
+            ledgerBalance: ledgerByKey.get(key),
+            snapshot: latestSnap.get(key),
+          });
           channels.push({
-            key: `coinsbuy:${pw.wallet_id}`,
+            key,
             // Brand the rows so a reader can tell they're Coinsbuy wallets
             // without needing additional context.
             label: `Coinsbuy · ${pw.wallet_label}`,
             type: 'api',
-            amount: snap?.amount ?? 0,
-            source: snap ? 'live' : 'snapshot',
+            amount: picked.amount,
+            source: picked.source,
             isCustom: false,
           });
         }
         continue;
       }
-      const snap = latestSnap.get(ch.key);
+      const picked = pickChannelAmount({
+        channelKey: ch.key,
+        ledgerBalance: ledgerByKey.get(ch.key),
+        snapshot: latestSnap.get(ch.key),
+      });
       channels.push({
         key: ch.key,
         label: ch.label,
         type: ch.type,
-        amount: snap?.amount ?? 0,
-        source: (snap?.source === 'api' ? 'live' : 'snapshot') as ReportChannelBalanceRow['source'],
+        amount: picked.amount,
+        source: picked.source,
         isCustom: ch.isCustom,
       });
     }

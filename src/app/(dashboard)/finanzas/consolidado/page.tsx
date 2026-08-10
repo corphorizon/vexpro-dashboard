@@ -263,6 +263,19 @@ export default function ConsolidadoPage() {
         total: 'sum',
         kind: 'neutral',
       },
+      // ── Desglose de ingresos: VALOR VIVO, a diferencia de las columnas de
+      //    abajo (auditoría 2026-08, B4).
+      //
+      // `operatingIncome` y `monthResult` salen de la cadena (saldoInfo), que
+      // para un período CERRADO devuelve los insumos congelados en el
+      // snapshot. Estas tres columnas salen de getPeriodSummary, o sea de las
+      // tablas vivas: si alguien edita un mes cerrado, el desglose se mueve y
+      // el total de la derecha no. No se corrige leyéndolas de la cadena
+      // porque PeriodDistResult NO expone el desglose — solo ingresosNetos /
+      // egresosNetos / saldoAFavor (ver src/lib/distribution.ts). Exponerlo es
+      // un cambio en la fórmula canónica y en el formato del snapshot, fuera
+      // del alcance de este fix. Hasta entonces, se leen como "así están hoy
+      // las tablas", no como "así cerró el mes".
       {
         key: 'brokerPnl',
         labelKey: 'summary.brokerPnl',

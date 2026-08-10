@@ -14,7 +14,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
+import { verifyAdminAuth, verifyAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import {
@@ -29,7 +29,11 @@ const MAX_LINES = 300;
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    // Lectura abierta a cualquier miembro de la empresa: la RLS de esta tabla
+    // ya deja leer a todo el tenant y exigir FINANCE_ROLES acá solo lograba
+    // que un socio con el módulo asignado viera la pantalla vacía o con
+    // "sin asignar" falso. Escritura (POST/DELETE) sigue en FINANCE_ROLES.
+    const auth = await verifyAuth(request);
     if (auth instanceof NextResponse) return auth;
 
     const periodId = request.nextUrl.searchParams.get('period_id');

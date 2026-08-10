@@ -103,6 +103,11 @@ function validateBody(body: unknown): { valid: true; data: SendEmailRequest } | 
 
 export async function POST(request: NextRequest) {
   try {
+    // Sin dominio declarado a propósito: los tipos que acepta cruzan las
+    // áreas (welcome = alta de usuario, report = finanzas, notification =
+    // genérico) y hoy ninguna pantalla la llama, así que atarla a
+    // FINANCE_ROLES o HR_ROLES sería adivinar. Queda en el fallback
+    // ADMIN_ROLES; si algún día se le da un único uso, declarar el dominio.
     const auth = await verifyAdminAuth(request);
     if (auth instanceof NextResponse) return auth;
 

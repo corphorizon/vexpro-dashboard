@@ -25,6 +25,9 @@ export interface CompanyFormValues {
    *  backgrounds (sidebar header, superadmin header, email footer).
    *  When empty we fall back to logo_url. */
   logo_url_white: string;
+  /** Isotipo cuadrado (migración 072) — es lo único que entra en el sidebar
+   *  contraído, que mide 64px. Vacío = se muestra la inicial del nombre. */
+  logo_icon_url: string;
   color_primary: string;
   color_secondary: string;
   active_modules: string[];
@@ -90,7 +93,7 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
             />
           </Field>
         )}
-        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Slot 1 — logo en color, para fondos claros. */}
           <div>
             <span className="text-xs font-medium mb-1 inline-block">
@@ -126,6 +129,28 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
               onChange={(next) => setValues((v) => ({ ...v, logo_url_white: next ?? '' }))}
               variant="white"
               previewTone="dark"
+              aspect="free"
+            />
+          </div>
+
+          {/* Slot 3 — isotipo cuadrado, para el sidebar contraído (64px). */}
+          <div>
+            <span className="text-xs font-medium mb-1 inline-block">
+              Isotipo — menú contraído
+            </span>
+            <p className="text-[11px] text-muted-foreground mb-2">
+              Marca cuadrada para el rail de 64px. El recorte se fuerza 1:1. Si no se sube,
+              se muestra la inicial del nombre.
+            </p>
+            <LogoUploader
+              companyId={companyId ?? null}
+              companyName={values.name || 'Organización'}
+              colorPrimary={values.color_primary}
+              logoUrl={values.logo_icon_url || null}
+              onChange={(next) => setValues((v) => ({ ...v, logo_icon_url: next ?? '' }))}
+              variant="icon"
+              previewTone="dark"
+              aspect="square"
             />
           </div>
         </div>

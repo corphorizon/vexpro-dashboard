@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 const BUCKET = 'contracts';
@@ -42,7 +42,10 @@ export async function GET(
   { params }: { params: Promise<{ profileId: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request);
+    // Dominio RRHH: el contrato es del legajo del perfil comercial. Con el
+    // fallback histórico un `auditor` (finanzas) se descargaba contratos de
+    // RRHH firmados.
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
     if (auth instanceof NextResponse) return auth;
     const { profileId } = await params;
 

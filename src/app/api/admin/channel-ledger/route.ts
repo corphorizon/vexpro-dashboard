@@ -23,6 +23,7 @@ import {
   hasLedger,
   type LedgerEntryInput,
 } from '@/lib/channel-ledger';
+import { unitLocationShares } from '@/lib/cash-locations';
 
 const SELECT_COLS =
   'id, company_id, channel_key, entry_date, kind, source, concept, category, reference, amount, notes, created_by, created_at, updated_at';
@@ -65,6 +66,9 @@ export async function GET(request: NextRequest) {
   // por empresa igual que todo lo demás — sin eso, un id de otro tenant
   // devolvería sus canales.
   let unitChannelKeys: string[] | null = null;
+  // Parte que le toca a la unidad de cada ubicación (1 = exclusiva). El front
+  // la necesita para no mostrar el 100% de una wallet compartida.
+  const unitShares: Record<string, number> = {};
   if (businessUnitId) {
     if (!UUID_RE.test(businessUnitId)) {
       return NextResponse.json(
@@ -72,17 +76,34 @@ export async function GET(request: NextRequest) {
         { status: 400 },
       );
     }
-    const { data: configs, error: configError } = await admin
-      .from('channel_configs')
-      .select('channel_key')
-      .eq('company_id', auth.companyId)
-      .eq('business_unit_id', businessUnitId);
+    // Las ubicaciones de la unidad salen de DOS fuentes (migración 071):
+    //   · location_business_units — el reparto con porcentaje, y
+    //   · channel_configs.business_unit_id — la unidad principal / fallback.
+    // Mirar solo la segunda (auditoría 2026-08, A5) hacía que una wallet
+    // repartida 50/50 apareciera entera en una unidad y en ninguna otra.
+    const [{ data: configs, error: configError }, { data: shareRows, error: shareError }] =
+      await Promise.all([
+        admin
+          .from('channel_configs')
+          .select('channel_key, business_unit_id')
+          .eq('company_id', auth.companyId),
+        admin
+          .from('location_business_units')
+          .select('channel_key, business_unit_id, share')
+          .eq('company_id', auth.companyId),
+      ]);
 
     if (configError) return apiError('admin/channel-ledger', configError, { status: 500 });
+    if (shareError) return apiError('admin/channel-ledger', shareError, { status: 500 });
 
-    unitChannelKeys = (configs ?? [])
-      .map((row) => row.channel_key as string)
-      .filter((key) => hasLedger(key));
+    const shareByKey = unitLocationShares(
+      businessUnitId,
+      (configs ?? []) as Array<{ channel_key: string; business_unit_id: string | null }>,
+      (shareRows ?? []) as Array<{ channel_key: string; business_unit_id: string; share: number }>,
+    );
+
+    unitChannelKeys = [...shareByKey.keys()].filter((key) => hasLedger(key));
+    for (const key of unitChannelKeys) unitShares[key] = shareByKey.get(key) ?? 1;
 
     // Unidad sin ubicaciones (o solo con canales que no llevan libro): no es
     // un error, es un libro vacío. Se corta acá para no mandar un `in ()`.
@@ -92,6 +113,7 @@ export async function GET(request: NextRequest) {
         entries: [],
         priorEntries: [],
         channelKeys: [],
+        shares: {},
       });
     }
   }
@@ -138,7 +160,7 @@ export async function GET(request: NextRequest) {
     priorEntries: opening,
     // Ubicaciones de la unidad, incluidas las que no tienen ni un asiento:
     // el desglose por ubicación tiene que poder mostrarlas en cero.
-    ...(unitChannelKeys ? { channelKeys: unitChannelKeys } : {}),
+    ...(unitChannelKeys ? { channelKeys: unitChannelKeys, shares: unitShares } : {}),
   });
 }
 

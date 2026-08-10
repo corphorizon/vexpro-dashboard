@@ -137,6 +137,91 @@ export function sharesTotal(shares: UnitShare[] | null | undefined): number {
   return (shares ?? []).reduce((s, r) => s + (Number(r.share) || 0), 0);
 }
 
+/**
+ * Unidad PRINCIPAL de una ubicación = la de MAYOR parte.
+ *
+ * `channel_configs.business_unit_id` sigue siendo el fallback que leen las
+ * pantallas que no saben del reparto (migración 071), así que cuál se guarda
+ * ahí no es cosmético. Tomar la primera del array (auditoría 2026-08, A5) hacía
+ * que una wallet 30/70 quedara registrada bajo la unidad del 30% solo porque
+ * era la fila que el usuario había cargado primero.
+ *
+ * Empate → la primera, que es un orden estable y tan bueno como cualquiera.
+ */
+export function primaryUnitId(shares: UnitShare[] | null | undefined): string | null {
+  let best: UnitShare | null = null;
+  for (const s of shares ?? []) {
+    if (!s?.business_unit_id) continue;
+    if (!best || (Number(s.share) || 0) > (Number(best.share) || 0)) best = s;
+  }
+  return best?.business_unit_id ?? null;
+}
+
+/**
+ * Qué proporción (0..1) de una ubicación le corresponde a una unidad.
+ *
+ * Misma normalización que `allocateShares` —si las partes cargadas suman más
+ * de 1 se prorratean— para que el libro por unidad y el desglose de /balances
+ * no puedan discrepar. Sin filas de reparto manda `channel_configs`.
+ */
+export function unitShareOfLocation(
+  businessUnitId: string,
+  shares: Array<{ business_unit_id: string; share: number }> | null | undefined,
+  fallbackUnitId: string | null,
+): number {
+  const rows = (shares ?? [])
+    .filter((r) => r && r.business_unit_id && Number(r.share) > 0)
+    .map((r) => ({ business_unit_id: r.business_unit_id, share: Number(r.share) }));
+
+  if (rows.length === 0) return fallbackUnitId === businessUnitId ? 1 : 0;
+
+  const sum = rows.reduce((s, r) => s + r.share, 0);
+  const mine = rows.find((r) => r.business_unit_id === businessUnitId);
+  if (!mine) return 0;
+  return sum > 1 ? mine.share / sum : mine.share;
+}
+
+/**
+ * Ubicaciones de una unidad de negocio, con la parte que le toca de cada una.
+ *
+ * POR QUÉ (auditoría 2026-08, A5): el libro por unidad resolvía sus canales
+ * SOLO por `channel_configs.business_unit_id`. Con una wallet repartida 50/50
+ * la unidad "principal" veía el 100% del saldo y la otra no la veía en
+ * absoluto: dos pantallas mintiendo en direcciones opuestas sobre la misma
+ * plata. Acá se unen las dos fuentes (dedup por channel_key) y se devuelve la
+ * proporción, que es lo que faltaba para poder mostrar la verdad.
+ */
+export function unitLocationShares(
+  businessUnitId: string,
+  configRows: Array<{ channel_key: string; business_unit_id: string | null }>,
+  shareRows: Array<{ channel_key: string; business_unit_id: string; share: number }>,
+): Map<string, number> {
+  const sharesByKey = new Map<string, Array<{ business_unit_id: string; share: number }>>();
+  for (const r of shareRows) {
+    if (!r?.channel_key || !r.business_unit_id) continue;
+    const arr = sharesByKey.get(r.channel_key);
+    const entry = { business_unit_id: r.business_unit_id, share: Number(r.share) || 0 };
+    if (arr) arr.push(entry);
+    else sharesByKey.set(r.channel_key, [entry]);
+  }
+
+  const fallbackByKey = new Map<string, string | null>();
+  for (const r of configRows) {
+    if (r?.channel_key) fallbackByKey.set(r.channel_key, r.business_unit_id ?? null);
+  }
+
+  const out = new Map<string, number>();
+  for (const key of new Set([...sharesByKey.keys(), ...fallbackByKey.keys()])) {
+    const share = unitShareOfLocation(
+      businessUnitId,
+      sharesByKey.get(key),
+      fallbackByKey.get(key) ?? null,
+    );
+    if (share > 0) out.set(key, share);
+  }
+  return out;
+}
+
 export function summarize(locations: CashLocation[], units: BusinessUnit[]): CashSummary {
   const fundUnits = new Set(units.filter((u) => u.counts_to_fund).map((u) => u.id));
   let liquid = 0, lent = 0, fund = 0, outsideFund = 0;

@@ -31,6 +31,12 @@ const ORDERS_SCANNED = 60;
 /** Sugerencias devueltas. Un datalist más largo que esto no se lee. */
 const MAX_SUGGESTIONS = 15;
 
+/**
+ * El id se interpola en un `.or()` de PostgREST — una coma o un paréntesis ahí
+ * adentro agrega condiciones al filtro. Se valida la forma antes de usarlo.
+ */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface LineSuggestion {
   description: string;
   /** Último valor unitario usado con ese concepto, o null si no era un número. */
@@ -44,6 +50,12 @@ export async function GET(request: NextRequest) {
 
     const beneficiaryId = request.nextUrl.searchParams.get('beneficiary_id')?.trim() || null;
     const name = request.nextUrl.searchParams.get('name')?.trim() || null;
+    if (beneficiaryId && !UUID_RE.test(beneficiaryId)) {
+      return NextResponse.json(
+        { success: false, error: 'Beneficiario inválido' },
+        { status: 400 },
+      );
+    }
     if (!beneficiaryId && !name) {
       return NextResponse.json({ success: true, suggestions: [] });
     }

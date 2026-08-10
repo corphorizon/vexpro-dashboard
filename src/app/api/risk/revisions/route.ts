@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -17,7 +17,9 @@ const MAX_REVISIONS = 50;
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    // Dominio finanzas: riesgo es una vista financiera. Con el fallback
+    // histórico un `hr` podía leer y escribir revisiones de riesgo.
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();
@@ -42,7 +44,9 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request);
+    // Dominio finanzas: riesgo es una vista financiera. Con el fallback
+    // histórico un `hr` podía leer y escribir revisiones de riesgo.
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
