@@ -19,6 +19,7 @@ import {
   groupByType,
   groupByUnit,
   summarize,
+  type AllocatedLocation,
   type BusinessUnit,
   type CashLocation,
   type CashSummary,
@@ -229,7 +230,33 @@ export function buildResult(
 export interface CashReport {
   summary: CashSummary;
   byType: Array<{ type: LocationType; total: number; count: number }>;
-  byUnit: Array<{ unit: BusinessUnit | null; locations: CashLocation[]; total: number }>;
+  /**
+   * Desglose por unidad ya PRORRATEADO: una ubicación compartida aparece en
+   * cada unidad dueña con la parte que le toca (`balance`) y el saldo entero
+   * aparte (`fullBalance`). Tipar esto como `CashLocation` escondía que
+   * `balance` ya no era el saldo completo, y las tres salidas mostraban la
+   * ubicación entera bajo una sola unidad.
+   */
+  byUnit: Array<{ unit: BusinessUnit | null; locations: AllocatedLocation[]; total: number }>;
+}
+
+/**
+ * Etiqueta de una ubicación en el desglose. Cuando la unidad se queda con una
+ * parte se dice cuál: sin eso, dos filas de "Wallet Externa" con montos
+ * distintos parecen un error de carga en vez de un reparto.
+ */
+export function allocationLabel(
+  location: { label: string; share: number },
+  unit: BusinessUnit | null,
+): string {
+  const base = unit ? `${location.label} (${unit.name})` : location.label;
+  return location.share < 0.9999 ? `${base} · ${formatShare(location.share)}%` : base;
+}
+
+/** Porcentaje sin decimales de más: 60, no 60.00; 33.33 cuando hace falta. */
+export function formatShare(share: number): string {
+  const pct = share * 100;
+  return pct % 1 === 0 ? pct.toFixed(0) : pct.toFixed(2);
 }
 
 export function buildCash(locations: CashLocation[], units: BusinessUnit[]): CashReport {
@@ -299,7 +326,7 @@ export function companyReportCsvRows(report: CompanyReport): (string | number)[]
     ...report.cash.byUnit.flatMap((g) =>
       g.locations.map((l) => [
         'Dinero · Ubicaciones',
-        `${l.label}${g.unit ? ` (${g.unit.name})` : ''}`,
+        allocationLabel(l, g.unit),
         l.balance,
       ] as (string | number)[]),
     ),

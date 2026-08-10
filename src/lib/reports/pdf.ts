@@ -13,7 +13,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { ReportData, ReportBucket, ReportDepositRow, ReportWithdrawalRow } from './data';
-import { UNASSIGNED_CLIENT_KEY, UNCATEGORIZED, type CompanyReport } from './company-report';
+import { UNASSIGNED_CLIENT_KEY, UNCATEGORIZED, formatShare, type CompanyReport } from './company-report';
 import { LOCATION_TYPE_LABELS } from '@/lib/cash-locations';
 import type { ReportCadence } from './email-template';
 import jsPDF from 'jspdf';
@@ -498,9 +498,17 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
       },
       { label: 'Total', value: fmtCurrency(r.cash.summary.total) },
     ]);
+    // Una ubicación compartida sale una vez por unidad dueña, con su parte.
+    // El "· 60% de $X" no es decorativo: sin él dos filas de la misma wallet
+    // con montos distintos parecen un error de carga.
     const cashRows = r.cash.byUnit.flatMap((g) =>
       g.locations.map((l) => [
-        l.holder ? `${l.label} · ${l.holder}` : l.label,
+        [
+          l.holder ? `${l.label} · ${l.holder}` : l.label,
+          l.share < 0.9999 ? `compartida — ${formatShare(l.share)}% de ${fmtCurrency(l.fullBalance)}` : null,
+        ]
+          .filter(Boolean)
+          .join(' · '),
         LOCATION_TYPE_LABELS[l.location_type].es,
         g.unit?.name ?? 'Sin unidad',
         fmtCurrency(l.balance),

@@ -12,6 +12,8 @@
 // admin-client call in server-side code (reports/cron).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { UnitShare } from './cash-locations';
+
 export type ChannelType = 'api' | 'manual' | 'auto';
 
 export interface BuiltinChannel {
@@ -56,6 +58,14 @@ export interface ChannelConfigRow {
   location_type?: string | null;
   business_unit_id?: string | null;
   holder?: string | null;
+  /**
+   * Reparto entre unidades (migración 071), tal como lo devuelve
+   * `GET /api/admin/channel-configs`. Viaja acá y no en un endpoint aparte
+   * porque el consumidor que lo olvidaba atribuía la ubicación compartida
+   * entera a `business_unit_id` (auditoría 2026-08, B1/C6). `[]` = sin
+   * reparto cargado, y ahí manda `business_unit_id`.
+   */
+  unit_shares?: UnitShare[] | null;
 }
 
 /**

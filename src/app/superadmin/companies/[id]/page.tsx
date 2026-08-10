@@ -28,6 +28,9 @@ export default function EditCompanyPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Aviso NO bloqueante devuelto por el PATCH (p.ej. cambio de modelo de
+  // negocio que deja datos ya cargados fuera de la distribución).
+  const [warning, setWarning] = useState<string | null>(null);
   // Three tabs: Configuración (branding + modules), APIs externas, Auditoría.
   // Auditoría lives here (not in the tenant sidebar) because platform audit
   // is a superadmin-only surface.
@@ -70,6 +73,7 @@ export default function EditCompanyPage() {
     if (!id) return;
     setSubmitting(true);
     setError(null);
+    setWarning(null);
     try {
       const { slug: _ignoreSlug, ...payload } = next; // slug is read-only here
       void _ignoreSlug;
@@ -81,6 +85,14 @@ export default function EditCompanyPage() {
       const json = await res.json();
       if (!res.ok || !json.success) {
         throw new Error(json.error || `HTTP ${res.status}`);
+      }
+      // El cambio de modelo de negocio puede dejar datos fuera de la cadena
+      // (depósitos/retiros/prop firm). Si el backend avisa, NO redirigimos:
+      // esa advertencia se pierde si la pantalla se va sola al panel.
+      if (typeof json.warning === 'string' && json.warning) {
+        setValues(next);
+        setWarning(json.warning);
+        return;
       }
       router.push('/superadmin');
     } catch (err) {
@@ -150,6 +162,18 @@ export default function EditCompanyPage() {
       {loadErr && (
         <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
           {loadErr}
+        </div>
+      )}
+
+      {warning && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 text-amber-900 dark:text-amber-100 p-3 text-sm space-y-2">
+          <p><strong>Cambios guardados.</strong> {warning}</p>
+          <button
+            onClick={() => router.push('/superadmin')}
+            className="underline underline-offset-2 font-medium"
+          >
+            Entendido, volver al panel
+          </button>
         </div>
       )}
 

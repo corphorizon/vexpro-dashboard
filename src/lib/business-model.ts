@@ -58,7 +58,14 @@ export interface BusinessModelFeatures {
   withdrawals: boolean;
   /** Net Deposit = depósitos − retiros. Sin depósitos no significa nada. */
   netDeposit: boolean;
-  /** P&L del broker y ventas de prop firm como fuente de ingresos. */
+  /**
+   * P&L del broker y ventas de prop firm como fuente de ingresos.
+   *
+   * En false NO es solo cosmético: `buildDistributionInputs` mete brokerPnl y
+   * propFirmNetIncome en CERO en la cadena de distribución. Si no, una entidad
+   * que pasó de 'broker' a 'company' seguía repartiendo plata que ninguna
+   * pantalla muestra (las esconde blockedConsolidatedColumns).
+   */
   brokerPnl: boolean;
   /** Pantalla de Movimientos: depósitos y retiros por período y canal. */
   movements: boolean;

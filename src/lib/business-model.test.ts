@@ -103,3 +103,17 @@ describe('secciones del reporte por email', () => {
     expect(blocked).toContain('prop_trading');
   });
 });
+
+describe('brokerPnl es el interruptor de la cadena de distribución', () => {
+  // Si alguien pone brokerPnl en true para 'company' (o lo saca del contrato),
+  // la neutralización de buildDistributionInputs deja de aplicar y vuelve la
+  // plata fantasma. Este test es el candado.
+  it("solo 'broker' factura por P&L de broker / prop firm", () => {
+    expect(features('broker').brokerPnl).toBe(true);
+    expect(features('company').brokerPnl).toBe(false);
+  });
+
+  it('la empresa factura por líneas de ingreso, que siguen encendidas', () => {
+    expect(features('company').incomeLines).toBe(true);
+  });
+});

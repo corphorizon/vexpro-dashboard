@@ -40,6 +40,7 @@ import {
   buildCash,
   buildExpenses,
   buildResult,
+  formatShare,
   periodsInRange,
   type CompanyReport,
 } from '@/lib/reports/company-report';
@@ -148,6 +149,11 @@ export function useCompanyReport(
           ? normalizeLocationType(row.location_type)
           : DEFAULT_LOCATION_TYPE,
         business_unit_id: row?.business_unit_id ?? null,
+        // Sin esto el reparto no llegaba hasta acá y `groupByUnit` atribuía la
+        // ubicación entera a su unidad principal: el total cerraba pero el
+        // desglose por unidad mentía, y contradecía a /balances (auditoría
+        // 2026-08, B1). Viene en la misma fila del endpoint de configuración.
+        unit_shares: row?.unit_shares ?? null,
         holder: row?.holder ?? null,
         is_visible: true,
         sort_order: row?.sort_order ?? 0,
@@ -361,10 +367,25 @@ export function CompanyReportSections({ report }: { report: CompanyReport }) {
               <tbody>
                 {report.cash.byUnit.flatMap((group) =>
                   group.locations.map((l) => (
-                    <tr key={l.channel_key} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                    // La clave lleva la unidad: una ubicación compartida sale
+                    // una vez por unidad dueña y con solo `channel_key` React
+                    // veía dos filas con la misma clave.
+                    <tr
+                      key={`${group.unit?.id ?? 'none'}-${l.channel_key}`}
+                      className="border-b border-border/50 hover:bg-muted/50 transition-colors"
+                    >
                       <td className="px-3 py-2">
                         {l.label}
                         {l.holder && <span className="text-xs text-muted-foreground"> · {l.holder}</span>}
+                        {l.share < 0.9999 && (
+                          <span className="text-xs text-muted-foreground">
+                            {' · '}
+                            {t('cash.sharedLocation', {
+                              percent: formatShare(l.share),
+                              total: money(l.fullBalance),
+                            })}
+                          </span>
+                        )}
                       </td>
                       <td className="px-3 py-2 text-xs text-muted-foreground">
                         {LOCATION_TYPE_LABELS[l.location_type][lang]}

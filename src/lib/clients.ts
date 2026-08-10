@@ -16,6 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { IncomeLine } from './income-lines';
+import { round2 } from './utils';
 
 /** Una línea de ingreso con el período al que pertenece. */
 export interface ClientLine {
@@ -56,10 +57,6 @@ export interface ClientCard {
 }
 
 export const UNASSIGNED_CLIENT_KEY = '__unassigned__';
-
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
-}
 
 export function clientKey(name: string | null | undefined): string {
   const trimmed = (name ?? '').trim();

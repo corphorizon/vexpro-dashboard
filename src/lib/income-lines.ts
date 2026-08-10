@@ -13,6 +13,8 @@
 // Import-safe desde cliente y servidor: no toca Supabase.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { round2 } from './utils';
+
 export interface IncomeLine {
   id: string;
   company_id: string;
@@ -50,10 +52,6 @@ export interface IncomeTotals {
   received: number;
   /** Por cobrar. */
   pending: number;
-}
-
-function round2(n: number): number {
-  return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
 export function computeIncomeTotals(lines: Array<Pick<IncomeLine, 'amount' | 'received' | 'pending'>>): IncomeTotals {
