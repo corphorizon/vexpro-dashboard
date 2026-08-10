@@ -1359,7 +1359,12 @@ export default function UploadPage() {
         // correct value, and the latest refresh will settle the
         // DataProvider. Only a true network failure / timeout matters,
         // and that surfaces through the regular catch below.
-        await refreshSections(['depositos']);
+        // Con techo + catch propio: si el refresh cuelga o falla, el guardado
+        // YA está en DB — rebotarlo al catch de afuera haría rollback de un
+        // guardado exitoso, y sin techo el spinner queda en "Guardando…" eterno.
+        await withRowTimeout(refreshSections(['depositos']), t('upload.opReloadData')).catch(() => {
+          console.warn('[depositos] refresh after save failed');
+        });
       } catch (err) {
         // Rollback the optimistic update so the cell reverts to what
         // was actually in DB before we touched it.
@@ -1419,7 +1424,10 @@ export default function UploadPage() {
         // stale refresh (common when user clicks Save on a second row
         // before the first refresh resolves). Real failures still
         // surface via catch.
-        await refreshSections(['retiros']);
+        // Techo + catch propio: mismo porqué que updateDeposit.
+        await withRowTimeout(refreshSections(['retiros']), t('upload.opReloadData')).catch(() => {
+          console.warn('[retiros] refresh after save failed');
+        });
       } catch (err) {
         setWithdrawalsRaw(previousWithdrawals);
         Sentry.captureException(err, {
@@ -1471,7 +1479,12 @@ export default function UploadPage() {
         logAction(user.id, user.name, opts.audit.action, 'expenses', opts.audit.details);
       }
       showSuccess(opts.toast);
-      await refreshSections(['egresos']);
+      // Techo + catch propio: el upsert ya corrió; un refresh colgado dejaba
+      // el botón en "Guardando…" para siempre (Kevin, 2026-08-10) porque el
+      // finally nunca llegaba a resetear savingExpenses.
+      await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
+        console.warn('[egresos] refresh after save failed');
+      });
     } catch (err) {
       setExpensesRaw(previousList); // rollback al estado previo (= lo que hay en DB)
       Sentry.captureException(err, {
@@ -1659,7 +1672,11 @@ export default function UploadPage() {
         logAction(user.id, user.name, 'update', 'expenses',
           `Egreso fijo "${forwardPending.oldConcept}" propagado a ${updatedPeriods} mes(es) siguientes`);
       }
-      await refreshSections(['egresos']);
+      // Techo + catch propio: la propagación ya corrió; un refresh caído no
+      // debe reportarse como forwardError.
+      await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
+        console.warn('[egresos] refresh after forward failed');
+      });
     } catch (err) {
       showError(t('expenses.forwardError', { error: (err as Error).message }));
     }
@@ -1797,7 +1814,9 @@ export default function UploadPage() {
         // in data-context.tsx), so `false` is reserved for real
         // failures — and in those we keep dirty marked so the next
         // save attempt re-pushes the data once the network recovers.
-        const ok = await refreshSections(['ingresos']);
+        // Techo: un refresh colgado se trata como fallo real (ok=false) —
+        // dirty queda marcado y el próximo guardado re-empuja los datos.
+        const ok = await withRowTimeout(refreshSections(['ingresos']), t('upload.opReloadData')).catch(() => false);
         if (ok) {
           clearDirty('ingresos');
           clearDirty('retiros');
@@ -1973,9 +1992,12 @@ export default function UploadPage() {
       // current local view (which is correct).
       // B1: refresh selectivo — solo las tablas de las secciones guardadas
       // (2-3 queries c/u) en vez de recargar toda la empresa (~19 queries).
-      const ok = await refreshSections(
-        saved as Array<'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones'>,
-      );
+      // Techo: sin él, un refresh colgado dejaba savingAll=true para siempre
+      // y bloqueaba el autosave entero. Timeout ⇒ ok=false (dirty se conserva).
+      const ok = await withRowTimeout(
+        refreshSections(saved as Array<'depositos' | 'retiros' | 'egresos' | 'ingresos' | 'liquidez' | 'inversiones'>),
+        t('upload.opReloadData'),
+      ).catch(() => false);
       if (ok) {
         for (const sec of saved) {
           // Limpiar dirty dispara el re-sync, que re-hidrata la sección desde

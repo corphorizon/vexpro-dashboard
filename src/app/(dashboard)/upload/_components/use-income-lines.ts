@@ -225,8 +225,14 @@ export function useIncomeLines(
         logAction(user.id, user.name, persistOpts.audit.action, 'income', persistOpts.audit.details);
       }
       showSuccess(persistOpts.toast);
-      await refreshSections(['ingresos']);
-      const fresh = await loadIncomeLines(targetPeriodId); // ids reales en vez de los optimistas
+      // Techo + catch propio en los dos pasos post-guardado: el POST ya
+      // corrió; si rebotaran al catch de afuera harían rollback de un
+      // guardado exitoso, y colgados dejaban savingIncomeLines en true eterno.
+      await withRowTimeout(refreshSections(['ingresos']), t('upload.opReloadData')).catch(() => {
+        console.warn('[ingresos] refresh after save failed');
+      });
+      const fresh = await withRowTimeout(loadIncomeLines(targetPeriodId), t('upload.opReloadData'))
+        .catch(() => null); // ids reales en vez de los optimistas
       if (fresh) {
         setIncomeLines(fresh);
         setIncomeLinesPeriodId(targetPeriodId);
