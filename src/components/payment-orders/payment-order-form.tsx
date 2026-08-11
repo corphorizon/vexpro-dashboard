@@ -67,8 +67,27 @@ const INPUT =
   'w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm placeholder:text-muted-foreground';
 const INPUT_ERR = 'border-negative';
 
-const CURRENCIES = ['USD', 'USDT', 'EUR', 'GBP', 'ARS', 'MXN', 'BRL'];
 const OTHER_NETWORK = '__other__';
+
+// ── Moneda: la de la empresa, y nada más ─────────────────────────────────────
+// El selector ofrecía USD/USDT/EUR/GBP/ARS/MXN/BRL, pero cuando la orden se
+// marca PAGADA el egreso se inserta con `total` TAL CUAL (payment-orders/
+// server.ts) y la tabla `expenses` no tiene columna de moneda: una OP de
+// 500.000 ARS entraba a la contabilidad como 500.000 "dólares" y se llevaba
+// puesto el período, la cadena de distribución y todo lo que cuelga de ella.
+//
+// Mientras no exista moneda + tipo de cambio en `expenses`, la única lectura
+// correcta es que una OP se emite en la moneda de la empresa (companies.
+// currency, la misma que usa formatCurrency en todo el dashboard).
+//
+// USDT se admite cuando la empresa opera en USD: no es otra moneda para esta
+// contabilidad —el resto de la app ya lo trata 1:1 con el dólar (el listado y
+// el detalle de órdenes hacen `currency === 'USDT' ? 'USD'`)— y es el medio
+// real de los pagos crypto, que son el camino por defecto del formulario.
+function allowedCurrencies(companyCurrency: string | null | undefined): string[] {
+  const base = (companyCurrency || 'USD').toUpperCase();
+  return base === 'USD' ? ['USD', 'USDT'] : [base];
+}
 
 /** Documento de respaldo — mismos límites que el endpoint (validar acá evita
  *  subir 30 MB para nada). */
@@ -81,6 +100,26 @@ function formatFileSize(bytes: number | null): string {
   if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+/**
+ * Textos del bloque de moneda. Viven acá —y no en i18n.tsx— para que el
+ * arreglo quede contenido en el formulario; moverlos al diccionario junto al
+ * resto de `payOrders.*` es la limpieza pendiente.
+ */
+const CURRENCY_COPY = {
+  es: {
+    hint: (list: string) =>
+      `Se emite en la moneda de la empresa (${list}). Los egresos se registran sin conversión.`,
+    mismatch: (orderCur: string, companyCur: string) =>
+      `Esta orden está en ${orderCur}, pero la contabilidad registra los egresos en ${companyCur} sin tipo de cambio: al marcarla pagada, el total entraría como ${companyCur}. Pasala a ${companyCur} con los importes convertidos antes de aprobarla.`,
+  },
+  en: {
+    hint: (list: string) =>
+      `Issued in the company currency (${list}). Expenses are recorded with no conversion.`,
+    mismatch: (orderCur: string, companyCur: string) =>
+      `This order is in ${orderCur}, but expenses are booked in ${companyCur} with no exchange rate: marking it paid would record the total as ${companyCur}. Switch it to ${companyCur} with converted amounts before approving it.`,
+  },
+} as const;
 
 function todayISO(): string {
   const d = new Date();
@@ -167,7 +206,7 @@ interface Props {
 }
 
 export function PaymentOrderForm({ mode, order }: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const router = useRouter();
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
@@ -233,6 +272,28 @@ export function PaymentOrderForm({ mode, order }: Props) {
     setForm((prev) => ({ ...prev, [key]: value }));
     setErrors((prev) => (prev[key as string] ? { ...prev, [key as string]: '' } : prev));
   }, []);
+
+  // ── Moneda de la empresa ───────────────────────────────────────────────────
+  // Ver la nota de allowedCurrencies: el egreso que nace de una OP pagada no
+  // lleva moneda ni conversión, así que la orden se emite en la de la empresa.
+  const currencyCopy = CURRENCY_COPY[locale === 'en' ? 'en' : 'es'];
+  const companyCurrency = (company?.currency || 'USD').toUpperCase();
+  const allowed = useMemo(() => allowedCurrencies(companyCurrency), [companyCurrency]);
+  /** La moneda guardada de una OP vieja sigue en la lista: se avisa, no se reescribe sola. */
+  const currencyOptions = useMemo(
+    () => Array.from(new Set([...allowed, form.currency])),
+    [allowed, form.currency],
+  );
+  const currencyMismatch = !allowed.includes(form.currency);
+
+  // `company` llega asincrónico: el estado inicial arranca en 'USD' y hay que
+  // corregirlo cuando la empresa carga — pero solo en alta y solo si el
+  // usuario todavía no eligió a mano (no le pisamos un USDT deliberado).
+  const currencyTouched = useRef(false);
+  useEffect(() => {
+    if (mode !== 'create' || currencyTouched.current) return;
+    setForm((prev) => (prev.currency === companyCurrency ? prev : { ...prev, currency: companyCurrency }));
+  }, [mode, companyCurrency]);
 
   // ── Libreta de beneficiarios ───────────────────────────────────────────────
   const [beneficiaries, setBeneficiaries] = useState<PaymentBeneficiary[]>([]);
@@ -515,10 +576,13 @@ export function PaymentOrderForm({ mode, order }: Props) {
             <Field label={t('payOrders.currency')}>
               <select
                 value={form.currency}
-                onChange={(e) => set('currency', e.target.value)}
-                className={INPUT}
+                onChange={(e) => {
+                  currencyTouched.current = true;
+                  set('currency', e.target.value);
+                }}
+                className={cn(INPUT, currencyMismatch && INPUT_ERR)}
               >
-                {Array.from(new Set([form.currency, ...CURRENCIES])).map((c) => (
+                {currencyOptions.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
@@ -526,6 +590,18 @@ export function PaymentOrderForm({ mode, order }: Props) {
               </select>
             </Field>
           </div>
+
+          <p className="text-xs text-muted-foreground">{currencyCopy.hint(allowed.join(' / '))}</p>
+
+          {/* OP vieja en una moneda que la contabilidad no sabe convertir. Se
+              avisa y se deja seguir: bloquear la edición de un borrador ya
+              guardado sería peor que explicar el problema. */}
+          {currencyMismatch && (
+            <p className="flex items-start gap-2 text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-px" aria-hidden />
+              <span>{currencyCopy.mismatch(form.currency, companyCurrency)}</span>
+            </p>
+          )}
         </Card>
 
         {/* ── Beneficiario ──────────────────────────────────────────────── */}

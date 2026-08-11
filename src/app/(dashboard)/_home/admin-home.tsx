@@ -22,8 +22,13 @@ import {
 //   Row 1 (financial flow): Net Deposit · Depósitos · Egresos · Retiros
 //   Row 2 (position):       Balance Disponible · Socios · Inversiones · Liquidez
 //
-// Row 1 is gated by the 'movements' module; Row 2 cards individually gated
-// by their respective module flags.
+// Cada tarjeta se gatea por SU módulo: 'movements' para el flujo de clientes,
+// 'income'/'expenses' para el resultado del mes, 'balances' para el total
+// consolidado. Antes toda la fila 1 y el Total Consolidado colgaban de
+// has('movements') — y 'movements' es uno de los módulos que
+// blockedModules('company') apaga, así que en una empresa modo `company` la
+// fila NUNCA se renderizaba: el skeleton dibujaba tres tarjetas que después se
+// evaporaban y la home quedaba vacía (Horizon).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function AdminHome() {
@@ -32,6 +37,7 @@ export function AdminHome() {
     company,
     periods,
     getPeriodSummary,
+    computeSaldoChain,
     partners,
     loading,
   } = useData();
@@ -72,7 +78,7 @@ export function AdminHome() {
     summary: typeof currentSummary,
     coexist: typeof currentCoexist,
   ) => {
-    if (!summary) return { deposits: 0, withdrawals: 0, netDeposit: 0, balance: 0 };
+    if (!summary) return { deposits: 0, withdrawals: 0, netDeposit: 0 };
     const useDerivedBroker = coexist.useDerivedBroker;
 
     const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount ?? 0;
@@ -96,18 +102,24 @@ export function AdminHome() {
 
     const netDeposit = deposits - withdrawals;
 
-    const ingresosNetos = (summary.operatingIncome
-      ? summary.operatingIncome.broker_pnl + summary.operatingIncome.other
-      : 0)
-      + summary.propFirmNetIncome
-      + summary.investmentProfits;
-    const balance = ingresosNetos - summary.totalExpenses;
-
-    return { deposits, withdrawals, netDeposit, balance };
+    return { deposits, withdrawals, netDeposit };
   };
 
   const cur = useMemo(() => consolidate(currentSummary, currentCoexist), [currentSummary, currentCoexist]);
   const prv = useMemo(() => consolidate(prevSummary, prevCoexist), [prevSummary, prevCoexist]);
+
+  // ── Resultado del mes — CADENA CANÓNICA ───────────────────────────────
+  // Ingresos / Egresos / Neto salen de computeSaldoChain(), que arma sus
+  // insumos con buildDistributionInputs + applySnapshotOverrides: los mismos
+  // números que ve /socios. Antes se recalculaban acá a mano desde las tablas
+  // vivas (broker_pnl + other + propFirm + inversiones − egresos), lo que
+  // (a) duplicaba la fórmula, (b) mostraba lo de HOY en un mes CERRADO
+  // mientras /socios mostraba lo congelado, y (c) no aplicaba la
+  // neutralización por modelo de negocio (una 'company' seguía sumando
+  // broker_pnl y prop firm heredados).
+  const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
+  const curChain = currentPeriod ? saldoChain.get(currentPeriod.id) ?? null : null;
+  const prvChain = prevPeriod ? saldoChain.get(prevPeriod.id) ?? null : null;
 
   const pct = (now: number, prev: number) => {
     if (!prev) return null;
@@ -115,17 +127,18 @@ export function AdminHome() {
   };
 
   const netDepositDelta = pct(cur.netDeposit, prv.netDeposit);
-  const expensesDelta = currentSummary && prevSummary
-    ? pct(currentSummary.totalExpenses, prevSummary.totalExpenses)
+  const expensesDelta = curChain && prvChain
+    ? pct(curChain.egresosNetos, prvChain.egresosNetos)
     : null;
   const withdrawalsDelta = pct(cur.withdrawals, prv.withdrawals);
 
   // ── Total Consolidado (suma de todos los canales) ─────────────────────
   // Pulls from /api/balances/total-consolidado, which calls Coinsbuy +
-  // UniPayment APIs LIVE, reads channel_balances_as_of(today) for the
-  // manual channels, and adds liquidity + investments running sums. So
-  // the number matches the bottom of /balances even before the daily cron
-  // has captured today's snapshot.
+  // UniPayment APIs LIVE and, para el resto, recorre las ubicaciones VISIBLES
+  // de channel_configs tomando el saldo del LIBRO (snapshot solo de respaldo)
+  // — incluidas las custom_*, que la lista fija anterior nunca sumaba. Más
+  // liquidez + inversiones. Así el número coincide con el pie de /balances
+  // incluso antes de que el cron diario capture el snapshot de hoy.
   // Auto-refresh every 5 min while the tab is visible.
   const [totalConsolidado, setTotalConsolidado] = useState<number | null>(null);
 
@@ -162,17 +175,27 @@ export function AdminHome() {
 
   // ── Module availability shortcuts ──────────────────────────────────────
   const has = (m: string) => hasModuleAccess(user, m, company?.active_modules, company?.business_model);
-  const hasFinance = has('movements');
   // Una consultora no tiene depósitos de clientes: la fila 1 queda solo con
-  // Egresos y el grid pasa a una columna para no dejar celdas vacías.
+  // Ingresos / Egresos / Neto y el grid se ajusta para no dejar celdas vacías.
   const showNetDeposit = features(company?.business_model).netDeposit;
-  // Los ingresos operativos del mes: en una empresa de servicios es el número
-  // que reemplaza al Depósito Neto (que allí siempre sería cero).
-  const operatingIncomeMonth =
-    (currentSummary?.operatingIncome?.broker_pnl ?? 0) +
-    (currentSummary?.operatingIncome?.other ?? 0) +
-    (currentSummary?.propFirmNetIncome ?? 0) +
-    (currentSummary?.investmentProfits ?? 0);
+
+  // Gate POR TARJETA, no por fila: 'movements' está bloqueado en modo
+  // 'company' (ver blockedModules) y colgar toda la fila de él dejaba la home
+  // de una consultora vacía.
+  const showFlowCards = showNetDeposit && has('movements');
+  const showIncomeCard = !showNetDeposit && has('income');
+  // En broker la fila entera sigue colgando de 'movements' — exactamente lo
+  // que se ve hoy. En 'company' (donde 'movements' está bloqueado) manda el
+  // módulo real de cada tarjeta.
+  const showExpensesCard = showNetDeposit ? has('movements') : has('expenses');
+  const showNetCard = showIncomeCard && showExpensesCard;
+  const row1Count =
+    (showFlowCards ? 3 : 0) + (showIncomeCard ? 1 : 0) + (showExpensesCard ? 1 : 0) + (showNetCard ? 1 : 0);
+
+  // Ingresos / Egresos / Neto del mes: SIEMPRE de la cadena canónica.
+  const operatingIncomeMonth = curChain?.ingresosNetos ?? 0;
+  const expensesMonth = curChain?.egresosNetos ?? 0;
+  const netMonth = curChain?.saldoAFavor ?? 0;
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -191,13 +214,13 @@ export function AdminHome() {
             (depositos and retiros sit together so net deposit "story" reads
              left-to-right). All values consolidate API + manual. */}
       {loading && !currentSummary ? (
-        <SkeletonRow n={showNetDeposit ? 4 : 3} />
-      ) : hasFinance ? (
-        <section className={showNetDeposit
+        row1Count > 0 ? <SkeletonRow n={row1Count} /> : null
+      ) : row1Count > 0 ? (
+        <section className={row1Count >= 4
           ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4'
           : 'grid grid-cols-1 sm:grid-cols-3 gap-4'}
         >
-          {showNetDeposit && (
+          {showFlowCards && (
             <>
               <StatCard
                 label="Depósito Neto · mes"
@@ -221,7 +244,7 @@ export function AdminHome() {
               />
             </>
           )}
-          {!showNetDeposit && (
+          {showIncomeCard && (
             <StatCard
               label="Ingresos · mes"
               value={formatCurrency(operatingIncomeMonth)}
@@ -229,19 +252,21 @@ export function AdminHome() {
               tone="positive"
             />
           )}
-          <StatCard
-            label="Egresos · mes"
-            value={formatCurrency(currentSummary?.totalExpenses ?? 0)}
-            icon={Receipt}
-            tone="warning"
-            hint={deltaHint(expensesDelta, /* invertColor */ true)}
-          />
-          {!showNetDeposit && (
+          {showExpensesCard && (
+            <StatCard
+              label="Egresos · mes"
+              value={formatCurrency(expensesMonth)}
+              icon={Receipt}
+              tone="warning"
+              hint={deltaHint(expensesDelta, /* invertColor */ true)}
+            />
+          )}
+          {showNetCard && (
             <StatCard
               label="Neto · mes"
-              value={formatCurrency(operatingIncomeMonth - (currentSummary?.totalExpenses ?? 0))}
+              value={formatCurrency(netMonth)}
               icon={Wallet}
-              tone={operatingIncomeMonth - (currentSummary?.totalExpenses ?? 0) >= 0 ? 'positive' : 'negative'}
+              tone={netMonth >= 0 ? 'positive' : 'negative'}
             />
           )}
         </section>
@@ -251,7 +276,11 @@ export function AdminHome() {
             Order: Total Consolidado · Inversiones · Liquidez · Socios
             (money figures grouped left, headcount card last) */}
       <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {hasFinance && (
+        {/* 'balances' y no 'movements': la tarjeta es la suma de TODOS los
+            balances (la misma de /balances) y en modo 'company' el módulo
+            'movements' está bloqueado — con el gate viejo la consultora
+            tampoco veía este número. */}
+        {has('balances') && (
           <StatCard
             label="Total Consolidado"
             value={totalConsolidado === null ? '—' : formatCurrency(totalConsolidado)}

@@ -25,6 +25,7 @@ import {
 } from '@/lib/channel-configs';
 import { apiError } from '@/lib/api-error';
 import { DEFAULT_LOCATION_TYPE, isLocationType, type UnitShare } from '@/lib/cash-locations';
+import { AUTO_CATEGORIES } from '@/lib/channel-ledger';
 import type { ChannelConfigRow } from '@/lib/channel-configs';
 
 const BUILTIN_KEYS = new Set(BUILTIN_CHANNELS.map((c) => c.key));
@@ -170,9 +171,18 @@ export async function POST(request: NextRequest) {
     const payload: Record<string, unknown> = {
       company_id: ctx.companyId,
       channel_key,
-      is_visible: typeof is_visible === 'boolean' ? is_visible : true,
       updated_at: new Date().toISOString(),
     };
+    // `is_visible` OMITIDO ≠ `is_visible: true`. Mismo criterio que
+    // custom_label: solo se escribe lo que vino en el body. Forzarlo a true
+    // hacía que RENOMBRAR un canal archivado lo DES-ARCHIVARA — el modal manda
+    // solo `custom_label` y el canal reaparecía en /balances (y en el total)
+    // sin que nadie lo pidiera.
+    //
+    // OJO con el insert: el upsert puede terminar insertando la fila y en ese
+    // caso la columna toma su default en la DB (true), que es justo lo que
+    // corresponde para un canal que hasta ahora no tenía configuración.
+    if (typeof is_visible === 'boolean') payload.is_visible = is_visible;
     // `custom_label` OMITIDO ≠ `custom_label: null`. Antes cualquier upsert
     // que no lo mandara (el toggle de visibilidad del modal, y desde hoy el
     // guardado de tipo/holder de la tarjeta de ubicaciones) lo pisaba con
@@ -290,23 +300,68 @@ export async function POST(request: NextRequest) {
       return apiError('admin/channel-configs', error, { status: 500 });
     }
 
-    // Optional initial balance snapshot.
+    // Saldo inicial.
+    //
+    // EL SALDO INICIAL ES UN ASIENTO DE APERTURA, NO UN SNAPSHOT. Antes esto
+    // escribía SOLO una fila en channel_balances, pero /balances (y el reporte,
+    // y el total consolidado) prefieren el LIBRO: en cuanto alguien cargaba el
+    // primer asiento de $50, el canal pasaba a valer $50 y los $1.000 de
+    // apertura se evaporaban. Se asienta en el libro —que es la representación
+    // correcta— y el snapshot queda como respaldo para las pantallas que
+    // todavía leen la foto diaria.
     const todayISO = () => {
       const d = new Date();
       const pad = (n: number) => String(n).padStart(2, '0');
       return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     };
-    if (typeof initial_balance === 'number' && initial_balance !== 0) {
+    if (typeof initial_balance === 'number' && Number.isFinite(initial_balance) && initial_balance !== 0) {
+      const entryDate = as_of && /^\d{4}-\d{2}-\d{2}$/.test(as_of) ? as_of : todayISO();
       await admin.from('channel_balances').upsert(
         {
           company_id: ctx.companyId,
-          snapshot_date: as_of && /^\d{4}-\d{2}-\d{2}$/.test(as_of) ? as_of : todayISO(),
+          snapshot_date: entryDate,
           channel_key,
           amount: initial_balance,
           source: 'manual',
         },
         { onConflict: 'company_id,snapshot_date,channel_key' },
       );
+
+      // `amount` en el libro es siempre positivo: el signo lo da `kind`. Una
+      // apertura en negativo (raro pero cargable) se asienta como egreso, que
+      // es la única forma de representarla sin violar el check de la tabla.
+      const openingRow = {
+        company_id: ctx.companyId,
+        channel_key,
+        entry_date: entryDate,
+        kind: initial_balance > 0 ? ('opening' as const) : ('out' as const),
+        source: 'manual' as const,
+        concept: 'Saldo inicial',
+        category: AUTO_CATEGORIES.opening,
+        amount: Math.abs(initial_balance),
+        created_by: ctx.userId,
+      };
+      const { error: openingError } = await admin
+        .from('channel_ledger_entries')
+        .insert(openingRow);
+      // 23505 = el índice único channel_ledger_entries_one_opening
+      // (company_id, channel_key) WHERE kind='opening'. Ya hay apertura para
+      // esta clave: se actualiza en vez de duplicar.
+      if (openingError?.code === '23505') {
+        await admin
+          .from('channel_ledger_entries')
+          .update({
+            entry_date: openingRow.entry_date,
+            concept: openingRow.concept,
+            category: openingRow.category,
+            amount: openingRow.amount,
+          })
+          .eq('company_id', ctx.companyId)
+          .eq('channel_key', channel_key)
+          .eq('kind', 'opening');
+      } else if (openingError) {
+        return apiError('admin/channel-configs opening', openingError, { status: 500 });
+      }
     }
 
     await admin.from('audit_logs').insert({
