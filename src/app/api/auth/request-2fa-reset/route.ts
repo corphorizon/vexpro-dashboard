@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { sendTwofaResetCodeEmail } from '@/services/emailService';
 import { resolveUserLocale } from '@/lib/email-i18n';
+import { checkRateLimit, recordFailure } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
 
 // ---------------------------------------------------------------------------
@@ -19,6 +20,16 @@ import { apiError } from '@/lib/api-error';
 // ---------------------------------------------------------------------------
 
 const CODE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+
+// Rate-limit igual que forgot-password: 5 intentos por IP cada 10 min. Este
+// endpoint hace signInWithPassword + envía email en CADA request, así que sin
+// límite es un vector de brute-force de contraseñas Y de abuso de la cuota de
+// SendGrid. Se agrega además una cuota por email (mismo tope) para que rotar el
+// origen de IP no permita spamear a una víctima concreta. Usamos el kind
+// dedicado 'send-email' con claves distintas para no colisionar con otros
+// contadores.
+const RESET_MAX_ATTEMPTS = 5;
+const RESET_LOCK_MS = 10 * 60 * 1000;
 
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
@@ -38,6 +49,31 @@ export async function POST(request: NextRequest) {
 
     const normalized = email.toLowerCase().trim();
     const adminClient = createAdminClient();
+
+    // Rate limit ANTES de tocar la DB. Se responde 200 en el lockout (igual que
+    // el resto del flujo) para no filtrar señal de enumeración ni de si el
+    // password era correcto.
+    const callerIp =
+      request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ||
+      request.headers.get('x-real-ip') ||
+      'unknown';
+    const rlKind = 'send-email' as const;
+    const ipGate = { key: `2fa-reset-ip:${callerIp}`, kind: rlKind };
+    const emailGate = { key: `2fa-reset-email:${normalized}`, kind: rlKind };
+
+    const [ipState, emailState] = await Promise.all([
+      checkRateLimit(adminClient, ipGate),
+      checkRateLimit(adminClient, emailGate),
+    ]);
+    if (ipState.locked || emailState.locked) {
+      return NextResponse.json({ success: true });
+    }
+    // Cada intento cuenta contra ambas cuotas (siempre respondemos 200, así que
+    // el contador debe avanzar aunque el usuario no exista o el password falle).
+    await Promise.all([
+      recordFailure(adminClient, { ...ipGate, max: RESET_MAX_ATTEMPTS, lockMs: RESET_LOCK_MS }),
+      recordFailure(adminClient, { ...emailGate, max: RESET_MAX_ATTEMPTS, lockMs: RESET_LOCK_MS }),
+    ]);
 
     const { data: companyUser } = await adminClient
       .from('company_users')

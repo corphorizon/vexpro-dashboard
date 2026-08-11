@@ -5,6 +5,7 @@ import { clearAttempts } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { notify } from '@/lib/notifications/notify';
+import { guardAdminTarget } from '@/lib/admin-user-guards';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/reset-user-2fa
@@ -38,7 +39,7 @@ export async function POST(request: NextRequest) {
     // Verify the target user is in the caller's company
     const { data: companyUser } = await adminClient
       .from('company_users')
-      .select('id, company_id, name, email')
+      .select('id, company_id, name, email, role')
       .eq('user_id', userId)
       .eq('company_id', auth.companyId)
       .maybeSingle();
@@ -49,6 +50,11 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
+
+    // Desactivar el 2FA de OTRO admin lo dejaría abierto a una toma de cuenta
+    // por un par: solo el superadmin puede resetear el 2FA de un admin.
+    const targetGuard = guardAdminTarget(companyUser.role, auth);
+    if (targetGuard) return targetGuard;
 
     // Disable 2FA and clear any pending setup
     const { error: updateError } = await adminClient

@@ -21,6 +21,9 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // `server-only` lo provee Next en el build; en node (test) no resuelve.
+      // Se stubbea para no romper los tests que importan libs marcadas server-only.
+      'server-only': path.resolve(__dirname, './src/test/stubs/server-only.ts'),
     },
   },
 });

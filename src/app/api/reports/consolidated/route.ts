@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { buildReportData } from '@/lib/reports/data';
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,11 @@ import { buildReportData } from '@/lib/reports/data';
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    // Este endpoint devuelve depósitos/retiros/P&L/balances consolidados: es
+    // dato financiero sensible. verifyAuth dejaba pasar CUALQUIER rol (incluido
+    // un invitado de solo lectura). Se exige rol financiero (admin/auditor); el
+    // superadmin pasa como 'admin' apuntando al tenant con ?company_id=...
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
     if (auth instanceof NextResponse) return auth;
 
     const url = new URL(request.url);

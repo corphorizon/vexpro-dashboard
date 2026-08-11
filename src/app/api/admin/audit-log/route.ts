@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAuth } from '@/lib/api-auth';
+import { verifyAuth, verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
+
+// Escapa los comodines de LIKE/ILIKE (% y _) y el propio escape (\) para que un
+// filtro de texto se compare de forma literal. Sin esto, un `q` con `%`/`_`
+// convierte la búsqueda en un patrón (p.ej. `%` matchea todo) — no es una
+// vulnerabilidad de inyección SQL (PostgREST parametriza), pero sí permite
+// exfiltrar/enumerar más de lo previsto y degradar el índice.
+function escapeLike(v: string): string {
+  return v.replace(/[\\%_]/g, (ch) => `\\${ch}`);
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/audit-log
@@ -83,14 +92,22 @@ export async function POST(request: NextRequest) {
 // lista que se desactualice (los módulos del log NO son los mismos que los
 // del menú: acá aparecen cosas como `integrations_sync` o `auth`).
 //
-// Solo lectura y siempre acotado a la empresa del token: `company_id` sale de
-// verifyAuth, nunca del query string.
+// Solo lectura y siempre acotado a la empresa del token: `company_id` sale del
+// token, nunca del query string.
+//
+// SEGURIDAD (2026-08-11): el GET usa el admin client (service_role, que saltea
+// RLS) para leer TODO el log de la empresa — incluyendo acciones de RRHH y de
+// otros usuarios. Antes se protegía solo con verifyAuth (cualquier rol), así
+// que un usuario básico o invitado podía leer la actividad completa y la
+// nómina. Ahora exige rol de finanzas (admin/auditor) vía verifyAdminAuth. El
+// POST sigue con verifyAuth a propósito: cada usuario debe poder registrar sus
+// propias acciones (login/logout/export) en el trail.
 // ---------------------------------------------------------------------------
 
 const MAX_LIMIT = 200;
 
 export async function GET(request: NextRequest) {
-  const auth = await verifyAuth(request);
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
   if (auth instanceof NextResponse) return auth;
 
   const p = request.nextUrl.searchParams;
@@ -119,8 +136,8 @@ export async function GET(request: NextRequest) {
   if (to) query = query.lte('created_at', `${to}T23:59:59.999Z`);
   if (moduleKey) query = query.eq('module', moduleKey);
   if (action) query = query.eq('action', action);
-  if (user) query = query.ilike('user_name', `%${user}%`);
-  if (q) query = query.ilike('details', `%${q}%`);
+  if (user) query = query.ilike('user_name', `%${escapeLike(user)}%`);
+  if (q) query = query.ilike('details', `%${escapeLike(q)}%`);
 
   const { data, error, count } = await query
     .order('created_at', { ascending: false })

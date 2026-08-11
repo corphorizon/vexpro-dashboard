@@ -16,6 +16,8 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
+import { useData } from '@/lib/data-context';
+import { blockedReportSections } from '@/lib/business-model';
 import { Send, X } from 'lucide-react';
 
 export type Cadence = 'current' | 'daily' | 'weekly' | 'monthly';
@@ -76,6 +78,15 @@ function previousMonthRange(): { from: string; to: string } {
 }
 
 export function SendReportModal({ open, onClose, currentRange }: Props) {
+  const { company } = useData();
+  // El modelo de negocio esconde secciones que no aplican: a una empresa
+  // 'company' no se le ofrecen deposits_withdrawals / broker_pnl / prop_trading.
+  // El servidor las vuelve a apagar igual (defensa en profundidad), pero no
+  // tiene sentido ofrecer un checkbox que nunca va a enviarse.
+  const blockedSections = new Set(blockedReportSections(company?.business_model));
+  const visibleSectionKeys = (Object.keys(SECTION_LABELS) as (keyof Sections)[]).filter(
+    (k) => !blockedSections.has(k),
+  );
   const [candidates, setCandidates] = useState<Recipient[]>([]);
   const [selectedEmails, setSelectedEmails] = useState<Set<string>>(new Set());
   const [externalEmail, setExternalEmail] = useState('');
@@ -260,7 +271,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
           <section>
             <h3 className="text-sm font-medium mb-2">Secciones a incluir</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-              {(Object.keys(SECTION_LABELS) as (keyof Sections)[]).map((k) => (
+              {visibleSectionKeys.map((k) => (
                 <label
                   key={k}
                   className="flex items-center gap-2 text-sm p-2 rounded-md border border-border cursor-pointer hover:bg-muted/40"

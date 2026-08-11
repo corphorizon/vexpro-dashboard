@@ -34,7 +34,12 @@ import {
 } from '@/lib/reports/email-template';
 import { sendEmail } from '@/services/emailService';
 import { loadReportConfig } from '@/lib/reports/config';
+import { blockedReportSections } from '@/lib/business-model';
 import { resolveUserLocale, type EmailLocale } from '@/lib/email-i18n';
+
+// Un envío legítimo no necesita más de 50 destinatarios; el tope es una barrera
+// defensiva contra un body inflado, no un límite de producto.
+const MAX_RECIPIENTS = 50;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -104,6 +109,46 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const admin = createAdminClient();
+
+  // ── Blindaje anti-exfiltración ──────────────────────────────────────────
+  // El body solo validaba SINTAXIS de email, así que un admin podía mandarse
+  // el reporte financiero a cualquier correo. Acá se filtra contra el conjunto
+  // legítimo: los usuarios de ESTA empresa (company_users) + los superadmins de
+  // plataforma (platform_users). Cualquier correo fuera de ese set se descarta
+  // (con log) en vez de enviarse.
+  const [companyUsersRes, platformUsersRes] = await Promise.all([
+    admin.from('company_users').select('email').eq('company_id', companyId),
+    admin.from('platform_users').select('email'),
+  ]);
+  const allowedEmails = new Set<string>();
+  for (const row of (companyUsersRes.data ?? []) as Array<{ email: string | null }>) {
+    if (row.email) allowedEmails.add(row.email.trim().toLowerCase());
+  }
+  for (const row of (platformUsersRes.data ?? []) as Array<{ email: string | null }>) {
+    if (row.email) allowedEmails.add(row.email.trim().toLowerCase());
+  }
+
+  const rejected: string[] = [];
+  const legitRecipients = recipients.filter((email) => {
+    if (allowedEmails.has(email)) return true;
+    rejected.push(email);
+    return false;
+  });
+  if (rejected.length > 0) {
+    console.warn(
+      `[reports/send] destinatarios descartados por no pertenecer a la empresa ${companyId}: ${rejected.join(', ')}`,
+    );
+  }
+  if (legitRecipients.length === 0) {
+    // Mensaje seguro: no revela qué correos existen ni por qué se filtraron.
+    return NextResponse.json(
+      { success: false, error: 'Ningún destinatario válido para esta empresa' },
+      { status: 400 },
+    );
+  }
+  const finalRecipients = legitRecipients.slice(0, MAX_RECIPIENTS);
+
   const cadence: ReportCadence =
     body.cadence === 'weekly' || body.cadence === 'monthly' ? body.cadence : 'daily';
 
@@ -141,15 +186,23 @@ export async function POST(request: NextRequest) {
         : storedCfg.sections.prop_trading,
   };
 
-  // Look up company name / logo for the email header.
-  const admin = createAdminClient();
+  // Look up company name / logo / modelo de negocio for the email header.
   const { data: company } = await admin
     .from('companies')
-    .select('id, name, logo_url, color_primary')
+    .select('id, name, logo_url, color_primary, business_model')
     .eq('id', companyId)
     .maybeSingle();
   if (!company) {
     return NextResponse.json({ success: false, error: 'Empresa no encontrada' }, { status: 404 });
+  }
+
+  // El modelo de negocio manda sobre el body: loadReportConfig ya filtra las
+  // secciones bloqueadas en LECTURA, pero body.sections gana sobre la config y
+  // podría re-encender una sección que el modelo no admite (p. ej. mandarle
+  // "Depósitos y retiros" a una empresa 'company'). Se vuelven a apagar acá,
+  // en el servidor, como último control.
+  for (const key of blockedReportSections(company.business_model)) {
+    if (key in sections) sections[key as keyof typeof sections] = false;
   }
 
   // Build data once, then render lazily per recipient locale ('en' when the
@@ -170,7 +223,7 @@ export async function POST(request: NextRequest) {
         sections,
         locale,
       }),
-      text: renderReportEmailText({ data, cadence, companyName: company.name, locale }),
+      text: renderReportEmailText({ data, cadence, companyName: company.name, sections, locale }),
       subject: reportEmailSubject({
         companyName: company.name,
         cadence,
@@ -185,7 +238,7 @@ export async function POST(request: NextRequest) {
   let sent = 0;
   let failed = 0;
   const errors: string[] = [];
-  for (const email of recipients) {
+  for (const email of finalRecipients) {
     const locale = await resolveUserLocale(admin, email);
     const { html, text, subject } = renderFor(locale);
     const res = await sendEmail(email, subject, html, text, companyId);
@@ -207,7 +260,8 @@ export async function POST(request: NextRequest) {
       from,
       to,
       cadence,
-      recipients,
+      recipients: finalRecipients,
+      rejected,
       sections,
       sent,
       failed,

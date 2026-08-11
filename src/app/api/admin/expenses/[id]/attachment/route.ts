@@ -73,6 +73,21 @@ export async function GET(
     );
   }
 
+  // Defensa en profundidad contra lectura cross-tenant: el path SIEMPRE arranca
+  // con el id de la empresa dueña del egreso. Aunque una fila manipulada haya
+  // logrado guardar un path de otra empresa (`{companyB}/...`), acá se firma
+  // con el admin client (saltea RLS), así que se revalida el prefijo antes de
+  // firmar. Se rechaza también cualquier `..` para evitar path traversal.
+  if (
+    expense.attachment_path.includes('..') ||
+    !expense.attachment_path.startsWith(`${expense.company_id}/`)
+  ) {
+    return NextResponse.json(
+      { success: false, error: 'El comprobante tiene un origen no reconocido' },
+      { status: 422 },
+    );
+  }
+
   const { data: signed, error: signErr } = await admin.storage
     .from(bucket)
     .createSignedUrl(expense.attachment_path, SIGNED_TTL_SECONDS);
