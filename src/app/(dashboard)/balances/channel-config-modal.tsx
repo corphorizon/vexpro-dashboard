@@ -39,6 +39,7 @@ import {
   DEFAULT_LOCATION_TYPE,
   LOCATION_TYPES,
   LOCATION_TYPE_LABELS,
+  primaryUnitId,
   type BusinessUnit,
   type LocationType,
   type UnitShare,
@@ -182,9 +183,12 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
           initial_balance: isNaN(initial) ? undefined : initial,
           location_type: newType,
           holder: newHolder,
-          // La primera unidad queda como principal en channel_configs, que es
-          // lo que leen las pantallas que no saben del reparto.
-          business_unit_id: newShares[0]?.business_unit_id ?? null,
+          // La unidad de MAYOR parte queda como principal en channel_configs,
+          // que es lo que leen las pantallas que no saben del reparto. Tomar
+          // la primera del array registraba una wallet 30/70 bajo la unidad
+          // del 30% solo porque era la fila cargada primero — para eso existe
+          // primaryUnitId (auditoría 2026-08, A5).
+          business_unit_id: primaryUnitId(newShares),
         }),
       });
       const json = (await res.json()) as { success: boolean; error?: string; channel_key?: string };

@@ -43,6 +43,7 @@ import {
   EyeOff,
   ChevronDown,
   ChevronUp,
+  AlertTriangle,
 } from 'lucide-react';
 
 // Column definition. `compute` recibe los helpers del DataProvider + el
@@ -57,7 +58,11 @@ interface PeriodRowContext {
   summary: ReturnType<ReturnType<typeof useData>['getPeriodSummary']>;
   saldoInfo: {
     reservaPeriodo: number; reservaAcumulada: number; montoDistribuir: number;
-    ingresosNetos: number; saldoAFavor: number;
+    // egresosNetos: la cadena YA lo expone. La interfaz lo omitía, así que la
+    // columna "Egresos Operativos" tenía que caer en summary.totalExpenses
+    // (VIVO) mientras "Resultado del Mes" salía de la cadena (congelado en un
+    // mes cerrado): con deriva, la fila no restaba bien.
+    ingresosNetos: number; egresosNetos: number; saldoAFavor: number;
   } | null;
   // API totales del mes (Coinsbuy + FairPay + UniPayment). Llenado desde
   // /api/integrations/period-totals que ya respeta pinned_coinsbuy_wallets.
@@ -105,6 +110,7 @@ export default function ConsolidadoPage() {
     periods,
     getPeriodSummary,
     computeSaldoChain,
+    getSnapshotDrifts,
     isPeriodAfterSaldoStart,
   } = useData();
   const { user } = useAuth();
@@ -147,6 +153,17 @@ export default function ConsolidadoPage() {
   // Los demás campos se derivan de getPeriodSummary del DataProvider.
 
   const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
+
+  // Deriva vivo-vs-congelado: alguien editó datos de un mes CERRADO. Toda esta
+  // tabla muestra lo congelado (la cadena manda), así que sin este aviso la
+  // edición pasaba desapercibida. Mismo aviso que /socios — la detección vive
+  // en getSnapshotDrifts (data-context → applySnapshotOverrides), acá solo se
+  // renderiza.
+  const snapshotDrifts = useMemo(() => getSnapshotDrifts(), [getSnapshotDrifts]);
+  const driftPeriodCount = useMemo(
+    () => new Set(snapshotDrifts.map((d) => d.periodLabel)).size,
+    [snapshotDrifts],
+  );
 
   // ─── API totales por período ─────────────────────────────────────────────
   //
@@ -207,6 +224,7 @@ export default function ConsolidadoPage() {
             reservaAcumulada: saldoEntry.reserveAccumulated,
             montoDistribuir: saldoEntry.montoDistribuir,
             ingresosNetos: saldoEntry.ingresosNetos,
+            egresosNetos: saldoEntry.egresosNetos,
             saldoAFavor: saldoEntry.saldoAFavor,
           }
         : null;
@@ -314,7 +332,10 @@ export default function ConsolidadoPage() {
       {
         key: 'operatingExpenses',
         labelKey: 'consolidated.colOperatingExpenses',
-        compute: (c) => c.summary?.totalExpenses ?? 0,
+        // De la CADENA, no de las tablas vivas: es el mismo egreso que
+        // "Resultado del Mes" resta a "Ingresos Operativos". Fallback al vivo
+        // solo si el período no está en la cadena (no debería pasar).
+        compute: (c) => c.saldoInfo?.egresosNetos ?? c.summary?.totalExpenses ?? 0,
         total: 'sum',
         kind: 'neg',
       },
@@ -479,6 +500,39 @@ export default function ConsolidadoPage() {
           </>
         }
       />
+
+      {/* Deriva snapshot-vs-vivo — mismo aviso que /socios */}
+      {snapshotDrifts.length > 0 && (
+        <div className="flex gap-3 rounded-lg border border-negative/30 bg-negative/5 p-4">
+          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-negative" />
+          <div className="text-sm">
+            <p className="font-medium text-negative">
+              {t('consolidated.driftTitle', {
+                count: String(driftPeriodCount),
+                periods: driftPeriodCount === 1
+                  ? t('consolidated.driftPeriodOne')
+                  : t('consolidated.driftPeriodMany'),
+              })}
+            </p>
+            <ul className="mt-1 text-xs text-muted-foreground space-y-0.5">
+              {snapshotDrifts.slice(0, 6).map((d, i) => (
+                <li key={i}>
+                  {t('consolidated.driftRow', {
+                    period: d.periodLabel,
+                    field: d.field,
+                    frozen: formatCurrency(d.frozen),
+                    live: formatCurrency(d.live),
+                  })}
+                </li>
+              ))}
+              {snapshotDrifts.length > 6 && (
+                <li>{t('consolidated.driftMore', { count: String(snapshotDrifts.length - 6) })}</li>
+              )}
+            </ul>
+            <p className="mt-1 text-xs text-muted-foreground">{t('consolidated.driftHint')}</p>
+          </div>
+        </div>
+      )}
 
       {/* Settings panel — columnas + meses */}
       {showSettings && (

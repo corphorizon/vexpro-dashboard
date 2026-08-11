@@ -56,7 +56,7 @@ export default function ResumenPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, periods, company, loading } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, computeSaldoChain, periods, company, loading } = useData();
   // Una consultora no mueve fondos de clientes: sin depósitos, "Net Deposit" y
   // el P&L del broker no significan nada y se van de la pantalla (y del export).
   const { netDeposit: showNetDeposit, brokerPnl: showBrokerPnl } = features(company?.business_model);
@@ -80,6 +80,33 @@ export default function ResumenPage() {
   // igual que /movimientos y /balances — net deposit consistente entre pantallas.
   const coexist = useApiCoexistence(activePeriods, '');
   const useDerivedBroker = coexist.useDerivedBroker;
+
+  // ─── Ingresos / Egresos / Balance — CADENA CANÓNICA ───────────────────
+  // Antes esta pantalla re-implementaba la base distribuible
+  // (broker_pnl + other + propFirm + inversiones − egresos) sobre las tablas
+  // VIVAS. Eso duplicaba ingresosNetos/saldoAFavor de distribution.ts y, en un
+  // mes CERRADO, mostraba los números de hoy mientras /socios mostraba los
+  // congelados en closing_snapshot; tampoco aplicaba la neutralización por
+  // modelo de negocio (una 'company' seguía sumando broker_pnl heredado).
+  // Ahora sale de computeSaldoChain() — mismos insumos
+  // (buildDistributionInputs + applySnapshotOverrides) y misma fórmula que
+  // /socios y /balances. En consolidado se suman los períodos seleccionados.
+  const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
+  const chainTotals = useMemo(() => {
+    const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
+    return ids.reduce(
+      (acc, id) => {
+        const e = saldoChain.get(id);
+        if (!e) return acc;
+        return {
+          ingresosNetos: acc.ingresosNetos + e.ingresosNetos,
+          egresosNetos: acc.egresosNetos + e.egresosNetos,
+          saldoAFavor: acc.saldoAFavor + e.saldoAFavor,
+        };
+      },
+      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0 },
+    );
+  }, [saldoChain, mode, selectedPeriodId, selectedPeriodIds]);
 
   // Skeleton while the data-context hasn't produced a summary yet. A blank
   // page mid-load (what used to show) felt like the app was broken.
@@ -133,13 +160,12 @@ export default function ResumenPage() {
 
   const consolidatedNetDeposit = consolidatedDeposits - consolidatedWithdrawals;
 
+  // `income` sigue siendo el desglose vivo que se muestra como detalle; los
+  // TOTALES vienen de la cadena (ver chainTotals arriba).
   const income = summary.operatingIncome;
-  const totalIncome = (income
-    ? income.broker_pnl + income.other
-    : 0)
-    + summary.propFirmNetIncome
-    + summary.investmentProfits;
-  const balanceDisponible = totalIncome - summary.totalExpenses;
+  const totalIncome = chainTotals.ingresosNetos;
+  const totalExpenses = chainTotals.egresosNetos;
+  const balanceDisponible = chainTotals.saldoAFavor;
 
   const exportHeaders = ['Metrica', 'Valor'];
   const exportRows: (string | number)[][] = [
@@ -150,7 +176,7 @@ export default function ResumenPage() {
           ['Net Deposit', consolidatedNetDeposit],
         ] as (string | number)[][])
       : []),
-    ['Egresos Operativos', summary.totalExpenses],
+    ['Egresos Operativos', totalExpenses],
     ['Ingresos Operativos', totalIncome],
     ['Balance Total', balanceDisponible],
   ];
@@ -246,7 +272,7 @@ export default function ResumenPage() {
         )}
         <StatCard
           label={t('summary.expenses')}
-          value={formatCurrency(summary.totalExpenses)}
+          value={formatCurrency(totalExpenses)}
           icon={Receipt}
           tone="warning"
         />
@@ -317,7 +343,7 @@ export default function ResumenPage() {
             <div className="flex justify-between">
               <span>{t('summary.expenses')}</span>
               <span className="text-negative">
-                -{formatCurrency(summary.totalExpenses)}
+                -{formatCurrency(totalExpenses)}
               </span>
             </div>
           </div>

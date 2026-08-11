@@ -104,26 +104,87 @@ describe('buildDistributionInputs — neutralización por modelo de negocio', ()
     expect(asCompany[0].brokerPnl).toBe(0);
     expect(asCompany[0].propFirmNetIncome).toBe(0);
     // Lo que SÍ factura una empresa de servicios (other = líneas cobradas) y
-    // sus egresos e inversiones siguen intactos.
+    // sus egresos siguen intactos.
     expect(asCompany[0].other).toBe(500);
     expect(asCompany[0].totalExpenses).toBe(250);
-    expect(asCompany[1].investmentProfits).toBe(77);
   });
 
-  it("modelo 'broker' (y default/desconocido) mantiene los dos términos", () => {
+  it("modelo 'company': investmentProfits también entra en cero", () => {
+    // features('company').investments === false ⇒ /inversiones está bloqueado
+    // y la columna ni figura en el consolidado. Si la ganancia igual entrara a
+    // la base, sería la misma plata fantasma que brokerPnl.
+    const asCompany = buildDistributionInputs(periods, sources({ businessModel: 'company' }));
+    expect(asCompany[1].investmentProfits).toBe(0);
+    // Y en broker sigue entrando.
+    const asBroker = buildDistributionInputs(periods, sources({ businessModel: 'broker' }));
+    expect(asBroker[1].investmentProfits).toBe(77);
+  });
+
+  it("modelo 'broker' (y default/desconocido) mantiene los tres términos", () => {
     for (const model of ['broker', undefined, null, 'marciano']) {
       const inputs = buildDistributionInputs(periods, sources({ businessModel: model }));
       expect(inputs[0].brokerPnl).toBe(1000);
       expect(inputs[0].propFirmNetIncome).toBe(200);
+      expect(inputs[1].investmentProfits).toBe(77);
     }
   });
 
-  it('broker vs company difieren EXACTAMENTE en esos dos términos', () => {
+  it('broker vs company difieren EXACTAMENTE en los términos neutralizados', () => {
     const asBroker = buildDistributionInputs(periods, sources({ businessModel: 'broker' }));
     const asCompany = buildDistributionInputs(periods, sources({ businessModel: 'company' }));
     asBroker.forEach((b, i) => {
       const c = asCompany[i];
-      expect({ ...c, brokerPnl: b.brokerPnl, propFirmNetIncome: b.propFirmNetIncome }).toEqual(b);
+      expect({
+        ...c,
+        brokerPnl: b.brokerPnl,
+        propFirmNetIncome: b.propFirmNetIncome,
+        investmentProfits: b.investmentProfits,
+      }).toEqual(b);
     });
+  });
+});
+
+describe('buildDistributionInputs — base CAJA de egresos (solo company)', () => {
+  // Fixture con las dos caras del egreso: 1.000 devengados de los que solo
+  // salieron 400 de la caja.
+  const conPagado = (over: Partial<DistributionSources> = {}) =>
+    sources({
+      expenses: [
+        { period_id: 'p1', amount: 600, paid: 400 },
+        { period_id: 'p1', amount: 400, paid: 0 }, // factura recibida y NO pagada
+      ],
+      ...over,
+    });
+
+  it("modelo 'company' resta lo PAGADO, no lo devengado", () => {
+    const [p1] = buildDistributionInputs(periods, conPagado({ businessModel: 'company' }));
+    expect(p1.totalExpenses).toBe(400);
+  });
+
+  it("modelo 'broker' (y default) sigue restando lo DEVENGADO", () => {
+    // NO se toca por diseño: en producción AP Markets tiene ~$24.900 de
+    // egresos con paid = 0 (ese equipo no usa el campo). Aplicarle caja le
+    // llevaría los egresos a cero e inflaría su base distribuible.
+    for (const model of ['broker', undefined, null, 'marciano']) {
+      const [p1] = buildDistributionInputs(periods, conPagado({ businessModel: model }));
+      expect(p1.totalExpenses).toBe(1000);
+    }
+  });
+
+  it("'paid: 0' es un dato real: en company esa factura no resta", () => {
+    const [p1] = buildDistributionInputs(
+      periods,
+      sources({ businessModel: 'company', expenses: [{ period_id: 'p1', amount: 5000, paid: 0 }] }),
+    );
+    expect(p1.totalExpenses).toBe(0);
+  });
+
+  it('sin columna `paid` se cae al devengado en vez de inflar la base', () => {
+    // Si el llamador no trajo `paid`, restar de más es el error seguro.
+    const [p1] = buildDistributionInputs(
+      periods,
+      sources({ businessModel: 'company', expenses: [{ period_id: 'p1', amount: 5000 }] }),
+    );
+    expect(p1.totalExpenses).toBe(5000);
   });
 });

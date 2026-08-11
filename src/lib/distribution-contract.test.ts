@@ -48,9 +48,10 @@ const sources: DistributionSources = {
     { period_id: 'p3', category: 'ib_commissions', amount: 7_000 }, // tampoco
   ],
   expenses: [
-    { period_id: 'p1', amount: 12_000 },
-    { period_id: 'p2', amount: 30_000 }, // 4.000 − 30.000 ⇒ mes negativo
-    { period_id: 'p3', amount: 10_000 },
+    // `paid` < `amount` en p1: el eje devengado-vs-caja, que solo mira 'company'.
+    { period_id: 'p1', amount: 12_000, paid: 9_000 },
+    { period_id: 'p2', amount: 30_000, paid: 30_000 }, // 4.000 − 30.000 ⇒ mes negativo
+    { period_id: 'p3', amount: 10_000, paid: 10_000 },
   ],
   investments: [{ date: '2026-03-09', profit: 1_500 }],
 };
@@ -192,18 +193,31 @@ describe('contrato — el cierre congela, y congela en los dos caminos', () => {
 });
 
 describe('contrato — el modelo de negocio entra por un solo lugar', () => {
-  it("'company' apaga brokerPnl y prop firm en TODA la cadena", () => {
+  it("'company' apaga brokerPnl, prop firm e inversiones en TODA la cadena", () => {
     const broker = productChain(periods, { ...sources, businessModel: 'broker' });
     const company = productChain(periods, { ...sources, businessModel: 'company' });
 
-    // p1 broker: 50.000 + 5.000 + (3.000 − 1.000) − 12.000 = 45.000
+    // p1 broker: 50.000 + 5.000 + (3.000 − 1.000) = 57.000
     expect(broker.get('p1')!.ingresosNetos).toBe(57_000);
     // p1 company: solo `other` (lo facturado y cobrado).
     expect(company.get('p1')!.ingresosNetos).toBe(5_000);
-    // Los egresos no se tocan: la empresa igual paga sus cuentas.
-    expect(company.get('p1')!.egresosNetos).toBe(broker.get('p1')!.egresosNetos);
+    // p3 broker incluye la ganancia de inversiones (80.000 + 2.000 + 1.500);
+    // company no, porque el módulo Inversiones no existe para ese modelo.
+    expect(broker.get('p3')!.ingresosNetos).toBe(83_500);
+    expect(company.get('p3')!.ingresosNetos).toBe(2_000);
     // Y el mes que era normal pasa a negativo ⇒ no reparte plata fantasma.
     expect(broker.get('p1')!.montoDistribuir).toBeGreaterThan(0);
     expect(company.get('p1')!.montoDistribuir).toBe(0);
+  });
+
+  it("'company' resta lo PAGADO y 'broker' lo DEVENGADO, en TODA la cadena", () => {
+    const broker = productChain(periods, { ...sources, businessModel: 'broker' });
+    const company = productChain(periods, { ...sources, businessModel: 'company' });
+
+    // p1: 12.000 facturados, 9.000 salidos de la caja.
+    expect(broker.get('p1')!.egresosNetos).toBe(12_000);
+    expect(company.get('p1')!.egresosNetos).toBe(9_000);
+    // Los meses con todo pagado dan igual en los dos modelos.
+    expect(company.get('p2')!.egresosNetos).toBe(broker.get('p2')!.egresosNetos);
   });
 });

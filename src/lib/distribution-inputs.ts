@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { PeriodDistInput } from './distribution';
-import { features } from './business-model';
+import { features, normalizeBusinessModel } from './business-model';
 
 /** Lo mínimo que el constructor necesita de un período. */
 export interface PeriodForInputs {
@@ -44,7 +44,15 @@ export interface WithdrawalLike {
 }
 export interface ExpenseLike {
   period_id: string;
+  /** Devengado: lo que se facturó, esté pagado o no. */
   amount: number;
+  /**
+   * Pagado: lo que efectivamente salió de la caja. Ver la nota de base CAJA
+   * abajo — solo lo lee el modelo 'company'. Ausente (no `0`, que es un dato
+   * real) ⇒ se cae al devengado: preferimos restar de más antes que inflar la
+   * base distribuible porque el llamador no trajo la columna.
+   */
+  paid?: number | string | null;
 }
 export interface InvestmentLike {
   date?: string | null;
@@ -105,9 +113,29 @@ export function buildDistributionInputs(
       pfwIndex.set(w.period_id, (pfwIndex.get(w.period_id) || 0) + (Number(w.amount) || 0));
     }
   }
+  // ── Base CAJA para los egresos, SOLO en modelo 'company' ────────────────
+  // La base era mixta y por eso mentía: del lado del ingreso entra lo COBRADO
+  // (income_lines.received, materializado en operating_income.other) pero del
+  // lado del egreso entraba lo DEVENGADO (expenses.amount, que incluye
+  // facturas todavía NO pagadas). Un mes daba negativo por plata que aún no
+  // salió de la caja, y esa deuda ficticia se arrastraba a los meses
+  // siguientes. En 'company' los dos lados pasan a ser caja: entra lo cobrado,
+  // sale lo pagado (expenses.paid).
+  //
+  // POR QUÉ SOLO 'company': se verificó en producción que AP Markets (broker)
+  // tiene ~$24.900 de egresos con paid = 0 — ese equipo no usa el campo
+  // "pagado", carga todo en `amount`. Aplicar caja al broker le llevaría los
+  // egresos casi a cero e INFLARÍA su base distribuible, que es exactamente el
+  // error de dinero que este archivo existe para evitar. En 'broker' no se
+  // cambia nada: sigue mandando el devengado.
+  const cashBasisExpenses = normalizeBusinessModel(sources.businessModel) === 'company';
   const expIndex = new Map<string, number>();
   for (const e of expenses) {
-    expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + (Number(e.amount) || 0));
+    const accrued = Number(e.amount) || 0;
+    // `paid` ausente/null ⇒ devengado (ver ExpenseLike). `paid: 0` es un dato
+    // real: en caja, una factura sin pagar no resta.
+    const value = cashBasisExpenses && e.paid != null ? (Number(e.paid) || 0) : accrued;
+    expIndex.set(e.period_id, (expIndex.get(e.period_id) || 0) + value);
   }
   // investmentProfits por período — las inversiones son date-keyed (no
   // period_id): se asignan al período cuyo año/mes coincide con inv.date.
@@ -136,7 +164,15 @@ export function buildDistributionInputs(
   // congelado en closing_snapshot (la inmutabilidad del cierre manda), y la
   // diferencia aparece como deriva en getSnapshotDrifts — que es exactamente
   // el aviso que uno quiere ver al cambiar de modelo con historia cerrada.
+  //
+  // MISMO MOTIVO para las inversiones: con features().investments en false el
+  // módulo /inversiones está bloqueado (blockedModules) y la columna
+  // investmentProfits ni aparece en el consolidado
+  // (blockedConsolidatedColumns) — pero la ganancia de inversiones seguía
+  // entrando a la base distribuible. Era la misma plata fantasma que arriba,
+  // dejada a medias: un "Monto a Distribuir" que ninguna pantalla explica.
   const brokerPnlApplies = features(sources.businessModel).brokerPnl;
+  const investmentsApply = features(sources.businessModel).investments;
 
   return periods.map(period => {
     const oi = oiIndex.get(period.id);
@@ -151,7 +187,7 @@ export function buildDistributionInputs(
       brokerPnl: brokerPnlApplies ? (oi?.broker_pnl || 0) : 0,
       other: oi?.other || 0,
       propFirmNetIncome: brokerPnlApplies ? pfs - pfW : 0,
-      investmentProfits: invIndex.get(period.id) || 0,
+      investmentProfits: investmentsApply ? (invIndex.get(period.id) || 0) : 0,
       totalExpenses: expIndex.get(period.id) || 0,
       reservePct: period.reserve_pct,
     };
