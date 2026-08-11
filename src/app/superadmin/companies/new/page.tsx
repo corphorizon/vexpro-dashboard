@@ -5,7 +5,8 @@ import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
-import { CompanyForm, ALL_MODULES, type CompanyFormValues } from '../_form';
+import { DEFAULT_ACTIVE_MODULES } from '@/lib/modules';
+import { CompanyForm, type CompanyFormValues } from '../_form';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/companies/new — create a new tenant
@@ -21,10 +22,10 @@ const DEFAULT_VALUES: CompanyFormValues = {
   logo_icon_url: '',
   color_primary: '#1E3A5F',
   color_secondary: '#3B82F6',
-  // Reasonable default module set for a fresh tenant.
-  active_modules: ALL_MODULES.map((m) => m.key).filter((k) =>
-    ['summary', 'movements', 'expenses', 'income', 'liquidity', 'investments', 'balances', 'partners', 'payment_orders', 'upload', 'periods'].includes(k),
-  ),
+  // El default vive en src/lib/modules.ts y es EL MISMO que aplica el
+  // endpoint de alta. Antes eran dos literales gemelos y a los dos les
+  // faltaban users/logs/reports/clients.
+  active_modules: [...DEFAULT_ACTIVE_MODULES],
   status: 'active',
   reserve_pct: 0.1,
   business_model: 'broker',

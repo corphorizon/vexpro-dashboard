@@ -18,7 +18,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request);
+    const auth = await verifyAdminAuth(request, { modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     // Mismo criterio que el POST: superadmins también pueden quitar la

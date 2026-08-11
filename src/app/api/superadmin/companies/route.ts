@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { normalizeBusinessModel } from '@/lib/business-model';
+import { blockedModules, normalizeBusinessModel } from '@/lib/business-model';
+import { DEFAULT_ACTIVE_MODULES, sanitizeModuleKeys } from '@/lib/modules';
 import { periodLabel } from '@/lib/utils';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
@@ -66,6 +67,18 @@ export async function POST(request: NextRequest) {
     const slug = slugify(slugInput || name);
     const sub = subdomain || slug;
 
+    // Módulos: el default vive en src/lib/modules.ts (una sola lista, la misma
+    // que muestra el formulario). Lo que venga del cliente se sanea y se filtra
+    // por el modelo de negocio — guardar un módulo que blockedModules esconde
+    // deja a la empresa "teniendo" pantallas que nadie ve y que igual aparecen
+    // como elegibles al crear usuarios.
+    const model = normalizeBusinessModel(business_model);
+    const blocked = new Set(blockedModules(model));
+    const requestedModules = Array.isArray(active_modules)
+      ? sanitizeModuleKeys(active_modules)
+      : DEFAULT_ACTIVE_MODULES;
+    const modules = requestedModules.filter((m) => !blocked.has(m));
+
     const admin = createAdminClient();
 
     // Slug uniqueness — surface a friendly 409 so UI can suggest alternatives.
@@ -95,16 +108,13 @@ export async function POST(request: NextRequest) {
         logo_url: logo_url || null,
         color_primary: color_primary || '#1E3A5F',
         color_secondary: color_secondary || '#3B82F6',
-        active_modules: active_modules || [
-          'summary', 'movements', 'expenses', 'income', 'liquidity', 'investments',
-          'balances', 'partners', 'payment_orders', 'upload', 'periods',
-        ],
+        active_modules: modules,
         reserve_pct: reserve_pct ?? 0.1,
         currency: currency || 'USD',
         status: status || 'active',
         // Un valor invalido cae al default en vez de romper el alta con el
         // CHECK de la tabla.
-        business_model: normalizeBusinessModel(business_model),
+        business_model: model,
         created_by: auth.userId,
       })
       .select('id, name, slug, subdomain, logo_url, color_primary, color_secondary, active_modules, reserve_pct, currency, status, created_at')
@@ -169,7 +179,10 @@ export async function GET() {
     const admin = createAdminClient();
     const { data: companies, error } = await admin
       .from('companies')
-      .select('id, name, slug, logo_url, color_primary, color_secondary, active_modules, status, created_at')
+      // `business_model` viaja porque el modal de invitación de
+      // /superadmin/users tiene que ofrecer SOLO los módulos que la empresa
+      // destino realmente muestra (blockedModules depende del modelo).
+      .select('id, name, slug, logo_url, color_primary, color_secondary, active_modules, business_model, status, created_at')
       .order('created_at', { ascending: true });
 
     if (error) {

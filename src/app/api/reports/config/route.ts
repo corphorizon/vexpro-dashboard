@@ -30,7 +30,7 @@ async function resolveCompanyAndAuth(
     if (sa instanceof NextResponse) return sa;
     return { companyId: explicitCompanyId, userId: sa.userId, isSuperadmin: true };
   }
-  const auth = await verifyAdminAuth();
+  const auth = await verifyAdminAuth(undefined, { modules: ['reports'] });
   if (auth instanceof NextResponse) return auth;
   if (auth.role !== 'admin') {
     return NextResponse.json(

@@ -23,7 +23,7 @@ function redactEmail(email: string | null | undefined): string {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { requireAdmin: true });
+    const auth = await verifyAdminAuth(request, { requireAdmin: true, modules: ['users'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();

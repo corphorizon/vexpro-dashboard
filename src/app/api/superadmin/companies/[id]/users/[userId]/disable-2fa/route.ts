@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
 import { apiError } from '@/lib/api-error';
+import { notify } from '@/lib/notifications/notify';
 
 // ---------------------------------------------------------------------------
 // POST /api/superadmin/companies/:id/users/:userId/disable-2fa
@@ -61,6 +62,17 @@ export async function POST(
       details: `Superadmin desactivó 2FA para ${membership.email} (estaba ${
         membership.twofa_enabled ? 'activo' : 'inactivo'
       })`,
+    });
+
+    // Mismo aviso que emite /api/admin/reset-user-2fa: apagar el segundo
+    // factor de alguien es un evento de seguridad del tenant, lo dispare quien
+    // lo dispare.
+    void notify(admin, {
+      companyId,
+      type: 'security.twofa_reset',
+      params: { actor: auth.name || auth.email, target: membership.email },
+      link: '/usuarios',
+      excludeUserIds: [auth.userId],
     });
 
     return NextResponse.json({ success: true });

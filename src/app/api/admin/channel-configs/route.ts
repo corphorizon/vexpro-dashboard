@@ -60,7 +60,7 @@ async function resolveCompanyAndAuth(
     if (sa instanceof NextResponse) return sa;
     return { companyId: explicitCompanyId, userId: sa.userId };
   }
-  const auth = await verifyAdminAuth();
+  const auth = await verifyAdminAuth(undefined, { modules: ['balances', 'reports'] });
   if (auth instanceof NextResponse) return auth;
   if (auth.role !== 'admin') {
     return NextResponse.json(
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
   // en cambio degradaba la UI: sin estas filas el auditor veía las claves
   // crudas del canal en vez de su etiqueta. Las escrituras (POST) siguen
   // siendo admin-only vía resolveCompanyAndAuth.
-  const auth = await verifyAuth(request);
+  const auth = await verifyAuth(request, { modules: ['balances', 'reports'] });
   if (auth instanceof NextResponse) return auth;
 
   const admin = createAdminClient();

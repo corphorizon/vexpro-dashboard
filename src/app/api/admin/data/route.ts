@@ -42,7 +42,7 @@ function stripProtected(input: unknown): Record<string, unknown> {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['upload', 'expenses', 'income', 'liquidity', 'investments', 'balances', 'partners', 'periods', 'movements'] });
     if (auth instanceof NextResponse) return auth;
     const companyId = auth.companyId;
     const admin = createAdminClient();

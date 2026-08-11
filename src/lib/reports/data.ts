@@ -13,6 +13,13 @@ import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
 import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
 import { buildBalancesByChannel, type ReportBalancesByChannel } from './balances-by-channel';
+import { features } from '@/lib/business-model';
+import {
+  buildCompanyResult,
+  periodsInRange,
+  type CompanyResultReport,
+  type IncomeLineRow,
+} from './company-report';
 
 interface DepositRow {
   channel: string;
@@ -107,6 +114,15 @@ export interface ReportData {
     isMock: boolean;
   };
   balances_by_channel: ReportBalancesByChannel;
+  /**
+   * Facturación / egresos / resultado de una empresa de servicios.
+   *
+   * `null` para un broker: su reporte ya responde esa pregunta con Net
+   * Deposit y Broker P&L. Para una consultora es AL REVÉS — sin esto, su
+   * reporte diario salía con "Balances por Canal" y nada más, sin una sola
+   * cifra de lo que factura (que es todo su negocio).
+   */
+  company_result: CompanyResultReport | null;
   /** True if any of the Orion sections returned mock data — the report
    *  surfaces this as a subtle notice so readers know the numbers aren't
    *  fully live yet. */
@@ -248,6 +264,74 @@ const sumRows = (rows: Array<{ amount: number }>) =>
   rows.reduce((s, r) => s + r.amount, 0);
 
 /**
+ * Resultado del período para una empresa de servicios. Devuelve `null`
+ * cuando el modelo de negocio no lo admite (un broker) — así el email decide
+ * con la presencia del bloque y no con otro flag paralelo.
+ *
+ * Los números NO se calculan acá: salen de `buildCompanyResult`, el mismo
+ * `buildBilling`/`buildExpenses` que arma la pantalla de reportes. Lo único
+ * que hace esta función es traer las filas.
+ */
+async function buildCompanyResultFor(
+  companyId: string,
+  from: string,
+  to: string,
+): Promise<CompanyResultReport | null> {
+  const admin = createAdminClient();
+  const { data: companyRow } = await admin
+    .from('companies')
+    .select('business_model')
+    .eq('id', companyId)
+    .maybeSingle();
+
+  // Sin depósitos de clientes y facturando servicios = la contabilidad que
+  // este bloque cuenta. Es el mismo registro que apaga las otras secciones.
+  const f = features((companyRow as { business_model?: unknown } | null)?.business_model);
+  if (f.deposits || !f.incomeLines) return null;
+
+  const { data: periodRows } = await admin
+    .from('periods')
+    .select('id, year, month, label')
+    .eq('company_id', companyId);
+
+  const covered = periodsInRange(
+    ((periodRows ?? []) as Array<{ id: string; year: number; month: number; label: string | null }>),
+    from,
+    to,
+  );
+  // Rango fuera de la contabilidad cargada: el bloque igual va, en cero y
+  // sin meses — decir "no hay datos de este rango" es información, esconderlo
+  // parecería que el reporte se rompió.
+  if (covered.length === 0) return buildCompanyResult([], [], []);
+
+  const periodIds = covered.map((p) => p.id);
+  const [linesRes, expensesRes] = await Promise.all([
+    admin
+      .from('income_lines')
+      .select('period_id, concept, client, amount, received, pending')
+      .eq('company_id', companyId)
+      .in('period_id', periodIds),
+    admin
+      .from('expenses')
+      .select('period_id, category, amount, paid, pending')
+      .eq('company_id', companyId)
+      .in('period_id', periodIds),
+  ]);
+
+  const expenses = ((expensesRes.data ?? []) as Array<{
+    period_id: string; category: string | null; amount: number | string; paid: number | string; pending: number | string;
+  }>).map((e) => ({
+    period_id: e.period_id,
+    category: e.category,
+    amount: Number(e.amount) || 0,
+    paid: Number(e.paid) || 0,
+    pending: Number(e.pending) || 0,
+  }));
+
+  return buildCompanyResult(covered, (linesRes.data ?? []) as IncomeLineRow[], expenses);
+}
+
+/**
  * Builds the full report payload for a company + date range. Pure data —
  * no HTML rendering or email sending. `referenceDate` lets callers pin
  * "this month" / "previous month" to a specific day (used by the cron
@@ -323,6 +407,7 @@ export async function buildReportData(
     crmPropTrading,
     crmTotals,
     balancesByChannel,
+    companyResult,
   ] = await Promise.allSettled([
     fetchManualDepsForMonths(rangeMonths),
     fetchManualWdrForMonths(rangeMonths),
@@ -376,6 +461,7 @@ export async function buildReportData(
     fetchOrionCrmPropTrading(companyId, from, to),
     fetchOrionCrmTotals(companyId, from, to),
     buildBalancesByChannel(companyId, to),
+    buildCompanyResultFor(companyId, from, to),
   ]);
 
   const safeData = <T>(
@@ -398,6 +484,7 @@ export async function buildReportData(
   if (crmPropTrading.status !== 'fulfilled') failures.push('orion_crm_prop_trading');
   if (crmTotals.status !== 'fulfilled') failures.push('orion_crm_totals');
   if (balancesByChannel.status !== 'fulfilled') failures.push('balances_by_channel');
+  if (companyResult.status !== 'fulfilled') failures.push('company_result');
 
   const manualDepRange = groupRows(safeData<DepositRow>(manualDepositsRange), (r) => r.channel);
   const manualWdrRange = groupRows(safeData<WithdrawalRow>(manualWithdrawalsRange), (r) => r.category);
@@ -600,6 +687,7 @@ export async function buildReportData(
       isMock: orionTotalsResult.isMock,
     },
     balances_by_channel: balancesByChannelResult,
+    company_result: unwrap<CompanyResultReport | null>(companyResult, null),
     anyMock,
     failures,
   };

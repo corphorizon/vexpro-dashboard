@@ -6,6 +6,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Users, Settings2, Loader2, UserPlus } from 'lucide-react';
 import { formatDateRelative } from '@/lib/dates';
+import { BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import { ManageUserPanel } from './_manage-panel';
 import { CreateUserModal } from './_create-modal';
 import { DataTable } from '@/components/ui/data-table';
@@ -50,14 +51,8 @@ const ROLE_COLORS: Record<string, string> = {
   invitado: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
 };
 
-const ROLE_LABEL: Record<string, string> = {
-  admin: 'Admin',
-  socio: 'Socio',
-  auditor: 'Auditor',
-  soporte: 'Soporte',
-  hr: 'HR',
-  invitado: 'Invitado',
-};
+// Etiquetas del registro único (src/lib/roles.ts) — era otra copia literal.
+const ROLE_LABEL: Record<string, string> = BUILT_IN_ROLE_LABELS;
 
 export default function CompanyUsersPage() {
   const params = useParams<{ id: string }>();

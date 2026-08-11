@@ -1,9 +1,12 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import Link from 'next/link';
 import { ArrowLeft, Plus, Trash2, Loader2, Mail } from 'lucide-react';
+import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/roles';
+import { ROLE_DEFAULT_MODULES } from '@/lib/auth-context';
+import { blockedModules } from '@/lib/business-model';
 import { ALL_MODULES } from '../companies/_form';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -40,9 +43,29 @@ interface CompanyOpt {
   name: string;
   slug: string;
   status: string;
+  active_modules: string[] | null;
+  business_model: string | null;
 }
 
-const ROLES = ['admin', 'auditor', 'hr', 'socio', 'soporte', 'invitado'] as const;
+// Los roles salen del registro único (src/lib/roles.ts). Era la sexta copia
+// literal de la misma lista en el repo.
+const ROLES: readonly string[] = BUILT_IN_ROLES;
+
+/**
+ * Rol por defecto de una invitación nueva: el MÍNIMO del catálogo. Antes
+ * arrancaba en `admin` con todos los módulos tildados, así que un enter
+ * distraído creaba un administrador con acceso total —órdenes de pago, RRHH y
+ * el registro de actividad incluidos— en la empresa que estuviera seleccionada.
+ */
+const DEFAULT_INVITE_ROLE = 'invitado';
+
+/** Módulos que la empresa destino realmente muestra (contratados − modelo). */
+function eligibleModulesFor(company: CompanyOpt | undefined): string[] {
+  if (!company) return [];
+  const active = new Set(company.active_modules ?? []);
+  const blocked = new Set(blockedModules(company.business_model));
+  return ALL_MODULES.map((m) => m.key).filter((k) => active.has(k) && !blocked.has(k));
+}
 
 export default function SuperadminUsersPage() {
   const [users, setUsers] = useState<UserRow[] | null>(null);
@@ -54,10 +77,14 @@ export default function SuperadminUsersPage() {
   const load = useCallback(async () => {
     try {
       setError(null);
-      const qs = filterCompany === 'all' ? '' : `?company_id=${filterCompany}`;
+      // fetch PLANO a propósito: apiFetch le pega `?company_id=` del
+      // viewing-as guardado en localStorage, y el endpoint filtra por él. Con
+      // un viewing-as abierto, "Todas las entidades" mostraba UNA sola y
+      // mentía. Acá el scope lo decide el selector, punto.
+      const qs = filterCompany === 'all' ? '' : `?company_id=${encodeURIComponent(filterCompany)}`;
       const [uRes, cRes] = await Promise.all([
-        apiFetch(`/api/superadmin/users${qs}`),
-        apiFetch('/api/superadmin/companies'),
+        fetch(`/api/superadmin/users${qs}`),
+        fetch('/api/superadmin/companies'),
       ]);
       const uJson = await uRes.json();
       const cJson = await cRes.json();
@@ -214,13 +241,13 @@ export default function SuperadminUsersPage() {
                       onChange={(e) => updateUser(u.id, { role: e.target.value })}
                       className="px-2 py-1 rounded border border-border bg-background text-xs"
                     >
-                      {ROLES.map((r) => (
+                      {BUILT_IN_ROLES.map((r) => (
                         <option key={r} value={r}>
-                          {r}
+                          {BUILT_IN_ROLE_LABELS[r]}
                         </option>
                       ))}
                       {/* Allow the current value even if it's a custom role */}
-                      {!(ROLES as readonly string[]).includes(u.role) && (
+                      {!ROLES.includes(u.role) && (
                         <option value={u.role}>{u.role} (custom)</option>
                       )}
                     </select>
@@ -293,11 +320,46 @@ function InviteModal({
 }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
-  const [role, setRole] = useState<string>('admin');
+  const [role, setRole] = useState<string>(DEFAULT_INVITE_ROLE);
   const [companyId, setCompanyId] = useState<string>(companies[0]?.id ?? '');
-  const [allowed, setAllowed] = useState<string[]>(ALL_MODULES.map((m) => m.key));
   const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const selectedCompany = companies.find((c) => c.id === companyId);
+  // Solo los módulos que la empresa destino tiene contratados Y que su modelo
+  // de negocio no esconde. Antes se ofrecía el catálogo COMPLETO, así que se
+  // podían asignar pantallas que en esa empresa ni existen.
+  const eligible = useMemo(
+    () => eligibleModulesFor(selectedCompany),
+    [selectedCompany],
+  );
+  const eligibleModules = ALL_MODULES.filter((m) => eligible.includes(m.key));
+
+  const defaultsFor = useCallback(
+    (nextRole: string, company: CompanyOpt | undefined) => {
+      const elegibles = new Set(eligibleModulesFor(company));
+      return (ROLE_DEFAULT_MODULES[nextRole] ?? ['summary']).filter((m) => elegibles.has(m));
+    },
+    [],
+  );
+
+  const [allowed, setAllowed] = useState<string[]>(() =>
+    defaultsFor(DEFAULT_INVITE_ROLE, companies[0]),
+  );
+
+  // Cambiar de empresa RESETEA rol y módulos: quedarse con lo tildado para
+  // otra entidad era la forma silenciosa de asignar módulos que la nueva no
+  // tiene (y de arrastrar un rol elegido para otro contexto).
+  const onCompanyChange = (nextId: string) => {
+    setCompanyId(nextId);
+    setRole(DEFAULT_INVITE_ROLE);
+    setAllowed(defaultsFor(DEFAULT_INVITE_ROLE, companies.find((c) => c.id === nextId)));
+  };
+
+  const onRoleChange = (nextRole: string) => {
+    setRole(nextRole);
+    setAllowed(defaultsFor(nextRole, selectedCompany));
+  };
 
   const toggle = (k: string) =>
     setAllowed((a) => (a.includes(k) ? a.filter((x) => x !== k) : [...a, k]));
@@ -364,7 +426,7 @@ function InviteModal({
             <select
               required
               value={companyId}
-              onChange={(e) => setCompanyId(e.target.value)}
+              onChange={(e) => onCompanyChange(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
             >
               {companies.map((c) => (
@@ -378,12 +440,12 @@ function InviteModal({
             <span className="text-xs font-medium mb-1 inline-block">Rol</span>
             <select
               value={role}
-              onChange={(e) => setRole(e.target.value)}
+              onChange={(e) => onRoleChange(e.target.value)}
               className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
             >
-              {ROLES.map((r) => (
+              {BUILT_IN_ROLES.map((r) => (
                 <option key={r} value={r}>
-                  {r}
+                  {BUILT_IN_ROLE_LABELS[r]}
                 </option>
               ))}
             </select>
@@ -393,18 +455,27 @@ function InviteModal({
         <div>
           <p className="text-xs font-medium mb-2">Módulos permitidos</p>
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 rounded-lg border border-border">
-            {ALL_MODULES.map((m) => (
-              <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={allowed.includes(m.key)}
-                  onChange={() => toggle(m.key)}
-                  className="rounded border-border"
-                />
-                <span>{m.label}</span>
-              </label>
-            ))}
+            {eligibleModules.length === 0 ? (
+              <p className="col-span-full text-xs text-muted-foreground italic">
+                La empresa seleccionada no tiene módulos disponibles.
+              </p>
+            ) : (
+              eligibleModules.map((m) => (
+                <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={allowed.includes(m.key)}
+                    onChange={() => toggle(m.key)}
+                    className="rounded border-border"
+                  />
+                  <span>{m.label}</span>
+                </label>
+              ))
+            )}
           </div>
+          <p className="text-[11px] text-muted-foreground mt-1">
+            Defaults según el rol, acotados a los módulos activos de la empresa.
+          </p>
         </div>
 
         <div className="flex justify-end gap-2">

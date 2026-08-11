@@ -15,7 +15,10 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 
 export async function GET(request: NextRequest) {
-  const auth = await verifyAuth(request);
+  // Queda en verifyAuth (cualquier rol) porque la tarjeta de Balances la ven
+  // todos los roles que tienen el módulo — el filtro que faltaba era el
+  // módulo, no el rol. El GET del libro completo (../route.ts) sigue igual.
+  const auth = await verifyAuth(request, { modules: ['balances'] });
   if (auth instanceof NextResponse) return auth;
 
   const asof = request.nextUrl.searchParams.get('asof');

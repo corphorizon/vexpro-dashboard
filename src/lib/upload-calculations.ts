@@ -12,6 +12,8 @@
 // `parseFloat(pending) || (amount - paid)` porque `-` liga más fuerte que `||`.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { round2 } from './utils';
+
 /**
  * Parsea un valor de input numérico igual que el original `parseFloat(x) || 0`:
  * vacío, no-numérico, o NaN → 0. Acepta number directo (lo pasa tal cual salvo
@@ -49,6 +51,10 @@ export function findInvalidAmount(
  * Replica exactamente `parseFloat(newExpense.pending) || amt - pd` del original:
  * un pendiente explícito de 0 NO se distingue de vacío (ambos caen al fallback),
  * que es el comportamiento que la pantalla ya tenía.
+ *
+ * El resultado se redondea a 2 decimales, igual que su espejo
+ * computeIncomePending: sin eso la resta de flotantes persistía residuos
+ * (1000.10 − 999.20 = 0.900000000000091) en expenses.pending.
  */
 export function computeExpensePending(
   amountRaw: string | number | null | undefined,
@@ -58,5 +64,5 @@ export function computeExpensePending(
   const amount = parseAmount(amountRaw);
   const paid = parseAmount(paidRaw);
   const explicit = parseAmount(pendingRaw);
-  return explicit || amount - paid;
+  return explicit || round2(amount - paid);
 }

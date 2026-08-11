@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
     // ya deja leer a todo el tenant y exigir FINANCE_ROLES acá solo lograba
     // que un socio con el módulo asignado viera la pantalla vacía o con
     // "sin asignar" falso. Escritura (POST/DELETE) sigue en FINANCE_ROLES.
-    const auth = await verifyAuth(request);
+    const auth = await verifyAuth(request, { modules: ['balances'] });
     if (auth instanceof NextResponse) return auth;
 
     const channelKey = request.nextUrl.searchParams.get('channel_key');
@@ -63,7 +63,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['balances'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = (await request.json().catch(() => null)) as {

@@ -30,6 +30,11 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { computeProviderTotals, monthRange } from '@/lib/api-integrations/totals';
+import { features } from '@/lib/business-model';
+import { cardsFromLines, UNASSIGNED_CLIENT_KEY } from '@/lib/clients';
+import { buildBilling } from '@/lib/reports/company-report';
+import type { IncomeLine } from '@/lib/income-lines';
+import type { PdfMonthlyCloseBilling } from '@/lib/pdf-export';
 
 const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
 
@@ -40,6 +45,13 @@ export default function SociosPage() {
   const isAdmin = canEdit(user);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
   const { periods, partners, partnerDistributions, getPeriodSummary, getDistributionInputs, getSnapshotDrifts, company, refresh } = useData();
+
+  // Esta pantalla no leía el modelo de negocio en ninguna línea, y el informe
+  // de cierre que genera es el documento que reciben los socios: a una
+  // consultora le imprimía "Broker P&L", "Prop Firm" y una sección entera de
+  // "Flujo de Depósitos y Retiros de Clientes" con todo en $0,00. El registro
+  // único decide qué preguntas tiene este negocio; acá solo se obedece.
+  const model = features(company?.business_model);
 
   // ─── Partner management state ───
   const [showPartnerForm, setShowPartnerForm] = useState(false);
@@ -352,28 +364,36 @@ export default function SociosPage() {
                 // /balances: persisted-movements en modo 'pinned' (walletId
                 // vacío) + computeProviderTotals (descuenta excluidas). Así los
                 // números del informe coinciden con los del dashboard.
+                //
+                // Solo para un broker: sin depósitos ni retiros de clientes,
+                // esta llamada devolvería ceros y el PDF imprimiría una página
+                // de "Depósitos por canal: $0,00" al socio de una consultora.
                 let depCoinsbuy = 0, depFairpay = 0, depUnipay = 0, wdCoinsbuy = 0;
-                try {
-                  const res = await apiFetch(`/api/integrations/persisted-movements?from=${from}&to=${to}`);
-                  const json = await res.json();
-                  for (const ds of (json.datasets ?? [])) {
-                    const totals = computeProviderTotals(ds);
-                    if (ds.slug === 'coinsbuy-deposits') depCoinsbuy = totals.total;
-                    else if (ds.slug === 'fairpay') depFairpay = totals.total;
-                    else if (ds.slug === 'unipayment') depUnipay = totals.total;
-                    else if (ds.slug === 'coinsbuy-withdrawals') wdCoinsbuy = totals.total;
+                if (model.movements) {
+                  try {
+                    const res = await apiFetch(`/api/integrations/persisted-movements?from=${from}&to=${to}`);
+                    const json = await res.json();
+                    for (const ds of (json.datasets ?? [])) {
+                      const totals = computeProviderTotals(ds);
+                      if (ds.slug === 'coinsbuy-deposits') depCoinsbuy = totals.total;
+                      else if (ds.slug === 'fairpay') depFairpay = totals.total;
+                      else if (ds.slug === 'unipayment') depUnipay = totals.total;
+                      else if (ds.slug === 'coinsbuy-withdrawals') wdCoinsbuy = totals.total;
+                    }
+                  } catch {
+                    // Sin conexión a movimientos: el informe sale con manuales.
                   }
-                } catch {
-                  // Sin conexión a movimientos: el informe sale con manuales.
                 }
 
                 const manualDepTotal = sum.deposits.reduce((s, d) => s + d.amount, 0);
-                const depositsByChannel = [
-                  { label: 'Coinsbuy (crypto)', amount: depCoinsbuy },
-                  { label: 'UniPayment (tarjeta)', amount: depUnipay },
-                  { label: 'FairPay (local)', amount: depFairpay },
-                  { label: 'Otros (manual)', amount: manualDepTotal },
-                ].filter((c) => c.amount !== 0);
+                const depositsByChannel = model.deposits
+                  ? [
+                      { label: 'Coinsbuy (crypto)', amount: depCoinsbuy },
+                      { label: 'UniPayment (tarjeta)', amount: depUnipay },
+                      { label: 'FairPay (local)', amount: depFairpay },
+                      { label: 'Otros (manual)', amount: manualDepTotal },
+                    ].filter((c) => c.amount !== 0)
+                  : [];
                 const depositsTotal = depositsByChannel.reduce((s, c) => s + c.amount, 0);
 
                 const CAT_LABEL: Record<string, string> = {
@@ -381,11 +401,51 @@ export default function SociosPage() {
                 };
                 const wdMap = new Map<string, number>();
                 for (const w of sum.withdrawals) wdMap.set(w.category, (wdMap.get(w.category) ?? 0) + w.amount);
-                const withdrawalsByCategory = [
-                  ...Array.from(wdMap.entries()).map(([k, v]) => ({ label: CAT_LABEL[k] ?? k, amount: v })),
-                  { label: 'Coinsbuy (crypto)', amount: wdCoinsbuy },
-                ].filter((c) => c.amount !== 0);
+                const withdrawalsByCategory = model.withdrawals
+                  ? [
+                      ...Array.from(wdMap.entries()).map(([k, v]) => ({ label: CAT_LABEL[k] ?? k, amount: v })),
+                      { label: 'Coinsbuy (crypto)', amount: wdCoinsbuy },
+                    ].filter((c) => c.amount !== 0)
+                  : [];
                 const withdrawalsTotal = withdrawalsByCategory.reduce((s, c) => s + c.amount, 0);
+
+                // Empresa de servicios: en lugar del flujo de clientes va la
+                // facturación del mes. NO se calcula acá — sale de buildBilling
+                // sobre las mismas líneas de ingreso que alimentan el reporte
+                // de /finanzas/reportes y su CSV. Dos fórmulas distintas para
+                // "cobrado" es exactamente lo que este repo no puede tener.
+                let billing: PdfMonthlyCloseBilling | null = null;
+                if (!model.movements) {
+                  let lines: IncomeLine[] = [];
+                  try {
+                    const res = await apiFetch('/api/admin/income-lines');
+                    const json = await res.json();
+                    lines = json?.success ? (json.lines ?? []) : [];
+                  } catch {
+                    // Sin facturación disponible: el informe sale con el
+                    // resultado y la distribución, sin el detalle por cliente.
+                  }
+                  const order = currentPeriod.year * 12 + currentPeriod.month;
+                  const label = currentPeriod.label ?? `${currentPeriod.year}-${pad(currentPeriod.month)}`;
+                  const b = buildBilling(
+                    cardsFromLines(
+                      lines
+                        .filter((l) => l.period_id === selectedPeriodId)
+                        .map((l) => ({ ...l, periodLabel: label, periodOrder: order })),
+                    ),
+                  );
+                  billing = {
+                    billed: b.billed,
+                    collected: b.collected,
+                    pending: b.pending,
+                    clients: b.clients.map((c) => ({
+                      name: c.key === UNASSIGNED_CLIENT_KEY ? 'Sin cliente' : c.name,
+                      billed: c.billed,
+                      collected: c.collected,
+                      pending: c.pending,
+                    })),
+                  };
+                }
 
                 const topExpenses = [...sum.expenses]
                   .sort((a, b) => b.amount - a.amount)
@@ -397,9 +457,14 @@ export default function SociosPage() {
                   companyName: company?.name ?? '',
                   companyLogoUrl: company?.logo_url ?? null,
                   periodLabel: currentPeriod.label ?? `${currentPeriod.year}-${pad(currentPeriod.month)}`,
-                  brokerPnl: sum.operatingIncome?.broker_pnl ?? 0,
-                  propFirmNet: sum.propFirmNetIncome ?? 0,
-                  investmentProfits: sum.investmentProfits ?? 0,
+                  billing,
+                  // En modo company estos cuatro van en cero por diseño (el PDF
+                  // no los imprime): brokerPnl y propFirmNetIncome ya salen en
+                  // cero de la cadena de distribución, y las inversiones no son
+                  // un módulo de este modelo.
+                  brokerPnl: model.brokerPnl ? (sum.operatingIncome?.broker_pnl ?? 0) : 0,
+                  propFirmNet: model.brokerPnl ? (sum.propFirmNetIncome ?? 0) : 0,
+                  investmentProfits: model.investments ? (sum.investmentProfits ?? 0) : 0,
                   otherIncome: sum.operatingIncome?.other ?? 0,
                   ingresosNetos: currentChain?.ingresosNetos ?? 0,
                   egresosTotal: sum.totalExpenses,

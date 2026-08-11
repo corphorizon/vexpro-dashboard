@@ -100,7 +100,7 @@ function parseCsv(text: string): string[][] {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['expenses', 'upload'] });
     if (auth instanceof NextResponse) return auth;
 
     const formData = await request.formData();

@@ -45,7 +45,7 @@ interface Body {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['expenses', 'upload'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = (await request.json()) as Body;

@@ -29,7 +29,7 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const auth = await verifyAuth(request);
+  const auth = await verifyAuth(request, { modules: ['expenses', 'upload'] });
   if (auth instanceof NextResponse) return auth;
 
   const { id } = await params;

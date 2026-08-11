@@ -45,7 +45,7 @@ export async function GET(
     // Dominio RRHH: el contrato es del legajo del perfil comercial. Con el
     // fallback histórico un `auditor` (finanzas) se descargaba contratos de
     // RRHH firmados.
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['hr'] });
     if (auth instanceof NextResponse) return auth;
     const { profileId } = await params;
 

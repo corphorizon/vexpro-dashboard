@@ -61,7 +61,11 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    // Sigue en verifyAuth (cualquier rol) A PROPÓSITO: la tarjeta de total
+    // consolidado es la home de TODOS los usuarios, socios incluidos. Lo que
+    // faltaba era el módulo — ahora sin 'balances' (para el usuario o para la
+    // empresa) esto es 403 en vez de una cifra consolidada servida a cualquiera.
+    const auth = await verifyAuth(request, { modules: ['balances'] });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();

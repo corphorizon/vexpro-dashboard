@@ -8,6 +8,7 @@ import {
   BUSINESS_MODELS,
   BUSINESS_MODEL_LABELS,
   BUSINESS_MODEL_DESCRIPTIONS,
+  blockedModules,
   normalizeBusinessModel,
 } from '@/lib/business-model';
 
@@ -52,7 +53,14 @@ interface Props {
 export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mode, companyId }: Props) {
   const [values, setValues] = useState<CompanyFormValues>(initial);
 
+  // Módulos que el modelo de negocio esconde igual (para 'company': risk,
+  // movements, liquidity, investments, commissions e ib_rebates). Dejar que se
+  // tilden guardaba módulos que ninguna pantalla muestra pero que SÍ aparecían
+  // como elegibles al crear usuarios de esa empresa.
+  const blocked = new Set(blockedModules(values.business_model));
+
   const toggleModule = (key: string) => {
+    if (blocked.has(key)) return;
     setValues((v) => ({
       ...v,
       active_modules: v.active_modules.includes(key)
@@ -63,7 +71,12 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSubmit(values);
+    // El filtro va también acá y no solo en el render: cambiar el modelo con
+    // módulos ya tildados los dejaría viajar en el payload.
+    onSubmit({
+      ...values,
+      active_modules: values.active_modules.filter((m) => !blocked.has(m)),
+    });
   };
 
   return (
@@ -238,15 +251,24 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
         <p className="text-sm font-medium mb-2">Módulos activos</p>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 rounded-lg border border-border bg-card">
           {ALL_MODULES.map((m) => {
-            const on = values.active_modules.includes(m.key);
+            const off = blocked.has(m.key);
+            const on = !off && values.active_modules.includes(m.key);
             return (
               <label
                 key={m.key}
-                className="flex items-center gap-2 text-sm cursor-pointer select-none"
+                title={
+                  off
+                    ? `No aplica al modelo "${BUSINESS_MODEL_LABELS[normalizeBusinessModel(values.business_model)].es}"`
+                    : undefined
+                }
+                className={`flex items-center gap-2 text-sm select-none ${
+                  off ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+                }`}
               >
                 <input
                   type="checkbox"
                   checked={on}
+                  disabled={off}
                   onChange={() => toggleModule(m.key)}
                   className="rounded border-border"
                 />
@@ -255,6 +277,11 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
             );
           })}
         </div>
+        {blocked.size > 0 && (
+          <p className="text-xs text-muted-foreground mt-2">
+            Los módulos en gris no aplican al modelo de negocio elegido y no se guardan.
+          </p>
+        )}
       </div>
 
       <div className="flex items-center justify-end gap-2">

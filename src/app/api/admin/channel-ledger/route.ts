@@ -37,7 +37,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * en tesorería, así que se rechaza explícitamente.
  */
 async function verifyWriteAccess(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['balances'] });
   if (auth instanceof NextResponse) return auth;
   if (auth.role === 'hr') {
     return NextResponse.json(
@@ -49,7 +49,7 @@ async function verifyWriteAccess(request: NextRequest) {
 }
 
 export async function GET(request: NextRequest) {
-  const auth = await verifyAuth(request);
+  const auth = await verifyAuth(request, { modules: ['balances'] });
   if (auth instanceof NextResponse) return auth;
 
   const params = request.nextUrl.searchParams;

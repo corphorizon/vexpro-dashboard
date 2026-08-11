@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
+import { canAccessAnyModule, type ModuleKey } from '@/lib/modules';
+
+export type { ModuleKey };
 
 // Roles allowed to call /api/admin/* routes (fallback histórico).
 //
@@ -16,7 +19,94 @@ const ADMIN_ROLES = ['admin', 'auditor', 'hr'];
 // que también lee la UI para no dibujar botones que este archivo rechazaría.
 export { FINANCE_ROLES, HR_ROLES } from '@/lib/roles';
 
-export type VerifyAdminAuthOptions = {
+// ─────────────────────────────────────────────────────────────────────────────
+// Guard de MÓDULOS en la API
+//
+// AUDITORÍA: hasta acá el guard de módulos era 100% cosmético —
+// `module-route-guard.tsx` y `use-module-access.ts` son componentes CLIENTE, y
+// ninguna ruta de API miraba `company_users.allowed_modules` ni
+// `companies.active_modules`. Un `fetch('/api/admin/payment-orders', {method:
+// 'POST'})` desde la consola del navegador entraba igual con el módulo
+// desactivado para el usuario O para toda la empresa.
+//
+// Ahora cada ruta declara su módulo con `modules:` y la decisión la toma
+// `canAccessModule` en src/lib/modules.ts — el MISMO helper que usa
+// `hasModuleAccess` en el cliente, para que el botón que la UI dibuja y la
+// ruta que el servidor acepta no puedan divergir.
+//
+// Semántica de la lista: OR. Una ruta que alimenta varias pantallas pasa si el
+// caller tiene AL MENOS UNO de sus módulos. Sin `modules:` no hay chequeo, así
+// que las rutas transversales (auth, notificaciones, idioma, health, cron) y
+// cualquier call site viejo se comportan EXACTAMENTE igual que antes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type ModuleGateOptions = {
+  /**
+   * Módulos que habilitan esta ruta. Pasa quien tenga acceso a alguno.
+   * Omitir = ruta transversal, sin chequeo de módulo (conducta histórica).
+   */
+  modules?: readonly ModuleKey[];
+};
+
+type ModuleGateSubject = {
+  role: string;
+  isSuperadmin: boolean;
+  allowedModules: string[] | null;
+};
+
+/**
+ * Aplica el guard de módulos. Devuelve `null` si pasa, o el 403 a devolver.
+ *
+ * Cuesta UNA query extra a `companies` y SOLO cuando la ruta declara módulos:
+ * `allowed_modules` viaja en el mismo select de `company_users` que ya se hace.
+ * Falla CERRADO: si la empresa no se puede leer, no se entra.
+ */
+async function enforceModules(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  companyId: string,
+  subject: ModuleGateSubject,
+  opts?: ModuleGateOptions,
+): Promise<NextResponse | null> {
+  const modules = opts?.modules;
+  if (!modules || modules.length === 0) return null;
+
+  const { data: company } = await supabase
+    .from('companies')
+    .select('active_modules, business_model')
+    .eq('id', companyId)
+    .maybeSingle();
+
+  if (!company) {
+    return NextResponse.json(
+      { success: false, error: 'Empresa no encontrada' },
+      { status: 403 },
+    );
+  }
+
+  const ok = canAccessAnyModule(modules, {
+    role: subject.role,
+    isSuperadmin: subject.isSuperadmin,
+    allowedModules: subject.allowedModules,
+    // `null` = no restringir a nivel tenant. Solo pasa si la columna está
+    // vacía en la DB (empresas anteriores a la feature); un array vacío SÍ
+    // bloquea, igual que en el cliente.
+    activeModules: Array.isArray(company.active_modules) ? company.active_modules : null,
+    businessModel: company.business_model,
+  });
+
+  if (!ok) {
+    // Mensaje deliberadamente genérico: no revela si el módulo está apagado
+    // para el usuario, para la empresa o por el modelo de negocio.
+    return NextResponse.json(
+      { success: false, error: 'Módulo no habilitado para este usuario' },
+      { status: 403 },
+    );
+  }
+
+  return null;
+}
+
+export type VerifyAdminAuthOptions = ModuleGateOptions & {
   /**
    * When true, only callers with role 'admin' pass. Platform superadmins
    * (who act as role 'admin' inside the target tenant) also pass.
@@ -73,6 +163,10 @@ function readCompanyIdFromRequest(request: NextRequest | undefined): string | nu
  * Pass `{ requireAdmin: true }` to restrict the endpoint to strict admins:
  * auditor / hr are rejected with 403 while the superadmin path keeps working
  * (superadmins already act as role 'admin' inside the target tenant).
+ *
+ * Pass `{ modules: ['payment_orders'] }` para exigir además el MÓDULO (ver
+ * ModuleGateOptions). El rol dice QUÉ puede hacer; el módulo, SOBRE QUÉ. Sin
+ * la opción, la conducta es exactamente la histórica.
  */
 export async function verifyAdminAuth(
   request?: NextRequest,
@@ -106,6 +200,16 @@ export async function verifyAdminAuth(
         { status: 400 },
       );
     }
+    // El bypass del superadmin NO salta el modelo de negocio (mismo orden que
+    // hasModuleAccess): pedirle órdenes de pago a una entidad que no las tiene
+    // sigue siendo 403.
+    const gate = await enforceModules(
+      supabase,
+      targetCompanyId,
+      { role: 'admin', isSuperadmin: true, allowedModules: null },
+      opts,
+    );
+    if (gate) return gate;
     return {
       userId: user.id,
       companyId: targetCompanyId,
@@ -117,10 +221,11 @@ export async function verifyAdminAuth(
   }
 
   // Fetch the caller's company profile — uses RLS (anon key + cookie JWT),
-  // so only rows the user can see are returned.
+  // so only rows the user can see are returned. `allowed_modules` viaja en
+  // este mismo select: el guard de módulos no agrega una query por usuario.
   const { data: profile } = await supabase
     .from('company_users')
-    .select('company_id, role, name, email')
+    .select('company_id, role, name, email, allowed_modules')
     .eq('user_id', user.id)
     .single();
 
@@ -147,6 +252,18 @@ export async function verifyAdminAuth(
       { status: 403 },
     );
   }
+
+  const gate = await enforceModules(
+    supabase,
+    profile.company_id,
+    {
+      role: profile.role,
+      isSuperadmin: false,
+      allowedModules: Array.isArray(profile.allowed_modules) ? profile.allowed_modules : null,
+    },
+    opts,
+  );
+  if (gate) return gate;
 
   return {
     userId: user.id,
@@ -214,8 +331,14 @@ export async function verifySuperadminAuth(): Promise<SuperadminAuthInfo | NextR
  * appending `?company_id=<id>` to the URL. This allows the "viewing as admin"
  * flow in /superadmin to hit tenant-scoped endpoints. Regular users ignore
  * the query param and resolve their company from `company_users` as before.
+ *
+ * `opts.modules` agrega el guard de módulos (ver ModuleGateOptions). Sin esa
+ * opción el comportamiento es idéntico al histórico.
  */
-export async function verifyAuth(request?: NextRequest): Promise<AuthInfo | NextResponse> {
+export async function verifyAuth(
+  request?: NextRequest,
+  opts?: ModuleGateOptions,
+): Promise<AuthInfo | NextResponse> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -244,6 +367,14 @@ export async function verifyAuth(request?: NextRequest): Promise<AuthInfo | Next
         { status: 400 },
       );
     }
+    // El modelo de negocio se aplica ANTES del bypass del superadmin.
+    const gate = await enforceModules(
+      supabase,
+      targetCompanyId,
+      { role: 'admin', isSuperadmin: true, allowedModules: null },
+      opts,
+    );
+    if (gate) return gate;
     return {
       userId: user.id,
       companyId: targetCompanyId,
@@ -254,10 +385,10 @@ export async function verifyAuth(request?: NextRequest): Promise<AuthInfo | Next
     };
   }
 
-  // Regular user path.
+  // Regular user path. `allowed_modules` viaja en el mismo select.
   const { data: profile } = await supabase
     .from('company_users')
-    .select('company_id, role, name, email')
+    .select('company_id, role, name, email, allowed_modules')
     .eq('user_id', user.id)
     .single();
 
@@ -267,6 +398,18 @@ export async function verifyAuth(request?: NextRequest): Promise<AuthInfo | Next
       { status: 403 },
     );
   }
+
+  const gate = await enforceModules(
+    supabase,
+    profile.company_id,
+    {
+      role: profile.role,
+      isSuperadmin: false,
+      allowedModules: Array.isArray(profile.allowed_modules) ? profile.allowed_modules : null,
+    },
+    opts,
+  );
+  if (gate) return gate;
 
   return {
     userId: user.id,

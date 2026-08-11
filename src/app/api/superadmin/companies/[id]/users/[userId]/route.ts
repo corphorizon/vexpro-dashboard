@@ -3,6 +3,8 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
 import { apiError } from '@/lib/api-error';
+import { BUILT_IN_ROLES, isBuiltInRole } from '@/lib/roles';
+import { sanitizeModuleKeys } from '@/lib/modules';
 
 // ---------------------------------------------------------------------------
 // PATCH /api/superadmin/companies/:id/users/:userId
@@ -22,10 +24,11 @@ import { apiError } from '@/lib/api-error';
 // (a `'use client'` module). In production server bundles that import
 // sometimes resolved to `undefined`, making the validation crash with
 // "L.includes is not a function" (the minified `undefined.includes(...)`).
-// Inlining the list here removes the cross-runtime hazard entirely.
+// La lista ya NO se copia acá: vive en src/lib/roles.ts, que es import-safe
+// desde el servidor (no arrastra React ni next/server) y es la misma que
+// consumen la UI y el resto de los endpoints.
 // ---------------------------------------------------------------------------
 
-const ALLOWED_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
 const ALLOWED_STATUSES = ['active', 'inactive'] as const;
 
 export async function PATCH(
@@ -65,9 +68,9 @@ export async function PATCH(
       update.email = body.email.trim().toLowerCase();
     }
     if (typeof body.role === 'string') {
-      if (!(ALLOWED_ROLES as readonly string[]).includes(body.role)) {
+      if (!isBuiltInRole(body.role)) {
         return NextResponse.json(
-          { success: false, error: `Rol inválido. Permitidos: ${ALLOWED_ROLES.join(', ')}` },
+          { success: false, error: `Rol inválido. Permitidos: ${BUILT_IN_ROLES.join(', ')}` },
           { status: 400 },
         );
       }
@@ -83,9 +86,10 @@ export async function PATCH(
       update.status = body.status;
     }
     if (Array.isArray(body.allowed_modules)) {
-      update.allowed_modules = (body.allowed_modules as unknown[]).filter(
-        (m): m is string => typeof m === 'string',
-      );
+      // Saneado contra el registro de módulos (mismo criterio que
+      // /api/admin/create-user): una clave inventada quedaba persistida y se
+      // descartaba después, en silencio, al leer el perfil.
+      update.allowed_modules = sanitizeModuleKeys(body.allowed_modules);
     }
 
     if (Object.keys(update).length === 0) {

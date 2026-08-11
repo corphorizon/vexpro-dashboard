@@ -10,6 +10,9 @@ import {
   ipFromRequest,
 } from '@/lib/invite-user';
 import { apiError } from '@/lib/api-error';
+import { BUILT_IN_ROLES, isBuiltInRole } from '@/lib/roles';
+import { sanitizeModuleKeys } from '@/lib/modules';
+import { notify } from '@/lib/notifications/notify';
 
 // ---------------------------------------------------------------------------
 // GET /api/superadmin/users?company_id=<uuid>
@@ -76,6 +79,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (!isBuiltInRole(role)) {
+      return NextResponse.json(
+        { success: false, error: `Rol inválido. Permitidos: ${BUILT_IN_ROLES.join(', ')}` },
+        { status: 400 },
+      );
+    }
+
     const normalizedEmail = email.trim().toLowerCase();
     const admin = createAdminClient();
 
@@ -92,16 +102,47 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Guard against duplicate membership in the same company.
-    const { data: dupe } = await admin
+    // ─── Exclusividad del email ───────────────────────────────────────
+    // Antes solo se miraba la MISMA empresa, y si el email ya existía en otra
+    // se reutilizaba su auth.users creando una SEGUNDA fila en company_users.
+    // Las tres lecturas de perfil asumen una sola fila (login-gate con
+    // maybeSingle, verifyAuth/verifyAdminAuth con .single()), así que esa
+    // segunda membresía deja a la persona con 401/403 permanente en LAS DOS
+    // empresas. Hasta que exista multi-membresía real, se rechaza.
+    const { data: dupes } = await admin
       .from('company_users')
-      .select('id, email, role')
-      .eq('company_id', company_id)
+      .select('id, email, role, company_id, companies(name)')
+      .ilike('email', normalizedEmail)
+      .limit(1);
+    const dupe = dupes?.[0];
+    if (dupe) {
+      const sameCompany = dupe.company_id === company_id;
+      return NextResponse.json(
+        {
+          success: false,
+          error: sameCompany
+            ? `${email} ya es miembro de esta empresa`
+            : `${email} ya tiene una cuenta en otra empresa. Un email solo puede pertenecer a una entidad.`,
+          existing: dupe,
+        },
+        { status: 409 },
+      );
+    }
+
+    // Superadmin de plataforma: las dos tablas son EXCLUYENTES. Si el email
+    // queda en ambas, el cliente y el servidor las resuelven en orden inverso
+    // (la UI lo trata como usuario del tenant, la API como superadmin).
+    const { data: platformDupe } = await admin
+      .from('platform_users')
+      .select('id')
       .ilike('email', normalizedEmail)
       .maybeSingle();
-    if (dupe) {
+    if (platformDupe) {
       return NextResponse.json(
-        { success: false, error: `${email} ya es miembro de esta empresa`, existing: dupe },
+        {
+          success: false,
+          error: `${email} es un superadmin de plataforma y no puede ser además usuario de una empresa`,
+        },
         { status: 409 },
       );
     }
@@ -142,6 +183,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ─── Insert company_users membership ──────────────────────────────
+    const sanitizedModules = sanitizeModuleKeys(allowed_modules);
     const { data: membership, error: memErr } = await admin
       .from('company_users')
       .insert({
@@ -150,7 +192,9 @@ export async function POST(request: NextRequest) {
         email: normalizedEmail,
         name: name.trim(),
         role,
-        allowed_modules: allowed_modules ?? ['summary'],
+        // Saneado contra el registro de módulos: una clave inventada quedaba
+        // guardada y después se descartaba en silencio al leerla.
+        allowed_modules: sanitizedModules.length > 0 ? sanitizedModules : ['summary'],
         must_change_password: true,
       })
       .select()
@@ -167,8 +211,20 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ─── Generate setup token + send email via shared helper ──────────
+    // Aviso al tenant: el alta equivalente del admin de empresa
+    // (/api/admin/create-user) sí notifica, y un usuario nuevo creado desde
+    // afuera es exactamente lo que los admins tienen que ver.
     const inviterName = await resolveInviterName(admin, auth.userId);
+
+    void notify(admin, {
+      companyId: company_id,
+      type: 'security.user_created',
+      params: { actor: inviterName, target: name.trim() || normalizedEmail, role },
+      link: '/usuarios',
+      excludeUserIds: [auth.userId],
+    });
+
+    // ─── Generate setup token + send email via shared helper ──────────
     const inviteResult = await generateAndSendInvite({
       admin,
       authUserId,

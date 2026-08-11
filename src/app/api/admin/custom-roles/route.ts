@@ -17,7 +17,7 @@ import { apiError } from '@/lib/api-error';
 const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
 
 export async function GET(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { requireAdmin: true });
+  const auth = await verifyAdminAuth(request, { requireAdmin: true, modules: ['users'] });
   if (auth instanceof NextResponse) return auth;
 
   const adminClient = createAdminClient();
@@ -35,7 +35,7 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { requireAdmin: true });
+  const auth = await verifyAdminAuth(request, { requireAdmin: true, modules: ['users'] });
   if (auth instanceof NextResponse) return auth;
 
   // Only company admins may manage roles (auditor / hr excluded).

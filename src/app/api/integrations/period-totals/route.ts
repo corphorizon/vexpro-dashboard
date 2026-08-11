@@ -43,7 +43,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    const auth = await verifyAuth(request, { modules: ['summary', 'movements', 'balances', 'reports'] });
     if (auth instanceof NextResponse) return auth;
 
     const from = request.nextUrl.searchParams.get('from');

@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ShieldCheck, ArrowLeft } from 'lucide-react';
 import { useAuth } from '@/lib/auth-context';
@@ -49,12 +48,16 @@ export function ViewingAsBanner() {
         </span>
       </div>
       <div className="flex items-center gap-2 shrink-0">
-        <Link
-          href="/superadmin"
+        {/* Botón, no Link: navegar al panel SIN limpiar la empresa activa dejaba
+            el puntero en localStorage, y apiFetch lo sigue agregando como
+            ?company_id= — así el filtro "Todas las entidades" mostraba un solo
+            tenant. Salir del viewing-as tiene un solo camino: handleExit. */}
+        <button
+          onClick={handleExit}
           className="hidden sm:inline text-xs underline hover:no-underline"
         >
           Panel superadmin
-        </Link>
+        </button>
         <button
           onClick={handleExit}
           className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-300 hover:bg-amber-400 dark:bg-amber-900 dark:hover:bg-amber-800 text-amber-900 dark:text-amber-100 text-xs font-bold"

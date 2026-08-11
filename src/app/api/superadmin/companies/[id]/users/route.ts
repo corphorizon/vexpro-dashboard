@@ -5,12 +5,14 @@ import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
 import { apiError } from '@/lib/api-error';
 
-// Roles inlined here (not imported from @/lib/auth-context, which is a
-// 'use client' module). Cross-runtime imports of client modules into
-// server routes have surfaced as `undefined` in production bundles —
-// causing things like `L.includes is not a function` from the minified
-// `undefined.includes(...)`. See PATCH route comment for context.
-const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'] as const;
+// Los roles salen del registro único src/lib/roles.ts. NO se importan de
+// @/lib/auth-context (módulo 'use client'): ese import cross-runtime resolvía
+// `undefined` en bundles de producción y reventaba con "L.includes is not a
+// function". roles.ts existe justamente para eso — no arrastra React ni
+// next/server, así que es seguro desde un route handler.
+import { BUILT_IN_ROLES, isBuiltInRole } from '@/lib/roles';
+import { sanitizeModuleKeys } from '@/lib/modules';
+import { notify } from '@/lib/notifications/notify';
 
 // ---------------------------------------------------------------------------
 // GET /api/superadmin/companies/:id/users
@@ -31,8 +33,6 @@ const BUILT_IN_ROLES = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'
 // (or reject if it already belongs to some other tenant). Mirrors the
 // pattern in /api/admin/create-user.
 // ---------------------------------------------------------------------------
-
-const ALLOWED_ROLES_POST = BUILT_IN_ROLES as readonly string[];
 
 async function findAuthByEmail(admin: SupabaseClient, email: string) {
   const target = email.toLowerCase().trim();
@@ -60,9 +60,9 @@ export async function POST(
     const password = typeof body.password === 'string' ? body.password : '';
     const name = typeof body.name === 'string' ? body.name.trim() : '';
     const role = typeof body.role === 'string' ? body.role : '';
-    const allowedModules = Array.isArray(body.allowed_modules)
-      ? (body.allowed_modules as unknown[]).filter((m): m is string => typeof m === 'string')
-      : [];
+    // Saneado contra el registro único de módulos: guardar una clave inventada
+    // la deja en la fila y después se descarta en silencio al leerla.
+    const sanitizedModules = sanitizeModuleKeys(body.allowed_modules);
 
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return NextResponse.json({ success: false, error: 'Email inválido' }, { status: 400 });
@@ -76,9 +76,9 @@ export async function POST(
     if (!name) {
       return NextResponse.json({ success: false, error: 'Nombre requerido' }, { status: 400 });
     }
-    if (!ALLOWED_ROLES_POST.includes(role)) {
+    if (!isBuiltInRole(role)) {
       return NextResponse.json(
-        { success: false, error: `Rol inválido. Permitidos: ${ALLOWED_ROLES_POST.join(', ')}` },
+        { success: false, error: `Rol inválido. Permitidos: ${BUILT_IN_ROLES.join(', ')}` },
         { status: 400 },
       );
     }
@@ -93,6 +93,47 @@ export async function POST(
       return NextResponse.json(
         { success: false, error: 'Empresa no encontrada' },
         { status: 404 },
+      );
+    }
+
+    // ─── Exclusividad del email ───────────────────────────────────────
+    // Se chequea ANTES de tocar auth: un email con fila en company_users (de
+    // esta o de cualquier otra empresa) no puede sumar una segunda membresía
+    // —las lecturas de perfil asumen una sola fila y devolverían 401/403 en
+    // ambos tenants— y un superadmin de plataforma no puede además ser
+    // usuario de empresa (cliente y servidor resuelven las dos tablas en
+    // orden inverso).
+    const { data: emailDupes } = await admin
+      .from('company_users')
+      .select('id, company_id')
+      .ilike('email', email)
+      .limit(1);
+    const emailDupe = emailDupes?.[0];
+    if (emailDupe) {
+      const sameCompany = emailDupe.company_id === companyId;
+      return NextResponse.json(
+        {
+          success: false,
+          error: sameCompany
+            ? `Ya existe un perfil para ${email} en esta empresa`
+            : `${email} ya tiene una cuenta en otra empresa. Un email solo puede pertenecer a una entidad.`,
+        },
+        { status: 409 },
+      );
+    }
+
+    const { data: platformDupe } = await admin
+      .from('platform_users')
+      .select('id')
+      .ilike('email', email)
+      .maybeSingle();
+    if (platformDupe) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `${email} es un superadmin de plataforma y no puede ser además usuario de una empresa`,
+        },
+        { status: 409 },
       );
     }
 
@@ -147,7 +188,7 @@ export async function POST(
         name,
         role,
         status: 'active',
-        allowed_modules: allowedModules.length > 0 ? allowedModules : ['summary'],
+        allowed_modules: sanitizedModules.length > 0 ? sanitizedModules : ['summary'],
       })
       .select()
       .single();
@@ -167,6 +208,17 @@ export async function POST(
       action: 'create',
       module: 'users',
       details: `Superadmin creó usuario ${email} (${role}) en ${company.name}`,
+    });
+
+    // Aviso a los admins del tenant: el alta equivalente hecha desde adentro
+    // (/api/admin/create-user) notifica, y una cuenta nueva creada desde el
+    // panel de plataforma es justo lo que no deberían enterarse de casualidad.
+    void notify(admin, {
+      companyId,
+      type: 'security.user_created',
+      params: { actor: auth.name || auth.email, target: name || email, role },
+      link: '/usuarios',
+      excludeUserIds: [auth.userId],
     });
 
     return NextResponse.json({ success: true, user: profile });

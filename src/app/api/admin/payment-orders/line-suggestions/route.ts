@@ -45,7 +45,7 @@ export interface LineSuggestion {
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
 
     const beneficiaryId = request.nextUrl.searchParams.get('beneficiary_id')?.trim() || null;

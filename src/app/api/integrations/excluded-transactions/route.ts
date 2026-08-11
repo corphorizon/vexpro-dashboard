@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
   try {
     // Dominio finanzas: excluir transacciones mueve los números de los
     // reportes. El fallback histórico se lo permitía a `hr`.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();
@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
   try {
     // Dominio finanzas: excluir transacciones mueve los números de los
     // reportes. El fallback histórico se lo permitía a `hr`.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     // Los superadmins (platform_users) en modo "viewing as" llegan acá con

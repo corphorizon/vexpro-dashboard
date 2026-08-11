@@ -13,7 +13,8 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { X, Loader2, UserPlus } from 'lucide-react';
-import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS, ROLE_DEFAULT_MODULES } from '@/lib/auth-context';
+import { ROLE_DEFAULT_MODULES } from '@/lib/auth-context';
+import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import { ALL_MODULES } from '../../_form';
 import type { CompanyUser } from './page';
 

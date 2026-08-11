@@ -16,7 +16,7 @@ import { fetchOrionCrmTotals } from '@/lib/api-integrations/orion-crm/totals';
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    const auth = await verifyAuth(request, { modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     const from = request.nextUrl.searchParams.get('from') ?? '';

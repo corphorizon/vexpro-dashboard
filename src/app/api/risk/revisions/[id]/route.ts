@@ -17,7 +17,7 @@ export async function DELETE(
   try {
     // Dominio finanzas (ver el GET/POST de ../route.ts): un `hr` no borra
     // revisiones de riesgo.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['risk'] });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 

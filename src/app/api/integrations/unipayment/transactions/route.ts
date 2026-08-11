@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
-import { verifyAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { fetchUnipaymentDepositsV2 } from '@/lib/api-integrations/unipayment/transactions';
 
 // ---------------------------------------------------------------------------
@@ -14,7 +14,10 @@ import { fetchUnipaymentDepositsV2 } from '@/lib/api-integrations/unipayment/tra
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    // Gate de ROL agregado en la auditoría: mismo criterio que
+    // coinsbuy/deposits — transacciones crudas de la pasarela no son lectura
+    // para cualquier rol. Ninguna pantalla lo consume (diagnóstico).
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     const from = request.nextUrl.searchParams.get('from') ?? undefined;

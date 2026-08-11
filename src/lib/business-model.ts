@@ -178,7 +178,12 @@ export function blockedReportSections(model: unknown): string[] {
   const f = features(model);
   const blocked: string[] = [];
   if (!f.movements) blocked.push('deposits_withdrawals');
-  if (!f.brokerPnl) blocked.push('broker_pnl', 'prop_trading');
+  // Las tres secciones del CRM del broker salen de la MISMA fuente (Orion
+  // CRM): P&L, prop trading y los usuarios de la plataforma de trading.
+  // `crm_users` cuenta las altas de clientes del broker — una consultora no
+  // tiene esa plataforma, así que su reporte diario venía con "Usuarios CRM:
+  // 0 / 0 / 0" (o peor, sin conectar) como una de sus dos únicas secciones.
+  if (!f.brokerPnl) blocked.push('broker_pnl', 'prop_trading', 'crm_users');
   return blocked;
 }
 
