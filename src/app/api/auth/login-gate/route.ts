@@ -4,6 +4,7 @@ import { createClient as createSupabaseClient } from '@supabase/supabase-js';
 import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
 import { checkRateLimit, recordFailure, clearAttempts, type AttemptKind } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
+import { TWOFA_COOKIE, mintTwofaSeal, twofaCookieOptions } from '@/lib/auth/twofa-session';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/login-gate
@@ -229,12 +230,32 @@ export async function POST(request: NextRequest) {
     const realNeeds2fa = !!(companyUser?.twofa_enabled || platformUser?.twofa_enabled);
     const needs2fa = isDev2faBypassEnabled() ? false : realNeeds2fa;
 
-    return NextResponse.json({
+    const response = NextResponse.json({
       success: true,
       userId: signInData.user.id,
       needs2fa,
       mustChangePassword: !!companyUser?.must_change_password,
     });
+
+    // ── SELLO 2FA ────────────────────────────────────────────────────────
+    // Sólo cuando NO hace falta segundo factor. Dos casos:
+    //   · El usuario no tiene 2FA → el sello certifica "pasó por el gate del
+    //     servidor" (bloqueo de cuenta + throttle por IP incluidos), no un
+    //     PIN. Sin esto, cada navegación de un usuario sin 2FA obligaría al
+    //     middleware a consultar la DB para descubrir que no le hace falta.
+    //   · Bypass de desarrollo (DEV_SKIP_2FA en localhost): `needs2fa` ya
+    //     viene forzado a false más arriba, así que el bypass sigue
+    //     funcionando end-to-end sin agregarle ramas al middleware. En
+    //     producción `isDev2faBypassEnabled()` es false por NODE_ENV.
+    //
+    // Si needs2fa es true NO se emite nada acá: el sello lo emite
+    // /api/auth/verify-2fa recién después de validar el PIN.
+    if (!needs2fa) {
+      const seal = await mintTwofaSeal(signInData.user.id);
+      if (seal) response.cookies.set(TWOFA_COOKIE, seal, twofaCookieOptions());
+    }
+
+    return response;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[login-gate] Unhandled error:', message);

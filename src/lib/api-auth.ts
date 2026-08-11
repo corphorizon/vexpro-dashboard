@@ -1,8 +1,42 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { cookies } from 'next/headers';
 import { createClient } from '@/lib/supabase/server';
 import { canAccessAnyModule, type ModuleKey } from '@/lib/modules';
+import { TWOFA_COOKIE, twofaSealAvailable, verifyTwofaSeal } from '@/lib/auth/twofa-session';
 
 export type { ModuleKey };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SELLO 2FA en la API
+//
+// El middleware sólo protege la navegación HTML (se saltea /api a propósito,
+// por latencia). Sin este chequeo acá, el atacante que se fabrica una sesión
+// contra GoTrue con la anon key no vería el dashboard… pero llamaría a
+// /api/* y se llevaría los datos igual. El guardián tiene que estar en ambos.
+//
+// Costo: CERO consultas extra. `twofa_enabled` viaja en el mismo select del
+// perfil que estas funciones ya hacían.
+//
+// Falla ABIERTO cuando no se puede aplicar (sin clave HMAC o kill switch) y
+// CERRADO —401— sólo cuando sabemos con certeza que el usuario tiene 2FA
+// habilitado y no hay sello válido. El 401 hace que el cliente reaccione
+// como ante cualquier sesión vencida; la navegación siguiente choca con el
+// middleware, que lo manda a /login a repetir el PIN.
+// ─────────────────────────────────────────────────────────────────────────────
+async function enforceTwofaSeal(
+  authUserId: string,
+  twofaEnabled: boolean | null | undefined,
+): Promise<NextResponse | null> {
+  if (!twofaEnabled) return null;
+  if (!twofaSealAvailable()) return null;
+  const store = await cookies();
+  const ok = await verifyTwofaSeal(store.get(TWOFA_COOKIE)?.value, authUserId);
+  if (ok) return null;
+  return NextResponse.json(
+    { success: false, error: 'Sesión sin verificación de 2FA. Volvé a iniciar sesión.' },
+    { status: 401 },
+  );
+}
 
 // Roles allowed to call /api/admin/* routes (fallback histórico).
 //
@@ -188,11 +222,13 @@ export async function verifyAdminAuth(
   // Superadmin shortcut — same pattern as verifyAuth.
   const { data: pu } = await supabase
     .from('platform_users')
-    .select('id, name, email')
+    .select('id, name, email, twofa_enabled')
     .eq('user_id', user.id)
     .maybeSingle();
 
   if (pu) {
+    const sealGate = await enforceTwofaSeal(user.id, pu.twofa_enabled);
+    if (sealGate) return sealGate;
     const targetCompanyId = readCompanyIdFromRequest(request);
     if (!targetCompanyId) {
       return NextResponse.json(
@@ -225,7 +261,7 @@ export async function verifyAdminAuth(
   // este mismo select: el guard de módulos no agrega una query por usuario.
   const { data: profile } = await supabase
     .from('company_users')
-    .select('company_id, role, name, email, allowed_modules')
+    .select('company_id, role, name, email, allowed_modules, twofa_enabled')
     .eq('user_id', user.id)
     .single();
 
@@ -235,6 +271,9 @@ export async function verifyAdminAuth(
       { status: 403 },
     );
   }
+
+  const sealGate = await enforceTwofaSeal(user.id, profile.twofa_enabled);
+  if (sealGate) return sealGate;
 
   const allowed = opts?.roles ?? ADMIN_ROLES;
   if (!allowed.includes(profile.role)) {
@@ -303,7 +342,7 @@ export async function verifySuperadminAuth(): Promise<SuperadminAuthInfo | NextR
 
   const { data: pu } = await supabase
     .from('platform_users')
-    .select('id, name, email')
+    .select('id, name, email, twofa_enabled')
     .eq('user_id', user.id)
     .maybeSingle();
 
@@ -313,6 +352,9 @@ export async function verifySuperadminAuth(): Promise<SuperadminAuthInfo | NextR
       { status: 403 },
     );
   }
+
+  const sealGate = await enforceTwofaSeal(user.id, pu.twofa_enabled);
+  if (sealGate) return sealGate;
 
   return {
     userId: user.id,
@@ -355,11 +397,13 @@ export async function verifyAuth(
   // Superadmin path — no row in company_users, but can target any tenant.
   const { data: pu } = await supabase
     .from('platform_users')
-    .select('id, name, email')
+    .select('id, name, email, twofa_enabled')
     .eq('user_id', user.id)
     .maybeSingle();
 
   if (pu) {
+    const sealGate = await enforceTwofaSeal(user.id, pu.twofa_enabled);
+    if (sealGate) return sealGate;
     const targetCompanyId = readCompanyIdFromRequest(request);
     if (!targetCompanyId) {
       return NextResponse.json(
@@ -388,7 +432,7 @@ export async function verifyAuth(
   // Regular user path. `allowed_modules` viaja en el mismo select.
   const { data: profile } = await supabase
     .from('company_users')
-    .select('company_id, role, name, email, allowed_modules')
+    .select('company_id, role, name, email, allowed_modules, twofa_enabled')
     .eq('user_id', user.id)
     .single();
 
@@ -398,6 +442,9 @@ export async function verifyAuth(
       { status: 403 },
     );
   }
+
+  const sealGate = await enforceTwofaSeal(user.id, profile.twofa_enabled);
+  if (sealGate) return sealGate;
 
   const gate = await enforceModules(
     supabase,

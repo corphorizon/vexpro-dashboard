@@ -268,6 +268,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'SIGNED_OUT') {
         setUser(null);
         setUsers([]);
+        // Sello 2FA: la cookie es httpOnly, así que sólo el servidor puede
+        // borrarla. Se hace acá (y no en logout()) porque este listener
+        // cubre TODAS las salidas: logout explícito, cierre por inactividad,
+        // expiración de sesión y signOut desde otra pestaña. Si el sello
+        // sobreviviera, en una máquina compartida alguien con la contraseña
+        // podría volver a entrar sin PIN.
+        fetch('/api/auth/2fa-seal', { method: 'DELETE' }).catch(() => {
+          /* non-fatal: el sello vence solo y el login lo re-emite */
+        });
         // Fase 4b: limpiar el caché SWR también cuando el sign-out llega
         // por este listener (auto-logout por inactividad, expiración de
         // sesión, signOut desde otra pestaña) y no por logout() explícito.
