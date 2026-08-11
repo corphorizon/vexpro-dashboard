@@ -764,45 +764,78 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
 export function renderReportEmailText(params: RenderReportEmailParams): string {
   const { data, cadence, companyName } = params;
   const locale = params.locale ?? 'en';
+  // Igual que el HTML: el cuerpo text/plain también respeta las secciones. Antes
+  // imprimía SIEMPRE depósitos / Net Deposit / Broker P&L / Prop Trading, así que
+  // una empresa 'company' recibía en el texto los bloques que el HTML omitía.
+  const sections = params.sections ?? ALL_SECTIONS_ON;
   const title = reportTitle(cadence, locale);
   const d = data.deposits_withdrawals;
-  return [
+
+  const lines: string[] = [
     `${title} — ${companyName}`,
     `${lt(locale, 'textPeriod')}: ${data.range.from} → ${data.range.to}`,
     ``,
-    lt(locale, 'textDepositsWithdrawals'),
-    `  ${lt(locale, 'textTotalDeposits')}: ${formatCurrency(d.range.total_deposits)}`,
-    `  ${lt(locale, 'textTotalWithdrawals')}: ${formatCurrency(d.range.total_withdrawals)}`,
-    `  Net Deposit: ${formatCurrency(d.range.net_deposit)}`,
-    ``,
-    lt(locale, 'textCurrentMonth'),
-    `  Net Deposit: ${formatCurrency(d.month.net_deposit)}`,
-    `  (${lt(locale, 'textPrevMonth')}: ${formatCurrency(d.prev_month.net_deposit)})`,
-    ``,
-    lt(locale, 'textBalancesByChannel'),
-    ...(data.balances_by_channel.channels.length === 0
-      ? [`  ${lt(locale, 'textNoVisibleChannels')}`]
-      : data.balances_by_channel.channels.map(
-          (c) =>
-            `  ${c.label.padEnd(28, ' ')} ${c.source === 'missing' ? 's/d' : formatCurrency(c.amount)}`,
-        )),
-    `  ${'TOTAL'.padEnd(28, ' ')} ${formatCurrency(data.balances_by_channel.total)}`,
-    ``,
-    lt(locale, 'textCrmUsers'),
-    `  ${lt(locale, 'textNewInRange')}: ${data.crm_users.new_users_in_range}`,
-    `  ${lt(locale, 'textNewThisMonth')}: ${data.crm_users.new_users_this_month}`,
-    `  ${lt(locale, 'textTotal')}: ${data.crm_users.total_users}`,
-    ``,
-    lt(locale, 'textBrokerPnl'),
-    `  ${lt(locale, 'textRange')}: ${formatCurrency(data.broker_pnl.pnl_range)}`,
-    `  ${lt(locale, 'textMonth')}: ${formatCurrency(data.broker_pnl.pnl_month)}`,
-    `  ${lt(locale, 'textPrevMonth')}: ${formatCurrency(data.broker_pnl.pnl_prev_month)}`,
-    ``,
-    lt(locale, 'textPropTrading'),
-    `  ${lt(locale, 'textSalesRange')}: ${formatCurrency(data.prop_trading.total_sales_range)}`,
-    `  ${lt(locale, 'textWithdrawalsRange')}: ${formatCurrency(data.prop_trading.prop_withdrawals_range)}`,
-    `  ${lt(locale, 'textPnlRange')}: ${formatCurrency(data.prop_trading.pnl_range)}`,
-    ``,
+  ];
+
+  if (sections.deposits_withdrawals) {
+    lines.push(
+      lt(locale, 'textDepositsWithdrawals'),
+      `  ${lt(locale, 'textTotalDeposits')}: ${formatCurrency(d.range.total_deposits)}`,
+      `  ${lt(locale, 'textTotalWithdrawals')}: ${formatCurrency(d.range.total_withdrawals)}`,
+      `  Net Deposit: ${formatCurrency(d.range.net_deposit)}`,
+      ``,
+      lt(locale, 'textCurrentMonth'),
+      `  Net Deposit: ${formatCurrency(d.month.net_deposit)}`,
+      `  (${lt(locale, 'textPrevMonth')}: ${formatCurrency(d.prev_month.net_deposit)})`,
+      ``,
+    );
+  }
+
+  if (sections.balances_by_channel) {
+    lines.push(
+      lt(locale, 'textBalancesByChannel'),
+      ...(data.balances_by_channel.channels.length === 0
+        ? [`  ${lt(locale, 'textNoVisibleChannels')}`]
+        : data.balances_by_channel.channels.map(
+            (c) =>
+              `  ${c.label.padEnd(28, ' ')} ${c.source === 'missing' ? 's/d' : formatCurrency(c.amount)}`,
+          )),
+      `  ${'TOTAL'.padEnd(28, ' ')} ${formatCurrency(data.balances_by_channel.total)}`,
+      ``,
+    );
+  }
+
+  if (sections.crm_users) {
+    lines.push(
+      lt(locale, 'textCrmUsers'),
+      `  ${lt(locale, 'textNewInRange')}: ${data.crm_users.new_users_in_range}`,
+      `  ${lt(locale, 'textNewThisMonth')}: ${data.crm_users.new_users_this_month}`,
+      `  ${lt(locale, 'textTotal')}: ${data.crm_users.total_users}`,
+      ``,
+    );
+  }
+
+  if (sections.broker_pnl) {
+    lines.push(
+      lt(locale, 'textBrokerPnl'),
+      `  ${lt(locale, 'textRange')}: ${formatCurrency(data.broker_pnl.pnl_range)}`,
+      `  ${lt(locale, 'textMonth')}: ${formatCurrency(data.broker_pnl.pnl_month)}`,
+      `  ${lt(locale, 'textPrevMonth')}: ${formatCurrency(data.broker_pnl.pnl_prev_month)}`,
+      ``,
+    );
+  }
+
+  if (sections.prop_trading) {
+    lines.push(
+      lt(locale, 'textPropTrading'),
+      `  ${lt(locale, 'textSalesRange')}: ${formatCurrency(data.prop_trading.total_sales_range)}`,
+      `  ${lt(locale, 'textWithdrawalsRange')}: ${formatCurrency(data.prop_trading.prop_withdrawals_range)}`,
+      `  ${lt(locale, 'textPnlRange')}: ${formatCurrency(data.prop_trading.pnl_range)}`,
+      ``,
+    );
+  }
+
+  lines.push(
     `---`,
     `Smart Dashboard · ${DASHBOARD_URL}`,
     cadence === 'daily'
@@ -810,5 +843,7 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
       : cadence === 'weekly'
         ? lt(locale, 'textAutoWeekly')
         : lt(locale, 'textAutoMonthly'),
-  ].join('\n');
+  );
+
+  return lines.join('\n');
 }

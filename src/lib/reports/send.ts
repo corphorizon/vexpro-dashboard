@@ -275,6 +275,9 @@ export async function sendReportsForCadence(
           data,
           cadence,
           companyName: company.name,
+          // Mismas secciones que el HTML: cfg.sections ya trae aplicado
+          // blockedReportSections (loadReportConfig lo filtra en lectura).
+          sections: cfg.sections,
           locale,
         });
         const subject = reportEmailSubject({

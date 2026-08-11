@@ -4,6 +4,7 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { notify } from '@/lib/notifications/notify';
+import { guardAdminTarget } from '@/lib/admin-user-guards';
 
 // Redact emails before logging — server logs are visible in Vercel dashboard.
 function redactEmail(email: string | null | undefined): string {
@@ -41,7 +42,7 @@ export async function POST(request: NextRequest) {
     //    the caller's company to prevent cross-tenant deletion.
     const { data: profile, error: lookupError } = await adminClient
       .from('company_users')
-      .select('user_id, email, name')
+      .select('user_id, email, name, role')
       .eq('id', companyUserId)
       .eq('company_id', auth.companyId)
       .maybeSingle();
@@ -57,6 +58,11 @@ export async function POST(request: NextRequest) {
       console.log(`[AdminAPI] company_user ${companyUserId} not found, nothing to delete`);
       return NextResponse.json({ success: true, alreadyDeleted: true });
     }
+
+    // Un admin de tenant no puede borrar a OTRO admin (arrancarle el acceso a
+    // un par). Solo el superadmin puede. Se chequea ANTES de cualquier delete.
+    const targetGuard = guardAdminTarget(profile.role, auth);
+    if (targetGuard) return targetGuard;
 
     // 2. Delete from company_users (scoped to caller's company)
     const { error: deleteProfileError } = await adminClient

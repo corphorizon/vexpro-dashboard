@@ -4,6 +4,7 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { notify } from '@/lib/notifications/notify';
+import { guardAdminTarget } from '@/lib/admin-user-guards';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/reset-password
@@ -36,7 +37,7 @@ export async function POST(request: NextRequest) {
     // Verify the email belongs to a user in the caller's company
     const { data: companyUser } = await adminClient
       .from('company_users')
-      .select('user_id, name, email')
+      .select('user_id, name, email, role')
       .eq('email', email)
       .eq('company_id', auth.companyId)
       .maybeSingle();
@@ -47,6 +48,11 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
+
+    // Un admin de tenant no puede resetear la contraseña de OTRO admin: sería
+    // tomar su cuenta. Solo el superadmin puede.
+    const targetGuard = guardAdminTarget(companyUser.role, auth);
+    if (targetGuard) return targetGuard;
 
     if (!companyUser.user_id) {
       return NextResponse.json(

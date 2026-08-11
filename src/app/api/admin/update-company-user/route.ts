@@ -4,6 +4,7 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { MODULE_KEY_SET } from '@/lib/modules';
 import { isBuiltInRole } from '@/lib/roles';
+import { guardAdminTarget } from '@/lib/admin-user-guards';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/update-company-user
@@ -20,14 +21,18 @@ import { isBuiltInRole } from '@/lib/roles';
 // endpoint dedicado /api/admin/update-auth-user.
 // ---------------------------------------------------------------------------
 
+// Los campos de 2FA (`twofa_secret`, `twofa_enabled`, `force_2fa_setup`) NO
+// van acá: este endpoint escribe crudo lo que llega en el body, así que
+// permitirlos dejaba a un admin FIJAR el secreto TOTP de otro usuario y tomar
+// su cuenta (o desactivarle el segundo factor). El ciclo de vida del 2FA es
+// exclusivo de /api/admin/reset-user-2fa, que solo lo desactiva y limpia el
+// secreto pendiente — nunca lo setea. `must_change_password` sí es gestión
+// legítima: a lo sumo obliga a la víctima a cambiar su clave, no la compromete.
 const ALLOWED_FIELDS = [
   'name',
   'email',
   'role',
   'allowed_modules',
-  'twofa_enabled',
-  'twofa_secret',
-  'force_2fa_setup',
   'must_change_password',
 ] as const;
 
@@ -76,7 +81,7 @@ export async function POST(request: NextRequest) {
 
     const { data: existing } = await admin
       .from('company_users')
-      .select('id, company_id')
+      .select('id, company_id, role')
       .eq('id', companyUserId)
       .maybeSingle();
 
@@ -92,6 +97,11 @@ export async function POST(request: NextRequest) {
         { status: 403 },
       );
     }
+
+    // Un admin de tenant no puede editar la ficha de OTRO admin (solo el
+    // superadmin). Sin esto podía degradarle el rol o cambiarle el email.
+    const targetGuard = guardAdminTarget(existing.role, auth);
+    if (targetGuard) return targetGuard;
 
     // Filtrar a los campos permitidos — defensa contra payloads que
     // intenten setear company_id, user_id, created_at, etc.

@@ -58,6 +58,23 @@ function normalizeBucket(v: unknown): string | null {
   return typeof v === 'string' && ALLOWED_ATTACHMENT_BUCKETS.has(v) ? v : null;
 }
 
+/**
+ * El attachment_path viaja verbatim en el body y después se firma sin volver a
+ * mirar RLS (el admin client saltea RLS). Sin validar el prefijo, un usuario de
+ * la empresa A podría guardar un path de la empresa B (`{companyB}/archivo.pdf`)
+ * y, al abrir el comprobante, bajarse el archivo ajeno. Por eso el path DEBE
+ * empezar por `${companyId}/` de la empresa del llamante y no contener `..`.
+ * Cualquier otra cosa se descarta (null) — la fila se guarda sin adjunto en vez
+ * de reventar el guardado del período entero.
+ */
+function normalizeAttachmentPath(v: unknown, companyId: string): string | null {
+  const p = str(v);
+  if (!p) return null;
+  if (p.includes('..')) return null;
+  if (!p.startsWith(`${companyId}/`)) return null;
+  return p;
+}
+
 // La fecha viaja como string del <input type="date">. Cualquier cosa que no
 // sea YYYY-MM-DD se guarda como null en vez de reventar el cast en Postgres.
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -104,12 +121,29 @@ export async function POST(request: NextRequest) {
         payment_order_id: normalizeUuid(e.payment_order_id),
         // migration-060 — misma razón que los dos de arriba.
         reference: str(e.reference),
-        attachment_bucket: normalizeBucket(e.attachment_bucket),
-        attachment_path: str(e.attachment_path),
-        attachment_name: str(e.attachment_name),
-        attachment_mime: str(e.attachment_mime),
-        attachment_size: typeof e.attachment_size === 'number' ? e.attachment_size : null,
-        attachment_uploaded_at: str(e.attachment_uploaded_at),
+        // El path se valida contra la empresa del token (anti cross-tenant).
+        // Si no es válido, se descartan TODOS los campos del adjunto para no
+        // dejar una fila con bucket/nombre pero sin path (o al revés).
+        ...(() => {
+          const attachmentPath = normalizeAttachmentPath(e.attachment_path, auth.companyId);
+          return attachmentPath
+            ? {
+                attachment_bucket: normalizeBucket(e.attachment_bucket),
+                attachment_path: attachmentPath,
+                attachment_name: str(e.attachment_name),
+                attachment_mime: str(e.attachment_mime),
+                attachment_size: typeof e.attachment_size === 'number' ? e.attachment_size : null,
+                attachment_uploaded_at: str(e.attachment_uploaded_at),
+              }
+            : {
+                attachment_bucket: null,
+                attachment_path: null,
+                attachment_name: null,
+                attachment_mime: null,
+                attachment_size: null,
+                attachment_uploaded_at: null,
+              };
+        })(),
       })),
     });
     if (error) return apiError('admin/expenses', error, { status: 500 });
