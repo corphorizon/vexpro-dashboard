@@ -461,6 +461,20 @@ export async function createExpenseForPaidOrder(
     return { expenseId: null, warning: periodWarning };
   }
 
+  // Candado anti-duplicado por payment_order_id (migración 079): NO se depende
+  // sólo de payment_orders.expense_id, que se pierde si /upload borra el egreso
+  // (on delete set null). Si YA existe un egreso para esta orden, se reutiliza
+  // —re-vinculando el puntero desde el caller— en vez de crear un segundo.
+  const { data: existing } = await admin
+    .from('expenses')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('payment_order_id', order.id)
+    .maybeSingle();
+  if (existing?.id) {
+    return { expenseId: existing.id as string, warning: periodWarning };
+  }
+
   const total = num(order.total);
   const { data: expense, error } = await admin
     .from('expenses')
@@ -498,6 +512,20 @@ export async function createExpenseForPaidOrder(
     .maybeSingle();
 
   if (error || !expense?.id) {
+    // Backstop de carrera: si dos "marcar pagada" corren a la vez, el índice
+    // único parcial (migración 079) rechaza el segundo insert con 23505. Eso NO
+    // es un fallo: significa que el otro ya creó el egreso. Se recupera su id.
+    if (error?.code === '23505') {
+      const { data: raced } = await admin
+        .from('expenses')
+        .select('id')
+        .eq('company_id', companyId)
+        .eq('payment_order_id', order.id)
+        .maybeSingle();
+      if (raced?.id) {
+        return { expenseId: raced.id as string, warning: periodWarning };
+      }
+    }
     console.error('[payment-orders] alta de egreso:', error?.message);
     return {
       expenseId: null,
