@@ -873,6 +873,24 @@ export default function ComisionesPage() {
       return;
     }
 
+    // Guarda anti-pisón: si este grupo YA tiene comisiones guardadas para el
+    // período, re-guardar las SOBRESCRIBE con lo que muestra la pantalla en
+    // vivo. Como el recálculo puede diferir de lo guardado (ND sembrado en 0,
+    // etc.), pedimos confirmación explícita para no borrar datos por accidente.
+    if (tab === 'teams' && typeof window !== 'undefined') {
+      const groupHasSaved = existingResults.some((r) => r.head_id === selectedHeadId);
+      if (groupHasSaved) {
+        const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
+        const ok = window.confirm(
+          `Este grupo ya tiene comisiones guardadas para ${periodLabel}.\n\n` +
+          `Vas a SOBRESCRIBIRLAS con los valores que se ven ahora en pantalla. ` +
+          `Si algún ND aparece en 0 o distinto a lo cargado, se guardará así y se perderá lo anterior.\n\n` +
+          `¿Continuar y sobrescribir?`,
+        );
+        if (!ok) return;
+      }
+    }
+
     setSaving(true);
     try {
       let entries: CommissionEntryRow[];
