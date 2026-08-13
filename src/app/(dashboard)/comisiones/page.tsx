@@ -873,19 +873,36 @@ export default function ComisionesPage() {
       return;
     }
 
-    // Guarda anti-pisón: si este grupo YA tiene comisiones guardadas para el
-    // período, re-guardar las SOBRESCRIBE con lo que muestra la pantalla en
-    // vivo. Como el recálculo puede diferir de lo guardado (ND sembrado en 0,
-    // etc.), pedimos confirmación explícita para no borrar datos por accidente.
+    // Guarda anti-pisón. Re-guardar un grupo SOBRESCRIBE lo guardado con lo que
+    // muestra la pantalla en vivo. Si al reabrir un mes el ND se sembró en 0,
+    // guardar borraría el ND que estaba cargado. Detectamos ese caso puntual
+    // (miembro con ND guardado != 0 que ahora se guardaría en 0) y avisamos con
+    // nombres ANTES de borrar. Es la protección contra el incidente del 2026-08.
     if (tab === 'teams' && typeof window !== 'undefined') {
-      const groupHasSaved = existingResults.some((r) => r.head_id === selectedHeadId);
-      if (groupHasSaved) {
-        const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
+      const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
+      const wouldZero: string[] = [];
+      for (const profile of teamProfiles) {
+        if (profile.id === headProfile?.id) continue; // el HEAD tiene ND propio (net_deposit_accumulated)
+        const saved = existingResults.find((r) => r.profile_id === profile.id && r.head_id === selectedHeadId);
+        const savedNd = saved ? Number(saved.net_deposit_current) : 0;
+        const inputNd = ndInputs.get(profile.id) ?? 0;
+        if (savedNd !== 0 && inputNd === 0) wouldZero.push(profile.name);
+      }
+      if (wouldZero.length > 0) {
+        const names = wouldZero.slice(0, 10).join(', ') + (wouldZero.length > 10 ? `, +${wouldZero.length - 10} más` : '');
+        const ok = window.confirm(
+          `⚠️ CUIDADO — posible borrado de datos en ${periodLabel}\n\n` +
+          `${wouldZero.length} miembro(s) tienen ND guardado pero ahora aparecen en 0. ` +
+          `Si guardás, se les BORRA el ND cargado:\n\n${names}\n\n` +
+          `Esto pasa al reabrir un mes viejo cuyos datos no cargaron. ` +
+          `Si NO estás re-cargando esos ND a propósito, CANCELÁ.\n\n` +
+          `¿Guardar igual y poner esos ND en 0?`,
+        );
+        if (!ok) return;
+      } else if (existingResults.some((r) => r.head_id === selectedHeadId)) {
         const ok = window.confirm(
           `Este grupo ya tiene comisiones guardadas para ${periodLabel}.\n\n` +
-          `Vas a SOBRESCRIBIRLAS con los valores que se ven ahora en pantalla. ` +
-          `Si algún ND aparece en 0 o distinto a lo cargado, se guardará así y se perderá lo anterior.\n\n` +
-          `¿Continuar y sobrescribir?`,
+          `Vas a sobrescribirlas con los valores actuales. ¿Continuar?`,
         );
         if (!ok) return;
       }
