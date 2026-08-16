@@ -23,14 +23,6 @@ export const dynamic = 'force-dynamic';
 
 const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36';
 
-const PATHS = [
-  '/api/v1/accounts', '/api/v1/accounts/balance', '/api/v1/accounts/balances',
-  '/api/v1/accounts/transactions', '/api/v1/accounts/statement',
-  '/api/v1/balance', '/api/v1/balances', '/api/v1/transactions', '/api/v1/statement',
-  '/api/v1/getBalance', '/api/v1/getAccounts', '/api/v1/getTransactionList',
-  '/api/v1/getAccountStatement', '/api/v1/getStatement', '/api/v1/payouts', '/api/v1/getPayoutList',
-] as const;
-
 // Ronda 2 (2026-08-17): con la API Key cruda, /api/v1/accounts respondió
 // "Wrong number of segments" → la API espera un JWT en Authorization, igual
 // que portal.fairpay.online. Se canjea la key por JWT en getAccessToken y
@@ -86,26 +78,50 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // 2) Con el JWT (si hay), recorrer las rutas. Sin JWT, igual se prueba con
-  //    la key cruda para dejar constancia.
-  const bearer = jwt ?? creds.apiKey;
+  // 2) Ronda 3: /api/v1/accounts YA responde la lista de cuentas (con currency
+  //    y balance). Se trae ENTERA y, por cada cuenta, se prueban las rutas por
+  //    id que suelen dar el estado de cuenta (depósitos/retiros).
+  if (!jwt) {
+    return NextResponse.json({ success: false, error: 'No se pudo canjear la API key por JWT', tokenAttempts });
+  }
+  const H = { ...jsonHeaders, Authorization: `Bearer ${jwt}` };
+  const accountsRes = await fetch(creds.baseUrl + '/api/v1/accounts', { headers: H, signal: AbortSignal.timeout(10_000) });
+  const accountsText = await accountsRes.text();
+  let accounts: Array<Record<string, unknown>> = [];
+  try { const j = JSON.parse(accountsText); accounts = Array.isArray(j) ? j : (Array.isArray(j?.data) ? j.data : []); } catch { /* no JSON */ }
+
+  // Resumen legible de cuentas: id, número, tipo, moneda, balance.
+  const accountSummary = accounts.map((a) => ({
+    id: a.id, account_number: a.account_number, account_type: a.account_type,
+    currency: a.currency, balance: a.balance, status: a.status,
+  }));
+
+  // Rutas por cuenta a probar (sólo GET). Se limita a las primeras 6 cuentas
+  // para no disparar decenas de llamadas si el usuario tiene muchas.
+  const perAccountPaths = (id: unknown) => [
+    `/api/v1/accounts/${id}`,
+    `/api/v1/accounts/${id}/transactions`,
+    `/api/v1/accounts/${id}/statement`,
+    `/api/v1/accounts/${id}/balance`,
+    `/api/v1/accounts/${id}/movements`,
+    `/api/v1/accounts/${id}/history`,
+    `/api/v1/transactions?account_id=${id}`,
+    `/api/v1/accounts/transactions?account_id=${id}`,
+    `/api/v1/accounts/statement?account_id=${id}`,
+  ];
   const results: Array<{ path: string; status: number; body: string }> = [];
-  for (const path of PATHS) {
-    try {
-      const res = await fetch(creds.baseUrl + path, {
-        headers: { ...jsonHeaders, Authorization: `Bearer ${bearer}` },
-        signal: AbortSignal.timeout(10_000),
-        redirect: 'manual',
-      });
-      const text = (await res.text()).replace(/\s+/g, ' ');
-      const looksHtml = /<html|<!doctype/i.test(text);
-      results.push({ path, status: res.status, body: (looksHtml ? '[HTML] ' : '') + text.slice(0, 400) });
-    } catch (err) {
-      results.push({ path, status: 0, body: (err as Error).message.slice(0, 100) });
+  for (const acc of accounts.slice(0, 6)) {
+    for (const path of perAccountPaths(acc.id)) {
+      try {
+        const res = await fetch(creds.baseUrl + path, { headers: H, signal: AbortSignal.timeout(10_000), redirect: 'manual' });
+        const text = (await res.text()).replace(/\s+/g, ' ');
+        results.push({ path, status: res.status, body: text.slice(0, 500) });
+      } catch (err) {
+        results.push({ path, status: 0, body: (err as Error).message.slice(0, 100) });
+      }
     }
   }
-
-  const interesting = results.filter((r) => ![403, 404].includes(r.status) && !r.body.startsWith('[HTML]'));
-  return NextResponse.json({ success: true, baseUrl: creds.baseUrl, jwtObtained: !!jwt, tokenAttempts, interesting, all: results });
+  const interesting = results.filter((r) => r.status === 200 && r.body !== '{}' && r.body !== '[]');
+  return NextResponse.json({ success: true, baseUrl: creds.baseUrl, jwtObtained: true, accountsRaw: accountsText.slice(0, 3000), accountSummary, interesting, all: results });
 
 }
