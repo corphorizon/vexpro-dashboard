@@ -401,7 +401,9 @@ export function toApiTransactionRow(
     provider: ONCHAIN_PROVIDER,
     external_id: transfer.externalId,
     amount: transfer.amount,
-    fee: null,
+    // La transferencia USDT no informa comisión (el gas se paga en el nativo y
+    // aparece en el ajuste del libro). api_transactions.fee es NOT NULL → 0.
+    fee: 0,
     currency: 'USDT',
     // El sentido va en el status, igual que Pay-Pros: la RPC del libro separa
     // depósitos de retiros mirando esta columna.
