@@ -123,6 +123,48 @@ export interface UnipaymentDepositTx {
   _originalResponse?: Record<string, unknown>;
 }
 
+// ── Pay-Pros ──
+//
+// Pay-Pros es PUSH puro: no hay endpoint de listado ni de balance, así que
+// NO participa del aggregator ni tiene un ProviderDataset. Sus filas entran
+// a `api_transactions` directamente desde el handler del webhook
+// (/api/webhooks/paypros/[token]) con provider = 'paypros'.
+//
+// OJO — 'paypros' NO se agrega a `ProviderSlug` a propósito: ese union
+// alimenta switches EXHAUSTIVOS en `totals.ts` (computeProviderTotals) y
+// literales `Record<ProviderSlug, number>` en `persistence.ts`. Sumarlo acá
+// rompe la compilación de esos archivos hasta que se les agregue el caso.
+// Ver `PAYPROS_PROVIDER` y `toNormalizedTx` en `./paypros/protocol.ts`.
+
+/** Valor que se guarda en api_transactions.provider para Pay-Pros. */
+export type PayprosProviderSlug = 'paypros';
+
+/**
+ * Estados de Pay-Pros ya traducidos a texto legible. Solo 'paid' (código 4)
+ * es un depósito cobrado; 'payout_paid' (6) es un retiro.
+ */
+export type PayprosTxStatus =
+  | 'refund_approved'
+  | 'refund_declined'
+  | 'paid'
+  | 'unpaid'
+  | 'payout_paid'
+  | 'payout_declined';
+
+export interface PayprosDepositTx {
+  /** uid de la transacción en Pay-Pros. */
+  id: string;
+  provider: 'paypros';
+  kind: 'deposit';
+  /** ISO UTC (el webhook lo manda en hora de Lima, GMT-5). */
+  createdAt: string;
+  amount: number;
+  currency: string;
+  status: PayprosTxStatus;
+  /** Id único de la NOTIFICACIÓN que trajo esta transacción. */
+  notifyReference: string;
+}
+
 // ── Union + dataset ──
 
 export type ProviderTransaction =

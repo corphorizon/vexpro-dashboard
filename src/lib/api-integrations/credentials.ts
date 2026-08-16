@@ -21,6 +21,7 @@
 //   · coinsbuy   → JSON.stringify({ client_id, client_secret })
 //   · unipayment → JSON.stringify({ client_id, client_secret })
 //   · fairpay    → raw api_key string
+//   · paypros    → JSON.stringify({ merchant_id, api_key, sign_key })
 //
 // `extra_config` stays available for non-sensitive knobs (webhook_url,
 // base_url override, sandbox toggle, etc.) and is returned alongside the
@@ -34,7 +35,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptSecret } from '@/lib/crypto';
 
-export type TenantProvider = 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
+export type TenantProvider = 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm' | 'paypros';
 
 interface RawCredentialRow {
   encrypted_secret: string;
@@ -232,4 +233,113 @@ export async function resolveOrionCrmCredentials(
       ? (raw.extraConfig.base_url as string)
       : undefined;
   return { apiKey, baseUrl };
+}
+
+// ── Pay-Pros ─────────────────────────────────────────────────────────────
+//
+// Pay-Pros necesita TRES secretos (merchant_id, api_key, sign_key), así que
+// se guardan juntos como JSON dentro de un único `encrypted_secret` —
+// mismo patrón que Coinsbuy con su par client_id/client_secret.
+//
+// `base_url` NO es secreto y vive en extra_config. Default = producción
+// (la URL que nos dio Pay-Pros). La documentación menciona un entorno de
+// sandbox ("SB") cuya URL no conocemos: cuando la tengamos, se configura
+// por tenant desde el panel sin tocar código.
+//
+// `webhook_token` (extra_config, 32 bytes hex) identifica a la empresa en
+// la URL del webhook entrante, porque Pay-Pros no manda el merchant en el
+// cuerpo de la notificación. Lo genera la ruta de guardado
+// (/api/admin/api-credentials) la primera vez y NUNCA se regenera: la URL
+// ya quedó registrada del lado de Pay-Pros.
+
+/** URL de producción de Pay-Pros. Override por tenant en extra_config.base_url. */
+export const PAYPROS_DEFAULT_BASE_URL = 'https://master-api.pay-pros.com/';
+
+export interface PayprosCredentials {
+  merchantId: string;
+  apiKey: string;
+  signKey: string;
+  baseUrl: string;
+}
+
+export async function resolvePayprosCredentials(
+  companyId: string | null | undefined,
+): Promise<PayprosCredentials | null> {
+  if (!companyId) return null;
+  const raw = await readRaw(companyId, 'paypros');
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw.plaintext) as {
+      merchant_id?: string;
+      api_key?: string;
+      sign_key?: string;
+    };
+    if (!parsed.merchant_id || !parsed.api_key || !parsed.sign_key) return null;
+
+    const configured =
+      typeof raw.extraConfig?.base_url === 'string' ? raw.extraConfig.base_url.trim() : '';
+
+    return {
+      merchantId: parsed.merchant_id,
+      apiKey: parsed.api_key,
+      signKey: parsed.sign_key,
+      baseUrl: configured || PAYPROS_DEFAULT_BASE_URL,
+    };
+  } catch {
+    console.warn('[credentials] paypros secret not JSON — treating as not configured');
+    return null;
+  }
+}
+
+/**
+ * Token del webhook de Pay-Pros para un tenant (extra_config.webhook_token).
+ * Se lee sin descifrar el secreto. null si la empresa no tiene credencial
+ * o si la fila es anterior a la generación del token.
+ */
+export async function resolvePayprosWebhookToken(
+  companyId: string | null | undefined,
+): Promise<string | null> {
+  if (!companyId) return null;
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from('api_credentials')
+    .select('extra_config')
+    .eq('company_id', companyId)
+    .eq('provider', 'paypros')
+    .maybeSingle<{ extra_config: Record<string, unknown> | null }>();
+
+  if (error) {
+    console.warn('[credentials] paypros webhook_token read failed:', error.message);
+    return null;
+  }
+  const token = data?.extra_config?.webhook_token;
+  return typeof token === 'string' && token.trim() !== '' ? token : null;
+}
+
+/**
+ * Inverso del anterior: dado el token que viene en la URL del webhook,
+ * devuelve el company_id dueño de esa credencial. null si no matchea —
+ * el caller debe responder 404/401 sin filtrar cuál de las dos cosas falló.
+ */
+export async function findCompanyByPayprosWebhookToken(
+  token: string | null | undefined,
+): Promise<string | null> {
+  const clean = typeof token === 'string' ? token.trim() : '';
+  // 32 bytes hex = 64 chars. Filtramos acá para no mandar basura a la DB.
+  if (!/^[0-9a-f]{64}$/i.test(clean)) return null;
+
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from('api_credentials')
+    .select('company_id')
+    .eq('provider', 'paypros')
+    .eq('extra_config->>webhook_token', clean)
+    .maybeSingle<{ company_id: string }>();
+
+  if (error) {
+    console.warn('[credentials] paypros webhook token lookup failed:', error.message);
+    return null;
+  }
+  return data?.company_id ?? null;
 }

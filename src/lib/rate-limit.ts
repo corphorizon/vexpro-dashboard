@@ -11,7 +11,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-export type AttemptKind = 'verify-2fa' | 'verify-pin' | 'forgot-password' | 'send-email' | 'login-ip';
+export type AttemptKind = 'verify-2fa' | 'verify-pin' | 'forgot-password' | 'send-email' | 'login-ip' | 'paypros-webhook';
 
 export interface RateLimitOptions {
   key: string;

@@ -1,3 +1,4 @@
+import { randomBytes } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -6,6 +7,7 @@ import { sanitizeDbError } from '@/lib/errors';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { notify } from '@/lib/notifications/notify';
+import { PAYPROS_DEFAULT_BASE_URL } from '@/lib/api-integrations/credentials';
 
 // ---------------------------------------------------------------------------
 // /api/admin/api-credentials
@@ -32,7 +34,25 @@ import { notify } from '@/lib/notifications/notify';
 // 'orion_crm' was added in migration 033. It follows the same storage
 // convention as fairpay (single api_key as encrypted_secret, base_url
 // in extra_config).
-const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'orion_crm'];
+// 'paypros' guarda TRES secretos como JSON en encrypted_secret
+// ({merchant_id, api_key, sign_key}) y en extra_config lleva base_url +
+// webhook_token (el token que identifica al tenant en la URL entrante).
+const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'orion_crm', 'paypros'];
+
+/**
+ * Origen público del dashboard, para armar la URL del webhook que el
+ * superadmin le pasa a Pay-Pros. NEXT_PUBLIC_APP_URL manda; si no está,
+ * usamos el origin de la request (útil en previews).
+ */
+function publicOrigin(request: NextRequest): string {
+  const configured = process.env.NEXT_PUBLIC_APP_URL?.trim();
+  return (configured || request.nextUrl.origin).replace(/\/+$/, '');
+}
+
+function payprosWebhookUrl(request: NextRequest, token: unknown): string | null {
+  if (typeof token !== 'string' || token.trim() === '') return null;
+  return `${publicOrigin(request)}/api/webhooks/paypros/${token.trim()}`;
+}
 
 /**
  * Resolve the effective `company_id` for the request. Returns either:
@@ -107,7 +127,18 @@ export async function GET(request: NextRequest) {
     return NextResponse.json(sanitizeDbError(error, 'api-credentials:list'), { status: 500 });
   }
 
-  return NextResponse.json({ success: true, credentials: data || [] });
+  // Pay-Pros: además del enmascarado habitual, devolvemos la URL completa
+  // del webhook para que el superadmin la copie y la registre en Pay-Pros.
+  // Sigue sin salir ningún secreto: webhook_token no es una credencial de
+  // API, es el identificador del tenant dentro de una URL que igual queda
+  // en manos de Pay-Pros.
+  const credentials = (data || []).map((row) => {
+    if (row.provider !== 'paypros') return row;
+    const extra = (row.extra_config || {}) as Record<string, unknown>;
+    return { ...row, webhook_url: payprosWebhookUrl(request, extra.webhook_token) };
+  });
+
+  return NextResponse.json({ success: true, credentials });
 }
 
 export async function POST(request: NextRequest) {
@@ -163,6 +194,72 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── Pay-Pros ────────────────────────────────────────────────────────
+    // El secreto llega como JSON {merchant_id, api_key, sign_key} (mismo
+    // patrón que coinsbuy con su par). extra_config lleva base_url +
+    // webhook_token; el token se genera UNA sola vez y se conserva entre
+    // guardados — regenerarlo rompería la URL ya registrada en Pay-Pros.
+    let effectiveExtraConfig: Record<string, unknown> | null = extra_config ?? null;
+    let lastFour = lastChars(secret, 4);
+
+    if (provider === 'paypros') {
+      let parsed: { merchant_id?: unknown; api_key?: unknown; sign_key?: unknown };
+      try {
+        parsed = JSON.parse(secret);
+      } catch {
+        return NextResponse.json(
+          { success: false, error: 'Pay-Pros: el secreto debe ser JSON {merchant_id, api_key, sign_key}' },
+          { status: 400 },
+        );
+      }
+
+      const merchantId = typeof parsed.merchant_id === 'string' ? parsed.merchant_id.trim() : '';
+      const apiKey = typeof parsed.api_key === 'string' ? parsed.api_key.trim() : '';
+      const signKey = typeof parsed.sign_key === 'string' ? parsed.sign_key.trim() : '';
+      if (!merchantId || !apiKey || !signKey) {
+        return NextResponse.json(
+          { success: false, error: 'Pay-Pros: Merchant ID, API Key y Sign Key son obligatorios' },
+          { status: 400 },
+        );
+      }
+
+      const rawBaseUrl =
+        typeof extra_config?.base_url === 'string' && extra_config.base_url.trim() !== ''
+          ? extra_config.base_url.trim()
+          : PAYPROS_DEFAULT_BASE_URL;
+      if (!rawBaseUrl.startsWith('https://') || !rawBaseUrl.endsWith('/')) {
+        return NextResponse.json(
+          { success: false, error: 'Pay-Pros: la Base URL debe empezar con https:// y terminar en /' },
+          { status: 400 },
+        );
+      }
+
+      // Token existente (si lo hay) → se conserva.
+      const { data: existing } = await adminClient
+        .from('api_credentials')
+        .select('extra_config')
+        .eq('company_id', ctx.companyId)
+        .eq('provider', 'paypros')
+        .maybeSingle<{ extra_config: Record<string, unknown> | null }>();
+
+      const previousToken = existing?.extra_config?.webhook_token;
+      const webhookToken =
+        typeof previousToken === 'string' && previousToken.trim() !== ''
+          ? previousToken.trim()
+          : randomBytes(32).toString('hex');
+
+      effectiveExtraConfig = {
+        ...(existing?.extra_config ?? {}),
+        ...(extra_config ?? {}),
+        base_url: rawBaseUrl,
+        webhook_token: webhookToken,
+      };
+      // El JSON completo termina en `"}`, que como máscara no dice nada.
+      // Mostramos los últimos 4 de la API Key, que es lo que el superadmin
+      // puede comparar contra el panel de Pay-Pros.
+      lastFour = lastChars(apiKey, 4);
+    }
+
     let bundle;
     try {
       bundle = encryptSecret(secret);
@@ -178,8 +275,8 @@ export async function POST(request: NextRequest) {
       encrypted_secret: bundle.ciphertext,
       iv: bundle.iv,
       auth_tag: bundle.authTag,
-      extra_config: extra_config ?? null,
-      last_four: lastChars(secret, 4),
+      extra_config: effectiveExtraConfig,
+      last_four: lastFour,
       is_configured: true,
       updated_at: new Date().toISOString(),
       updated_by: ctx.userId,
