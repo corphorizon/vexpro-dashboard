@@ -301,7 +301,22 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       const res = await apiFetch(`/api/integrations/movements?${qs.toString()}`);
       const json = await res.json();
       if (!json.success) throw new Error(json.error || 'Error desconocido');
-      setDatasets(json.datasets ?? []);
+      // Si un proveedor vino en ERROR desde la API en vivo (cuota agotada,
+      // caída, timeout), NO pisamos su tarjeta con ceros: un $0.00 se lee como
+      // "no hubo depósitos", que es peor que un dato viejo con aviso. Se
+      // conserva el dataset que ya teníamos (de la caché persistida) marcado
+      // como 'stale' y con el mensaje del error. Kevin (2026-08-17): "si falla
+      // debería mostrar el último balance, es mejor". Los proveedores que sí
+      // respondieron se actualizan normalmente.
+      const live: ProviderDataset[] = json.datasets ?? [];
+      setDatasets((prev) =>
+        live.map((ds) => {
+          if (ds.status !== 'error') return ds;
+          const cached = prev.find((p) => p.slug === ds.slug);
+          if (!cached || cached.status === 'error' || cached.transactions.length === 0) return ds;
+          return { ...cached, status: 'stale' as const, errorMessage: ds.errorMessage };
+        }),
+      );
       setFetchedAt(json.fetchedAt);
       // Wait briefly for the server-side fire-and-forget persist to complete,
       // THEN tell the parent page to re-read from Supabase. Without this
@@ -552,6 +567,10 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                 </span>
                 {ds.status === 'fresh' ? (
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                ) : ds.status === 'stale' ? (
+                  // Ámbar = dato de la última sincronización buena; la API en
+                  // vivo falló pero el número NO es cero ni inventado.
+                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
                 ) : (
                   <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
                 )}
@@ -570,6 +589,14 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
               {ds.status === 'error' && ds.errorMessage && (
                 <p className="text-[10px] text-red-500 mt-0.5 truncate" title={ds.errorMessage}>
                   {ds.errorMessage}
+                </p>
+              )}
+              {ds.status === 'stale' && (
+                <p
+                  className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 truncate"
+                  title={ds.errorMessage ? `La API no respondió (${ds.errorMessage}). Se muestra la última sincronización buena.` : 'Última sincronización buena'}
+                >
+                  Última sincronización · API sin respuesta ahora
                 </p>
               )}
             </Link>
