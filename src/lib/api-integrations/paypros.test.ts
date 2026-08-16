@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { createHash } from 'crypto';
 import {
   buildIngoingResponse,
@@ -14,6 +14,16 @@ import {
   PAYPROS_DEPOSIT_STATUS,
   SIGNATURE_VARIANTS,
 } from './paypros';
+import { fetchPayprosBalance, parsePayprosBalance } from './paypros/balance';
+import { proxiedFetch } from './proxy';
+import { resolvePayprosCredentials } from './credentials';
+
+// El balance sale por red y por la DB: las dos puntas se mockean.
+vi.mock('./proxy', () => ({ proxiedFetch: vi.fn() }));
+vi.mock('./credentials', () => ({ resolvePayprosCredentials: vi.fn() }));
+
+const mockFetch = vi.mocked(proxiedFetch);
+const mockCreds = vi.mocked(resolvePayprosCredentials);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pay-Pros es PUSH puro: si el parseo o la firma están mal, la plata
@@ -285,5 +295,148 @@ describe('toNormalizedTx', () => {
       const parsed = parseOutgoing(makeBody(['2026-01-15T10:00:00', 'n', 'u', '5', 'USD', String(code)]))!;
       expect(isDeposit(parsed)).toBe(code === 4);
     }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Balance (GET v2/getBalance)
+//
+// No conocemos el shape real de la respuesta, así que el parser es defensivo:
+// acepta varias formas plausibles y, ante cualquier otra, devuelve error con
+// el crudo en vez de inventar un saldo. Estos tests fijan ese contrato: si
+// mañana Pay-Pros manda algo distinto, tiene que fallar RUIDOSO, no en cero.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Respuesta HTTP mínima con el cuerpo JSON indicado. */
+function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {}) {
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  return {
+    ok: init.ok ?? true,
+    status: init.status ?? 200,
+    statusText: '',
+    text: async () => text,
+  } as unknown as Response;
+}
+
+const ENVELOPE = { status: 'E00', response: 'OK', datetime: '2026-08-16 10:00:00' };
+
+describe('parsePayprosBalance', () => {
+  it('acepta balance escalar', () => {
+    expect(parsePayprosBalance({ ...ENVELOPE, balance: 1234.56, currency: 'usd' }))
+      .toEqual({ balance: 1234.56, currency: 'USD' });
+  });
+
+  it('acepta balance como objeto con available/amount', () => {
+    expect(parsePayprosBalance({ ...ENVELOPE, balance: { available: 900, currency: 'PEN' } }))
+      .toEqual({ balance: 900, currency: 'PEN' });
+    expect(parsePayprosBalance({ ...ENVELOPE, balance: { amount: '750.25' } }))
+      .toEqual({ balance: 750.25, currency: null });
+  });
+
+  it('acepta available en la raíz', () => {
+    expect(parsePayprosBalance({ ...ENVELOPE, available: 42, currency: 'USD' }))
+      .toEqual({ balance: 42, currency: 'USD' });
+  });
+
+  it('acepta la lista balances[] y se queda con la primera entrada', () => {
+    expect(
+      parsePayprosBalance({
+        ...ENVELOPE,
+        balances: [{ currency: 'usd', amount: '10500.10' }, { currency: 'PEN', amount: 5 }],
+      }),
+    ).toEqual({ balance: 10500.1, currency: 'USD' });
+  });
+
+  it('acepta amount en la raíz como último recurso', () => {
+    expect(parsePayprosBalance({ ...ENVELOPE, amount: 7 })).toEqual({ balance: 7, currency: null });
+  });
+
+  it('devuelve null cuando no hay ningún número reconocible', () => {
+    expect(parsePayprosBalance({ ...ENVELOPE, wallet: { saldo_total: 100 } })).toBeNull();
+    expect(parsePayprosBalance({ ...ENVELOPE, balance: 'no-es-un-numero' })).toBeNull();
+    expect(parsePayprosBalance(null)).toBeNull();
+  });
+});
+
+describe('fetchPayprosBalance', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockCreds.mockResolvedValue({
+      merchantId: 'M123',
+      apiKey: 'api-key',
+      signKey: 'sign-key',
+      baseUrl: 'https://master-api.pay-pros.com/',
+    });
+  });
+
+  it('sin credenciales no llama a la API y marca not_configured', async () => {
+    mockCreds.mockResolvedValue(null);
+    const res = await fetchPayprosBalance('empresa-1');
+    expect(res).toEqual({
+      balance: null,
+      currency: null,
+      isMock: false,
+      error: 'not_configured',
+      notConfigured: true,
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('pega a {base}v2/getBalance con Basic auth y User-Agent', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ ...ENVELOPE, balance: 100 }));
+    const res = await fetchPayprosBalance('empresa-1');
+
+    expect(res.balance).toBe(100);
+    const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('https://master-api.pay-pros.com/v2/getBalance');
+    expect(init.method).toBe('GET');
+    const headers = init.headers as Record<string, string>;
+    expect(headers.Authorization).toBe(
+      `Basic ${Buffer.from('M123:api-key').toString('base64')}`,
+    );
+    expect(headers['User-Agent']).toContain('SmartDashboard');
+  });
+
+  it('no duplica la barra cuando el base_url del tenant no la trae', async () => {
+    mockCreds.mockResolvedValue({
+      merchantId: 'M123', apiKey: 'k', signKey: 's', baseUrl: 'https://sb.pay-pros.com',
+    });
+    mockFetch.mockResolvedValue(jsonResponse({ ...ENVELOPE, balance: 1 }));
+    await fetchPayprosBalance('empresa-1');
+    expect(mockFetch.mock.calls[0][0]).toBe('https://sb.pay-pros.com/v2/getBalance');
+  });
+
+  it('un status distinto de E00 es error, no un balance', async () => {
+    mockFetch.mockResolvedValue(jsonResponse({ status: 'E03', response: 'Invalid IP' }));
+    const res = await fetchPayprosBalance('empresa-1');
+    expect(res.balance).toBeNull();
+    expect(res.error).toContain('status=E03');
+    expect(res.error).toContain('response=Invalid IP');
+    expect(res.raw).toMatchObject({ status: 'E03' });
+  });
+
+  it('shape desconocido → error con el crudo, nunca un saldo inventado', async () => {
+    const body = { ...ENVELOPE, wallet: { saldo_total: '999' } };
+    mockFetch.mockResolvedValue(jsonResponse(body));
+    const res = await fetchPayprosBalance('empresa-1');
+
+    expect(res.balance).toBeNull();
+    expect(res.error).toContain('no contiene un balance reconocible');
+    expect(res.error).toContain('saldo_total');   // el crudo va en el mensaje
+    expect(res.raw).toEqual(body);
+  });
+
+  it('respuesta que no es JSON → error con el snippet', async () => {
+    mockFetch.mockResolvedValue(jsonResponse('<html>403 Forbidden</html>'));
+    const res = await fetchPayprosBalance('empresa-1');
+    expect(res.balance).toBeNull();
+    expect(res.error).toContain('no es JSON');
+  });
+
+  it('HTTP no-OK termina en error (y no rompe el cron)', async () => {
+    mockFetch.mockResolvedValue(jsonResponse('IP not allowed', { ok: false, status: 403 }));
+    const res = await fetchPayprosBalance('empresa-1');
+    expect(res.balance).toBeNull();
+    expect(res.error).toContain('403');
   });
 });

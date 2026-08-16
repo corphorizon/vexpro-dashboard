@@ -32,13 +32,12 @@ export const BUILTIN_CHANNELS: BuiltinChannel[] = [
   { key: 'coinsbuy',       defaultLabel: 'Coinsbuy',                   type: 'auto',   description: 'Wallets pinneadas — balance en tiempo real desde la API', isBuiltin: true },
   { key: 'unipayment',     defaultLabel: 'UniPayment',                 type: 'auto',   description: 'My Wallet — balance en tiempo real desde la API',         isBuiltin: true },
   { key: 'fairpay',        defaultLabel: 'FairPay',                    type: 'manual', description: 'Ingreso manual',                                           isBuiltin: true },
-  // Pay-Pros arranca como 'manual'. Los depósitos/retiros entran solos vía
-  // /api/webhooks/paypros/[token] (modelo push). El balance SÍ existe por API
-  // (GET /v2/getBalance) pero Pay-Pros exige IP whitelisteada para las llamadas
-  // salientes y Vercel no tiene IP fija — hasta resolver eso (IP estática o
-  // proxy vía CRM, que ya está autorizado) el saldo se carga a mano. Cuando
-  // se habilite la llamada, pasa a 'auto' + fetcher de balance en paypros/.
-  { key: 'paypros',        defaultLabel: 'Pay-Pros',                   type: 'manual', description: 'Ingreso manual (balance por API pendiente de IP whitelist)', isBuiltin: true },
+  // Pay-Pros es mixto: los depósitos/retiros entran solos vía
+  // /api/webhooks/paypros/[token] (modelo push) y el saldo lo trae el cron
+  // desde GET v2/getBalance (src/lib/api-integrations/paypros/balance.ts).
+  // Ya no está bloqueado por el whitelist de IP: la llamada sale por el proxy
+  // SOCKS5 Fixie (IP fija), el mismo que usan Coinsbuy y UniPayment.
+  { key: 'paypros',        defaultLabel: 'Pay-Pros',                   type: 'auto',   description: 'Balance por API (getBalance) — depósitos/retiros por webhook', isBuiltin: true },
   { key: 'wallet_externa', defaultLabel: 'Wallet Externa',             type: 'manual', description: 'Ingreso manual',                                           isBuiltin: true },
   { key: 'otros',          defaultLabel: 'Otros',                      type: 'manual', description: 'Ingreso manual',                                           isBuiltin: true },
   { key: 'inversiones',    defaultLabel: 'Balance Actual Inversiones', type: 'auto',   description: 'Automático desde módulo Inversiones',                      isBuiltin: true },

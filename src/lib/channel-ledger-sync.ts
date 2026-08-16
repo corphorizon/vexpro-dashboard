@@ -49,10 +49,16 @@ const CENT = 0.01;
  * Un ajuste fuera de rango casi siempre es una wallet que faltó en la
  * respuesta de la API o un snapshot pisado: mejor no escribir nada, avisar,
  * y reprocesar el día cuando se entienda la causa.
+ * Pay-Pros: los movimientos llegan por webhook y el balance por getBalance,
+ * pero el webhook NO informa la comisión de Pay-Pros ni retenciones/liquidaciones
+ * que ellos hagan de su lado — todo eso cae en el ajuste. Arranca en 5.000
+ * como umbral conservador hasta ver los primeros días reales; si el ajuste
+ * típico resulta mayor, subirlo con dato en la mano, no a ciegas.
  */
 export const MAX_ADJUSTMENT: Record<string, number> = {
   coinsbuy: 500,
   unipayment: 25_000,
+  paypros: 5_000,
 };
 
 export interface LedgerSyncResult {

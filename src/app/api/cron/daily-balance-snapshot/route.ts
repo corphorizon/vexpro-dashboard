@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
 import { fetchFairpayBalances } from '@/lib/api-integrations/fairpay/balances';
+import { fetchPayprosBalance } from '@/lib/api-integrations/paypros/balance';
 import { syncChannelLedgerDay, type LedgerSyncResult } from '@/lib/channel-ledger-sync';
 import { previousDay } from '@/lib/channel-ledger';
 import { notify, dailyKey } from '@/lib/notifications/notify';
@@ -270,6 +271,34 @@ export async function GET(request: NextRequest) {
       const reason = err instanceof Error ? err.message : 'Unknown error';
       entry.unipayment_error = reason;
       failures.push({ channel: 'unipayment', date: ledgerDate, reason });
+    }
+
+    // ── Pay-Pros ──
+    // Los depósitos/retiros entran por webhook (push), pero el SALDO sale de
+    // GET v2/getBalance. `fetchPayprosBalance` resuelve las credenciales del
+    // tenant: si la empresa no tiene fila en api_credentials devuelve
+    // `notConfigured` y no llama a nada, así que no hace falta un chequeo
+    // previo acá (mismo contrato que UniPayment).
+    try {
+      const pp = await fetchPayprosBalance(company.id);
+      if (pp.error || pp.balance === null) {
+        const reason = pp.error ?? 'Pay-Pros no devolvió balance';
+        entry.paypros_error = reason;
+        if (!pp.notConfigured) {
+          failures.push({ channel: 'paypros', date: ledgerDate, reason });
+        }
+      } else {
+        await adminUpsertChannelBalance(admin, company.id, today, 'paypros', pp.balance, 'api');
+        entry.paypros = pp.balance;
+
+        ledger.push(
+          await syncChannelLedgerDay(admin, company.id, 'paypros', ledgerDate, pp.balance),
+        );
+      }
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : 'Unknown error';
+      entry.paypros_error = reason;
+      failures.push({ channel: 'paypros', date: ledgerDate, reason });
     }
 
     if (ledger.length > 0) entry.ledger = ledger;
