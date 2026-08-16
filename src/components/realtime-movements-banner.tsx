@@ -19,8 +19,14 @@ import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { computeProviderTotals } from '@/lib/api-integrations/totals';
 import { apiFetch } from '@/lib/api-fetch';
-import { pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
+import {
+  pinCoinsbuyWallet,
+  unpinCoinsbuyWallet,
+  setPinnedWalletRole,
+} from '@/lib/supabase/mutations';
 import { fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
+import { selectOperatingWallets, type PinnedWalletRole } from '@/lib/pinned-wallet-roles';
+import type { PinnedCoinsbuyWallet } from '@/lib/types';
 import type {
   ProviderDataset,
   ProviderSlug,
@@ -157,15 +163,23 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Wallets pinneadas — el SET que cuenta para los totales (company-wide,
-  // misma tabla que /balances). Permite pinnear/despinnear desde acá; tras el
-  // toggle se refrescan los totales vía onAfterLiveSync (BUG-05).
-  const [pinnedIds, setPinnedIds] = useState<string[]>([]);
+  // Wallets pinneadas, con su ROL (company-wide, misma tabla que /balances).
+  // Permite pinnear/despinnear y cambiar el rol desde acá; tras el cambio se
+  // refrescan los totales vía onAfterLiveSync.
+  //
+  // BUG-05 (reescrito 2026-08-17): pinnear significaba UNA sola cosa y en
+  // realidad son dos. Las wallets pineadas suman TODAS al balance, pero solo
+  // las OPERATIVAS cuentan como depósitos/retiros de clientes. Vex Pro pinneó
+  // 1087 "Savings" y 1705 "Egresos Vex" para el balance y "Datos del período"
+  // se las llevó puestas: Retiros Totales $932.444,83 en vez de $469.650,98
+  // (la Main 1079) y Net Deposit −$231.127 alimentando la distribución.
+  const [pinned, setPinned] = useState<PinnedCoinsbuyWallet[]>([]);
+  const pinnedIds = useMemo(() => pinned.map((p) => p.wallet_id), [pinned]);
+  const operatingPins = useMemo(() => selectOperatingWallets(pinned), [pinned]);
   const [pinBusy, setPinBusy] = useState(false);
   const loadPinned = useCallback(async () => {
     if (!company?.id) return;
-    const pins = await fetchPinnedCoinsbuyWallets(company.id);
-    setPinnedIds(pins.map((p) => p.wallet_id));
+    setPinned(await fetchPinnedCoinsbuyWallets(company.id));
   }, [company?.id]);
   useEffect(() => {
     if (isAdmin) void loadPinned();
@@ -178,12 +192,29 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (pinnedIds.includes(id)) {
         await unpinCoinsbuyWallet(company.id, id);
       } else {
-        await pinCoinsbuyWallet(company.id, id, label);
+        // Default 'operating': fijar una wallet nueva sin decir nada la deja
+        // contando como wallet de clientes, que es lo que el usuario espera
+        // del botón "Fijar". Para tesorería interna se cambia el rol al lado.
+        await pinCoinsbuyWallet(company.id, id, label, 'operating');
       }
       await loadPinned();
       onAfterLiveSync?.(); // re-scopea los totales al nuevo set pinneado
     } catch {
       // silencioso — la UI queda en el estado previo; el usuario puede reintentar
+    } finally {
+      setPinBusy(false);
+    }
+  };
+
+  const changePinRole = async (id: string, role: PinnedWalletRole) => {
+    if (!company?.id || !id || pinBusy) return;
+    setPinBusy(true);
+    try {
+      await setPinnedWalletRole(company.id, id, role);
+      await loadPinned();
+      onAfterLiveSync?.(); // los totales cambian: re-leer
+    } catch {
+      // silencioso — igual que togglePin
     } finally {
       setPinBusy(false);
     }
@@ -424,28 +455,44 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
             <></>
           )}
           {isAdmin && walletId && walletOptions.length > 0 ? (
-            // Fijar/quitar la wallet seleccionada del set que cuenta para los
-            // totales (BUG-05). Los pins son company-wide → afecta también a
-            // /balances y /resumen-general.
+            // Fijar/quitar la wallet seleccionada + su ROL. Los pins son
+            // company-wide → afectan también a /balances y /resumen-general.
             (() => {
               const sel = walletOptions.find((w) => w.id === walletId);
-              const pinned = pinnedIds.includes(walletId);
+              const pin = pinned.find((p) => p.wallet_id === walletId);
               return (
-                <button
-                  type="button"
-                  onClick={() => togglePin(walletId, sel?.label ?? '')}
-                  disabled={pinBusy}
-                  className={`h-8 inline-flex items-center gap-1 px-2 text-xs rounded-md border transition-colors disabled:opacity-50 ${
-                    pinned
-                      ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-primary dark:text-accent'
-                      : 'border-border bg-card text-muted-foreground hover:text-foreground'
-                  }`}
-                  title={pinned ? 'Quitar del conteo de totales' : 'Fijar para que cuente en los totales'}
-                  aria-label={pinned ? 'Quitar wallet fijada' : 'Fijar wallet'}
-                >
-                  {pinned ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
-                  {pinned ? 'Fijada' : 'Fijar'}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => togglePin(walletId, sel?.label ?? '')}
+                    disabled={pinBusy}
+                    className={`h-8 inline-flex items-center gap-1 px-2 text-xs rounded-md border transition-colors disabled:opacity-50 ${
+                      pin
+                        ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-primary dark:text-accent'
+                        : 'border-border bg-card text-muted-foreground hover:text-foreground'
+                    }`}
+                    title={pin ? 'Quitar del balance y de los totales' : 'Fijar: suma al balance consolidado'}
+                    aria-label={pin ? 'Quitar wallet fijada' : 'Fijar wallet'}
+                  >
+                    {pin ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
+                    {pin ? 'Fijada' : 'Fijar'}
+                  </button>
+                  {pin && (
+                    <select
+                      value={pin.role}
+                      onChange={(e) =>
+                        changePinRole(walletId, e.target.value as PinnedWalletRole)
+                      }
+                      disabled={pinBusy}
+                      className="h-8 px-2 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
+                      aria-label="Rol de la wallet fijada"
+                      title="Operativa: cuenta como depósitos y retiros de clientes. Interna: solo suma al balance (ahorro, egresos)."
+                    >
+                      <option value="operating">Operativa</option>
+                      <option value="internal">Interna (solo balance)</option>
+                    </select>
+                  )}
+                </>
               );
             })()
           ) : !isAdmin ? (
@@ -455,6 +502,34 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
           ) : null}
         </label>
       </div>
+
+      {/* Qué wallets cuentan y para qué. Sin esto, "Datos del período" (abajo)
+          y las tarjetas de acá arriba muestran números distintos sin explicar
+          por qué: el selector de wallet filtra SOLO estas tarjetas, mientras
+          que los totales del período siempre cuentan las operativas. */}
+      {isAdmin && pinned.length > 0 && (
+        <p className="text-[11px] text-muted-foreground mb-3 -mt-1">
+          <span className="font-medium text-foreground">Datos del período</span>{' '}
+          cuenta {operatingPins.length}{' '}
+          {operatingPins.length === 1 ? 'wallet operativa' : 'wallets operativas'}
+          {operatingPins.length > 0 && (
+            <>: {operatingPins.map((p) => p.wallet_label || `#${p.wallet_id}`).join(', ')}</>
+          )}
+          .
+          {pinned.length > operatingPins.length && (
+            <>
+              {' '}
+              Las internas (solo suman al balance, no a depósitos/retiros):{' '}
+              {pinned
+                .filter((p) => p.role === 'internal')
+                .map((p) => p.wallet_label || `#${p.wallet_id}`)
+                .join(', ')}
+              .
+            </>
+          )}{' '}
+          El selector de wallet de acá arriba filtra únicamente estas tarjetas.
+        </p>
+      )}
 
       {errorMsg && (
         <div className="p-2 mb-2 rounded bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">

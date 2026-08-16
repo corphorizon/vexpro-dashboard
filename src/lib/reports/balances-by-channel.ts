@@ -25,6 +25,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { fetchPinnedWallets } from '@/lib/pinned-wallets';
 import { resolveChannels, type ChannelConfigRow, type ResolvedChannel } from '@/lib/channel-configs';
 import { hasLedger } from '@/lib/channel-ledger';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
@@ -171,13 +172,12 @@ export async function buildBalancesByChannel(
 
     // Pull the pinned wallet labels so the report shows "Savings Vex Pro"
     // instead of "coinsbuy:1087". Only needed when `coinsbuy` is visible.
+    // BALANCE → TODAS las pineadas, operativas e internas (migración 084):
+    // el reporte de saldos por canal muestra dónde está la plata, y la wallet
+    // de ahorro o la de egresos también son ubicaciones de la empresa.
     let pinnedWallets: Array<{ wallet_id: string; wallet_label: string }> = [];
     if (visibleKeys.includes('coinsbuy')) {
-      const { data: pins } = await admin
-        .from('pinned_coinsbuy_wallets')
-        .select('wallet_id, wallet_label')
-        .eq('company_id', companyId);
-      pinnedWallets = pins ?? [];
+      pinnedWallets = await fetchPinnedWallets(companyId);
     }
 
     // Self-healing: if the coinsbuy channel is visible but the latest snapshot

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { fetchPinnedWallets } from '@/lib/pinned-wallets';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
 import { fetchFairpayBalances } from '@/lib/api-integrations/fairpay/balances';
@@ -150,12 +151,11 @@ export async function GET(request: NextRequest) {
           failures.push({ channel: 'coinsbuy', date: ledgerDate, reason: cb.error });
         }
       } else {
-        // Load pinned wallet selection for this tenant.
-        const { data: pinned } = await admin
-          .from('pinned_coinsbuy_wallets')
-          .select('wallet_id, wallet_label')
-          .eq('company_id', company.id);
-        const pins = pinned ?? [];
+        // Load pinned wallet selection for this tenant. BALANCE → TODAS las
+        // pineadas, operativas e internas (migración 084): el snapshot diario
+        // es el saldo de la empresa, y la wallet de ahorro o la de egresos
+        // también tienen plata adentro.
+        const pins = await fetchPinnedWallets(company.id);
         const wallets = cb.wallets ?? [];
 
         // Si la API respondió 200 pero le falta alguna wallet fijada

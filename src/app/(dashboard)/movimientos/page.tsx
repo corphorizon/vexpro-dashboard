@@ -99,11 +99,23 @@ export default function MovimientosPage() {
   const [apiRefreshKey, setApiRefreshKey] = useState(0);
 
   // Centralized API + manual coexistence (same hook feeds /resumen-general).
-  // BUG-05: los TOTALES (net deposit) scopean al SET de wallets pinneadas
-  // (walletId '' → modo 'pinned' en persisted-movements), IGUAL que /balances,
-  // para que las dos pantallas muestren el mismo número. El selector de wallet
-  // del banner (coinsbuyWalletId) sigue siendo solo para ver el balance live
-  // de una wallet puntual, no scopea los totales.
+  //
+  // BUG-05 (reescrito 2026-08-17): los TOTALES (net deposit) scopean a las
+  // wallets pineadas OPERATIVAS — walletId '' → modo 'pinned' en
+  // persisted-movements, que desde la migración 084 devuelve solo role
+  // 'operating'. El selector de wallet del banner (coinsbuyWalletId) sigue
+  // siendo solo para mirar una wallet puntual en las tarjetas de arriba; NO
+  // scopea estos totales.
+  //
+  // La versión anterior decía "IGUAL que /balances" y usaba TODAS las
+  // pineadas, unificando a propósito dos criterios que no son el mismo:
+  //   · balance      → toda wallet propia suma (incluida la de ahorro)
+  //   · movimientos  → solo lo que entra y sale de CLIENTES
+  // Coincidían mientras Vex Pro tenía pineada solo 1079 "Main". Al pinnear
+  // 1087 "Savings Vex Pro" ($400.014,00) y 1705 "Egresos Vex" ($62.779,85)
+  // para el balance, esta pantalla las contó como retiros: Retiros Totales
+  // $932.444,83 en vez de $469.650,98 y Net Deposit −$231.127, que es el
+  // número que después consume la cadena de distribución.
   const coexist = useApiCoexistence(activePeriods, '', apiRefreshKey);
   const { useDerivedBroker, apiFrom, apiTo } = coexist;
   // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0

@@ -154,6 +154,14 @@ export interface PinnedCoinsbuyWallet {
   company_id: string;
   wallet_id: string;
   wallet_label: string;
+  /**
+   * Migración 084 — qué significa tener esta wallet pineada:
+   *   · 'operating' → cuenta como depósitos/retiros de clientes Y suma al balance
+   *   · 'internal'  → SOLO suma al balance (ahorro, pago de egresos, tesorería)
+   * Las filas anteriores a la migración se leen como 'operating'
+   * (`normalizePinnedWalletRole` en src/lib/pinned-wallets.ts).
+   */
+  role: import('./pinned-wallet-roles').PinnedWalletRole;
   created_at: string;
 }
 

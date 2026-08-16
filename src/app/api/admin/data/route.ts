@@ -238,10 +238,33 @@ export async function POST(request: NextRequest) {
       }
 
       // ── Pinned Coinsbuy wallets ──
+      // El ROL decide qué significa el pin (migración 084):
+      //   · 'operating' → cuenta como depósitos/retiros de clientes Y suma al
+      //                   balance consolidado
+      //   · 'internal'  → SOLO suma al balance (ahorro, pago de egresos)
+      // Se valida acá y no solo en la UI: un rol inventado que pasara el
+      // CHECK de la DB por accidente movería plata en la cadena de
+      // distribución (fue el bug de agosto 2026 en Vex Pro: dos wallets
+      // internas metieron $462.793,85 de retiros falsos).
       case 'pin_wallet': {
+        const role = body.role === 'internal' ? 'internal' : 'operating';
         const { error } = await admin.from('pinned_coinsbuy_wallets')
-          .insert({ company_id: companyId, wallet_id: body.walletId, wallet_label: body.walletLabel });
+          .insert({ company_id: companyId, wallet_id: body.walletId, wallet_label: body.walletLabel, role });
         if (error && error.code !== '23505') return fail(error, op); // 23505 = ya fijada
+        return NextResponse.json({ success: true });
+      }
+      case 'pin_wallet_role': {
+        if (body.role !== 'operating' && body.role !== 'internal') {
+          return NextResponse.json(
+            { error: "role debe ser 'operating' o 'internal'" },
+            { status: 400 },
+          );
+        }
+        const { error } = await admin.from('pinned_coinsbuy_wallets')
+          .update({ role: body.role })
+          .eq('company_id', companyId)
+          .eq('wallet_id', body.walletId);
+        if (error) return fail(error, op);
         return NextResponse.json({ success: true });
       }
       case 'unpin_wallet': {

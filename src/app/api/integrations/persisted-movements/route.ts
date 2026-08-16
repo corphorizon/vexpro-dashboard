@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { friendlyDbMessage } from '@/lib/errors';
 import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getOperatingWalletScope } from '@/lib/pinned-wallets';
 import type { ProviderDataset, ProviderSlug } from '@/lib/api-integrations/types';
 
 // ---------------------------------------------------------------------------
@@ -55,13 +56,22 @@ export async function GET(request: NextRequest) {
     const from = request.nextUrl.searchParams.get('from');
     const to = request.nextUrl.searchParams.get('to');
     const walletIdRaw = request.nextUrl.searchParams.get('walletId');
-    // BUG-05 — scope de wallets de Coinsbuy. Tres modos:
+    // BUG-05 (reescrito 2026-08-17) — scope de wallets de Coinsbuy. Tres modos:
     //   · 'single'  → walletId explícito (deep-link del desglose a UNA wallet)
     //   · 'all'     → literal 'all' (el desglose ofrece "Todas las wallets")
     //   · 'pinned'  → vacío/ausente (DEFAULT, usado por /movimientos para los
-    //                 totales): scopea al SET de wallets pinneadas, IGUAL que
-    //                 el RPC get_period_totals_by_month de /balances, para que
-    //                 el net deposit coincida entre ambas pantallas.
+    //                 totales): scopea a las wallets pineadas OPERATIVAS.
+    //
+    // Por qué ya NO es "todas las pineadas": la versión anterior de este
+    // comentario decía "IGUAL que /balances" y unificaba a propósito los dos
+    // criterios. Eso era correcto solo mientras la única wallet pineada de
+    // Vex Pro era 1079 "Main". Cuando se pinnearon 1087 "Savings Vex Pro" y
+    // 1705 "Egresos Vex" —que son tesorería interna y se pinnearon para que
+    // sumaran al BALANCE— esta pantalla se las llevó puestas: Retiros Totales
+    // $932.444,83 en vez de los $469.650,98 de la operativa, y Net Deposit
+    // −$231.127 alimentando la cadena de distribución.
+    // Balance y movimientos son dos preguntas distintas: la primera la
+    // responde getBalanceWalletIds, esta la responde getOperatingWalletIds.
     const walletMode: 'single' | 'all' | 'pinned' =
       walletIdRaw === 'all'
         ? 'all'
@@ -87,17 +97,17 @@ export async function GET(request: NextRequest) {
       .select('external_id, reason, excluded_by_name, excluded_at, provider')
       .eq('company_id', auth.companyId);
 
-    // Set de wallets pinneadas (para walletMode='pinned'). Company-wide: la
-    // misma tabla que usa /balances, así pinnear en cualquier pantalla afecta
-    // a las dos. Si no hay ninguna pinneada, no se filtra (= todas), igual que
-    // el `p.ids IS NULL` del RPC.
+    // Set de wallets OPERATIVAS (para walletMode='pinned'). Company-wide.
+    // Si la empresa no tiene NINGUNA wallet pineada no se filtra (= todas,
+    // igual que el `p.ids IS NULL` del RPC). Si tiene pineadas pero todas
+    // internas, `scoped` queda en true con la lista vacía y no cuenta ninguna
+    // tx de Coinsbuy: es lo que el admin configuró.
     let pinnedIds: string[] = [];
+    let walletScoped = false;
     if (walletMode === 'pinned') {
-      const { data: pinnedRows } = await admin
-        .from('pinned_coinsbuy_wallets')
-        .select('wallet_id')
-        .eq('company_id', auth.companyId);
-      pinnedIds = (pinnedRows ?? []).map((p) => p.wallet_id as string);
+      const scope = await getOperatingWalletScope(auth.companyId);
+      pinnedIds = scope.ids;
+      walletScoped = scope.scoped;
     }
     const excludedMap = new Map<
       string,
@@ -209,7 +219,7 @@ export async function GET(request: NextRequest) {
           if (walletMode === 'single' && r.wallet_id !== walletId) return false;
           if (
             walletMode === 'pinned' &&
-            pinnedIds.length > 0 &&
+            walletScoped &&
             !pinnedIds.includes(r.wallet_id)
           ) {
             return false;

@@ -1,4 +1,5 @@
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getBalanceWalletIds, getOperatingWalletScope } from '@/lib/pinned-wallets';
 import { canonicalAmount, canonicalFee } from './canonical';
 import type {
   ProviderDataset,
@@ -72,24 +73,27 @@ export async function persistDataset(
   // múltiples wallets y el cron persistía TODAS las que la API
   // devolvía. La limpieza ya borró las cross-tenant rows existentes;
   // este check evita que vuelvan a entrar. Set de wallet IDs
-  // autorizadas = pinned_coinsbuy_wallets ∪ {default_wallet_id}. Si
+  // autorizadas = TODAS las pineadas ∪ {default_wallet_id}. Si
   // está vacío (tenant nuevo sin configurar), permitimos pero
   // capturamos a Sentry para que el operador lo arregle.
+  //
+  // OJO — acá van TODAS las pineadas, incluidas las internas (migración
+  // 084): este es el paso de PERSISTIR, no el de TOTALIZAR. Las wallets
+  // internas (Vex Pro: 1087 Savings, 1705 Egresos) tienen que seguir
+  // guardando sus transacciones porque de ellas sale el saldo del balance
+  // consolidado y el libro del canal. Lo que se restringe a operativas son
+  // los TOTALES (loadPersistedTotals más abajo, /movimientos, reportes).
   let allowedWalletIds: Set<string> | null = null;
   if (dataset.slug === 'coinsbuy-deposits' || dataset.slug === 'coinsbuy-withdrawals') {
-    const [pinnedRes, companyRes] = await Promise.all([
-      admin
-        .from('pinned_coinsbuy_wallets')
-        .select('wallet_id')
-        .eq('company_id', companyId),
+    const [balanceWalletIds, companyRes] = await Promise.all([
+      getBalanceWalletIds(companyId),
       admin
         .from('companies')
         .select('default_wallet_id')
         .eq('id', companyId)
         .maybeSingle(),
     ]);
-    const ids = new Set<string>();
-    for (const r of pinnedRes.data ?? []) ids.add(String(r.wallet_id));
+    const ids = new Set<string>(balanceWalletIds);
     if (companyRes.data?.default_wallet_id) {
       ids.add(String(companyRes.data.default_wallet_id));
     }
@@ -104,7 +108,7 @@ export async function persistDataset(
         });
       } catch {
         console.warn(
-          `[persistDataset] ${dataset.slug} company ${companyId} has no pinned_coinsbuy_wallets and no default_wallet_id — accepting all wallet IDs (legacy). Configure to prevent cross-tenant data.`,
+          `[persistDataset] ${dataset.slug} company ${companyId} has no pinned wallets and no default_wallet_id — accepting all wallet IDs (legacy). Configure to prevent cross-tenant data.`,
         );
       }
     }
@@ -245,6 +249,16 @@ export interface PersistedTotals {
  * Sum persisted transactions for a company over a date range.
  * Used when the live API is unreachable OR when Movimientos / Resumen
  * General want a consistent historical answer.
+ *
+ * Scope de wallets (migración 084): los totales son de MOVIMIENTOS, así que
+ * las filas de Coinsbuy se restringen a las wallets pineadas OPERATIVAS. Las
+ * internas —tesorería propia: ahorro, pago de egresos— suman al balance pero
+ * no son depósitos ni retiros de clientes. Sin este filtro, agosto 2026 de
+ * Vex Pro daba $932.444,83 de retiros ($469.650,98 de la Main 1079 +
+ * $400.014,00 de Savings 1087 + $62.779,85 de Egresos 1705) y un Net Deposit
+ * de −$231.127 que se iba derecho a la cadena de distribución.
+ * Si el tenant no tiene ninguna operativa configurada no se filtra nada
+ * (mismo fallback permisivo que /api/integrations/persisted-movements).
  */
 export async function loadPersistedTotals(
   companyId: string,
@@ -253,6 +267,8 @@ export async function loadPersistedTotals(
   walletId?: string,
 ): Promise<PersistedTotals> {
   const admin = createAdminClient();
+  const walletScope = await getOperatingWalletScope(companyId);
+  const operatingWalletIds = new Set(walletScope.ids);
 
   // Inclusive date range: interpret `to` as end-of-day.
   const fromISO = `${from}T00:00:00.000Z`;
@@ -318,6 +334,17 @@ export async function loadPersistedTotals(
     }
     const slug = row.provider as ProviderSlug;
     if (!(slug in by)) continue;
+    // Solo wallets operativas para las filas de Coinsbuy (ver docstring).
+    // Las filas sin wallet_id (persistidas antes de la migración 041) se
+    // dejan pasar para no vaciar el histórico.
+    if (
+      (slug === 'coinsbuy-deposits' || slug === 'coinsbuy-withdrawals') &&
+      walletScope.scoped &&
+      row.wallet_id &&
+      !operatingWalletIds.has(String(row.wallet_id))
+    ) {
+      continue;
+    }
     const accepted = ACCEPTED[slug];
     if (row.status && !accepted.includes(row.status)) continue;
     // Transferencias internas entre wallets propias (txid null en Coinsbuy):

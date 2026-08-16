@@ -1,4 +1,5 @@
 import { createClient } from './client';
+import { normalizePinnedWalletRole } from '../pinned-wallet-roles';
 import type {
   Company,
   Period,
@@ -233,7 +234,13 @@ export async function fetchPinnedCoinsbuyWallets(
     console.error('Error fetching pinned wallets:', error.message);
     return [];
   }
-  return data ?? [];
+  // `role` normalizado acá para que la UI nunca tenga que adivinar: las filas
+  // escritas antes de la migración 084 no traen la columna y su rol histórico
+  // es 'operating' (eran las que ya contaban para los totales).
+  return (data ?? []).map((row) => ({
+    ...row,
+    role: normalizePinnedWalletRole((row as { role?: unknown }).role),
+  })) as import('../types').PinnedCoinsbuyWallet[];
 }
 
 // ─── Preoperative Expenses ───

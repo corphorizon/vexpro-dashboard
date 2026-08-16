@@ -11,7 +11,12 @@ import { useAuth, canAdd, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
-import { pinCoinsbuyWallet, unpinCoinsbuyWallet } from '@/lib/supabase/mutations';
+import {
+  pinCoinsbuyWallet,
+  unpinCoinsbuyWallet,
+  setPinnedWalletRole,
+} from '@/lib/supabase/mutations';
+import type { PinnedWalletRole } from '@/lib/pinned-wallet-roles';
 import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
 import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
 import { isDerivedBrokerPeriod, computeDerivedNetDeposit } from '@/lib/broker-logic';
@@ -402,6 +407,28 @@ export default function BalancesPage() {
     }
   };
 
+  // Rol de la wallet fijada (migración 084). Fijar suma SIEMPRE al balance;
+  // el rol decide si además cuenta como depósitos/retiros de clientes:
+  //   · Operativa → sí (default)
+  //   · Interna   → no; solo balance (ahorro, pago de egresos, tesorería)
+  // Sin esta distinción, Vex Pro fijó "Savings" y "Egresos Vex" para el
+  // balance y /movimientos las contó como retiros: $932.444,83 en vez de
+  // $469.650,98, con el Net Deposit en −$231.127.
+  //
+  // Textos en español literal a propósito: las claves i18n de esta UI todavía
+  // no están en src/lib/i18n.tsx (ver scratchpad i18n-keys-wallet-roles.ts).
+  const handleSetRole = async (walletId: string, role: PinnedWalletRole) => {
+    if (!company) return;
+    try {
+      await setPinnedWalletRole(company.id, walletId, role);
+      setOkMsg(role === 'internal' ? 'Wallet marcada como interna' : 'Wallet marcada como operativa');
+      setTimeout(() => setOkMsg(null), 2000);
+      await loadPinnedWallets();
+    } catch (err) {
+      setErrMsg(err instanceof Error ? err.message : 'Error cambiando el rol de la wallet');
+    }
+  };
+
   const handleUnpin = async (walletId: string) => {
     if (!company) return;
     try {
@@ -724,7 +751,25 @@ export default function BalancesPage() {
                     <div className="flex items-center gap-2 min-w-0 flex-1">
                       <Wallet className="w-3.5 h-3.5 text-positive shrink-0" />
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{pw.wallet_label}</p>
+                        <p className="text-sm font-medium truncate">
+                          {pw.wallet_label}
+                          {/* Qué significa el pin de esta wallet: la interna
+                              suma acá pero NO en /movimientos (migr. 084). */}
+                          <span
+                            className={`ml-2 align-middle text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${
+                              pw.role === 'internal'
+                                ? 'bg-muted text-muted-foreground'
+                                : 'bg-positive/10 text-positive'
+                            }`}
+                            title={
+                              pw.role === 'internal'
+                                ? 'Interna: suma al balance, no cuenta como depósitos ni retiros de clientes'
+                                : 'Operativa: suma al balance y cuenta como depósitos y retiros de clientes'
+                            }
+                          >
+                            {pw.role === 'internal' ? 'interna' : 'operativa'}
+                          </span>
+                        </p>
                         <p className="text-[10px] text-muted-foreground">
                           {wData?.currencyCode ?? 'USDT'} · Wallet #{pw.wallet_id}
                         </p>
@@ -992,13 +1037,33 @@ export default function BalancesPage() {
                             {w.balanceConfirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} {w.currencyCode}
                           </span>
                           {isPinned(w.id) ? (
-                            <button
-                              onClick={() => handleUnpin(w.id)}
-                              className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
-                              title={t('balances.unpinTitle')}
-                            >
-                              <PinOff className="w-4 h-4" />
-                            </button>
+                            <>
+                              {/* Rol de la wallet fijada: Operativa cuenta como
+                                  depósitos/retiros de clientes; Interna solo
+                                  suma al balance (migración 084). */}
+                              <select
+                                value={
+                                  pinnedWallets.find((p) => p.wallet_id === w.id)?.role ??
+                                  'operating'
+                                }
+                                onChange={(e) =>
+                                  handleSetRole(w.id, e.target.value as PinnedWalletRole)
+                                }
+                                className="h-8 px-2 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
+                                aria-label="Rol de la wallet fijada"
+                                title="Operativa: cuenta como depósitos y retiros de clientes. Interna: solo suma al balance (ahorro, egresos)."
+                              >
+                                <option value="operating">Operativa</option>
+                                <option value="internal">Interna (solo balance)</option>
+                              </select>
+                              <button
+                                onClick={() => handleUnpin(w.id)}
+                                className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
+                                title={t('balances.unpinTitle')}
+                              >
+                                <PinOff className="w-4 h-4" />
+                              </button>
+                            </>
                           ) : (
                             <button
                               onClick={() => handlePin(w.id, w.label)}
