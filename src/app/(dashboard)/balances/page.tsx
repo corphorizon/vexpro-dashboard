@@ -67,6 +67,36 @@ export default function BalancesPage() {
   const { user } = useAuth();
   const { company, periods, getPeriodSummary, computeSaldoChain, getInvestmentsData, getLiquidityData, loading } = useData();
   const { movements: showFlows } = features(company?.business_model);
+
+  // El VALOR de la primera columna ya se sustituye por modelo (más abajo:
+  // ingresosNetos en vez de Net Deposit), pero la ETIQUETA seguía diciendo
+  // "Net Deposit · De Movimientos" — el nombre de un concepto que la empresa
+  // no tiene y de un módulo que ni siquiera aparece en su menú. Un número
+  // correcto con el nombre equivocado se lee como un número equivocado.
+  //
+  // `tf` usa la clave nueva si ya está en i18n y, mientras no lo esté, el
+  // texto de respaldo — así la pantalla nunca muestra la clave cruda.
+  const tf = (key: string, fallback: string) => {
+    const v = t(key);
+    return v === key ? fallback : v;
+  };
+  const inflowLabel = showFlows
+    ? t('balances.netDeposit')
+    : tf('balances.netIncomeCompany', locale === 'en' ? 'Net income' : 'Ingresos netos');
+  const inflowHint = showFlows
+    ? t('balances.fromMovements')
+    : tf(
+        'balances.fromIncomeLines',
+        locale === 'en' ? 'From Income (billing)' : 'De Ingresos (facturación)',
+      );
+  const monthResultHint = showFlows
+    ? t('balances.monthResultHint')
+    : tf(
+        'balances.monthResultHintCompany',
+        locale === 'en'
+          ? 'Net income − Expenses − Amount to Distribute'
+          : 'Ingresos netos − Egresos − Monto a Distribuir',
+      );
   const { selectedPeriodId } = usePeriod();
   const userCanAdd = canAdd(user);
 
@@ -767,18 +797,18 @@ export default function BalancesPage() {
                 {formatCurrency(currentBalanceRow.balanceMes)}
               </p>
               <p className="text-xs text-muted-foreground mt-2">
-                {t('balances.monthResultHint')} ({t('balances.monthAccumulated')} <span className="font-medium text-foreground">{formatCurrency(currentBalanceRow.saldoFinal)}</span>)
+                {monthResultHint} ({t('balances.monthAccumulated')} <span className="font-medium text-foreground">{formatCurrency(currentBalanceRow.saldoFinal)}</span>)
               </p>
             </div>
 
             {/* Breakdown of where each number comes from */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
               <div className="p-3 rounded-lg border border-border">
-                <p className="text-xs text-muted-foreground">{t('balances.netDeposit')}</p>
+                <p className="text-xs text-muted-foreground">{inflowLabel}</p>
                 <p className="text-lg font-semibold text-positive">
                   +{formatCurrency(currentBalanceRow.netDeposit)}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{t('balances.fromMovements')}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">{inflowHint}</p>
               </div>
               <div className="p-3 rounded-lg border border-border">
                 <p className="text-xs text-muted-foreground">{t('balances.operatingExpenses')}</p>
@@ -809,7 +839,7 @@ export default function BalancesPage() {
                 <thead>
                   <tr className="border-b border-border">
                     <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('balances.period')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.netDeposit')}</th>
+                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{inflowLabel}</th>
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.operatingExpenses')}</th>
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.amountToDistribute')}</th>
                     <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.balanceMonth')}</th>

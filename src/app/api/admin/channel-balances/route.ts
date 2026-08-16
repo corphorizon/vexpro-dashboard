@@ -35,7 +35,7 @@ type Body = {
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export async function POST(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['balances'] });
   if (auth instanceof NextResponse) return auth;
 
   // Only admin/auditor are allowed to write balances. HR roles can hit other
@@ -115,7 +115,7 @@ export async function POST(request: NextRequest) {
 // returned a Next.js default 405 that leaked endpoint existence to
 // unauthenticated callers.
 async function reject(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['balances'] });
   if (auth instanceof NextResponse) return auth;
   return NextResponse.json(
     { success: false, error: 'Método no permitido' },

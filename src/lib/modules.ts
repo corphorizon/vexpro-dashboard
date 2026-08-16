@@ -17,6 +17,8 @@
 // Import-safe desde cliente y servidor: no toca Supabase ni React.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { moduleAllowedForModel } from '@/lib/business-model';
+
 export interface ModuleDef {
   key: string;
   labelEs: string;
@@ -29,7 +31,7 @@ export interface ModuleDef {
   parent?: string;
 }
 
-export const MODULES: ModuleDef[] = [
+const MODULE_DEFS = [
   { key: 'summary',        labelEs: 'Resumen',            labelEn: 'Summary' },
   { key: 'movements',      labelEs: 'Movimientos',        labelEn: 'Movements' },
   { key: 'expenses',       labelEs: 'Egresos',            labelEn: 'Expenses' },
@@ -49,7 +51,15 @@ export const MODULES: ModuleDef[] = [
   { key: 'risk',           labelEs: 'Gestión de Riesgo',  labelEn: 'Risk Management' },
   { key: 'users',          labelEs: 'Usuarios',           labelEn: 'Users' },
   { key: 'logs',           labelEs: 'Registro de Actividad', labelEn: 'Activity Log' },
-];
+] as const satisfies readonly ModuleDef[];
+
+/**
+ * Unión de las claves reales, derivada de la MISMA lista: pasar un módulo
+ * inventado a `verifyAuth({ modules: [...] })` no compila.
+ */
+export type ModuleKey = (typeof MODULE_DEFS)[number]['key'];
+
+export const MODULES: ModuleDef[] = MODULE_DEFS.map((m) => ({ ...m }));
 
 /**
  * `audit` NO está en la lista: es exclusivo del superadmin y hasModuleAccess
@@ -61,6 +71,46 @@ export const MODULES: ModuleDef[] = [
  * hay ninguna pantalla detrás.
  */
 export const RESERVED_MODULE_KEYS = ['audit', 'settings'] as const;
+
+/**
+ * Módulos con los que NACE una empresa nueva. Fuente ÚNICA: la consumen el
+ * endpoint de alta (POST /api/superadmin/companies) y el formulario del
+ * superadmin (/superadmin/companies/new). Antes eran dos literales gemelos
+ * que nadie sincronizaba, y a los dos les faltaba lo mismo:
+ *
+ *   · `users` → el admin de la empresa NO podía entrar a /usuarios: el guard
+ *     de módulos corta por `active_modules` incluso para el rol admin, así
+ *     que la empresa quedaba sin forma de administrar su propia gente.
+ *   · `logs`  → sin Registro de Actividad, o sea sin rastro visible.
+ *   · `reports` → src/lib/reports/send.ts solo le manda el reporte diario a
+ *     las empresas que lo tienen; sin él ni la empresa ni el superadmin
+ *     recibían NADA (le pasó a Horizon, verificado en producción).
+ *   · `clients` → la ficha de clientes que alimenta ingresos y comisiones.
+ *
+ * Lo que NO entra por default y se habilita a mano: `hr` (+ su submódulo
+ * `ib_rebates`), `commissions` y `risk` — son módulos que se contratan.
+ *
+ * Ojo: esto es el default del ALTA. El modelo de negocio sigue mandando
+ * (blockedModules), así que una entidad 'company' no ve movements/liquidity/
+ * investments aunque figuren acá.
+ */
+export const DEFAULT_ACTIVE_MODULES: string[] = [
+  'summary',
+  'movements',
+  'expenses',
+  'income',
+  'liquidity',
+  'investments',
+  'balances',
+  'partners',
+  'clients',
+  'payment_orders',
+  'upload',
+  'periods',
+  'reports',
+  'users',
+  'logs',
+];
 
 export const MODULE_KEYS: string[] = MODULES.map((m) => m.key);
 
@@ -80,6 +130,79 @@ export function moduleLabel(key: string, locale: 'es' | 'en' = 'es'): string {
 
 export function isValidModuleKey(key: string): boolean {
   return MODULE_KEY_SET.has(key);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Decisión de acceso a un módulo — helper PURO, única fuente de verdad.
+//
+// AUDITORÍA: el guard de módulos era puramente COSMÉTICO. `hasModuleAccess`
+// (cliente) decidía qué se dibuja, pero NINGUNA ruta de API miraba
+// `allowed_modules` ni `active_modules`: un fetch desde la consola del
+// navegador entraba igual con el módulo apagado. Ahora `verifyAuth` /
+// `verifyAdminAuth` (src/lib/api-auth.ts) llaman a ESTA función con los datos
+// que traen de la DB, y `hasModuleAccess` la llama con los del contexto de
+// React. La regla vive en un solo lugar a propósito: listas duplicadas que se
+// desincronizan en silencio son el modo de falla número uno de este repo.
+//
+// El ORDEN de los chequeos es parte del contrato y replica el que ya tenía el
+// cliente:
+//   1. modelo de negocio  → bloquea INCLUSO al superadmin (una consultora no
+//      tiene "riesgo" ni "movimientos" por más superadmin que seas).
+//   2. bypass superadmin  → pasa el resto.
+//   3. módulos reservados → `audit` es exclusivo de /superadmin.
+//   4. chequeo de usuario → admin de empresa pasa sin mirar allowed_modules.
+//   5. chequeo de tenant  → active_modules, si se proporcionó.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ModuleAccessContext {
+  /** Rol efectivo dentro de la empresa ('admin', 'auditor', 'hr', custom…). */
+  role?: string | null;
+  /** True para un superadmin de plataforma (bypass del punto 2). */
+  isSuperadmin?: boolean;
+  /** `company_users.allowed_modules` del caller. */
+  allowedModules?: readonly string[] | null;
+  /**
+   * `companies.active_modules`. `null`/`undefined` = no se comprueba el nivel
+   * tenant (lo que hace la UI cuando todavía no cargó la empresa). Un array
+   * VACÍO sí bloquea: es una empresa sin módulos habilitados.
+   */
+  activeModules?: readonly string[] | null;
+  /** `companies.business_model` ('broker' | 'company'). */
+  businessModel?: unknown;
+}
+
+export function canAccessModule(module: string, ctx: ModuleAccessContext): boolean {
+  // 1. El modelo de negocio manda sobre todo, superadmin incluido.
+  if (!moduleAllowedForModel(ctx.businessModel, module)) return false;
+
+  // 2. Superadmin de plataforma: ve el resto sin filtros de tenant.
+  if (ctx.isSuperadmin) return true;
+
+  // 3. Reservados del superadmin — ni un admin de empresa entra.
+  if ((RESERVED_MODULE_KEYS as readonly string[]).includes(module)) return false;
+
+  // 4. Nivel usuario: el admin de empresa pasa sin mirar su lista.
+  const passesUserCheck =
+    ctx.role === 'admin' || (ctx.allowedModules?.includes(module) ?? false);
+  if (!passesUserCheck) return false;
+
+  // 5. Nivel tenant: el módulo tiene que estar contratado por la empresa.
+  if (ctx.activeModules && !ctx.activeModules.includes(module)) return false;
+
+  return true;
+}
+
+/**
+ * Variante OR para rutas que sirven a varios módulos a la vez (p.ej.
+ * /api/admin/data alimenta el resumen entero). Con la lista vacía devuelve
+ * `true` — "sin módulo declarado" significa ruta transversal.
+ */
+export function canAccessAnyModule(
+  modules: readonly string[],
+  ctx: ModuleAccessContext,
+): boolean {
+  if (modules.length === 0) return true;
+  return modules.some((m) => canAccessModule(m, ctx));
 }
 
 /** Filtra un payload dejando solo claves conocidas, sin duplicados. */

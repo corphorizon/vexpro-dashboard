@@ -18,7 +18,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 
 export async function POST(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['movements'] });
   if (auth instanceof NextResponse) return auth;
 
   let body: { walletId?: string | null };

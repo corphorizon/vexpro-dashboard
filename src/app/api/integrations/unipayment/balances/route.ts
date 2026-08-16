@@ -17,7 +17,7 @@ import { persistBalanceSnapshot } from '@/lib/api-integrations/persistence';
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    const auth = await verifyAuth(request, { modules: ['balances'] });
     if (auth instanceof NextResponse) return auth;
 
     const result = await fetchUnipaymentBalances(auth.companyId);

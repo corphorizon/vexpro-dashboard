@@ -10,7 +10,7 @@ import { sanitizeDbError } from '@/lib/errors';
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['hr'] });
     if (auth instanceof NextResponse) return auth;
 
     const { searchParams } = new URL(request.url);
@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['hr'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();

@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
     if (sa instanceof NextResponse) return sa;
     companyId = explicit;
   } else {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(undefined, { modules: ['reports'] });
     if (auth instanceof NextResponse) return auth;
     if (auth.role !== 'admin') {
       return NextResponse.json(

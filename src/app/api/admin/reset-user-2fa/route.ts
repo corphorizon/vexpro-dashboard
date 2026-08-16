@@ -22,7 +22,7 @@ import { guardAdminTarget } from '@/lib/admin-user-guards';
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { requireAdmin: true });
+    const auth = await verifyAdminAuth(request, { requireAdmin: true, modules: ['users'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json().catch(() => ({}));

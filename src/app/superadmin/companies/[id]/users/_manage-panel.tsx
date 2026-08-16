@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { X, Loader2, KeyRound, ShieldOff, Power, ClipboardList, Check } from 'lucide-react';
 import { ALL_MODULES } from '../../_form';
-import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/auth-context';
+import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import type { CompanyUser } from './page';
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -15,7 +15,7 @@ import { fetchCoinsbuyPayoutsV3 } from '@/lib/api-integrations/coinsbuy/payouts'
 export async function GET(request: NextRequest) {
   try {
     // Dominio finanzas: movimientos de la pasarela cripto.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     const url = new URL(request.url);

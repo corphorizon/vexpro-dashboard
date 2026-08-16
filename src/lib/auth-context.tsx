@@ -5,8 +5,7 @@ import { createClient } from '@/lib/supabase/client';
 import { logAction } from '@/lib/audit-log';
 import { withActiveCompany } from '@/lib/api-fetch';
 import { getActiveCompanyId, subscribeActiveCompanyId } from '@/lib/active-company';
-import { MODULE_KEYS } from '@/lib/modules';
-import { moduleAllowedForModel } from '@/lib/business-model';
+import { MODULE_KEYS, canAccessModule } from '@/lib/modules';
 import { isBuiltInRole } from '@/lib/roles';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
@@ -269,6 +268,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (event === 'SIGNED_OUT') {
         setUser(null);
         setUsers([]);
+        // Sello 2FA: la cookie es httpOnly, así que sólo el servidor puede
+        // borrarla. Se hace acá (y no en logout()) porque este listener
+        // cubre TODAS las salidas: logout explícito, cierre por inactividad,
+        // expiración de sesión y signOut desde otra pestaña. Si el sello
+        // sobreviviera, en una máquina compartida alguien con la contraseña
+        // podría volver a entrar sin PIN.
+        fetch('/api/auth/2fa-seal', { method: 'DELETE' }).catch(() => {
+          /* non-fatal: el sello vence solo y el login lo re-emite */
+        });
         // Fase 4b: limpiar el caché SWR también cuando el sign-out llega
         // por este listener (auto-logout por inactividad, expiración de
         // sesión, signOut desde otra pestaña) y no por logout() explícito.
@@ -884,24 +892,16 @@ export function hasModuleAccess(
   businessModel?: unknown,
 ): boolean {
   if (!user) return false;
-  if (!moduleAllowedForModel(businessModel, module)) return false;
-  // Platform superadmin sees everything — tenant filters don't apply.
-  if (user.is_superadmin) return true;
-
-  // `audit` is reserved for SUPERADMIN. Not even a tenant admin can access
-  // /auditoria — platform-level auditing is surfaced inside /superadmin
-  // (per-company tabs).
-  if (module === 'audit') return false;
-
-  // User-level check: admins pass; others must have the module on their list.
-  const passesUserCheck =
-    user.effective_role === 'admin' || user.allowed_modules.includes(module);
-  if (!passesUserCheck) return false;
-
-  // Tenant-level check (optional — skipped when activeModules not provided).
-  if (activeModules && !activeModules.includes(module)) return false;
-
-  return true;
+  // La regla vive en modules.ts: `verifyAuth`/`verifyAdminAuth` llaman al
+  // MISMO helper con los datos de la DB, así el guard del servidor no puede
+  // divergir de lo que la UI dibuja.
+  return canAccessModule(module, {
+    role: user.effective_role,
+    isSuperadmin: user.is_superadmin,
+    allowedModules: user.allowed_modules,
+    activeModules,
+    businessModel,
+  });
 }
 
 // Superadmin bypass (Kevin 2026-06-07): cuando un superadmin entra

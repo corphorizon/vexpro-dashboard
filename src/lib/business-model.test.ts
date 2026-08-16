@@ -101,6 +101,10 @@ describe('secciones del reporte por email', () => {
     expect(blocked).toContain('deposits_withdrawals');
     expect(blocked).toContain('broker_pnl');
     expect(blocked).toContain('prop_trading');
+    // Los usuarios del CRM son los clientes de la plataforma de trading del
+    // broker. Sin bloquearla, el reporte diario de una consultora llegaba con
+    // "Usuarios CRM: 0" como una de sus dos únicas secciones.
+    expect(blocked).toContain('crm_users');
   });
 });
 

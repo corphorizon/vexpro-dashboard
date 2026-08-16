@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { isBusinessModel } from '@/lib/business-model';
+import { blockedModules, isBusinessModel, normalizeBusinessModel } from '@/lib/business-model';
+import { sanitizeModuleKeys } from '@/lib/modules';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
@@ -72,6 +73,19 @@ export async function PATCH(
     }
 
     const admin = createAdminClient();
+
+    // ── Módulos: saneados y filtrados por el modelo de negocio ──────────────
+    // Sin esto se podía guardar cualquier clave inventada, y también módulos
+    // que blockedModules esconde igual: la empresa "tenía" pantallas que nadie
+    // ve pero que sí se ofrecían al asignar permisos a sus usuarios.
+    if ('active_modules' in allowed) {
+      const currentModel = allowed.business_model ?? (
+        await admin.from('companies').select('business_model').eq('id', id).maybeSingle()
+      ).data?.business_model;
+      const blocked = new Set(blockedModules(normalizeBusinessModel(currentModel)));
+      allowed.active_modules = sanitizeModuleKeys(allowed.active_modules)
+        .filter((m) => !blocked.has(m));
+    }
 
     // ── Aviso de datos que dejan de contar ──────────────────────────────────
     // Pasar a 'company' apaga el P&L de broker y el circuito de prop firm en

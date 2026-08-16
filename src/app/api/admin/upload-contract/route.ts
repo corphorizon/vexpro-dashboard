@@ -61,7 +61,7 @@ function sniffContract(bytes: Uint8Array): { ext: string; mime: string } | null 
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['hr'] });
     if (auth instanceof NextResponse) return auth;
 
     const formData = await request.formData();

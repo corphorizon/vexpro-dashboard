@@ -30,6 +30,11 @@ import { BRAND_HEX } from '@/lib/brand';
 import type { ReportData } from './data';
 import { formatCurrency } from '@/lib/utils';
 import type { EmailLocale } from '@/lib/email-i18n';
+import {
+  UNASSIGNED_CLIENT_KEY,
+  UNCATEGORIZED,
+  type CompanyResultReport,
+} from './company-report';
 
 const DASHBOARD_URL =
   process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.horizonconsulting.ai';
@@ -162,6 +167,29 @@ const L: Record<EmailLocale, Record<string, string>> = {
     textAutoDaily: 'Reporte diario automático.',
     textAutoWeekly: 'Reporte semanal automático.',
     textAutoMonthly: 'Reporte mensual automático.',
+    companyResultTitle: 'Facturación y Resultado',
+    monthsCovered: 'Meses incluidos: {months}',
+    noPeriodsInRange: 'El rango no toca ningún mes cargado.',
+    billed: 'Facturado',
+    collected: 'Cobrado',
+    receivable: 'Por cobrar',
+    billingByClient: 'Facturación por cliente',
+    client: 'Cliente',
+    unassignedClient: 'Sin cliente',
+    expensesTitle: 'Egresos del período',
+    expensesByCategory: 'Egresos por categoría',
+    uncategorized: 'Sin categoría',
+    expensesTotal: 'Egresos totales',
+    expensesPaid: 'Pagado',
+    expensesPending: 'Pendiente',
+    cashResultLabel: 'Resultado de caja (cobrado − egresos pagados)',
+    textCompanyResult: 'FACTURACIÓN Y RESULTADO',
+    textBilled: 'Facturado',
+    textCollected: 'Cobrado',
+    textReceivable: 'Por cobrar',
+    textExpensesPaid: 'Egresos pagados',
+    textExpensesPending: 'Egresos pendientes',
+    textCashResult: 'Resultado de caja',
   },
   en: {
     noComparison: 'no comparison',
@@ -242,6 +270,29 @@ const L: Record<EmailLocale, Record<string, string>> = {
     textAutoDaily: 'Automated daily report.',
     textAutoWeekly: 'Automated weekly report.',
     textAutoMonthly: 'Automated monthly report.',
+    companyResultTitle: 'Billing & Result',
+    monthsCovered: 'Months included: {months}',
+    noPeriodsInRange: 'The range does not cover any recorded month.',
+    billed: 'Billed',
+    collected: 'Collected',
+    receivable: 'Receivable',
+    billingByClient: 'Billing by client',
+    client: 'Client',
+    unassignedClient: 'No client',
+    expensesTitle: 'Expenses in the period',
+    expensesByCategory: 'Expenses by category',
+    uncategorized: 'Uncategorised',
+    expensesTotal: 'Total expenses',
+    expensesPaid: 'Paid',
+    expensesPending: 'Pending',
+    cashResultLabel: 'Cash result (collected − expenses paid)',
+    textCompanyResult: 'BILLING & RESULT',
+    textBilled: 'Billed',
+    textCollected: 'Collected',
+    textReceivable: 'Receivable',
+    textExpensesPaid: 'Expenses paid',
+    textExpensesPending: 'Expenses pending',
+    textCashResult: 'Cash result',
   },
 };
 
@@ -472,6 +523,97 @@ function renderBalancesByChannelSection(
     <p style="font-size:11px;color:${BRAND_HEX.muted};margin:0 0 8px 0;">${lt(locale, 'asOf', { date: escapeHtml(b.asOf) })}</p>
     ${b.channels.length ? renderTable([lt(locale, 'channel'), lt(locale, 'type'), lt(locale, 'balance')], rows, locale, totalRow) : ''}
     ${emptyNote}
+  `;
+}
+
+/**
+ * Resultado de una empresa de servicios: qué facturó, qué cobró, qué le
+ * deben, qué gastó y qué le quedó.
+ *
+ * Es la contracara de "Depósitos y Retiros": esa sección responde por la
+ * plata de los CLIENTES del broker, ésta por la plata de la EMPRESA. No se
+ * ofrece como toggle en la configuración porque no es una preferencia —
+ * viene o no viene según el modelo de negocio (`data.company_result`).
+ */
+function renderCompanyResultSection(
+  result: CompanyResultReport,
+  primary: string,
+  locale: EmailLocale,
+): string {
+  const b = result.billing;
+  const e = result.expenses;
+
+  // Top 8 clientes: el email es para leer en el teléfono, no para auditar.
+  // El detalle completo vive en el reporte de la pantalla.
+  const clientRows = b.clients
+    .slice(0, 8)
+    .map((c) => [
+      c.key === UNASSIGNED_CLIENT_KEY ? lt(locale, 'unassignedClient') : c.name,
+      formatCurrency(c.billed),
+      formatCurrency(c.collected),
+      formatCurrency(c.pending),
+    ]);
+
+  const categoryRows = e.categories
+    .slice(0, 8)
+    .map((c) => [
+      c.category === UNCATEGORIZED ? lt(locale, 'uncategorized') : c.category,
+      formatCurrency(c.amount),
+      formatCurrency(c.pending),
+    ]);
+
+  const periodsNote = result.periods.length
+    ? lt(locale, 'monthsCovered', {
+        months: escapeHtml(result.periods.map((p) => p.label).join(' · ')),
+      })
+    : lt(locale, 'noPeriodsInRange');
+
+  return `
+    ${sectionHeader(primary, '🧾', lt(locale, 'companyResultTitle'))}
+    <p style="font-size:11px;color:${BRAND_HEX.muted};margin:0 0 8px 0;">${periodsNote}</p>
+
+    <table cellspacing="0" cellpadding="0" style="width:100%;margin-bottom:16px;">
+      <tr>
+        ${renderKpi(lt(locale, 'billed'), formatCurrency(b.billed), 'info')}
+        ${renderKpi(lt(locale, 'collected'), formatCurrency(b.collected), 'positive')}
+        ${renderKpi(lt(locale, 'receivable'), formatCurrency(b.pending), b.pending > 0 ? 'negative' : 'neutral')}
+      </tr>
+    </table>
+
+    <div style="margin-bottom:16px;">
+      <h3 style="font-size:14px;color:${BRAND_HEX.inkSoft};margin:0 0 8px 0;">${lt(locale, 'billingByClient')}</h3>
+      ${renderTable(
+        [lt(locale, 'client'), lt(locale, 'billed'), lt(locale, 'collected'), lt(locale, 'receivable')],
+        clientRows,
+        locale,
+        [lt(locale, 'total'), formatCurrency(b.billed), formatCurrency(b.collected), formatCurrency(b.pending)],
+      )}
+    </div>
+
+    <table cellspacing="0" cellpadding="0" style="width:100%;margin-bottom:16px;">
+      <tr>
+        ${renderKpi(lt(locale, 'expensesTotal'), formatCurrency(e.total), 'neutral')}
+        ${renderKpi(lt(locale, 'expensesPaid'), formatCurrency(e.paid), 'negative')}
+        ${renderKpi(lt(locale, 'expensesPending'), formatCurrency(e.pending), e.pending > 0 ? 'negative' : 'neutral')}
+      </tr>
+    </table>
+
+    <div style="margin-bottom:16px;">
+      <h3 style="font-size:14px;color:${BRAND_HEX.inkSoft};margin:0 0 8px 0;">${lt(locale, 'expensesByCategory')}</h3>
+      ${renderTable(
+        [lt(locale, 'category'), lt(locale, 'amount'), lt(locale, 'expensesPending')],
+        categoryRows,
+        locale,
+        [lt(locale, 'total'), formatCurrency(e.total), formatCurrency(e.pending)],
+      )}
+    </div>
+
+    <table cellspacing="0" cellpadding="0" style="width:100%;border-collapse:collapse;border:1px solid ${BRAND_HEX.border};border-radius:8px;overflow:hidden;">
+      <tr style="background:${BRAND_HEX.surface};">
+        <td style="padding:12px 14px;font-size:13px;font-weight:600;color:${BRAND_HEX.inkSoft};">${lt(locale, 'cashResultLabel')}</td>
+        <td align="right" style="padding:12px 14px;font-size:18px;font-weight:700;color:${result.cashResult >= 0 ? BRAND_HEX.positive : BRAND_HEX.negative};">${escapeHtml(formatCurrency(result.cashResult))}</td>
+      </tr>
+    </table>
   `;
 }
 
@@ -730,6 +872,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
             <td style="padding:8px 32px 32px 32px;">
               ${failureNote}
               ${mockNote}
+              ${data.company_result ? renderCompanyResultSection(data.company_result, primary, locale) : ''}
               ${sections.deposits_withdrawals ? renderDepositsWithdrawalsSection(data, cadence, primary, locale) : ''}
               ${sections.balances_by_channel ? renderBalancesByChannelSection(data, primary, locale) : ''}
               ${sections.crm_users ? renderCrmUsersSection(data, primary, locale) : ''}
@@ -776,6 +919,22 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
     `${lt(locale, 'textPeriod')}: ${data.range.from} → ${data.range.to}`,
     ``,
   ];
+
+  // Mismo criterio que el HTML: el bloque de la empresa de servicios no es
+  // un toggle, viene con el modelo de negocio.
+  if (data.company_result) {
+    const r = data.company_result;
+    lines.push(
+      lt(locale, 'textCompanyResult'),
+      `  ${lt(locale, 'textBilled')}: ${formatCurrency(r.billing.billed)}`,
+      `  ${lt(locale, 'textCollected')}: ${formatCurrency(r.billing.collected)}`,
+      `  ${lt(locale, 'textReceivable')}: ${formatCurrency(r.billing.pending)}`,
+      `  ${lt(locale, 'textExpensesPaid')}: ${formatCurrency(r.expenses.paid)}`,
+      `  ${lt(locale, 'textExpensesPending')}: ${formatCurrency(r.expenses.pending)}`,
+      `  ${lt(locale, 'textCashResult')}: ${formatCurrency(r.cashResult)}`,
+      ``,
+    );
+  }
 
   if (sections.deposits_withdrawals) {
     lines.push(

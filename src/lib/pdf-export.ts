@@ -804,11 +804,31 @@ export async function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
 //   (ingresos, egresos, resultado, flujo de depósitos/retiros, distribución)
 // ═══════════════════════════════════════════════════════════
 
+/**
+ * Facturación del mes de una empresa de servicios: reemplaza el flujo de
+ * depósitos y retiros de clientes, que para una consultora es una página
+ * entera de ceros. Sale de `buildBilling` (company-report.ts) — el mismo
+ * objeto que ve en pantalla y en el CSV.
+ */
+export interface PdfMonthlyCloseBilling {
+  billed: number;
+  collected: number;
+  pending: number;
+  clients: Array<{ name: string; billed: number; collected: number; pending: number }>;
+}
+
 export interface PdfMonthlyCloseData {
   companyName: string;
   /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
   companyLogoUrl?: string | null;
   periodLabel: string;
+  /**
+   * Facturación del mes. Presente = empresa de servicios: el informe cambia
+   * "Resultado Operativo" (broker P&L, prop firm, inversiones) y "Flujo de
+   * Depósitos y Retiros de Clientes" por facturación por cliente. Ausente =
+   * broker, el informe de siempre, sin un solo cambio.
+   */
+  billing?: PdfMonthlyCloseBilling | null;
   // Resultado operativo
   brokerPnl: number;
   propFirmNet: number;
@@ -854,13 +874,20 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   ]);
 
   // ─── Resultado operativo ───
+  const billing = data.billing ?? null;
   y = pdfSection(doc, 'Resultado Operativo', y + 2);
-  const opRows: [string, number][] = [
-    ['Broker P&L (Book B)', data.brokerPnl],
-    ['Prop Firm (neto)', data.propFirmNet],
-    ['Ganancias de inversiones', data.investmentProfits],
-  ];
-  if (data.otherIncome) opRows.push(['Otros ingresos', data.otherIncome]);
+  const opRows: [string, number][] = billing
+    ? [
+        ['Facturado del mes', billing.billed],
+        ['Cobrado', billing.collected],
+        ['Por cobrar', billing.pending],
+      ]
+    : [
+        ['Broker P&L (Book B)', data.brokerPnl],
+        ['Prop Firm (neto)', data.propFirmNet],
+        ['Ganancias de inversiones', data.investmentProfits],
+      ];
+  if (!billing && data.otherIncome) opRows.push(['Otros ingresos', data.otherIncome]);
   autoTable(doc, {
     startY: y,
     body: opRows.map(([k, v]) => [k, money(v)]),
@@ -884,51 +911,97 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   });
   y = getLastTableY(doc, y + 40, 8);
 
-  // ─── Flujo de depósitos y retiros (clientes) ───
-  y = pdfSection(doc, 'Flujo de Depositos y Retiros de Clientes', y);
-  const maxRows = Math.max(data.depositsByChannel.length, data.withdrawalsByCategory.length);
-  const flowBody: string[][] = [];
-  for (let i = 0; i < maxRows; i++) {
-    const d = data.depositsByChannel[i];
-    const w = data.withdrawalsByCategory[i];
-    flowBody.push([
-      d ? d.label : '', d ? money(d.amount) : '',
-      w ? w.label : '', w ? money(w.amount) : '',
-    ]);
+  if (billing) {
+    // ─── Facturación por cliente (empresa de servicios) ───
+    y = pdfSection(doc, 'Facturacion por Cliente', y);
+    autoTable(doc, {
+      startY: y,
+      head: [['Cliente', 'Facturado', 'Cobrado', 'Por cobrar']],
+      body: billing.clients.map((c) => [
+        c.name,
+        money(c.billed),
+        money(c.collected),
+        money(c.pending),
+      ]),
+      foot: [['Total', money(billing.billed), money(billing.collected), money(billing.pending)]],
+      theme: 'grid',
+      styles: { fontSize: 9, cellPadding: 2.6 },
+      headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
+      footStyles: { fillColor: C.surface, textColor: C.primary, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 66 },
+        1: { halign: 'right' },
+        2: { halign: 'right', textColor: C.positive },
+        3: { halign: 'right', textColor: C.negative },
+      },
+      margin: { left: 14, right: 14 },
+      didParseCell: (h) => {
+        if (h.section === 'foot' && h.column.index > 0) h.cell.styles.halign = 'right';
+      },
+    });
+    y = getLastTableY(doc, y + 30, 5);
+    // Banda de lo que falta cobrar: es lo que NO entra en el saldo a favor y
+    // por lo tanto no se reparte este mes.
+    doc.setFillColor(...C.surface);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.3);
+    const wBand = doc.internal.pageSize.getWidth();
+    doc.roundedRect(14, y, wBand - 28, 11, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...C.ink);
+    doc.text('Facturado sin cobrar (no se distribuye)', 18, y + 7);
+    doc.setTextColor(...(billing.pending > 0 ? C.negative : C.positive));
+    doc.setFontSize(11);
+    doc.text(money(billing.pending), wBand - 18, y + 7.2, { align: 'right' });
+    y += 17;
+  } else {
+    // ─── Flujo de depósitos y retiros (clientes) ───
+    y = pdfSection(doc, 'Flujo de Depositos y Retiros de Clientes', y);
+    const maxRows = Math.max(data.depositsByChannel.length, data.withdrawalsByCategory.length);
+    const flowBody: string[][] = [];
+    for (let i = 0; i < maxRows; i++) {
+      const d = data.depositsByChannel[i];
+      const w = data.withdrawalsByCategory[i];
+      flowBody.push([
+        d ? d.label : '', d ? money(d.amount) : '',
+        w ? w.label : '', w ? money(w.amount) : '',
+      ]);
+    }
+    autoTable(doc, {
+      startY: y,
+      head: [['Depositos por canal', 'Monto', 'Retiros por categoria', 'Monto']],
+      body: flowBody,
+      foot: [['Total depositos', money(data.depositsTotal), 'Total retiros', money(data.withdrawalsTotal)]],
+      theme: 'grid',
+      styles: { fontSize: 9, cellPadding: 2.6 },
+      headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
+      footStyles: { fillColor: C.surface, textColor: C.primary, fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 52 }, 1: { halign: 'right', textColor: C.positive },
+        2: { cellWidth: 52 }, 3: { halign: 'right', textColor: C.negative },
+      },
+      margin: { left: 14, right: 14 },
+      didParseCell: (h) => {
+        if (h.section === 'foot' && (h.column.index === 1 || h.column.index === 3)) h.cell.styles.halign = 'right';
+      },
+    });
+    y = getLastTableY(doc, y + 30, 5);
+    // Banda de flujo neto
+    doc.setFillColor(...C.surface);
+    doc.setDrawColor(...C.border);
+    doc.setLineWidth(0.3);
+    const wPage = doc.internal.pageSize.getWidth();
+    doc.roundedRect(14, y, wPage - 28, 11, 2, 2, 'FD');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(...C.ink);
+    doc.text('Flujo neto de clientes (depositos - retiros)', 18, y + 7);
+    doc.setTextColor(...(data.netFlow >= 0 ? C.positive : C.negative));
+    doc.setFontSize(11);
+    doc.text(money(data.netFlow), wPage - 18, y + 7.2, { align: 'right' });
+    y += 17;
   }
-  autoTable(doc, {
-    startY: y,
-    head: [['Depositos por canal', 'Monto', 'Retiros por categoria', 'Monto']],
-    body: flowBody,
-    foot: [['Total depositos', money(data.depositsTotal), 'Total retiros', money(data.withdrawalsTotal)]],
-    theme: 'grid',
-    styles: { fontSize: 9, cellPadding: 2.6 },
-    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold', fontSize: 8.5 },
-    footStyles: { fillColor: C.surface, textColor: C.primary, fontStyle: 'bold' },
-    columnStyles: {
-      0: { cellWidth: 52 }, 1: { halign: 'right', textColor: C.positive },
-      2: { cellWidth: 52 }, 3: { halign: 'right', textColor: C.negative },
-    },
-    margin: { left: 14, right: 14 },
-    didParseCell: (h) => {
-      if (h.section === 'foot' && (h.column.index === 1 || h.column.index === 3)) h.cell.styles.halign = 'right';
-    },
-  });
-  y = getLastTableY(doc, y + 30, 5);
-  // Banda de flujo neto
-  doc.setFillColor(...C.surface);
-  doc.setDrawColor(...C.border);
-  doc.setLineWidth(0.3);
-  const wPage = doc.internal.pageSize.getWidth();
-  doc.roundedRect(14, y, wPage - 28, 11, 2, 2, 'FD');
-  doc.setFont('helvetica', 'bold');
-  doc.setFontSize(9.5);
-  doc.setTextColor(...C.ink);
-  doc.text('Flujo neto de clientes (depositos - retiros)', 18, y + 7);
-  doc.setTextColor(...(data.netFlow >= 0 ? C.positive : C.negative));
-  doc.setFontSize(11);
-  doc.text(money(data.netFlow), wPage - 18, y + 7.2, { align: 'right' });
-  y += 17;
 
   // ─── Página 2: egresos + distribución ───
   doc.addPage();

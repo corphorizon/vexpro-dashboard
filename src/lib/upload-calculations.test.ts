@@ -48,6 +48,13 @@ describe('computeExpensePending', () => {
   it('puede dar pendiente negativo si pagado > monto (sin clamp, como el original)', () => {
     expect(computeExpensePending('100', '150', '')).toBe(-50);
   });
+
+  it('redondea a 2 decimales: la resta de flotantes no debe dejar residuo', () => {
+    // Sin round2 esto daba 0.900000000000091 y se persistía así en la columna
+    // pending. Su espejo computeIncomePending ya redondeaba.
+    expect(computeExpensePending('1000.10', '999.20', '')).toBe(0.9);
+    expect(computeExpensePending('0.3', '0.1', '')).toBe(0.2);
+  });
 });
 
 describe('findInvalidAmount', () => {

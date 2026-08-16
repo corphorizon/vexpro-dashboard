@@ -32,7 +32,7 @@ const VALID_SLUGS: ProviderSlug[] = [
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    const auth = await verifyAuth(request, { modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     const from = request.nextUrl.searchParams.get('from') ?? undefined;

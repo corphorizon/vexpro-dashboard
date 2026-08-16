@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { privateCache } from '@/lib/cache-headers';
 import { friendlyDbMessage } from '@/lib/errors';
-import { verifyAuth } from '@/lib/api-auth';
+import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { fetchFairpayDeposits } from '@/lib/api-integrations/fairpay/transactions';
 
 // ---------------------------------------------------------------------------
@@ -16,7 +16,11 @@ import { fetchFairpayDeposits } from '@/lib/api-integrations/fairpay/transaction
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAuth(request);
+    // Gate de ROL agregado en la auditoría: este proxy devuelve las
+    // transacciones crudas de la pasarela y estaba abierto a CUALQUIER rol
+    // (invitado incluido), mientras el equivalente de Coinsbuy ya exigía
+    // FINANCE_ROLES. Ninguna pantalla lo consume — se usa para diagnóstico.
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['movements'] });
     if (auth instanceof NextResponse) return auth;
 
     const from = request.nextUrl.searchParams.get('from') ?? undefined;

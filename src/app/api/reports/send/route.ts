@@ -75,7 +75,7 @@ export async function POST(request: NextRequest) {
     actorName = sa.name || sa.email;
     isSuperadmin = true;
   } else {
-    const auth = await verifyAdminAuth();
+    const auth = await verifyAdminAuth(undefined, { modules: ['reports'] });
     if (auth instanceof NextResponse) return auth;
     if (auth.role !== 'admin') {
       return NextResponse.json(

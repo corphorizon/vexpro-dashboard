@@ -107,7 +107,11 @@ export async function POST(request: NextRequest) {
 const MAX_LIMIT = 200;
 
 export async function GET(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+  // El módulo va SOLO en el GET. El POST escribe el trail desde cualquier
+  // pantalla (login, export, CRUD) y exigirle `logs` dejaría sin registrar
+  // justo a los usuarios que no tienen la pantalla de auditoría — el agujero
+  // opuesto al que estamos tapando.
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['logs'] });
   if (auth instanceof NextResponse) return auth;
 
   const p = request.nextUrl.searchParams;

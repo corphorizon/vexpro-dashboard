@@ -65,7 +65,7 @@ export async function POST(
     // Aprobación abierta (decisión Kevin 2026-08-05): cualquier usuario con
     // acceso al módulo puede aprobar/rechazar, incluida su propia orden. La
     // trazabilidad (approved_by/at) reemplaza al bloqueo como control.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
 
     const { id } = await params;

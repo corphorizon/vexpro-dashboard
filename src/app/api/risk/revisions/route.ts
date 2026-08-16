@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   try {
     // Dominio finanzas: riesgo es una vista financiera. Con el fallback
     // histórico un `hr` podía leer y escribir revisiones de riesgo.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['risk'] });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();
@@ -46,7 +46,7 @@ export async function POST(request: NextRequest) {
   try {
     // Dominio finanzas: riesgo es una vista financiera. Con el fallback
     // histórico un `hr` podía leer y escribir revisiones de riesgo.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['risk'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();

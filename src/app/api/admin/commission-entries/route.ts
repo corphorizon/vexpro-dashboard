@@ -8,7 +8,7 @@ import { apiError } from '@/lib/api-error';
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['commissions'] });
     if (auth instanceof NextResponse) return auth;
 
     const { period_id, head_id, entries } = await request.json();

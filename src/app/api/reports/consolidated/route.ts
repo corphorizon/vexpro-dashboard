@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     // dato financiero sensible. verifyAuth dejaba pasar CUALQUIER rol (incluido
     // un invitado de solo lectura). Se exige rol financiero (admin/auditor); el
     // superadmin pasa como 'admin' apuntando al tenant con ?company_id=...
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['reports'] });
     if (auth instanceof NextResponse) return auth;
 
     const url = new URL(request.url);

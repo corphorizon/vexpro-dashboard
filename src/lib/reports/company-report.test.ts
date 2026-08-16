@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   UNCATEGORIZED,
   buildCash,
+  buildCompanyResult,
   buildExpenses,
   buildResult,
   companyReportCsvRows,
@@ -27,6 +28,45 @@ describe('periodsInRange', () => {
 
   it('devuelve vacío si el rango cae fuera de la contabilidad cargada', () => {
     expect(periodsInRange(periods, '2025-01-01', '2025-02-01')).toEqual([]);
+  });
+});
+
+describe('buildCompanyResult', () => {
+  // Es la fuente del email del cron: si esto no cuenta igual que la pantalla,
+  // Kevin recibe dos verdades distintas del mismo mes.
+  const lines = [
+    { period_id: 'ago', concept: 'CRM', client: 'Bullfy', amount: '8900', received: '0', pending: '8900' },
+    { period_id: 'ago', concept: 'CRM', client: 'Vex Pro', amount: '13500', received: '13500', pending: '0' },
+    { period_id: 'jul', concept: 'CRM', client: 'Bullfy', amount: '1000', received: '1000', pending: '0' },
+  ];
+  const expenses = [
+    { period_id: 'ago', category: 'Sueldos', amount: 500, paid: 300, pending: 200 },
+    { period_id: 'jul', category: 'Sueldos', amount: 999, paid: 999, pending: 0 },
+  ];
+
+  it('cuenta solo los períodos del rango', () => {
+    const r = buildCompanyResult([periods[2]], lines, expenses);
+    expect(r.periods.map((p) => p.label)).toEqual(['Ago 26']);
+    expect(r.billing.billed).toBe(22400);
+    expect(r.billing.collected).toBe(13500);
+    expect(r.billing.pending).toBe(8900);
+    expect(r.expenses.total).toBe(500);
+    // Resultado de caja: lo cobrado menos lo efectivamente pagado.
+    expect(r.cashResult).toBe(13200);
+  });
+
+  it('agrupa el mismo cliente a través de los meses del rango', () => {
+    const r = buildCompanyResult([periods[1], periods[2]], lines, expenses);
+    expect(r.billing.clients.find((c) => c.name === 'Bullfy')?.billed).toBe(9900);
+    expect(r.billing.clientCount).toBe(2);
+  });
+
+  it('sin períodos devuelve todo en cero, no explota', () => {
+    const r = buildCompanyResult([], lines, expenses);
+    expect(r.periods).toEqual([]);
+    expect(r.billing.billed).toBe(0);
+    expect(r.expenses.total).toBe(0);
+    expect(r.cashResult).toBe(0);
   });
 });
 

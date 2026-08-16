@@ -48,12 +48,18 @@ const STATUS_DESC_KEY: Record<PeriodStatus, string> = {
   in_progress: 'periods.inProgressDesc',
 };
 
+// `is_closed` SIEMPRE va primero. Cuando el chequeo de "mes en curso" iba
+// antes, un período del mes actual que estaba cerrado en la base se mostraba
+// como "En curso": no aparecía ni "Cerrar" ni "Reabrir", pero el trigger de la
+// migración 061 seguía rechazando toda escritura — el mes quedaba irreabrible
+// desde la UI y sólo se destrababa con SQL directo.
+// "En curso" es, por definición, el mes actual TODAVÍA abierto.
 function getStatusFromPeriod(p: Period): PeriodStatus {
   const now = new Date();
   const currentYear = now.getFullYear();
   const currentMonth = now.getMonth() + 1;
-  if (p.year === currentYear && p.month === currentMonth) return 'in_progress';
   if (p.is_closed) return 'closed';
+  if (p.year === currentYear && p.month === currentMonth) return 'in_progress';
   return 'open';
 }
 
@@ -273,11 +279,11 @@ export default function PeríodosPage() {
                   header: t('common.actions'),
                   align: 'center' as const,
                   accessor: (period: ManagedPeriod) => {
-                    const now = new Date();
-                    const currentYear = now.getFullYear();
-                    const currentMonth = now.getMonth() + 1;
-                    const isCurrentMonth = period.year === currentYear && period.month === currentMonth;
-                    const isPastMonth = period.year < currentYear || (period.year === currentYear && period.month < currentMonth);
+                    // Las acciones se derivan SOLO del estado: con `is_closed`
+                    // evaluado primero, 'in_progress' ya significa exactamente
+                    // "mes actual y abierto", así que no hace falta recalcular
+                    // el mes acá. La rama vieja `in_progress && isPastMonth`
+                    // era inalcanzable por construcción y se eliminó.
                     const isUpdating = updating === period.id;
                     return (
                       <div className="flex justify-center gap-1">
@@ -301,15 +307,7 @@ export default function PeríodosPage() {
                                 {t('periods.reopen')}
                               </button>
                             )}
-                            {period.status === 'in_progress' && isPastMonth && (
-                              <button
-                                onClick={() => changeStatus(period.id, 'closed')}
-                                className="px-2.5 py-1 text-xs rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                              >
-                                {t('periods.closeMonth')}
-                              </button>
-                            )}
-                            {period.status === 'in_progress' && isCurrentMonth && (
+                            {period.status === 'in_progress' && (
                               <span className="text-xs text-muted-foreground">{t('periods.monthInProgress')}</span>
                             )}
                           </>

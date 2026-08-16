@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { checkRateLimit, recordFailure, clearAttempts, type AttemptKind } from '@/lib/rate-limit';
 import speakeasy from 'speakeasy';
 import { apiError } from '@/lib/api-error';
+import { TWOFA_COOKIE, mintTwofaSeal, twofaCookieOptions } from '@/lib/auth/twofa-session';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/verify-2fa
@@ -209,7 +210,7 @@ export async function POST(request: NextRequest) {
       { auth: { autoRefreshToken: false, persistSession: false } },
     );
 
-    const { error: signInError } = await tempClient.auth.signInWithPassword({
+    const { data: signInData, error: signInError } = await tempClient.auth.signInWithPassword({
       email,
       password,
     });
@@ -252,7 +253,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    return NextResponse.json({ success: true, verified: true });
+    // ── SELLO 2FA ────────────────────────────────────────────────────────
+    // Éste es el ÚNICO punto del login donde alguien probó el segundo factor,
+    // así que es el único que puede emitir el sello. Se emite ANTES de que el
+    // navegador haga su `signInWithPassword`, pero eso no importa: la cookie
+    // no depende de la sesión de GoTrue, sólo del `auth.users.id` — que
+    // acabamos de confirmar con la contraseña correcta.
+    //
+    // Sin sello, `updateSession` (middleware) y verifyAuth/verifyAdminAuth
+    // rechazan cualquier sesión de un usuario con twofa_enabled = true.
+    const response = NextResponse.json({ success: true, verified: true });
+    const authUserId = signInData?.user?.id;
+    if (authUserId) {
+      const seal = await mintTwofaSeal(authUserId);
+      // seal === null ⇒ no hay clave HMAC; `twofaSealAvailable()` también es
+      // false, así que el guardián no exige nada y nadie queda afuera.
+      if (seal) response.cookies.set(TWOFA_COOKIE, seal, twofaCookieOptions());
+    }
+    return response;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';
     console.error('[verify-2fa] Unhandled error:', message);

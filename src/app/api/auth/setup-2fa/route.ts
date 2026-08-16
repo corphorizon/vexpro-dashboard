@@ -4,6 +4,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import speakeasy from 'speakeasy';
 import QRCode from 'qrcode';
 import { apiError } from '@/lib/api-error';
+import { TWOFA_COOKIE, mintTwofaSeal, twofaCookieOptions } from '@/lib/auth/twofa-session';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/setup-2fa
@@ -260,7 +261,15 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      return NextResponse.json({ success: true, verified: true });
+      // ── SELLO 2FA ──────────────────────────────────────────────────────
+      // El usuario ACABA de probar un TOTP válido: éste es un segundo factor
+      // legítimo. Sin emitir el sello acá, activar 2FA desde /setup-2fa
+      // dejaría al usuario con twofa_enabled = true y sin sello — es decir,
+      // expulsado de su propia sesión un segundo después de activarlo.
+      const setupResponse = NextResponse.json({ success: true, verified: true });
+      const seal = await mintTwofaSeal(user.id);
+      if (seal) setupResponse.cookies.set(TWOFA_COOKIE, seal, twofaCookieOptions());
+      return setupResponse;
     }
 
     // Action: disable — disable 2FA (requires valid TOTP code)

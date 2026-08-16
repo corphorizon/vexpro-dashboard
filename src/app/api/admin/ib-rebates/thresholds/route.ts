@@ -13,7 +13,7 @@ import { apiError } from '@/lib/api-error';
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['ib_rebates'] });
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();
@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
 export async function PUT(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['ib_rebates'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();

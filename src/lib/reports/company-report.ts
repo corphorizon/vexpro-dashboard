@@ -14,7 +14,14 @@
 // Import-safe desde cliente y servidor: no toca Supabase ni React.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { totalsOf, UNASSIGNED_CLIENT_KEY, type ClientCard } from '@/lib/clients';
+import {
+  buildClientCards,
+  totalsOf,
+  UNASSIGNED_CLIENT_KEY,
+  type ClientCard,
+  type ClientLine,
+} from '@/lib/clients';
+import { periodLabel } from '@/lib/utils';
 import {
   groupByType,
   groupByUnit,
@@ -277,6 +284,82 @@ export interface CompanyReport {
   expenses: ExpensesReport;
   result: ResultReport;
   cash: CashReport;
+}
+
+// ─── Resultado de la empresa, sin la parte que solo tiene la pantalla ────
+//
+// El `CompanyReport` de arriba necesita la cadena de distribución y el libro
+// de ubicaciones, que solo existen del lado del cliente (data-context). El
+// email del cron corre en el servidor y no los tiene — pero SÍ tiene que
+// contar lo mismo: qué se facturó, qué se cobró, qué falta cobrar, qué se
+// gastó y qué quedó.
+//
+// Por eso este subconjunto: las mismas funciones (`buildBilling`,
+// `buildExpenses`) sobre las mismas filas, para que el email y la pantalla no
+// puedan contradecirse. Si mañana cambia el criterio de "cobrado", cambia en
+// buildBilling y los dos se enteran.
+
+export interface CompanyResultReport {
+  /** Meses que el rango toca, en orden. Vacío = fuera de la contabilidad cargada. */
+  periods: Array<{ id: string; label: string }>;
+  billing: BillingReport;
+  expenses: ExpensesReport;
+  /** Cobrado − egresos pagados: el mismo criterio de caja que ResultReport. */
+  cashResult: number;
+}
+
+/** Una línea de ingreso tal como sale de la tabla `income_lines`. */
+export interface IncomeLineRow {
+  period_id: string;
+  concept: string;
+  client: string | null;
+  amount: number | string;
+  received: number | string;
+  pending: number | string;
+}
+
+/**
+ * Facturación + egresos + resultado de los períodos indicados.
+ *
+ * `periods` ya viene recortado al rango (usar `periodsInRange`). `lines` y
+ * `expenses` pueden traer filas de otros períodos: se filtran acá, así el
+ * llamador puede pedirle a la base "todo lo de la empresa" de una sola vez.
+ */
+export function buildCompanyResult(
+  periods: PeriodRef[],
+  lines: IncomeLineRow[],
+  expenses: Array<ExpenseLike & { period_id: string }>,
+): CompanyResultReport {
+  const meta = new Map(
+    periods.map((p) => [
+      p.id,
+      { label: p.label || periodLabel(p.year, p.month), order: monthOrder(p.year, p.month) },
+    ]),
+  );
+
+  const inRange = lines.filter((l) => meta.has(l.period_id));
+  const clientLines: ClientLine[] = inRange.map((l) => {
+    const m = meta.get(l.period_id);
+    return {
+      concept: l.concept,
+      amount: Number(l.amount) || 0,
+      received: Number(l.received) || 0,
+      pending: Number(l.pending) || 0,
+      periodId: l.period_id,
+      periodLabel: m?.label ?? '—',
+      periodOrder: m?.order ?? 0,
+    };
+  });
+
+  const billing = buildBilling(buildClientCards(clientLines, (i) => inRange[i].client));
+  const expenseReport = buildExpenses(expenses.filter((e) => meta.has(e.period_id)));
+
+  return {
+    periods: periods.map((p) => ({ id: p.id, label: p.label || periodLabel(p.year, p.month) })),
+    billing,
+    expenses: expenseReport,
+    cashResult: round2(billing.collected - expenseReport.paid),
+  };
 }
 
 // ─── CSV ─────────────────────────────────────────────────────────────────

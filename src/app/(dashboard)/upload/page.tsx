@@ -1322,6 +1322,11 @@ export default function UploadPage() {
   // wiped on save. Today only fixed channels exist so the array is complete.
   const updateDeposit = (id: string, amount: number) => {
     if (!userCanAdd || !company) return;
+    // Mes cerrado: mismo criterio que el autosave. El trigger de la migración
+    // 061 rechaza la escritura igual; sin este corte el usuario veía un error
+    // crudo de la base. El botón además viene deshabilitado y el aviso fijo de
+    // arriba explica por qué (no hace falta un toast nuevo).
+    if (selectedPeriodIsClosed) return;
     if (savingDepositIds.has(id)) return; // already in flight for this row
     // Skip confirmation modal — the inline input onBlur/save is already a
     // deliberate action. Toast feedback + undo-via-re-edit is faster UX.
@@ -1388,6 +1393,7 @@ export default function UploadPage() {
   // Withdrawal handlers
   const updateWithdrawal = (id: string, amount: number) => {
     if (!userCanAdd || !company) return;
+    if (selectedPeriodIsClosed) return; // mes cerrado: mismo criterio que el autosave
     if (savingWithdrawalIds.has(id)) return;
     // Skip confirmation modal — the inline input commit (blur / enter) is
     // the deliberate action. Toast feedback gives the user a fast signal
@@ -1468,6 +1474,15 @@ export default function UploadPage() {
     opts: { toast: string; audit?: { action: 'create' | 'update' | 'delete'; details: string } },
   ) => {
     if (!company) return;
+    // Red de seguridad central de los egresos (alta, edición, marcar pagado,
+    // borrar, fijo, import): con el mes cerrado el trigger rechaza la
+    // escritura, así que se deshace el optimista y no se sale a la red. Los
+    // botones ya vienen deshabilitados y el aviso fijo de "período cerrado"
+    // explica el porqué en pantalla.
+    if (selectedPeriodIsClosed) {
+      setExpensesRaw(previousList);
+      return;
+    }
     markDirty('egresos');
     setSavingExpenses(true);
     try {
@@ -1563,6 +1578,7 @@ export default function UploadPage() {
 
   const addExpense = () => {
     if (!userCanAdd || !company || !newExpense.concept || !newExpense.amount) return;
+    if (selectedPeriodIsClosed) return; // mes cerrado: mismo criterio que el autosave
     const badExp = findInvalidAmount(newExpense.amount, newExpense.paid, newExpense.pending);
     if (badExp !== null) { showError(t('upload.invalidAmount', { value: badExp })); return; }
     const amt = parseAmount(newExpense.amount);
@@ -1611,6 +1627,7 @@ export default function UploadPage() {
 
   const saveEditExpense = () => {
     if (!editingExpenseId) return;
+    if (selectedPeriodIsClosed) return; // mes cerrado: mismo criterio que el autosave
     const badEditExp = findInvalidAmount(editExpense.amount, editExpense.paid, editExpense.pending);
     if (badEditExp !== null) { showError(t('upload.invalidAmount', { value: badEditExp })); return; }
     const amt = parseAmount(editExpense.amount);
@@ -1684,6 +1701,7 @@ export default function UploadPage() {
 
   const toggleExpenseFixed = (id: string) => {
     if (!userCanEdit) return;
+    if (selectedPeriodIsClosed) return; // mes cerrado: mismo criterio que el autosave
     const previous = expenses;
     const target = expenses.find(e => e.id === id);
     const next = expenses.map(e => e.id === id ? { ...e, is_fixed: !e.is_fixed } : e);
@@ -1699,6 +1717,7 @@ export default function UploadPage() {
   // tener que abrir la edición. Persiste por-acción (ahora server-side, rápido).
   const markExpensePaid = (id: string) => {
     if (!userCanEdit) return;
+    if (selectedPeriodIsClosed) return; // mes cerrado: mismo criterio que el autosave
     const target = expenses.find(e => e.id === id);
     if (!target || target.pending <= 0) return; // ya está pagado
     const previous = expenses;
@@ -1712,6 +1731,9 @@ export default function UploadPage() {
 
   const deleteExpense = (id: string) => {
     if (!userCanDelete) return;
+    // Se corta ANTES de abrir el diálogo de confirmación: pedir confirmación
+    // de algo que la base va a rechazar es peor que no ofrecer la acción.
+    if (selectedPeriodIsClosed) return;
     const exp = expenses.find(e => e.id === id);
     askConfirmation(t('expenses.deleteConfirm', { concept: exp?.concept ?? '' }), () => {
       const previous = expenses;
@@ -2148,7 +2170,7 @@ export default function UploadPage() {
                         type="number"
                         step="0.01"
                         value={d.amount || ''}
-                        disabled={savingDepositIds.has(d.id)}
+                        disabled={savingDepositIds.has(d.id) || selectedPeriodIsClosed}
                         onChange={(e) => setDeposits(prev => prev.map(dd => dd.id === d.id ? { ...dd, amount: parseFloat(e.target.value) || 0 } : dd))}
                         className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-progress"
                         placeholder="0.00"
@@ -2161,7 +2183,7 @@ export default function UploadPage() {
                     <td className="py-2.5 px-3 text-center">
                       <button
                         onClick={() => updateDeposit(d.id, d.amount)}
-                        disabled={savingDepositIds.has(d.id)}
+                        disabled={savingDepositIds.has(d.id) || selectedPeriodIsClosed}
                         className="p-2 sm:p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
                         title={savingDepositIds.has(d.id) ? t('common.saving') : t('common.save')}
                         aria-busy={savingDepositIds.has(d.id)}
@@ -2246,7 +2268,7 @@ export default function UploadPage() {
                             type="number"
                             step="0.01"
                             value={w.amount || ''}
-                            disabled={savingWithdrawalIds.has(w.id)}
+                            disabled={savingWithdrawalIds.has(w.id) || selectedPeriodIsClosed}
                             onChange={(e) => setWithdrawals(prev => prev.map(ww => ww.id === w.id ? { ...ww, amount: parseFloat(e.target.value) || 0 } : ww))}
                             className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-progress"
                             placeholder="0.00"
@@ -2269,7 +2291,7 @@ export default function UploadPage() {
                       <td className="py-2.5 px-3 text-center">
                         <button
                           onClick={() => updateWithdrawal(w.id, w.amount)}
-                          disabled={savingWithdrawalIds.has(w.id)}
+                          disabled={savingWithdrawalIds.has(w.id) || selectedPeriodIsClosed}
                           className="p-2 sm:p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
                           title={savingWithdrawalIds.has(w.id) ? t('common.saving') : t('common.save')}
                           aria-busy={savingWithdrawalIds.has(w.id)}
@@ -2567,7 +2589,7 @@ export default function UploadPage() {
                       <td></td>
                       <td className="py-2.5 px-3 text-center">
                         <div className="flex justify-center gap-1">
-                          <button onClick={saveEditExpense} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
+                          <button onClick={saveEditExpense} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
                           <button onClick={() => setEditingExpenseId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
                         </div>
                       </td>
@@ -2622,13 +2644,13 @@ export default function UploadPage() {
                         <td className="py-2.5 px-3 text-center">
                           <div className="flex justify-center gap-1">
                             {userCanEdit && exp.pending > 0 && (
-                              <button onClick={() => markExpensePaid(exp.id)} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" title={t('upload.markPaid')} aria-label={t('upload.markPaidAria', { concept: exp.concept })}><Check className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => markExpensePaid(exp.id)} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" title={t('upload.markPaid')} aria-label={t('upload.markPaidAria', { concept: exp.concept })}><Check className="w-3.5 h-3.5" /></button>
                             )}
                             {userCanEdit && (
-                              <button onClick={() => startEditExpense(exp)} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => startEditExpense(exp)} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
                             )}
                             {userCanDelete && (
-                              <button onClick={() => deleteExpense(exp.id)} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
+                              <button onClick={() => deleteExpense(exp.id)} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
                             )}
                           </div>
                         </td>
@@ -2771,7 +2793,7 @@ export default function UploadPage() {
                 />
                 <button
                   onClick={addExpense}
-                  disabled={!newExpense.concept || !newExpense.amount || savingExpenses}
+                  disabled={!newExpense.concept || !newExpense.amount || savingExpenses || selectedPeriodIsClosed}
                   className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
                 >
                   {savingExpenses ? t('common.saving') : t('common.add')}

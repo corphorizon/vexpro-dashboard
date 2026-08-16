@@ -45,7 +45,7 @@ function parseNumOrZero(v: unknown): number {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: HR_ROLES });
+    const auth = await verifyAdminAuth(request, { roles: HR_ROLES, modules: ['ib_rebates'] });
     if (auth instanceof NextResponse) return auth;
 
     const formData = await request.formData();

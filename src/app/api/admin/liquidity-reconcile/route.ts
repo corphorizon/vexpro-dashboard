@@ -28,7 +28,7 @@ import { serverAuditLog } from '@/lib/server-audit';
 const CENT = 0.01;
 
 async function guard(request: NextRequest) {
-  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES });
+  const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['liquidity'] });
   if (auth instanceof NextResponse) return auth;
   if (auth.role === 'hr') {
     return NextResponse.json(
