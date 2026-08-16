@@ -31,7 +31,12 @@ export interface BuiltinChannel {
 export const BUILTIN_CHANNELS: BuiltinChannel[] = [
   { key: 'coinsbuy',       defaultLabel: 'Coinsbuy',                   type: 'auto',   description: 'Wallets pinneadas — balance en tiempo real desde la API', isBuiltin: true },
   { key: 'unipayment',     defaultLabel: 'UniPayment',                 type: 'auto',   description: 'My Wallet — balance en tiempo real desde la API',         isBuiltin: true },
-  { key: 'fairpay',        defaultLabel: 'FairPay',                    type: 'manual', description: 'Ingreso manual',                                           isBuiltin: true },
+  // FairPay es mixto, como Pay-Pros: los depósitos entran por el portal de
+  // cobros (portal.fairpay.online, getTransactionList) y el SALDO lo trae el
+  // cron del portal banking (banking.fairpay.online, GET /api/v1/accounts —
+  // ver src/lib/api-integrations/fairpay/balances.ts). Dejó de ser 'manual'
+  // el 2026-08-17, cuando el balance real empezó a llegar por API.
+  { key: 'fairpay',        defaultLabel: 'FairPay',                    type: 'auto',   description: 'Balance por API (FairPay Banking) — depósitos por el portal de cobros', isBuiltin: true },
   // Pay-Pros es mixto: los depósitos/retiros entran solos vía
   // /api/webhooks/paypros/[token] (modelo push) y el saldo lo trae el cron
   // desde GET v2/getBalance (src/lib/api-integrations/paypros/balance.ts).

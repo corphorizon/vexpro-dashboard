@@ -1,169 +1,300 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// FairPay — Balance fetcher (per-tenant)
+// FairPay — Balance de la cuenta (por tenant)
 //
-// Kevin (2026-06-06): el cron daily-balance-snapshot necesita un balance
-// diario para FairPay además de Coinsbuy/UniPayment. La documentación
-// pública de FairPay no expone un endpoint de balance estandarizado
-// (a diferencia de UniPayment que tiene /v1.0/wallet/balance), así que
-// esta implementación es defensiva:
+// HISTORIA (importa para no volver a caer): hasta 2026-08-17 este archivo
+// pegaba a POST portal.fairpay.online/api/v1/getBalance, un endpoint ADIVINADO
+// a partir del naming de FairPay (getTransactionList, getTransaction…). Nunca
+// existió: devolvía 404 todos los días y el cron guardaba el error. El balance
+// no vive en el portal de cobros.
 //
-//   1. Intenta POST /api/v1/getBalance (mejor adivinanza basada en su
-//      patrón de naming — getTransactionList, getTransaction, etc.).
-//   2. Si la API responde con balance estructurado, lo devuelve.
-//   3. Si responde 404 / 401 / shape no esperada → devuelve
-//      `{ balances: [], error: 'FairPay no expone balance público...' }`
-//      sin throw. El cron ya captura el `error` y lo guarda en `entry.fairpay_error`
-//      para revisión humana sin romper el resto del snapshot.
+// FairPay tiene DOS sistemas separados:
+//   · portal.fairpay.online  → cobros/depósitos (ver ./transactions.ts).
+//   · banking.fairpay.online → cuentas bancarias, y ACÁ está el balance.
+// Credenciales distintas: provider 'fairpay' vs 'fairpay_banking'.
 //
-// Cuando FairPay confirme el endpoint oficial o expongan documentación,
-// reemplazar `BALANCE_ENDPOINT` por el correcto y ajustar el parser.
+// Endpoint verificado contra producción (2026-08-17, credencial real):
+//
+//   GET {baseUrl}/api/v1/accounts     con Authorization: Bearer <JWT>
+//   → [
+//       {"id":26716,"account_number":"FP20227712","account_type":"Corporate Account",
+//        "currency":"USD","balance":"0.00","status":1,"opening_balance":"0.00", …},
+//       …
+//     ]
+//
+// Dos detalles del proveedor:
+//   · `balance` viene como STRING ("0.00"), no como número.
+//   · El tenant puede tener VARIAS cuentas (Vex Pro tiene 4: Personal EUR,
+//     Personal USD, Corporate EUR, Corporate USD).
+//
+// POR QUÉ DEVOLVEMOS UNA SOLA CUENTA EN `balances`
+// ------------------------------------------------
+// El cron (src/app/api/cron/daily-balance-snapshot/route.ts) SUMA todas las
+// entradas de `balances` en un único total y lo asienta como el saldo del
+// canal 'fairpay'. Si devolviéramos las 4 cuentas, sumaría euros con dólares
+// y asentaría un número que no existe. Por eso `balances` trae SOLO la cuenta
+// elegida, y el resto viaja en `otherAccounts`, que es informativo y nadie
+// suma.
+//
+// ORDEN DE SELECCIÓN DE CUENTA (documentado a propósito):
+//   1. Cuenta CORPORATE en la moneda de la empresa (companies.currency,
+//      default 'USD') — es la cuenta operativa del negocio.
+//   2. Si no hay, la PRIMERA cuenta Corporate en cualquier moneda.
+//   3. Si no hay ninguna Corporate, la primera cuenta en la moneda de la
+//      empresa.
+//   4. Si nada de lo anterior aplica → error explícito con el crudo. NO se
+//      cae a "la primera cuenta que haya": elegir a ciegas entre cuentas de
+//      distinta moneda/titularidad es exactamente cómo se asienta plata
+//      inventada en el libro.
+//
+// Mismo criterio que Pay-Pros: ante un shape desconocido devolvemos error con
+// el JSON crudo truncado, nunca un número inventado.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { getFairpayToken, getFairpayBaseUrl, isFairpayEnabled } from './auth';
+import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  getFairpayBankingToken,
+  getFairpayBankingBaseUrl,
+  isFairpayBankingEnabled,
+  fairpayBankingHeaders,
+} from './banking-auth';
 
-const BALANCE_ENDPOINT = '/api/v1/getBalance';
+const LOG = '[fairpay-banking]';
+
+/** El cron no puede colgarse por un proveedor. */
+const TIMEOUT_MS = 12_000;
+
+const ACCOUNTS_ENDPOINT = '/api/v1/accounts';
+
+/** Cómo llama FairPay a la cuenta corporativa (comparación case-insensitive). */
+const CORPORATE_MARKER = 'corporate';
 
 export interface FairpayBalanceEntry {
   currency: string;
   availableBalance: number;
   rawCurrencyAmount?: number;
+  /** Nº de cuenta del banking (ej. 'FP20227712'). Informativo. */
+  accountNumber?: string;
+  /** 'Corporate Account' | 'Personal Account' | lo que devuelva FairPay. */
+  accountType?: string;
 }
 
 export interface FairpayBalanceResult {
+  /**
+   * SOLO la cuenta elegida. El cron suma este array: más de una entrada
+   * mezclaría monedas. Ver "ORDEN DE SELECCIÓN" arriba.
+   */
   balances: FairpayBalanceEntry[];
   error?: string;
-  /** True when the credentials are configured but the endpoint returned
-   * an unexpected response (404, malformed payload, etc.). Lets the cron
-   * distinguish "not configured" from "configured but FairPay didn't
-   * cooperate" for better alerting. */
+  /**
+   * Legado del endpoint adivinado (ya borrado). El cron todavía lo mira para
+   * mandar un aviso a Sentry; hoy NUNCA se setea porque el endpoint real
+   * existe y está verificado. Se deja para no romper su tipado.
+   */
   endpointMissing?: boolean;
   /** No hay credenciales para este tenant: no es una falla que valga avisar. */
   notConfigured?: boolean;
+  /**
+   * Las demás cuentas del tenant (otras monedas / personales). Informativo:
+   * nadie las suma ni las asienta.
+   */
+  otherAccounts?: FairpayBalanceEntry[];
 }
 
-// FairPay's docs show responses shaped like `{ status, code, data: { ... } }`,
-// where `data` may be either a scalar, an object, or an array depending on
-// the endpoint. The parser below is tolerant: it accepts any of:
-//   { data: { available_balance: 123, currency: 'USD' } }
-//   { data: [{ currency: 'USD', available_balance: 123 }, ...] }
-//   { data: { wallets: [...] } }
-// and returns an empty list when nothing recognizable is found.
-interface RawBalanceResponse {
-  status?: boolean;
-  code?: number;
-  data?: unknown;
-  message?: string;
+// ── Helpers ────────────────────────────────────────────────────────────────
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** El banking manda los importes como string ("0.00"). Tolera número también. */
+function toNumber(value: unknown): number | null {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const n = Number(trimmed);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
-function parseBalances(json: RawBalanceResponse): FairpayBalanceEntry[] {
-  const entries: FairpayBalanceEntry[] = [];
-  if (!json || json.status === false || !json.data) return entries;
+/** Recorta el crudo para que quepa en un mensaje de error / notificación. */
+function truncateRaw(value: unknown, max = 500): string {
+  let text: string;
+  try {
+    text = typeof value === 'string' ? value : JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  if (!text) return '';
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
 
-  const pushEntry = (raw: Record<string, unknown>) => {
-    const currency = typeof raw.currency === 'string' ? raw.currency.toUpperCase() : 'USD';
-    const candidate =
-      (typeof raw.available_balance === 'number' && raw.available_balance) ||
-      (typeof raw.availableBalance === 'number' && raw.availableBalance) ||
-      (typeof raw.balance === 'number' && raw.balance) ||
-      (typeof raw.amount === 'number' && raw.amount);
-    if (typeof candidate === 'number' && Number.isFinite(candidate)) {
-      entries.push({ currency, availableBalance: candidate });
-    }
+/**
+ * Normaliza una fila de /api/v1/accounts. Devuelve null si no tiene un
+ * balance numérico usable: una cuenta sin importe reconocible no puede
+ * asentar nada.
+ */
+export function parseFairpayAccount(raw: unknown): FairpayBalanceEntry | null {
+  if (!isRecord(raw)) return null;
+  const balance = toNumber(raw.balance);
+  if (balance === null) return null;
+  const currency =
+    typeof raw.currency === 'string' && raw.currency.trim()
+      ? raw.currency.trim().toUpperCase()
+      : 'USD';
+  return {
+    currency,
+    availableBalance: balance,
+    accountNumber: typeof raw.account_number === 'string' ? raw.account_number : undefined,
+    accountType: typeof raw.account_type === 'string' ? raw.account_type : undefined,
   };
-
-  const visit = (value: unknown) => {
-    if (Array.isArray(value)) {
-      for (const v of value) visit(v);
-      return;
-    }
-    if (value && typeof value === 'object') {
-      const obj = value as Record<string, unknown>;
-      pushEntry(obj);
-      // Common nested keys we might encounter once the API is known.
-      for (const key of ['wallets', 'balances', 'accounts']) {
-        if (key in obj) visit(obj[key]);
-      }
-    }
-  };
-  visit(json.data);
-  return entries;
 }
+
+/**
+ * Extrae la lista de cuentas tolerando array directo (lo que devuelve prod)
+ * o envuelto en {data:[…]} (por si algún día lo cambian, como el portal de
+ * cobros). Devuelve null cuando no hay lista reconocible.
+ */
+export function extractAccountList(json: unknown): unknown[] | null {
+  if (Array.isArray(json)) return json;
+  if (isRecord(json) && Array.isArray(json.data)) return json.data;
+  return null;
+}
+
+const isCorporate = (e: FairpayBalanceEntry) =>
+  (e.accountType ?? '').toLowerCase().includes(CORPORATE_MARKER);
+
+/**
+ * Elige la cuenta a asentar. Ver "ORDEN DE SELECCIÓN DE CUENTA" en la cabecera
+ * del archivo — el orden es parte del contrato, no un detalle interno.
+ */
+export function selectFairpayAccount(
+  accounts: FairpayBalanceEntry[],
+  companyCurrency: string,
+): FairpayBalanceEntry | null {
+  const cur = companyCurrency.toUpperCase();
+  return (
+    accounts.find((a) => isCorporate(a) && a.currency === cur) ??
+    accounts.find(isCorporate) ??
+    accounts.find((a) => a.currency === cur) ??
+    null
+  );
+}
+
+/**
+ * Moneda de la empresa (companies.currency). Se lee con el admin client
+ * porque el cron corre sin sesión de usuario. Cualquier problema → 'USD',
+ * que es el default de la columna en la DB.
+ */
+async function getCompanyCurrency(companyId: string): Promise<string> {
+  try {
+    const admin = createAdminClient();
+    const { data, error } = await admin
+      .from('companies')
+      .select('currency')
+      .eq('id', companyId)
+      .maybeSingle<{ currency: string | null }>();
+    if (error || !data?.currency) return 'USD';
+    return data.currency.trim().toUpperCase() || 'USD';
+  } catch {
+    return 'USD';
+  }
+}
+
+// ── Fetch principal ────────────────────────────────────────────────────────
 
 export async function fetchFairpayBalances(
   companyId?: string | null,
 ): Promise<FairpayBalanceResult> {
-  if (!(await isFairpayEnabled(companyId))) {
+  // Sin credencial no se llama a nada. El cron distingue este caso con
+  // `notConfigured` y NO lo cuenta como falla (route.ts: `if (!fp.notConfigured)`).
+  if (!(await isFairpayBankingEnabled(companyId))) {
     return {
       balances: [],
-      error: 'FairPay no está configurado para esta empresa',
+      error: 'FairPay Banking no está configurado para esta empresa',
       notConfigured: true,
     };
   }
 
   try {
-    const baseUrl = await getFairpayBaseUrl(companyId);
-    const token = await getFairpayToken(companyId);
+    const baseUrl = await getFairpayBankingBaseUrl(companyId);
+    const token = await getFairpayBankingToken(companyId);
 
-    const response = await fetch(`${baseUrl}${BALANCE_ENDPOINT}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: 'application/json',
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      // FairPay's spec uses empty form bodies for "list" calls; we mirror
-      // that so the request looks identical to known-working ones.
-      body: '',
-      signal: AbortSignal.timeout(15_000),
+    const response = await fetch(`${baseUrl}${ACCOUNTS_ENDPOINT}`, {
+      method: 'GET',
+      // El User-Agent de navegador va en fairpayBankingHeaders: sin él el
+      // banking corta con 403 antes de llegar a la aplicación.
+      headers: fairpayBankingHeaders(token),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
     });
 
-    if (response.status === 404) {
-      return {
-        balances: [],
-        endpointMissing: true,
-        error: `FairPay no expone ${BALANCE_ENDPOINT} (404). Si FairPay publicó otro endpoint para balance, actualizar BALANCE_ENDPOINT en src/lib/api-integrations/fairpay/balances.ts. Mientras tanto, captura el saldo manualmente en /balances.`,
-      };
-    }
+    const text = await response.text().catch(() => '');
 
     if (!response.ok) {
-      const body = await response.text().catch(() => '');
+      console.warn(`${LOG} accounts no-OK`, { companyId, status: response.status });
       return {
         balances: [],
-        error: `FairPay /getBalance → ${response.status} ${response.statusText}: ${body.slice(0, 200)}`,
+        error: `FairPay Banking ${ACCOUNTS_ENDPOINT} → ${response.status} ${response.statusText}: ${truncateRaw(text, 200)}`,
       };
     }
 
-    let json: RawBalanceResponse;
+    let json: unknown;
     try {
-      json = (await response.json()) as RawBalanceResponse;
-    } catch (err) {
+      json = JSON.parse(text);
+    } catch {
       return {
         balances: [],
-        error: `FairPay /getBalance: respuesta no es JSON (${err instanceof Error ? err.message : 'parse error'})`,
+        error: `FairPay Banking ${ACCOUNTS_ENDPOINT}: la respuesta no es JSON. Crudo: ${truncateRaw(text)}`,
       };
     }
 
-    if (json.status === false) {
-      return {
-        balances: [],
-        error: `FairPay /getBalance: ${json.message ?? 'status=false'}`,
-      };
-    }
-
-    const balances = parseBalances(json);
-    if (balances.length === 0) {
+    const list = extractAccountList(json);
+    if (!list) {
+      console.warn(`${LOG} shape desconocido`, { companyId, raw: truncateRaw(json, 200) });
       return {
         balances: [],
         error:
-          'FairPay respondió OK pero el shape no contiene balance reconocible. Capturar el response real y actualizar parseBalances() en src/lib/api-integrations/fairpay/balances.ts.',
+          `FairPay Banking ${ACCOUNTS_ENDPOINT} respondió OK pero no trae una lista de cuentas reconocible. ` +
+          `Actualizar extractAccountList() en src/lib/api-integrations/fairpay/balances.ts. Crudo: ${truncateRaw(json)}`,
       };
     }
 
-    return { balances };
-  } catch (err) {
+    const accounts = list
+      .map(parseFairpayAccount)
+      .filter((a): a is FairpayBalanceEntry => a !== null);
+
+    if (accounts.length === 0) {
+      console.warn(`${LOG} sin cuentas parseables`, { companyId, raw: truncateRaw(json, 200) });
+      return {
+        balances: [],
+        error:
+          `FairPay Banking ${ACCOUNTS_ENDPOINT} respondió OK pero ninguna cuenta trae un balance numérico. ` +
+          `Crudo: ${truncateRaw(json)}`,
+      };
+    }
+
+    const currency = companyId ? await getCompanyCurrency(companyId) : 'USD';
+    const chosen = selectFairpayAccount(accounts, currency);
+
+    if (!chosen) {
+      // Hay cuentas pero ninguna califica (ni Corporate, ni en la moneda de
+      // la empresa). Preferimos avisar antes que elegir una al azar.
+      return {
+        balances: [],
+        error:
+          `FairPay Banking: ninguna cuenta califica para asentar (moneda de la empresa: ${currency}; ` +
+          `cuentas: ${accounts.map((a) => `${a.accountNumber ?? '?'}/${a.accountType ?? '?'}/${a.currency}`).join(', ')}).`,
+        otherAccounts: accounts,
+      };
+    }
+
     return {
-      balances: [],
-      error: err instanceof Error ? err.message : 'Unknown error fetching FairPay balance',
+      balances: [chosen],
+      otherAccounts: accounts.filter((a) => a !== chosen),
     };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Error desconocido consultando FairPay Banking';
+    console.error(`${LOG} fallo consultando balance`, { companyId, error: msg });
+    return { balances: [], error: msg };
   }
 }
