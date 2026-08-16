@@ -25,13 +25,20 @@ export interface BuiltinChannel {
   isBuiltin: true;
 }
 
-// Hardcoded 7 built-ins — these match the original CHANNELS array in
+// Hardcoded built-ins — these match the original CHANNELS array in
 // src/app/(dashboard)/balances/page.tsx. Keep the keys stable: they're used
 // as the primary key in channel_balances + channel_configs.
 export const BUILTIN_CHANNELS: BuiltinChannel[] = [
   { key: 'coinsbuy',       defaultLabel: 'Coinsbuy',                   type: 'auto',   description: 'Wallets pinneadas — balance en tiempo real desde la API', isBuiltin: true },
   { key: 'unipayment',     defaultLabel: 'UniPayment',                 type: 'auto',   description: 'My Wallet — balance en tiempo real desde la API',         isBuiltin: true },
   { key: 'fairpay',        defaultLabel: 'FairPay',                    type: 'manual', description: 'Ingreso manual',                                           isBuiltin: true },
+  // Pay-Pros arranca como 'manual'. Los depósitos/retiros entran solos vía
+  // /api/webhooks/paypros/[token] (modelo push). El balance SÍ existe por API
+  // (GET /v2/getBalance) pero Pay-Pros exige IP whitelisteada para las llamadas
+  // salientes y Vercel no tiene IP fija — hasta resolver eso (IP estática o
+  // proxy vía CRM, que ya está autorizado) el saldo se carga a mano. Cuando
+  // se habilite la llamada, pasa a 'auto' + fetcher de balance en paypros/.
+  { key: 'paypros',        defaultLabel: 'Pay-Pros',                   type: 'manual', description: 'Ingreso manual (balance por API pendiente de IP whitelist)', isBuiltin: true },
   { key: 'wallet_externa', defaultLabel: 'Wallet Externa',             type: 'manual', description: 'Ingreso manual',                                           isBuiltin: true },
   { key: 'otros',          defaultLabel: 'Otros',                      type: 'manual', description: 'Ingreso manual',                                           isBuiltin: true },
   { key: 'inversiones',    defaultLabel: 'Balance Actual Inversiones', type: 'auto',   description: 'Automático desde módulo Inversiones',                      isBuiltin: true },
@@ -85,7 +92,7 @@ export interface ResolvedChannel {
 }
 
 /**
- * Merge the 7 built-ins with whatever's in channel_configs for this company.
+ * Merge the built-ins with whatever's in channel_configs for this company.
  * Built-ins missing a DB row default to `{is_visible: true, custom_label: null}`.
  * Custom channels (channel_key not in BUILTIN_KEYS) come straight from DB.
  *

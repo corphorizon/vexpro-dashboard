@@ -299,7 +299,23 @@ export async function loadPersistedTotals(
     unipayment: ['Completed'],
   };
 
+  // Pay-Pros entra por webhook (modelo push) y NO pasa por ProviderDataset ni
+  // tiene slug propio en `by` todavía: sus filas viven en api_transactions
+  // con provider='paypros' y un status que ya distingue depósito de retiro
+  // ('paid' = cash/bank cobrado, 'payout_paid' = payout ejecutado). Se suman
+  // aparte a los totales de depósitos/retiros para que Net Deposit las vea
+  // desde el primer aviso; el desglose por pantalla llega en la tanda de UI
+  // (ampliar ProviderSlug arrastra 7 Records exhaustivos).
+  let payprosDeposits = 0;
+  let payprosPayouts = 0;
+
   for (const row of data) {
+    if (row.provider === 'paypros') {
+      const amt = Number(row.amount) || 0;
+      if (row.status === 'paid') payprosDeposits += amt;
+      else if (row.status === 'payout_paid') payprosPayouts += amt;
+      continue;
+    }
     const slug = row.provider as ProviderSlug;
     if (!(slug in by)) continue;
     const accepted = ACCEPTED[slug];
@@ -321,8 +337,8 @@ export async function loadPersistedTotals(
 
   return {
     by,
-    depositsTotal: by['coinsbuy-deposits'] + by.fairpay + by.unipayment,
-    withdrawalsTotal: by['coinsbuy-withdrawals'],
+    depositsTotal: by['coinsbuy-deposits'] + by.fairpay + by.unipayment + payprosDeposits,
+    withdrawalsTotal: by['coinsbuy-withdrawals'] + payprosPayouts,
     lastSyncedAt: syncRows?.[0]?.last_synced_at ?? null,
   };
 }

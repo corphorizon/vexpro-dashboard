@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { Card } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle } from 'lucide-react';
+import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle, Copy } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -22,12 +22,19 @@ import { createClient } from '@/lib/supabase/client';
 //   · fairpay     → encrypted_secret = raw api_key
 //   · sendgrid    → encrypted_secret = raw api_key, extras: from_email/from_name
 //   · orion_crm   → encrypted_secret = raw api_key, extras: base_url
+//   · paypros     → encrypted_secret = JSON({ merchant_id, api_key, sign_key })
+//                   extras: base_url + webhook_token (el token lo genera el
+//                   servidor una sola vez; la URL del webhook llega armada
+//                   en el GET como `webhook_url`)
 //
 // When `companyId` is passed, requests append `?company_id=<id>` so the API
 // route knows which tenant to operate on (see /api/admin/api-credentials).
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Provider = 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm';
+type Provider = 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm' | 'paypros';
+
+/** URL de producción de Pay-Pros (prefill del campo Base URL). */
+const PAYPROS_DEFAULT_BASE_URL = 'https://master-api.pay-pros.com/';
 
 interface ApiCredential {
   provider: Provider;
@@ -35,6 +42,8 @@ interface ApiCredential {
   extra_config: Record<string, unknown> | null;
   is_configured: boolean;
   updated_at: string;
+  /** Solo paypros: URL completa a registrar en Pay-Pros (la arma el GET). */
+  webhook_url?: string | null;
 }
 
 // What each provider's form looks like. Rather than a generic
@@ -44,7 +53,8 @@ interface ApiCredential {
 type FormKind =
   | { kind: 'compound' }   // coinsbuy, unipayment → client_id + client_secret (secret = JSON of both)
   | { kind: 'apiKey' }     // fairpay → raw api_key
-  | { kind: 'keyExtras' }; // sendgrid, orion_crm → api_key + extra_config fields
+  | { kind: 'keyExtras' }  // sendgrid, orion_crm → api_key + extra_config fields
+  | { kind: 'paypros' };   // paypros → merchant_id + api_key + sign_key (secret = JSON) + base_url
 
 interface ProviderMeta {
   label: string;
@@ -93,6 +103,12 @@ const PROVIDER_META: Record<Provider, ProviderMeta> = {
     form: { kind: 'apiKey' },
     supportsFeePct: true,
   },
+  paypros: {
+    label: 'Pay-Pros',
+    description:
+      'Pasarela de pagos. Necesita Merchant ID, API Key y Sign Key, y que la URL del webhook quede registrada del lado de Pay-Pros.',
+    form: { kind: 'paypros' },
+  },
   orion_crm: {
     label: 'Orion CRM',
     description: 'CRM del broker — usuarios registrados, Broker P&L, ventas Prop Firm.',
@@ -111,6 +127,7 @@ const PROVIDER_ORDER: Provider[] = [
   'coinsbuy',
   'unipayment',
   'fairpay',
+  'paypros',
   'orion_crm',
 ];
 
@@ -386,6 +403,7 @@ function ConfiguredView({
   const secretLabel = (() => {
     switch (meta.form.kind) {
       case 'compound': return 'Client Secret';
+      case 'paypros': return 'API Key';
       case 'apiKey':
       case 'keyExtras':
         return provider === 'sendgrid' || provider === 'orion_crm' || provider === 'fairpay'
@@ -394,12 +412,24 @@ function ConfiguredView({
     }
   })();
 
+  // El webhook_token ya viaja dentro de webhook_url; listarlo otra vez en el
+  // volcado genérico de extra_config sólo agrega ruido.
+  const extraEntries = Object.entries(cred.extra_config ?? {}).filter(
+    ([k]) => !(provider === 'paypros' && k === 'webhook_token'),
+  );
+
   return (
     <>
       <div className="flex items-center gap-2 text-sm">
         <span className="text-muted-foreground">{secretLabel}:</span>
         <code className="px-2 py-0.5 rounded bg-muted font-mono">••••••••{cred.last_four}</code>
       </div>
+
+      {/* Pay-Pros: la URL que hay que darle a Pay-Pros para las notificaciones
+          entrantes. El token la hace única por empresa. */}
+      {provider === 'paypros' && cred.webhook_url && (
+        <WebhookUrlBlock url={cred.webhook_url} />
+      )}
 
       {/* Coinsbuy: show wallet_id read from companies.default_wallet_id. */}
       {meta.editsCompanyWallet && walletId && (
@@ -410,9 +440,9 @@ function ConfiguredView({
       )}
 
       {/* Generic extra_config (sendgrid from_email/from_name, orion_crm base_url). */}
-      {cred.extra_config && Object.keys(cred.extra_config).length > 0 && (
+      {extraEntries.length > 0 && (
         <div className="text-xs text-muted-foreground space-y-0.5">
-          {Object.entries(cred.extra_config).map(([k, v]) => (
+          {extraEntries.map(([k, v]) => (
             <div key={k}>
               <span className="font-medium">{k}:</span> {String(v ?? '')}
             </div>
@@ -420,6 +450,51 @@ function ConfiguredView({
         </div>
       )}
     </>
+  );
+}
+
+// ─── Webhook URL (Pay-Pros) ───────────────────────────────────────────────────
+//
+// Pay-Pros no manda el merchant en el cuerpo de la notificación, así que la
+// empresa se identifica por el token que va en la URL. Esta es LA url que
+// Kevin tiene que registrar en el panel de Pay-Pros.
+
+function WebhookUrlBlock({ url }: { url: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard bloqueado (contexto no seguro): la URL igual está visible
+      // y se puede seleccionar a mano.
+    }
+  };
+
+  return (
+    <div className="space-y-1">
+      <span className="text-sm text-muted-foreground">Webhook URL:</span>
+      <div className="flex items-start gap-2">
+        <code className="flex-1 px-2 py-1 rounded bg-muted font-mono text-xs break-all">
+          {url}
+        </code>
+        <button
+          type="button"
+          onClick={handleCopy}
+          className="px-2 py-1 rounded-lg border border-border text-xs hover:bg-muted inline-flex items-center gap-1.5 shrink-0"
+        >
+          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          {copied ? 'Copiada' : 'Copiar'}
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Esta es la URL que hay que registrar en Pay-Pros para recibir las notificaciones
+        de pago. Es única por empresa: no la compartas entre tenants ni la cambies sin
+        actualizarla también del lado de Pay-Pros.
+      </p>
+    </div>
   );
 }
 
@@ -452,6 +527,14 @@ function ApiCredentialForm({
   const [clientId, setClientId] = useState('');
   const [clientSecret, setClientSecret] = useState('');
   const [apiKey, setApiKey] = useState('');
+  // Pay-Pros: tres secretos + base_url (extra_config, prefilled con prod).
+  const [merchantId, setMerchantId] = useState('');
+  const [signKey, setSignKey] = useState('');
+  const [payprosBaseUrl, setPayprosBaseUrl] = useState<string>(() =>
+    typeof existingExtras.base_url === 'string' && existingExtras.base_url.trim() !== ''
+      ? existingExtras.base_url
+      : PAYPROS_DEFAULT_BASE_URL,
+  );
   const [walletInput, setWalletInput] = useState(currentWalletId ?? '');
   // Comisión del proveedor (%) — solo fairpay/unipayment (supportsFeePct).
   // Se guarda en extra_config.fee_pct; vacío = sin comisión configurada.
@@ -484,6 +567,24 @@ function ApiCredentialForm({
         client_id: clientId.trim(),
         client_secret: clientSecret,
       });
+    } else if (meta.form.kind === 'paypros') {
+      const base = payprosBaseUrl.trim();
+      if (!merchantId.trim() || !apiKey.trim() || !signKey.trim()) {
+        setError('Ingresá Merchant ID, API Key y Sign Key.');
+        return;
+      }
+      if (!base.startsWith('https://') || !base.endsWith('/')) {
+        setError('La Base URL debe empezar con https:// y terminar en /.');
+        return;
+      }
+      // Los tres secretos viajan como un único JSON cifrado (mismo patrón
+      // que coinsbuy). webhook_token lo genera/conserva el servidor.
+      secret = JSON.stringify({
+        merchant_id: merchantId.trim(),
+        api_key: apiKey.trim(),
+        sign_key: signKey.trim(),
+      });
+      extra_config = { ...existingExtras, base_url: base };
     } else if (meta.form.kind === 'apiKey') {
       if (apiKey.length < 8) {
         setError('La API key debe tener al menos 8 caracteres.');
@@ -624,6 +725,80 @@ function ApiCredentialForm({
               </p>
             </div>
           )}
+        </>
+      )}
+
+      {/* Pay-Pros: merchant_id + api_key + sign_key (un solo secreto JSON) + base_url */}
+      {meta.form.kind === 'paypros' && (
+        <>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Merchant ID</label>
+            <input
+              type="text"
+              value={merchantId}
+              onChange={(e) => setMerchantId(e.target.value)}
+              placeholder="Pega aquí el Merchant ID de Pay-Pros."
+              required
+              autoComplete="off"
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">API Key</label>
+            <div className="relative">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Pega aquí la API Key. Se guardará encriptada."
+                required
+                autoComplete="new-password"
+                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
+              >
+                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Sign Key</label>
+            <input
+              type={showSecret ? 'text' : 'password'}
+              value={signKey}
+              onChange={(e) => setSignKey(e.target.value)}
+              placeholder="Pega aquí la Sign Key. Se guardará encriptada."
+              required
+              autoComplete="new-password"
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Por seguridad ni la API Key ni la Sign Key se muestran después de guardar.
+              Si cambiás una, pegá las tres completas.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Base URL</label>
+            <input
+              type="text"
+              value={payprosBaseUrl}
+              onChange={(e) => setPayprosBaseUrl(e.target.value)}
+              placeholder={PAYPROS_DEFAULT_BASE_URL}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Producción por defecto. Cambiala solo para apuntar al entorno de pruebas de
+              Pay-Pros. Debe empezar con https:// y terminar en /.
+            </p>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Al guardar se genera la Webhook URL de esta empresa (aparece en la tarjeta y hay
+            que registrarla en Pay-Pros). No cambia en guardados posteriores.
+          </p>
         </>
       )}
 
