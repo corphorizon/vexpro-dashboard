@@ -40,11 +40,14 @@ import {
   LOCATION_TYPES,
   LOCATION_TYPE_LABELS,
   primaryUnitId,
+  validateOnchainWallets,
   type BusinessUnit,
   type LocationType,
+  type OnchainWallet,
   type UnitShare,
 } from '@/lib/cash-locations';
 import { UnitSharesEditor } from './unit-shares-editor';
+import { OnchainWalletsEditor } from './onchain-wallets-editor';
 
 interface Props {
   open: boolean;
@@ -74,6 +77,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
   const [newType, setNewType] = useState<LocationType>(DEFAULT_LOCATION_TYPE);
   const [newHolder, setNewHolder] = useState('');
   const [newShares, setNewShares] = useState<UnitShare[]>([]);
+  const [newOnchain, setNewOnchain] = useState<OnchainWallet[]>([]);
   const [creating, setCreating] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null);
 
@@ -96,6 +100,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
     setNewType(DEFAULT_LOCATION_TYPE);
     setNewHolder('');
     setNewShares([]);
+    setNewOnchain([]);
     setLoading(true);
     loadUnits();
     (async () => {
@@ -170,6 +175,15 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
       setStatus({ kind: 'err', msg: t('balances.cfgNameRequired') });
       return;
     }
+    // Las direcciones se validan ANTES de crear nada: si una está mal, el alta
+    // fallaría del lado del servidor dejando el nombre y el saldo cargados a
+    // medias. Se usa la misma función que corre allá, así el mensaje es uno solo.
+    const onchain = validateOnchainWallets(newOnchain.filter((w) => w.address.trim()));
+    if (onchain.error) {
+      setStatus({ kind: 'err', msg: onchain.error });
+      return;
+    }
+
     setCreating(true);
     setStatus(null);
     try {
@@ -189,6 +203,9 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
           // del 30% solo porque era la fila cargada primero — para eso existe
           // primaryUnitId (auditoría 2026-08, A5).
           business_unit_id: primaryUnitId(newShares),
+          // Solo tiene sentido en una wallet: un banco o un préstamo no tienen
+          // dirección en una blockchain, y el bloque ni siquiera se muestra.
+          onchain_wallets: newType === 'wallet' ? onchain.wallets : [],
         }),
       });
       const json = (await res.json()) as { success: boolean; error?: string; channel_key?: string };
@@ -209,6 +226,7 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
       setNewType(DEFAULT_LOCATION_TYPE);
       setNewHolder('');
       setNewShares([]);
+      setNewOnchain([]);
       setStatus({ kind: 'ok', msg: t('balances.cfgCreated') });
       await refresh();
     } catch (err) {
@@ -463,6 +481,19 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                 </div>
 
                 <UnitSharesEditor units={units} value={newShares} onChange={setNewShares} />
+
+                {/* Balance automático desde la blockchain — solo para wallets.
+                    Con una dirección cargada, la ubicación deja de cargarse a
+                    mano: el saldo lo pone el cron leyendo la cadena. */}
+                {newType === 'wallet' && (
+                  <div className="pt-3 border-t border-border">
+                    <OnchainWalletsEditor
+                      value={newOnchain}
+                      onChange={setNewOnchain}
+                      disabled={creating}
+                    />
+                  </div>
+                )}
 
                 <div className="flex items-center justify-between gap-3">
                   <p className="text-xs text-muted-foreground">{t('balances.cfgAddHint')}</p>

@@ -24,14 +24,19 @@ import {
   type ChannelType,
 } from '@/lib/channel-configs';
 import { apiError } from '@/lib/api-error';
-import { DEFAULT_LOCATION_TYPE, isLocationType, type UnitShare } from '@/lib/cash-locations';
+import {
+  DEFAULT_LOCATION_TYPE,
+  isLocationType,
+  validateOnchainWallets,
+  type UnitShare,
+} from '@/lib/cash-locations';
 import { AUTO_CATEGORIES } from '@/lib/channel-ledger';
 import type { ChannelConfigRow } from '@/lib/channel-configs';
 
 const BUILTIN_KEYS = new Set(BUILTIN_CHANNELS.map((c) => c.key));
 
 const CONFIG_COLUMNS =
-  'id, channel_key, custom_label, channel_type, is_visible, is_custom, sort_order, location_type, business_unit_id, holder';
+  'id, channel_key, custom_label, channel_type, is_visible, is_custom, sort_order, location_type, business_unit_id, holder, onchain_wallets';
 
 /**
  * El admin client saltea RLS, así que aceptar un business_unit_id del body sin
@@ -149,6 +154,7 @@ export async function POST(request: NextRequest) {
       location_type,
       business_unit_id,
       holder,
+      onchain_wallets,
     } = body as {
       channel_key?: string;
       custom_label?: string | null;
@@ -157,6 +163,7 @@ export async function POST(request: NextRequest) {
       location_type?: string;
       business_unit_id?: string | null;
       holder?: string | null;
+      onchain_wallets?: unknown;
     };
     if (!channel_key || typeof channel_key !== 'string') {
       return NextResponse.json({ success: false, error: 'channel_key requerido' }, { status: 400 });
@@ -230,6 +237,22 @@ export async function POST(request: NextRequest) {
       payload.holder = typeof holder === 'string' ? holder.trim() || null : null;
     }
 
+    // Direcciones on-chain (migración 085). Mismo criterio que los campos de
+    // arriba: OMITIRLO no es lo mismo que mandarlo vacío. Si no viene, la
+    // ubicación conserva sus direcciones — así el toggle de visibilidad o un
+    // cambio de holder no desconectan la lectura de la cadena sin querer.
+    // Aplica a CUALQUIER fila, built-in incluida: la Trust Wallet de Vex Pro es
+    // el canal built-in `wallet_externa`, no un canal propio.
+    if (onchain_wallets !== undefined) {
+      const parsed = validateOnchainWallets(onchain_wallets);
+      if (parsed.error !== undefined) {
+        return NextResponse.json({ success: false, error: parsed.error }, { status: 400 });
+      }
+      // [] se guarda como NULL: "sin direcciones" y "columna vacía" son el
+      // mismo hecho, y el índice parcial solo mira NULL.
+      payload.onchain_wallets = parsed.wallets.length > 0 ? parsed.wallets : null;
+    }
+
     const { error } = await admin
       .from('channel_configs')
       .upsert(payload, { onConflict: 'company_id,channel_key' });
@@ -248,19 +271,29 @@ export async function POST(request: NextRequest) {
         location_type: payload.location_type,
         business_unit_id: payload.business_unit_id,
         holder: payload.holder,
+        onchain_wallets: payload.onchain_wallets,
       }),
     });
     return NextResponse.json({ success: true });
   }
 
   if (action === 'create_custom') {
-    const { label, initial_balance, as_of, location_type, business_unit_id, holder } = body as {
+    const {
+      label,
+      initial_balance,
+      as_of,
+      location_type,
+      business_unit_id,
+      holder,
+      onchain_wallets,
+    } = body as {
       label?: string;
       initial_balance?: number;
       as_of?: string;
       location_type?: string;
       business_unit_id?: string | null;
       holder?: string | null;
+      onchain_wallets?: unknown;
     };
     const clean = (label ?? '').trim();
     if (!clean) {
@@ -281,10 +314,16 @@ export async function POST(request: NextRequest) {
       }
       unitId = business_unit_id;
     }
+    const onchain = validateOnchainWallets(onchain_wallets);
+    if (onchain.error !== undefined) {
+      return NextResponse.json({ success: false, error: onchain.error }, { status: 400 });
+    }
+
     const channel_key = newCustomChannelKey();
     const channel_type: ChannelType = 'manual';
 
     const { error } = await admin.from('channel_configs').insert({
+      onchain_wallets: onchain.wallets.length > 0 ? onchain.wallets : null,
       company_id: ctx.companyId,
       channel_key,
       custom_label: clean,

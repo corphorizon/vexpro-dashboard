@@ -61,6 +61,48 @@ export const MAX_ADJUSTMENT: Record<string, number> = {
   paypros: 5_000,
 };
 
+/** Tope por defecto para un canal sin entrada propia. */
+export const DEFAULT_MAX_ADJUSTMENT = 1_000;
+
+/**
+ * Tope para una ubicación ON-CHAIN (migración 085).
+ *
+ * Una wallet on-chain no tiene "clave conocida": su canal es `wallet_externa` o
+ * un `custom_<uuid>`, así que el tope no puede vivir en el Record de arriba —
+ * de ahí `maxAdjustmentFor`.
+ *
+ * POR QUÉ TAN ALTO. En esta wallet el ajuste NO es ruido, es movimiento real
+ * todavía sin explicar:
+ *   · Las transferencias USDT de Tron SÍ se explican (llegan por
+ *     api_transactions y la RPC del libro las separa en depósitos/retiros).
+ *   · BSC y Ethereum, mientras no haya API key de explorador, aportan solo su
+ *     saldo: lo que se mueva ahí cae entero en el ajuste.
+ *   · El GAS se consume en cada transacción y su precio se mueve solo: el total
+ *     del canal sube y baja sin que haya ninguna transferencia. Eso también
+ *     cae en el ajuste, y está BIEN — es la diferencia real del día.
+ *   · El primer día después del alta, el ajuste absorbe la brecha entre el
+ *     último saldo cargado a mano y la cadena (Vex Pro: 17.613 manual vs
+ *     ~17.116 reales ⇒ ajuste ≈ −497).
+ * 50.000 deja pasar todo eso y sigue frenando un desastre (una wallet de $17K
+ * no puede moverse $50K en un día sin que alguien mire).
+ */
+export const ONCHAIN_MAX_ADJUSTMENT = 50_000;
+
+/**
+ * Tope de ajuste del canal. Los canales built-in lo tienen por clave; una
+ * ubicación on-chain lo tiene por su NATURALEZA, que el caller conoce y la
+ * clave no. Es la forma más simple de tener un tope dinámico sin inventar una
+ * tabla de configuración ni parsear la clave.
+ */
+export function maxAdjustmentFor(
+  channelKey: string,
+  opts: { onchain?: boolean } = {},
+): number {
+  const byKey = MAX_ADJUSTMENT[channelKey];
+  if (byKey !== undefined) return byKey;
+  return opts.onchain ? ONCHAIN_MAX_ADJUSTMENT : DEFAULT_MAX_ADJUSTMENT;
+}
+
 export interface LedgerSyncResult {
   channel_key: string;
   entry_date: string;
@@ -85,6 +127,7 @@ export async function syncChannelLedgerDay(
   channelKey: string,
   entryDate: string,
   actualClose: number,
+  opts: { onchain?: boolean } = {},
 ): Promise<LedgerSyncResult> {
   // ── Saldo con el que veníamos ──────────────────────────────────────────
   const { data: priorRows, error: priorError } = await admin.rpc('get_channel_ledger_balances', {
@@ -193,7 +236,9 @@ export async function syncChannelLedgerDay(
       concept: 'Ajuste de conciliación',
       category: AUTO_CATEGORIES.adjustment,
       amount: Math.abs(adjustment),
-      notes: 'Diferencia contra el saldo real de la API (comisiones de red y movimientos no detallados por el proveedor).',
+      notes: opts.onchain
+        ? 'Diferencia contra el saldo real de la cadena: fees de gas consumidos, variación del precio del gas y transferencias de redes sin historial disponible (BEP20/ERC20 sin API key de explorador).'
+        : 'Diferencia contra el saldo real de la API (comisiones de red y movimientos no detallados por el proveedor).',
     });
   }
 
@@ -201,7 +246,7 @@ export async function syncChannelLedgerDay(
   // red, es un dato de entrada roto (wallet ausente en la respuesta, snapshot
   // pisado, wallet recién fijada). Escribirlo contaminaría el libro con un
   // movimiento que no existió; mejor fallar ruidoso y reprocesar el día.
-  const maxAdj = MAX_ADJUSTMENT[channelKey] ?? 1_000;
+  const maxAdj = maxAdjustmentFor(channelKey, opts);
   if (Math.abs(adjustment) > maxAdj) {
     return {
       channel_key: channelKey,
