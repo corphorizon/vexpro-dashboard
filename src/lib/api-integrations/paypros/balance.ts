@@ -79,14 +79,19 @@ function readCurrency(...candidates: unknown[]): string | null {
 }
 
 /**
- * Busca un balance reconocible dentro de la respuesta. Orden de preferencia
- * (de la forma más simple a la más anidada):
+ * Busca un balance reconocible dentro de la respuesta.
  *
- *   1. { balance: 123 }                              → 123
- *   2. { balance: { available|amount|balance, currency } }
- *   3. { available: 123 }
- *   4. { balances: [{ amount|balance|available, currency }, ...] }  → primera
- *   5. { amount: 123 }
+ * FORMATO REAL (primera llamada a prod, 2026-08-16, Vex Pro):
+ *   {"status":"E00","response":"OK","datetime":"...",
+ *    "balaces":[{"currency":"USD","available_balance":6073}]}
+ * Sí: la clave viene con el typo "balaces" (sic) del lado de Pay-Pros, y el
+ * campo es "available_balance". Ninguna doc pública lo mostraba: lo destapó
+ * el mensaje de "shape no reconocible" del cron. Se acepta ese formato
+ * PRIMERO, y también "balances" bien escrito por si algún día lo corrigen.
+ *
+ * Después, formas genéricas de respaldo (de la más simple a la más anidada):
+ *   { balance: 123 } · { balance: {available|amount|balance} } ·
+ *   { available: 123 } · { amount: 123 }
  *
  * Todas aceptan el número como string. Devuelve null si nada califica.
  */
@@ -96,6 +101,23 @@ export function parsePayprosBalance(
   if (!isRecord(data)) return null;
 
   const topCurrency = readCurrency(data.currency, data.currency_code);
+
+  // 0) Formato real de Pay-Pros: lista por moneda bajo "balaces" (typo suyo)
+  //    o "balances", con available_balance. Primera entrada reconocible —
+  //    hoy liquidan en una sola moneda por merchant.
+  const list = Array.isArray(data.balaces) ? data.balaces
+             : Array.isArray(data.balances) ? data.balances
+             : null;
+  if (list) {
+    for (const item of list) {
+      if (!isRecord(item)) continue;
+      const n = toNumber(item.available_balance) ?? toNumber(item.available)
+             ?? toNumber(item.amount) ?? toNumber(item.balance);
+      if (n !== null) {
+        return { balance: n, currency: readCurrency(item.currency, item.currency_code, topCurrency) };
+      }
+    }
+  }
 
   // 1) balance escalar
   const flat = toNumber(data.balance);
@@ -114,19 +136,7 @@ export function parsePayprosBalance(
   const available = toNumber(data.available);
   if (available !== null) return { balance: available, currency: topCurrency };
 
-  // 4) lista de balances por moneda → nos quedamos con la primera entrada
-  //    reconocible (hoy Pay-Pros liquida en una sola moneda por merchant).
-  if (Array.isArray(data.balances)) {
-    for (const item of data.balances) {
-      if (!isRecord(item)) continue;
-      const n = toNumber(item.amount) ?? toNumber(item.balance) ?? toNumber(item.available);
-      if (n !== null) {
-        return { balance: n, currency: readCurrency(item.currency, item.currency_code, topCurrency) };
-      }
-    }
-  }
-
-  // 5) amount en la raíz
+  // 4) amount en la raíz
   const amount = toNumber(data.amount);
   if (amount !== null) return { balance: amount, currency: topCurrency };
 

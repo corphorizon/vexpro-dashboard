@@ -321,6 +321,24 @@ function jsonResponse(body: unknown, init: { ok?: boolean; status?: number } = {
 const ENVELOPE = { status: 'E00', response: 'OK', datetime: '2026-08-16 10:00:00' };
 
 describe('parsePayprosBalance', () => {
+  it('FORMATO REAL de prod: "balaces" (typo de Pay-Pros) con available_balance', () => {
+    // Payload literal de la primera llamada real (Vex Pro, 2026-08-16). La
+    // clave viene mal escrita del lado de Pay-Pros — NO "corregirla" acá:
+    // si el parser exige "balances", el balance vuelve a salir irreconocible.
+    const real = {
+      status: 'E00',
+      response: 'OK',
+      datetime: '2026-08-16T16:00:35.000Z',
+      balaces: [{ currency: 'USD', available_balance: 6073 }],
+    };
+    expect(parsePayprosBalance(real)).toEqual({ balance: 6073, currency: 'USD' });
+  });
+
+  it('acepta también "balances" bien escrito, por si Pay-Pros lo corrige', () => {
+    expect(parsePayprosBalance({ ...ENVELOPE, balances: [{ currency: 'USD', available_balance: '12.5' }] }))
+      .toEqual({ balance: 12.5, currency: 'USD' });
+  });
+
   it('acepta balance escalar', () => {
     expect(parsePayprosBalance({ ...ENVELOPE, balance: 1234.56, currency: 'usd' }))
       .toEqual({ balance: 1234.56, currency: 'USD' });
