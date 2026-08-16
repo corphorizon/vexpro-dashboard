@@ -4,6 +4,11 @@ import {
   normalizeLocationType,
   isLiquid,
   isAutomatic,
+  isOnchain,
+  isValidOnchainAddress,
+  normalizeOnchainAddress,
+  parseOnchainWallets,
+  validateOnchainWallets,
   summarize,
   groupByUnit,
   groupByType,
@@ -305,5 +310,83 @@ describe('unitLocationShares', () => {
       { channel_key: 'wallet_ab', business_unit_id: 'u2', share: 1 },
     ]);
     expect(m.has('wallet_ab')).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Wallets on-chain (migración 085)
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('direcciones on-chain', () => {
+  const TRON = 'TEkSDmWk3KMxSeSK9ogefYkhEEnVtZVTkJ';
+  const EVM = '0x321814cA95A24348551239466d778E2Fc93539c9';
+
+  it('acepta el formato de cada red y rechaza el cruzado', () => {
+    expect(isValidOnchainAddress('tron', TRON)).toBe(true);
+    expect(isValidOnchainAddress('bsc', EVM)).toBe(true);
+    expect(isValidOnchainAddress('ethereum', EVM)).toBe(true);
+    // Una dirección EVM no es una dirección Tron ni al revés.
+    expect(isValidOnchainAddress('tron', EVM)).toBe(false);
+    expect(isValidOnchainAddress('bsc', TRON)).toBe(false);
+    // Base58 no incluye 0/O/I/l: una "T" seguida de ceros no es una dirección.
+    expect(isValidOnchainAddress('tron', 'T000000000000000000000000000000000')).toBe(false);
+  });
+
+  it('normaliza EVM a minúsculas y deja Tron como está (es case-sensitive)', () => {
+    expect(normalizeOnchainAddress('bsc', ` ${EVM} `)).toBe(EVM.toLowerCase());
+    expect(normalizeOnchainAddress('tron', ` ${TRON} `)).toBe(TRON);
+  });
+
+  it('la MISMA dirección 0x en dos cadenas NO es un duplicado', () => {
+    const res = validateOnchainWallets([
+      { network: 'bsc', address: EVM },
+      { network: 'ethereum', address: EVM },
+    ]);
+    expect(res.error).toBeUndefined();
+    expect(res.wallets).toHaveLength(2);
+  });
+
+  it('la misma (red, dirección) dos veces SÍ es un duplicado', () => {
+    const res = validateOnchainWallets([
+      { network: 'bsc', address: EVM },
+      // Distinto casing, misma wallet: se detecta porque se normaliza antes.
+      { network: 'bsc', address: EVM.toLowerCase() },
+    ]);
+    expect(res.error).toMatch(/repetida/);
+  });
+
+  it('rechaza una red inventada y una dirección mal pegada', () => {
+    expect(validateOnchainWallets([{ network: 'solana', address: EVM }]).error).toMatch(/no soportada/);
+    expect(validateOnchainWallets([{ network: 'tron', address: 'TEkS' }]).error).toMatch(/inválida/);
+  });
+
+  it('null y [] son válidos: así se desconecta una wallet sin borrarla', () => {
+    expect(validateOnchainWallets(null).wallets).toEqual([]);
+    expect(validateOnchainWallets([]).wallets).toEqual([]);
+  });
+
+  it('parseOnchainWallets descarta la basura sin lanzar (datos ya guardados)', () => {
+    const parsed = parseOnchainWallets([
+      { network: 'tron', address: TRON },
+      { network: 'tron', address: 'roto' },
+      'no soy un objeto',
+      null,
+    ]);
+    expect(parsed).toEqual([{ network: 'tron', address: TRON }]);
+    expect(parseOnchainWallets('cualquier cosa')).toEqual([]);
+  });
+
+  it('isOnchain mira la FILA; isAutomatic sigue mirando el TIPO', () => {
+    const wallet = { location_type: 'wallet', onchain_wallets: [{ network: 'tron', address: TRON }] };
+    expect(isOnchain(wallet)).toBe(true);
+    // Una wallet a secas NO es automática por su tipo: eso solo lo son las
+    // pasarelas. Las dos preguntas son distintas y así deben seguir.
+    expect(isAutomatic(wallet.location_type)).toBe(false);
+    expect(isOnchain({ onchain_wallets: [] })).toBe(false);
+    expect(isOnchain(null)).toBe(false);
+  });
+
+  it('una wallet on-chain sigue siendo líquida', () => {
+    expect(isLiquid('wallet')).toBe(true);
   });
 });

@@ -18,7 +18,7 @@ import {
 } from '@/lib/supabase/mutations';
 import type { PinnedWalletRole } from '@/lib/pinned-wallet-roles';
 import { fetchChannelBalances, fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
-import type { ChannelBalance, PinnedCoinsbuyWallet } from '@/lib/types';
+import type { ChannelBalance, OnchainSnapshotMeta, PinnedCoinsbuyWallet } from '@/lib/types';
 import { isDerivedBrokerPeriod, computeDerivedNetDeposit } from '@/lib/broker-logic';
 import { apiFetch } from '@/lib/api-fetch';
 import { withTimeout, TimeoutError } from '@/lib/promise-utils';
@@ -604,6 +604,21 @@ export default function BalancesPage() {
     return snap?.amount ?? 0;
   };
 
+  /**
+   * Desglose que el cron dejó guardado con el snapshot (migración 085).
+   *
+   * Solo se devuelve el de una wallet on-chain, que es el único que hoy tiene
+   * forma conocida. Sale del MISMO snapshot que ya se carga para la fecha
+   * elegida: mirar el detalle por moneda no dispara ninguna consulta nueva —
+   * ni a la base ni, mucho menos, a la blockchain.
+   */
+  const getSnapshotMeta = (key: string): OnchainSnapshotMeta | null => {
+    const meta = snapshots.find((s) => s.channel_key === key)?.meta;
+    if (!meta || typeof meta !== 'object') return null;
+    const candidate = meta as OnchainSnapshotMeta;
+    return candidate.kind === 'onchain' && Array.isArray(candidate.networks) ? candidate : null;
+  };
+
   // Carga manual del saldo de un canal sin libro. La tarjeta unificada es la
   // dueña del formulario; acá vive la escritura porque también recarga los
   // snapshots de la fecha elegida.
@@ -726,6 +741,7 @@ export default function BalancesPage() {
         onExportPdf={exportChannelsPdf}
         onConfigure={() => setShowChannelConfig(true)}
         onSaveBalance={saveChannelBalance}
+        getSnapshotMeta={getSnapshotMeta}
         extraActions={(key) =>
           key === 'coinsbuy' && isAdmin ? (
             <button

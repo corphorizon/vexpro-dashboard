@@ -8,6 +8,10 @@ import { fetchPayprosBalance } from '@/lib/api-integrations/paypros/balance';
 import { syncChannelLedgerDay, type LedgerSyncResult } from '@/lib/channel-ledger-sync';
 import { previousDay } from '@/lib/channel-ledger';
 import { notify, dailyKey } from '@/lib/notifications/notify';
+import { fetchOnchainTotal } from '@/lib/api-integrations/onchain/usdt-balance';
+import { syncOnchainTransfers } from '@/lib/api-integrations/onchain/transfers';
+import { fetchNativePrices, type NativePriceMap } from '@/lib/api-integrations/onchain/prices';
+import { parseOnchainWallets } from '@/lib/cash-locations';
 
 // The channel_balances table has RLS enabled; writes from the cron can't
 // pass through the normal `supabase` client (no cookie → no user). This
@@ -19,6 +23,13 @@ async function adminUpsertChannelBalance(
   channelKey: string,
   amount: number,
   source: 'manual' | 'api' | 'derived',
+  /**
+   * Desglose auditable del saldo (migración 085). Hoy lo usa la wallet
+   * on-chain para guardar cuánto había en cada red y en cada activo, y a qué
+   * precio se valuó el gas — sin esto, "$17.116" es un número sin forma de
+   * reconstruirlo tres meses después.
+   */
+  meta?: Record<string, unknown> | null,
 ) {
   // ignoreDuplicates: la PRIMERA escritura del día gana. El snapshot con
   // fecha D es "el cierre de D−1" y es un hecho histórico: re-correr el cron
@@ -35,6 +46,7 @@ async function adminUpsertChannelBalance(
         channel_key: channelKey,
         amount,
         source,
+        ...(meta ? { meta } : {}),
       },
       { onConflict: 'company_id,snapshot_date,channel_key', ignoreDuplicates: true },
     );
@@ -98,6 +110,25 @@ export async function GET(request: NextRequest) {
       { success: false, error: listError?.message ?? 'No companies' },
       { status: 500 },
     );
+  }
+
+  // Precio del gas (TRX/BNB/ETH): UNA lectura para toda la corrida.
+  //
+  // El precio no depende del inquilino, así que pedirlo dentro del bucle sería
+  // una llamada por empresa a un endpoint público con cuota por minuto. Si
+  // falla, las wallets con gas despreciable siguen asentándose (lo cuentan
+  // como 0) y las que tengan gas relevante fallan cerradas — la decisión vive
+  // en fetchOnchainTotal, acá solo se transporta el dato.
+  let nativePrices: NativePriceMap = {};
+  let nativePriceAt: string | null = null;
+  let nativePriceError: string | null = null;
+  {
+    const p = await fetchNativePrices();
+    if (p.error !== undefined) nativePriceError = p.error;
+    else {
+      nativePrices = p.prices;
+      nativePriceAt = p.at;
+    }
   }
 
   // Parallel per-tenant snapshot.
@@ -301,6 +332,93 @@ export async function GET(request: NextRequest) {
       failures.push({ channel: 'paypros', date: ledgerDate, reason });
     }
 
+    // ── Ubicaciones on-chain (migración 085) ──
+    //
+    // A diferencia de los canales de arriba, acá no hay una lista fija: son las
+    // filas de `channel_configs` que tengan direcciones cargadas, sean built-in
+    // (`wallet_externa` = la Trust Wallet de Vex Pro) o propias (`custom_*`).
+    // Solo las VISIBLES: una ubicación archivada no suma al total, así que
+    // gastar cuota de la cadena en leerla no tiene sentido.
+    //
+    // Orden importante: PRIMERO el historial de transferencias y DESPUÉS el
+    // saldo + el asiento. Así, cuando el libro pregunta por los movimientos del
+    // día, las transferencias de ese día ya están en api_transactions y el
+    // ajuste queda solo con lo que de verdad no cuadra (fees de gas, variación
+    // del precio del gas, redes sin historial).
+    try {
+      const { data: onchainRows, error: onchainErr } = await admin
+        .from('channel_configs')
+        .select('channel_key, custom_label, onchain_wallets')
+        .eq('company_id', company.id)
+        .eq('is_visible', true)
+        .not('onchain_wallets', 'is', null);
+
+      if (onchainErr) throw new Error(onchainErr.message);
+
+      const onchainErrors: string[] = [];
+      const onchainTotals: Record<string, number> = {};
+
+      for (const row of onchainRows ?? []) {
+        const key = String(row.channel_key);
+        const label = (row.custom_label as string | null) || key;
+        const wallets = parseOnchainWallets(row.onchain_wallets);
+        // `not('onchain_wallets','is',null)` deja pasar `[]` y filas con basura:
+        // el parser tolerante decide si de verdad hay algo que consultar.
+        if (wallets.length === 0) continue;
+
+        try {
+          // 1) Historial. Un fallo acá NO frena el saldo: el libro sigue
+          //    cerrando contra la cadena y lo no explicado cae en el ajuste.
+          const transfers = await syncOnchainTransfers(admin, company.id, key, wallets);
+          for (const t of transfers) {
+            // `historyUnavailable` es una limitación conocida (BSC/ETH sin API
+            // key de explorador), no una falla: se informa y no se notifica.
+            if (t.error && !t.historyUnavailable) {
+              onchainErrors.push(`${label} (${t.network}) historial: ${t.error}`);
+            }
+          }
+
+          // 2) Saldo total: USDT + gas valuado, en todas sus redes.
+          const res = await fetchOnchainTotal(wallets, {
+            prices: nativePrices,
+            priceAt: nativePriceAt,
+          });
+          if (res.error !== undefined) {
+            onchainErrors.push(`${label}: ${res.error}`);
+            failures.push({ channel: key, date: ledgerDate, reason: res.error });
+            continue;
+          }
+
+          await adminUpsertChannelBalance(admin, company.id, today, key, res.total, 'api', {
+            kind: 'onchain',
+            total: res.total,
+            priceAt: res.priceAt,
+            readAt: new Date().toISOString(),
+            networks: res.breakdown,
+          });
+          onchainTotals[key] = res.total;
+          entry[`onchain_${key}`] = res.breakdown;
+
+          ledger.push(
+            await syncChannelLedgerDay(admin, company.id, key, ledgerDate, res.total, {
+              onchain: true,
+            }),
+          );
+        } catch (err) {
+          const reason = err instanceof Error ? err.message : 'Unknown error';
+          onchainErrors.push(`${label}: ${reason}`);
+          failures.push({ channel: key, date: ledgerDate, reason });
+        }
+      }
+
+      if (Object.keys(onchainTotals).length > 0) entry.onchain = onchainTotals;
+      if (onchainErrors.length > 0) entry.onchain_errors = onchainErrors;
+    } catch (err) {
+      // Un problema leyendo channel_configs no puede tumbar el resto del
+      // snapshot de la empresa: se informa y se sigue.
+      entry.onchain_errors = [err instanceof Error ? err.message : 'Unknown error'];
+    }
+
     if (ledger.length > 0) entry.ledger = ledger;
 
     // El asiento abortado por MAX_ADJUSTMENT llega hasta acá como
@@ -363,6 +481,8 @@ export async function GET(request: NextRequest) {
     snapshot_date: today,
     ledger_date: ledgerDate,
     companies_processed: results.length,
+    native_price_at: nativePriceAt,
+    ...(nativePriceError ? { native_price_error: nativePriceError } : {}),
     results,
   });
 }

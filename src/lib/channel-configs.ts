@@ -12,7 +12,7 @@
 // admin-client call in server-side code (reports/cron).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { UnitShare } from './cash-locations';
+import type { OnchainWallet, UnitShare } from './cash-locations';
 
 export type ChannelType = 'api' | 'manual' | 'auto';
 
@@ -77,6 +77,12 @@ export interface ChannelConfigRow {
    * reparto cargado, y ahí manda `business_unit_id`.
    */
   unit_shares?: UnitShare[] | null;
+  /**
+   * Direcciones públicas de la ubicación (migración 085). Con al menos una, el
+   * saldo lo lee el cron desde la blockchain y deja de cargarse a mano. La
+   * lista se valida con `validateOnchainWallets` antes de guardarse.
+   */
+  onchain_wallets?: OnchainWallet[] | null;
 }
 
 /**

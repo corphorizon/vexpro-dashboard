@@ -54,6 +54,162 @@ export function isAutomatic(type: unknown): boolean {
   return normalizeLocationType(type) === 'gateway';
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Wallets on-chain (migración 085)
+//
+// Una wallet de Trust Wallet no es una pasarela: no hay credenciales, no hay
+// depósitos de clientes y no hay proveedor. Lo único que tiene es una DIRECCIÓN
+// PÚBLICA, y con eso alcanza para leer su saldo de la cadena.
+//
+// UNA UBICACIÓN, VARIAS REDES
+// Para el dueño "la Trust Wallet" es UN lugar donde hay plata, aunque adentro
+// tenga un saldo en TRC20 y otro en BEP20 (misma app, mismas llaves, distinta
+// cadena). Partirla en dos ubicaciones obligaría a sumar de memoria y
+// duplicaría el libro de un solo bolsillo. Por eso la fila guarda una LISTA de
+// {red, dirección} y el saldo de la ubicación es la SUMA — que es justo lo que
+// Kevin pidió para `wallet_externa` ("Trust Wallet").
+//
+// POR QUÉ `isOnchain` Y NO EXTENDER `isAutomatic`
+// `isAutomatic(type)` recibe SOLO el tipo de ubicación (un string) — así lo
+// llaman la tarjeta de Balances y sus tests. Para saber si una wallet es
+// on-chain hay que mirar la FILA (su lista de direcciones), que es otro dato:
+// meterlo dentro de isAutomatic obligaría a cambiarle la firma en todos los
+// callers y a que un `wallet` a secas dejara de ser manual según de dónde se lo
+// mire. Se deja `isAutomatic` como está (¿su TIPO se sincroniza solo?) y se
+// agrega `isOnchain` (¿esta fila concreta tiene lectura de cadena?). Quien
+// necesite "no editable a mano" pregunta por las dos. `isLiquid` y
+// `allocateShares` no se tocan: una wallet on-chain sigue siendo líquida y se
+// reparte entre unidades igual que cualquier otra.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const ONCHAIN_NETWORKS = ['tron', 'bsc', 'ethereum'] as const;
+export type OnchainNetwork = (typeof ONCHAIN_NETWORKS)[number];
+
+export const ONCHAIN_NETWORK_LABELS: Record<OnchainNetwork, string> = {
+  tron: 'Tron (TRC20)',
+  bsc: 'BNB Smart Chain (BEP20)',
+  ethereum: 'Ethereum (ERC20)',
+};
+
+/** Redes EVM: comparten formato de dirección (0x + 40 hex). */
+const EVM_NETWORKS = new Set<string>(['bsc', 'ethereum']);
+
+export function isOnchainNetwork(v: unknown): v is OnchainNetwork {
+  return typeof v === 'string' && (ONCHAIN_NETWORKS as readonly string[]).includes(v);
+}
+
+/** Un elemento de `channel_configs.onchain_wallets`. */
+export interface OnchainWallet {
+  network: OnchainNetwork;
+  address: string;
+}
+
+// Tron: base58check, siempre arranca con 'T' y mide 34 caracteres. El alfabeto
+// base58 excluye 0/O/I/l a propósito (se confunden al copiarlas a mano).
+const TRON_ADDRESS_RE = /^T[1-9A-HJ-NP-Za-km-z]{33}$/;
+// EVM (BSC / Ethereum): 0x + 40 hex. No se valida el checksum EIP-55 porque
+// Trust Wallet muestra la dirección en minúsculas y rechazarla sería un falso
+// negativo. La MISMA dirección 0x vale en las dos cadenas y tiene saldos
+// distintos: por eso la identidad de una wallet es el par (red, dirección).
+const EVM_ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
+
+/**
+ * Deja la dirección como se va a guardar y consultar. En EVM se pasa a
+ * minúsculas —el eth_call arma el calldata con hex en minúsculas y así dos
+ * cargas de la misma wallet se detectan como duplicadas en vez de contarse dos
+ * veces—. Tron es case-sensitive: se recorta y nada más.
+ */
+export function normalizeOnchainAddress(network: unknown, address: unknown): string {
+  const clean = typeof address === 'string' ? address.trim() : '';
+  if (!clean) return '';
+  return typeof network === 'string' && EVM_NETWORKS.has(network) ? clean.toLowerCase() : clean;
+}
+
+/** Formato de la dirección para la red indicada. No verifica que exista. */
+export function isValidOnchainAddress(network: unknown, address: unknown): boolean {
+  const clean = normalizeOnchainAddress(network, address);
+  if (!clean) return false;
+  if (network === 'tron') return TRON_ADDRESS_RE.test(clean);
+  if (typeof network === 'string' && EVM_NETWORKS.has(network)) return EVM_ADDRESS_RE.test(clean);
+  return false;
+}
+
+/**
+ * Lectura TOLERANTE del jsonb: descarta lo que no entiende y nunca lanza.
+ * La usan la UI y el cron sobre datos YA guardados — una fila con basura no
+ * puede tumbar la pantalla de Balances ni cortar el cron de todas las empresas.
+ */
+export function parseOnchainWallets(value: unknown): OnchainWallet[] {
+  if (!Array.isArray(value)) return [];
+  const out: OnchainWallet[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const { network, address } = item as { network?: unknown; address?: unknown };
+    if (!isOnchainNetwork(network)) continue;
+    const clean = normalizeOnchainAddress(network, address);
+    if (!isValidOnchainAddress(network, clean)) continue;
+    const key = `${network}:${clean}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ network, address: clean });
+  }
+  return out;
+}
+
+/**
+ * Validación ESTRICTA para ESCRIBIR: devuelve la lista normalizada o el motivo
+ * exacto del rechazo. Acá no se descarta en silencio — si el admin pegó una
+ * dirección mal, tiene que enterarse antes de que el cron asiente el saldo de
+ * la wallet de otro. Corre igual en el cliente y en el servidor para que el
+ * mensaje sea el mismo de los dos lados.
+ */
+export function validateOnchainWallets(
+  value: unknown,
+): { wallets: OnchainWallet[]; error?: undefined } | { wallets?: undefined; error: string } {
+  // null / [] = "esta ubicación no es on-chain". Es un valor válido: así se
+  // desconecta la lectura de cadena sin borrar la ubicación ni su libro.
+  if (value === null || value === undefined) return { wallets: [] };
+  if (!Array.isArray(value)) return { error: 'Las wallets on-chain tienen que venir como lista' };
+
+  const out: OnchainWallet[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return { error: 'Cada wallet on-chain tiene que ser un objeto {network, address}' };
+    }
+    const { network, address } = item as { network?: unknown; address?: unknown };
+    if (!isOnchainNetwork(network)) {
+      return { error: `Red on-chain no soportada: ${String(network)}` };
+    }
+    const clean = normalizeOnchainAddress(network, address);
+    if (!clean) {
+      return { error: `Falta la dirección de la red ${ONCHAIN_NETWORK_LABELS[network]}` };
+    }
+    if (!isValidOnchainAddress(network, clean)) {
+      return {
+        error:
+          network === 'tron'
+            ? 'Dirección Tron inválida: tiene que empezar con T y medir 34 caracteres base58'
+            : `Dirección ${ONCHAIN_NETWORK_LABELS[network]} inválida: tiene que ser 0x seguido de 40 caracteres hexadecimales`,
+      };
+    }
+    // Repetir el MISMO PAR duplicaría su saldo dentro de la ubicación. La clave
+    // es (red, dirección) y no la dirección sola: la 0x de Trust Wallet vale a
+    // la vez en BSC y en Ethereum, con dos saldos que hay que sumar.
+    const key = `${network}:${clean}`;
+    if (seen.has(key)) return { error: `Dirección repetida en la misma ubicación: ${clean}` };
+    seen.add(key);
+    out.push({ network, address: clean });
+  }
+  return { wallets: out };
+}
+
+/** true → el saldo de esta ubicación lo lee el cron desde la blockchain. */
+export function isOnchain(loc: { onchain_wallets?: unknown } | null | undefined): boolean {
+  return Boolean(loc) && parseOnchainWallets(loc?.onchain_wallets).length > 0;
+}
+
 export interface BusinessUnit {
   id: string;
   company_id: string;
@@ -86,6 +242,8 @@ export interface CashLocation {
   is_visible: boolean;
   /** Propia del usuario: solo estas se pueden eliminar (las base se archivan). */
   is_custom?: boolean;
+  /** Direcciones públicas cuyo saldo se lee de la cadena (migración 085). */
+  onchain_wallets?: OnchainWallet[] | null;
   sort_order: number;
   /** Saldo actual del libro de esa ubicación. */
   balance: number;

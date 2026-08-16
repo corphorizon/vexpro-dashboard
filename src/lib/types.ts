@@ -147,6 +147,30 @@ export interface ChannelBalance {
   amount: number;
   source: 'manual' | 'api' | 'derived';
   notes: string | null;
+  /**
+   * Desglose del snapshot (migración 085). Para una ubicación on-chain trae
+   * cuánto había en cada red y en cada activo, con el precio usado para valuar
+   * el gas — de acá sale el detalle por moneda de la tarjeta de Balances, sin
+   * volver a consultar la cadena al abrir la página.
+   */
+  meta?: OnchainSnapshotMeta | Record<string, unknown> | null;
+}
+
+/** Lo que el cron guarda en `channel_balances.meta` para una wallet on-chain. */
+export interface OnchainSnapshotMeta {
+  kind: 'onchain';
+  total: number;
+  /** Cuándo se leyó el precio del gas. */
+  priceAt: string | null;
+  /** Cuándo se leyó la cadena. */
+  readAt: string;
+  networks: Array<{
+    network: string;
+    address: string;
+    usdt: number;
+    native: { symbol: string; amount: number; priceUsd: number | null; valueUsd: number };
+    subtotal: number;
+  }>;
 }
 
 export interface PinnedCoinsbuyWallet {
