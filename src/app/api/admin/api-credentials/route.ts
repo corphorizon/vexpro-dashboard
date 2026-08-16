@@ -37,7 +37,7 @@ import { PAYPROS_DEFAULT_BASE_URL } from '@/lib/api-integrations/credentials';
 // 'paypros' guarda TRES secretos como JSON en encrypted_secret
 // ({merchant_id, api_key, sign_key}) y en extra_config lleva base_url +
 // webhook_token (el token que identifica al tenant en la URL entrante).
-const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'orion_crm', 'paypros'];
+const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'fairpay_banking', 'orion_crm', 'paypros'];
 
 /**
  * Origen público del dashboard, para armar la URL del webhook que el

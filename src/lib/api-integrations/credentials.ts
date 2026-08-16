@@ -35,7 +35,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptSecret } from '@/lib/crypto';
 
-export type TenantProvider = 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm' | 'paypros';
+export type TenantProvider = 'coinsbuy' | 'unipayment' | 'fairpay' | 'fairpay_banking' | 'orion_crm' | 'paypros';
 
 interface RawCredentialRow {
   encrypted_secret: string;
@@ -201,6 +201,37 @@ export async function resolveFairpayCredentials(
       ? (raw.extraConfig.base_url as string)
       : undefined;
   return { apiKey, baseUrl, feePct: getProviderFeePct(raw.extraConfig) };
+}
+
+// ── FairPay Banking ──────────────────────────────────────────────────────
+//
+// banking.fairpay.online es un sistema SEPARADO del portal de cobros
+// (portal.fairpay.online, que sólo expone getTransactionList): login propio,
+// API Key propia, y es donde FairPay muestra el BALANCE de la cuenta. Sin
+// documentación pública (2026-08-17: 27 rutas del portal de cobros = 404;
+// el banking bloquea por User-Agent a todo lo que no parezca navegador).
+// Misma forma de storage que FairPay/Orion: el secreto es la api_key sola.
+
+export interface FairpayBankingCredentials {
+  apiKey: string;
+  baseUrl: string;
+}
+
+export const FAIRPAY_BANKING_DEFAULT_BASE_URL = 'https://banking.fairpay.online';
+
+export async function resolveFairpayBankingCredentials(
+  companyId: string | null | undefined,
+): Promise<FairpayBankingCredentials | null> {
+  if (!companyId) return null;
+  const raw = await readRaw(companyId, 'fairpay_banking');
+  if (!raw) return null;
+  const apiKey = raw.plaintext.trim();
+  if (!apiKey) return null;
+  const baseUrl =
+    typeof raw.extraConfig?.base_url === 'string' && raw.extraConfig.base_url.trim()
+      ? (raw.extraConfig.base_url as string).replace(/\/+$/, '')
+      : FAIRPAY_BANKING_DEFAULT_BASE_URL;
+  return { apiKey, baseUrl };
 }
 
 // ── Orion CRM ────────────────────────────────────────────────────────────

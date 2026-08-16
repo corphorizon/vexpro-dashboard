@@ -31,7 +31,7 @@ import { createClient } from '@/lib/supabase/client';
 // route knows which tenant to operate on (see /api/admin/api-credentials).
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Provider = 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'orion_crm' | 'paypros';
+type Provider = 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'fairpay_banking' | 'orion_crm' | 'paypros';
 
 /** URL de producción de Pay-Pros (prefill del campo Base URL). */
 const PAYPROS_DEFAULT_BASE_URL = 'https://master-api.pay-pros.com/';
@@ -109,6 +109,15 @@ const PROVIDER_META: Record<Provider, ProviderMeta> = {
       'Pasarela de pagos. Necesita Merchant ID, API Key y Sign Key, y que la URL del webhook quede registrada del lado de Pay-Pros.',
     form: { kind: 'paypros' },
   },
+  fairpay_banking: {
+    label: 'FairPay Banking',
+    description:
+      'Portal banking.fairpay.online — sistema APARTE del portal de cobros: es donde vive el balance de la cuenta. API Key propia. Base URL solo si FairPay indica una distinta.',
+    form: { kind: 'keyExtras' },
+    extraFields: [
+      { key: 'base_url', label: 'Base URL', placeholder: 'https://banking.fairpay.online' },
+    ],
+  },
   orion_crm: {
     label: 'Orion CRM',
     description: 'CRM del broker — usuarios registrados, Broker P&L, ventas Prop Firm.',
@@ -127,6 +136,7 @@ const PROVIDER_ORDER: Provider[] = [
   'coinsbuy',
   'unipayment',
   'fairpay',
+  'fairpay_banking',
   'paypros',
   'orion_crm',
 ];
