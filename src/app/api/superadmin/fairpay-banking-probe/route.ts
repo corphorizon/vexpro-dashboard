@@ -96,28 +96,51 @@ export async function GET(request: NextRequest) {
     currency: a.currency, balance: a.balance, status: a.status,
   }));
 
-  // Rutas por cuenta a probar (sólo GET). Se limita a las primeras 6 cuentas
-  // para no disparar decenas de llamadas si el usuario tiene muchas.
-  const perAccountPaths = (id: unknown) => [
-    `/api/v1/accounts/${id}`,
-    `/api/v1/accounts/${id}/transactions`,
-    `/api/v1/accounts/${id}/statement`,
-    `/api/v1/accounts/${id}/balance`,
-    `/api/v1/accounts/${id}/movements`,
-    `/api/v1/accounts/${id}/history`,
-    `/api/v1/transactions?account_id=${id}`,
-    `/api/v1/accounts/transactions?account_id=${id}`,
-    `/api/v1/accounts/statement?account_id=${id}`,
+  // Ronda 4: la lista de cuentas viene con balance "0.00" en las 4 y las
+  // rutas /accounts/statement y /accounts/transactions responden 200 con {}
+  // por GET → lo más probable es que esperen POST con account_id + rango de
+  // fechas (mismo patrón que getTransactionList del portal de cobros). Se
+  // prueba SOLO sobre la Corporate Account USD (la que interesa) y sólo con
+  // cuerpos de consulta; ningún endpoint de escritura.
+  const target = accounts.find((a) => a.account_number === 'FP20227712') ?? accounts[accounts.length - 1];
+  const targetId = target?.id;
+  const today = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  const bodies: Array<[label: string, body: Record<string, string>]> = [
+    ['account_id+dates', { account_id: String(targetId), start_date: from, end_date: today }],
+    ['account_id only', { account_id: String(targetId) }],
+    ['account_number+dates', { account_number: String(target?.account_number), start_date: from, end_date: today }],
+    ['id+from/to', { id: String(targetId), from, to: today }],
+    ['account_id+date_from/to', { account_id: String(targetId), date_from: from, date_to: today }],
   ];
+  const postPaths = ['/api/v1/accounts/statement', '/api/v1/accounts/transactions', '/api/v1/accounts/balance', '/api/v1/accounts/balances'];
   const results: Array<{ path: string; status: number; body: string }> = [];
-  for (const acc of accounts.slice(0, 6)) {
-    for (const path of perAccountPaths(acc.id)) {
+  for (const path of postPaths) {
+    for (const [label, form] of bodies) {
+      for (const kind of ['form', 'json'] as const) {
+        try {
+          const res = await fetch(creds.baseUrl + path, {
+            method: 'POST',
+            headers: { ...H, 'Content-Type': kind === 'form' ? 'application/x-www-form-urlencoded' : 'application/json' },
+            body: kind === 'form' ? new URLSearchParams(form).toString() : JSON.stringify(form),
+            signal: AbortSignal.timeout(10_000),
+          });
+          const text = (await res.text()).replace(/\s+/g, ' ');
+          results.push({ path: `POST ${path} [${label}/${kind}]`, status: res.status, body: text.slice(0, 600) });
+        } catch (err) {
+          results.push({ path: `POST ${path} [${label}/${kind}]`, status: 0, body: (err as Error).message.slice(0, 100) });
+        }
+      }
+    }
+    // y GET con query, por si acaso
+    for (const [label, form] of bodies.slice(0, 1)) {
       try {
-        const res = await fetch(creds.baseUrl + path, { headers: H, signal: AbortSignal.timeout(10_000), redirect: 'manual' });
+        const url = new URL(creds.baseUrl + path); Object.entries(form).forEach(([k, v]) => url.searchParams.set(k, v));
+        const res = await fetch(url, { headers: H, signal: AbortSignal.timeout(10_000) });
         const text = (await res.text()).replace(/\s+/g, ' ');
-        results.push({ path, status: res.status, body: text.slice(0, 500) });
+        results.push({ path: `GET ${path}?${label}`, status: res.status, body: text.slice(0, 600) });
       } catch (err) {
-        results.push({ path, status: 0, body: (err as Error).message.slice(0, 100) });
+        results.push({ path: `GET ${path}?${label}`, status: 0, body: (err as Error).message.slice(0, 100) });
       }
     }
   }
