@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getOperatingWalletIds } from '@/lib/pinned-wallets';
 import { fetchOrionCrmTotals } from '@/lib/api-integrations/orion-crm/totals';
 import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
@@ -493,26 +494,26 @@ export async function buildReportData(
   const manualDepPrev = groupRows(safeData<DepositRow>(manualDepositsPrevMonth), (r) => r.channel);
   const manualWdrPrev = groupRows(safeData<WithdrawalRow>(manualWithdrawalsPrevMonth), (r) => r.category);
 
-  // Scope every Coinsbuy aggregation to the wallets the tenant has
-  // explicitly pinned (same set surfaced by /balances).
+  // Scope every Coinsbuy aggregation to the tenant's OPERATING wallets.
   //
   // Kevin (2026-06-06): "los informes están mandando también los depósitos
   // y retiros de otra wallet". El fallback antiguo era "si no hay pinned,
   // contar TODAS las wallets" — y eso filtraba datos cross-tenant a los
   // reportes. Nuevo orden de fallback:
-  //   1. pinned_coinsbuy_wallets si tiene filas → usar ese set
+  //   1. wallets pineadas OPERATIVAS si hay → usar ese set
   //   2. companies.default_wallet_id si está seteado → usar solo esa wallet
   //   3. null (todas las wallets) → único caso legacy donde no hay nada
   //      configurado, advertimos por logs.
-  const { data: pinnedRows } = await admin
-    .from('pinned_coinsbuy_wallets')
-    .select('wallet_id')
-    .eq('company_id', companyId);
+  //
+  // Operativas y no "todas las pineadas" (migración 084): el reporte informa
+  // depósitos y retiros de CLIENTES. Las wallets internas (Vex Pro: 1087
+  // "Savings" $400.014,00 y 1705 "Egresos Vex" $62.779,85 en agosto 2026)
+  // suman al balance pero mover plata ahí no es un retiro — contarlas dejaba
+  // el Net Deposit del reporte en −$231.127.
+  const operatingWalletIds = await getOperatingWalletIds(companyId);
   let pinnedCoinsbuyIds: Set<string> | null = null;
-  if (pinnedRows && pinnedRows.length > 0) {
-    pinnedCoinsbuyIds = new Set(
-      (pinnedRows as Array<{ wallet_id: string }>).map((r) => String(r.wallet_id)),
-    );
+  if (operatingWalletIds.length > 0) {
+    pinnedCoinsbuyIds = new Set(operatingWalletIds);
   } else {
     const { data: companyRow } = await admin
       .from('companies')
@@ -540,7 +541,7 @@ export async function buildReportData(
         // Sentry not available — fall back to console.error so it
         // still ends up in Vercel logs.
         console.error(
-          `[reports] company ${companyId} has no pinned_coinsbuy_wallets and no default_wallet_id — Coinsbuy totals will be 0 until one is set. Refusing to count all wallets to prevent cross-tenant data in reports.`,
+          `[reports] company ${companyId} has no OPERATING pinned wallet and no default_wallet_id — Coinsbuy totals will be 0 until one is set. Refusing to count all wallets to prevent cross-tenant data in reports.`,
         );
       }
     }

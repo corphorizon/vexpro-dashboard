@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
+import { getBalanceWalletIds } from '@/lib/pinned-wallets';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
 import { apiError } from '@/lib/api-error';
@@ -94,10 +95,10 @@ export async function GET(request: NextRequest) {
         p_asof: today,
       }),
       admin.rpc('channel_balances_as_of', { p_company_id: auth.companyId, p_date: today }),
-      admin
-        .from('pinned_coinsbuy_wallets')
-        .select('wallet_id')
-        .eq('company_id', auth.companyId),
+      // BALANCE → TODAS las wallets pineadas, operativas e internas: la plata
+      // que está en la wallet de ahorro o en la de egresos sigue siendo plata
+      // de la empresa (migración 084).
+      getBalanceWalletIds(auth.companyId),
       withTimeout(fetchCoinsbuyWallets(auth.companyId), API_TIMEOUT_MS),
       withTimeout(fetchUnipaymentBalances(auth.companyId), API_TIMEOUT_MS),
       admin
@@ -146,11 +147,8 @@ export async function GET(request: NextRequest) {
     );
 
     // ── Coinsbuy: sum of pinned wallets from live API ────────────────────
-    type Pinned = { wallet_id: string };
     const pinnedIds: Set<string> = new Set(
-      pinnedRes.status === 'fulfilled' && !pinnedRes.value.error
-        ? ((pinnedRes.value.data as Pinned[] | null) ?? []).map((p) => p.wallet_id)
-        : [],
+      pinnedRes.status === 'fulfilled' ? pinnedRes.value : [],
     );
 
     type WalletLike = { id: string; balanceConfirmed?: number };

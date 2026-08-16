@@ -65,7 +65,9 @@ interface PeriodRowContext {
     ingresosNetos: number; egresosNetos: number; saldoAFavor: number;
   } | null;
   // API totales del mes (Coinsbuy + FairPay + UniPayment). Llenado desde
-  // /api/integrations/period-totals que ya respeta pinned_coinsbuy_wallets.
+  // /api/integrations/period-totals, que cuenta SOLO las wallets pineadas
+  // OPERATIVAS (migración 084: las internas suman al balance pero no son
+  // depósitos ni retiros de clientes).
   // Sumado a `summary.totalDeposits` (manual) para mostrar el monto real.
   // Antes la tabla solo leía manuales y Mayo/Junio aparecían como $0.
   apiDeposits: number;
@@ -169,7 +171,8 @@ export default function ConsolidadoPage() {
   //
   // /api/integrations/period-totals devuelve un objeto
   // `months: { '2026-04': { deposits, withdrawals } }` aplicando el filtrado
-  // por pinned_coinsbuy_wallets que ya teníamos. Lo cargamos una sola vez
+  // por wallets pineadas OPERATIVAS (RPC get_period_totals_by_month, ver
+  // migración 084). Lo cargamos una sola vez
   // (al cambiar de empresa) y lo guardamos en estado para que cada fila
   // de la tabla sume API + manual.
   const [apiMonths, setApiMonths] = useState<

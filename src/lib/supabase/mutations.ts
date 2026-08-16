@@ -1,4 +1,5 @@
 import { withActiveCompany, apiFetch } from '@/lib/api-fetch';
+import type { PinnedWalletRole } from '@/lib/pinned-wallet-roles';
 
 // Todas las ESCRITURAS de datos van server-side vía /api/admin/data (dispatcher)
 // para evitar el cuelgue recurrente del auth-refresh del cliente supabase-js del
@@ -271,9 +272,21 @@ export async function upsertChannelBalance(
 export async function pinCoinsbuyWallet(
   companyId: string,
   walletId: string,
-  walletLabel: string
+  walletLabel: string,
+  /** 'operating' (default) cuenta como depósitos/retiros de clientes;
+   *  'internal' solo suma al balance. Ver migración 084. */
+  role: PinnedWalletRole = 'operating'
 ): Promise<void> {
-  await postData('pin_wallet', { walletId, walletLabel });
+  await postData('pin_wallet', { walletId, walletLabel, role });
+}
+
+/** Cambia el rol de una wallet ya fijada (Operativa ↔ Interna). */
+export async function setPinnedWalletRole(
+  companyId: string,
+  walletId: string,
+  role: PinnedWalletRole
+): Promise<void> {
+  await postData('pin_wallet_role', { walletId, role });
 }
 
 export async function unpinCoinsbuyWallet(
