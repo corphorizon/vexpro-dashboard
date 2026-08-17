@@ -15,6 +15,7 @@ import type {
   PaymentBeneficiary,
   PaymentOrder,
   PaymentOrderInput,
+  PaymentOrderProof,
   PaymentOrderStatus,
 } from './types';
 
@@ -110,19 +111,29 @@ export async function transitionPaymentOrder(
   return { order, warning: warning ?? null };
 }
 
-// ── Comprobante de pago (opcional) ──────────────────────────────────────────
+// ── Comprobantes de pago (opcionales, hasta MAX_PAYMENT_PROOFS) ─────────────
+// Migración 086: cada archivo es una fila de payment_order_proofs. El POST ya
+// no reemplaza: AGREGA. La respuesta trae la orden con `order.proofs` al día,
+// así que el llamador reemplaza estado sin refetch.
 
 /**
- * Sube (o reemplaza) el comprobante de la orden. PDF/PNG/JPG/WEBP, máx 10 MB —
- * el servidor valida los magic bytes, no la extensión.
+ * Sube uno o varios comprobantes. PDF/PNG/JPG/WEBP, máx 10 MB CADA UNO — el
+ * servidor valida los magic bytes, no la extensión, y rechaza el lote entero
+ * (400) si existentes + nuevos superan el tope.
+ *
+ * Va todo en UN multipart con el campo 'file' repetido: si el lote no entra o
+ * un archivo es inválido, no queda nada a medio subir.
  *
  * OJO: no se setea Content-Type a mano. apiFetch solo lo agrega cuando el body
  * es string, así que con FormData el browser pone el multipart con su boundary
  * (fijarlo a mano rompe el parseo server-side).
  */
-export async function uploadPaymentProof(orderId: string, file: File): Promise<PaymentOrder> {
+export async function uploadPaymentProofs(
+  orderId: string,
+  files: File[],
+): Promise<PaymentOrder> {
   const body = new FormData();
-  body.append('file', file);
+  for (const file of files) body.append('file', file);
   const { order } = await request<{ order: PaymentOrder }>(
     `/api/admin/payment-orders/${orderId}/proof`,
     { method: 'POST', body },
@@ -130,23 +141,44 @@ export async function uploadPaymentProof(orderId: string, file: File): Promise<P
   return order;
 }
 
-/** Quita el comprobante (archivo + columnas). No permitido en órdenes anuladas. */
-export async function deletePaymentProof(orderId: string): Promise<PaymentOrder> {
+/** Quita UN comprobante (fila + archivo). No permitido en órdenes anuladas. */
+export async function deletePaymentProof(
+  orderId: string,
+  proofId: string,
+): Promise<PaymentOrder> {
   const { order } = await request<{ order: PaymentOrder }>(
-    `/api/admin/payment-orders/${orderId}/proof`,
+    `/api/admin/payment-orders/${orderId}/proof?proof_id=${encodeURIComponent(proofId)}`,
     { method: 'DELETE' },
   );
   return order;
 }
 
+/** Lista de comprobantes de la orden. El detalle ya los recibe dentro de la
+ *  orden (`order.proofs`); esto es para quien solo necesite la lista. */
+export async function listPaymentProofs(orderId: string): Promise<PaymentOrderProof[]> {
+  const { proofs } = await request<{ proofs: PaymentOrderProof[] }>(
+    `/api/admin/payment-orders/${orderId}/proof`,
+  );
+  return proofs ?? [];
+}
+
 /**
- * URL de lectura del comprobante para un <a href> / window.open: el GET
- * responde un 302 a una URL firmada de 10 minutos. Pasa por withActiveCompany
- * porque una navegación directa no atraviesa apiFetch (el superadmin en modo
- * "viendo como" necesita el ?company_id en la URL).
+ * URL de lectura de UN comprobante para un <a href> / window.open: el GET con
+ * ?proof_id responde un 302 a una URL firmada de 10 minutos. Pasa por
+ * withActiveCompany porque una navegación directa no atraviesa apiFetch (el
+ * superadmin en modo "viendo como" necesita el ?company_id en la URL).
+ *
+ * `download: true` pide la variante que fuerza la descarga (el servidor firma
+ * la URL con Content-Disposition: attachment). Hace falta porque el redirect es
+ * cross-origin y el atributo `download` de un <a> se ignora en ese caso.
  */
-export function paymentProofUrl(orderId: string): string {
-  return withActiveCompany(`/api/admin/payment-orders/${orderId}/proof`);
+export function paymentProofUrl(
+  orderId: string,
+  proofId: string,
+  opts?: { download?: boolean },
+): string {
+  const qs = `proof_id=${encodeURIComponent(proofId)}${opts?.download ? '&download=1' : ''}`;
+  return withActiveCompany(`/api/admin/payment-orders/${orderId}/proof?${qs}`);
 }
 
 // ── Documento de respaldo (opcional) ────────────────────────────────────────

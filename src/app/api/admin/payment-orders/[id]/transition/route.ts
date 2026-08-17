@@ -13,6 +13,8 @@ import {
   actorName,
   createExpenseForPaidOrder,
   normalizeOrder,
+  primaryProofForExpense,
+  withProofs,
 } from '@/lib/payment-orders/server';
 import { notifyOrderTransition } from '@/lib/payment-orders/notifications';
 
@@ -221,6 +223,10 @@ export async function POST(
     // Si no hay período abierto NO se rompe la transición: la orden ya está
     // pagada en la realidad. Se devuelve un warning para que la UI lo diga.
     if (to === 'paid' && body?.create_expense === true && !result.expense_id) {
+      // Con varios comprobantes (migración 086) el egreso hereda el PRIMERO:
+      // sus columnas attachment_* apuntan a un solo archivo. El resto sigue
+      // colgado de la orden, que es donde tiene sentido verlos juntos.
+      const proof = await primaryProofForExpense(admin, result);
       const { expenseId, warning: w } = await createExpenseForPaidOrder(admin, companyId, {
         id: result.id,
         order_number: result.order_number,
@@ -229,11 +235,11 @@ export async function POST(
         // Se pasa la traza del pago para que el egreso la herede (migr. 060).
         payment_reference: result.payment_reference,
         payment_date: result.payment_date,
-        payment_proof_path: result.payment_proof_path,
-        payment_proof_name: result.payment_proof_name,
-        payment_proof_mime: result.payment_proof_mime,
-        payment_proof_size: result.payment_proof_size,
-        payment_proof_uploaded_at: result.payment_proof_uploaded_at,
+        payment_proof_path: proof.path,
+        payment_proof_name: proof.name,
+        payment_proof_mime: proof.mime,
+        payment_proof_size: proof.size,
+        payment_proof_uploaded_at: proof.uploadedAt,
       }, body?.expense_category ?? null);
       warning = w;
       if (expenseId) {
@@ -261,7 +267,9 @@ export async function POST(
         (reference ? ` — ref: ${reference}` : ''),
     });
 
-    return NextResponse.json({ success: true, order: result, warning });
+    // La orden viaja SIEMPRE con `proofs` para que el cliente reemplace estado
+    // sin un refetch (mismo shape que devuelven /[id] GET y /proof).
+    return NextResponse.json({ success: true, order: await withProofs(admin, result), warning });
   } catch (err) {
     return apiError('admin/payment-orders/transition', err, { status: 500 });
   }

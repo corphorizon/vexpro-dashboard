@@ -51,8 +51,10 @@ import { formatDate, formatDateTime } from '@/lib/dates';
 import {
   canTransition,
   isEditable,
+  MAX_PAYMENT_PROOFS,
   type PaymentOrder,
   type PaymentOrderLine,
+  type PaymentOrderProof,
   type PaymentOrderStatus,
 } from '@/lib/payment-orders/types';
 import {
@@ -63,7 +65,7 @@ import {
   paymentProofUrl,
   transitionPaymentOrder,
   uploadOrderAttachment,
-  uploadPaymentProof,
+  uploadPaymentProofs,
   type TransitionOptions,
 } from '@/lib/payment-orders/api';
 
@@ -78,9 +80,12 @@ type Dialog =
   | 'removeProof'
   | 'removeAttachment';
 
-/** Mismo tope que el endpoint — validar acá evita subir 30 MB para nada. */
+/** Mismo tope que el endpoint — validar acá evita subir 30 MB para nada. El
+ *  tope de CANTIDAD sale de MAX_PAYMENT_PROOFS (types.ts), compartido con el
+ *  servidor: la UI solo se adelanta, la autoridad sigue siendo el endpoint. */
 const MAX_PROOF_BYTES = 10 * 1024 * 1024;
 const PROOF_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
+const MAX_PROOFS_STR = String(MAX_PAYMENT_PROOFS);
 
 /** Documento de respaldo: mismo tope, pero admite además Office (docx/xlsx). */
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -153,14 +158,16 @@ export default function OrdenPagoDetallePage() {
   const canAct = roleCanWriteFinance(user?.effective_role ?? '');
 
   /**
-   * `proofFile` solo llega desde el diálogo de pago. Se sube DESPUÉS de la
-   * transición y en su propio try: el comprobante es opcional, así que un fallo
-   * al subirlo no puede desandar ni bloquear el "pagada" que ya se registró.
+   * `proofFiles` solo llega desde el diálogo de pago (hasta MAX_PAYMENT_PROOFS).
+   * Se suben DESPUÉS de la transición y en su propio try: los comprobantes son
+   * opcionales, así que un fallo al subirlos no puede desandar ni bloquear el
+   * "pagada" que ya se registró. Van en UN solo POST: el servidor acepta o
+   * rechaza el lote entero, no deja la mitad arriba.
    */
   async function runTransition(
     to: PaymentOrderStatus,
     payload?: TransitionOptions,
-    proofFile?: File | null,
+    proofFiles?: File[],
   ) {
     if (!order) return;
     setBusy(true);
@@ -181,13 +188,19 @@ export default function OrdenPagoDetallePage() {
         void refreshSections(['egresos']);
       }
 
-      if (proofFile) {
+      if (proofFiles && proofFiles.length > 0) {
         try {
-          setOrder(await uploadPaymentProof(paid.id, proofFile));
-          toast.success(t('payOrders.proofUploadOk'));
+          setOrder(await uploadPaymentProofs(paid.id, proofFiles));
+          toast.success(
+            proofFiles.length === 1
+              ? t('payOrders.proofUploadOk')
+              : t('payOrders.proofUploadOkMany', { count: String(proofFiles.length) }),
+          );
         } catch (err) {
+          // El lote es atómico server-side: si falla, no quedó ninguno arriba.
+          // Se avisa con el mensaje del servidor (dice qué archivo lo rompió).
           toast.error(
-            t('payOrders.proofErrorAfterPay', {
+            t(proofFiles.length === 1 ? 'payOrders.proofErrorAfterPay' : 'payOrders.proofSomeFailed', {
               error: err instanceof Error ? err.message : t('payOrders.proofError'),
             }),
           );
@@ -202,20 +215,35 @@ export default function OrdenPagoDetallePage() {
     }
   }
 
-  // ── Comprobante de pago (adjunto opcional) ────────────────────────────────
+  // ── Comprobantes de pago (adjuntos opcionales, hasta MAX_PAYMENT_PROOFS) ──
   const proofInputRef = useRef<HTMLInputElement>(null);
   const [proofBusy, setProofBusy] = useState(false);
+  /** Cuál se está por borrar: con varios, "borrá el comprobante" no alcanza. */
+  const [proofToRemove, setProofToRemove] = useState<PaymentOrderProof | null>(null);
 
-  async function onProofPicked(file: File | null) {
-    if (!order || !file) return;
-    if (file.size > MAX_PROOF_BYTES) {
+  const proofs = useMemo(() => order?.proofs ?? [], [order?.proofs]);
+  const proofsFull = proofs.length >= MAX_PAYMENT_PROOFS;
+
+  async function onProofsPicked(picked: File[]) {
+    if (!order || picked.length === 0) return;
+    // Dos chequeos que el servidor repite (él es la autoridad): acá solo evitan
+    // un round-trip perdido con 40 MB de subida.
+    if (proofs.length + picked.length > MAX_PAYMENT_PROOFS) {
+      toast.error(t('payOrders.proofTooMany', { max: MAX_PROOFS_STR }));
+      return;
+    }
+    if (picked.some((f) => f.size > MAX_PROOF_BYTES)) {
       toast.error(t('payOrders.proofTooLarge'));
       return;
     }
     setProofBusy(true);
     try {
-      setOrder(await uploadPaymentProof(order.id, file));
-      toast.success(t('payOrders.proofUploadOk'));
+      setOrder(await uploadPaymentProofs(order.id, picked));
+      toast.success(
+        picked.length === 1
+          ? t('payOrders.proofUploadOk')
+          : t('payOrders.proofUploadOkMany', { count: String(picked.length) }),
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('payOrders.proofError'));
     } finally {
@@ -224,11 +252,12 @@ export default function OrdenPagoDetallePage() {
   }
 
   async function removeProof() {
-    if (!order) return;
+    if (!order || !proofToRemove) return;
     setProofBusy(true);
     try {
-      setOrder(await deletePaymentProof(order.id));
+      setOrder(await deletePaymentProof(order.id, proofToRemove.id));
       setDialog(null);
+      setProofToRemove(null);
       toast.success(t('payOrders.proofRemoveOk'));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('payOrders.proofError'));
@@ -501,91 +530,125 @@ export default function OrdenPagoDetallePage() {
             )}
           </Card>
 
-          {/* ── Comprobante de pago (opcional) ────────────────────────── */}
-          {/* Metadato operativo: se puede adjuntar, reemplazar o quitar aun con
-              la orden pagada. Solo desaparece en una orden anulada. */}
-          {order.status !== 'cancelled' && (order.payment_proof_path || order.status === 'paid') && (
+          {/* ── Comprobantes de pago (opcionales, hasta 5) ────────────── */}
+          {/* Metadato operativo: se pueden agregar o quitar aun con la orden
+              pagada. Solo desaparece en una orden anulada. */}
+          {order.status !== 'cancelled' && (proofs.length > 0 || order.status === 'paid') && (
             <Card className="space-y-3">
-              <h2 className="text-base font-semibold flex items-center gap-2">
-                <Paperclip className="w-4 h-4 text-muted-foreground" />
-                {t('payOrders.proofSection')}
-              </h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold flex items-center gap-2">
+                  <Paperclip className="w-4 h-4 text-muted-foreground" />
+                  {t('payOrders.proofSection')}
+                </h2>
+                {proofs.length > 0 && (
+                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                    {t('payOrders.proofCount', { n: String(proofs.length), max: MAX_PROOFS_STR })}
+                  </span>
+                )}
+              </div>
 
-              {/* Un solo input oculto sirve para "adjuntar" y "reemplazar". */}
+              {/* `multiple`: se pueden elegir varios de una. El input se limpia
+                  siempre para poder volver a elegir el mismo archivo. */}
               <input
                 ref={proofInputRef}
                 type="file"
+                multiple
                 accept={PROOF_ACCEPT}
                 className="sr-only"
                 onChange={(e) => {
-                  const file = e.target.files?.[0] ?? null;
-                  e.target.value = ''; // permite volver a elegir el mismo archivo
-                  void onProofPicked(file);
+                  const picked = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  void onProofsPicked(picked);
                 }}
               />
 
-              {order.payment_proof_path ? (
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium break-all">
-                      {order.payment_proof_name || t('payOrders.proofSection')}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {formatFileSize(order.payment_proof_size)}
-                      {order.payment_proof_uploaded_at && (
-                        <>
-                          {' · '}
-                          {t('payOrders.proofUploaded', {
-                            date: formatDateTime(order.payment_proof_uploaded_at),
+              {proofs.length > 0 ? (
+                <ul className="divide-y divide-border">
+                  {proofs.map((p) => (
+                    <li
+                      key={p.id}
+                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium break-all">
+                          {p.file_name || t('payOrders.proofSection')}
+                        </p>
+                        <p className="text-xs text-muted-foreground mt-0.5">
+                          {formatFileSize(p.size)}
+                          {p.uploaded_at && (
+                            <>
+                              {' · '}
+                              {t('payOrders.proofUploaded', { date: formatDateTime(p.uploaded_at) })}
+                            </>
+                          )}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <a
+                          href={paymentProofUrl(order.id, p.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={t('payOrders.proofViewItemAria', {
+                            name: p.file_name || '',
                           })}
-                        </>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <a
-                      href={paymentProofUrl(order.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={t('payOrders.proofViewAria')}
-                    >
-                      <Button variant="secondary">
-                        <ExternalLink className="w-4 h-4" />
-                        {t('payOrders.proofView')}
-                      </Button>
-                    </a>
-                    <Button
-                      aria-label={t('payOrders.proofReplaceAria')}
-                      disabled={proofBusy}
-                      onClick={() => proofInputRef.current?.click()}
-                    >
-                      <Upload className="w-4 h-4" />
-                      {t('payOrders.proofReplace')}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      aria-label={t('payOrders.proofRemoveAria')}
-                      disabled={proofBusy}
-                      onClick={() => setDialog('removeProof')}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                      {t('payOrders.proofRemove')}
-                    </Button>
-                  </div>
-                </div>
+                        >
+                          <Button variant="secondary">
+                            <ExternalLink className="w-4 h-4" />
+                            {t('payOrders.proofView')}
+                          </Button>
+                        </a>
+                        {/* La descarga usa su propia URL firmada (el servidor le
+                            pone Content-Disposition: attachment): con el
+                            redirect cross-origin, un <a download> no alcanza. */}
+                        <a
+                          href={paymentProofUrl(order.id, p.id, { download: true })}
+                          aria-label={t('payOrders.proofDownloadAria', {
+                            name: p.file_name || '',
+                          })}
+                        >
+                          <Button variant="secondary">
+                            <Download className="w-4 h-4" />
+                            {t('payOrders.proofDownload')}
+                          </Button>
+                        </a>
+                        <Button
+                          variant="ghost"
+                          aria-label={t('payOrders.proofRemoveItemAria', {
+                            name: p.file_name || '',
+                          })}
+                          disabled={proofBusy}
+                          onClick={() => {
+                            setProofToRemove(p);
+                            setDialog('removeProof');
+                          }}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                          {t('payOrders.proofRemove')}
+                        </Button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
               ) : (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                  <Button
-                    aria-label={t('payOrders.proofAttach')}
-                    loading={proofBusy}
-                    onClick={() => proofInputRef.current?.click()}
-                  >
-                    <Paperclip className="w-4 h-4" />
-                    {t('payOrders.proofAttach')}
-                  </Button>
-                  <span className="text-xs text-muted-foreground">{t('payOrders.proofHint')}</span>
-                </div>
+                <p className="text-sm text-muted-foreground">{t('payOrders.proofNone')}</p>
               )}
+
+              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                <Button
+                  aria-label={t('payOrders.proofAddAria')}
+                  loading={proofBusy}
+                  disabled={proofsFull}
+                  onClick={() => proofInputRef.current?.click()}
+                >
+                  <Upload className="w-4 h-4" />
+                  {proofs.length === 0 ? t('payOrders.proofAttach') : t('payOrders.proofAdd')}
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  {proofsFull
+                    ? t('payOrders.proofMaxReached', { max: MAX_PROOFS_STR })
+                    : t('payOrders.proofHintMulti', { max: MAX_PROOFS_STR })}
+                </span>
+              </div>
             </Card>
           )}
 
@@ -812,17 +875,20 @@ export default function OrdenPagoDetallePage() {
           busy={busy}
           defaultDate={order.payment_date || todayISO()}
           onClose={() => setDialog(null)}
-          onConfirm={(payload, proofFile) => runTransition('paid', payload, proofFile)}
+          onConfirm={(payload, proofFiles) => runTransition('paid', payload, proofFiles)}
         />
       )}
 
-      {dialog === 'removeProof' && (
+      {dialog === 'removeProof' && proofToRemove && (
         <ConfirmDialog
           title={t('payOrders.proofRemoveTitle')}
           message={t('payOrders.proofRemoveMessage')}
           confirmLabel={t('payOrders.proofRemove')}
           onConfirm={removeProof}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            setProofToRemove(null);
+          }}
         />
       )}
 
@@ -1049,7 +1115,7 @@ function PayDialog({
       create_expense: boolean;
       expense_category?: string | null;
     },
-    proofFile: File | null,
+    proofFiles: File[],
   ) => void;
   onClose: () => void;
 }) {
@@ -1069,9 +1135,12 @@ function PayDialog({
     }
     return [...set].sort((a, b) => a.localeCompare(b));
   }, [allExpenses]);
-  const [proofFile, setProofFile] = useState<File | null>(null);
+  // Selección acumulativa: cada pasada por el input SUMA a lo ya elegido (así
+  // se pueden juntar archivos de carpetas distintas sin perder los anteriores).
+  const [proofFiles, setProofFiles] = useState<File[]>([]);
   const [error, setError] = useState('');
   const [fileError, setFileError] = useState('');
+  const proofsLeft = MAX_PAYMENT_PROOFS - proofFiles.length;
 
   return (
     <Modal title={t('payOrders.payTitle')} onClose={busy ? () => {} : onClose}>
@@ -1101,23 +1170,40 @@ function PayDialog({
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={INPUT} />
       </label>
 
-      {/* Comprobante: OPCIONAL. Se sube después de registrar el pago, así que
-          si falla la subida el pago igual queda asentado. */}
-      <label className="block">
-        <span className="block text-sm font-medium mb-1.5">{t('payOrders.proofField')}</span>
+      {/* Comprobantes: OPCIONALES, hasta MAX_PAYMENT_PROOFS. Se suben después
+          de registrar el pago, así que si falla la subida el pago igual queda
+          asentado. */}
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between gap-3">
+          <span className="block text-sm font-medium">{t('payOrders.proofField')}</span>
+          {proofFiles.length > 0 && (
+            <span className="text-xs text-muted-foreground tabular-nums">
+              {t('payOrders.proofCount', {
+                n: String(proofFiles.length),
+                max: String(MAX_PAYMENT_PROOFS),
+              })}
+            </span>
+          )}
+        </div>
         <input
           type="file"
+          multiple
           accept={PROOF_ACCEPT}
+          disabled={proofsLeft <= 0}
           onChange={(e) => {
-            const file = e.target.files?.[0] ?? null;
-            if (file && file.size > MAX_PROOF_BYTES) {
-              setProofFile(null);
-              e.target.value = '';
+            const picked = Array.from(e.target.files ?? []);
+            e.target.value = ''; // permite volver a elegir el mismo archivo
+            if (picked.length === 0) return;
+            if (picked.some((f) => f.size > MAX_PROOF_BYTES)) {
               setFileError(t('payOrders.proofTooLarge'));
               return;
             }
+            if (picked.length > proofsLeft) {
+              setFileError(t('payOrders.proofTooMany', { max: String(MAX_PAYMENT_PROOFS) }));
+              return;
+            }
             setFileError('');
-            setProofFile(file);
+            setProofFiles((prev) => [...prev, ...picked]);
           }}
           className={cn(
             INPUT,
@@ -1125,12 +1211,39 @@ function PayDialog({
             fileError && 'border-negative',
           )}
         />
-        {fileError ? (
-          <span className="block text-xs text-negative mt-1">{fileError}</span>
-        ) : (
-          <span className="block text-xs text-muted-foreground mt-1">{t('payOrders.proofHint')}</span>
+        {proofFiles.length > 0 && (
+          <ul className="space-y-1">
+            {proofFiles.map((f, i) => (
+              <li
+                key={`${f.name}-${f.size}-${i}`}
+                className="flex items-center justify-between gap-2 text-xs"
+              >
+                <span className="min-w-0 truncate">
+                  {f.name}
+                  <span className="text-muted-foreground"> · {formatFileSize(f.size)}</span>
+                </span>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-negative shrink-0"
+                  aria-label={t('payOrders.proofUnselectAria', { name: f.name })}
+                  onClick={() => setProofFiles((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </li>
+            ))}
+          </ul>
         )}
-      </label>
+        {fileError ? (
+          <span className="block text-xs text-negative">{fileError}</span>
+        ) : (
+          <span className="block text-xs text-muted-foreground">
+            {proofsLeft <= 0
+              ? t('payOrders.proofMaxReached', { max: String(MAX_PAYMENT_PROOFS) })
+              : t('payOrders.proofHintMulti', { max: String(MAX_PAYMENT_PROOFS) })}
+          </span>
+        )}
+      </div>
 
       <label className="flex items-start gap-2.5 cursor-pointer">
         <input
@@ -1186,7 +1299,7 @@ function PayDialog({
                 create_expense: createExpense,
                 expense_category: createExpense ? expenseCategory.trim() || null : null,
               },
-              proofFile,
+              proofFiles,
             );
           }}
         >
