@@ -39,6 +39,47 @@ export interface PaymentOrderLine {
   amount: number;
 }
 
+// ── Comprobantes de pago ────────────────────────────────────────────────────
+// Espeja supabase/migration-086-payment-order-proofs.sql.
+
+/**
+ * Tope de comprobantes por orden (pedido de Kevin, 2026-08-17).
+ *
+ * ÚNICA fuente de verdad: la usan el endpoint (autoridad real) y la UI (para
+ * deshabilitar el botón y avisar antes de subir). Un "5" suelto en dos archivos
+ * es la forma más segura de que un día el cliente permita 5 y el servidor 3.
+ */
+export const MAX_PAYMENT_PROOFS = 5;
+
+/** Fila de payment_order_proofs tal como la ve la UI (sin el storage_path: el
+ *  path del bucket nunca sale del servidor). */
+export interface PaymentOrderProof {
+  id: string;
+  file_name: string | null;
+  mime: string | null;
+  size: number | null;
+  uploaded_at: string;
+}
+
+/**
+ * ¿Entran `incoming` archivos nuevos sobre `existing` ya guardados?
+ *
+ * Pura a propósito: es la regla que el servidor tiene que aplicar sí o sí y la
+ * UI quiere anticipar, así que se testea sin Supabase ni DOM. Devuelve el
+ * mensaje en castellano (mostrable tal cual) o null si entra.
+ */
+export function proofCountError(existing: number, incoming: number): string | null {
+  if (incoming <= 0) return 'No se recibió ningún archivo.';
+  const total = existing + incoming;
+  if (total > MAX_PAYMENT_PROOFS) {
+    const libres = Math.max(0, MAX_PAYMENT_PROOFS - existing);
+    return libres === 0
+      ? `La orden ya tiene ${MAX_PAYMENT_PROOFS} comprobantes (el máximo). Quitá alguno antes de subir otro.`
+      : `La orden ya tiene ${existing} comprobante${existing === 1 ? '' : 's'}: solo se pueden agregar ${libres} más (máximo ${MAX_PAYMENT_PROOFS}).`;
+  }
+  return null;
+}
+
 export interface PaymentOrder {
   id: string;
   company_id: string;
@@ -95,11 +136,20 @@ export interface PaymentOrder {
   cancelled_by_name: string | null;
   cancellation_reason: string | null;
 
-  // Comprobante de pago — OPCIONAL. Respaldo del pago (captura de la
-  // transferencia, PDF del banco…) que acompaña a payment_reference. Se guarda
-  // el PATH dentro del bucket privado `payment-proofs`, nunca una URL pública:
-  // la lectura pasa por /api/admin/payment-orders/[id]/proof, que valida
-  // sesión + empresa y emite una URL firmada de corta vida.
+  // Comprobantes de pago — OPCIONALES, hasta MAX_PAYMENT_PROOFS. Respaldo del
+  // pago (captura de la transferencia, PDF del banco…) que acompaña a
+  // payment_reference. Viven en la tabla payment_order_proofs (migración 086);
+  // el archivo está en el bucket PRIVADO `payment-proofs` y la lectura pasa por
+  // /api/admin/payment-orders/[id]/proof?proof_id=…, que valida sesión +
+  // empresa y emite una URL firmada de corta vida.
+  //
+  // Opcional en el tipo porque no todas las respuestas lo traen (el listado no
+  // hace el join); el detalle y las respuestas de /proof sí.
+  proofs?: PaymentOrderProof[];
+
+  // LEGADO (migración 086) — el comprobante único de antes. Se conserva para
+  // que un rollback del código siga funcionando; NO leer de acá en código
+  // nuevo: si la orden tiene filas en payment_order_proofs, esas mandan.
   payment_proof_path: string | null;
   payment_proof_name: string | null;
   payment_proof_mime: string | null;

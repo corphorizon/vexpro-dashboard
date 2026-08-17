@@ -18,10 +18,101 @@ import {
   type PaymentOrder,
   type PaymentOrderInput,
   type PaymentOrderLine,
+  type PaymentOrderProof,
 } from './types';
 
 /** Columnas de payment_orders — el contrato expone la fila completa. */
 export const ORDER_COLUMNS = '*';
+
+// ── Comprobantes de pago (migración 086) ────────────────────────────────────
+// Viven en payment_order_proofs, una fila por archivo (antes: cinco columnas en
+// payment_orders = un solo archivo). El PATH del bucket NUNCA sale al cliente:
+// se expone el id y la lectura pasa por /proof?proof_id=…, que firma la URL.
+
+/** Lo único que la UI necesita ver de un comprobante. `storage_path` queda adentro. */
+export const PROOF_CLIENT_COLUMNS = 'id, file_name, mime, size, uploaded_at';
+
+/** Comprobantes de una orden, en el orden en que se muestran. */
+export async function loadOrderProofs(
+  admin: SupabaseClient,
+  orderId: string,
+): Promise<PaymentOrderProof[]> {
+  const { data, error } = await admin
+    .from('payment_order_proofs')
+    .select(PROOF_CLIENT_COLUMNS)
+    .eq('payment_order_id', orderId)
+    .order('sort_order', { ascending: true })
+    .order('uploaded_at', { ascending: true });
+  if (error) {
+    // No es fatal: la orden se muestra igual, sin la lista de comprobantes.
+    console.error('[payment-orders] comprobantes:', error.message);
+    return [];
+  }
+  return (data ?? []) as unknown as PaymentOrderProof[];
+}
+
+/** La orden con su array `proofs` — lo que consume el detalle del cliente. */
+export async function withProofs(
+  admin: SupabaseClient,
+  order: PaymentOrder,
+): Promise<PaymentOrder> {
+  return { ...order, proofs: await loadOrderProofs(admin, order.id) };
+}
+
+/**
+ * Archivo que hereda el egreso generado al pagar. El egreso apunta a UN adjunto
+ * (columnas attachment_* de expenses), así que con varios comprobantes se lleva
+ * el PRIMERO; el resto sigue accesible desde la orden.
+ *
+ * Fallback a las columnas legadas de payment_orders para las órdenes previas a
+ * la migración 086 cuyo backfill todavía no corrió.
+ */
+export async function primaryProofForExpense(
+  admin: SupabaseClient,
+  order: {
+    id: string;
+    payment_proof_path?: string | null;
+    payment_proof_name?: string | null;
+    payment_proof_mime?: string | null;
+    payment_proof_size?: number | null;
+    payment_proof_uploaded_at?: string | null;
+  },
+): Promise<{
+  path: string | null;
+  name: string | null;
+  mime: string | null;
+  size: number | null;
+  uploadedAt: string | null;
+}> {
+  const { data } = await admin
+    .from('payment_order_proofs')
+    .select('storage_path, file_name, mime, size, uploaded_at')
+    .eq('payment_order_id', order.id)
+    .order('sort_order', { ascending: true })
+    .order('uploaded_at', { ascending: true })
+    .limit(1);
+
+  const first = (data ?? [])[0] as
+    | { storage_path: string; file_name: string | null; mime: string | null; size: number | null; uploaded_at: string }
+    | undefined;
+
+  if (first) {
+    return {
+      path: first.storage_path,
+      name: first.file_name,
+      mime: first.mime,
+      size: first.size,
+      uploadedAt: first.uploaded_at,
+    };
+  }
+  return {
+    path: order.payment_proof_path ?? null,
+    name: order.payment_proof_name ?? null,
+    mime: order.payment_proof_mime ?? null,
+    size: order.payment_proof_size ?? null,
+    uploadedAt: order.payment_proof_uploaded_at ?? null,
+  };
+}
 
 // ── Normalización DB → contrato ─────────────────────────────────────────────
 // numeric llega como string desde PostgREST en algunos casos y jsonb como

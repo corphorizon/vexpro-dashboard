@@ -13,6 +13,7 @@ import {
   beneficiaryBelongsToCompany,
   upsertBeneficiary,
   validateOrderInput,
+  withProofs,
 } from '@/lib/payment-orders/server';
 
 // ---------------------------------------------------------------------------
@@ -53,9 +54,10 @@ export async function GET(request: NextRequest, { params }: Params) {
       );
     }
 
+    // Con `proofs`: el detalle es la pantalla que los lista (migración 086).
     return NextResponse.json({
       success: true,
-      order: normalizeOrder(data as Record<string, unknown>),
+      order: await withProofs(admin, normalizeOrder(data as Record<string, unknown>)),
     });
   } catch (err) {
     return apiError('admin/payment-orders/[id] GET', err, { status: 500 });
@@ -157,7 +159,8 @@ export async function PATCH(request: NextRequest, { params }: Params) {
       details: `Editó la orden de pago ${order.order_number} — ${order.beneficiary_name} — ${order.currency} ${order.total}`,
     });
 
-    return NextResponse.json({ success: true, order });
+    // Mismo shape que el GET: la orden viaja siempre con `proofs`.
+    return NextResponse.json({ success: true, order: await withProofs(admin, order) });
   } catch (err) {
     return apiError('admin/payment-orders/[id] PATCH', err, { status: 500 });
   }
