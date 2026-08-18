@@ -243,6 +243,7 @@ interface PdfCommissionData {
     pct: number;
     diffPct: number;
     nd: number;
+    accIn: number;
     division: number;
     commission: number;
     realPayment: number;
@@ -310,13 +311,14 @@ export async function generateCommissionPDF(data: PdfCommissionData) {
   y = pdfSection(doc, `Miembros del Equipo (${data.bdms.length})`, y);
   autoTable(doc, {
     startY: y,
-    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Division', 'Comision', 'Pago Real', 'Acc -> Sig.', 'Sueldo']],
+    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Acumulado', 'Division', 'Comision', 'Pago Real', 'Acc -> Sig.', 'Sueldo']],
     body: data.bdms.map(b => [
       b.name,
       b.email,
       `${b.pct}%`,
       `${b.diffPct}%`,
       money(b.nd),
+      money(b.accIn),
       money(b.division),
       money(b.commission),
       money(b.realPayment),

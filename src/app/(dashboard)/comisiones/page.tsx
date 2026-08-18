@@ -1249,6 +1249,7 @@ export default function ComisionesPage() {
           pct: c.bdmOwnPct,
           diffPct: c.diffPct,
           nd: c.netDepositCurrent,
+          accIn: c.accumulatedIn,
           division: c.division,
           commission: c.commission,
           realPayment: c.realPayment,
