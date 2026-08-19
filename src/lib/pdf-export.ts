@@ -399,6 +399,8 @@ interface PdfIndividualData {
   accumulatedOut: number;
   salary: number;
   total: number;
+  /** Deuda arrastrada del mes anterior (negativa = hay deuda). >= 0 = sin deuda. */
+  prevDebt: number;
 }
 
 export async function generateIndividualPDF(data: PdfIndividualData) {
@@ -456,23 +458,38 @@ export async function generateIndividualPDF(data: PdfIndividualData) {
   // ─── Total box ───
   y = getLastTableY(doc, y + 60, 10);
   y = pdfSection(doc, 'Resumen de Pago', y);
+  // Si hay deuda arrastrada (prevDebt < 0), se muestra el subtotal y la deuda
+  // descontada para que TOTAL = Comision + Salario − Deuda cuadre a la vista.
+  const hasDebt = data.prevDebt < 0;
+  const rawTotal = Math.round((data.realPayment + data.salary) * 100) / 100;
+  const summaryBody: string[][] = [
+    ['Comision (Pago Real)', money(data.realPayment)],
+    ['Salario', money(data.salary)],
+  ];
+  if (hasDebt) {
+    summaryBody.push(['Subtotal antes de deuda', money(rawTotal)]);
+    summaryBody.push(['(-) Deuda arrastrada del mes anterior', money(data.prevDebt)]);
+  }
+  summaryBody.push(['TOTAL A PAGAR', money(data.total)]);
+  const totalRowIdx = summaryBody.length - 1;
+  const debtRowIdx = hasDebt ? summaryBody.length - 2 : -1;
   autoTable(doc, {
     startY: y,
     head: [['Concepto', 'Monto']],
-    body: [
-      ['Comision (Pago Real)', money(data.realPayment)],
-      ['Salario', money(data.salary)],
-      ['TOTAL A PAGAR', money(data.total)],
-    ],
+    body: summaryBody,
     theme: 'grid',
     styles: { fontSize: 10, cellPadding: 4 },
     headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
     bodyStyles: { textColor: C.ink },
     didParseCell: (hookData) => {
-      if (hookData.section === 'body' && hookData.row.index === 2) {
+      if (hookData.section !== 'body') return;
+      if (hookData.row.index === totalRowIdx) {
         hookData.cell.styles.fontStyle = 'bold';
         hookData.cell.styles.fillColor = [234, 241, 250];
         hookData.cell.styles.textColor = C.primary;
+      } else if (hookData.row.index === debtRowIdx) {
+        hookData.cell.styles.fillColor = [254, 243, 199]; // ámbar suave
+        hookData.cell.styles.textColor = [146, 64, 14];
       }
     },
     columnStyles: { 0: { cellWidth: 100 }, 1: { halign: 'right' } },

@@ -1663,6 +1663,9 @@ export default function ComisionesPage() {
                                       getPrevDebtAll(calc.profileId),
                                       calc.realPayment + calc.salary,
                                     ).finalTotalEarned,
+                                    // Deuda arrastrada para mostrarla en el
+                                    // resumen (si negativa) y que el TOTAL cuadre.
+                                    prevDebt: getPrevDebtAll(calc.profileId),
                                   });
                                 })}
                                 className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
