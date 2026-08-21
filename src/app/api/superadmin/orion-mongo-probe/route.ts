@@ -60,10 +60,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: false, error: 'company_id requerido' }, { status: 400 });
   }
 
+  // ?schema=deposits,withdrawals — devuelve SOLO los nombres de campo (y el
+  // tipo BSON) del documento más reciente de cada colección pedida. Nunca
+  // valores: es descubrimiento de esquema para diseñar los syncs sin exponer
+  // datos de clientes. Máx 8 colecciones por llamada.
+  const schemaParam = request.nextUrl.searchParams.get('schema');
+  const schemaTargets = (schemaParam ?? '')
+    .split(',')
+    .map((x) => x.trim())
+    .filter((x) => /^[a-z0-9_]{1,64}$/i.test(x))
+    .slice(0, 8);
+
   const startedAt = Date.now();
   try {
     const payload = await withTimeout(
-      withOrionMongo(companyId, (session) => runProbe(session, startedAt)),
+      withOrionMongo(companyId, (session) => runProbe(session, startedAt, schemaTargets)),
       PROBE_TIMEOUT_MS,
     );
     return NextResponse.json(payload);
@@ -84,7 +95,22 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function runProbe(session: OrionMongoSession, startedAt: number) {
+/** Tipo BSON legible de un valor, sin revelar el valor. */
+function bsonTypeOf(v: unknown): string {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return `array(${v.length ? bsonTypeOf(v[0]) : 'vacío'})`;
+  if (v instanceof Date) return 'date';
+  const t = typeof v;
+  if (t === 'object') {
+    const ctor = (v as object).constructor?.name;
+    if (ctor === 'ObjectId') return 'objectId';
+    if (ctor === 'Decimal128' || ctor === 'Long' || ctor === 'Double' || ctor === 'Int32') return 'number';
+    return 'object';
+  }
+  return t;
+}
+
+async function runProbe(session: OrionMongoSession, startedAt: number, schemaTargets: string[] = []) {
   const admin = session.db.admin();
 
   // connectionStatus es de las poquísimas órdenes que cualquier usuario puede
@@ -132,6 +158,29 @@ async function runProbe(session: OrionMongoSession, startedAt: number) {
     });
   }
 
+  // Esquema por colección: claves + tipo del doc más reciente (por _id desc).
+  // Los subdocumentos se describen un nivel: {cliente: 'object(keys: name, email)'}
+  // sin bajar a los valores.
+  const schemas: Record<string, Record<string, string> | { error: string }> = {};
+  for (const name of schemaTargets) {
+    try {
+      const doc = await session.db.collection(name)
+        .find({}, { sort: { _id: -1 }, limit: 1 })
+        .next();
+      if (!doc) { schemas[name] = { error: 'colección vacía' }; continue; }
+      const out: Record<string, string> = {};
+      for (const [k, v] of Object.entries(doc)) {
+        const t = bsonTypeOf(v);
+        out[k] = t === 'object' && v
+          ? `object(keys: ${Object.keys(v as object).slice(0, 15).join(', ')})`
+          : t;
+      }
+      schemas[name] = out;
+    } catch (err) {
+      schemas[name] = { error: (err as Error).message.slice(0, 120) };
+    }
+  }
+
   return {
     success: true as const,
     connected: true as const,
@@ -142,6 +191,7 @@ async function runProbe(session: OrionMongoSession, startedAt: number) {
     collectionCountTotal: names.length,
     crmMatches: names.filter((n) => CRM_HINT_NAMES.includes(n.toLowerCase())),
     readOnly,
+    schemas: Object.keys(schemas).length ? schemas : undefined,
     elapsedMs: Date.now() - startedAt,
   };
 }
