@@ -71,10 +71,16 @@ export async function GET(request: NextRequest) {
     .filter((x) => /^[a-z0-9_]{1,64}$/i.test(x))
     .slice(0, 8);
 
+  // ?facets=1 — distribución de valores de los campos CLASIFICADORES de las
+  // colecciones de dinero (tipo, estado, procesador): conteo y suma por grupo.
+  // Son agregados, sin un solo dato de cliente. Es lo que define las reglas de
+  // clasificación del sync (¿'paypros' o 'PayPros'? ¿qué estados existen?).
+  const wantFacets = request.nextUrl.searchParams.get('facets') === '1';
+
   const startedAt = Date.now();
   try {
     const payload = await withTimeout(
-      withOrionMongo(companyId, (session) => runProbe(session, startedAt, schemaTargets)),
+      withOrionMongo(companyId, (session) => runProbe(session, startedAt, schemaTargets, wantFacets)),
       PROBE_TIMEOUT_MS,
     );
     return NextResponse.json(payload);
@@ -110,7 +116,16 @@ function bsonTypeOf(v: unknown): string {
   return t;
 }
 
-async function runProbe(session: OrionMongoSession, startedAt: number, schemaTargets: string[] = []) {
+/** Facetas fijas: colección → [campos de agrupación, campo de monto]. */
+const FACET_SPECS: ReadonlyArray<[collection: string, groupBy: string[], amountField: string]> = [
+  ['deposits', ['depositType', 'depositStatus'], 'amountPaid'],
+  ['withdrawals', ['processor', 'type', 'status'], 'transactionAmount'],
+  ['transactions', ['transactionType', 'transactionStatus'], 'transactionValue'],
+  ['fairpaytransactions', ['type', 'status'], 'amountUsd'],
+  ['coinsbuytransactions', ['status'], 'amount'],
+];
+
+async function runProbe(session: OrionMongoSession, startedAt: number, schemaTargets: string[] = [], wantFacets = false) {
   const admin = session.db.admin();
 
   // connectionStatus es de las poquísimas órdenes que cualquier usuario puede
@@ -181,6 +196,31 @@ async function runProbe(session: OrionMongoSession, startedAt: number, schemaTar
     }
   }
 
+  // Facetas: $group con conteo, suma y rango de fechas por combinación.
+  const facets: Record<string, unknown> = {};
+  if (wantFacets) {
+    for (const [coll, groupBy, amountField] of FACET_SPECS) {
+      try {
+        const idExpr: Record<string, string> = {};
+        for (const g of groupBy) idExpr[g] = `$${g}`;
+        const rows = await session.db.collection(coll).aggregate([
+          { $group: {
+              _id: idExpr,
+              n: { $sum: 1 },
+              total: { $sum: { $ifNull: [`$${amountField}`, 0] } },
+              desde: { $min: '$createdAt' },
+              hasta: { $max: '$createdAt' },
+          } },
+          { $sort: { n: -1 } },
+          { $limit: 30 },
+        ], { allowDiskUse: false, maxTimeMS: 8000 }).toArray();
+        facets[coll] = rows.map((r) => ({ ...(r._id as object), n: r.n, total: Math.round(Number(r.total) * 100) / 100, desde: r.desde, hasta: r.hasta }));
+      } catch (err) {
+        facets[coll] = { error: (err as Error).message.slice(0, 120) };
+      }
+    }
+  }
+
   return {
     success: true as const,
     connected: true as const,
@@ -192,6 +232,7 @@ async function runProbe(session: OrionMongoSession, startedAt: number, schemaTar
     crmMatches: names.filter((n) => CRM_HINT_NAMES.includes(n.toLowerCase())),
     readOnly,
     schemas: Object.keys(schemas).length ? schemas : undefined,
+    facets: wantFacets ? facets : undefined,
     elapsedMs: Date.now() - startedAt,
   };
 }
