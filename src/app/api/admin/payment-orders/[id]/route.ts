@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
+import { PAYMENT_ORDER_READ_ROLES } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { isEditable, STATUS_LABELS, type PaymentOrderStatus } from '@/lib/payment-orders/types';
@@ -34,7 +35,7 @@ type Params = { params: Promise<{ id: string }> };
 
 export async function GET(request: NextRequest, { params }: Params) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
+    const auth = await verifyAdminAuth(request, { roles: PAYMENT_ORDER_READ_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 
