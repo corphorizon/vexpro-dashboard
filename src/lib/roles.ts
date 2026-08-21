@@ -66,6 +66,15 @@ export function roleCanWrite(role: string): boolean {
 export const FINANCE_ROLES = ['admin', 'auditor'] as const;
 export const HR_ROLES = ['admin', 'hr'] as const;
 
+/**
+ * Lectura de Órdenes de Pago. Más ancho que FINANCE_ROLES a propósito
+ * (Kevin, 2026-08-18): el perfil de RRHH necesita VER las órdenes —muchas
+ * son salarios— sin poder crear, aprobar ni pagar. Solo aplica a los GET;
+ * toda escritura de OPs sigue exigiendo FINANCE_ROLES. El módulo
+ * 'payment_orders' en allowed_modules sigue siendo requisito además del rol.
+ */
+export const PAYMENT_ORDER_READ_ROLES = ['admin', 'auditor', 'hr'] as const;
+
 export function roleCanWriteFinance(role: string): boolean {
   // El superadmin de plataforma llega al cliente con effective_role
   // 'superadmin' (no figura en FINANCE_ROLES porque esa lista alimenta el
