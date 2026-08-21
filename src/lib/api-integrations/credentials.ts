@@ -22,6 +22,9 @@
 //   · unipayment → JSON.stringify({ client_id, client_secret })
 //   · fairpay    → raw api_key string
 //   · paypros    → JSON.stringify({ merchant_id, api_key, sign_key })
+//   · mt5_sql     → JSON.stringify({ engine, host, port, database, user, password })
+//   · orion_mongo → connection string mongodb:// entera (lleva usuario y
+//                   contraseña adentro; extra_config.database es opcional)
 //
 // `extra_config` stays available for non-sensitive knobs (webhook_url,
 // base_url override, sandbox toggle, etc.) and is returned alongside the
@@ -34,8 +37,21 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptSecret } from '@/lib/crypto';
+import { parseMt5SqlSecret } from './mt5-sql/validate';
+import { parseMongoUri } from './orion-mongo/validate';
 
-export type TenantProvider = 'coinsbuy' | 'unipayment' | 'fairpay' | 'fairpay_banking' | 'orion_crm' | 'paypros';
+export type TenantProvider =
+  | 'coinsbuy'
+  | 'unipayment'
+  | 'fairpay'
+  | 'fairpay_banking'
+  | 'orion_crm'
+  | 'paypros'
+  // Migración 087: bases de datos propias del broker (réplica SQL de MT5 y
+  // MongoDB del CRM Orion). No son pasarelas: son orígenes de datos de SOLO
+  // LECTURA de los que el dashboard leerá en tandas siguientes.
+  | 'mt5_sql'
+  | 'orion_mongo';
 
 interface RawCredentialRow {
   encrypted_secret: string;
@@ -321,6 +337,82 @@ export async function resolvePayprosCredentials(
     console.warn('[credentials] paypros secret not JSON — treating as not configured');
     return null;
   }
+}
+
+// ── MetaTrader 5 · réplica SQL ───────────────────────────────────────────
+//
+// El Backup Server de MT5 puede exportar sus tablas (mt5_users, mt5_deals,
+// mt5_orders…) a una base SQL que administra el hosting del broker. Esa
+// réplica es nuestra única puerta a MT5: no hablamos con el server en vivo.
+//
+// Secreto = JSON {engine, host, port, database, user, password} — el host y
+// el puerto también viajan cifrados porque van pegados a las credenciales;
+// se duplican en extra_config (sin user/password) sólo para que el panel
+// muestre a qué base apunta la fila sin descifrar nada.
+//
+// EXIGENCIA: el usuario debe ser de SOLO LECTURA. El probe del superadmin lo
+// verifica contra los permisos reales del motor.
+
+export interface Mt5SqlCredentials {
+  engine: 'mysql' | 'postgres';
+  host: string;
+  port: number;
+  database: string;
+  user: string;
+  password: string;
+}
+
+export async function resolveMt5SqlCredentials(
+  companyId: string | null | undefined,
+): Promise<Mt5SqlCredentials | null> {
+  if (!companyId) return null;
+  const raw = await readRaw(companyId, 'mt5_sql');
+  if (!raw) return null;
+
+  const parsed = parseMt5SqlSecret(raw.plaintext);
+  if (!parsed.ok) {
+    // Nunca logueamos el secreto — sólo el motivo del rechazo, que ya viene
+    // redactado por el validador.
+    console.warn('[credentials] mt5_sql secreto inválido:', parsed.error);
+    return null;
+  }
+  return parsed.value;
+}
+
+// ── Orion CRM · MongoDB ──────────────────────────────────────────────────
+//
+// Además de su API, Orion corre sobre un MongoDB al que algunos brokers nos
+// dan acceso directo de lectura (mucho más completo que la API). El secreto
+// es la connection string ENTERA (lleva usuario y contraseña adentro), así
+// que se cifra tal cual; `extra_config.database` guarda la base a usar
+// cuando la URI no la trae en el path.
+
+export interface OrionMongoCredentials {
+  uri: string;
+  database: string | null;
+}
+
+export async function resolveOrionMongoCredentials(
+  companyId: string | null | undefined,
+): Promise<OrionMongoCredentials | null> {
+  if (!companyId) return null;
+  const raw = await readRaw(companyId, 'orion_mongo');
+  if (!raw) return null;
+
+  const parsed = parseMongoUri(raw.plaintext);
+  if (!parsed.ok) {
+    console.warn('[credentials] orion_mongo URI inválida:', parsed.error);
+    return null;
+  }
+
+  const configured =
+    typeof raw.extraConfig?.database === 'string' && raw.extraConfig.database.trim() !== ''
+      ? (raw.extraConfig.database as string).trim()
+      : null;
+
+  // extra_config manda sobre el path de la URI: es lo que el superadmin ve
+  // y edita en el panel.
+  return { uri: parsed.value.uri, database: configured ?? parsed.value.uriDatabase };
 }
 
 /**

@@ -26,12 +26,26 @@ import { createClient } from '@/lib/supabase/client';
 //                   extras: base_url + webhook_token (el token lo genera el
 //                   servidor una sola vez; la URL del webhook llega armada
 //                   en el GET como `webhook_url`)
+//   · mt5_sql     → encrypted_secret = JSON({ engine, host, port, database,
+//                   user, password }); extras: { engine, host, port, database }
+//                   (sin user/password — el host se muestra truncado)
+//   · orion_mongo → encrypted_secret = la connection string mongodb:// ENTERA
+//                   extras: { database, host_hint }
 //
 // When `companyId` is passed, requests append `?company_id=<id>` so the API
 // route knows which tenant to operate on (see /api/admin/api-credentials).
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Provider = 'sendgrid' | 'coinsbuy' | 'unipayment' | 'fairpay' | 'fairpay_banking' | 'orion_crm' | 'paypros';
+type Provider =
+  | 'sendgrid'
+  | 'coinsbuy'
+  | 'unipayment'
+  | 'fairpay'
+  | 'fairpay_banking'
+  | 'orion_crm'
+  | 'paypros'
+  | 'mt5_sql'
+  | 'orion_mongo';
 
 /** URL de producción de Pay-Pros (prefill del campo Base URL). */
 const PAYPROS_DEFAULT_BASE_URL = 'https://master-api.pay-pros.com/';
@@ -54,7 +68,9 @@ type FormKind =
   | { kind: 'compound' }   // coinsbuy, unipayment → client_id + client_secret (secret = JSON of both)
   | { kind: 'apiKey' }     // fairpay → raw api_key
   | { kind: 'keyExtras' }  // sendgrid, orion_crm → api_key + extra_config fields
-  | { kind: 'paypros' };   // paypros → merchant_id + api_key + sign_key (secret = JSON) + base_url
+  | { kind: 'paypros' }    // paypros → merchant_id + api_key + sign_key (secret = JSON) + base_url
+  | { kind: 'mt5sql' }     // mt5_sql → engine + host + port + database + user + password (secret = JSON)
+  | { kind: 'mongo' };     // orion_mongo → connection string (secret) + database
 
 interface ProviderMeta {
   label: string;
@@ -72,6 +88,13 @@ interface ProviderMeta {
    * su comisión por API, así que el % se configura acá por tenant.
    */
   supportsFeePct?: boolean;
+  /**
+   * Bases de datos del broker (mt5_sql / orion_mongo): ruta del sondeo del
+   * superadmin que valida el acceso Y verifica que el usuario sea de solo
+   * lectura. Distinto de `supportsPing` (health-check de las pasarelas):
+   * devuelve un diagnóstico completo, no un booleano.
+   */
+  dbProbePath?: string;
 }
 
 const PROVIDER_META: Record<Provider, ProviderMeta> = {
@@ -127,10 +150,24 @@ const PROVIDER_META: Record<Provider, ProviderMeta> = {
     ],
     supportsPing: true,
   },
+  mt5_sql: {
+    label: 'MetaTrader 5 (SQL)',
+    description:
+      'Réplica SQL Export del Backup Server de MT5. Usuario de SOLO LECTURA.',
+    form: { kind: 'mt5sql' },
+    dbProbePath: '/api/superadmin/mt5-sql-probe',
+  },
+  orion_mongo: {
+    label: 'Orion CRM (MongoDB)',
+    description:
+      'Base MongoDB del CRM. Usuario de SOLO LECTURA. La connection string completa queda cifrada.',
+    form: { kind: 'mongo' },
+    dbProbePath: '/api/superadmin/orion-mongo-probe',
+  },
 };
 
-// Rendering order — Orion CRM last so it groups with the business/data
-// section, separate from the three payment processors above.
+// Rendering order — el grupo "datos del negocio" (Orion CRM y las dos bases
+// del broker) va al final, separado de las pasarelas de pago de arriba.
 const PROVIDER_ORDER: Provider[] = [
   'sendgrid',
   'coinsbuy',
@@ -139,6 +176,8 @@ const PROVIDER_ORDER: Provider[] = [
   'fairpay_banking',
   'paypros',
   'orion_crm',
+  'mt5_sql',
+  'orion_mongo',
 ];
 
 interface Props {
@@ -151,6 +190,35 @@ interface PingResult {
   connected: boolean;
   message: string;
   isMock: boolean;
+  testedAt: string;
+}
+
+// Respuesta de los sondeos de base de datos (mt5-sql-probe / orion-mongo-probe).
+// Los dos comparten `connected`, `readOnly` y `elapsedMs`; el resto es propio
+// de cada motor y se pinta sólo si viene.
+interface DbProbeResult {
+  connected: boolean;
+  error?: string | null;
+  hint?: string | null;
+  code?: string | null;
+  elapsedMs?: number;
+  readOnly?: { verdict: 'ok' | 'ESCRITURA DETECTADA'; detail: string };
+  // MT5 SQL
+  engine?: string;
+  serverVersion?: string;
+  database?: string;
+  tables?: Array<{ name: string; isMt5: boolean }>;
+  tableCountTotal?: number;
+  dealsPartitioned?: boolean;
+  samples?: {
+    mt5_users: { count: number | null; lastRegistration: string | null } | null;
+    deals: { table: string; count: number | null; lastTime: string | null } | null;
+  };
+  // Orion Mongo
+  collections?: Array<{ name: string; isCrmLike: boolean; count: number | null }>;
+  collectionCountTotal?: number;
+  crmMatches?: string[];
+  user?: string | null;
   testedAt: string;
 }
 
@@ -167,7 +235,40 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   const [pingResults, setPingResults] = useState<Partial<Record<Provider, PingResult>>>({});
   const [pingBusy, setPingBusy] = useState<Provider | null>(null);
 
+  // Sondeos de base de datos (MT5 SQL / Orion Mongo): resultado completo por
+  // proveedor + cuál se está probando ahora.
+  const [dbProbes, setDbProbes] = useState<Partial<Record<Provider, DbProbeResult>>>({});
+  const [dbProbeBusy, setDbProbeBusy] = useState<Provider | null>(null);
+
   const qs = companyId ? `?company_id=${encodeURIComponent(companyId)}` : '';
+
+  /**
+   * Lanza el sondeo de la base. Siempre pasa company_id: estas rutas son de
+   * superadmin y operan sobre un tenant explícito.
+   */
+  const handleDbProbe = async (provider: Provider, path: string) => {
+    if (!companyId) return;
+    setDbProbeBusy(provider);
+    try {
+      const res = await apiFetch(`${path}?company_id=${encodeURIComponent(companyId)}`);
+      const data = (await res.json()) as Omit<DbProbeResult, 'testedAt'>;
+      setDbProbes((prev) => ({
+        ...prev,
+        [provider]: { ...data, testedAt: new Date().toISOString() },
+      }));
+    } catch (err) {
+      setDbProbes((prev) => ({
+        ...prev,
+        [provider]: {
+          connected: false,
+          error: err instanceof Error ? err.message : 'Error de red',
+          testedAt: new Date().toISOString(),
+        },
+      }));
+    } finally {
+      setDbProbeBusy(null);
+    }
+  };
 
   const handlePing = async (provider: Provider) => {
     setPingBusy(provider);
@@ -260,6 +361,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
         const cred = getCred(provider);
         const isEditing = editing === provider;
         const ping = pingResults[provider];
+        const dbProbe = dbProbes[provider];
 
         return (
           <Card key={provider}>
@@ -285,6 +387,28 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                       <><AlertTriangle className="w-3 h-3" /> Mock</>
                     ) : (
                       <><WifiOff className="w-3 h-3" /> Sin conectar</>
+                    )}
+                  </Badge>
+                )}
+                {/* Sondeo de base: verde si conecta con usuario de solo
+                    lectura, ámbar si conecta pero puede escribir, rojo si no
+                    conecta. */}
+                {dbProbe && (
+                  <Badge
+                    variant={
+                      !dbProbe.connected
+                        ? 'danger'
+                        : dbProbe.readOnly?.verdict === 'ok'
+                          ? 'success'
+                          : 'warning'
+                    }
+                  >
+                    {!dbProbe.connected ? (
+                      <><WifiOff className="w-3 h-3" /> Sin conectar</>
+                    ) : dbProbe.readOnly?.verdict === 'ok' ? (
+                      <><Wifi className="w-3 h-3" /> Solo lectura</>
+                    ) : (
+                      <><AlertTriangle className="w-3 h-3" /> Permite escritura</>
                     )}
                   </Badge>
                 )}
@@ -333,6 +457,9 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                     {ping.message} · {new Date(ping.testedAt).toLocaleString('es-ES')}
                   </p>
                 )}
+                {/* Resultado del sondeo de base (MT5 SQL / Orion Mongo). */}
+                {meta.dbProbePath && dbProbe && <DbProbeReport result={dbProbe} />}
+                {meta.dbProbePath && <ReadOnlyNote />}
                 <div className="flex gap-2 pt-2 flex-wrap">
                   <button
                     onClick={() => setEditing(provider)}
@@ -347,6 +474,20 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                       className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
                     >
                       {pingBusy === provider ? (
+                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando…</>
+                      ) : (
+                        <><Wifi className="w-3.5 h-3.5" /> Probar conexión</>
+                      )}
+                    </button>
+                  )}
+                  {meta.dbProbePath && (
+                    <button
+                      onClick={() => handleDbProbe(provider, meta.dbProbePath!)}
+                      disabled={dbProbeBusy === provider || !companyId}
+                      title={!companyId ? 'Requiere el contexto de una empresa' : undefined}
+                      className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
+                    >
+                      {dbProbeBusy === provider ? (
                         <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando…</>
                       ) : (
                         <><Wifi className="w-3.5 h-3.5" /> Probar conexión</>
@@ -369,6 +510,13 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                 >
                   Configurar
                 </button>
+                {/* Sin credenciales no hay nada que sondear: la nota explica
+                    qué se va a hacer con lo que se cargue. */}
+                {meta.dbProbePath && (
+                  <div className="w-full">
+                    <ReadOnlyNote />
+                  </div>
+                )}
                 {/* Even without credentials, Orion CRM can be probed — it
                     reports "mock mode" which is useful info for the admin. */}
                 {meta.supportsPing && (
@@ -389,6 +537,115 @@ export function ApiCredentialsPanel({ companyId }: Props) {
           </Card>
         );
       })}
+    </div>
+  );
+}
+
+// ─── Bases de datos del broker ────────────────────────────────────────────────
+
+/** Nota fija de las dos tarjetas de base de datos. */
+function ReadOnlyNote() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Los datos nunca salen del servidor: la conexión se abre desde el backend y el
+      dashboard sólo LEE. El usuario que cargues debe ser de solo lectura; el botón
+      &quot;Probar conexión&quot; lo verifica contra los permisos reales del motor.
+    </p>
+  );
+}
+
+/** Host truncado para mostrar: db.hosting.com → db.h…g.com */
+function truncateHost(host: string): string {
+  if (host.length <= 12) return host;
+  return `${host.slice(0, 4)}…${host.slice(-6)}`;
+}
+
+/**
+ * Resultado del sondeo. Verde = conecta y el usuario es de solo lectura.
+ * Ámbar = conecta pero puede escribir. Rojo = no conecta (con el error de red
+ * legible y, si huele a firewall, las IPs a autorizar).
+ */
+function DbProbeReport({ result }: { result: DbProbeResult }) {
+  const tone = !result.connected
+    ? 'border-negative/30 bg-negative/5 text-negative'
+    : result.readOnly?.verdict === 'ok'
+      ? 'border-positive/30 bg-positive/5 text-positive'
+      : 'border-warning/30 bg-warning/5 text-warning';
+
+  return (
+    <div className={`rounded-lg border p-3 text-xs space-y-1.5 ${tone}`}>
+      {!result.connected ? (
+        <>
+          <p className="font-medium">No se pudo conectar.</p>
+          <p className="text-foreground/80 break-words">{result.error}</p>
+          {result.hint && <p className="text-foreground/80">Pista: {result.hint}</p>}
+        </>
+      ) : (
+        <>
+          <p className="font-medium">
+            Conexión OK
+            {result.engine ? ` · ${result.engine}` : ''}
+            {result.serverVersion ? ` ${result.serverVersion}` : ''}
+            {result.database ? ` · base ${result.database}` : ''}
+          </p>
+
+          {/* MT5 SQL */}
+          {result.tables && (
+            <div className="text-foreground/80 space-y-1">
+              <p>
+                {result.tableCountTotal} tablas ({result.tables.filter((t) => t.isMt5).length} mt5_*
+                entre las {result.tables.length} listadas)
+                {result.dealsPartitioned ? ' · deals particionados por año' : ''}
+              </p>
+              <p className="font-mono break-words">
+                {result.tables.map((t) => (t.isMt5 ? `▸${t.name}` : t.name)).join('  ')}
+              </p>
+              {result.samples?.mt5_users && (
+                <p>
+                  mt5_users: {result.samples.mt5_users.count ?? '?'} filas · último registro{' '}
+                  {result.samples.mt5_users.lastRegistration ?? '—'}
+                </p>
+              )}
+              {result.samples?.deals && (
+                <p>
+                  {result.samples.deals.table}: {result.samples.deals.count ?? '?'} filas · última
+                  operación {result.samples.deals.lastTime ?? '—'}
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Orion Mongo */}
+          {result.collections && (
+            <div className="text-foreground/80 space-y-1">
+              <p>
+                {result.collectionCountTotal} colecciones
+                {result.user ? ` · usuario ${result.user}` : ''}
+                {result.crmMatches && result.crmMatches.length > 0
+                  ? ` · típicas de CRM: ${result.crmMatches.join(', ')}`
+                  : ''}
+              </p>
+              <p className="font-mono break-words">
+                {result.collections
+                  .map((c) => `${c.isCrmLike ? '▸' : ''}${c.name}${c.count != null ? `(${c.count})` : ''}`)
+                  .join('  ')}
+              </p>
+            </div>
+          )}
+
+          {result.readOnly && (
+            <p className="text-foreground/80">
+              <span className="font-medium">Solo lectura: {result.readOnly.verdict}.</span>{' '}
+              {result.readOnly.detail}
+              {result.readOnly.verdict !== 'ok' && ' Pedí un usuario de solo lectura.'}
+            </p>
+          )}
+        </>
+      )}
+      <p className="text-foreground/60">
+        {result.elapsedMs != null ? `${result.elapsedMs} ms · ` : ''}
+        {new Date(result.testedAt).toLocaleString('es-ES')}
+      </p>
     </div>
   );
 }
@@ -414,6 +671,8 @@ function ConfiguredView({
     switch (meta.form.kind) {
       case 'compound': return 'Client Secret';
       case 'paypros': return 'API Key';
+      case 'mt5sql': return 'Contraseña';
+      case 'mongo': return 'Connection string (host)';
       case 'apiKey':
       case 'keyExtras':
         return provider === 'sendgrid' || provider === 'orion_crm' || provider === 'fairpay'
@@ -454,7 +713,10 @@ function ConfiguredView({
         <div className="text-xs text-muted-foreground space-y-0.5">
           {extraEntries.map(([k, v]) => (
             <div key={k}>
-              <span className="font-medium">{k}:</span> {String(v ?? '')}
+              {/* host / host_hint son la puerta de la base del broker: se
+                  muestran truncados aunque estén guardados enteros. */}
+              <span className="font-medium">{k}:</span>{' '}
+              {k === 'host' || k === 'host_hint' ? truncateHost(String(v ?? '')) : String(v ?? '')}
             </div>
           ))}
         </div>
@@ -545,6 +807,25 @@ function ApiCredentialForm({
       ? existingExtras.base_url
       : PAYPROS_DEFAULT_BASE_URL,
   );
+  // MT5 SQL: engine/host/port/database vienen de extra_config (no son
+  // secretos) y se prellenan; usuario y contraseña NUNCA se prellenan.
+  const [mt5Engine, setMt5Engine] = useState<'mysql' | 'postgres'>(() =>
+    existingExtras.engine === 'postgres' ? 'postgres' : 'mysql',
+  );
+  const [mt5Host, setMt5Host] = useState(() => String(existingExtras.host ?? ''));
+  const [mt5Port, setMt5Port] = useState(() =>
+    existingExtras.port != null
+      ? String(existingExtras.port)
+      : existingExtras.engine === 'postgres'
+        ? '5432'
+        : '3306',
+  );
+  const [mt5Database, setMt5Database] = useState(() => String(existingExtras.database ?? ''));
+  const [mt5User, setMt5User] = useState('');
+  const [mt5Password, setMt5Password] = useState('');
+  // Orion Mongo: la URI entera es el secreto; la base sí es visible.
+  const [mongoUri, setMongoUri] = useState('');
+  const [mongoDatabase, setMongoDatabase] = useState(() => String(existingExtras.database ?? ''));
   const [walletInput, setWalletInput] = useState(currentWalletId ?? '');
   // Comisión del proveedor (%) — solo fairpay/unipayment (supportsFeePct).
   // Se guarda en extra_config.fee_pct; vacío = sin comisión configurada.
@@ -595,6 +876,44 @@ function ApiCredentialForm({
         sign_key: signKey.trim(),
       });
       extra_config = { ...existingExtras, base_url: base };
+    } else if (meta.form.kind === 'mt5sql') {
+      // Mismas reglas que valida el servidor (mt5-sql/validate.ts). Acá sólo
+      // para dar el error sin viaje de red; el servidor vuelve a validar.
+      const host = mt5Host.trim();
+      const port = Number(mt5Port.trim());
+      if (!host) { setError('Ingresá el host de la base.'); return; }
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(host)) {
+        setError('El host va sin esquema (sin http:// ni mysql://). Ej: db.hosting.com');
+        return;
+      }
+      if (!Number.isInteger(port) || port < 1 || port > 65535) {
+        setError('El puerto debe ser un entero entre 1 y 65535.');
+        return;
+      }
+      if (!mt5Database.trim() || !mt5User.trim() || !mt5Password) {
+        setError('Ingresá base de datos, usuario y contraseña.');
+        return;
+      }
+      secret = JSON.stringify({
+        engine: mt5Engine,
+        host,
+        port,
+        database: mt5Database.trim(),
+        user: mt5User.trim(),
+        password: mt5Password,
+      });
+      // engine/host/port/database los reescribe el servidor en extra_config
+      // a partir del secreto: una sola fuente de verdad.
+      extra_config = null;
+    } else if (meta.form.kind === 'mongo') {
+      const uri = mongoUri.trim();
+      if (!/^mongodb(\+srv)?:\/\//i.test(uri)) {
+        setError('La connection string debe empezar con mongodb:// o mongodb+srv://');
+        return;
+      }
+      secret = uri;
+      // host_hint lo calcula el servidor a partir de la URI.
+      extra_config = mongoDatabase.trim() ? { database: mongoDatabase.trim() } : {};
     } else if (meta.form.kind === 'apiKey') {
       if (apiKey.length < 8) {
         setError('La API key debe tener al menos 8 caracteres.');
@@ -809,6 +1128,157 @@ function ApiCredentialForm({
             Al guardar se genera la Webhook URL de esta empresa (aparece en la tarjeta y hay
             que registrarla en Pay-Pros). No cambia en guardados posteriores.
           </p>
+        </>
+      )}
+
+      {/* MT5 SQL: engine + host + puerto + base + usuario + contraseña.
+          Los seis viajan como un único JSON cifrado. */}
+      {meta.form.kind === 'mt5sql' && (
+        <>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Motor</label>
+            <select
+              value={mt5Engine}
+              onChange={(e) => {
+                const next = e.target.value as 'mysql' | 'postgres';
+                setMt5Engine(next);
+                // Puerto por defecto del motor, salvo que ya lo hayan tocado.
+                if (mt5Port === '' || mt5Port === '3306' || mt5Port === '5432') {
+                  setMt5Port(next === 'postgres' ? '5432' : '3306');
+                }
+              }}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
+            >
+              <option value="mysql">MySQL / MariaDB</option>
+              <option value="postgres">PostgreSQL</option>
+            </select>
+            <p className="text-xs text-muted-foreground mt-1">
+              El SQL Export de MT5 también admite MSSQL y Oracle, pero todavía no los
+              leemos: si el hosting sólo ofrece uno de esos, avisanos.
+            </p>
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <div className="col-span-2">
+              <label className="block text-sm font-medium mb-1.5">Host</label>
+              <input
+                type="text"
+                value={mt5Host}
+                onChange={(e) => setMt5Host(e.target.value)}
+                placeholder="db.hosting-del-broker.com"
+                required
+                autoComplete="off"
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-1.5">Puerto</label>
+              <input
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={65535}
+                value={mt5Port}
+                onChange={(e) => setMt5Port(e.target.value)}
+                required
+                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Base de datos</label>
+            <input
+              type="text"
+              value={mt5Database}
+              onChange={(e) => setMt5Database(e.target.value)}
+              placeholder="mt5"
+              required
+              autoComplete="off"
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Usuario</label>
+            <input
+              type="text"
+              value={mt5User}
+              onChange={(e) => setMt5User(e.target.value)}
+              placeholder="usuario de SOLO LECTURA"
+              required
+              autoComplete="off"
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Contraseña</label>
+            <div className="relative">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                value={mt5Password}
+                onChange={(e) => setMt5Password(e.target.value)}
+                placeholder="Se guardará encriptada."
+                required
+                autoComplete="new-password"
+                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
+              >
+                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Host, puerto y base se muestran después de guardar; usuario y contraseña no.
+              Si cambiás algo, completá los seis campos.
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* Orion Mongo: la connection string entera es el secreto. */}
+      {meta.form.kind === 'mongo' && (
+        <>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Connection string</label>
+            <div className="relative">
+              <input
+                type={showSecret ? 'text' : 'password'}
+                value={mongoUri}
+                onChange={(e) => setMongoUri(e.target.value)}
+                placeholder="mongodb+srv://usuario:clave@cluster.mongodb.net/orion"
+                required
+                autoComplete="new-password"
+                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              />
+              <button
+                type="button"
+                onClick={() => setShowSecret((v) => !v)}
+                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
+              >
+                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+            <p className="text-xs text-muted-foreground mt-1">
+              Lleva el usuario y la contraseña adentro: se cifra entera y no vuelve a
+              mostrarse. Del lado del panel sólo queda visible el host.
+            </p>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Base de datos (opcional)</label>
+            <input
+              type="text"
+              value={mongoDatabase}
+              onChange={(e) => setMongoDatabase(e.target.value)}
+              placeholder="orion"
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Si la connection string ya trae la base en el path, dejalo vacío.
+            </p>
+          </div>
         </>
       )}
 

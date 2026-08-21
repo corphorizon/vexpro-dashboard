@@ -8,6 +8,8 @@ import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { notify } from '@/lib/notifications/notify';
 import { PAYPROS_DEFAULT_BASE_URL } from '@/lib/api-integrations/credentials';
+import { parseMt5SqlSecret } from '@/lib/api-integrations/mt5-sql/validate';
+import { parseMongoUri } from '@/lib/api-integrations/orion-mongo/validate';
 
 // ---------------------------------------------------------------------------
 // /api/admin/api-credentials
@@ -37,7 +39,13 @@ import { PAYPROS_DEFAULT_BASE_URL } from '@/lib/api-integrations/credentials';
 // 'paypros' guarda TRES secretos como JSON en encrypted_secret
 // ({merchant_id, api_key, sign_key}) y en extra_config lleva base_url +
 // webhook_token (el token que identifica al tenant en la URL entrante).
-const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'fairpay_banking', 'orion_crm', 'paypros'];
+// Migración 087 — bases de datos propias del broker, ambas de SOLO LECTURA:
+// 'mt5_sql'     guarda JSON {engine, host, port, database, user, password} y
+//               repite lo no secreto (engine/host/port/database) en extra_config
+//               para que el panel muestre a dónde apunta sin descifrar.
+// 'orion_mongo' guarda la connection string ENTERA (lleva usuario y contraseña)
+//               y en extra_config {database, host_hint}.
+const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'fairpay_banking', 'orion_crm', 'paypros', 'mt5_sql', 'orion_mongo'];
 
 /**
  * Origen público del dashboard, para armar la URL del webhook que el
@@ -258,6 +266,64 @@ export async function POST(request: NextRequest) {
       // Mostramos los últimos 4 de la API Key, que es lo que el superadmin
       // puede comparar contra el panel de Pay-Pros.
       lastFour = lastChars(apiKey, 4);
+    }
+
+    // ── MT5 SQL ─────────────────────────────────────────────────────────
+    // El secreto es el JSON de conexión completo. La validación (motor
+    // permitido, host sin esquema, puerto, campos obligatorios) vive en
+    // parseMt5SqlSecret y la comparte el resolver: una sola fuente.
+    if (provider === 'mt5_sql') {
+      const parsed = parseMt5SqlSecret(secret);
+      if (!parsed.ok) {
+        return NextResponse.json({ success: false, error: parsed.error }, { status: 400 });
+      }
+      const { engine, host, port, database, password } = parsed.value;
+      // extra_config repite SOLO lo no secreto. El host técnicamente es
+      // sensible (es la puerta de la base del broker), así que se guarda pero
+      // el panel lo muestra truncado.
+      effectiveExtraConfig = {
+        ...(extra_config ?? {}),
+        engine,
+        host,
+        port,
+        database,
+      };
+      // El JSON termina en `"}`: como máscara no dice nada. Mostramos los
+      // últimos 4 de la contraseña, que es lo que el superadmin puede
+      // comparar contra lo que le pasó el hosting.
+      lastFour = lastChars(password, 4);
+    }
+
+    // ── Orion MongoDB ───────────────────────────────────────────────────
+    // El secreto es la connection string entera. Nunca sale del servidor:
+    // en extra_config queda sólo el host (sin credenciales) y la base.
+    if (provider === 'orion_mongo') {
+      const parsed = parseMongoUri(secret);
+      if (!parsed.ok) {
+        return NextResponse.json({ success: false, error: parsed.error }, { status: 400 });
+      }
+      const explicitDb =
+        typeof extra_config?.database === 'string' && extra_config.database.trim() !== ''
+          ? extra_config.database.trim()
+          : null;
+      const database = explicitDb ?? parsed.value.uriDatabase;
+      if (!database) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: 'Orion Mongo: indicá la base de datos (en el campo o en el path de la connection string).',
+          },
+          { status: 400 },
+        );
+      }
+      effectiveExtraConfig = {
+        ...(extra_config ?? {}),
+        database,
+        host_hint: parsed.value.hostHint,
+      };
+      // Últimos 4 del HOST, no de la URI: los últimos caracteres de la URI
+      // suelen ser opciones (…&w=majority) y no identifican nada.
+      lastFour = lastChars(parsed.value.hostHint, 4);
     }
 
     let bundle;
