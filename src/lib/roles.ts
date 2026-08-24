@@ -75,6 +75,37 @@ export const HR_ROLES = ['admin', 'hr'] as const;
  */
 export const PAYMENT_ORDER_READ_ROLES = ['admin', 'auditor', 'hr'] as const;
 
+/**
+ * Revisión de Retiros. El reparto es de Kevin (2026-08-24) y es una
+ * segregación de funciones, no una comodidad: **soporte triajea y escala, el
+ * auditor aprueba**.
+ *
+ * Quien atiende al cliente que reclama su retiro no debería ser quien libera
+ * el dinero — esa es toda la idea. Soporte mira la cola, entiende el caso y lo
+ * escala; aprobar o rechazar exige rol de finanzas.
+ *
+ * Ojo con el cruce que había antes de esto: los 5 usuarios de soporte tenían
+ * el módulo `risk` y no podían decidir nada, y el auditor —el único rol no
+ * admin que puede decidir— NO tenía el módulo y ni siquiera veía la pantalla.
+ * El módulo en allowed_modules sigue siendo requisito ADEMÁS del rol.
+ */
+export const WITHDRAWAL_REVIEW_READ_ROLES = ['admin', 'auditor', 'soporte'] as const;
+
+/** Ver la cola y la ficha. */
+export function roleCanReadWithdrawalReview(role: string): boolean {
+  return role === 'superadmin' || (WITHDRAWAL_REVIEW_READ_ROLES as readonly string[]).includes(role);
+}
+
+/** Escalar o dejar pendiente: no mueve dinero, sólo marca el caso. */
+export function roleCanTriageWithdrawal(role: string): boolean {
+  return roleCanReadWithdrawalReview(role);
+}
+
+/** Aprobar o rechazar: sólo finanzas. */
+export function roleCanApproveWithdrawal(role: string): boolean {
+  return roleCanWriteFinance(role);
+}
+
 export function roleCanWriteFinance(role: string): boolean {
   // El superadmin de plataforma llega al cliente con effective_role
   // 'superadmin' (no figura en FINANCE_ROLES porque esa lista alimenta el

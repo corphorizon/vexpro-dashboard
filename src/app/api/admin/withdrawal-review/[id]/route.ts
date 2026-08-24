@@ -25,12 +25,20 @@
 // el modelo daría hoy. Por eso `score`, `score_band` y `factors` se guardan
 // como datos, no se recalculan al leer.
 //
-// Auth: FINANCE_ROLES (admin / auditor — 'hr' no está en la lista) + módulo
-// 'risk', igual en lectura y en escritura.
+// Auth: módulo 'risk' siempre, y el rol se parte según lo que se haga.
+// LEER (cola y ficha): admin, auditor y soporte.
+// ESCALAR / dejar pendiente: los mismos — no mueve dinero, sólo marca el caso.
+// APROBAR o RECHAZAR: sólo finanzas (admin / auditor).
+// Es segregación de funciones, no comodidad: quien atiende al cliente que
+// reclama su retiro no debería ser quien lo libera. Ver roles.ts.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
+import { verifyAdminAuth } from '@/lib/api-auth';
+import {
+  WITHDRAWAL_REVIEW_READ_ROLES,
+  roleCanApproveWithdrawal,
+} from '@/lib/roles';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
@@ -48,7 +56,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['risk'] });
+    const auth = await verifyAdminAuth(request, { roles: WITHDRAWAL_REVIEW_READ_ROLES, modules: ['risk'] });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 
@@ -83,7 +91,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['risk'] });
+    const auth = await verifyAdminAuth(request, { roles: WITHDRAWAL_REVIEW_READ_ROLES, modules: ['risk'] });
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
     const externalId = decodeURIComponent(id);
@@ -101,6 +109,20 @@ export async function POST(
         { status: 400 },
       );
     }
+    // Segregación de funciones (ver roles.ts): soporte triajea y escala, el
+    // auditor aprueba. El rol se lee del servidor, nunca del body.
+    if ((decision === 'approve' || decision === 'reject') && !roleCanApproveWithdrawal(auth.role)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'Tu rol puede escalar o dejar pendiente un retiro, pero aprobarlo o rechazarlo ' +
+            'requiere rol de finanzas. Escalá el caso para que lo revise un auditor.',
+        },
+        { status: 403 },
+      );
+    }
+
     const notes = typeof body.notes === 'string' ? body.notes.trim().slice(0, NOTES_MAX) : null;
 
     // Rechazar y escalar SIEMPRE necesitan una razón escrita: es lo único que

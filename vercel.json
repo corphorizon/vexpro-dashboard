@@ -27,6 +27,26 @@
       "schedule": "20 0 * * *"
     },
     {
+      "path": "/api/cron/sync-crm",
+      "schedule": "20 4 * * *"
+    },
+    {
+      "path": "/api/cron/sync-crm",
+      "schedule": "20 8 * * *"
+    },
+    {
+      "path": "/api/cron/sync-crm",
+      "schedule": "20 12 * * *"
+    },
+    {
+      "path": "/api/cron/sync-crm",
+      "schedule": "20 16 * * *"
+    },
+    {
+      "path": "/api/cron/sync-crm",
+      "schedule": "20 20 * * *"
+    },
+    {
       "path": "/api/cron/create-new-period",
       "schedule": "1 0 1 * *"
     },

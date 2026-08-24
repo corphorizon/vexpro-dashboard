@@ -983,7 +983,11 @@ export const ROLE_DEFAULT_MODULES: Record<string, string[]> = {
   admin: ALL_MODULES,
   socio: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'reports'],
   auditor: ['summary', 'movements', 'expenses', 'liquidity', 'investments', 'balances', 'partners', 'upload', 'risk', 'reports'],
-  soporte: ['summary', 'movements', 'expenses', 'liquidity', 'balances'],
+  // 'risk' entra acá por la decisión de reparto de Kevin (2026-08-24): soporte
+  // TRIAJEA la cola de retiros y escala; aprobar y rechazar quedan en finanzas
+  // (ver WITHDRAWAL_REVIEW_READ_ROLES en roles.ts). Ver el módulo no da poder
+  // de decisión: son dos permisos distintos.
+  soporte: ['summary', 'movements', 'expenses', 'liquidity', 'balances', 'risk'],
   hr: ['summary', 'hr'],
   invitado: ['summary'],
 };
