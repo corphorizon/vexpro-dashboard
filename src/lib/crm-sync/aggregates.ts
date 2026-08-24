@@ -377,10 +377,30 @@ async function depositsAndWithdrawals(
     out.set(d.user_external_id, cur);
   }
 
-  const wds = await fetchAllRows<{ user_external_id: string | null; transaction_amount: number | null }>((from, to) =>
+  // ── POR QUÉ `requested_amount` Y NO `transaction_amount` ────────────────
+  // Los dos existen y los DOS son reales, pero miden hechos distintos:
+  //
+  //   requestedAmount    lo que sale de la BILLETERA del cliente
+  //   transactionAmount  lo que el cliente RECIBE por fuera, neto de comisión
+  //   fee                se lo queda el broker
+  //
+  // Verificado contra `wallettransfers`, el libro de la billetera, sobre 3.628
+  // clientes donde los dos importes difieren: lo descontado coincide con
+  // `requestedAmount` en 2.978 casos y con `transactionAmount` en CERO.
+  //
+  // Para el neto —cuánto puso el cliente menos cuánto sacó— manda lo que salió
+  // de su saldo. Restar el neto de comisión le atribuiría al cliente un dinero
+  // que nunca tuvo: la comisión es ingreso del broker.
+  //
+  // No es el mismo caso que en depósitos. Ahí `depositValue` era la INTENCIÓN
+  // del usuario y `amountPaid` el hecho; acá los dos son hechos. Asumir que el
+  // paralelo se sostenía fue un error mío el 2026-08-25, corregido el mismo día
+  // haciéndole a los retiros la misma prueba del libro que ya se le había hecho
+  // a los depósitos.
+  const wds = await fetchAllRows<{ user_external_id: string | null; requested_amount: number | null }>((from, to) =>
     admin
       .from('crm_withdrawals')
-      .select('user_external_id, transaction_amount')
+      .select('user_external_id, requested_amount')
       .eq('company_id', companyId)
       .eq('status_norm', 'approved')
       .order('external_id', { ascending: true })
@@ -389,7 +409,7 @@ async function depositsAndWithdrawals(
   for (const w of wds) {
     if (!w.user_external_id) continue;
     const cur = out.get(w.user_external_id) ?? { total: 0, count: 0, last: null, withdrawn: 0 };
-    cur.withdrawn += w.transaction_amount ?? 0;
+    cur.withdrawn += w.requested_amount ?? 0;
     out.set(w.user_external_id, cur);
   }
 
