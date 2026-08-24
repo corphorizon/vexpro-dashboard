@@ -99,30 +99,59 @@ const numOrNull = (v: unknown): number | null => {
 };
 
 /**
- * Recalcula los agregados de TODOS los clientes de la empresa.
+ * Recalcula los agregados de los clientes de la empresa.
  *
- * Es un recálculo completo y no incremental a propósito: los agregados
- * dependen de colecciones enteras (si una billetera baja de saldo, el total
- * del cliente cambia sin que el cliente se "actualice"). Un cursor sobre
- * `users` no lo detectaría.
+ * ── DOS MODOS, Y LA DIFERENCIA IMPORTA ─────────────────────────────────────
+ * COMPLETO (sin `changedSince`): recalcula los 20.900. Es lo correcto de fondo
+ * porque los agregados dependen de colecciones enteras — si una billetera baja
+ * de saldo, el total del cliente cambia sin que el cliente se "actualice", y
+ * un cursor sobre `users` no lo detectaría nunca.
+ *
+ * RÁPIDO (`changedSince`): recalcula sólo los clientes cuyos depósitos o
+ * retiros se movieron desde esa marca. Existe porque el traspaso a Retención
+ * se dispara con `depositCount` y necesita 15 minutos de latencia, mientras
+ * que barrer las tres colecciones de Mongo cada 15 minutos sería multiplicar
+ * por 16 la carga sobre la base de PRODUCCIÓN del broker para refrescar datos
+ * que casi nunca cambian.
+ *
+ * El modo rápido NO refresca saldos de billetera ni conteos de cuentas de los
+ * clientes que no movieron dinero: para eso está el completo cada 4 horas. Es
+ * un compromiso consciente, no un olvido.
  */
 export async function syncCustomerAggregates(
   admin: SupabaseClient,
   companyId: string,
+  opts: { changedSince?: string | null } = {},
 ): Promise<AggregatesResult> {
   const started = Date.now();
   const warnings: string[] = [];
+
+  // ── 0. ¿Modo rápido? Qué clientes movieron dinero ───────────────────────
+  const soloEstos = opts.changedSince
+    ? await usersWithRecentMoney(admin, companyId, opts.changedSince)
+    : null;
+
+  if (soloEstos && soloEstos.size === 0) {
+    // Nadie movió dinero: no hay nada que recalcular y no hace falta molestar
+    // al Mongo del broker.
+    return {
+      customers: 0, upserted: 0, wallets: 0, tradingAccounts: 0, socialAccounts: 0,
+      elapsedMs: Date.now() - started, warnings,
+    };
+  }
 
   // ── 1. Lo que ya tenemos espejado: depósitos y retiros ──────────────────
   const dineroPlataforma = await depositsAndWithdrawals(admin, companyId);
 
   // ── 2. Lo que falta, de Mongo, con proyección estricta ──────────────────
   const desdeMongo = await withOrionMongo(companyId, async ({ db }) => {
+    const filtroUsuarios = soloEstos ? { userId: { $in: [...soloEstos] } } : {};
+
     const walletAgg = await db
       .collection('wallets')
       .aggregate(
         [
-          { $match: { walletType: BALANCE_WALLET_TYPE } },
+          { $match: { walletType: BALANCE_WALLET_TYPE, ...filtroUsuarios } },
           { $project: projectionOf(ORION_WALLET_FIELDS) },
           { $group: { _id: '$userId', balance: { $sum: '$balance' } } },
         ],
@@ -134,6 +163,7 @@ export async function syncCustomerAggregates(
       .collection('tradingaccounts')
       .aggregate(
         [
+          ...(soloEstos ? [{ $match: filtroUsuarios }] : []),
           { $project: projectionOf(ORION_TRADING_ACCOUNT_FIELDS) },
           {
             $group: {
@@ -151,6 +181,7 @@ export async function syncCustomerAggregates(
       .collection('socialtradingaccounts')
       .aggregate(
         [
+          ...(soloEstos ? [{ $match: filtroUsuarios }] : []),
           { $project: projectionOf(ORION_SOCIAL_ACCOUNT_FIELDS) },
           { $group: { _id: '$userId', total: { $sum: 1 } } },
         ],
@@ -189,7 +220,9 @@ export async function syncCustomerAggregates(
   );
 
   const now = new Date().toISOString();
-  const payload = perfiles.map((p) => {
+  const payload = perfiles
+    .filter((p) => !soloEstos || soloEstos.has(p.user_external_id))
+    .map((p) => {
     const uid = p.user_external_id;
     const cuentas = cuentasPorUsuario.get(uid);
     const dinero = dineroPlataforma.get(uid);
@@ -240,6 +273,33 @@ export async function syncCustomerAggregates(
     elapsedMs: Date.now() - started,
     warnings,
   };
+}
+
+/**
+ * Clientes cuyos depósitos o retiros se escribieron desde `since`. Es el
+ * conjunto que el modo rápido tiene que recalcular: si a alguien no le entró
+ * ni le salió dinero, su `depositCount` no cambió y el traspaso a Retención no
+ * puede depender de él.
+ */
+async function usersWithRecentMoney(
+  admin: SupabaseClient,
+  companyId: string,
+  since: string,
+): Promise<Set<string>> {
+  const out = new Set<string>();
+  for (const tabla of ['crm_deposits', 'crm_withdrawals'] as const) {
+    const filas = await fetchAllRows<{ user_external_id: string | null }>((from, to) =>
+      admin
+        .from(tabla)
+        .select('user_external_id, external_id')
+        .eq('company_id', companyId)
+        .gte('synced_at', since)
+        .order('external_id', { ascending: true })
+        .range(from, to),
+    );
+    for (const f of filas) if (f.user_external_id) out.add(f.user_external_id);
+  }
+  return out;
 }
 
 /**

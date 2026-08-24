@@ -212,6 +212,24 @@ export async function GET(request: NextRequest) {
   const onlyCompanyId = url.searchParams.get('company_id');
   const full = url.searchParams.get('full') === '1';
 
+  // ── DOS MODOS ────────────────────────────────────────────────────────────
+  // RÁPIDO (cada 15 min, el default): espeja los movimientos del CRM y
+  // recalcula los agregados SÓLO de quien movió dinero. Es lo que necesita el
+  // traspaso a Retención, que se dispara con `depositCount` y tiene 15 minutos
+  // como requisito de negocio — medido por la sesión de Atlas.
+  //
+  // COMPLETO (`?mode=full`, cada 4 h): además espeja los 20.900 usuarios, la
+  // tanda de MT5 y recalcula TODOS los agregados. Lo pesado va acá porque
+  // barrer tres colecciones de Mongo cada 15 minutos multiplicaría por 16 la
+  // carga sobre la base de PRODUCCIÓN del broker para refrescar datos que casi
+  // nunca cambian.
+  const modoCompleto = url.searchParams.get('mode') === 'full' || full;
+
+  // Ventana del modo rápido: qué se considera "movido". Se toma con holgura
+  // sobre los 15 minutos para que una corrida que se retrase no deje un hueco
+  // — releer de más es barato, perderse un depósito no.
+  const desde = new Date(Date.now() - 45 * 60 * 1000).toISOString();
+
   const ranAt = new Date().toISOString();
 
   try {
@@ -261,7 +279,9 @@ export async function GET(request: NextRequest) {
         let mt5: Mt5SyncResult | null = null;
         const mt5Errors: string[] = [];
         try {
-          const emails = await emailsNeedingTradingActivity(admin, company.id);
+          // La actividad de trading no la mira el traspaso a Retención, así
+          // que no necesita 15 minutos: va con el modo completo.
+          const emails = modoCompleto ? await emailsNeedingTradingActivity(admin, company.id) : [];
           if (emails.length > 0) {
             mt5 = await syncTradingActivity(admin, company.id, emails);
             if (mt5.warnings.length > 0) {
@@ -294,9 +314,15 @@ export async function GET(request: NextRequest) {
           // barrido. Cuando Orion agregue ese índice, acá va el cursor con
           // `$gte` — nunca `$gt`: dos usuarios pueden compartir milisegundo y
           // el segundo se perdería para siempre.
-          allUsers = await syncAllOrionUsers(admin, company.id, null);
-          aggregates = await syncCustomerAggregates(admin, company.id);
-          for (const w of [...allUsers.warnings, ...aggregates.warnings]) {
+          // El barrido de usuarios sólo en el modo completo: son 20.900
+          // documentos y casi ninguno cambia entre una corrida y la siguiente.
+          if (modoCompleto) {
+            allUsers = await syncAllOrionUsers(admin, company.id, null);
+          }
+          aggregates = await syncCustomerAggregates(admin, company.id, {
+            changedSince: modoCompleto ? null : desde,
+          });
+          for (const w of [...(allUsers?.warnings ?? []), ...aggregates.warnings]) {
             console.warn(`[cron/sync-crm] orion ${company.id}: ${w}`);
           }
         } catch (err) {
@@ -337,6 +363,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       ranAt,
+      modo: modoCompleto ? 'completo' : 'rapido',
       full,
       companies_processed: results.length,
       companies_failed: results.filter((r) => r.errors.length > 0).length,
