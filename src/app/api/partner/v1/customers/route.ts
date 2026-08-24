@@ -145,15 +145,22 @@ export async function GET(request: NextRequest) {
     const aggs = (data ?? []) as unknown as AggRow[];
 
     // El perfil va aparte para no duplicar columnas en dos tablas. Se trae
-    // sólo para las filas de esta página.
+    // sólo para las filas de esta página, y EN TROZOS.
+    //
+    // Los trozos no son una optimización: PostgREST manda el filtro `in` en la
+    // URL, y con 1.000 uuid de 36 caracteres son ~37 KB — más de lo que
+    // aguanta, así que devolvía 500. Medido: 500 filas pasan, 1.000 revientan.
+    // Lo encontró el script de comparación de Atlas en su primera corrida,
+    // paginando de a 1.000, que es justo el borde que un uso normal no toca.
     const ids = aggs.map((a) => a.user_external_id);
     const profiles = new Map<string, ProfileRow>();
-    if (ids.length > 0) {
+    const ID_CHUNK = 200;
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
       const { data: prof, error: pErr } = await admin
         .from('crm_user_snapshots')
         .select(PROFILE_COLS)
         .eq('company_id', auth.companyId)
-        .in('user_external_id', ids);
+        .in('user_external_id', ids.slice(i, i + ID_CHUNK));
       if (pErr) return apiError('partner/customers perfiles', pErr, { status: 500 });
       for (const r of (prof ?? []) as unknown as ProfileRow[]) profiles.set(r.user_external_id, r);
     }
