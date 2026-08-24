@@ -88,6 +88,21 @@ export interface CrmUserRow {
   pending_fee_debt: number | null;
   raw: Record<string, unknown>;
   synced_at: string;
+  /** El `updatedAt` de Orion: el cursor de quien consuma nuestro espejo. */
+  source_updated_at: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  /** Teléfono SIN normalizar: cuarta llave del cruce y dato de pantalla. */
+  phone_raw: string | null;
+  /** Prefijo telefónico, no el país. */
+  phone_country_code: string | null;
+  /** ISO del país: `country` es el nombre largo y no sirve para agrupar. */
+  country_iso: string | null;
+  language: string | null;
+  /** Distinto de sponsor_username y no derivable de él. */
+  sponsor_email: string | null;
+  ib_program_name: string | null;
+  ib_program_broker_name: string | null;
 }
 
 /** Conteos por colección que devuelve el sync. */

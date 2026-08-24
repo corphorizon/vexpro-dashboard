@@ -413,6 +413,15 @@ export const ORION_USER_FIELDS = [
   'rank',
   'pendingFeeDebt',
   'enabledWithdrawals',
+  // Agregados el 2026-08-25 tras cotejar contra los 27 campos que Atlas
+  // consume: faltaban ocho, y cuatro rompían algo concreto.
+  'name',
+  'lastName',
+  'phone',
+  'countryCode',
+  'preferredLanguage',
+  'ibProgramName',
+  'ibProgramBrokerName',
 ] as const;
 
 const USER_PROJECTION: Record<string, 1> = Object.fromEntries(

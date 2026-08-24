@@ -354,6 +354,29 @@ export function toUserRow(
     // `rank` puede venir número o string según el broker: la columna es text.
     rank: toStr(doc.rank),
     pending_fee_debt: pendingFeeDebt,
+
+    // ── Campos que consume Atlas (cotejados el 2026-08-25) ────────────────
+    // `updatedAt` de Orion. Es EL CURSOR de quien consuma: sin esto, un
+    // consumidor no puede sostener su avance incremental y reescribe las
+    // 20.918 filas en cada pasada.
+    source_updated_at: toIso(doc.updatedAt),
+    first_name: toStr(doc.name),
+    last_name: toStr(doc.lastName),
+    // SIN normalizar a propósito: es la cuarta llave del cruce con el CRM de
+    // Atlas, y se muestra crudo para que el agente vea qué había cuando la
+    // normalización falló. La normalización se queda de su lado, que ya la
+    // tiene: duplicarla acá es cómo se divergen dos implementaciones.
+    phone_raw: toStr(doc.phone),
+    // `countryCode` NO es el país: es el prefijo telefónico. Va aparte
+    // justamente para poder normalizar el teléfono.
+    phone_country_code: toStr(doc.countryCode),
+    // `country` es el nombre largo ("Colombia") y no sirve para agrupar.
+    country_iso: toStr(doc.countryISOCode),
+    language: toStr(doc.preferredLanguage),
+    // NO es lo mismo que sponsor_username, y no se puede derivar uno del otro.
+    sponsor_email: toStr(doc.sponsorEmail),
+    ib_program_name: toStr(doc.ibProgramName),
+    ib_program_broker_name: toStr(doc.ibProgramBrokerName),
     raw: toRaw(doc, DROP_USERS),
     synced_at: syncedAt,
   };

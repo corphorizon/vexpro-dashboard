@@ -47,7 +47,9 @@ const AGG_COLS =
 
 const PROFILE_COLS =
   'user_external_id, username, email, country, status, kyc_status, user_type, register_date, ' +
-  'sponsor_username, rank';
+  'sponsor_username, rank, source_updated_at, first_name, last_name, phone_raw, ' +
+  'phone_country_code, country_iso, language, sponsor_email, ib_program_name, ' +
+  'ib_program_broker_name';
 
 interface AggRow {
   user_external_id: string;
@@ -77,6 +79,16 @@ interface ProfileRow {
   register_date: string | null;
   sponsor_username: string | null;
   rank: string | null;
+  source_updated_at: string | null;
+  first_name: string | null;
+  last_name: string | null;
+  phone_raw: string | null;
+  phone_country_code: string | null;
+  country_iso: string | null;
+  language: string | null;
+  sponsor_email: string | null;
+  ib_program_name: string | null;
+  ib_program_broker_name: string | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -179,6 +191,7 @@ export async function GET(request: NextRequest) {
 const CUSTOMER_SOURCE = {
   system: 'orion' as const,
   authoritativeFor: [
+    'sourceUpdatedAt',
     'walletBalance',
     'totalDeposits',
     'depositCount',
@@ -202,13 +215,28 @@ function shape(a: AggRow, p: ProfileRow | null) {
     clientId: a.client_id,
     email: a.email,
     username: p?.username ?? null,
+    firstName: p?.first_name ?? null,
+    lastName: p?.last_name ?? null,
+    // Sin normalizar a propósito: la normalización se queda del lado del
+    // consumidor, que ya la tiene. Duplicarla es cómo divergen dos
+    // implementaciones del mismo teléfono.
+    phoneRaw: p?.phone_raw ?? null,
+    phoneCountryCode: p?.phone_country_code ?? null,
     country: p?.country ?? null,
+    // `country` es el nombre largo ("Colombia"); para agrupar segmentos hay
+    // que usar el ISO.
+    countryIso: p?.country_iso ?? null,
+    language: p?.language ?? null,
     status: p?.status ?? null,
     kycStatus: p?.kyc_status ?? null,
     kycLevel: a.kyc_level,
     userType: p?.user_type ?? null,
     rank: p?.rank ?? null,
     sponsorUsername: p?.sponsor_username ?? null,
+    // NO es derivable del username: son dos datos distintos.
+    sponsorEmail: p?.sponsor_email ?? null,
+    ibProgramName: p?.ib_program_name ?? null,
+    ibProgramBrokerName: p?.ib_program_broker_name ?? null,
     registerDate: p?.register_date ?? null,
     enabledWithdrawals: a.enabled_withdrawals,
 
@@ -224,6 +252,12 @@ function shape(a: AggRow, p: ProfileRow | null) {
     liveAccountsCount: a.live_accounts_count,
     socialAccountsCount: a.social_accounts_count,
 
+    // EL CURSOR de quien consuma: el `updatedAt` de Orion. Sin esto no se
+    // puede sostener un avance incremental y hay que reescribir las 20.918
+    // filas en cada pasada.
+    sourceUpdatedAt: p?.source_updated_at ?? null,
+    // Cuándo lo calculamos NOSOTROS. Distinto de sourceUpdatedAt: uno dice
+    // cuándo cambió el dato en el origen, el otro cuándo lo miramos.
     asOf: a.synced_at,
   };
 }
