@@ -72,6 +72,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyPartnerAuth } from '@/lib/partner-api/auth';
 import { apiError } from '@/lib/api-error';
+import { moneyByFamily, money, familyOf } from '@/lib/partner-api/money';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -183,16 +184,23 @@ export async function GET(request: NextRequest) {
         // 200 con nulos, no 404: "no opera" es un dato.
         found: rows.length > 0,
         summary: summarize(real, rows.length - real.length),
-        accounts: real.map((r) => ({
-          login: r.login,
-          group: r.group_name,
-          balance: r.account_balance,
-          tradeCount: r.deals_count ?? 0,
-          profit: r.profit,
-          firstTradeAt: r.first_deal_at,
-          lastTradeAt: r.last_deal_at,
-          registeredAt: r.registration_at,
-        })),
+        // Cada cuenta lleva su importe CON la unidad dentro, por lo mismo que
+        // el desglose: un número suelto llamado `balance` invita a sumarse con
+        // el de al lado, que puede estar en otra unidad.
+        accounts: real.map((r) => {
+          const family = familyOf(r.group_name);
+          return {
+            login: r.login,
+            group: r.group_name,
+            family,
+            balance: money(r.account_balance ?? 0, family),
+            profit: money(r.profit ?? 0, family),
+            tradeCount: r.deals_count ?? 0,
+            firstTradeAt: r.first_deal_at,
+            lastTradeAt: r.last_deal_at,
+            registeredAt: r.registration_at,
+          };
+        }),
         notice: HISTORICAL_NOTICE,
       });
     }
@@ -294,43 +302,3 @@ function summarize(real: ActivityRow[], demoCount: number) {
   };
 }
 
-/**
- * Desglosa el dinero por familia de cuenta, con su unidad.
- *
- * `Cent` está denominada en CENTAVOS: 88,8 de los 101 millones que sale de
- * sumar todo vienen de ahí. `PropFirm` es capital virtual de desafío, no plata
- * del cliente. Devolverlas juntas en un solo número es lo que producía un
- * total 13 veces mayor que lo realmente depositado.
- *
- * No convertimos los centavos a dólares a propósito: haría falta asumir un
- * factor, y una conversión equivocada es peor que un dato crudo bien
- * etiquetado. El consumidor tiene la unidad y decide.
- */
-function moneyByFamily(real: ActivityRow[]) {
-  const familyOf = (group: string | null): string => {
-    if (!group) return 'unknown';
-    const parts = group.replace(/\\/g, '/').split('/');
-    return parts[1] ?? parts[0] ?? 'unknown';
-  };
-
-  const acc = new Map<string, { accounts: number; balance: number; profit: number; tradeCount: number }>();
-  for (const r of real) {
-    const key = familyOf(r.group_name);
-    const cur = acc.get(key) ?? { accounts: 0, balance: 0, profit: 0, tradeCount: 0 };
-    cur.accounts += 1;
-    cur.balance += r.account_balance ?? 0;
-    cur.profit += r.profit ?? 0;
-    cur.tradeCount += r.deals_count ?? 0;
-    acc.set(key, cur);
-  }
-
-  return [...acc.entries()].map(([family, v]) => ({
-    family,
-    ...v,
-    // La unidad es lo que hace utilizable el número. Sin esto, un consumidor
-    // suma centavos con dólares y no se entera.
-    unit: family.toLowerCase() === 'cent' ? 'cents' : 'account_currency',
-    // Capital de desafío, no dinero del cliente.
-    isVirtual: family.toLowerCase() === 'propfirm',
-  }));
-}
