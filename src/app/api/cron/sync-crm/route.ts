@@ -28,6 +28,7 @@ import {
   syncPayprosDepositsFromCrm,
   type PayprosFromCrmResult,
 } from '@/lib/api-integrations/paypros/deposits-from-crm';
+import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
 import type { CrmSyncResult } from '@/lib/crm-sync/types';
 import { apiError } from '@/lib/api-error';
 
@@ -36,6 +37,84 @@ export const maxDuration = 300; // hasta 5 min: la primera corrida es completa
 interface CompanyRow {
   id: string;
   name: string | null;
+}
+
+/**
+ * Correos cuya actividad de trading vale la pena refrescar en ESTA corrida.
+ *
+ * Dos grupos con urgencia distinta, y la diferencia importa: espejar los 1.787
+ * clientes con retiro en los últimos 45 días tarda 45 s y son casi todos datos
+ * que no cambiaron. Repetirlo seis veces al día es carga regalada sobre la
+ * base de producción del broker.
+ *
+ *  · PENDIENTES: siempre. Es el dato sobre el que alguien va a decidir hoy y
+ *    tiene que estar fresco.
+ *  · RECIENTES (45 días): sólo si su espejo tiene más de 20 h. Sirven de
+ *    contexto en una ficha ya decidida; que tengan un día de atraso no cambia
+ *    ninguna decisión.
+ */
+const TRADING_RECENT_DAYS = 45;
+const TRADING_STALE_HOURS = 20;
+
+async function emailsNeedingTradingActivity(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+): Promise<string[]> {
+  const since = new Date(Date.now() - TRADING_RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+
+  const { data: pend, error: pErr } = await admin
+    .from('crm_withdrawals')
+    .select('user_external_id')
+    .eq('company_id', companyId)
+    .eq('status_norm', 'pending')
+    .limit(2000);
+  if (pErr) throw new Error(`retiros pendientes para MT5: ${pErr.message}`);
+
+  const { data: rec, error: rErr } = await admin
+    .from('crm_withdrawals')
+    .select('user_external_id')
+    .eq('company_id', companyId)
+    .gte('requested_at', since)
+    .limit(5000);
+  if (rErr) throw new Error(`retiros recientes para MT5: ${rErr.message}`);
+
+  const idsOf = (rows: { user_external_id: string | null }[] | null) =>
+    [...new Set((rows ?? []).map((r) => r.user_external_id).filter((v): v is string => !!v))];
+
+  const emailsOf = async (ids: string[]): Promise<string[]> => {
+    if (ids.length === 0) return [];
+    const { data, error } = await admin
+      .from('crm_user_snapshots')
+      .select('email')
+      .eq('company_id', companyId)
+      .in('user_external_id', ids);
+    if (error) throw new Error(`perfiles para MT5: ${error.message}`);
+    return [...new Set((data ?? []).map((u) => u.email).filter((e): e is string => !!e))];
+  };
+
+  const pendientes = await emailsOf(idsOf(pend));
+  const recientes = await emailsOf(idsOf(rec));
+
+  // De los recientes, descartar los que ya se espejaron hace poco.
+  const fresco = new Date(Date.now() - TRADING_STALE_HOURS * 60 * 60 * 1000).toISOString();
+  const { data: yaFrescos, error: fErr } = await admin
+    .from('mt5_account_activity')
+    .select('email')
+    .eq('company_id', companyId)
+    .gte('synced_at', fresco)
+    .limit(20000);
+  if (fErr) throw new Error(`frescura MT5: ${fErr.message}`);
+
+  const frescos = new Set(
+    (yaFrescos ?? []).map((r) => (r.email ? String(r.email).trim().toLowerCase() : '')),
+  );
+  const norm = (e: string) => e.trim().toLowerCase();
+  const pendSet = new Set(pendientes.map(norm));
+
+  return [
+    ...pendientes,
+    ...recientes.filter((e) => !pendSet.has(norm(e)) && !frescos.has(norm(e))),
+  ];
 }
 
 /**
@@ -102,6 +181,7 @@ export async function GET(request: NextRequest) {
     const results: (CrmSyncResult & {
       companyName: string | null;
       paypros?: PayprosFromCrmResult | null;
+      mt5?: Mt5SyncResult | null;
     })[] = [];
     for (const company of companies) {
       try {
@@ -125,11 +205,39 @@ export async function GET(request: NextRequest) {
           payprosErrors.push(`paypros: ${err instanceof Error ? err.message : 'unknown'}`);
         }
 
+        // ── Actividad de trading (MT5) ────────────────────────────────────
+        // Sólo para los clientes con retiro pendiente o reciente: ahí es donde
+        // la señal se usa, y mantiene el costo sobre la base del broker en
+        // decenas de cuentas en vez de 26.422.
+        //
+        // Va al final y aislado por la misma razón que Pay-Pros: si la base
+        // del broker no responde, el espejo del CRM ya quedó bien y la
+        // revisión de retiros sigue funcionando sin esta señal.
+        let mt5: Mt5SyncResult | null = null;
+        const mt5Errors: string[] = [];
+        try {
+          const emails = await emailsNeedingTradingActivity(admin, company.id);
+          if (emails.length > 0) {
+            mt5 = await syncTradingActivity(admin, company.id, emails);
+            if (mt5.warnings.length > 0) {
+              console.warn(`[cron/sync-crm] mt5 ${company.id}:`, mt5.warnings.join(' | '));
+            }
+          }
+        } catch (err) {
+          // Sin credenciales de MT5 el tenant simplemente no tiene esta señal:
+          // no es un fallo del sync y no debe contarse como empresa fallida.
+          const msg = err instanceof Error ? err.message : 'unknown';
+          if (!/no configurad|not configured|sin credencial/i.test(msg)) {
+            mt5Errors.push(`mt5: ${msg}`);
+          }
+        }
+
         results.push({
           ...res,
           companyName: company.name,
           paypros,
-          errors: [...res.errors, ...payprosErrors],
+          mt5,
+          errors: [...res.errors, ...payprosErrors, ...mt5Errors],
         });
       } catch (err) {
         // Una empresa que revienta no puede cortar a las demás.
