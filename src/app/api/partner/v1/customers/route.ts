@@ -22,6 +22,30 @@
 // Depósitos y retiros son movimientos de la PLATAFORMA y mandan desde acá:
 // MT5 sólo ve las transferencias internas billetera → cuenta.
 //
+// ── QUÉ IMPORTE ES CADA UNO (medido, no supuesto) ──────────────────────────
+// Orion guarda DOS importes por movimiento, y elegir mal infla los números sin
+// dar error. Medido el 2026-08-25 sobre Vex Pro:
+//
+//   DEPÓSITOS (17.776 completados)
+//     depositValue   $8.122.721  ← lo que el cliente DECLARÓ que iba a mandar
+//     amountPaid     $7.777.399  ← lo que REALMENTE llegó        [usamos éste]
+//     inflado si se elige mal: $345.322 (difieren en el 24% de los casos)
+//
+//   RETIROS (12.061 completados)
+//     requestedAmount $4.891.800 ← lo que el cliente PIDIÓ, antes de comisión
+//     transactionAmount $4.856.793 ← lo que SALIÓ de verdad      [usamos éste]
+//     fee                $35.013  ← y la aritmética cierra: pedido − fee = salido
+//     coinciden sólo en el 3,6% de los casos (los de comisión cero)
+//
+// Los dos campos elegidos son los EFECTIVOS: lo que entró y lo que salió. El
+// desempate del lado de depósitos lo dio `wallettransfers`, el libro de la
+// billetera: sobre 300 casos donde los dos importes difieren, lo acreditado
+// coincide con `amountPaid` en 285 y con `depositValue` en 0.
+//
+// Si alguien calcula un "neto" con estos campos, está restando dinero
+// efectivo contra dinero efectivo. Mezclarlos con los declarados —en
+// cualquiera de los dos lados— da un número que parece bien y no lo está.
+//
 // ── LO QUE NUNCA SALE ──────────────────────────────────────────────────────
 // Contraseñas de MetaTrader, direcciones de retiro, documentos de KYC. No
 // están en el espejo porque la proyección que va a Mongo no las pide (ver
@@ -211,6 +235,11 @@ const CUSTOMER_SOURCE = {
   note:
     'Movimientos de la PLATAFORMA y perfil del cliente. Para la ACTIVIDAD de trading (cuántas ' +
     'cuentas operan, cuánto operó, última operación) manda MT5: ver /api/partner/v1/trading-activity.',
+  amountNotice:
+    'totalDeposits es lo ACREDITADO (amountPaid) y totalWithdrawals es lo EFECTIVAMENTE SALIDO ' +
+    '(transactionAmount, ya neto de comisión). Orion guarda además los importes DECLARADOS ' +
+    '(depositValue / requestedAmount), que difieren en el 24% y el 96,4% de los casos ' +
+    'respectivamente. No los mezcles: un neto que reste declarado contra acreditado parece bien y no lo está.',
   nullNotice:
     'null significa "no se calculó" y 0 significa "es cero". No los mezcles: un cliente con dinero ' +
     'se mostraría en cero y los segmentos que dependen de esto mentirían sin dar error.',
