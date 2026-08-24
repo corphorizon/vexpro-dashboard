@@ -23,6 +23,10 @@
       "schedule": "0 0 * * *"
     },
     {
+      "path": "/api/cron/sync-crm",
+      "schedule": "20 0 * * *"
+    },
+    {
       "path": "/api/cron/create-new-period",
       "schedule": "1 0 1 * *"
     },
