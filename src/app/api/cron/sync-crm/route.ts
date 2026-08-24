@@ -105,13 +105,21 @@ async function emailsNeedingTradingActivity(
   // Paginado a mano: PostgREST corta en 1.000 filas en silencio, y con 8.709
   // clientes eso significaría espejar siempre el mismo primer millar.
   const todos = await fetchAll<{ email: string | null }>((from, to) =>
-    admin.from('crm_user_snapshots').select('email').eq('company_id', companyId).range(from, to),
+    admin
+      .from('crm_user_snapshots')
+      .select('email')
+      .eq('company_id', companyId)
+      // Orden obligatorio al paginar: sin él las páginas pueden repetir una
+      // fila y saltarse otra, sin dar error.
+      .order('user_external_id', { ascending: true })
+      .range(from, to),
   );
   const estados = await fetchAll<{ email: string; last_attempt_at: string }>((from, to) =>
     admin
       .from('mt5_email_sync_state')
       .select('email, last_attempt_at')
       .eq('company_id', companyId)
+      .order('email', { ascending: true })
       .range(from, to),
   );
 

@@ -31,6 +31,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
+import { round2 } from '@/lib/utils';
 
 /**
  * Los ÚNICOS campos que se piden de cada colección. Cambiar esto es cambiar
@@ -183,6 +184,7 @@ export async function syncCustomerAggregates(
       .from('crm_user_snapshots')
       .select('user_external_id, email, raw')
       .eq('company_id', companyId)
+      .order('user_external_id', { ascending: true })
       .range(from, to),
   );
 
@@ -197,11 +199,14 @@ export async function syncCustomerAggregates(
       user_external_id: uid,
       email: p.email ? p.email.trim().toLowerCase() : null,
       // Cero porque lo calculamos y da cero, no porque falte el dato.
-      wallet_balance: saldoPorUsuario.get(uid) ?? 0,
-      total_deposits: dinero?.total ?? 0,
+      // Redondeado al centavo al ESCRIBIR: sumar cientos de importes en coma
+      // flotante deja colas como 453.795038, que después aparecen como
+      // "diferencias" al comparar contra otro sistema que sí redondeó.
+      wallet_balance: round2(saldoPorUsuario.get(uid) ?? 0),
+      total_deposits: round2(dinero?.total ?? 0),
       deposit_count: dinero?.count ?? 0,
       last_deposit_at: dinero?.last ?? null,
-      total_withdrawals: dinero?.withdrawn ?? 0,
+      total_withdrawals: round2(dinero?.withdrawn ?? 0),
       accounts_count: cuentas?.total ?? 0,
       live_accounts_count: cuentas?.live ?? 0,
       social_accounts_count: socialPorUsuario.get(uid) ?? 0,
@@ -255,6 +260,10 @@ async function depositsAndWithdrawals(
         .select('user_external_id, amount_paid, deposit_at')
         .eq('company_id', companyId)
         .eq('status_norm', 'completed')
+        // El orden NO es cosmético: sin él, Postgres puede devolver las
+        // páginas en distinto orden y una fila sale dos veces mientras otra no
+        // sale nunca. Ver la cabecera de fetchAllRows.
+        .order('external_id', { ascending: true })
         .range(from, to),
   );
   for (const d of deps) {
@@ -272,6 +281,7 @@ async function depositsAndWithdrawals(
       .select('user_external_id, transaction_amount')
       .eq('company_id', companyId)
       .eq('status_norm', 'approved')
+      .order('external_id', { ascending: true })
       .range(from, to),
   );
   for (const w of wds) {
@@ -284,8 +294,24 @@ async function depositsAndWithdrawals(
   return out;
 }
 
-/** PostgREST corta en 1.000 filas sin avisar. Con 39.000 depósitos, eso sería
- *  calcular los agregados sobre el 2,5% de los datos y no enterarse. */
+/**
+ * Trae TODAS las filas paginando.
+ *
+ * DOS TRAMPAS, LAS DOS SILENCIOSAS:
+ *
+ *  1. PostgREST corta en 1.000 filas y no avisa. Con 39.000 depósitos, sin
+ *     paginar se calcularían los agregados sobre el 2,5% de los datos.
+ *
+ *  2. Cada consulta que se pagine DEBE traer un `.order(...)` por una columna
+ *     única. Sin orden explícito, Postgres no garantiza que las páginas sean
+ *     consistentes entre sí: una fila puede salir en dos páginas y otra en
+ *     ninguna. No da error — da números mal.
+ *
+ * La segunda nos costó 15.095 diferencias en la comparación con Atlas el
+ * 2026-08-25: un cliente con 5 depósitos aparecía con 0, y otro con 1 depósito
+ * de $300 aparecía con 2 de $600 (exactamente el doble). El espejo estaba
+ * perfecto; lo que estaba mal era esta paginación.
+ */
 async function fetchAllRows<T>(
   page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
 ): Promise<T[]> {
