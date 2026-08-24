@@ -34,6 +34,7 @@ import {
   Wallet,
   Calculator,
   ShieldCheck,
+  ShieldAlert,
   FileSearch,
   Briefcase,
   FileText,
@@ -129,9 +130,10 @@ const NAV_STRUCTURE: NavEntry[] = [
       // flat-menu mode puts it at the top.
       { href: '/risk/dashboard', i18nKey: 'nav.riskDashboard', icon: LayoutDashboard, module: 'risk' },
       { href: '/risk/retiros-propfirm', i18nKey: 'nav.riskWithdrawals', icon: FileSearch, module: 'risk' },
-      // retiros-wallet se ELIMINÓ (auditoría 2026-08-06, QW10): era 100% mock
-      // (MOCK_REQUESTS + botones alert). Cuando se conecte el CRM real, se
-      // reconstruye desde cero contra datos verdaderos.
+      // La cola de retiros del CRM. Reemplaza al viejo retiros-wallet, que se
+      // ELIMINÓ en la auditoría 2026-08-06 (QW10) por ser 100% mock — se
+      // reconstruyó desde cero contra el espejo real del CRM (migración 088).
+      { href: '/risk/retiros', i18nKey: 'nav.riskWithdrawalQueue', icon: ShieldAlert, module: 'risk' },
     ],
   },
 
