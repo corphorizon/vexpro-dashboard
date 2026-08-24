@@ -408,7 +408,29 @@ export interface WithdrawalDetail extends QueueItem {
   withdrawalHistory: Array<WithdrawalRow & { paymentMethod: string; beforeRequest: boolean }>;
   /** KYC / deuda / dirección compartida. SIEMPRE con affectsScore:false. */
   informative: ReturnType<typeof informativeNotes>;
+  /**
+   * Historial completo de decisiones, del más nuevo al más viejo (migración
+   * 089). `review` dice en qué estado está; esto dice cómo se llegó ahí — que
+   * es lo que se pierde si sólo se guarda la última decisión.
+   */
+  events: ReviewEventRow[];
 }
+
+/** Una decisión, tal como quedó registrada. La tabla es append-only. */
+export interface ReviewEventRow {
+  decision: string;
+  notes: string | null;
+  score: number | null;
+  score_band: RiskBand | null;
+  calibration_id: string | null;
+  actor_name: string | null;
+  /** Rol del autor EN EL MOMENTO del hecho, no el de hoy. */
+  actor_role: string | null;
+  created_at: string;
+}
+
+const EVENT_COLS =
+  'decision, notes, score, score_band, calibration_id, actor_name, actor_role, created_at';
 
 /**
  * Ficha completa de un retiro. Devuelve `null` si el id no existe EN ESTA
@@ -439,7 +461,7 @@ export async function loadWithdrawalDetail(
   // todos los estados (para que el analista vea los cancelados y los
   // rechazados), marcando cuáles son anteriores a la solicitud — que son los
   // únicos que entraron al score.
-  const [deps, wds] = await Promise.all([
+  const [deps, wds, events] = await Promise.all([
     uid
       ? admin
           .from('crm_deposits')
@@ -459,9 +481,17 @@ export async function loadWithdrawalDetail(
           .order('requested_at', { ascending: false, nullsFirst: false })
           .limit(HISTORY_LIMIT)
       : Promise.resolve({ data: [], error: null }),
+    admin
+      .from('withdrawal_review_events')
+      .select(EVENT_COLS)
+      .eq('company_id', companyId)
+      .eq('withdrawal_external_id', externalId)
+      .order('created_at', { ascending: false })
+      .limit(HISTORY_LIMIT),
   ]);
   if (deps.error) throw new Error(deps.error.message);
   if (wds.error) throw new Error(wds.error.message);
+  if (events.error) throw new Error(events.error.message);
 
   const isBefore = (at: string | null) =>
     cut !== null && at !== null && new Date(at).getTime() < cut;
@@ -479,5 +509,6 @@ export async function loadWithdrawalDetail(
       beforeRequest: isBefore(w.requested_at),
     })),
     informative: informativeNotes(base.features),
+    events: (events.data ?? []) as unknown as ReviewEventRow[],
   };
 }
