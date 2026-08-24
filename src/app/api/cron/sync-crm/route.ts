@@ -52,6 +52,26 @@ interface CompanyRow {
  *  · RECIENTES (45 días): sólo si su espejo tiene más de 20 h. Sirven de
  *    contexto en una ficha ya decidida; que tengan un día de atraso no cambia
  *    ninguna decisión.
+ *
+ * ── LÍMITE CONOCIDO, MEDIDO EL 2026-08-24 ──────────────────────────────────
+ * Este criterio SE MUERDE LA COLA para cualquier uso que necesite gente
+ * INACTIVA. Seleccionar por "tiene un retiro reciente" selecciona, casi por
+ * definición, a gente activa: quien dejó de operar hace seis meses tampoco
+ * pide retiros, así que nunca entra. Sobre los 1.678 espejados:
+ *
+ *     operó hace <30 d  1.395 (83%)      90-180 d   12
+ *     30-90 d             252            >180 d      4  ·  nunca operó  7
+ *
+ * Dieciséis clientes con más de 90 días sin operar, en TODO el espejo.
+ *
+ * Para la revisión de retiros está BIEN: sólo importa quien pide plata ahora.
+ * Pero si el call center quiere llamar a quien dejó de operar, el espejo
+ * tendría a todos menos a los que hay que llamar.
+ *
+ * Cuando llegue ese momento el criterio tiene que salir del CRM ("existe como
+ * cliente") y no de MT5 ("hizo algo hace poco"). Espejar los 8.709 del CRM son
+ * ~3,7 min a la tasa medida: no entra en una corrida, se hace por tandas
+ * rotando por antigüedad del espejo y converge en menos de un día.
  */
 const TRADING_RECENT_DAYS = 45;
 const TRADING_STALE_HOURS = 20;
