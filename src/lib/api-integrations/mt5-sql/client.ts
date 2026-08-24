@@ -12,14 +12,19 @@
 //     dentro de funciones de Vercel con presupuesto limitado.
 //   · Los errores salen SIN contraseña ni cadena de conexión (redactMt5Error).
 //
-// Fase 1: conexión DIRECTA, sin proxy TCP. Si la base del broker exige IP fija
-// hay que autorizar las IPs de salida de Vercel (ver el probe); el cableado
-// por proxy queda para la fase 2.
+// SALIDA POR IP FIJA. El hosting del broker filtra por IP: probado el
+// 2026-08-24, el MySQL de Vex Pro (57.129.140.227) acepta la IP de Kevin y las
+// dos del proxy —que son las que el propio sondeo sugiere autorizar— pero NO
+// las de Vercel, que son dinámicas. Por eso, cuando FIXIE_URL está definida la
+// conexión se tuneliza por SOCKS5 y sale siempre por 3.224.144.155 o
+// 3.223.196.67. Sin FIXIE_URL (desarrollo local) va directa, que es lo que
+// hace falta para probar desde una máquina ya autorizada.
 //
 // No hay sincronización acá: esto es sólo la puerta de lectura que van a usar
 // los syncs de las tandas siguientes.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { Socket } from 'node:net';
 import 'server-only';
 import type { Mt5SqlCredentials } from '../credentials';
 import { resolveMt5SqlCredentials } from '../credentials';
@@ -83,6 +88,39 @@ export async function withMt5Connection<T>(
 
 // ── MySQL / MariaDB ──────────────────────────────────────────────────────
 
+/**
+ * Abre un socket TCP al destino a través del proxy SOCKS5 de Fixie, para que
+ * la conexión salga por una IP fija y autorizada.
+ *
+ * Devuelve null cuando no hay FIXIE_URL: en local se conecta directo, que es
+ * justo lo que permite probar desde una máquina ya autorizada.
+ *
+ * Si el proxy está configurado pero falla, se PROPAGA el error en vez de caer
+ * a la conexión directa. Un fallback silencioso daría un "no se pudo conectar"
+ * genérico desde una IP que el broker jamás va a aceptar, y perderíamos el
+ * verdadero motivo.
+ */
+async function openProxiedSocket(host: string, port: number): Promise<Socket | null> {
+  const proxyUrl = process.env.FIXIE_URL;
+  if (!proxyUrl) return null;
+
+  const u = new URL(proxyUrl);
+  const { SocksClient } = await import('socks');
+  const { socket } = await SocksClient.createConnection({
+    proxy: {
+      host: u.hostname,
+      port: Number(u.port),
+      type: 5,
+      userId: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+    },
+    command: 'connect',
+    destination: { host, port },
+    timeout: MT5_CONNECT_TIMEOUT_MS,
+  });
+  return socket;
+}
+
 async function withMysql<T>(
   creds: Mt5SqlCredentials,
   fn: (session: Mt5Session) => Promise<T>,
@@ -91,11 +129,19 @@ async function withMysql<T>(
   // este motor. Además mantiene el driver fuera de los bundles que no lo usan.
   const mysql = await import('mysql2/promise');
 
+  // El túnel se abre ANTES que el driver: mysql2 recibe un socket ya conectado
+  // al destino y no se entera de que hay un proxy en el medio.
+  const stream = await openProxiedSocket(creds.host, creds.port);
+
   let conn: Awaited<ReturnType<typeof mysql.createConnection>> | null = null;
   try {
     conn = await mysql.createConnection({
       host: creds.host,
       port: creds.port,
+      // Cuando hay túnel, mysql2 usa este socket en vez de abrir el suyo. El
+      // host/port de arriba quedan igual porque el driver los usa para el
+      // saludo y para los mensajes de error.
+      ...(stream ? { stream } : {}),
       user: creds.user,
       password: creds.password,
       database: creds.database,

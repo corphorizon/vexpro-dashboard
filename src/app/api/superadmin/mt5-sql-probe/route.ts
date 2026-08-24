@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { withMt5Connection, Mt5SqlError, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
 import { mysqlGrantsVerdict, postgresGrantsVerdict, type ReadOnlyVerdict } from '@/lib/api-integrations/mt5-sql/read-only';
+import { mt5TimestampToIso } from '@/lib/api-integrations/mt5-sql/timestamps';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // PROBAR CONEXIÓN — réplica SQL de MetaTrader 5.
 //
 // Herramienta de diagnóstico del superadmin. Con las credenciales cifradas del
-// tenant: conecta, lista tablas, cuenta filas de mt5_users / mt5_deals y —lo
+// tenant: conecta, lista tablas, cuenta filas de mt5_users / mt5_deals (esta
+// última APROXIMADA: son decenas de millones, ver sampleDeals) y —lo
 // más importante— VERIFICA que el usuario sea de SOLO LECTURA mirando sus
 // permisos reales. NUNCA ejecuta una escritura para probarlo.
 //
@@ -45,7 +47,7 @@ interface ProbeResponse {
   dealsPartitioned: boolean;
   samples: {
     mt5_users: { count: number | null; lastRegistration: string | null } | null;
-    deals: { table: string; count: number | null; lastTime: string | null } | null;
+    deals: { table: string; count: number | null; countIsEstimate: boolean; lastTime: string | null } | null;
   };
   readOnly: ReadOnlyVerdict;
   elapsedMs: number;
@@ -157,6 +159,7 @@ async function sampleUsers(
   return { count: toNumber(rows[0]?.c), lastRegistration: toIsoish(rows[0]?.last) };
 }
 
+
 /**
  * Deals: idem sobre la tabla elegida. El nombre viene de information_schema
  * (no del usuario), pero igual se valida contra el patrón antes de
@@ -165,16 +168,57 @@ async function sampleUsers(
 async function sampleDeals(
   session: Mt5Session,
   table: string,
-): Promise<{ table: string; count: number | null; lastTime: string | null }> {
+): Promise<{ table: string; count: number | null; countIsEstimate: boolean; lastTime: string | null }> {
   if (!/^mt5_deals(_\d{4})?$/i.test(table)) {
-    return { table, count: null, lastTime: null };
+    return { table, count: null, countIsEstimate: false, lastTime: null };
   }
-  const rows = await session.query<{ c: unknown; last: unknown }>(
+
+  // ── POR QUÉ EL CONTEO ES APROXIMADO ────────────────────────────────────────
+  // Medido el 2026-08-24 contra Vex Pro: `SELECT COUNT(*)` sobre mt5_deals
+  // tarda 9,5 s porque son 68,4 MILLONES de filas — casi la mitad del
+  // presupuesto de 20 s del sondeo, y suficiente para que se caiga por timeout
+  // cualquier día en que el servidor del broker esté cargado. Un diagnóstico
+  // que falla intermitentemente es peor que uno menos preciso.
+  //
+  // information_schema da una estimación instantánea. Para lo que este sondeo
+  // responde —"¿hay datos ahí?"— alcanza de sobra, y se devuelve marcada como
+  // estimación para que nadie la use como cifra contable.
+  //
+  // ── Y POR QUÉ NO USAMOS MAX(Time) ──────────────────────────────────────────
+  // Porque `Time` NO está indexada: medido, MAX(Time) tarda 31 SEGUNDOS
+  // barriendo las 68 millones de filas de la base de PRODUCCIÓN del broker.
+  // Un diagnóstico nuestro no tiene derecho a hacerle eso a su servidor.
+  //
+  // Los índices reales de mt5_deals son PRIMARY(Deal), Timestamp, y dos
+  // compuestos que arrancan por Entry y por Login. `Timestamp` es el único
+  // índice de una sola columna que sirve para un MAX global: 276 ms, cien
+  // veces más rápido, y contesta lo mismo que necesitamos saber — si el export
+  // está vivo y hasta cuándo llegó.
+  const lastRows = await session.query<{ last: unknown }>(
     session.engine === 'mysql'
-      ? `SELECT COUNT(*) AS c, MAX(Time) AS last FROM \`${table}\``
-      : `SELECT COUNT(*) AS c, MAX("Time") AS last FROM "${table}"`,
+      ? `SELECT MAX(Timestamp) AS last FROM \`${table}\``
+      : `SELECT MAX("Timestamp") AS last FROM "${table}"`,
   );
-  return { table, count: toNumber(rows[0]?.c), lastTime: toIsoish(rows[0]?.last) };
+
+  let count: number | null = null;
+  try {
+    const est = await session.query<{ c: unknown }>(
+      session.engine === 'mysql'
+        ? 'SELECT TABLE_ROWS AS c FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?'
+        : 'SELECT reltuples::bigint AS c FROM pg_class WHERE relname = $1',
+      [table],
+    );
+    count = toNumber(est[0]?.c);
+  } catch {
+    // Sin estimación seguimos: el sondeo sirve igual sin el número de filas.
+  }
+
+  return {
+    table,
+    count,
+    countIsEstimate: true,
+    lastTime: mt5TimestampToIso(lastRows[0]?.last) ?? toIsoish(lastRows[0]?.last),
+  };
 }
 
 /**
