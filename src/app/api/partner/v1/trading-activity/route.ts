@@ -22,6 +22,17 @@
 //  · El detalle por cuenta sólo cuando se pide UN correo. Por operación no se
 //    ofrece: son 68,4 millones de filas y nadie las necesita.
 //
+// ── FUENTE DE VERDAD (decisión de Kevin, 2026-08-25) ───────────────────────
+// Para CUENTAS DE TRADING manda MT5, no Orion. Cuando el saldo, el número de
+// cuentas o la actividad difieran entre las dos fuentes, el valor bueno es el
+// de acá.
+//
+// Importa porque Atlas ya muestra `balanceUsd` y `liveAccountsCount` sacados
+// de Orion. El riesgo real no es elegir mal la fuente: es que queden DOS
+// NÚMEROS DISTINTOS en pantalla delante de un agente que está hablando con el
+// cliente. Por eso la respuesta marca su procedencia explícitamente en
+// `source`, para que quien la consuma no tenga que adivinar de dónde salió.
+//
 // ── LO QUE NUNCA SALE POR ACÁ ──────────────────────────────────────────────
 // Contraseñas de MetaTrader (master/investor). No están en nuestro espejo y no
 // deben estarlo: Orion las guarda en texto plano y Atlas tiene tests que
@@ -143,6 +154,9 @@ export async function GET(request: NextRequest) {
       const real = rows.filter((r) => !r.is_demo);
       return NextResponse.json({
         success: true,
+        // Procedencia explícita: para cuentas de trading, MT5 manda sobre
+        // Orion. Quien consuma no debería tener que adivinarlo.
+        source: TRADING_SOURCE,
         // El correo con el que se unió, normalizado, para poder auditarlo.
         email,
         asOf,
@@ -187,6 +201,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
+      source: TRADING_SOURCE,
       asOf,
       // `count` son CLIENTES; `limit` y `hasMore` son FILAS (cuentas). Un
       // cliente con cinco cuentas ocupa cinco filas de la página.
@@ -204,6 +219,16 @@ export async function GET(request: NextRequest) {
     return apiError('partner/trading-activity', err, { status: 500 });
   }
 }
+
+/**
+ * Procedencia del dato. Va en toda respuesta por la decisión de arriba: para
+ * cuentas de trading, MT5 es la fuente de verdad y Orion no.
+ */
+const TRADING_SOURCE = {
+  system: 'mt5' as const,
+  authoritativeFor: ['balance', 'accounts', 'tradeCount', 'lastTradeAt'],
+  note: 'Para cuentas de trading MT5 manda sobre Orion (decisión de Kevin, 2026-08-25). Si Orion dice otra cosa sobre estos campos, el valor bueno es éste.',
+};
 
 const HISTORICAL_NOTICE =
   'lastTradeAt es histórico. Si construís un detector de "dejó de operar", anclá el valor inicial ' +
