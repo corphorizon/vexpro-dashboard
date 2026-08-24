@@ -40,48 +40,42 @@ interface CompanyRow {
 }
 
 /**
- * Correos cuya actividad de trading vale la pena refrescar en ESTA corrida.
+ * Correos a espejar en ESTA corrida.
  *
- * Dos grupos con urgencia distinta, y la diferencia importa: espejar los 1.787
- * clientes con retiro en los últimos 45 días tarda 45 s y son casi todos datos
- * que no cambiaron. Repetirlo seis veces al día es carga regalada sobre la
- * base de producción del broker.
+ * ── EL UNIVERSO ES EL CRM, NO MT5 ──────────────────────────────────────────
+ * Kevin lo amplió el 2026-08-25 al universo completo (8.709 clientes). El
+ * criterio anterior —"tiene un retiro reciente"— se mordía la cola: elegía por
+ * actividad reciente y por lo tanto excluía por construcción a quien dejó de
+ * estar activo. Medido entonces: 1.395 de 1.678 espejados (83%) habían operado
+ * en los últimos 30 días, y sólo 16 llevaban más de 90 sin operar. Para la
+ * revisión de retiros daba igual; para llamar a quien dejó de operar, el
+ * espejo tenía a todos menos a los que había que llamar.
  *
- *  · PENDIENTES: siempre. Es el dato sobre el que alguien va a decidir hoy y
- *    tiene que estar fresco.
- *  · RECIENTES (45 días): sólo si su espejo tiene más de 20 h. Sirven de
- *    contexto en una ficha ya decidida; que tengan un día de atraso no cambia
- *    ninguna decisión.
+ * ── POR QUÉ POR TANDAS ─────────────────────────────────────────────────────
+ * Los 8.709 son ~3,7 min a la tasa medida (1.787 correos → 4.797 cuentas en
+ * 45 s) y la corrida tiene 5 min para todo, sync del CRM incluido. Así que:
  *
- * ── LÍMITE CONOCIDO, MEDIDO EL 2026-08-24 ──────────────────────────────────
- * Este criterio SE MUERDE LA COLA para cualquier uso que necesite gente
- * INACTIVA. Seleccionar por "tiene un retiro reciente" selecciona, casi por
- * definición, a gente activa: quien dejó de operar hace seis meses tampoco
- * pide retiros, así que nunca entra. Sobre los 1.678 espejados:
+ *   · PENDIENTES: siempre, sin importar cuándo se miraron. Es el dato sobre el
+ *     que alguien decide hoy.
+ *   · EL RESTO: una tanda ordenada por antigüedad del último intento, los más
+ *     viejos primero. Con 6 corridas diarias el universo converge en menos de
+ *     un día y después se mantiene solo.
  *
- *     operó hace <30 d  1.395 (83%)      90-180 d   12
- *     30-90 d             252            >180 d      4  ·  nunca operó  7
- *
- * Dieciséis clientes con más de 90 días sin operar, en TODO el espejo.
- *
- * Para la revisión de retiros está BIEN: sólo importa quien pide plata ahora.
- * Pero si el call center quiere llamar a quien dejó de operar, el espejo
- * tendría a todos menos a los que hay que llamar.
- *
- * Cuando llegue ese momento el criterio tiene que salir del CRM ("existe como
- * cliente") y no de MT5 ("hizo algo hace poco"). Espejar los 8.709 del CRM son
- * ~3,7 min a la tasa medida: no entra en una corrida, se hace por tandas
- * rotando por antigüedad del espejo y converge en menos de un día.
+ * La antigüedad sale de `mt5_email_sync_state` y NO de `mt5_account_activity`,
+ * y la diferencia es la que hace que esto funcione: un cliente sin cuenta en
+ * MT5 no deja fila en el espejo, así que ordenar por el espejo lo dejaría para
+ * siempre como "nunca mirado", eternamente al frente de la cola, bloqueando la
+ * rotación del resto del universo.
  */
-const TRADING_RECENT_DAYS = 45;
-const TRADING_STALE_HOURS = 20;
+const TRADING_BATCH = 2500;
 
 async function emailsNeedingTradingActivity(
   admin: ReturnType<typeof createAdminClient>,
   companyId: string,
 ): Promise<string[]> {
-  const since = new Date(Date.now() - TRADING_RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const norm = (e: string) => e.trim().toLowerCase();
 
+  // ── 1. Pendientes: prioridad absoluta ───────────────────────────────────
   const { data: pend, error: pErr } = await admin
     .from('crm_withdrawals')
     .select('user_external_id')
@@ -90,51 +84,70 @@ async function emailsNeedingTradingActivity(
     .limit(2000);
   if (pErr) throw new Error(`retiros pendientes para MT5: ${pErr.message}`);
 
-  const { data: rec, error: rErr } = await admin
-    .from('crm_withdrawals')
-    .select('user_external_id')
-    .eq('company_id', companyId)
-    .gte('requested_at', since)
-    .limit(5000);
-  if (rErr) throw new Error(`retiros recientes para MT5: ${rErr.message}`);
+  const pendIds = [
+    ...new Set((pend ?? []).map((r) => r.user_external_id).filter((v): v is string => !!v)),
+  ];
 
-  const idsOf = (rows: { user_external_id: string | null }[] | null) =>
-    [...new Set((rows ?? []).map((r) => r.user_external_id).filter((v): v is string => !!v))];
-
-  const emailsOf = async (ids: string[]): Promise<string[]> => {
-    if (ids.length === 0) return [];
+  let pendientes: string[] = [];
+  if (pendIds.length > 0) {
     const { data, error } = await admin
       .from('crm_user_snapshots')
       .select('email')
       .eq('company_id', companyId)
-      .in('user_external_id', ids);
-    if (error) throw new Error(`perfiles para MT5: ${error.message}`);
-    return [...new Set((data ?? []).map((u) => u.email).filter((e): e is string => !!e))];
-  };
+      .in('user_external_id', pendIds);
+    if (error) throw new Error(`perfiles pendientes para MT5: ${error.message}`);
+    pendientes = [...new Set((data ?? []).map((u) => u.email).filter((e): e is string => !!e))];
+  }
 
-  const pendientes = await emailsOf(idsOf(pend));
-  const recientes = await emailsOf(idsOf(rec));
-
-  // De los recientes, descartar los que ya se espejaron hace poco.
-  const fresco = new Date(Date.now() - TRADING_STALE_HOURS * 60 * 60 * 1000).toISOString();
-  const { data: yaFrescos, error: fErr } = await admin
-    .from('mt5_account_activity')
-    .select('email')
-    .eq('company_id', companyId)
-    .gte('synced_at', fresco)
-    .limit(20000);
-  if (fErr) throw new Error(`frescura MT5: ${fErr.message}`);
-
-  const frescos = new Set(
-    (yaFrescos ?? []).map((r) => (r.email ? String(r.email).trim().toLowerCase() : '')),
+  // ── 2. El universo, y cuándo se miró cada uno ───────────────────────────
+  // Paginado a mano: PostgREST corta en 1.000 filas en silencio, y con 8.709
+  // clientes eso significaría espejar siempre el mismo primer millar.
+  const todos = await fetchAll<{ email: string | null }>((from, to) =>
+    admin.from('crm_user_snapshots').select('email').eq('company_id', companyId).range(from, to),
   );
-  const norm = (e: string) => e.trim().toLowerCase();
+  const estados = await fetchAll<{ email: string; last_attempt_at: string }>((from, to) =>
+    admin
+      .from('mt5_email_sync_state')
+      .select('email, last_attempt_at')
+      .eq('company_id', companyId)
+      .range(from, to),
+  );
+
+  const visto = new Map(estados.map((e) => [norm(e.email), e.last_attempt_at]));
   const pendSet = new Set(pendientes.map(norm));
 
-  return [
-    ...pendientes,
-    ...recientes.filter((e) => !pendSet.has(norm(e)) && !frescos.has(norm(e))),
-  ];
+  const resto = [
+    ...new Set(
+      todos
+        .map((u) => (u.email ? norm(u.email) : null))
+        .filter((e): e is string => !!e && !pendSet.has(e)),
+    ),
+  ]
+    // Nunca mirados primero (cadena vacía ordena antes que cualquier fecha),
+    // después los más viejos.
+    .sort((a, b) => (visto.get(a) ?? '').localeCompare(visto.get(b) ?? ''))
+    .slice(0, TRADING_BATCH);
+
+  return [...pendientes, ...resto];
+}
+
+/**
+ * Trae TODAS las filas paginando. PostgREST devuelve como mucho 1.000 por
+ * consulta y no avisa: sin esto, una tabla de 8.709 filas se leería como 1.000
+ * y nadie lo notaría.
+ */
+async function fetchAll<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const SIZE = 1000;
+  const out: T[] = [];
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await page(from, from + SIZE - 1);
+    if (error) throw new Error(error.message);
+    const batch = data ?? [];
+    out.push(...batch);
+    if (batch.length < SIZE) return out;
+  }
 }
 
 /**
