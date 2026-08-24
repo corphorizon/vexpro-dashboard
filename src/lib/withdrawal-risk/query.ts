@@ -414,6 +414,38 @@ export interface WithdrawalDetail extends QueueItem {
    * es lo que se pierde si sólo se guarda la última decisión.
    */
   events: ReviewEventRow[];
+  /**
+   * Actividad de trading del cliente (migración 090). CONTEXTO, no score:
+   * medido contra los 3.711 retiros decididos de los últimos 45 días, "nunca
+   * operó" tuvo CERO rechazos en 20 casos — la intuición de que depositar y
+   * retirar sin operar es sospechoso NO se sostiene en la data. Lo que sí
+   * aparece es que empezar a operar DESPUÉS de pedir el retiro se rechaza al
+   * 19,51% contra un 2,69% de base, pero con sólo 41 casos.
+   */
+  trading: TradingActivity | null;
+}
+
+/** Resumen de trading del cliente, sumando sus cuentas reales (nunca demo). */
+export interface TradingActivity {
+  accounts: number;
+  demoAccounts: number;
+  dealsCount: number;
+  profit: number | null;
+  firstDealAt: string | null;
+  lastDealAt: string | null;
+  /** ¿Ya había operado ANTES de pedir este retiro? El corte punto-en-el-tiempo. */
+  tradedBeforeRequest: boolean | null;
+  /** Sin ninguna cuenta MT5 con ese correo: puede ser real o un correo distinto. */
+  noMt5Account: boolean;
+}
+
+interface Mt5ActivityRow {
+  login: number;
+  deals_count: number | null;
+  profit: number | null;
+  first_deal_at: string | null;
+  last_deal_at: string | null;
+  is_demo: boolean;
 }
 
 /** Una decisión, tal como quedó registrada. La tabla es append-only. */
@@ -461,7 +493,7 @@ export async function loadWithdrawalDetail(
   // todos los estados (para que el analista vea los cancelados y los
   // rechazados), marcando cuáles son anteriores a la solicitud — que son los
   // únicos que entraron al score.
-  const [deps, wds, events] = await Promise.all([
+  const [deps, wds, mt5, events] = await Promise.all([
     uid
       ? admin
           .from('crm_deposits')
@@ -481,6 +513,13 @@ export async function loadWithdrawalDetail(
           .order('requested_at', { ascending: false, nullsFirst: false })
           .limit(HISTORY_LIMIT)
       : Promise.resolve({ data: [], error: null }),
+    withdrawal.email
+      ? admin
+          .from('mt5_account_activity')
+          .select('login, deals_count, profit, first_deal_at, last_deal_at, is_demo')
+          .eq('company_id', companyId)
+          .eq('email', withdrawal.email.trim().toLowerCase())
+      : Promise.resolve({ data: [], error: null }),
     admin
       .from('withdrawal_review_events')
       .select(EVENT_COLS)
@@ -492,6 +531,7 @@ export async function loadWithdrawalDetail(
   if (deps.error) throw new Error(deps.error.message);
   if (wds.error) throw new Error(wds.error.message);
   if (events.error) throw new Error(events.error.message);
+  if (mt5.error) throw new Error(mt5.error.message);
 
   const isBefore = (at: string | null) =>
     cut !== null && at !== null && new Date(at).getTime() < cut;
@@ -510,5 +550,40 @@ export async function loadWithdrawalDetail(
     })),
     informative: informativeNotes(base.features),
     events: (events.data ?? []) as unknown as ReviewEventRow[],
+    trading: summarizeTrading((mt5.data ?? []) as unknown as Mt5ActivityRow[], cut),
+  };
+}
+
+/**
+ * Suma las cuentas REALES del cliente. Las demo se cuentan aparte y nunca se
+ * suman: operar en demo no es operar el dinero depositado.
+ *
+ * `tradedBeforeRequest` queda en null cuando no hay ninguna cuenta: "no lo
+ * sabemos" y "no operó" son cosas distintas, y mezclarlas haría que un correo
+ * que no casó pareciera un cliente que no operó.
+ */
+function summarizeTrading(rows: Mt5ActivityRow[], cut: number | null): TradingActivity | null {
+  if (rows.length === 0) {
+    return {
+      accounts: 0, demoAccounts: 0, dealsCount: 0, profit: null,
+      firstDealAt: null, lastDealAt: null, tradedBeforeRequest: null, noMt5Account: true,
+    };
+  }
+  const real = rows.filter((r) => !r.is_demo);
+  const times = (xs: (string | null)[]) => xs.filter((x): x is string => !!x).map((x) => new Date(x).getTime());
+  const firsts = times(real.map((r) => r.first_deal_at));
+  const lasts = times(real.map((r) => r.last_deal_at));
+  const dealsCount = real.reduce((s, r) => s + (r.deals_count ?? 0), 0);
+  const firstMs = firsts.length ? Math.min(...firsts) : null;
+
+  return {
+    accounts: real.length,
+    demoAccounts: rows.length - real.length,
+    dealsCount,
+    profit: real.some((r) => r.profit !== null) ? real.reduce((s, r) => s + (r.profit ?? 0), 0) : null,
+    firstDealAt: firstMs === null ? null : new Date(firstMs).toISOString(),
+    lastDealAt: lasts.length ? new Date(Math.max(...lasts)).toISOString() : null,
+    tradedBeforeRequest: dealsCount === 0 ? false : firstMs === null || cut === null ? null : firstMs < cut,
+    noMt5Account: false,
   };
 }

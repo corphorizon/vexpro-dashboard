@@ -290,6 +290,44 @@ export default function RetiroDetallePage() {
         </ul>
       </Card>
 
+      {/* ── Trading: contexto medido, no score ───────────────────────────── */}
+      {detail.trading && (
+        <Card>
+          <CardTitle>{t('wdReview.tradingTitle')}</CardTitle>
+          <p className="mt-1 text-xs text-muted-foreground">{t('wdReview.tradingHint')}</p>
+          {detail.trading.noMt5Account ? (
+            <p className="mt-3 text-sm">{t('wdReview.tradingNoAccount')}</p>
+          ) : (
+            <>
+              <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+                <Field label={t('wdReview.tradingAccounts')} value={String(detail.trading.accounts)} />
+                <Field
+                  label={t('wdReview.tradingDeals')}
+                  value={detail.trading.dealsCount.toLocaleString('es')}
+                  tone={detail.trading.dealsCount === 0 ? 'negative' : undefined}
+                />
+                <Field
+                  label={t('wdReview.tradingFirst')}
+                  value={detail.trading.firstDealAt ? formatDate(detail.trading.firstDealAt) : '—'}
+                />
+                <Field
+                  label={t('wdReview.tradingLast')}
+                  value={detail.trading.lastDealAt ? formatDate(detail.trading.lastDealAt) : '—'}
+                />
+              </dl>
+              {detail.trading.tradedBeforeRequest === false && detail.trading.dealsCount > 0 && (
+                <p className="mt-3 text-sm text-warning">{t('wdReview.tradingAfterRequest')}</p>
+              )}
+              {detail.trading.demoAccounts > 0 && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t('wdReview.tradingDemoExcluded', { count: String(detail.trading.demoAccounts) })}
+                </p>
+              )}
+            </>
+          )}
+        </Card>
+      )}
+
       {/* ── 5. Lo que se ve y NO puntúa ──────────────────────────────────── */}
       <Card>
         <CardTitle>{t('wdReview.informativeTitle')}</CardTitle>
