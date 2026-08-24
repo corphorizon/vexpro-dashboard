@@ -22,10 +22,16 @@
 // en demo no es evidencia de haber operado el dinero depositado. Se guardan
 // para poder auditar la exclusión en vez de que desaparezcan sin rastro.
 //
-// ALCANCE ACOTADO A PROPÓSITO. No espejamos las 26.422 cuentas: sólo las de
-// los clientes que tienen un retiro pendiente o reciente, que es donde la
-// señal se usa. Son decenas, no miles, y mantiene el costo sobre el servidor
-// del broker en un nivel que no le molesta.
+// ALCANCE: EL UNIVERSO COMPLETO DEL CRM, POR TANDAS. Kevin lo amplió el
+// 2026-08-25. No entra en una corrida (8.709 clientes ≈ 3,7 min a la tasa
+// medida), así que se rota: los pendientes siempre, y una tanda de los demás
+// ordenada por antigüedad del espejo. Converge en menos de un día y después se
+// mantiene sola.
+//
+// Cada correo consultado deja rastro en `mt5_email_sync_state`, INCLUSO si no
+// tiene ninguna cuenta. Sin eso, los correos sin cuenta serían para siempre
+// "nunca mirados" y bloquearían la rotación: cada corrida volvería a preguntar
+// por los mismos que no existen y el resto no se espejaría jamás.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -51,6 +57,8 @@ const MARKET_ENTRIES = '(0,1)';
 
 export interface Mt5SyncResult {
   emailsRequested: number;
+  /** Correos consultados que NO tienen ninguna cuenta en MT5. */
+  emailsWithoutAccount: number;
   accountsFound: number;
   demoSkipped: number;
   accountsWithDeals: number;
@@ -125,7 +133,7 @@ export async function syncTradingActivity(
 
   if (wanted.length === 0) {
     return {
-      emailsRequested: 0, accountsFound: 0, demoSkipped: 0,
+      emailsRequested: 0, emailsWithoutAccount: 0, accountsFound: 0, demoSkipped: 0,
       accountsWithDeals: 0, upserted: 0, elapsedMs: Date.now() - started, warnings,
     };
   }
@@ -209,13 +217,41 @@ export async function syncTradingActivity(
     upserted += part.length;
   }
 
-  const sinCorreo = wanted.length - new Set(payload.map((p) => p.email)).size;
-  if (sinCorreo > 0) {
-    warnings.push(`${sinCorreo} correo(s) del CRM no tienen ninguna cuenta en MT5.`);
+  // ── Rastro del INTENTO, no del resultado ────────────────────────────────
+  // Se escribe una fila por cada correo CONSULTADO, con cuántas cuentas se le
+  // encontraron. Cero es una respuesta válida. Esto es lo que permite rotar
+  // por tandas sin que los correos sin cuenta se queden atascados al frente
+  // de la cola para siempre.
+  const encontradasPorCorreo = new Map<string, number>();
+  for (const e of wanted) encontradasPorCorreo.set(e, 0);
+  for (const p of payload) {
+    if (p.email) encontradasPorCorreo.set(p.email, (encontradasPorCorreo.get(p.email) ?? 0) + 1);
+  }
+
+  const attemptAt = new Date().toISOString();
+  const estados = [...encontradasPorCorreo.entries()].map(([email, n]) => ({
+    company_id: companyId,
+    email,
+    last_attempt_at: attemptAt,
+    accounts_found: n,
+  }));
+  for (const part of chunk(estados, 500)) {
+    const { error } = await admin
+      .from('mt5_email_sync_state')
+      .upsert(part, { onConflict: 'company_id,email' });
+    // Que falle el rastro no invalida los datos ya espejados, pero SÍ hay que
+    // saberlo: sin rastro, la rotación deja de avanzar.
+    if (error) warnings.push(`No se pudo registrar el rastro de espejado: ${error.message}`);
+  }
+
+  const sinCuenta = [...encontradasPorCorreo.values()].filter((n) => n === 0).length;
+  if (sinCuenta > 0) {
+    warnings.push(`${sinCuenta} correo(s) del CRM no tienen ninguna cuenta en MT5.`);
   }
 
   return {
     emailsRequested: wanted.length,
+    emailsWithoutAccount: sinCuenta,
     accountsFound: rows.accounts.length,
     demoSkipped,
     accountsWithDeals: payload.filter((p) => p.deals_count > 0).length,
