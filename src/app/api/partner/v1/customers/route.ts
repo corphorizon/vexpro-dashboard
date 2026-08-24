@@ -42,9 +42,25 @@
 // `transactionAmount` en CERO.
 //
 // EL CRITERIO ES LA BILLETERA, en los dos lados: lo que ENTRÓ (`amountPaid`,
-// 285 a 0) menos lo que SALIÓ (`requestedAmount`, 2.978 a 0). Así el neto mide
-// la posición del cliente con la plataforma. Restar el neto de comisión le
-// atribuiría un dinero que nunca tuvo — la comisión es ingreso del broker.
+// 285 a 0) menos lo que SALIÓ (`requestedAmount`, 2.978 a 0).
+//
+// ── DEFINICIÓN DEL NEGOCIO (Kevin, 2026-08-25) ─────────────────────────────
+// Textual: "al cliente le descontamos 100 de su balance; para el broker el
+// retiro es de 97 más la comisión que cobre el procesador".
+//
+// O sea que hay DOS respuestas correctas según quién pregunte, y este endpoint
+// sirve una sola:
+//
+//   PERSPECTIVA DEL CLIENTE  → `requestedAmount` (100). Es lo que salió de su
+//     saldo, y es la que corresponde a "cuánto puso menos cuánto sacó". Es la
+//     que sirve este endpoint, porque quien lo consume —La Base, Retención,
+//     la ficha 360— razona sobre el cliente.
+//
+//   PERSPECTIVA DEL BROKER   → `transactionAmount` (97) más lo que cobre el
+//     procesador. Es la salida de caja real. NO se sirve acá: quien necesite
+//     tesorería tiene que pedir ese otro número explícitamente, porque los dos
+//     son ciertos y confundirlos es el error que este bloque existe para
+//     evitar.
 //
 // ── LO QUE NUNCA SALE ──────────────────────────────────────────────────────
 // Contraseñas de MetaTrader, direcciones de retiro, documentos de KYC. No
@@ -239,8 +255,10 @@ const CUSTOMER_SOURCE = {
     'El criterio es LA BILLETERA en los dos lados: totalDeposits es lo que ENTRÓ a ella ' +
     '(amountPaid) y totalWithdrawals lo que SALIÓ de ella (requestedAmount). Orion guarda además ' +
     'depositValue —la intención del usuario, NO es dinero— y transactionAmount —lo que el cliente ' +
-    'recibe por fuera, ya neto de comisión—. La comisión es ingreso del broker: restarla del neto ' +
-    'le atribuye al cliente un dinero que nunca tuvo.',
+    'recibe por fuera, ya neto de comisión—. Definición del negocio: al cliente se le descuentan ' +
+    '100 de su balance; para el broker ese retiro es de 97 más la comisión del procesador. Este ' +
+    'endpoint sirve la PERSPECTIVA DEL CLIENTE (100). Para tesorería hace falta el otro número, y ' +
+    'no se sirve acá: los dos son ciertos y confundirlos es el error a evitar.',
   nullNotice:
     'null significa "no se calculó" y 0 significa "es cero". No los mezcles: un cliente con dinero ' +
     'se mostraría en cero y los segmentos que dependen de esto mentirían sin dar error.',

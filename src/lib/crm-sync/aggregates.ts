@@ -388,9 +388,13 @@ async function depositsAndWithdrawals(
   // clientes donde los dos importes difieren: lo descontado coincide con
   // `requestedAmount` en 2.978 casos y con `transactionAmount` en CERO.
   //
-  // Para el neto —cuánto puso el cliente menos cuánto sacó— manda lo que salió
-  // de su saldo. Restar el neto de comisión le atribuiría al cliente un dinero
-  // que nunca tuvo: la comisión es ingreso del broker.
+  // DEFINICIÓN DEL NEGOCIO (Kevin, 2026-08-25), textual: "al cliente le
+  // descontamos 100 de su balance; para el broker el retiro es de 97 más la
+  // comisión que cobre el procesador".
+  //
+  // Hay DOS respuestas correctas según quién pregunte. Acá se calcula la
+  // POSICIÓN DEL CLIENTE, así que manda lo que salió de su saldo: 100. La
+  // salida de caja del broker es otro número y otra pregunta.
   //
   // No es el mismo caso que en depósitos. Ahí `depositValue` era la INTENCIÓN
   // del usuario y `amountPaid` el hecho; acá los dos son hechos. Asumir que el
