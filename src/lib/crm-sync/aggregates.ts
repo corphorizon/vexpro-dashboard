@@ -1,0 +1,301 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Agregados por cliente desde Orion — lo que Atlas consume.
+//
+// Atlas NUNCA ve un documento individual de `deposits` ni de `tradingaccounts`:
+// consume seis agregados por cliente. Acá se calculan.
+//
+// ── LA ADUANA: LA PROYECCIÓN ES LA DEFENSA ─────────────────────────────────
+// `tradingaccounts` tiene `masterPassword` e `investorPassword` EN TEXTO PLANO
+// en el origen. La protección no es filtrarlos al mapear: es NO PEDIRLOS. Lo
+// que no está en la proyección no viaja por la red, no llega a memoria y no
+// puede terminar en un log ni en un volcado de error.
+//
+// Atlas tiene la misma lista con sus propios tests, y acordamos que viva en
+// los dos lados: su lista blanca protege lo que entra por SU sync, no lo que
+// salga por una API nuestra.
+//
+// ── DE DÓNDE SALE CADA COSA ────────────────────────────────────────────────
+// Depósitos y retiros NO se piden a Mongo: ya los tenemos espejados en
+// crm_deposits / crm_withdrawals. Pedirle dos veces lo mismo al broker sería
+// gastar su servidor para nada.
+//
+// De Mongo sólo salen las tres colecciones que todavía no espejamos: wallets,
+// tradingaccounts y socialtradingaccounts.
+//
+// ── NULL NO ES CERO ────────────────────────────────────────────────────────
+// Un cliente sin billeteras devuelve 0 (lo calculamos y da cero). Un cliente
+// que no procesamos queda en NULL. Confundirlos hace que alguien con 4.000
+// dólares se muestre en cero, y el segmento "depositó y no tiene cuenta live"
+// mienta sin que nadie lo note.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { SupabaseClient } from '@supabase/supabase-js';
+import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
+
+/**
+ * Los ÚNICOS campos que se piden de cada colección. Cambiar esto es cambiar
+ * qué sale de la base del broker: hay un test que lo fija.
+ */
+export const ORION_WALLET_FIELDS = ['userId', 'walletType', 'balance'] as const;
+export const ORION_TRADING_ACCOUNT_FIELDS = ['userId', 'real'] as const;
+export const ORION_SOCIAL_ACCOUNT_FIELDS = ['userId'] as const;
+
+/**
+ * Campos que NO deben salir NUNCA. No es el mecanismo de defensa —ése es la
+ * proyección— sino la afirmación contra la que corre el test.
+ *
+ * `masterPassword` e `investorPassword` están en texto plano en el origen;
+ * copiarlas multiplicaría los sitios desde los que se puede robar acceso a
+ * 30.962 cuentas. `targetAddress` es la billetera de destino de un retiro: un
+ * agente de call center no tiene ningún motivo para verla.
+ */
+export const ORION_FORBIDDEN_FIELDS = [
+  'masterPassword',
+  'investorPassword',
+  'targetAddress',
+  'password',
+  'otp',
+  'frontPageId',
+  'backPageId',
+  'proofOfAddress',
+  'selfie',
+  'hash',
+  'profileImage',
+  'address',
+  'birthDate',
+] as const;
+
+/** Sólo el saldo de billetera cuenta como `wallet_balance`. */
+const BALANCE_WALLET_TYPE = 'BALANCE';
+
+export interface AggregatesResult {
+  customers: number;
+  upserted: number;
+  wallets: number;
+  tradingAccounts: number;
+  socialAccounts: number;
+  elapsedMs: number;
+  warnings: string[];
+}
+
+/** Arma la proyección de Mongo a partir de una lista blanca. */
+export function projectionOf(fields: readonly string[]): Record<string, 1> {
+  const p: Record<string, 1> = {};
+  for (const f of fields) p[f] = 1;
+  return p;
+}
+
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+const numOrNull = (v: unknown): number | null => {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === 'number' ? v : Number(String(v));
+  return Number.isFinite(n) ? n : null;
+};
+
+/**
+ * Recalcula los agregados de TODOS los clientes de la empresa.
+ *
+ * Es un recálculo completo y no incremental a propósito: los agregados
+ * dependen de colecciones enteras (si una billetera baja de saldo, el total
+ * del cliente cambia sin que el cliente se "actualice"). Un cursor sobre
+ * `users` no lo detectaría.
+ */
+export async function syncCustomerAggregates(
+  admin: SupabaseClient,
+  companyId: string,
+): Promise<AggregatesResult> {
+  const started = Date.now();
+  const warnings: string[] = [];
+
+  // ── 1. Lo que ya tenemos espejado: depósitos y retiros ──────────────────
+  const dineroPlataforma = await depositsAndWithdrawals(admin, companyId);
+
+  // ── 2. Lo que falta, de Mongo, con proyección estricta ──────────────────
+  const desdeMongo = await withOrionMongo(companyId, async ({ db }) => {
+    const walletAgg = await db
+      .collection('wallets')
+      .aggregate(
+        [
+          { $match: { walletType: BALANCE_WALLET_TYPE } },
+          { $project: projectionOf(ORION_WALLET_FIELDS) },
+          { $group: { _id: '$userId', balance: { $sum: '$balance' } } },
+        ],
+        { allowDiskUse: false, maxTimeMS: 60_000 },
+      )
+      .toArray();
+
+    const accountAgg = await db
+      .collection('tradingaccounts')
+      .aggregate(
+        [
+          { $project: projectionOf(ORION_TRADING_ACCOUNT_FIELDS) },
+          {
+            $group: {
+              _id: '$userId',
+              total: { $sum: 1 },
+              live: { $sum: { $cond: [{ $eq: ['$real', true] }, 1, 0] } },
+            },
+          },
+        ],
+        { allowDiskUse: false, maxTimeMS: 60_000 },
+      )
+      .toArray();
+
+    const socialAgg = await db
+      .collection('socialtradingaccounts')
+      .aggregate(
+        [
+          { $project: projectionOf(ORION_SOCIAL_ACCOUNT_FIELDS) },
+          { $group: { _id: '$userId', total: { $sum: 1 } } },
+        ],
+        { allowDiskUse: false, maxTimeMS: 60_000 },
+      )
+      .toArray();
+
+    return { walletAgg, accountAgg, socialAgg };
+  });
+
+  const saldoPorUsuario = new Map<string, number>();
+  for (const w of desdeMongo.walletAgg) {
+    if (w._id) saldoPorUsuario.set(String(w._id), numOrNull(w.balance) ?? 0);
+  }
+  const cuentasPorUsuario = new Map<string, { total: number; live: number }>();
+  for (const a of desdeMongo.accountAgg) {
+    if (a._id) cuentasPorUsuario.set(String(a._id), { total: Number(a.total ?? 0), live: Number(a.live ?? 0) });
+  }
+  const socialPorUsuario = new Map<string, number>();
+  for (const s of desdeMongo.socialAgg) {
+    if (s._id) socialPorUsuario.set(String(s._id), Number(s.total ?? 0));
+  }
+
+  // ── 3. El universo: nuestros perfiles espejados ─────────────────────────
+  const perfiles = await fetchAllRows<{
+    user_external_id: string;
+    email: string | null;
+    raw: Record<string, unknown> | null;
+  }>((from, to) =>
+    admin
+      .from('crm_user_snapshots')
+      .select('user_external_id, email, raw')
+      .eq('company_id', companyId)
+      .range(from, to),
+  );
+
+  const now = new Date().toISOString();
+  const payload = perfiles.map((p) => {
+    const uid = p.user_external_id;
+    const cuentas = cuentasPorUsuario.get(uid);
+    const dinero = dineroPlataforma.get(uid);
+    const raw = p.raw ?? {};
+    return {
+      company_id: companyId,
+      user_external_id: uid,
+      email: p.email ? p.email.trim().toLowerCase() : null,
+      // Cero porque lo calculamos y da cero, no porque falte el dato.
+      wallet_balance: saldoPorUsuario.get(uid) ?? 0,
+      total_deposits: dinero?.total ?? 0,
+      deposit_count: dinero?.count ?? 0,
+      last_deposit_at: dinero?.last ?? null,
+      total_withdrawals: dinero?.withdrawn ?? 0,
+      accounts_count: cuentas?.total ?? 0,
+      live_accounts_count: cuentas?.live ?? 0,
+      social_accounts_count: socialPorUsuario.get(uid) ?? 0,
+      kyc_level: raw.kycLevel != null ? String(raw.kycLevel) : null,
+      enabled_withdrawals: typeof raw.enabledWithdrawals === 'boolean' ? raw.enabledWithdrawals : null,
+      client_id: raw.clientId != null ? String(raw.clientId) : null,
+      synced_at: now,
+    };
+  });
+
+  let upserted = 0;
+  for (const part of chunk(payload, 500)) {
+    const { error } = await admin
+      .from('crm_customer_aggregates')
+      .upsert(part, { onConflict: 'company_id,user_external_id' });
+    if (error) throw new Error(`crm_customer_aggregates: ${error.message}`);
+    upserted += part.length;
+  }
+
+  const sinPerfil = saldoPorUsuario.size - payload.filter((p) => saldoPorUsuario.has(p.user_external_id)).length;
+  if (sinPerfil > 0) {
+    warnings.push(`${sinPerfil} usuario(s) con billetera en Orion no tienen perfil espejado.`);
+  }
+
+  return {
+    customers: payload.length,
+    upserted,
+    wallets: saldoPorUsuario.size,
+    tradingAccounts: cuentasPorUsuario.size,
+    socialAccounts: socialPorUsuario.size,
+    elapsedMs: Date.now() - started,
+    warnings,
+  };
+}
+
+/**
+ * Depósitos y retiros desde NUESTRO espejo. Sólo los completados: un depósito
+ * cancelado no es plata que entró, y contarlo diría que el cliente financió
+ * cuando no lo hizo.
+ */
+async function depositsAndWithdrawals(
+  admin: SupabaseClient,
+  companyId: string,
+): Promise<Map<string, { total: number; count: number; last: string | null; withdrawn: number }>> {
+  const out = new Map<string, { total: number; count: number; last: string | null; withdrawn: number }>();
+
+  const deps = await fetchAllRows<{ user_external_id: string | null; amount_paid: number | null; deposit_at: string | null }>(
+    (from, to) =>
+      admin
+        .from('crm_deposits')
+        .select('user_external_id, amount_paid, deposit_at')
+        .eq('company_id', companyId)
+        .eq('status_norm', 'completed')
+        .range(from, to),
+  );
+  for (const d of deps) {
+    if (!d.user_external_id) continue;
+    const cur = out.get(d.user_external_id) ?? { total: 0, count: 0, last: null, withdrawn: 0 };
+    cur.total += d.amount_paid ?? 0;
+    cur.count += 1;
+    if (d.deposit_at && (!cur.last || d.deposit_at > cur.last)) cur.last = d.deposit_at;
+    out.set(d.user_external_id, cur);
+  }
+
+  const wds = await fetchAllRows<{ user_external_id: string | null; transaction_amount: number | null }>((from, to) =>
+    admin
+      .from('crm_withdrawals')
+      .select('user_external_id, transaction_amount')
+      .eq('company_id', companyId)
+      .eq('status_norm', 'approved')
+      .range(from, to),
+  );
+  for (const w of wds) {
+    if (!w.user_external_id) continue;
+    const cur = out.get(w.user_external_id) ?? { total: 0, count: 0, last: null, withdrawn: 0 };
+    cur.withdrawn += w.transaction_amount ?? 0;
+    out.set(w.user_external_id, cur);
+  }
+
+  return out;
+}
+
+/** PostgREST corta en 1.000 filas sin avisar. Con 39.000 depósitos, eso sería
+ *  calcular los agregados sobre el 2,5% de los datos y no enterarse. */
+async function fetchAllRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const SIZE = 1000;
+  const out: T[] = [];
+  for (let from = 0; ; from += SIZE) {
+    const { data, error } = await page(from, from + SIZE - 1);
+    if (error) throw new Error(error.message);
+    const batch = data ?? [];
+    out.push(...batch);
+    if (batch.length < SIZE) return out;
+  }
+}

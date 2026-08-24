@@ -1,0 +1,229 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /api/partner/v1/customers
+//
+// Los datos de cliente que Atlas consume hoy directo de Orion Mongo. Smart
+// Dashboard pasa a ser el único que se conecta y los sirve por acá (decisión
+// de Kevin, 2026-08-25); Atlas deja su propio cron y sus credenciales.
+//
+// ── NULL Y CERO NO SON LO MISMO ────────────────────────────────────────────
+// Es la trampa que Atlas señaló y que aquí se respeta: `null` significa "no se
+// calculó", `0` significa "es cero". En el modelo de Atlas estos campos tienen
+// `@default(0)` y no distinguen, y eso rompe en silencio — un cliente con
+// 4.000 dólares se muestra en cero si el dato no llegó, y el segmento
+// "depositó y no tiene cuenta live" miente sin que nadie lo note.
+//
+// ── EL DINERO DE ACÁ NO ES EL DE MT5 ───────────────────────────────────────
+// `walletBalance` es el saldo de BILLETERA (wallets con walletType=BALANCE).
+// NO es el saldo de las cuentas de trading: eso vive en
+// /api/partner/v1/trading-activity, va desglosado por familia y con su unidad,
+// porque las cuentas Cent están en centavos. Son dos columnas distintas, no
+// una que reemplaza a la otra.
+//
+// Depósitos y retiros son movimientos de la PLATAFORMA y mandan desde acá:
+// MT5 sólo ve las transferencias internas billetera → cuenta.
+//
+// ── LO QUE NUNCA SALE ──────────────────────────────────────────────────────
+// Contraseñas de MetaTrader, direcciones de retiro, documentos de KYC. No
+// están en el espejo porque la proyección que va a Mongo no las pide (ver
+// crm-sync/aggregates.ts y el test que lo fija). De KYC sale el estado y el
+// nivel, nunca un documento.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { NextRequest, NextResponse } from 'next/server';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { verifyPartnerAuth } from '@/lib/partner-api/auth';
+import { apiError } from '@/lib/api-error';
+
+export const dynamic = 'force-dynamic';
+export const maxDuration = 30;
+
+const MAX_LIMIT = 1000;
+const DEFAULT_LIMIT = 500;
+
+const AGG_COLS =
+  'user_external_id, email, wallet_balance, total_deposits, deposit_count, last_deposit_at, ' +
+  'total_withdrawals, accounts_count, live_accounts_count, social_accounts_count, kyc_level, ' +
+  'enabled_withdrawals, client_id, synced_at';
+
+const PROFILE_COLS =
+  'user_external_id, username, email, country, status, kyc_status, user_type, register_date, ' +
+  'sponsor_username, rank';
+
+interface AggRow {
+  user_external_id: string;
+  email: string | null;
+  wallet_balance: number | null;
+  total_deposits: number | null;
+  deposit_count: number | null;
+  last_deposit_at: string | null;
+  total_withdrawals: number | null;
+  accounts_count: number | null;
+  live_accounts_count: number | null;
+  social_accounts_count: number | null;
+  kyc_level: string | null;
+  enabled_withdrawals: boolean | null;
+  client_id: string | null;
+  synced_at: string;
+}
+
+interface ProfileRow {
+  user_external_id: string;
+  username: string | null;
+  email: string | null;
+  country: string | null;
+  status: string | null;
+  kyc_status: string | null;
+  user_type: string | null;
+  register_date: string | null;
+  sponsor_username: string | null;
+  rank: string | null;
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const admin = createAdminClient();
+    const auth = await verifyPartnerAuth(request, admin, ['mt5:read']);
+    if (auth instanceof NextResponse) return auth;
+
+    const p = new URL(request.url).searchParams;
+    const email = p.get('email')?.trim().toLowerCase() || null;
+    const userId = p.get('userId')?.trim() || null;
+    const since = p.get('since');
+    const afterIdRaw = p.get('afterId');
+    const afterId = afterIdRaw && afterIdRaw.trim() ? afterIdRaw.trim() : null;
+    const rawLimit = Number(p.get('limit') ?? DEFAULT_LIMIT);
+    const limit = Math.min(Number.isFinite(rawLimit) && rawLimit > 0 ? rawLimit : DEFAULT_LIMIT, MAX_LIMIT);
+
+    // El alcance sale del TOKEN, nunca de un parámetro.
+    let q = admin.from('crm_customer_aggregates').select(AGG_COLS).eq('company_id', auth.companyId);
+
+    if (email) q = q.eq('email', email);
+    else if (userId) q = q.eq('user_external_id', userId);
+    else {
+      if (since) {
+        const d = new Date(since);
+        if (Number.isNaN(d.getTime())) {
+          return NextResponse.json(
+            { success: false, error: 'El parámetro `since` debe ser una fecha ISO 8601.' },
+            { status: 400 },
+          );
+        }
+        const iso = d.toISOString();
+        // Cursor COMPUESTO (synced_at, user_external_id) por lo mismo que en
+        // trading-activity: un recálculo escribe miles de filas con la misma
+        // marca, y con un cursor simple una página que corte en medio de un
+        // grupo empatado se saltaría el resto en silencio.
+        if (afterId) {
+          q = q.or(
+            `synced_at.gt.${iso},and(synced_at.eq.${iso},user_external_id.gt.${afterId})`,
+          );
+        } else {
+          q = q.gte('synced_at', iso);
+        }
+      }
+      q = q
+        .order('synced_at', { ascending: true })
+        .order('user_external_id', { ascending: true })
+        .limit(limit);
+    }
+
+    const { data, error } = await q;
+    if (error) return apiError('partner/customers', error, { status: 500 });
+
+    const aggs = (data ?? []) as unknown as AggRow[];
+
+    // El perfil va aparte para no duplicar columnas en dos tablas. Se trae
+    // sólo para las filas de esta página.
+    const ids = aggs.map((a) => a.user_external_id);
+    const profiles = new Map<string, ProfileRow>();
+    if (ids.length > 0) {
+      const { data: prof, error: pErr } = await admin
+        .from('crm_user_snapshots')
+        .select(PROFILE_COLS)
+        .eq('company_id', auth.companyId)
+        .in('user_external_id', ids);
+      if (pErr) return apiError('partner/customers perfiles', pErr, { status: 500 });
+      for (const r of (prof ?? []) as unknown as ProfileRow[]) profiles.set(r.user_external_id, r);
+    }
+
+    const items = aggs.map((a) => shape(a, profiles.get(a.user_external_id) ?? null));
+    const asOf = aggs.reduce<string | null>((max, r) => (!max || r.synced_at > max ? r.synced_at : max), null);
+    const last = aggs.length > 0 ? aggs[aggs.length - 1]! : null;
+
+    if (email || userId) {
+      return NextResponse.json({
+        success: true,
+        source: CUSTOMER_SOURCE,
+        asOf,
+        // 200 con nulos y no 404: "no existe" es un dato, no un error.
+        found: items.length > 0,
+        customer: items[0] ?? null,
+      });
+    }
+
+    return NextResponse.json({
+      success: true,
+      source: CUSTOMER_SOURCE,
+      asOf,
+      count: items.length,
+      nextSince: last ? last.synced_at : since,
+      nextAfterId: last ? last.user_external_id : afterId,
+      hasMore: aggs.length >= limit,
+      items,
+    });
+  } catch (err) {
+    return apiError('partner/customers', err, { status: 500 });
+  }
+}
+
+const CUSTOMER_SOURCE = {
+  system: 'orion' as const,
+  authoritativeFor: [
+    'walletBalance',
+    'totalDeposits',
+    'depositCount',
+    'lastDepositAt',
+    'totalWithdrawals',
+    'status',
+    'kycStatus',
+    'kycLevel',
+  ],
+  note:
+    'Movimientos de la PLATAFORMA y perfil del cliente. Para la ACTIVIDAD de trading (cuántas ' +
+    'cuentas operan, cuánto operó, última operación) manda MT5: ver /api/partner/v1/trading-activity.',
+  nullNotice:
+    'null significa "no se calculó" y 0 significa "es cero". No los mezcles: un cliente con dinero ' +
+    'se mostraría en cero y los segmentos que dependen de esto mentirían sin dar error.',
+};
+
+function shape(a: AggRow, p: ProfileRow | null) {
+  return {
+    userId: a.user_external_id,
+    clientId: a.client_id,
+    email: a.email,
+    username: p?.username ?? null,
+    country: p?.country ?? null,
+    status: p?.status ?? null,
+    kycStatus: p?.kyc_status ?? null,
+    kycLevel: a.kyc_level,
+    userType: p?.user_type ?? null,
+    rank: p?.rank ?? null,
+    sponsorUsername: p?.sponsor_username ?? null,
+    registerDate: p?.register_date ?? null,
+    enabledWithdrawals: a.enabled_withdrawals,
+
+    // Dinero de la plataforma. Ver nullNotice.
+    walletBalance: a.wallet_balance,
+    totalDeposits: a.total_deposits,
+    depositCount: a.deposit_count,
+    lastDepositAt: a.last_deposit_at,
+    totalWithdrawals: a.total_withdrawals,
+
+    // "Cuántas abrió". Cuáles OPERAN lo sabe MT5.
+    accountsCount: a.accounts_count,
+    liveAccountsCount: a.live_accounts_count,
+    socialAccountsCount: a.social_accounts_count,
+
+    asOf: a.synced_at,
+  };
+}
