@@ -29,6 +29,8 @@ import {
   type PayprosFromCrmResult,
 } from '@/lib/api-integrations/paypros/deposits-from-crm';
 import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
+import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users';
+import { syncCustomerAggregates, type AggregatesResult } from '@/lib/crm-sync/aggregates';
 import type { CrmSyncResult } from '@/lib/crm-sync/types';
 import { apiError } from '@/lib/api-error';
 
@@ -215,6 +217,8 @@ export async function GET(request: NextRequest) {
       companyName: string | null;
       paypros?: PayprosFromCrmResult | null;
       mt5?: Mt5SyncResult | null;
+      allUsers?: AllUsersResult | null;
+      aggregates?: AggregatesResult | null;
     })[] = [];
     for (const company of companies) {
       try {
@@ -265,12 +269,40 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        // ── Universo completo de usuarios + agregados ──────────────────────
+        // Esto es lo que le vamos a servir a Atlas para que deje su propia
+        // conexión a Orion. Va DESPUÉS del sync de movimientos porque los
+        // agregados de depósitos y retiros se calculan sobre nuestro espejo.
+        //
+        // Aislado como los demás: si falla, el módulo de retiros —que es lo
+        // que ya está en producción— sigue funcionando igual.
+        let allUsers: AllUsersResult | null = null;
+        let aggregates: AggregatesResult | null = null;
+        const orionErrors: string[] = [];
+        try {
+          // Sin cursor a propósito por ahora: son 20.918 documentos en 23 s y
+          // `users` NO tiene índice por `updatedAt` en el broker (verificado
+          // por Atlas el 21/08), así que un filtro por fecha no ahorraría el
+          // barrido. Cuando Orion agregue ese índice, acá va el cursor con
+          // `$gte` — nunca `$gt`: dos usuarios pueden compartir milisegundo y
+          // el segundo se perdería para siempre.
+          allUsers = await syncAllOrionUsers(admin, company.id, null);
+          aggregates = await syncCustomerAggregates(admin, company.id);
+          for (const w of [...allUsers.warnings, ...aggregates.warnings]) {
+            console.warn(`[cron/sync-crm] orion ${company.id}: ${w}`);
+          }
+        } catch (err) {
+          orionErrors.push(`orion-agregados: ${err instanceof Error ? err.message : 'unknown'}`);
+        }
+
         results.push({
           ...res,
           companyName: company.name,
           paypros,
           mt5,
-          errors: [...res.errors, ...payprosErrors, ...mt5Errors],
+          allUsers,
+          aggregates,
+          errors: [...res.errors, ...payprosErrors, ...mt5Errors, ...orionErrors],
         });
       } catch (err) {
         // Una empresa que revienta no puede cortar a las demás.

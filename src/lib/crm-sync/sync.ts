@@ -383,6 +383,42 @@ export async function runCrmSync(opts: RunCrmSyncOptions): Promise<CrmSyncResult
   return result;
 }
 
+/**
+ * Los ÚNICOS campos que se piden de `users`. La defensa NO es filtrarlos al
+ * mapear: es no pedirlos. Lo que no está acá no viaja por la red, no llega a
+ * memoria y no puede terminar en un log ni en un volcado de error.
+ *
+ * Hasta el 2026-08-25 esta consulta iba SIN proyección y traía el documento
+ * completo. Atlas tiene la misma lista con sus propios tests del otro lado;
+ * acordamos que viva en los dos, porque la de ellos protege lo que entra por
+ * SU sync y no lo que salga por una API nuestra.
+ */
+export const ORION_USER_FIELDS = [
+  'userId',
+  'clientId',
+  '_id',
+  'username',
+  'email',
+  'country',
+  'countryISOCode',
+  'status',
+  'kycStatus',
+  'kycLevel',
+  'userType',
+  'registerDate',
+  'createdAt',
+  'updatedAt',
+  'sponsorUsername',
+  'sponsorEmail',
+  'rank',
+  'pendingFeeDebt',
+  'enabledWithdrawals',
+] as const;
+
+const USER_PROJECTION: Record<string, 1> = Object.fromEntries(
+  ORION_USER_FIELDS.map((f) => [f, 1]),
+) as Record<string, 1>;
+
 /** Trae y espeja sólo los usuarios referenciados por los movimientos leídos. */
 async function syncUsers(
   session: OrionMongoSession,
@@ -400,7 +436,7 @@ async function syncUsers(
     const slice = values.slice(i, i + USER_ID_CHUNK);
     const docs = await session.db
       .collection('users')
-      .find({ userId: { $in: slice } }, { batchSize: USER_ID_CHUNK })
+      .find({ userId: { $in: slice } }, { batchSize: USER_ID_CHUNK, projection: USER_PROJECTION })
       .toArray();
 
     const rows: Record<string, unknown>[] = [];
