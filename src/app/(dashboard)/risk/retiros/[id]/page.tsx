@@ -382,14 +382,34 @@ export default function RetiroDetallePage() {
       <Card>
         <CardTitle>{t('wdReview.decisionTitle')}</CardTitle>
 
-        {detail.review?.decision && (
-          <p className="mt-2 text-sm text-muted-foreground">
-            {t('wdReview.lastDecision', {
-              decision: t(`wdReview.decision.${detail.review.decision}`),
-              who: detail.review.decided_by_name ?? '—',
-              when: formatDateTime(detail.review.decided_at),
-            })}
-          </p>
+        {/* Historial completo, no sólo la última. Un caso normal son DOS
+            hechos —soporte escala, el auditor aprueba— y el escalamiento es
+            justamente la evidencia de que el control funcionó. */}
+        {detail.events.length > 0 && (
+          <ol className="mt-3 space-y-3 border-l border-border pl-4">
+            {detail.events.map((e, idx) => (
+              <li key={`${e.created_at}-${idx}`} className="relative">
+                <span
+                  className={cn(
+                    'absolute -left-[21px] top-1.5 h-2 w-2 rounded-full',
+                    idx === 0 ? 'bg-primary' : 'bg-border',
+                  )}
+                  aria-hidden
+                />
+                <p className="text-sm">
+                  <span className="font-medium">{t(`wdReview.decision.${e.decision}`)}</span>
+                  {' · '}
+                  {e.actor_name ?? '—'}
+                  {e.actor_role ? ` (${e.actor_role})` : ''}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {formatDateTime(e.created_at)}
+                  {e.score !== null ? ` · ${t('wdReview.scoreThen', { score: String(e.score) })}` : ''}
+                </p>
+                {e.notes && <p className="mt-0.5 text-xs">{e.notes}</p>}
+              </li>
+            ))}
+          </ol>
         )}
 
         <label className="mt-4 block text-sm font-medium" htmlFor="wd-notes">

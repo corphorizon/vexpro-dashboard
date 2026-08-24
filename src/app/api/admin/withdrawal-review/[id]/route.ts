@@ -148,6 +148,30 @@ export async function POST(
     const fresh = scoreWithdrawal(detail.features, cal);
 
     const now = new Date().toISOString();
+
+    // ── El hecho, primero ────────────────────────────────────────────────────
+    // El evento se escribe ANTES que el estado, y a propósito: si la segunda
+    // escritura falla, preferimos un historial con un hecho que el estado
+    // todavía no refleja (visible, corregible) antes que un estado cambiado
+    // sin rastro de quién lo cambió. El orden inverso perdería la evidencia,
+    // que es justo lo que esta tabla existe para no perder.
+    const { error: eventErr } = await admin.from('withdrawal_review_events').insert({
+      company_id: auth.companyId,
+      withdrawal_external_id: externalId,
+      decision,
+      notes,
+      score: fresh.approvalScore,
+      score_band: fresh.band,
+      calibration_id: fresh.calibrationId,
+      factors: { logOdds: fresh.logOdds, items: fresh.factors, informative: detail.informative },
+      actor_id: auth.userId,
+      actor_name: auth.name,
+      // El rol de HOY, congelado: dentro de un año hay que poder demostrar que
+      // quien aprobó tenía permiso para aprobar ESE día.
+      actor_role: auth.role,
+    });
+    if (eventErr) return apiError('admin/withdrawal-review/[id] POST evento', eventErr, { status: 500 });
+
     const { data: saved, error } = await admin
       .from('withdrawal_reviews')
       .upsert(

@@ -24,6 +24,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { runCrmSync } from '@/lib/crm-sync/sync';
+import {
+  syncPayprosDepositsFromCrm,
+  type PayprosFromCrmResult,
+} from '@/lib/api-integrations/paypros/deposits-from-crm';
 import type { CrmSyncResult } from '@/lib/crm-sync/types';
 import { apiError } from '@/lib/api-error';
 
@@ -90,15 +94,43 @@ export async function GET(request: NextRequest) {
 
   try {
     const companies = await eligibleCompanies(onlyCompanyId);
+    const admin = createAdminClient();
 
     // Secuencial a propósito: cada empresa abre su propia conexión al Mongo del
     // broker (maxPoolSize 1) y la primera corrida mueve decenas de miles de
     // filas. Paralelizar tenants sólo multiplicaría la carga sobre el CRM.
-    const results: (CrmSyncResult & { companyName: string | null })[] = [];
+    const results: (CrmSyncResult & {
+      companyName: string | null;
+      paypros?: PayprosFromCrmResult | null;
+    })[] = [];
     for (const company of companies) {
       try {
         const res = await runCrmSync({ companyId: company.id, full });
-        results.push({ ...res, companyName: company.name });
+
+        // Los depósitos de Pay-Pros salen de acá y no del webhook: la URL que
+        // se registró con Pay-Pros es la del CRM, no la nuestra, así que el
+        // receptor nunca recibió un evento. Va DESPUÉS del sync porque lee del
+        // espejo que el sync acaba de refrescar.
+        //
+        // Que falle no puede tumbar la sincronización: el espejo ya quedó bien
+        // y es lo que alimenta la revisión de retiros. Se anota y se sigue.
+        let paypros: PayprosFromCrmResult | null = null;
+        const payprosErrors: string[] = [];
+        try {
+          paypros = await syncPayprosDepositsFromCrm(admin, company.id);
+          if (paypros.warnings.length > 0) {
+            console.warn(`[cron/sync-crm] paypros ${company.id}:`, paypros.warnings.join(' | '));
+          }
+        } catch (err) {
+          payprosErrors.push(`paypros: ${err instanceof Error ? err.message : 'unknown'}`);
+        }
+
+        results.push({
+          ...res,
+          companyName: company.name,
+          paypros,
+          errors: [...res.errors, ...payprosErrors],
+        });
       } catch (err) {
         // Una empresa que revienta no puede cortar a las demás.
         const msg = err instanceof Error ? err.message : 'unknown';
