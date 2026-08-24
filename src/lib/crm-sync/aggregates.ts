@@ -126,38 +126,84 @@ export async function syncCustomerAggregates(
   const started = Date.now();
   const warnings: string[] = [];
 
-  // ── 0. ¿Modo rápido? Qué clientes movieron dinero ───────────────────────
-  const soloEstos = opts.changedSince
+  // ── 0. En modo rápido, QUIÉN hay que recalcular ─────────────────────────
+  //
+  // Dos motivos para entrar en la lista, y hacen falta los dos:
+  //
+  //  · movió dinero (depósito o retiro nuevo en nuestro espejo), que es lo que
+  //    dispara el traspaso a Retención;
+  //  · le cambió el SALDO de billetera, que Kevin pidió refrescar también cada
+  //    15 minutos.
+  //
+  // El saldo NO se puede detectar por movimientos: cambia por transferencias
+  // internas, comisiones y ajustes que no dejan depósito. La única forma de
+  // saber a quién le cambió es LEERLOS TODOS y comparar. Medido: leer las
+  // 62.652 billeteras tarda 1,6 s — barato de sobra para cada 15 minutos.
+  //
+  // Lo que se evita igual es lo caro: recalcular y REESCRIBIR 20.900 filas
+  // cuando cambiaron veinte.
+  const movieronDinero = opts.changedSince
     ? await usersWithRecentMoney(admin, companyId, opts.changedSince)
     : null;
-
-  if (soloEstos && soloEstos.size === 0) {
-    // Nadie movió dinero: no hay nada que recalcular y no hace falta molestar
-    // al Mongo del broker.
-    return {
-      customers: 0, upserted: 0, wallets: 0, tradingAccounts: 0, socialAccounts: 0,
-      elapsedMs: Date.now() - started, warnings,
-    };
-  }
 
   // ── 1. Lo que ya tenemos espejado: depósitos y retiros ──────────────────
   const dineroPlataforma = await depositsAndWithdrawals(admin, companyId);
 
-  // ── 2. Lo que falta, de Mongo, con proyección estricta ──────────────────
-  const desdeMongo = await withOrionMongo(companyId, async ({ db }) => {
-    const filtroUsuarios = soloEstos ? { userId: { $in: [...soloEstos] } } : {};
-
-    const walletAgg = await db
+  // ── 2. Las billeteras SIEMPRE se leen enteras (ver arriba) ──────────────
+  const saldosMongo = await withOrionMongo(companyId, async ({ db }) =>
+    db
       .collection('wallets')
       .aggregate(
         [
-          { $match: { walletType: BALANCE_WALLET_TYPE, ...filtroUsuarios } },
+          { $match: { walletType: BALANCE_WALLET_TYPE } },
           { $project: projectionOf(ORION_WALLET_FIELDS) },
           { $group: { _id: '$userId', balance: { $sum: '$balance' } } },
         ],
         { allowDiskUse: false, maxTimeMS: 60_000 },
       )
-      .toArray();
+      .toArray(),
+  );
+
+  const saldoPorUsuario = new Map<string, number>();
+  for (const w of saldosMongo) {
+    if (w._id) saldoPorUsuario.set(String(w._id), round2(numOrNull(w.balance) ?? 0));
+  }
+
+  // ── 3. En modo rápido: unir los que movieron dinero con los que cambiaron
+  //      de saldo ────────────────────────────────────────────────────────
+  let soloEstos: Set<string> | null = null;
+  if (movieronDinero) {
+    soloEstos = new Set(movieronDinero);
+    const guardados = await fetchAllRows<{ user_external_id: string; wallet_balance: number | null }>(
+      (from, to) =>
+        admin
+          .from('crm_customer_aggregates')
+          .select('user_external_id, wallet_balance')
+          .eq('company_id', companyId)
+          .order('user_external_id', { ascending: true })
+          .range(from, to),
+    );
+    const antes = new Map(guardados.map((g) => [g.user_external_id, Number(g.wallet_balance) || 0]));
+    for (const [uid, saldo] of saldoPorUsuario) {
+      if (Math.abs(saldo - (antes.get(uid) ?? 0)) > 0.005) soloEstos.add(uid);
+    }
+    // Un cliente que tenía saldo y ya no aparece en Mongo también cambió.
+    for (const [uid, saldo] of antes) {
+      if (saldo !== 0 && !saldoPorUsuario.has(uid)) soloEstos.add(uid);
+    }
+
+    if (soloEstos.size === 0) {
+      return {
+        customers: 0, upserted: 0, wallets: saldoPorUsuario.size,
+        tradingAccounts: 0, socialAccounts: 0,
+        elapsedMs: Date.now() - started, warnings,
+      };
+    }
+  }
+
+  // ── 4. El resto de Mongo, ya filtrado ───────────────────────────────────
+  const desdeMongo = await withOrionMongo(companyId, async ({ db }) => {
+    const filtroUsuarios = soloEstos ? { userId: { $in: [...soloEstos] } } : {};
 
     const accountAgg = await db
       .collection('tradingaccounts')
@@ -189,13 +235,9 @@ export async function syncCustomerAggregates(
       )
       .toArray();
 
-    return { walletAgg, accountAgg, socialAgg };
+    return { accountAgg, socialAgg };
   });
 
-  const saldoPorUsuario = new Map<string, number>();
-  for (const w of desdeMongo.walletAgg) {
-    if (w._id) saldoPorUsuario.set(String(w._id), numOrNull(w.balance) ?? 0);
-  }
   const cuentasPorUsuario = new Map<string, { total: number; live: number }>();
   for (const a of desdeMongo.accountAgg) {
     if (a._id) cuentasPorUsuario.set(String(a._id), { total: Number(a.total ?? 0), live: Number(a.live ?? 0) });
@@ -235,7 +277,7 @@ export async function syncCustomerAggregates(
       // Redondeado al centavo al ESCRIBIR: sumar cientos de importes en coma
       // flotante deja colas como 453.795038, que después aparecen como
       // "diferencias" al comparar contra otro sistema que sí redondeó.
-      wallet_balance: round2(saldoPorUsuario.get(uid) ?? 0),
+      wallet_balance: saldoPorUsuario.get(uid) ?? 0,
       total_deposits: round2(dinero?.total ?? 0),
       deposit_count: dinero?.count ?? 0,
       last_deposit_at: dinero?.last ?? null,
