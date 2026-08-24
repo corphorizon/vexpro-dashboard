@@ -114,9 +114,21 @@ const numOrNull = (v: unknown): number | null => {
  * por 16 la carga sobre la base de PRODUCCIÓN del broker para refrescar datos
  * que casi nunca cambian.
  *
- * El modo rápido NO refresca saldos de billetera ni conteos de cuentas de los
- * clientes que no movieron dinero: para eso está el completo cada 4 horas. Es
- * un compromiso consciente, no un olvido.
+ * El modo rápido NO refresca conteos de cuentas de los clientes que no
+ * movieron dinero ni cambiaron de saldo: para eso está el completo cada 4
+ * horas. Es un compromiso consciente, no un olvido.
+ *
+ * ── SI CAMBIÁS CÓMO SE CALCULA ALGO ACÁ, CORRÉ UNA COMPLETA ────────────────
+ * El modo rápido sólo reescribe a quien se movió, así que un cambio de fórmula
+ * o de campo NO llega a las filas ya guardadas: se quedan con el valor viejo
+ * indefinidamente, sin dar error.
+ *
+ * Pasó de verdad el 2026-08-25 al corregir el campo de retiros: 3.604 de 3.820
+ * clientes conservaron el importe anterior y el total quedó $30.040 corto
+ * hasta que se disparó una completa. La sesión de Atlas se comió el mismo
+ * problema dos veces el mismo día. No es una posibilidad teórica.
+ *
+ * Disparo manual: /api/cron/sync-crm?mode=full
  */
 export async function syncCustomerAggregates(
   admin: SupabaseClient,
