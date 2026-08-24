@@ -22,16 +22,36 @@
 //  · El detalle por cuenta sólo cuando se pide UN correo. Por operación no se
 //    ofrece: son 68,4 millones de filas y nadie las necesita.
 //
-// ── FUENTE DE VERDAD (decisión de Kevin, 2026-08-25) ───────────────────────
-// Para CUENTAS DE TRADING manda MT5, no Orion. Cuando el saldo, el número de
-// cuentas o la actividad difieran entre las dos fuentes, el valor bueno es el
-// de acá.
+// ── FUENTE DE VERDAD, Y SUS LÍMITES (Kevin, 2026-08-25) ────────────────────
+// Para la ACTIVIDAD de trading manda MT5: cuántas cuentas reales tiene, cuánto
+// operó, cuándo fue su primera y última operación. Ahí Orion no sabe.
 //
-// Importa porque Atlas ya muestra `balanceUsd` y `liveAccountsCount` sacados
-// de Orion. El riesgo real no es elegir mal la fuente: es que queden DOS
-// NÚMEROS DISTINTOS en pantalla delante de un agente que está hablando con el
-// cliente. Por eso la respuesta marca su procedencia explícitamente en
-// `source`, para que quien la consuma no tenga que adivinar de dónde salió.
+// EL DINERO NO. Y esto se midió, no se supone:
+//
+//   familia     cuentas   "saldo" sumado
+//   Cent          3.321      88.767.992   <-- 88% del total
+//   Copy          4.341       7.204.744
+//   PropFirm      1.114       4.635.816
+//   Broker        7.467       1.838.482
+//
+// Las cuentas Cent están denominadas EN CENTAVOS y las PropFirm llevan capital
+// virtual de desafío, que no es plata del cliente. Sumar `Balance` entre
+// familias da un número sin significado: el total de MT5 son 101 millones
+// contra 7,6 millones realmente depositados según Orion, y difieren 6.924 de
+// 6.985 clientes.
+//
+// Por eso NO se devuelve un "saldo del cliente" agregado. El dinero va
+// desglosado por familia, con su unidad a la vista, y quien consuma decide.
+//
+// TAMPOCO cubre depósitos ni retiros. Son movimientos de la PLATAFORMA
+// (pasarela → billetera) y viven en Orion; MT5 sólo ve las transferencias
+// internas billetera → cuenta de trading, que es otra cosa. `totalDeposits`,
+// `depositCount`, `lastDepositAt` y `totalWithdrawals` se quedan en Orion —
+// además el traspaso a Retención se dispara con `depositCount`, así que
+// cambiarle la fuente rompería la operación del call center.
+//
+// El riesgo que todo esto evita es concreto: que queden DOS NÚMEROS DISTINTOS
+// en pantalla delante de un agente hablando con el cliente.
 //
 // ── LO QUE NUNCA SALE POR ACÁ ──────────────────────────────────────────────
 // Contraseñas de MetaTrader (master/investor). No están en nuestro espejo y no
@@ -226,8 +246,24 @@ export async function GET(request: NextRequest) {
  */
 const TRADING_SOURCE = {
   system: 'mt5' as const,
-  authoritativeFor: ['balance', 'accounts', 'tradeCount', 'lastTradeAt'],
-  note: 'Para cuentas de trading MT5 manda sobre Orion (decisión de Kevin, 2026-08-25). Si Orion dice otra cosa sobre estos campos, el valor bueno es éste.',
+  /** Acá MT5 manda sobre Orion. Son conteos y fechas: comparables siempre. */
+  authoritativeFor: ['accounts', 'tradeCount', 'firstTradeAt', 'lastTradeAt'],
+  /** Acá NO. Sigue mandando Orion; MT5 no los ve o no son comparables. */
+  notAuthoritativeFor: [
+    'totalDeposits',
+    'depositCount',
+    'lastDepositAt',
+    'totalWithdrawals',
+    'walletBalance',
+  ],
+  note:
+    'MT5 manda para la ACTIVIDAD de trading (cuentas, operaciones, fechas). NO para depósitos ni ' +
+    'retiros: esos son movimientos de la plataforma y viven en Orion. Tampoco hay un "saldo del ' +
+    'cliente" único — ver moneyNotice.',
+  moneyNotice:
+    'El dinero va desglosado por familia de cuenta y NO sumado: las cuentas Cent están ' +
+    'denominadas en CENTAVOS y las PropFirm llevan capital virtual de desafío. Sumarlas da ' +
+    '101 millones contra 7,6 realmente depositados. Cada familia trae su propia unidad.',
 };
 
 const HISTORICAL_NOTICE =
@@ -245,14 +281,56 @@ function summarize(real: ActivityRow[], demoCount: number) {
   const lasts = times(real.map((r) => r.last_deal_at));
 
   return {
+    // Conteos y fechas: comparables entre familias, se pueden sumar.
     accounts: real.length,
     demoAccounts: demoCount,
     tradeCount: real.reduce((s, r) => s + (r.deals_count ?? 0), 0),
-    profit: real.some((r) => r.profit !== null) ? real.reduce((s, r) => s + (r.profit ?? 0), 0) : null,
-    balance: real.some((r) => r.account_balance !== null)
-      ? real.reduce((s, r) => s + (r.account_balance ?? 0), 0)
-      : null,
     firstTradeAt: firsts.length ? new Date(Math.min(...firsts)).toISOString() : null,
     lastTradeAt: lasts.length ? new Date(Math.max(...lasts)).toISOString() : null,
+
+    // El dinero NO se suma entre familias (ver cabecera). Va desglosado con la
+    // unidad a la vista, y quien consuma decide qué hacer con cada una.
+    money: moneyByFamily(real),
   };
+}
+
+/**
+ * Desglosa el dinero por familia de cuenta, con su unidad.
+ *
+ * `Cent` está denominada en CENTAVOS: 88,8 de los 101 millones que sale de
+ * sumar todo vienen de ahí. `PropFirm` es capital virtual de desafío, no plata
+ * del cliente. Devolverlas juntas en un solo número es lo que producía un
+ * total 13 veces mayor que lo realmente depositado.
+ *
+ * No convertimos los centavos a dólares a propósito: haría falta asumir un
+ * factor, y una conversión equivocada es peor que un dato crudo bien
+ * etiquetado. El consumidor tiene la unidad y decide.
+ */
+function moneyByFamily(real: ActivityRow[]) {
+  const familyOf = (group: string | null): string => {
+    if (!group) return 'unknown';
+    const parts = group.replace(/\\/g, '/').split('/');
+    return parts[1] ?? parts[0] ?? 'unknown';
+  };
+
+  const acc = new Map<string, { accounts: number; balance: number; profit: number; tradeCount: number }>();
+  for (const r of real) {
+    const key = familyOf(r.group_name);
+    const cur = acc.get(key) ?? { accounts: 0, balance: 0, profit: 0, tradeCount: 0 };
+    cur.accounts += 1;
+    cur.balance += r.account_balance ?? 0;
+    cur.profit += r.profit ?? 0;
+    cur.tradeCount += r.deals_count ?? 0;
+    acc.set(key, cur);
+  }
+
+  return [...acc.entries()].map(([family, v]) => ({
+    family,
+    ...v,
+    // La unidad es lo que hace utilizable el número. Sin esto, un consumidor
+    // suma centavos con dólares y no se entera.
+    unit: family.toLowerCase() === 'cent' ? 'cents' : 'account_currency',
+    // Capital de desafío, no dinero del cliente.
+    isVirtual: family.toLowerCase() === 'propfirm',
+  }));
 }
