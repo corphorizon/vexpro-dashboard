@@ -50,7 +50,7 @@ import { useToasts } from '@/components/ui/toast';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
-import { roleCanWriteFinance } from '@/lib/roles';
+import { roleCanApproveWithdrawal, roleCanTriageWithdrawal } from '@/lib/roles';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
 import { formatDate, formatDateTime } from '@/lib/dates';
@@ -79,7 +79,12 @@ export default function RetiroDetallePage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? '';
   const hasRiskAccess = useModuleAccess('risk');
-  const canAct = roleCanWriteFinance(user?.effective_role ?? '');
+  // Dos permisos distintos, no uno: soporte triajea y escala, el auditor
+  // aprueba. Un botón que el servidor va a rechazar con 403 no se dibuja
+  // habilitado.
+  const role = user?.effective_role ?? '';
+  const canApprove = roleCanApproveWithdrawal(role);
+  const canTriage = roleCanTriageWithdrawal(role);
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
 
@@ -395,7 +400,7 @@ export default function RetiroDetallePage() {
           value={notes}
           onChange={(e) => setNotes(e.target.value)}
           rows={3}
-          disabled={!canAct}
+          disabled={!canTriage}
           placeholder={t('wdReview.notesPlaceholder')}
           className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm disabled:opacity-60"
         />
@@ -403,8 +408,8 @@ export default function RetiroDetallePage() {
         <div className="mt-4 flex flex-wrap gap-2">
           <Button
             variant="primary"
-            disabled={!canAct}
-            title={canAct ? undefined : t('wdReview.noPermission')}
+            disabled={!canApprove}
+            title={canApprove ? undefined : t('wdReview.approveNeedsFinance')}
             onClick={() => setPending('approve')}
           >
             <CheckCircle2 className="h-4 w-4" aria-hidden />
@@ -412,8 +417,8 @@ export default function RetiroDetallePage() {
           </Button>
           <Button
             variant="destructive"
-            disabled={!canAct}
-            title={canAct ? undefined : t('wdReview.noPermission')}
+            disabled={!canApprove}
+            title={canApprove ? undefined : t('wdReview.approveNeedsFinance')}
             onClick={() => setPending('reject')}
           >
             <XCircle className="h-4 w-4" aria-hidden />
@@ -421,8 +426,8 @@ export default function RetiroDetallePage() {
           </Button>
           <Button
             variant="secondary"
-            disabled={!canAct}
-            title={canAct ? undefined : t('wdReview.noPermission')}
+            disabled={!canTriage}
+            title={canTriage ? undefined : t('wdReview.noPermission')}
             onClick={() => setPending('escalate')}
           >
             <ArrowUpCircle className="h-4 w-4" aria-hidden />
@@ -430,9 +435,13 @@ export default function RetiroDetallePage() {
           </Button>
         </div>
 
-        {/* El botón se muestra deshabilitado con el motivo en vez de
-            desaparecer: que se vea que el control existe es parte del control. */}
-        {!canAct && <p className="mt-2 text-xs text-muted-foreground">{t('wdReview.noPermission')}</p>}
+        {/* Los botones se muestran deshabilitados con el motivo en vez de
+            desaparecer: que se vea que el control existe es parte del control.
+            A soporte le decimos qué SÍ puede hacer, no sólo qué no. */}
+        {!canApprove && canTriage && (
+          <p className="mt-2 text-xs text-muted-foreground">{t('wdReview.triageOnly')}</p>
+        )}
+        {!canTriage && <p className="mt-2 text-xs text-muted-foreground">{t('wdReview.noPermission')}</p>}
       </Card>
 
       {pending && (

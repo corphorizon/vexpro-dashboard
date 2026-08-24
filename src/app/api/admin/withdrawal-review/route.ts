@@ -20,7 +20,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
+import { verifyAdminAuth } from '@/lib/api-auth';
+import { WITHDRAWAL_REVIEW_READ_ROLES } from '@/lib/roles';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 import { loadQueue, type QueueFilters } from '@/lib/withdrawal-risk/query';
@@ -37,7 +38,7 @@ function numParam(v: string | null): number | null {
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['risk'] });
+    const auth = await verifyAdminAuth(request, { roles: WITHDRAWAL_REVIEW_READ_ROLES, modules: ['risk'] });
     if (auth instanceof NextResponse) return auth;
 
     const p = request.nextUrl.searchParams;
