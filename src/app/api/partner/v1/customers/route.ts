@@ -62,6 +62,20 @@
 //     son ciertos y confundirlos es el error que este bloque existe para
 //     evitar.
 //
+// ── sourceUpdatedAt NO SIRVE PARA DETECTAR CAMBIOS ─────────────────────────
+// Es el `updatedAt` de Orion: dice cuándo cambió el cliente EN EL ORIGEN. Pero
+// los agregados de dinero se calculan de ESTE lado, así que un saldo puede
+// cambiar sin que `sourceUpdatedAt` se mueva ni un milisegundo.
+//
+// A Atlas le pasó al consumirnos (2026-08-25): su escritura por lotes descarta
+// las filas cuyo `sourceUpdatedAt` no cambió, así que el perfil volvía idéntico
+// y el saldo nuevo NO SE ESCRIBÍA NUNCA. Sin error, sin aviso: un saldo
+// congelado para siempre.
+//
+// Quien consuma esto tiene que COMPARAR VALORES para saber si algo cambió.
+// `nextSince`/`nextAfterId` son otra cosa: ésos son nuestro reloj (`synced_at`)
+// y existen para no releer lo ya leído, no para decidir si una fila cambió.
+//
 // ── LO QUE NUNCA SALE ──────────────────────────────────────────────────────
 // Contraseñas de MetaTrader, direcciones de retiro, documentos de KYC. No
 // están en el espejo porque la proyección que va a Mongo no las pide (ver
@@ -262,6 +276,13 @@ const CUSTOMER_SOURCE = {
   nullNotice:
     'null significa "no se calculó" y 0 significa "es cero". No los mezcles: un cliente con dinero ' +
     'se mostraría en cero y los segmentos que dependen de esto mentirían sin dar error.',
+  changeDetectionNotice:
+    'NO uses sourceUpdatedAt para decidir si una fila cambió. Es el reloj del ORIGEN (Orion), no el ' +
+    'nuestro: los agregados de dinero se recalculan de este lado y cambian SIN que sourceUpdatedAt ' +
+    'se mueva. Un consumidor que descarte filas por marca de tiempo idéntica nunca escribe esos ' +
+    'saldos nuevos, y no da error. Para saber si algo cambió, COMPARÁ VALORES. Para paginar usá ' +
+    'nextSince + nextAfterId, que es otra cosa: ésos son nuestro reloj (synced_at) y sirven para ' +
+    'no releer, no para detectar cambios.',
 };
 
 function shape(a: AggRow, p: ProfileRow | null) {
@@ -307,9 +328,10 @@ function shape(a: AggRow, p: ProfileRow | null) {
     liveAccountsCount: a.live_accounts_count,
     socialAccountsCount: a.social_accounts_count,
 
-    // EL CURSOR de quien consuma: el `updatedAt` de Orion. Sin esto no se
-    // puede sostener un avance incremental y hay que reescribir las 20.918
-    // filas en cada pasada.
+    // El `updatedAt` de Orion. Sirve para saber cuándo cambió el cliente EN EL
+    // ORIGEN y para separar lo estable del ruido reciente al comparar — NO
+    // para detectar si esta fila cambió: los agregados se recalculan de este
+    // lado sin tocarlo. Ver changeDetectionNotice.
     sourceUpdatedAt: p?.source_updated_at ?? null,
     // Cuándo lo calculamos NOSOTROS. Distinto de sourceUpdatedAt: uno dice
     // cuándo cambió el dato en el origen, el otro cuándo lo miramos.
