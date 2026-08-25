@@ -188,6 +188,18 @@ export interface QueueFilters {
   q?: string | null;
 }
 
+/** De dónde salió el dinero del cliente, para pintarlo en la ficha. */
+export interface WalletSourcesRow {
+  user_external_id: string;
+  in_p2p: number | null;
+  in_ib: number | null;
+  in_social: number | null;
+  in_propfirm: number | null;
+  in_trading: number | null;
+  in_deposit: number | null;
+  out_p2p: number | null;
+}
+
 export interface QueueItem {
   withdrawal: WithdrawalRow;
   /** Método inferido de coin+network (el walletType del CRM no sirve). */
@@ -199,10 +211,35 @@ export interface QueueItem {
   user: UserSnapshotRow | null;
   /** Revisión ya registrada por el equipo, si la hay. */
   review: ReviewRow | null;
+  sources: WalletSourcesRow | null;
+}
+
+/**
+ * Un retiro que ESTUVO en la cola y ya no: alguien lo movió, en el CRM o acá.
+ * Se lista aparte con el estado en el que quedó, porque el estado puede seguir
+ * cambiando —REQUESTED → ON_HOLD → REVIEWED → IN_PROCESS— hasta llegar a
+ * COMPLETED, FAILED o REJECTED, y lo que importa es dónde terminó.
+ */
+export interface ResolvedItem {
+  externalId: string;
+  username: string | null;
+  email: string | null;
+  amount: number | null;
+  requestedAt: string | null;
+  processedAt: string | null;
+  /** El estado CRUDO del CRM: 'COMPLETED', 'REJECTED', 'FAILED'… */
+  statusRaw: string | null;
+  statusNorm: string;
+  wasInstant: boolean;
+  /** Qué decidimos nosotros, si es que llegamos a decidir algo. */
+  ourDecision: string | null;
+  ourDecidedBy: string | null;
 }
 
 export interface QueueResult {
   items: QueueItem[];
+  /** Los que cambiaron de estado. Ver ResolvedItem. */
+  resolved: ResolvedItem[];
   /** Pendientes antes de aplicar los filtros (para mostrar "N de M"). */
   totalPending: number;
   calibrationId: string;
@@ -223,12 +260,26 @@ export async function loadQueue(
   filters: QueueFilters = {},
   cal: Calibration = DEFAULT_CALIBRATION,
 ): Promise<QueueResult> {
+  // ── QUÉ ENTRA EN LA COLA (Kevin, 2026-08-25) ────────────────────────────
+  // Dos cosas y sólo dos:
+  //
+  //   PEDIDOS    los que esperan decisión: REQUESTED, ON_HOLD, REVIEWED,
+  //              IN_PROCESS. Todos caen en status_norm='pending'.
+  //   INSTANTES  los que el sistema aprueba SOLO. Ya salió el dinero, así que
+  //              no hay nada que decidir — pero hay que poder ver qué tan
+  //              arriesgado era, que es justamente lo que nadie miraba.
+  //
+  // Los instantáneos se reconocen por la COMISIÓN DE $5: el admin del broker
+  // los sirve por otro endpoint (/api/withdraws/instant) y no traen ningún
+  // campo propio que los marque, pero la comisión estándar es $3 y la de ellos
+  // $5. Verificado: 107 retiros con fee=5, todos COMPLETED, todos desde el 23
+  // de agosto, que es cuando se lanzó la función.
   let q = admin
     .from('crm_withdrawals')
     .select(WITHDRAWAL_COLS)
     .eq('company_id', companyId)
-    .eq('status_norm', 'pending')
-    .order('requested_at', { ascending: true, nullsFirst: false });
+    .or(`status_norm.eq.pending,and(fee.eq.${INSTANT_FEE},requested_at.gte.${instantSince()})`)
+    .order('requested_at', { ascending: false, nullsFirst: false });
 
   if (typeof filters.minAmount === 'number') q = q.gte('requested_amount', filters.minAmount);
   if (typeof filters.maxAmount === 'number') q = q.lte('requested_amount', filters.maxAmount);
@@ -257,6 +308,55 @@ export async function loadQueue(
 
   const items = await scoreMany(admin, companyId, pending, cal);
 
+  // ── Los que ya cambiaron de estado ──────────────────────────────────────
+  // Se listan los pedidos en la ventana que YA NO están pendientes. Es la
+  // única forma de cerrar el ciclo: alguien mira la cola, vuelve al día
+  // siguiente y quiere saber en qué terminó lo que vio ayer.
+  //
+  // Los instantáneos se excluyen de acá: nacen resueltos, así que aparecerían
+  // todos y taparían a los que de verdad cambiaron.
+  const desde = new Date(Date.now() - RESOLVED_DAYS * 86_400_000).toISOString();
+  const { data: resueltos, error: rErr } = await admin
+    .from('crm_withdrawals')
+    .select(WITHDRAWAL_COLS)
+    .eq('company_id', companyId)
+    .neq('status_norm', 'pending')
+    .neq('fee', INSTANT_FEE)
+    .gte('requested_at', desde)
+    .order('processed_at', { ascending: false, nullsFirst: false })
+    .limit(200);
+  if (rErr) throw new Error(rErr.message);
+
+  const resueltosRows = (resueltos ?? []) as unknown as WithdrawalRow[];
+  const nuestrasDecisiones = new Map<string, ReviewRow>();
+  if (resueltosRows.length > 0) {
+    const { data: revs } = await admin
+      .from('withdrawal_reviews')
+      .select(REVIEW_COLS)
+      .eq('company_id', companyId)
+      .in('withdrawal_external_id', resueltosRows.map((r) => r.external_id));
+    for (const r of (revs ?? []) as unknown as ReviewRow[]) {
+      nuestrasDecisiones.set(r.withdrawal_external_id, r);
+    }
+  }
+
+  const resolved: ResolvedItem[] = resueltosRows.map((w) => {
+    const nuestra = nuestrasDecisiones.get(w.external_id) ?? null;
+    return {
+      externalId: w.external_id,
+      username: w.username,
+      email: w.email,
+      amount: w.requested_amount,
+      requestedAt: w.requested_at,
+      processedAt: w.processed_at,
+      statusRaw: w.status_raw,
+      statusNorm: w.status_norm,
+      wasInstant: isInstant(w),
+      ourDecision: nuestra?.decision ?? null,
+      ourDecidedBy: nuestra?.decided_by_name ?? null,
+    };
+  });
+
   const filtered = filters.band ? items.filter((i) => i.score.band === filters.band) : items;
   const counts: Record<RiskBand, number> = { low: 0, medium: 0, high: 0 };
   for (const i of items) counts[i.score.band] += 1;
@@ -266,7 +366,31 @@ export async function loadQueue(
     (a, b) => a.score.approvalScore - b.score.approvalScore || (b.ageDays ?? 0) - (a.ageDays ?? 0),
   );
 
-  return { items: filtered, totalPending: count ?? pending.length, calibrationId: cal.id, counts };
+  return { items: filtered, resolved, totalPending: count ?? pending.length, calibrationId: cal.id, counts };
+}
+
+/**
+ * Comisión que identifica un retiro instantáneo. Ver la cabecera de loadQueue:
+ * es el único rasgo que los distingue en los datos.
+ */
+export const INSTANT_FEE = 5;
+
+/**
+ * Ventana de los instantáneos. Ya están cobrados, así que mostrarlos para
+ * siempre convertiría la cola en un archivo histórico. Se muestran los de los
+ * últimos días, que es cuando alguien todavía puede reaccionar.
+ */
+const INSTANT_DAYS = 7;
+
+/** Ventana de "ya cambiaron de estado". Misma lógica: cerrar el ciclo, no archivar. */
+const RESOLVED_DAYS = 7;
+function instantSince(): string {
+  return new Date(Date.now() - INSTANT_DAYS * 86_400_000).toISOString();
+}
+
+/** ¿Este retiro fue instantáneo (aprobado solo por el sistema)? */
+export function isInstant(w: { fee: number | null }): boolean {
+  return Number(w.fee) === INSTANT_FEE;
 }
 
 /** Neutraliza los metacaracteres que rompen un patrón `ilike` dentro de `or(...)`. */
@@ -290,7 +414,7 @@ async function scoreMany(
   const userIds = [...new Set(withdrawals.map((w) => w.user_external_id).filter((x): x is string => !!x))];
   const addresses = [...new Set(withdrawals.map((w) => w.target_address).filter((x): x is string => !!x))];
 
-  const [users, deposits, history, reviews, addressOwners] = await Promise.all([
+  const [users, deposits, history, reviews, sources, addressOwners] = await Promise.all([
     userIds.length
       ? fetchAllPages<UserSnapshotRow>((from, to) =>
           admin
@@ -333,6 +457,18 @@ async function scoreMany(
         .in('withdrawal_external_id', withdrawals.map((w) => w.external_id))
         .range(from, to),
     ),
+    // Origen del dinero. SÍ puntúa: es la señal más fuerte del módulo.
+    userIds.length
+      ? fetchAllPages<{ user_external_id: string; in_p2p: number | null; in_ib: number | null; in_social: number | null; in_propfirm: number | null; in_trading: number | null; in_deposit: number | null; out_p2p: number | null }>(
+          (from, to) =>
+            admin
+              .from('crm_wallet_sources')
+              .select('user_external_id, in_p2p, in_ib, in_social, in_propfirm, in_trading, in_deposit, out_p2p')
+              .eq('company_id', companyId)
+              .in('user_external_id', userIds)
+              .range(from, to),
+        )
+      : Promise.resolve([]),
     // Sólo para el CONTEXTO informativo: cuántos usuarios distintos comparten
     // la dirección. No puntúa (ver score.ts), pero el analista quiere verlo.
     addresses.length
@@ -351,6 +487,7 @@ async function scoreMany(
   const depsByUser = groupByUser(deposits);
   const histByUser = groupByUser(history);
   const reviewById = new Map(reviews.map((r) => [r.withdrawal_external_id, r]));
+  const sourcesByUser = new Map(sources.map((s) => [s.user_external_id, s]));
   const usersByAddress = new Map<string, Set<string>>();
   for (const a of addressOwners) {
     if (!a.target_address || !a.user_external_id) continue;
@@ -385,6 +522,10 @@ async function scoreMany(
       kycStatus: user?.kyc_status ?? null,
       pendingFeeDebt: user?.pending_fee_debt ?? null,
       sharedAddressUserCount: w.target_address ? (usersByAddress.get(w.target_address)?.size ?? 1) : 0,
+      // Origen del dinero: el P2P recibido decide el tramo, y el correo decide
+      // si es personal del broker (a quien no se le mide igual).
+      p2pReceived: sourcesByUser.get(uid)?.in_p2p ?? 0,
+      email: w.email ?? user?.email ?? null,
     });
 
     return {
@@ -394,6 +535,7 @@ async function scoreMany(
       features,
       score: scoreWithdrawal(features, cal),
       user,
+      sources: sourcesByUser.get(uid) ?? null,
       review: reviewById.get(w.external_id) ?? null,
     };
   });

@@ -221,7 +221,15 @@ describe('señales DESCARTADAS — no deben mover el score', () => {
 
   it('ningún factor del score corresponde a una señal descartada', () => {
     const codes = baseScore.factors.map((f) => f.code);
-    expect(codes).toEqual(['prior_rejections', 'amount_ratio', 'account_age', 'net_before']);
+    expect(codes).toEqual([
+      'prior_rejections',
+      'amount_ratio',
+      'account_age',
+      'net_before',
+      // Agregada el 2026-08-25 tras medirla: es la única señal de "origen del
+      // dinero" que predice. Ver los tests de más abajo.
+      'money_origin',
+    ]);
     for (const prohibido of ['kyc', 'fee_debt', 'shared_address']) {
       expect(codes).not.toContain(prohibido);
     }
@@ -300,5 +308,47 @@ describe('deriva temporal y bandas', () => {
     expect(low.band).toBe('low');
     expect(high.band).toBe('high');
     expect(low.approvalScore).toBeGreaterThan(high.approvalScore);
+  });
+});
+
+describe('origen del dinero — la señal más fuerte, y la que contradice la intuición', () => {
+  const conP2p = (p2pReceived: number, extra: Record<string, unknown> = {}) =>
+    scoreWithdrawal(computeFeatures(cleanInput({ amount: 1000, p2pReceived, ...extra })));
+
+  it('recibir P2P que cubre el retiro baja el score más que recibir menos', () => {
+    // Medido: 11,62% de rechazo cuando el P2P cubre el retiro, 8,35% cuando no
+    // llega, 3,90% sin P2P. Monótona.
+    const sin = conP2p(0).approvalScore;
+    const parcial = conP2p(400).approvalScore;
+    const cubre = conP2p(5000).approvalScore;
+    expect(sin).toBeGreaterThan(parcial);
+    expect(parcial).toBeGreaterThan(cubre);
+  });
+
+  it('el personal del broker NO se penaliza por recibir dinero', () => {
+    // Un BDM cobra comisiones: retirar sin haber depositado es su forma normal
+    // de operar. Rechazan al 1,70%, POR DEBAJO de la base.
+    const staff = conP2p(5000, { email: 'alguien@vexprofx.com' });
+    const cliente = conP2p(5000, { email: 'alguien@gmail.com' });
+    expect(staff.approvalScore).toBeGreaterThan(cliente.approvalScore);
+    expect(staff.factors.find((f) => f.code === 'money_origin')!.detail).toContain('Personal del broker');
+  });
+
+  it('el subdominio del correo también cuenta como personal', () => {
+    const a = conP2p(5000, { email: 'x@mail.vexprofx.com' }).approvalScore;
+    const b = conP2p(5000, { email: 'x@vexprofx.com' }).approvalScore;
+    expect(a).toBe(b);
+  });
+
+  it('un correo parecido pero ajeno NO cuenta como personal', () => {
+    // `@notvexprofx.com` termina en el dominio si se compara mal.
+    const falso = conP2p(5000, { email: 'x@notvexprofx.com' }).approvalScore;
+    const cliente = conP2p(5000, { email: 'x@gmail.com' }).approvalScore;
+    expect(falso).toBe(cliente);
+  });
+
+  it('el detalle explica de dónde vino el dinero, no sólo que hay riesgo', () => {
+    const f = conP2p(5000).factors.find((x) => x.code === 'money_origin')!;
+    expect(f.detail).toContain('transferencias de otros usuarios');
   });
 });
