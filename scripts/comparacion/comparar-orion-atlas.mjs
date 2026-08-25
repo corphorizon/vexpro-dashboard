@@ -79,8 +79,16 @@ function iguales(a, b) {
   if (typeof a === 'number' || typeof b === 'number') {
     const x = Number(a), y = Number(b);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return String(a) === String(b);
-    // Tolerancia de centavo: los dos lados redondean distinto.
-    return Math.abs(x - y) < 0.01;
+    // ── TOLERANCIA DE UN CENTAVO, CON EPSILON ────────────────────────────
+    // El epsilon no es paranoia: una diferencia de exactamente un centavo se
+    // calcula en coma flotante como 0.010000000000218279, así que `< 0.01`
+    // la marca como diferencia. Pasó en la corrida del 2026-08-25: un cliente
+    // cuya suma cruda en Orion es 9066.845000000001 —medio centavo justo— dio
+    // 9066.85 de un lado y 9066.84 del otro, y ninguno estaba equivocado.
+    //
+    // Sin esto NINGUNA corrida puede aprobar mientras los importes se guarden
+    // como float: siempre habrá algún cliente cuya suma caiga en el filo.
+    return Math.abs(x - y) <= 0.01 + 1e-9;
   }
   if (typeof a === 'boolean' || typeof b === 'boolean') return Boolean(a) === Boolean(b);
   // Fechas: se comparan como instante, no como texto.
