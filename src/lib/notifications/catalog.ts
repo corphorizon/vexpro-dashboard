@@ -59,6 +59,15 @@ export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
     email: false, i18nKey: 'notif.syncFailed',
   },
   {
+    // El sync del CRM dejó de correr. Va con correo y como crítica porque su
+    // muerte es INVISIBLE: el traspaso a Retención se dispara desde dentro de
+    // ese sync, así que si deja de correr nadie pasa a Retención y no hay
+    // ningún error en ningún lado — sólo un equipo que deja de recibir gente.
+    key: 'crm_sync.stale',
+    severity: 'critical', audience: 'admins', module: 'risk',
+    email: true, i18nKey: 'notif.crmSyncStale',
+  },
+  {
     key: 'ledger.not_posted',
     severity: 'critical', audience: 'finance', module: 'balances',
     email: true, i18nKey: 'notif.ledgerNotPosted',

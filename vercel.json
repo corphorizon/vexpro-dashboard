@@ -71,6 +71,10 @@
     {
       "path": "/api/cron/sync-crm?mode=full",
       "schedule": "20 20 * * *"
+    },
+    {
+      "path": "/api/cron/sync-health",
+      "schedule": "40 * * * *"
     }
   ]
 }
