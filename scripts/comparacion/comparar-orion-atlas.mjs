@@ -128,7 +128,8 @@ const nuestros = await traerTodos();
 const porCorreo = new Map(nuestros.filter((c) => c.email).map((c) => [c.email.trim().toLowerCase(), c]));
 
 const corte = Date.now() - ventanaMin * 60 * 1000;
-const faltantes = [];
+const faltantesEstables = [];
+const faltantesRecientes = [];
 const sobrantes = [];
 const recientes = [];
 const difCriticas = [];
@@ -138,12 +139,30 @@ for (const a of atlas) {
   const mail = (a.email ?? '').trim().toLowerCase();
   if (!mail) continue;
   const n = porCorreo.get(mail);
-  if (!n) { faltantes.push(mail); continue; }
+
+  // Cuándo cambió en el ORIGEN. Se calcula antes de nada porque decide si una
+  // ausencia es un fallo o el diseño funcionando.
+  const cambio = Date.parse(a.sourceUpdatedAt ?? n?.sourceUpdatedAt ?? '');
+  const esReciente = Number.isFinite(cambio) && cambio > corte;
+
+  if (!n) {
+    // ── UN FALTANTE RECIENTE NO ES UN FALLO ──────────────────────────────
+    // Los dos espejos barren a ritmos distintos. Un cliente que apareció en
+    // el origen hace veinte minutos y todavía no está en un espejo que barre
+    // cada cuatro horas es exactamente lo que el diseño predice.
+    //
+    // Sin esta distinción el veredicto diría NO APRUEBA para siempre: siempre
+    // va a haber alguien registrado dentro del hueco entre dos barridos, y el
+    // criterio dejaría de medir corrección para medir sincronía de relojes.
+    // (Lo señaló la sesión de Atlas el 2026-08-25, con razón.)
+    if (esReciente) faltantesRecientes.push(mail);
+    else faltantesEstables.push(mail);
+    continue;
+  }
   porCorreo.delete(mail);
 
   // Un registro que cambió hace poco puede diferir legítimamente.
-  const cambio = Date.parse(a.sourceUpdatedAt ?? n.sourceUpdatedAt ?? '');
-  if (Number.isFinite(cambio) && cambio > corte) { recientes.push(mail); continue; }
+  if (esReciente) { recientes.push(mail); continue; }
 
   for (const [nuestro, suyo] of CAMPOS_CRITICOS) {
     if (!iguales(n[nuestro], a[suyo])) {
@@ -153,13 +172,14 @@ for (const a of atlas) {
 }
 for (const [mail] of porCorreo) sobrantes.push(mail);
 
-const estables = atlas.length - recientes.length - faltantes.length;
+const estables = atlas.length - recientes.length - faltantesRecientes.length - faltantesEstables.length;
 console.log('\n══════════════ RESULTADO ══════════════');
 console.log(`  filas de Atlas          : ${atlas.length}`);
 console.log(`  clientes nuestros       : ${nuestros.length}`);
 console.log(`  comparados (estables)   : ${estables}`);
 console.log(`  recientes (esperado)    : ${recientes.length}  — cambiaron hace < ${ventanaMin} min`);
-console.log(`  en Atlas y no en nosotros: ${faltantes.length}`);
+console.log(`  faltan y son ESTABLES     : ${faltantesEstables.length}  <- esto sí es un fallo`);
+console.log(`  faltan pero son recientes : ${faltantesRecientes.length}  — cambiaron hace < ${ventanaMin} min, esperado`);
 console.log(`  en nosotros y no en Atlas: ${sobrantes.length}`);
 console.log(`\n  DIFERENCIAS CRÍTICAS    : ${difCriticas.length}`);
 
@@ -175,9 +195,12 @@ if (difCriticas.length > 0) {
     console.log(`    ${d.email} · ${d.campo}: Atlas=${JSON.stringify(d.atlas)} nosotros=${JSON.stringify(d.nuestro)}`);
   }
 }
-if (faltantes.length > 0) console.log('\n  faltantes (5):', faltantes.slice(0, 5).join(', '));
+if (faltantesEstables.length > 0) console.log('\n  faltantes estables (5):', faltantesEstables.slice(0, 5).join(', '));
+if (faltantesRecientes.length > 0) console.log('  faltantes recientes (5):', faltantesRecientes.slice(0, 5).join(', '));
 
-const aprueba = difCriticas.length === 0 && faltantes.length === 0;
+// El criterio es el acordado: cero diferencias en los once campos, sobre los
+// registros ESTABLES. Un faltante reciente no cuenta, por lo mismo.
+const aprueba = difCriticas.length === 0 && faltantesEstables.length === 0;
 console.log(`\n  VEREDICTO: ${aprueba ? 'APRUEBA — cero diferencias críticas' : 'NO APRUEBA'}`);
 console.log('  (el criterio es cero diferencias en los once campos que mueven filtros y órdenes)');
 process.exit(aprueba ? 0 : 1);
