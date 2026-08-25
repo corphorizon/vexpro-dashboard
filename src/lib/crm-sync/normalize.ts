@@ -114,12 +114,21 @@ export function toStr(value: unknown): string | null {
 // ── Estados ──────────────────────────────────────────────────────────────────
 
 /**
- * Vocabulario REAL medido en prod (13.524 retiros):
+ * Vocabulario REAL medido en prod (13.638 retiros al 2026-08-25):
  *   COMPLETED 12006 · REJECTED 915 · CANCELLED 570 · CANCELED 6 (sic, con una
- *   sola L) · ON_HOLD 24 · REQUESTED 2 · IN_PROCESS 1.
+ *   sola L) · ON_HOLD 28 · REVIEWED 8 · REQUESTED 7 · IN_PROCESS 1.
  *
  * CANCELLED lo cancela el CLIENTE: no es una decisión nuestra y por eso tiene
  * un estado propio, distinto de 'rejected'.
+ *
+ * `REVIEWED` se agregó el 2026-08-25: estaba cayendo en 'unknown' y por lo
+ * tanto 8 retiros quedaban FUERA de la cola. El admin del broker lo lista
+ * entre los estados abiertos, así que es pendiente: alguien ya lo miró pero
+ * todavía no salió el dinero.
+ *
+ * El admin tiene además `FAILED`, que todavía no apareció en los datos. Se
+ * mapea igual, porque el día que aparezca no queremos que caiga en 'unknown'
+ * y desaparezca de las pantallas sin que nadie lo note.
  */
 const WITHDRAWAL_STATUS_MAP: Record<string, WithdrawalStatusNorm> = {
   COMPLETED: 'approved',
@@ -129,6 +138,8 @@ const WITHDRAWAL_STATUS_MAP: Record<string, WithdrawalStatusNorm> = {
   ON_HOLD: 'pending',
   REQUESTED: 'pending',
   IN_PROCESS: 'pending',
+  REVIEWED: 'pending',
+  FAILED: 'rejected',
 };
 
 /** Vocabulario REAL medido en prod (39.413 depósitos). */

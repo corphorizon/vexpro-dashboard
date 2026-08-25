@@ -60,6 +60,8 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       items: queue.items,
+      // Los que ya cambiaron de estado, con el estado en el que quedaron.
+      resolved: queue.resolved,
       totalPending: queue.totalPending,
       counts: queue.counts,
       calibration: {

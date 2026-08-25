@@ -30,6 +30,8 @@ import {
 } from '@/lib/api-integrations/paypros/deposits-from-crm';
 import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
 import { syncExposure, type ExposureResult } from '@/lib/mt5-sync/exposure';
+import { syncWalletSources, type WalletSourcesResult } from '@/lib/crm-sync/wallet-sources';
+import { syncTradingBehavior, type BehaviorResult } from '@/lib/mt5-sync/behavior';
 import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users';
 import { syncCustomerAggregates, type AggregatesResult } from '@/lib/crm-sync/aggregates';
 import type { CrmSyncResult } from '@/lib/crm-sync/types';
@@ -162,6 +164,58 @@ async function fetchAll<T>(
 }
 
 /**
+ * Cuentas cuyo comportamiento de trading vale la pena analizar: las de los
+ * clientes con un retiro pendiente. Es deliberadamente estrecho — emparejar
+ * entrada y salida por PositionID cuesta ~17 s cada 60 cuentas sobre las 68
+ * millones de filas de mt5_deals, así que esto NO se hace para las 26.000.
+ */
+async function accountsNeedingBehavior(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+): Promise<Array<{ login: number; email: string | null; group: string | null }>> {
+  const { data: pend, error } = await admin
+    .from('crm_withdrawals')
+    .select('user_external_id')
+    .eq('company_id', companyId)
+    .eq('status_norm', 'pending')
+    .limit(500);
+  if (error) throw new Error(`pendientes para comportamiento: ${error.message}`);
+
+  const ids = [...new Set((pend ?? []).map((r) => r.user_external_id).filter((v): v is string => !!v))];
+  if (ids.length === 0) return [];
+
+  const { data: users, error: uErr } = await admin
+    .from('crm_user_snapshots')
+    .select('email')
+    .eq('company_id', companyId)
+    .in('user_external_id', ids);
+  if (uErr) throw new Error(`perfiles para comportamiento: ${uErr.message}`);
+
+  const emails = [...new Set((users ?? []).map((u) => u.email).filter((e): e is string => !!e))]
+    .map((e) => e.trim().toLowerCase());
+  if (emails.length === 0) return [];
+
+  // Sólo cuentas REALES y que hayan operado: analizar una cuenta sin
+  // operaciones devuelve una fila vacía y gasta el presupuesto igual.
+  const { data: accts, error: aErr } = await admin
+    .from('mt5_account_activity')
+    .select('login, email, group_name')
+    .eq('company_id', companyId)
+    .eq('is_demo', false)
+    .gt('deals_count', 0)
+    .in('email', emails)
+    .order('deals_count', { ascending: false })
+    .limit(500);
+  if (aErr) throw new Error(`cuentas para comportamiento: ${aErr.message}`);
+
+  return (accts ?? []).map((a) => ({
+    login: Number(a.login),
+    email: a.email ? String(a.email) : null,
+    group: a.group_name ? String(a.group_name) : null,
+  }));
+}
+
+/**
  * Empresas que tienen la credencial `orion_mongo` cargada y activa. Sin
  * credencial no hay nada que sincronizar, y recorrer todos los tenants sólo
  * sirve para llenar los logs de "no configurado".
@@ -245,6 +299,8 @@ export async function GET(request: NextRequest) {
       paypros?: PayprosFromCrmResult | null;
       mt5?: Mt5SyncResult | null;
       exposure?: ExposureResult | null;
+      walletSources?: WalletSourcesResult | null;
+      behavior?: BehaviorResult | null;
       allUsers?: AllUsersResult | null;
       aggregates?: AggregatesResult | null;
     })[] = [];
@@ -349,15 +405,53 @@ export async function GET(request: NextRequest) {
           }
         }
 
+        // ── Origen del dinero y comportamiento de trading ─────────────────
+        // Los dos alimentan el score y la ficha del retiro. Van con el modo
+        // COMPLETO: el origen del dinero recorre wallettransfers entera y el
+        // comportamiento paga ir a la fila en una tabla de 68M — ninguno de
+        // los dos cambia lo suficiente en 15 minutos para justificar ese costo.
+        let walletSources: WalletSourcesResult | null = null;
+        let behavior: BehaviorResult | null = null;
+        const extraErrors: string[] = [];
+        if (modoCompleto) {
+          try {
+            walletSources = await syncWalletSources(admin, company.id);
+            for (const w of walletSources.warnings) {
+              console.warn(`[cron/sync-crm] fuentes ${company.id}: ${w}`);
+            }
+          } catch (err) {
+            extraErrors.push(`fuentes: ${err instanceof Error ? err.message : 'unknown'}`);
+          }
+          try {
+            const cuentas = await accountsNeedingBehavior(admin, company.id);
+            if (cuentas.length > 0) {
+              behavior = await syncTradingBehavior(admin, company.id, cuentas);
+              for (const w of behavior.warnings) {
+                console.warn(`[cron/sync-crm] comportamiento ${company.id}: ${w}`);
+              }
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'unknown';
+            if (!/no configurad|not configured|sin credencial/i.test(msg)) {
+              extraErrors.push(`comportamiento: ${msg}`);
+            }
+          }
+        }
+
         results.push({
           ...res,
           companyName: company.name,
           paypros,
           mt5,
           exposure,
+          walletSources,
+          behavior,
           allUsers,
           aggregates,
-          errors: [...res.errors, ...payprosErrors, ...mt5Errors, ...orionErrors, ...expErrors],
+          errors: [
+            ...res.errors, ...payprosErrors, ...mt5Errors,
+            ...orionErrors, ...expErrors, ...extraErrors,
+          ],
         });
       } catch (err) {
         // Una empresa que revienta no puede cortar a las demás.

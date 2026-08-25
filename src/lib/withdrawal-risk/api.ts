@@ -12,10 +12,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { apiFetch } from '@/lib/api-fetch';
-import type { QueueItem, WithdrawalDetail, QueueFilters } from '@/lib/withdrawal-risk/query';
+import type {
+  QueueItem,
+  WithdrawalDetail,
+  QueueFilters,
+  ResolvedItem,
+} from '@/lib/withdrawal-risk/query';
 import type { RiskBand } from '@/lib/withdrawal-risk/score';
 
-export type { QueueItem, WithdrawalDetail, QueueFilters, RiskBand };
+export type { QueueItem, WithdrawalDetail, QueueFilters, ResolvedItem, RiskBand };
 
 /** Datos de la calibración vigente, para poder explicar de dónde sale el score. */
 export interface CalibrationInfo {
@@ -28,6 +33,7 @@ export interface CalibrationInfo {
 
 export interface QueueResponse {
   items: QueueItem[];
+  resolved: ResolvedItem[];
   totalPending: number;
   counts: Record<RiskBand, number>;
   calibration: CalibrationInfo;

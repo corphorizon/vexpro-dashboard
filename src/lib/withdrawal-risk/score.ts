@@ -93,6 +93,7 @@
 import type {
   AgeBucket,
   NetBucket,
+  P2pBucket,
   RatioBucket,
   RejectionBucket,
   WithdrawalFeatures,
@@ -103,7 +104,7 @@ export type FactorImpact = 'up' | 'down' | 'neutral';
 
 export interface ScoreFactor {
   /** Identificador estable (para i18n / filtros). */
-  code: 'prior_rejections' | 'amount_ratio' | 'account_age' | 'net_before';
+  code: 'prior_rejections' | 'amount_ratio' | 'account_age' | 'net_before' | 'money_origin';
   /** Etiqueta corta en español. */
   label: string;
   /** 'up' = empuja a aprobar, 'down' = empuja a rechazar, 'neutral' = como el promedio. */
@@ -149,6 +150,13 @@ export interface Calibration {
   ratio: Record<RatioBucket, number>;
   age: Record<Exclude<AgeBucket, 'unknown'>, number>;
   net: Record<NetBucket, number>;
+  /**
+   * Origen del dinero. La señal más fuerte del módulo, y la única que salió de
+   * una intuición de Kevin que resultó correcta — aunque no por el motivo que
+   * suponía: no es "retiró más de lo que depositó" (eso NO predice), es de
+   * dónde vino ese dinero.
+   */
+  p2p: Record<P2pBucket, number>;
 }
 
 /**
@@ -173,6 +181,9 @@ export const RECENT_6M: Calibration = {
   // 0,5–1x, que es justo al revés de lo que muestra la historia.
   // n = 5.969 / 1.630 / 863 / 379 / 944
   ratio: { lt_0_5: 0.0260, b_0_5_1: 0.1239, b_1_2: 0.0614, gt_2: 0.1003, no_deposits: 0.0540 },
+  // Medido el 2026-08-25 en esta misma ventana, n = 411 / 7.723 / 575 / 1.119.
+  // Monótona: cuanto más cubre el P2P al retiro, más se rechaza.
+  p2p: { staff: 0.0170, none: 0.0390, partial: 0.0835, covers: 0.1162 },
   // n = 60 / 600 / 2.142 / 6.982
   age: { lt_1d: 0.2167, b_1_7d: 0.0917, b_7_30d: 0.0345, gt_30d: 0.0511 },
   // n = 890 / 1.151 / 3.357 / 3.443 / 944
@@ -200,6 +211,9 @@ export const FULL_HISTORY: Calibration = {
   age: { lt_1d: 0.1653, b_1_7d: 0.0980, b_7_30d: 0.0645, gt_30d: 0.0684 },
   // n = 1.180 / 1.691 / 4.445 / 4.265 / 1.341
   net: { lt_m1000: 0.0305, m1000_0: 0.1029, b_0_500: 0.0945, gt_500: 0.0467, no_deposits: 0.0641 },
+  // Sin medición propia en la ventana completa: se reusan los de 6 meses, que
+  // es la ventana donde la señal se midió. Anotado para no darlo por medido.
+  p2p: { staff: 0.0170, none: 0.0390, partial: 0.0835, covers: 0.1162 },
 };
 
 export const DEFAULT_CALIBRATION = RECENT_6M;
@@ -362,6 +376,24 @@ export function scoreWithdrawal(
         ? `Sin depósitos previos → ${pct(r)} de rechazo histórico`
         : `Neto de ${money(features.netBefore)} (depositó ${money(features.depositedBefore)}, retiró ${money(features.withdrawnBefore)}) → ${pct(r)} de rechazo histórico en este tramo`;
     factors.push({ code: 'net_before', label: 'Neto depositado − retirado', impact: impactOf(weight), weight, detail });
+  }
+
+  // ── 5. Origen del dinero ──────────────────────────────────────────────────
+  // La señal más fuerte del módulo. Nótese que NO es "retiró más de lo que
+  // depositó": eso se midió y no predice (quien retira su ganancia de trading
+  // rechaza por DEBAJO de la base). Lo que predice es de dónde vino el dinero.
+  {
+    const r = cal.p2p[features.p2pBucket];
+    const weight = lambda * woe(r, cal);
+    const detail =
+      features.p2pBucket === 'staff'
+        ? `Personal del broker → ${pct(r)} de rechazo histórico. Cobran comisiones, así que retirar sin haber depositado es su forma normal de operar y no se les mide como al resto.`
+        : features.p2pBucket === 'none'
+          ? `Sin transferencias recibidas de otros usuarios → ${pct(r)} de rechazo histórico`
+          : features.p2pBucket === 'covers'
+            ? `Recibió ${money(features.p2pReceived)} por transferencias de otros usuarios, suficiente para cubrir este retiro → ${pct(r)} de rechazo histórico`
+            : `Recibió ${money(features.p2pReceived)} por transferencias de otros usuarios, menos que este retiro → ${pct(r)} de rechazo histórico`;
+    factors.push({ code: 'money_origin', label: 'Origen del dinero', impact: impactOf(weight), weight, detail });
   }
 
   const logOdds = factors.reduce((acc, f) => acc + f.weight, base);

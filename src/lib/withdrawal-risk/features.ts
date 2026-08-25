@@ -49,6 +49,11 @@ export interface FeatureInput {
   pendingFeeDebt: number | null;
   /** Cuántos usuarios distintos usaron esta misma dirección de destino. */
   sharedAddressUserCount: number | null;
+  // ── Origen del dinero: SÍ puntúa (ver P2pBucket) ──────────────────────────
+  /** Total recibido por transferencia P2P de otros usuarios. */
+  p2pReceived?: number | null;
+  /** Correo del cliente: decide si es personal del broker. */
+  email?: string | null;
 }
 
 /** Tramos medidos del ratio pedido/depositado. `no_deposits` = sin depósitos previos. */
@@ -59,6 +64,20 @@ export type AgeBucket = 'lt_1d' | 'b_1_7d' | 'b_7_30d' | 'gt_30d' | 'unknown';
 export type NetBucket = 'lt_m1000' | 'm1000_0' | 'b_0_500' | 'gt_500' | 'no_deposits';
 /** Tramos medidos de rechazos previos. */
 export type RejectionBucket = 'r0' | 'r1' | 'r2' | 'r3plus';
+
+/**
+ * De dónde salió el dinero que está retirando.
+ *
+ * Medido sobre 9.828 retiros decididos en 6 meses (base 4,95%):
+ *   staff         1,70%   personal del broker: cobran comisiones, retirar sin
+ *                         haber depositado es su forma normal de operar
+ *   none          3,90%   nunca recibió una transferencia de otro usuario
+ *   partial       8,35%   recibió P2P por menos de lo que retira
+ *   covers       11,62%   el P2P recibido alcanza para cubrir el retiro entero
+ *
+ * Monótona y con volumen. Es la señal más fuerte del módulo.
+ */
+export type P2pBucket = 'staff' | 'none' | 'partial' | 'covers';
 
 /** Contexto que se MUESTRA en la ficha pero que NO mueve el score. */
 export interface InformativeContext {
@@ -93,6 +112,11 @@ export interface WithdrawalFeatures {
   ageBucket: AgeBucket;
   netBucket: NetBucket;
   rejectionBucket: RejectionBucket;
+  p2pBucket: P2pBucket;
+  /** Cuánto entró por P2P, para poder explicarlo en la ficha. */
+  p2pReceived: number;
+  /** Personal del broker: la comparación depósitos-retiros no le aplica. */
+  isStaff: boolean;
   /** Deliberadamente FUERA de todo lo que puntúa. */
   context: InformativeContext;
 }
@@ -154,6 +178,20 @@ export function netBucketOf(net: number, hasDeposits: boolean): NetBucket {
   return 'gt_500';
 }
 
+/**
+ * El tramo de P2P. `isStaff` gana sobre todo lo demás: a un BDM que cobra
+ * comisiones no se le mide el dinero recibido como si fuera sospechoso.
+ */
+export function p2pBucketOf(
+  p2pReceived: number,
+  withdrawalAmount: number,
+  isStaff: boolean,
+): P2pBucket {
+  if (isStaff) return 'staff';
+  if (!(p2pReceived > 0)) return 'none';
+  return p2pReceived >= withdrawalAmount ? 'covers' : 'partial';
+}
+
 export function rejectionBucketOf(n: number): RejectionBucket {
   if (n <= 0) return 'r0';
   if (n === 1) return 'r1';
@@ -192,6 +230,13 @@ export function computeFeatures(input: FeatureInput): WithdrawalFeatures {
 
   const sorted = deps.dates.slice().sort((a, b) => a.getTime() - b.getTime());
   const rejectedCountBefore = Math.max(0, Math.trunc(num(input.rejectedCountBefore)));
+  const p2pReceived = Math.max(0, num(input.p2pReceived) ?? 0);
+  // Los dominios del broker se comprueban acá y no en la capa de datos para
+  // que la regla viaje con el cálculo: quien lea features.ts ve por qué a un
+  // BDM no se le mide el dinero recibido como sospechoso.
+  const mail = (input.email ?? '').trim().toLowerCase();
+  const isStaff = mail.endsWith('@vexprofx.com') || mail.endsWith('@mail.vexprofx.com');
+
   const sharedAddressUserCount = Math.max(0, Math.trunc(num(input.sharedAddressUserCount)));
 
   return {
@@ -212,6 +257,9 @@ export function computeFeatures(input: FeatureInput): WithdrawalFeatures {
     ageBucket: ageBucketOf(accountAgeDays),
     netBucket: netBucketOf(netBefore, hasDeposits),
     rejectionBucket: rejectionBucketOf(rejectedCountBefore),
+    p2pBucket: p2pBucketOf(p2pReceived, amount, isStaff),
+    p2pReceived,
+    isStaff,
     context: {
       kycStatus: input.kycStatus ?? null,
       pendingFeeDebt: num(input.pendingFeeDebt),
