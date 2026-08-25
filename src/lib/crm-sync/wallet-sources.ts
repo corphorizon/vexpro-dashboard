@@ -53,6 +53,19 @@ export const CONCEPT_GROUPS: Record<string, string> = {
   WALLET_TRANSFER: 'trading',
   TRANSFER_P2P: 'p2p',
   DEPOSIT: 'deposit',
+  // ── DEVOLUCIONES: dinero que YA ESTABA y volvió ──────────────────────────
+  // Un retiro rechazado o cancelado devuelve el importe a la billetera. NO es
+  // dinero nuevo: contarlo como ingreso lo duplicaría, porque entró una vez
+  // como depósito (o como lo que fuera) antes del intento de retiro.
+  // Medido: $455.233 devueltos por rechazo y $676.115 por cancelación.
+  REJECTED_WITHDRAW: 'returned',
+  CANCELED_WITHDRAW: 'returned',
+  CANCELLED_WITHDRAW: 'returned',
+  // Reembolso de una suscripción de social trading: misma lógica.
+  SOCIAL_SUBSCRIPTION: 'returned',
+  // Variante con espacios del mismo concepto de comisiones IB. El broker lo
+  // escribe de tres formas distintas; las tres van al mismo lugar.
+  'IB REWARDS BROKER ADJUSTMENT': 'ib',
 };
 
 /** Dominios del personal del broker. Ver la cabecera. */
@@ -119,8 +132,8 @@ export async function syncWalletSources(
       .toArray(),
   );
 
-  type Row = { in_ib: number; in_social: number; in_propfirm: number; in_trading: number; in_p2p: number; in_deposit: number; in_other: number; out_p2p: number };
-  const vacio = (): Row => ({ in_ib: 0, in_social: 0, in_propfirm: 0, in_trading: 0, in_p2p: 0, in_deposit: 0, in_other: 0, out_p2p: 0 });
+  type Row = { in_ib: number; in_social: number; in_propfirm: number; in_trading: number; in_p2p: number; in_deposit: number; in_returned: number; in_other: number; out_p2p: number };
+  const vacio = (): Row => ({ in_ib: 0, in_social: 0, in_propfirm: 0, in_trading: 0, in_p2p: 0, in_deposit: 0, in_returned: 0, in_other: 0, out_p2p: 0 });
   const porUsuario = new Map<string, Row>();
 
   for (const a of agg) {
@@ -149,6 +162,7 @@ export async function syncWalletSources(
       case 'trading': cur.in_trading += monto; break;
       case 'p2p': cur.in_p2p += monto; break;
       case 'deposit': cur.in_deposit += monto; break;
+      case 'returned': cur.in_returned += monto; break;
       // Un concepto nuevo cae acá en vez de desaparecer. Si `in_other` crece,
       // es que el broker agregó un flujo que no estamos clasificando.
       default: cur.in_other += monto; break;
@@ -180,6 +194,7 @@ export async function syncWalletSources(
       in_trading: round2(v.in_trading),
       in_p2p: round2(v.in_p2p),
       in_deposit: round2(v.in_deposit),
+      in_returned: round2(v.in_returned),
       in_other: round2(v.in_other),
       out_p2p: round2(v.out_p2p),
       synced_at: now,
