@@ -29,6 +29,7 @@ import {
   type PayprosFromCrmResult,
 } from '@/lib/api-integrations/paypros/deposits-from-crm';
 import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
+import { syncExposure, type ExposureResult } from '@/lib/mt5-sync/exposure';
 import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users';
 import { syncCustomerAggregates, type AggregatesResult } from '@/lib/crm-sync/aggregates';
 import type { CrmSyncResult } from '@/lib/crm-sync/types';
@@ -243,6 +244,7 @@ export async function GET(request: NextRequest) {
       companyName: string | null;
       paypros?: PayprosFromCrmResult | null;
       mt5?: Mt5SyncResult | null;
+      exposure?: ExposureResult | null;
       allUsers?: AllUsersResult | null;
       aggregates?: AggregatesResult | null;
     })[] = [];
@@ -329,14 +331,33 @@ export async function GET(request: NextRequest) {
           orionErrors.push(`orion-agregados: ${err instanceof Error ? err.message : 'unknown'}`);
         }
 
+        // ── Riesgo vivo: exposición abierta y margen ──────────────────────
+        // Va en TODAS las corridas, incluida la rápida: es un dato que cambia
+        // minuto a minuto y cuya utilidad depende de estar fresco. Cuesta ~8 s.
+        let exposure: ExposureResult | null = null;
+        const expErrors: string[] = [];
+        try {
+          exposure = await syncExposure(admin, company.id);
+          for (const w of exposure.warnings) {
+            console.warn(`[cron/sync-crm] exposicion ${company.id}: ${w}`);
+          }
+        } catch (err) {
+          // Sin credenciales de MT5 el tenant no tiene esta vista: no es fallo.
+          const msg = err instanceof Error ? err.message : 'unknown';
+          if (!/no configurad|not configured|sin credencial/i.test(msg)) {
+            expErrors.push(`exposicion: ${msg}`);
+          }
+        }
+
         results.push({
           ...res,
           companyName: company.name,
           paypros,
           mt5,
+          exposure,
           allUsers,
           aggregates,
-          errors: [...res.errors, ...payprosErrors, ...mt5Errors, ...orionErrors],
+          errors: [...res.errors, ...payprosErrors, ...mt5Errors, ...orionErrors, ...expErrors],
         });
       } catch (err) {
         // Una empresa que revienta no puede cortar a las demás.

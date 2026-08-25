@@ -69,6 +69,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
       { module: 'risk',        href: '/risk/dashboard',       labelEs: 'Dashboard Risk' },
       { module: 'risk',        href: '/risk/retiros-propfirm', labelEs: 'Retiros PropFirm' },
       { module: 'risk',        href: '/risk/retiros',          labelEs: 'Cola de Retiros' },
+      { module: 'risk',        href: '/risk/exposicion',      labelEs: 'Exposición Abierta' },
     ],
   },
   {

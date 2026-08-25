@@ -35,6 +35,7 @@ import {
   Calculator,
   ShieldCheck,
   ShieldAlert,
+  Activity,
   FileSearch,
   Briefcase,
   FileText,
@@ -134,6 +135,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       // ELIMINÓ en la auditoría 2026-08-06 (QW10) por ser 100% mock — se
       // reconstruyó desde cero contra el espejo real del CRM (migración 088).
       { href: '/risk/retiros', i18nKey: 'nav.riskWithdrawalQueue', icon: ShieldAlert, module: 'risk' },
+      { href: '/risk/exposicion', i18nKey: 'nav.riskExposure', icon: Activity, module: 'risk' },
     ],
   },
 
