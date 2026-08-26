@@ -18,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { moduleAllowedForModel } from '@/lib/business-model';
+import { roleCanWrite } from '@/lib/roles';
 
 export interface ModuleDef {
   key: string;
@@ -180,6 +181,15 @@ export function canAccessModule(module: string, ctx: ModuleAccessContext): boole
 
   // 3. Reservados del superadmin — ni un admin de empresa entra.
   if ((RESERVED_MODULE_KEYS as readonly string[]).includes(module)) return false;
+
+  // 3b. La carga de datos SÓLO existe para escribir.
+  //
+  // Un rol de solo lectura ahí dentro no puede hacer nada: ve formularios que
+  // el servidor le va a rechazar con 403. Se bloquea por rol y no fila por
+  // fila porque ya se le escapó a alguien — los dos socios de Vex Pro tenían
+  // el módulo quitado a mano y los siete de AP Markets no, sin que la
+  // diferencia respondiera a ninguna decisión.
+  if (module === 'upload' && !roleCanWrite(ctx.role ?? '')) return false;
 
   // 4. Nivel usuario: el admin de empresa pasa sin mirar su lista.
   const passesUserCheck =

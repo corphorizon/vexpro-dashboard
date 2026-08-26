@@ -94,9 +94,16 @@ export const BUSINESS_MODEL_FEATURES: Record<BusinessModel, BusinessModelFeature
     movements: true,
     liquidity: true,
     investments: true,
-    // Un broker también puede facturar servicios sueltos; no molesta y da
-    // el mismo detalle que ya tienen los egresos.
-    incomeLines: true,
+    // ── Corregido (Kevin, 2026-08-26): un broker NO factura por concepto ────
+    // Antes esto estaba en true con el argumento de que "no molesta". Sí
+    // molesta: Ingresos y Clientes son la contabilidad de una empresa de
+    // servicios, y en un broker aparecen siempre vacíos invitando a cargar
+    // datos donde no corresponde.
+    //
+    // Medido antes de apagarlo: los cuatro brokers tienen CERO líneas de
+    // ingreso entre todos; las 70 que existen son de Horizon, que es
+    // `company`. Apagarlo no esconde ningún dato real.
+    incomeLines: false,
     riskManagement: true,
     commercialTeam: true,
   },
@@ -131,6 +138,9 @@ export function blockedModules(model: unknown): string[] {
   if (!f.movements) blocked.push('movements');
   if (!f.liquidity) blocked.push('liquidity');
   if (!f.investments) blocked.push('investments');
+  // Ingresos por concepto y la cartera de clientes a los que se factura: son
+  // la misma contabilidad y se encienden o apagan juntos.
+  if (!f.incomeLines) blocked.push('income', 'clients');
   return blocked;
 }
 
