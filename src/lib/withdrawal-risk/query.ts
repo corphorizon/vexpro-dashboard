@@ -186,6 +186,15 @@ export interface QueueFilters {
   olderThanDays?: number | null;
   /** Búsqueda libre por username / email / id de retiro. */
   q?: string | null;
+  /**
+   * Rango de fechas de SOLICITUD (`YYYY-MM-DD`, inclusive los dos extremos).
+   *
+   * Se aplica a las TRES secciones a la vez y no sólo a una: si cada tabla
+   * mirara un período distinto, la pantalla estaría contando cosas de momentos
+   * distintos al mismo tiempo y nadie podría leerla.
+   */
+  from?: string | null;
+  to?: string | null;
 }
 
 /** De dónde salió el dinero del cliente, para pintarlo en la ficha. */
@@ -256,6 +265,14 @@ export interface QueueResult {
   totalPending: number;
   calibrationId: string;
   counts: Record<RiskBand, number>;
+  /**
+   * Qué listas llegaron al tope y por lo tanto están RECORTADAS.
+   *
+   * Existe porque un recorte silencioso es indistinguible de "no hay más": la
+   * pantalla mostraría 1.000 filas con cara de ser todas. Con esto puede
+   * decir "hay más, acotá las fechas".
+   */
+  truncated: { instant: boolean; resolved: boolean };
 }
 
 /**
@@ -284,33 +301,65 @@ export async function loadQueue(
   // Los instantáneos se reconocen por la COMISIÓN DE $5: el admin del broker
   // los sirve por otro endpoint (/api/withdraws/instant) y no traen ningún
   // campo propio que los marque, pero la comisión estándar es $3 y la de ellos
-  // $5. Verificado: 107 retiros con fee=5, todos COMPLETED, todos desde el 23
-  // de agosto, que es cuando se lanzó la función.
-  let q = admin
-    .from('crm_withdrawals')
-    .select(WITHDRAWAL_COLS)
-    .eq('company_id', companyId)
-    .or(`status_norm.eq.pending,and(fee.eq.${INSTANT_FEE},requested_at.gte.${instantSince()})`)
-    .order('requested_at', { ascending: false, nullsFirst: false });
+  // $5.
+  //
+  // ── ES UN HEURÍSTICO, Y HAY QUE SABERLO ─────────────────────────────────
+  // Medido el 2026-08-26: 167 retiros con fee=5, TODOS COMPLETED, todos entre
+  // el 23 y el 26 de agosto. El resto de la tabla usa fee=3 (13.101) o fee=0
+  // (465), más una decena de importes sueltos de noviembre de 2025.
+  //
+  // El día que el bróker cambie esa comisión, los instantáneos dejan de
+  // detectarse EN SILENCIO: no hay error, simplemente la lista se queda corta.
+  // Si algún día aparecen retiros instantáneos con otra comisión, este es el
+  // único lugar que hay que tocar.
 
-  if (typeof filters.minAmount === 'number') q = q.gte('requested_amount', filters.minAmount);
-  if (typeof filters.maxAmount === 'number') q = q.lte('requested_amount', filters.maxAmount);
-  if (filters.processor) q = q.eq('processor', filters.processor);
-  if (filters.coin) q = q.eq('coin', filters.coin);
-  if (typeof filters.olderThanDays === 'number' && filters.olderThanDays > 0) {
-    const cut = new Date(Date.now() - filters.olderThanDays * 86_400_000).toISOString();
-    q = q.lte('requested_at', cut);
-  }
-  if (filters.q) {
-    // `escapeLike` protege el patrón de PostgREST: una coma o un paréntesis
-    // en la búsqueda rompería el `or(...)` y podría ensanchar el filtro.
-    const term = escapeLike(filters.q.trim());
-    if (term) q = q.or(`username.ilike.%${term}%,email.ilike.%${term}%,external_id.ilike.%${term}%`);
+  /** Filtros que valen para las TRES secciones por igual. */
+  const comunes = <T extends ReturnType<typeof baseQuery>>(q: T): T => {
+    let r = q;
+    if (typeof filters.minAmount === 'number') r = r.gte('requested_amount', filters.minAmount) as T;
+    if (typeof filters.maxAmount === 'number') r = r.lte('requested_amount', filters.maxAmount) as T;
+    if (filters.processor) r = r.eq('processor', filters.processor) as T;
+    if (filters.coin) r = r.eq('coin', filters.coin) as T;
+    if (typeof filters.olderThanDays === 'number' && filters.olderThanDays > 0) {
+      const cut = new Date(Date.now() - filters.olderThanDays * 86_400_000).toISOString();
+      r = r.lte('requested_at', cut) as T;
+    }
+    // El rango de fechas va al DÍA COMPLETO: `to` inclusive significa hasta el
+    // último instante de ese día, no hasta su medianoche — que dejaría fuera
+    // todo lo del día elegido.
+    if (filters.from) r = r.gte('requested_at', `${filters.from}T00:00:00.000Z`) as T;
+    if (filters.to) r = r.lte('requested_at', `${filters.to}T23:59:59.999Z`) as T;
+    if (filters.q) {
+      // `escapeLike` protege el patrón de PostgREST: una coma o un paréntesis
+      // en la búsqueda rompería el `or(...)` y podría ensanchar el filtro.
+      const term = escapeLike(filters.q.trim());
+      if (term) r = r.or(`username.ilike.%${term}%,email.ilike.%${term}%,external_id.ilike.%${term}%`) as T;
+    }
+    return r;
+  };
+
+  function baseQuery() {
+    return admin
+      .from('crm_withdrawals')
+      .select(WITHDRAWAL_COLS)
+      .eq('company_id', companyId)
+      .order('requested_at', { ascending: false, nullsFirst: false });
   }
 
-  const { data, error } = await q.limit(500);
-  if (error) throw new Error(error.message);
-  const pending = (data ?? []) as unknown as WithdrawalRow[];
+  // ── DOS CONSULTAS Y NO UNA ──────────────────────────────────────────────
+  // Antes las dos secciones venían de un solo `.or()` con un `.limit(500)`
+  // compartido. Eso tenía un recorte silencioso esperando: en cuanto los
+  // instantáneos pasaran de ~495, el límite empezaría a comerse filas sin que
+  // nada avisara. Separadas, cada una tiene su tope y su aviso.
+  const [pendRes, instRes] = await Promise.all([
+    comunes(baseQuery()).eq('status_norm', 'pending').limit(PENDING_MAX),
+    comunes(baseQuery()).eq('fee', INSTANT_FEE).limit(INSTANT_MAX),
+  ]);
+  if (pendRes.error) throw new Error(pendRes.error.message);
+  if (instRes.error) throw new Error(instRes.error.message);
+
+  const pending = (pendRes.data ?? []) as unknown as WithdrawalRow[];
+  const instantRows = (instRes.data ?? []) as unknown as WithdrawalRow[];
 
   const { count } = await admin
     .from('crm_withdrawals')
@@ -319,7 +368,7 @@ export async function loadQueue(
     .eq('status_norm', 'pending')
     .eq('status_raw', UNTOUCHED_STATUS);
 
-  const todos = await scoreMany(admin, companyId, pending, cal);
+  const todos = await scoreMany(admin, companyId, [...pending, ...instantRows], cal);
 
   // ── LA COLA SE PARTE EN DOS ─────────────────────────────────────────────
   // Los instantáneos ya cobraron: no hay nada que decidir sobre ellos, sólo
@@ -345,16 +394,25 @@ export async function loadQueue(
   //
   // Los instantáneos se excluyen de acá: nacen resueltos, así que aparecerían
   // todos y taparían a los que de verdad cambiaron.
-  const desde = new Date(Date.now() - RESOLVED_DAYS * 86_400_000).toISOString();
-  const { data: resueltos, error: rErr } = await admin
+  // El historial usa el MISMO rango que el resto de la pantalla. Sólo cuando
+  // no hay rango cae a su ventana por defecto: sin ella la primera carga
+  // traería los 13.690 retiros de la historia entera.
+  let qr = admin
     .from('crm_withdrawals')
     .select(WITHDRAWAL_COLS)
     .eq('company_id', companyId)
     .neq('status_norm', 'pending')
     .neq('fee', INSTANT_FEE)
-    .gte('requested_at', desde)
-    .order('processed_at', { ascending: false, nullsFirst: false })
-    .limit(200);
+    .order('processed_at', { ascending: false, nullsFirst: false });
+
+  if (filters.from || filters.to) {
+    if (filters.from) qr = qr.gte('requested_at', `${filters.from}T00:00:00.000Z`);
+    if (filters.to) qr = qr.lte('requested_at', `${filters.to}T23:59:59.999Z`);
+  } else {
+    qr = qr.gte('requested_at', new Date(Date.now() - RESOLVED_DAYS * 86_400_000).toISOString());
+  }
+
+  const { data: resueltos, error: rErr } = await qr.limit(RESOLVED_MAX);
   if (rErr) throw new Error(rErr.message);
 
   const resueltosRows = (resueltos ?? []) as unknown as WithdrawalRow[];
@@ -433,6 +491,10 @@ export async function loadQueue(
     totalPending: count ?? items.length,
     calibrationId: cal.id,
     counts,
+    truncated: {
+      instant: instantRows.length >= INSTANT_MAX,
+      resolved: resueltosRows.length >= RESOLVED_MAX,
+    },
   };
 }
 
@@ -450,18 +512,26 @@ export const UNTOUCHED_STATUS = 'REQUESTED';
 export const INSTANT_FEE = 5;
 
 /**
- * Ventana de los instantáneos. Ya están cobrados, así que mostrarlos para
- * siempre convertiría la cola en un archivo histórico. Se muestran los de los
- * últimos días, que es cuando alguien todavía puede reaccionar.
+ * ── LA VENTANA DE 7 DÍAS SE QUITÓ (Kevin, 2026-08-26) ──────────────────────
+ * Decía: "ya están cobrados, así que mostrarlos para siempre convertiría la
+ * cola en un archivo histórico". El razonamiento era bueno pero la conclusión
+ * era prematura: Kevin quiere verlos TODOS, y el filtro por fechas —que ahora
+ * existe— es la respuesta correcta al problema que esa ventana intentaba
+ * evitar. La lista se acota cuando hace falta, no siempre.
+ *
+ * La ventana además era una bomba de tiempo sin estallar: hoy los 167
+ * instantáneos caben en 7 días porque la función se lanzó el 23 de agosto. El
+ * 30 de agosto los primeros habrían empezado a desaparecer solos.
+ *
+ * Topes: cada lista tiene el suyo y avisa cuando lo toca. Un recorte
+ * silencioso es indistinguible de "no hay más".
  */
-const INSTANT_DAYS = 7;
+const INSTANT_MAX = 1000;
+const PENDING_MAX = 500;
+const RESOLVED_MAX = 500;
 
 /** Ventana de "ya cambiaron de estado". Misma lógica: cerrar el ciclo, no archivar. */
 const RESOLVED_DAYS = 7;
-function instantSince(): string {
-  return new Date(Date.now() - INSTANT_DAYS * 86_400_000).toISOString();
-}
-
 /** ¿Este retiro fue instantáneo (aprobado solo por el sistema)? */
 export function isInstant(w: { fee: number | null }): boolean {
   return Number(w.fee) === INSTANT_FEE;

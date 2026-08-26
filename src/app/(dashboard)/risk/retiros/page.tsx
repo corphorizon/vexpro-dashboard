@@ -23,6 +23,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ShieldAlert, Search, Eye, Clock, Wallet, Info, Check, X, History, Zap } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { Button } from '@/components/ui/button';
 import { Card, CardTitle } from '@/components/ui/card';
 import { DataTable, type Column } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -107,6 +108,11 @@ export default function RevisionRetirosPage() {
   // Lo que se manda al servidor. Se separa de `query` para no disparar una
   // consulta por tecla: se confirma con Enter o con el botón.
   const [appliedQuery, setAppliedQuery] = useState('');
+  // Rango de fechas de solicitud. Vacío = sin recorte para los instantáneos y
+  // los solicitados; el historial cae a su ventana por defecto.
+  const [desde, setDesde] = useState('');
+  const [hasta, setHasta] = useState('');
+  const [truncado, setTruncado] = useState({ instant: false, resolved: false });
 
   useEffect(() => {
     if (user === null) return;
@@ -115,10 +121,15 @@ export default function RevisionRetirosPage() {
   const accessDenied = user !== null && !hasRiskAccess;
 
   const fetchQueue = useCallback(
-    (bandFilter: BandFilter, q: string) => {
+    (bandFilter: BandFilter, q: string, from = '', to = '') => {
       let alive = true;
       setLoading(true);
-      loadQueue({ band: bandFilter === 'all' ? null : bandFilter, q: q || null })
+      loadQueue({
+        band: bandFilter === 'all' ? null : bandFilter,
+        q: q || null,
+        from: from || null,
+        to: to || null,
+      })
         .then((res) => {
           if (!alive) return;
           setItems(res.items ?? []);
@@ -126,6 +137,7 @@ export default function RevisionRetirosPage() {
           setResolved(res.resolved ?? []);
           setCounts(res.counts ?? { low: 0, medium: 0, high: 0 });
           setCalibration(res.calibration ?? null);
+          setTruncado(res.truncated ?? { instant: false, resolved: false });
         })
         .catch((err: unknown) => {
           if (alive) toast.error(err instanceof Error ? err.message : t('wdReview.loadError'));
@@ -144,8 +156,8 @@ export default function RevisionRetirosPage() {
 
   useEffect(() => {
     if (accessDenied) return;
-    return fetchQueue(band, appliedQuery);
-  }, [band, appliedQuery, accessDenied, fetchQueue]);
+    return fetchQueue(band, appliedQuery, desde, hasta);
+  }, [band, appliedQuery, desde, hasta, accessDenied, fetchQueue]);
 
   const money = (n: number, currency?: string) =>
     formatCurrency(n, (currency === 'USDT' ? 'USD' : currency) || company?.currency || 'USD');
@@ -197,7 +209,7 @@ export default function RevisionRetirosPage() {
       toast.success(t('wdReview.quickSaved'));
       // Se recarga en vez de tocar la fila en memoria: la decisión puede sacar
       // el retiro de la cola, y dejarlo pintado sería mostrar algo que ya no es.
-      fetchQueue(band, appliedQuery);
+      fetchQueue(band, appliedQuery, desde, hasta);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('wdReview.quickError'));
       // Se relanza para que el diálogo no se cierre y no se pierda el motivo.
@@ -419,6 +431,38 @@ export default function RevisionRetirosPage() {
               ))}
             </div>
 
+            <div className="flex flex-wrap items-end gap-3">
+              <label className="text-xs text-muted-foreground">
+                <span className="mb-1 block">{t('wdReview.dateFrom')}</span>
+                <input
+                  type="date"
+                  value={desde}
+                  max={hasta || undefined}
+                  onChange={(e) => setDesde(e.target.value)}
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
+                />
+              </label>
+              <label className="text-xs text-muted-foreground">
+                <span className="mb-1 block">{t('wdReview.dateTo')}</span>
+                <input
+                  type="date"
+                  value={hasta}
+                  min={desde || undefined}
+                  onChange={(e) => setHasta(e.target.value)}
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
+                />
+              </label>
+              {(desde || hasta) && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => { setDesde(''); setHasta(''); }}
+                >
+                  {t('wdReview.dateClear')}
+                </Button>
+              )}
+            </div>
+
             <form
               className="relative w-full sm:max-w-xs"
               onSubmit={(e) => {
@@ -512,7 +556,14 @@ export default function RevisionRetirosPage() {
           {seccion === 'instant' && (
           <Card className="p-0 overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4">
-              <p className="text-xs text-muted-foreground">{t('wdReview.instantHint')}</p>
+              <div className="text-xs text-muted-foreground">
+                <p>{t('wdReview.instantHint')}</p>
+                {/* Un recorte silencioso es indistinguible de "no hay más":
+                    la tabla mostraría el tope con cara de ser la lista entera. */}
+                {truncado.instant && (
+                  <p className="mt-1 font-medium text-warning">{t('wdReview.truncated')}</p>
+                )}
+              </div>
               <TableCsvButton<QueueItem>
                 rows={instantaneos.filtered}
                 filename="Retiros_instantaneos"
@@ -568,9 +619,15 @@ export default function RevisionRetirosPage() {
           <Card className="p-0 overflow-hidden">
             <div className="px-4 pt-4">
               <CardTitle>{t('wdReview.resolvedTitle')}</CardTitle>
-              <p className="mt-1 mb-3 text-xs text-muted-foreground">
+              <p className="mt-1 text-xs text-muted-foreground">
                 {t('wdReview.resolvedHint')}
               </p>
+              {truncado.resolved && (
+                <p className="mt-1 mb-3 text-xs font-medium text-warning">
+                  {t('wdReview.truncated')}
+                </p>
+              )}
+              <div className="mb-3" />
               <div className="mb-3">
                 <TableSearch
                   value={cerrados.query}
