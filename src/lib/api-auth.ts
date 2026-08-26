@@ -140,6 +140,58 @@ async function enforceModules(
   return null;
 }
 
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Quién puede llamar a una ruta: LEER y ESCRIBIR no son la misma pregunta.
+//
+// ── EL BUG QUE ESTO ARREGLA ────────────────────────────────────────────────
+// El gate de rol se aplicaba a TODOS los métodos, así que `socio` —que nunca
+// estuvo en ADMIN_ROLES— era rechazado antes de llegar al gate de módulos.
+// Resultado: el rol era decorativo. Un socio con todos los módulos marcados
+// veía el menú completo y cada pantalla le devolvía 403.
+//
+// No era teórico: Sergio (socio de Vex Pro) entró el 2026-08-22 con seis
+// módulos marcados y no pudo leer ninguno. Y la doctrina escrita en roles.ts
+// —"los allowed_modules controlan QUÉ VE un usuario"— era simplemente falsa.
+//
+// ── LA REGLA ───────────────────────────────────────────────────────────────
+// · ESCRIBIR  → decide el ROL. Sin cambios: FINANCE_ROLES, HR_ROLES o el
+//               fallback admin/auditor/hr. Nadie gana escritura con esto.
+// · LEER      → decide el MÓDULO. Cualquier miembro de la empresa puede leer
+//               lo que un admin le marcó en `allowed_modules`, y sólo eso.
+//
+// ── LAS TRES PUERTAS QUE NO SE ABREN ───────────────────────────────────────
+// 1. `requireAdmin` gana siempre: el ciclo de vida de usuarios sigue siendo
+//    sólo de admins, se lea o se escriba.
+// 2. Sin módulos declarados NO se relaja. Si no hay módulo, el gate de módulos
+//    no filtra nada y relajar el rol dejaría la ruta abierta a cualquiera.
+//    `list-company-users` es exactamente ese caso.
+// 3. Sin `request` no se relaja: sin método no se puede saber si es lectura, y
+//    ante la duda se aplica lo estricto (`api-credentials` llama así).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Métodos que sólo leen. TODO lo demás se trata como escritura. */
+const METODOS_DE_LECTURA = new Set(['GET', 'HEAD']);
+
+export function puedeLlamarRuta(params: {
+  role: string;
+  /** Método HTTP. `null` cuando la ruta llamó sin request: se asume escritura. */
+  method: string | null;
+  /** Roles que la ruta declara para ESCRIBIR. */
+  allowed: readonly string[];
+  /** ¿La ruta declara al menos un módulo? */
+  declaresModules: boolean;
+  requireAdmin?: boolean;
+}): boolean {
+  const { role, method, allowed, declaresModules, requireAdmin } = params;
+
+  if (requireAdmin) return role === 'admin';
+  if (allowed.includes(role)) return true;
+
+  const esLectura = method !== null && METODOS_DE_LECTURA.has(method.toUpperCase());
+  return esLectura && declaresModules;
+}
+
 export type VerifyAdminAuthOptions = ModuleGateOptions & {
   /**
    * When true, only callers with role 'admin' pass. Platform superadmins
@@ -276,18 +328,27 @@ export async function verifyAdminAuth(
   if (sealGate) return sealGate;
 
   const allowed = opts?.roles ?? ADMIN_ROLES;
-  if (!allowed.includes(profile.role)) {
+  if (
+    !puedeLlamarRuta({
+      role: profile.role,
+      method: request?.method ?? null,
+      allowed,
+      declaresModules: (opts?.modules?.length ?? 0) > 0,
+      requireAdmin: opts?.requireAdmin,
+    })
+  ) {
+    // El mensaje distingue los dos casos: "no tenés el rol" y "no tenés el
+    // módulo" mandan a arreglar cosas distintas.
+    const esLectura = ['GET', 'HEAD'].includes((request?.method ?? '').toUpperCase());
     return NextResponse.json(
-      { success: false, error: `Permiso insuficiente — se requiere rol ${allowed.join(' o ')}` },
-      { status: 403 },
-    );
-  }
-
-  // Strict admin gate — auditor / hr can read admin endpoints elsewhere but
-  // must never touch user-lifecycle operations (S1 privilege escalation fix).
-  if (opts?.requireAdmin && profile.role !== 'admin') {
-    return NextResponse.json(
-      { success: false, error: 'Solo administradores pueden realizar esta acción' },
+      {
+        success: false,
+        error: opts?.requireAdmin
+          ? 'Solo administradores pueden realizar esta acción'
+          : esLectura
+            ? 'No tenés acceso a este módulo'
+            : `Permiso insuficiente — se requiere rol ${allowed.join(' o ')}`,
+      },
       { status: 403 },
     );
   }

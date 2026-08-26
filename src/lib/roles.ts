@@ -50,6 +50,19 @@ export const BUILT_IN_ROLE_LABELS: Record<BuiltInRole, string> = {
  * Ojo con la distinción, que ya confundió antes: los `allowed_modules`
  * controlan QUÉ VE un usuario, nunca qué puede cambiar. Un `socio` con todos
  * los módulos marcados sigue siendo de solo lectura.
+ *
+ * ── ESTO ERA FALSO HASTA EL 2026-08-26 ─────────────────────────────────────
+ * La frase de arriba describía la intención, no el comportamiento. El gate de
+ * rol de `verifyAdminAuth` se aplicaba a TODOS los métodos, así que `socio`
+ * —que nunca estuvo en ADMIN_ROLES— era rechazado antes de llegar al gate de
+ * módulos: marcaba módulos, veía el menú y cada pantalla le devolvía 403.
+ *
+ * No era teórico. Sergio (socio de Vex Pro) entró el 2026-08-22 con seis
+ * módulos marcados y no pudo leer ninguno.
+ *
+ * Ya es cierto: `puedeLlamarRuta` en api-auth.ts separa leer de escribir. Leer
+ * lo decide el módulo; escribir lo sigue decidiendo el rol, y esta lista sigue
+ * siendo la única que lo define.
  */
 export const WRITE_CAPABLE_ROLES: ReadonlySet<string> = new Set(['admin', 'auditor', 'hr']);
 
