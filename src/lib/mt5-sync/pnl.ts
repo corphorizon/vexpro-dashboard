@@ -59,12 +59,32 @@ export type PnlCategory = (typeof PNL_CATEGORIES)[number];
  * `LeverageX12` cuenta como PROPFIRM (Kevin, 2026-08-26): es un producto de la
  * prop firm, no una categoría aparte.
  *
+ * ── QUÉ SON LAS BOOST, Y CÓMO SE SUPO ──────────────────────────────────────
+ * Las "Boost x12" no se llaman Boost en ningún lado. Viven en dos grupos:
+ *
+ *     real\Broker\Synthetics_Apalancados    337 cuentas
+ *     real\Broker\Apalancada                 57 cuentas
+ *
+ * Los dos con apalancamiento 1:33 y creados el 2026-08-02. El "x12" NO es el
+ * apalancamiento de MT5: es el multiplicador de capital que acredita el CRM
+ * (`walletCredit` / `capitalDelta` en `leveraged_account_events`), y por eso el
+ * apalancamiento del servidor es bajo.
+ *
+ * La identificación no es por el nombre: se verificó contra Orion. Los 332
+ * logins que el CRM trata como cuenta apalancada caen TODOS en esos dos grupos
+ * y en ninguno más. Sin ese cruce, "Apalancada" habría sido una corazonada
+ * sobre una palabra.
+ *
+ * La rama va ANTES del descarte por moneda: cuelgan de `real\Broker`, así que
+ * sin ella caen en USD — que es exactamente donde estaban escondidas.
+ *
  * La moneda sale de `mt5_groups.Currency`, que es el dato autoritativo. Deducir
  * "cent" del nombre del grupo funciona hasta que alguien crea un grupo con otro
  * nombre.
  */
 export const CATEGORIA_SQL =
   "CASE WHEN u.`Group` LIKE 'real\\\\\\\\PropFirm%' THEN 'PROPFIRM' " +
+  "WHEN u.`Group` LIKE 'real\\\\\\\\Broker\\\\\\\\%Apalancad%' THEN 'BOOST' " +
   "WHEN g.Currency = 'USC' THEN 'CENT' ELSE 'USD' END";
 
 export const SQL_ABIERTO = [

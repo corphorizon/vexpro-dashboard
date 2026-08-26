@@ -27,8 +27,22 @@ describe('clasificación de cuentas', () => {
     expect(CATEGORIA_SQL).toContain("g.Currency = 'USC'");
   });
 
-  it('declara BOOST aunque todavía no se sepa qué grupo la identifica', () => {
+  it('reconoce las Boost por los grupos Apalancad*, no por la palabra "Boost"', () => {
+    // Las "Boost x12" no se llaman Boost en ningún lado: viven en
+    // real\Broker\Apalancada y real\Broker\Synthetics_Apalancados. Verificado
+    // contra Orion: los 332 logins que el CRM trata como cuenta apalancada caen
+    // TODOS en esos dos grupos.
     expect(PNL_CATEGORIES).toContain('BOOST');
+    expect(CATEGORIA_SQL).toContain("THEN 'BOOST'");
+    expect(CATEGORIA_SQL).toContain('%Apalancad%');
+  });
+
+  it('clasifica las Boost ANTES de mirar la moneda', () => {
+    // Cuelgan de real\Broker, así que si la rama fuera después del descarte por
+    // moneda caerían en USD — que es donde estaban escondidas hasta ahora.
+    expect(CATEGORIA_SQL.indexOf("'BOOST'")).toBeLessThan(
+      CATEGORIA_SQL.indexOf("g.Currency = 'USC'"),
+    );
   });
 });
 
