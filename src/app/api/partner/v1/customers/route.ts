@@ -278,7 +278,11 @@ const CUSTOMER_SOURCE = {
     'se mostraría en cero y los segmentos que dependen de esto mentirían sin dar error.',
   changeDetectionNotice:
     'NO uses sourceUpdatedAt para decidir si una fila cambió. Es el reloj del ORIGEN (Orion), no el ' +
-    'nuestro: los agregados de dinero se recalculan de este lado y cambian SIN que sourceUpdatedAt ' +
+    'nuestro. Estos campos se sirven desde nuestra tabla de agregados, que se escribe DESPUÉS y por ' +
+    'un proceso distinto al del perfil, así que cambian SIN que sourceUpdatedAt se mueva: kycLevel, ' +
+    'enabledWithdrawals, walletBalance, totalDeposits, depositCount, lastDepositAt, totalWithdrawals, ' +
+    'accountsCount, liveAccountsCount, socialAccountsCount. Ojo con los dos primeros: NO son dinero ' +
+    'y se leen como campos de perfil, que es exactamente por lo que se pasan por alto. ' +
     'se mueva. Un consumidor que descarte filas por marca de tiempo idéntica nunca escribe esos ' +
     'saldos nuevos, y no da error. Para saber si algo cambió, COMPARÁ VALORES. Para paginar usá ' +
     'nextSince + nextAfterId, que es otra cosa: ésos son nuestro reloj (synced_at) y sirven para ' +
@@ -330,8 +334,19 @@ function shape(a: AggRow, p: ProfileRow | null) {
 
     // El `updatedAt` de Orion. Sirve para saber cuándo cambió el cliente EN EL
     // ORIGEN y para separar lo estable del ruido reciente al comparar — NO
-    // para detectar si esta fila cambió: los agregados se recalculan de este
-    // lado sin tocarlo. Ver changeDetectionNotice.
+    // para detectar si esta fila cambió. Ver changeDetectionNotice.
+    //
+    // ── POR QUÉ, EN CONCRETO ────────────────────────────────────────────────
+    // Este campo sale de `crm_user_snapshots` y todo lo marcado con `a.` sale
+    // de `crm_customer_aggregates`, que es OTRA tabla escrita por OTRO proceso.
+    // Medido el 2026-08-26: en las 21.143 filas, sin una sola excepción, el
+    // agregado se escribió DESPUÉS del perfil. Así que cualquier cambio en un
+    // campo `a.` aterriza con el `sourceUpdatedAt` congelado.
+    //
+    // Le costó 16 horas de dato viejo a Atlas, y la culpa fue de este contrato:
+    // el aviso decía "los agregados de DINERO", y `kycLevel` y
+    // `enabledWithdrawals` viven en esa misma tabla pero se leen como campos de
+    // perfil. Nombrar la categoría en vez de los campos fue el error.
     sourceUpdatedAt: p?.source_updated_at ?? null,
     // Cuándo lo calculamos NOSOTROS. Distinto de sourceUpdatedAt: uno dice
     // cuándo cambió el dato en el origen, el otro cuándo lo miramos.
