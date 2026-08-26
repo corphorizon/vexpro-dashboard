@@ -171,3 +171,95 @@ export async function loadRiskSnapshot(
     concentration,
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// PNL por categoría de cuenta.
+//
+// ── POR QUÉ ESTO NO SE MEZCLA CON LA EXPOSICIÓN DE ARRIBA ──────────────────
+// La exposición agrupa por FAMILIA (el segundo tramo del Group) y el PNL por
+// CATEGORÍA (USD / CENT / PROPFIRM / BOOST), que no son lo mismo: `Copy` y
+// `Broker` son familias distintas y las dos son USD. Son dos cortes del mismo
+// universo y unificarlos obligaría a elegir uno, perdiendo el otro.
+//
+// Y hay una diferencia que importa más: el PNL sólo cuenta cuentas que están
+// en el CRM, la exposición cuenta todas. Un total de PNL y uno de exposición
+// NO tienen por qué cuadrar, y eso es correcto, no un error.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface PnlRow {
+  category: string;
+  currency: string;
+  snapshot_at: string;
+  utc_day: string;
+  open_positions: number;
+  open_accounts: number;
+  open_pnl: number | null;
+  open_swap: number | null;
+  closed_deals: number;
+  closed_accounts: number;
+  closed_pnl: number | null;
+  closed_swap: number | null;
+  closed_commission: number | null;
+  accounts_outside_crm: number;
+}
+
+const PNL_COLS =
+  'category, currency, snapshot_at, utc_day, open_positions, open_accounts, open_pnl, ' +
+  'open_swap, closed_deals, closed_accounts, closed_pnl, closed_swap, closed_commission, ' +
+  'accounts_outside_crm';
+
+/** El PNL vivo: la foto más reciente, sea del día que sea. */
+export async function loadPnlLive(
+  admin: SupabaseClient,
+  companyId: string,
+): Promise<{ snapshotAt: string | null; rows: PnlRow[] }> {
+  const { data: last, error: lastErr } = await admin
+    .from('mt5_pnl_snapshots')
+    .select('snapshot_at')
+    .eq('company_id', companyId)
+    .order('snapshot_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (lastErr) throw new Error(lastErr.message);
+
+  const snapshotAt = last?.snapshot_at ? String(last.snapshot_at) : null;
+  if (!snapshotAt) return { snapshotAt: null, rows: [] };
+
+  // Se filtra por la marca exacta y no por "las últimas N filas": si una
+  // corrida cae justo mientras se lee, un LIMIT devolvería categorías de dos
+  // fotos distintas y el total sería de un instante que nunca existió.
+  const { data, error } = await admin
+    .from('mt5_pnl_snapshots')
+    .select(PNL_COLS)
+    .eq('company_id', companyId)
+    .eq('snapshot_at', snapshotAt)
+    .order('category', { ascending: true });
+  if (error) throw new Error(error.message);
+
+  return { snapshotAt, rows: (data ?? []) as unknown as PnlRow[] };
+}
+
+/**
+ * El cierre de cada día en un rango, por categoría.
+ *
+ * `from` y `to` son días UTC inclusive (`YYYY-MM-DD`). El día en curso también
+ * aparece, pero su cifra es "hasta ahora" y no un cierre: quien lo muestre
+ * tiene que decirlo.
+ */
+export async function loadPnlHistory(
+  admin: SupabaseClient,
+  companyId: string,
+  from: string,
+  to: string,
+): Promise<PnlRow[]> {
+  const { data, error } = await admin
+    .from('mt5_pnl_daily')
+    .select(PNL_COLS)
+    .eq('company_id', companyId)
+    .gte('utc_day', from)
+    .lte('utc_day', to)
+    .order('utc_day', { ascending: false })
+    .order('category', { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as PnlRow[];
+}

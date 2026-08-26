@@ -75,6 +75,10 @@
     {
       "path": "/api/cron/sync-health",
       "schedule": "40 * * * *"
+    },
+    {
+      "path": "/api/cron/mt5-pnl",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

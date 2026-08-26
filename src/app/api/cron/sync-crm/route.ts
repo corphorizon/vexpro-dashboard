@@ -31,6 +31,7 @@ import {
 import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
 import { syncExposure, type ExposureResult } from '@/lib/mt5-sync/exposure';
 import { syncWalletSources, type WalletSourcesResult } from '@/lib/crm-sync/wallet-sources';
+import { syncTradingAccounts, type TradingAccountsResult } from '@/lib/crm-sync/trading-accounts';
 import { syncTradingBehavior, type BehaviorResult } from '@/lib/mt5-sync/behavior';
 import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users';
 import { syncCustomerAggregates, type AggregatesResult } from '@/lib/crm-sync/aggregates';
@@ -300,6 +301,7 @@ export async function GET(request: NextRequest) {
       mt5?: Mt5SyncResult | null;
       exposure?: ExposureResult | null;
       walletSources?: WalletSourcesResult | null;
+      tradingAccounts?: TradingAccountsResult | null;
       behavior?: BehaviorResult | null;
       allUsers?: AllUsersResult | null;
       aggregates?: AggregatesResult | null;
@@ -412,8 +414,21 @@ export async function GET(request: NextRequest) {
         // los dos cambia lo suficiente en 15 minutos para justificar ese costo.
         let walletSources: WalletSourcesResult | null = null;
         let behavior: BehaviorResult | null = null;
+        let tradingAccounts: TradingAccountsResult | null = null;
         const extraErrors: string[] = [];
         if (modoCompleto) {
+          // La lista de cuentas del CRM decide qué cuenta entra a las cifras de
+          // PNL y cuál es de prueba. Va con el modo completo: sólo cambia
+          // cuando alguien abre una cuenta, y una cuenta nueva se ve excluida
+          // (y CONTADA como excluida) hasta la siguiente corrida completa.
+          try {
+            tradingAccounts = await syncTradingAccounts(admin, company.id);
+            for (const w of tradingAccounts.warnings) {
+              console.warn(`[cron/sync-crm] cuentas ${company.id}: ${w}`);
+            }
+          } catch (err) {
+            extraErrors.push(`cuentas: ${err instanceof Error ? err.message : 'unknown'}`);
+          }
           try {
             walletSources = await syncWalletSources(admin, company.id);
             for (const w of walletSources.warnings) {
@@ -446,6 +461,7 @@ export async function GET(request: NextRequest) {
           exposure,
           walletSources,
           behavior,
+          tradingAccounts,
           allUsers,
           aggregates,
           errors: [

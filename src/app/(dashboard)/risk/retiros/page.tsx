@@ -21,22 +21,36 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ShieldAlert, Search, Eye, Clock, Wallet, Info } from 'lucide-react';
+import { ShieldAlert, Search, Eye, Clock, Wallet, Info, Check, X, History } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card } from '@/components/ui/card';
+import { Card, CardTitle } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { useToasts } from '@/components/ui/toast';
+import { useTablePage, TableSearch, TablePager } from '@/components/ui/table-toolbar';
+import {
+  QuickDecisionDialog,
+  type QuickDecisionTarget,
+  type QuickDecision,
+} from '@/components/withdrawal/quick-decision-dialog';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dates';
-import { loadQueue, type QueueItem, type CalibrationInfo, type RiskBand } from '@/lib/withdrawal-risk/api';
+import { roleCanApproveWithdrawal } from '@/lib/roles';
+import {
+  loadQueue,
+  saveDecision,
+  type QueueItem,
+  type ResolvedItem,
+  type CalibrationInfo,
+  type RiskBand,
+} from '@/lib/withdrawal-risk/api';
 
 type BandFilter = 'all' | RiskBand;
 
@@ -46,6 +60,19 @@ const BAND_FILTERS: { value: BandFilter; key: string }[] = [
   { value: 'medium', key: 'wdReview.filterMedium' },
   { value: 'low', key: 'wdReview.filterLow' },
 ];
+
+/**
+ * Color del estado final. `pending` sigue existiendo acá: un retiro puede pasar
+ * por estados intermedios (IN_PROCESS, ON_HOLD) antes de COMPLETED o REJECTED,
+ * y mostrarlo en gris dice "esto todavía se está moviendo" sin fingir que ya
+ * terminó.
+ */
+const STATUS_VARIANT = (norm: string): 'success' | 'warning' | 'danger' | 'neutral' => {
+  if (norm === 'completed') return 'success';
+  if (norm === 'rejected' || norm === 'failed') return 'danger';
+  if (norm === 'pending') return 'warning';
+  return 'neutral';
+};
 
 const BAND_VARIANT: Record<RiskBand, 'success' | 'warning' | 'danger'> = {
   low: 'success',
@@ -62,6 +89,9 @@ export default function RevisionRetirosPage() {
   const { toast, ToastHost } = useToasts();
 
   const [items, setItems] = useState<QueueItem[]>([]);
+  const [resolved, setResolved] = useState<ResolvedItem[]>([]);
+  // El retiro sobre el que está abierto el diálogo de decisión rápida.
+  const [target, setTarget] = useState<QuickDecisionTarget | null>(null);
   const [counts, setCounts] = useState<Record<RiskBand, number>>({ low: 0, medium: 0, high: 0 });
   const [calibration, setCalibration] = useState<CalibrationInfo | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,6 +115,7 @@ export default function RevisionRetirosPage() {
         .then((res) => {
           if (!alive) return;
           setItems(res.items ?? []);
+          setResolved(res.resolved ?? []);
           setCounts(res.counts ?? { low: 0, medium: 0, high: 0 });
           setCalibration(res.calibration ?? null);
         })
@@ -127,6 +158,43 @@ export default function RevisionRetirosPage() {
       staleSum: stale.reduce((s, i) => s + (i.withdrawal.requested_amount ?? 0), 0),
     };
   }, [items]);
+
+  // ── Paginado ──────────────────────────────────────────────────────────────
+  // El filtro de texto de la cola pendiente va al SERVIDOR (ver api.ts), así
+  // que acá el hook sólo pagina: por eso su `searchable` devuelve vacío. Los
+  // resueltos sí se buscan en memoria — son la ventana de los últimos días, ya
+  // vienen enteros y no hace falta un viaje por tecla.
+  const cola = useTablePage<QueueItem>(items, () => '');
+  const cerrados = useTablePage<ResolvedItem>(
+    resolved,
+    (r) => `${r.username ?? ''} ${r.email ?? ''} ${r.externalId} ${r.statusRaw ?? ''}`,
+  );
+
+  const pagerLabels = {
+    prev: t('table.prev'),
+    next: t('table.next'),
+    range: t('table.range'),
+    filtered: t('table.filtered'),
+  };
+
+  // Aprobar y rechazar es de finanzas. Soporte triajea y escala desde la ficha;
+  // no se le muestran botones que el servidor le va a rechazar igual.
+  const puedeDecidir = roleCanApproveWithdrawal(user?.effective_role ?? '');
+
+  const decidir = async (decision: QuickDecision, notes: string) => {
+    if (!target) return;
+    try {
+      await saveDecision(target.externalId, { decision, notes: notes || null });
+      toast.success(t('wdReview.quickSaved'));
+      // Se recarga en vez de tocar la fila en memoria: la decisión puede sacar
+      // el retiro de la cola, y dejarlo pintado sería mostrar algo que ya no es.
+      fetchQueue(band, appliedQuery);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('wdReview.quickError'));
+      // Se relanza para que el diálogo no se cierre y no se pierda el motivo.
+      throw err;
+    }
+  };
 
   if (accessDenied) return null;
 
@@ -233,7 +301,7 @@ export default function RevisionRetirosPage() {
             <DataTable
               stickyHeader
               zebra
-              data={items}
+              data={cola.pageRows}
               empty={
                 <EmptyState
                   compact
@@ -324,17 +392,187 @@ export default function RevisionRetirosPage() {
                 {
                   header: '',
                   align: 'right',
-                  accessor: (i) => (
+                  accessor: (i) => {
+                    const quien = i.withdrawal.username ?? i.withdrawal.email ?? i.withdrawal.external_id;
+                    const importe = money(
+                      i.withdrawal.requested_amount ?? 0,
+                      i.withdrawal.coin ?? undefined,
+                    );
+                    const abrir = (decision: QuickDecision) =>
+                      setTarget({
+                        externalId: i.withdrawal.external_id,
+                        who: quien,
+                        amount: importe,
+                        decision,
+                      });
+                    return (
+                      <div className="flex items-center justify-end gap-1">
+                        <Link
+                          href={`/risk/retiros/${encodeURIComponent(i.withdrawal.external_id)}`}
+                          className="inline-flex items-center gap-1 rounded-md p-1.5 text-xs text-primary hover:bg-muted"
+                          aria-label={t('wdReview.review')}
+                          title={t('wdReview.review')}
+                        >
+                          <Eye className="h-4 w-4" aria-hidden />
+                        </Link>
+                        {puedeDecidir && (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => abrir('approve')}
+                              aria-label={t('wdReview.quickApprove')}
+                              title={t('wdReview.quickApprove')}
+                              className="rounded-md p-1.5 text-positive hover:bg-positive/10"
+                            >
+                              <Check className="h-4 w-4" aria-hidden />
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => abrir('reject')}
+                              aria-label={t('wdReview.quickReject')}
+                              title={t('wdReview.quickReject')}
+                              className="rounded-md p-1.5 text-negative hover:bg-negative/10"
+                            >
+                              <X className="h-4 w-4" aria-hidden />
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    );
+                  },
+                },
+              ]}
+            />
+            <TablePager
+              page={cola.page}
+              pageCount={cola.pageCount}
+              shown={cola.pageRows.length}
+              total={cola.total}
+              filteredTotal={cola.filtered.length}
+              onPage={cola.setPage}
+              labels={pagerLabels}
+            />
+          </Card>
+
+          {/* ── Los que ya cambiaron de estado ──────────────────────────────
+              Un retiro no desaparece cuando alguien lo toca: pasa a COMPLETED,
+              FAILED o REJECTED, y puede recorrer estados intermedios antes.
+              Sin esta sección la fila simplemente se esfumaba de la cola y no
+              había forma de saber en qué terminó — ni de contrastar lo que
+              nosotros habíamos decidido con lo que el CRM hizo. */}
+          <Card className="p-0 overflow-hidden">
+            <div className="px-4 pt-4">
+              <CardTitle>{t('wdReview.resolvedTitle')}</CardTitle>
+              <p className="mt-1 mb-3 text-xs text-muted-foreground">
+                {t('wdReview.resolvedHint')}
+              </p>
+              <div className="mb-3">
+                <TableSearch
+                  value={cerrados.query}
+                  onChange={cerrados.setQuery}
+                  placeholder={t('wdReview.resolvedSearch')}
+                />
+              </div>
+            </div>
+            <DataTable<ResolvedItem>
+              zebra
+              density="compact"
+              data={cerrados.pageRows}
+              empty={
+                <EmptyState
+                  compact
+                  icon={History}
+                  title={t('wdReview.resolvedEmpty')}
+                  description={t('wdReview.resolvedEmptyHint')}
+                />
+              }
+              columns={[
+                {
+                  header: t('wdReview.colClient'),
+                  accessor: (r) => (
+                    <div className="min-w-0">
+                      <p className="truncate font-medium">{r.username ?? t('wdReview.noUser')}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {r.email ?? r.externalId}
+                      </p>
+                    </div>
+                  ),
+                },
+                {
+                  header: t('wdReview.colAmount'),
+                  align: 'right',
+                  accessor: (r) => (
+                    <span className="font-semibold tabular-nums">{money(r.amount ?? 0)}</span>
+                  ),
+                },
+                {
+                  header: t('wdReview.colFinalStatus'),
+                  accessor: (r) => (
+                    <div className="flex items-center gap-2">
+                      {/* El estado CRUDO del CRM, no una traducción nuestra:
+                          entre REQUESTED y COMPLETED hay estados intermedios y
+                          normalizarlos escondería en cuál está parado. */}
+                      <Badge variant={STATUS_VARIANT(r.statusNorm)}>
+                        {r.statusRaw ?? r.statusNorm}
+                      </Badge>
+                      {r.wasInstant && (
+                        <span className="text-xs text-muted-foreground">
+                          {t('wdReview.wasInstant')}
+                        </span>
+                      )}
+                    </div>
+                  ),
+                },
+                {
+                  header: t('wdReview.colProcessed'),
+                  accessor: (r) => (
+                    <span className="text-xs">
+                      {r.processedAt ? formatDateTime(r.processedAt) : '—'}
+                    </span>
+                  ),
+                },
+                {
+                  header: t('wdReview.colOurDecision'),
+                  accessor: (r) =>
+                    r.ourDecision ? (
+                      <div>
+                        <Badge variant={r.ourDecision === 'approve' ? 'success' : 'neutral'}>
+                          {t(`wdReview.decision.${r.ourDecision}`)}
+                        </Badge>
+                        {r.ourDecidedBy && (
+                          <p className="mt-0.5 text-xs text-muted-foreground">{r.ourDecidedBy}</p>
+                        )}
+                      </div>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        {t('wdReview.neverReviewed')}
+                      </span>
+                    ),
+                },
+                {
+                  header: '',
+                  align: 'right',
+                  accessor: (r) => (
                     <Link
-                      href={`/risk/retiros/${encodeURIComponent(i.withdrawal.external_id)}`}
-                      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                      href={`/risk/retiros/${encodeURIComponent(r.externalId)}`}
+                      className="inline-flex items-center gap-1 rounded-md p-1.5 text-xs text-primary hover:bg-muted"
+                      aria-label={t('wdReview.review')}
+                      title={t('wdReview.review')}
                     >
-                      <Eye className="h-3.5 w-3.5" aria-hidden />
-                      {t('wdReview.review')}
+                      <Eye className="h-4 w-4" aria-hidden />
                     </Link>
                   ),
                 },
               ]}
+            />
+            <TablePager
+              page={cerrados.page}
+              pageCount={cerrados.pageCount}
+              shown={cerrados.pageRows.length}
+              total={cerrados.total}
+              filteredTotal={cerrados.filtered.length}
+              onPage={cerrados.setPage}
+              labels={pagerLabels}
             />
           </Card>
 
@@ -348,6 +586,25 @@ export default function RevisionRetirosPage() {
             </p>
           )}
         </>
+      )}
+
+      {target && (
+        <QuickDecisionDialog
+          target={target}
+          onClose={() => setTarget(null)}
+          onConfirm={decidir}
+          labels={{
+            approveTitle: t('wdReview.quickApproveTitle'),
+            rejectTitle: t('wdReview.quickRejectTitle'),
+            reason: t('wdReview.quickReason'),
+            reasonRequired: t('wdReview.quickReasonRequired'),
+            reasonOptional: t('wdReview.quickReasonOptional'),
+            notExecuted: t('wdReview.quickNotExecuted'),
+            confirmApprove: t('wdReview.quickConfirmApprove'),
+            confirmReject: t('wdReview.quickConfirmReject'),
+            cancel: t('wdReview.quickCancel'),
+          }}
+        />
       )}
     </div>
   );
