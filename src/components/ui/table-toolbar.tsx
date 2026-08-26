@@ -16,8 +16,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useMemo, useState, useEffect } from 'react';
-import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { downloadCSV } from '@/lib/csv-export';
 
 /**
  * Filas por página. Es EL número: cualquier tabla del dashboard que pagine
@@ -173,5 +174,52 @@ export function TablePager({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Descarga la tabla como CSV.
+ *
+ * ── QUÉ SE BAJA: LO FILTRADO, NO LA PÁGINA ─────────────────────────────────
+ * Se exportan TODAS las filas que pasaron el buscador, no las 50 que se están
+ * viendo. Bajar sólo la página convertiría el paginado —que es una comodidad
+ * de lectura— en un recorte de los datos, y nadie lo notaría hasta sumar la
+ * columna en Excel y ver que no da.
+ *
+ * Y se exporta lo FILTRADO y no todo: quien buscó algo y aprieta descargar
+ * espera el resultado de su búsqueda. Por eso el pie del CSV no hace falta,
+ * pero el nombre del archivo sí lleva la fecha.
+ *
+ * El escape contra inyección de fórmulas vive en `downloadCSV` (un valor que
+ * empieza con `=` o `+` se ejecuta al abrir el archivo en Excel).
+ */
+export function TableCsvButton<T>({
+  rows,
+  headers,
+  toRow,
+  filename,
+  label,
+}: {
+  /** Las filas FILTRADAS (`useTablePage(...).filtered`), no `pageRows`. */
+  rows: T[];
+  headers: string[];
+  toRow: (row: T) => (string | number)[];
+  /** Sin extensión ni fecha: las agrega esta función. */
+  filename: string;
+  label: string;
+}) {
+  return (
+    <Button
+      variant="secondary"
+      size="sm"
+      disabled={rows.length === 0}
+      onClick={() => {
+        const hoy = new Date().toISOString().slice(0, 10);
+        downloadCSV(`${filename}_${hoy}.csv`, headers, rows.map(toRow));
+      }}
+    >
+      <Download className="h-4 w-4" aria-hidden />
+      {label}
+    </Button>
   );
 }

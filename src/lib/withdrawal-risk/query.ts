@@ -202,6 +202,8 @@ export interface WalletSourcesRow {
 
 export interface QueueItem {
   withdrawal: WithdrawalRow;
+  /** Aprobado solo por el sistema. Ver INSTANT_FEE. */
+  wasInstant: boolean;
   /** Método inferido de coin+network (el walletType del CRM no sirve). */
   paymentMethod: string;
   /** Días que lleva esperando la solicitud. */
@@ -237,7 +239,17 @@ export interface ResolvedItem {
 }
 
 export interface QueueResult {
+  /**
+   * SOLICITADOS: los que esperan una primera decisión y NO cambiaron de estado
+   * (`status_raw = 'REQUESTED'`). Kevin, 2026-08-26.
+   *
+   * Un retiro que alguien movió a ON_HOLD ya cambió de estado y por lo tanto
+   * vive en `resolved`, aunque siga esperando decisión: lo que separa las
+   * secciones es si alguien lo tocó, no si está cerrado.
+   */
   items: QueueItem[];
+  /** INSTANTÁNEOS: aprobados solos por el sistema. Nunca se mezclan. */
+  instant: QueueItem[];
   /** Los que cambiaron de estado. Ver ResolvedItem. */
   resolved: ResolvedItem[];
   /** Pendientes antes de aplicar los filtros (para mostrar "N de M"). */
@@ -304,9 +316,27 @@ export async function loadQueue(
     .from('crm_withdrawals')
     .select('external_id', { count: 'exact', head: true })
     .eq('company_id', companyId)
-    .eq('status_norm', 'pending');
+    .eq('status_norm', 'pending')
+    .eq('status_raw', UNTOUCHED_STATUS);
 
-  const items = await scoreMany(admin, companyId, pending, cal);
+  const todos = await scoreMany(admin, companyId, pending, cal);
+
+  // ── LA COLA SE PARTE EN DOS ─────────────────────────────────────────────
+  // Los instantáneos ya cobraron: no hay nada que decidir sobre ellos, sólo
+  // que mirar qué tan arriesgados eran. Mezclarlos con los que esperan
+  // decisión convierte una lista de trabajo en una lista de lectura.
+  const instant = todos.filter((i) => i.wasInstant);
+  const items = todos.filter(
+    (i) => !i.wasInstant && i.withdrawal.status_raw === UNTOUCHED_STATUS,
+  );
+
+  // Los pendientes que YA fueron tocados (ON_HOLD y compañía) no desaparecen:
+  // bajan al historial con su estado actual. Siguen esperando decisión, y por
+  // eso el estado se muestra crudo y en color de aviso, no como si estuvieran
+  // cerrados.
+  const tocados = todos.filter(
+    (i) => !i.wasInstant && i.withdrawal.status_raw !== UNTOUCHED_STATUS,
+  );
 
   // ── Los que ya cambiaron de estado ──────────────────────────────────────
   // Se listan los pedidos en la ventana que YA NO están pendientes. Es la
@@ -340,6 +370,23 @@ export async function loadQueue(
     }
   }
 
+  // Los pendientes ya tocados se suman al historial. Se construyen igual que
+  // los cerrados para que la tabla no tenga que distinguirlos: lo que los
+  // distingue es su estado, y ese ya se muestra.
+  const desdeCola: ResolvedItem[] = tocados.map((i) => ({
+    externalId: i.withdrawal.external_id,
+    username: i.withdrawal.username,
+    email: i.withdrawal.email,
+    amount: i.withdrawal.requested_amount,
+    requestedAt: i.withdrawal.requested_at,
+    processedAt: i.withdrawal.processed_at,
+    statusRaw: i.withdrawal.status_raw,
+    statusNorm: i.withdrawal.status_norm,
+    wasInstant: false,
+    ourDecision: i.review?.decision ?? null,
+    ourDecidedBy: i.review?.decided_by_name ?? null,
+  }));
+
   const resolved: ResolvedItem[] = resueltosRows.map((w) => {
     const nuestra = nuestrasDecisiones.get(w.external_id) ?? null;
     return {
@@ -358,16 +405,43 @@ export async function loadQueue(
   });
 
   const filtered = filters.band ? items.filter((i) => i.score.band === filters.band) : items;
+  const instantFiltrados = filters.band
+    ? instant.filter((i) => i.score.band === filters.band)
+    : instant;
+
+  // Los contadores de banda cuentan las DOS colas: son el semáforo de "cuánto
+  // riesgo hay", y dejar los instantáneos afuera escondería justo los que ya
+  // salieron sin que nadie los mirara.
   const counts: Record<RiskBand, number> = { low: 0, medium: 0, high: 0 };
-  for (const i of items) counts[i.score.band] += 1;
+  for (const i of [...items, ...instant]) counts[i.score.band] += 1;
 
   // Lo más riesgoso arriba; a igual banda, lo que más tiempo lleva esperando.
-  filtered.sort(
-    (a, b) => a.score.approvalScore - b.score.approvalScore || (b.ageDays ?? 0) - (a.ageDays ?? 0),
-  );
 
-  return { items: filtered, resolved, totalPending: count ?? pending.length, calibrationId: cal.id, counts };
+  const porRiesgo = (a: QueueItem, b: QueueItem) =>
+    a.score.approvalScore - b.score.approvalScore || (b.ageDays ?? 0) - (a.ageDays ?? 0);
+  filtered.sort(porRiesgo);
+  instantFiltrados.sort(porRiesgo);
+
+  return {
+    items: filtered,
+    instant: instantFiltrados,
+    // El historial junta lo cerrado con lo que sigue abierto pero ya se tocó.
+    // Lo más reciente arriba, sin importar de cuál de los dos venga.
+    resolved: [...desdeCola, ...resolved].sort((a, b) =>
+      (b.processedAt ?? b.requestedAt ?? '').localeCompare(a.processedAt ?? a.requestedAt ?? ''),
+    ),
+    totalPending: count ?? items.length,
+    calibrationId: cal.id,
+    counts,
+  };
 }
+
+/**
+ * El único estado que cuenta como "solicitado y sin tocar". Cualquier otro
+ * —ON_HOLD, REVIEWED, IN_PROCESS— significa que alguien ya lo movió, así que
+ * pasa al historial con el estado en el que quedó.
+ */
+export const UNTOUCHED_STATUS = 'REQUESTED';
 
 /**
  * Comisión que identifica un retiro instantáneo. Ver la cabecera de loadQueue:
@@ -530,6 +604,7 @@ async function scoreMany(
 
     return {
       withdrawal: w,
+      wasInstant: isInstant(w),
       paymentMethod: paymentMethodOf(w.coin, w.network),
       ageDays: cut === null ? null : Math.max(0, (now - cut) / 86_400_000),
       features,

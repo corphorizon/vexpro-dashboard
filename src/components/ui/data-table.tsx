@@ -11,7 +11,7 @@ import { cn } from '@/lib/utils';
 //   · Scroll horizontal seguro: el wrapper trae overflow-x-auto.
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Column<T> {
+export interface Column<T> {
   header: string;
   accessor: keyof T | ((row: T) => React.ReactNode);
   className?: string;
