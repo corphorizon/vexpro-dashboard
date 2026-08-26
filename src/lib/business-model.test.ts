@@ -22,14 +22,33 @@ describe('modelo de negocio', () => {
     expect(normalizeBusinessModel('company')).toBe('company');
   });
 
-  it('un broker conserva TODO lo que tenía', () => {
+  // Esta prueba nació guardando la promesa "introducir el modelo `company` no
+  // le quita nada a un broker". Esa promesa sigue en pie para todo lo suyo; lo
+  // que cambió (Kevin, 2026-08-26) es que la facturación por concepto NUNCA
+  // fue suyo: Ingresos y Clientes son la contabilidad de una empresa de
+  // servicios. Medido antes de apagarlo, los cuatro brokers tenían CERO líneas
+  // de ingreso — las 70 que existen son de Horizon, que es `company`.
+  it('un broker conserva todo lo suyo, pero no factura por concepto', () => {
     const f = features('broker');
     expect(f).toEqual({
       deposits: true, withdrawals: true, netDeposit: true, brokerPnl: true,
-      movements: true, liquidity: true, investments: true, incomeLines: true,
+      movements: true, liquidity: true, investments: true, incomeLines: false,
       riskManagement: true, commercialTeam: true,
     });
-    expect(blockedModules('broker')).toEqual([]);
+    // Lo propio del broker sigue intacto: nada de esto puede aparecer acá.
+    for (const suyo of ['movements', 'liquidity', 'investments', 'risk', 'commissions']) {
+      expect(blockedModules('broker')).not.toContain(suyo);
+    }
+    // Y los dos que se apagaron van juntos: son la misma contabilidad.
+    expect(blockedModules('broker')).toEqual(['income', 'clients']);
+  });
+
+  it('los módulos de facturación siguen encendidos para una empresa de servicios', () => {
+    // El riesgo del cambio anterior es apagarlos de más. Horizon vive de esto.
+    expect(moduleAllowedForModel('company', 'income')).toBe(true);
+    expect(moduleAllowedForModel('company', 'clients')).toBe(true);
+    expect(moduleAllowedForModel('broker', 'income')).toBe(false);
+    expect(moduleAllowedForModel('broker', 'clients')).toBe(false);
   });
 
   it('una empresa de servicios no tiene depósitos, retiros ni riesgo', () => {

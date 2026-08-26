@@ -1,13 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  MODULES,
-  MODULE_KEYS,
-  MODULE_LABELS,
-  MODULE_KEY_SET,
-  RESERVED_MODULE_KEYS,
-  sanitizeModuleKeys,
-  moduleLabel,
-} from './modules';
+import { MODULES, MODULE_KEYS, MODULE_LABELS, MODULE_KEY_SET, RESERVED_MODULE_KEYS, sanitizeModuleKeys, moduleLabel, canAccessModule } from './modules';
 import { BUILT_IN_ROLES, isBuiltInRole, roleCanWrite } from './roles';
 
 // Estos tests existen porque la lista de módulos vivía duplicada en cuatro
@@ -100,5 +92,35 @@ describe('registro de roles', () => {
     expect(roleCanWrite('socio')).toBe(false);
     expect(roleCanWrite('soporte')).toBe(false);
     expect(roleCanWrite('invitado')).toBe(false);
+  });
+});
+
+describe('la carga de datos es solo para quien puede escribir', () => {
+  // Un rol de solo lectura en /upload ve formularios que el servidor le va a
+  // rechazar con 403. Se bloquea por ROL y no marcando la casilla usuario por
+  // usuario, porque eso ya se escapó: los dos socios de Vex Pro lo tenían
+  // quitado a mano y los siete de AP Markets no, sin que la diferencia
+  // respondiera a ninguna decisión.
+  const ctx = (role: string) => ({
+    role,
+    allowedModules: ['upload', 'summary'],
+    activeModules: null,
+    businessModel: 'broker',
+  });
+
+  it('lo niega a los roles de solo lectura aunque lo tengan marcado', () => {
+    expect(canAccessModule('upload', ctx('socio'))).toBe(false);
+    expect(canAccessModule('upload', ctx('soporte'))).toBe(false);
+    expect(canAccessModule('upload', ctx('invitado'))).toBe(false);
+  });
+
+  it('lo permite a los que sí escriben', () => {
+    expect(canAccessModule('upload', ctx('admin'))).toBe(true);
+    expect(canAccessModule('upload', ctx('auditor'))).toBe(true);
+    expect(canAccessModule('upload', ctx('hr'))).toBe(true);
+  });
+
+  it('no toca los demás módulos de un rol de solo lectura', () => {
+    expect(canAccessModule('summary', ctx('socio'))).toBe(true);
   });
 });
