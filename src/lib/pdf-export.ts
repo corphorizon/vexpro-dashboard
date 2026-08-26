@@ -1282,3 +1282,184 @@ export async function generateChannelBalancesPDF(data: PdfChannelBalancesData) {
   pdfFooter(doc);
   doc.save(`Balances_por_Canal_${data.asOf}.pdf`);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Informe de exposición y PNL por categoría de cuenta.
+//
+// ── EL DINERO NO SE SUMA, TAMPOCO EN PDF ───────────────────────────────────
+// Es la misma regla que en la pantalla, y en papel importa MÁS: un PDF se
+// imprime, se manda por correo y se lee fuera de contexto meses después, sin
+// nadie al lado que aclare que esa columna estaba en centavos. Por eso cada
+// importe lleva su unidad pegada y NO hay fila de total general.
+//
+// Sumar CENT con USD daría un número enorme, perfectamente creíble y falso:
+// las cuentas Cent están denominadas en centavos y las PropFirm llevan capital
+// virtual de desafío.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const EXPOSURE_T = {
+  es: {
+    title: 'Exposición y PNL', period: 'Período', generated: 'Generado',
+    liveSection: 'PNL en vivo por categoría', historySection: 'Cierres diarios',
+    category: 'Categoría', unit: 'Unidad', openPnl: 'PNL abierto',
+    closedPnl: 'PNL cerrado', positions: 'Posiciones', accounts: 'Cuentas',
+    deals: 'Operaciones', day: 'Día', outsideCrm: 'Fuera del CRM',
+    inProgress: 'en curso', asOf: 'Foto del',
+    noSum: 'Los importes NO se suman entre categorías: las cuentas Cent estan denominadas en CENTAVOS y las PropFirm llevan capital virtual de desafio. Cada importe lleva su unidad.',
+    scope: 'Solo cuentas live que ademas existen en el CRM. Lo que esta en MetaTrader y no en el CRM son cuentas de prueba y queda fuera. Los cortes del dia son UTC.',
+    todayNote: 'El dia de hoy sigue en curso: su cifra es "hasta ahora", no un cierre, y no es comparable con un dia entero.',
+  },
+  en: {
+    title: 'Exposure and P&L', period: 'Period', generated: 'Generated',
+    liveSection: 'Live P&L by category', historySection: 'Daily closes',
+    category: 'Category', unit: 'Unit', openPnl: 'Open P&L',
+    closedPnl: 'Closed P&L', positions: 'Positions', accounts: 'Accounts',
+    deals: 'Trades', day: 'Day', outsideCrm: 'Outside CRM',
+    inProgress: 'in progress', asOf: 'Snapshot of',
+    noSum: 'Amounts are NOT summed across categories: Cent accounts are denominated in CENTS and PropFirm carries virtual challenge capital. Every amount carries its unit.',
+    scope: 'Only live accounts that also exist in the CRM. What is in MetaTrader but not in the CRM are test accounts and stay out. Day cut-offs are UTC.',
+    todayNote: 'Today is still in progress: its figure is "so far", not a close, and is not comparable with a full day.',
+  },
+} as const;
+
+export interface PdfExposureRow {
+  utc_day: string;
+  category: string;
+  open_positions: number;
+  open_accounts: number;
+  open_pnl: number | null;
+  closed_deals: number;
+  closed_accounts: number;
+  closed_pnl: number | null;
+  accounts_outside_crm: number;
+}
+
+export interface PdfExposureData {
+  company: { name: string; logoUrl?: string | null };
+  range: { from: string; to: string };
+  snapshotAt: string;
+  /** La foto más reciente, una fila por categoría. */
+  live: PdfExposureRow[];
+  /** El cierre de cada día del rango. */
+  history: PdfExposureRow[];
+  locale?: LedgerLocale;
+}
+
+/** Sólo CENT está en centavos. Misma regla que en la pantalla. */
+const exposureUnit = (categoria: string) => (categoria === 'CENT' ? 'cent' : 'USD');
+
+/** Importe CON su unidad. Nunca un número de dinero solo. */
+const exposureAmount = (n: number | null, categoria: string) =>
+  n === null ? '—' : `${fmt(n)} ${categoria === 'CENT' ? 'cent' : 'USD'}`;
+
+export async function generateExposurePDF(data: PdfExposureData) {
+  const L = EXPOSURE_T[data.locale ?? 'es'];
+  // Apaisado: la tabla de cierres tiene nueve columnas y en vertical los
+  // importes se parten en dos líneas.
+  const doc = new jsPDF('landscape', 'mm', 'a4');
+  const hoy = new Date().toISOString().slice(0, 10);
+
+  const logoDataUrl = await loadLogoDataUrl(data.company.logoUrl);
+  let y = pdfHeader(doc, {
+    logoDataUrl,
+    title: L.title,
+    company: data.company.name,
+    right: [
+      `${L.period} ${data.range.from} — ${data.range.to}`,
+      `${L.asOf} ${new Date(data.snapshotAt).toLocaleString()}`,
+      `${L.generated}: ${new Date().toLocaleDateString()}`,
+    ],
+  });
+
+  // Una tarjeta por categoría con su PNL abierto. La unidad va DENTRO del
+  // valor, no en el label: un label se recorta, el valor no.
+  if (data.live.length > 0) {
+    y = pdfCards(
+      doc,
+      y,
+      data.live.map((r) => ({
+        label: `${r.category} · ${L.openPnl}`,
+        value: exposureAmount(r.open_pnl, r.category),
+        tone: (r.open_pnl ?? 0) < 0 ? ('negative' as const) : ('positive' as const),
+      })),
+    );
+  }
+
+  y = pdfSection(doc, L.liveSection, y + 2);
+  autoTable(doc, {
+    startY: y,
+    head: [[L.category, L.unit, L.openPnl, L.positions, L.accounts, L.closedPnl, L.deals, L.outsideCrm]],
+    body: data.live.map((r) => [
+      r.category,
+      exposureUnit(r.category),
+      exposureAmount(r.open_pnl, r.category),
+      fmt(r.open_positions),
+      fmt(r.open_accounts),
+      exposureAmount(r.closed_pnl, r.category),
+      fmt(r.closed_deals),
+      r.accounts_outside_crm > 0 ? fmt(r.accounts_outside_crm) : '—',
+    ]),
+    theme: 'striped',
+    styles: { fontSize: 9, cellPadding: 2.5 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    columnStyles: {
+      1: { halign: 'center' },
+      2: { halign: 'right', fontStyle: 'bold' },
+      3: { halign: 'right' }, 4: { halign: 'right' },
+      5: { halign: 'right', fontStyle: 'bold' },
+      6: { halign: 'right' }, 7: { halign: 'right' },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  y = pdfSection(doc, L.historySection, getLastTableY(doc, y + 40));
+  autoTable(doc, {
+    startY: y,
+    head: [[L.day, L.category, L.closedPnl, L.deals, L.accounts, L.openPnl, L.positions, L.outsideCrm]],
+    body: data.history.map((r) => [
+      // El día en curso se marca EN LA FILA. Sin eso, un PDF leído en otro
+      // momento muestra un día corto como si hubiera cerrado así.
+      r.utc_day === hoy ? `${r.utc_day} (${L.inProgress})` : r.utc_day,
+      r.category,
+      exposureAmount(r.closed_pnl, r.category),
+      fmt(r.closed_deals),
+      fmt(r.closed_accounts),
+      exposureAmount(r.open_pnl, r.category),
+      fmt(r.open_positions),
+      r.accounts_outside_crm > 0 ? fmt(r.accounts_outside_crm) : '—',
+    ]),
+    theme: 'striped',
+    styles: { fontSize: 8.5, cellPadding: 2.2 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    columnStyles: {
+      2: { halign: 'right', fontStyle: 'bold' },
+      3: { halign: 'right' }, 4: { halign: 'right' },
+      5: { halign: 'right' }, 6: { halign: 'right' }, 7: { halign: 'right' },
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  // Las tres advertencias van al final y en el documento, no en un pie de
+  // pantalla que no viaja con el archivo.
+  let ny = getLastTableY(doc, y + 40, 6);
+  const w = doc.internal.pageSize.getWidth();
+  doc.setFontSize(7.5);
+  doc.setTextColor(...C.muted);
+  doc.setFont('helvetica', 'normal');
+  for (const nota of [L.noSum, L.scope, L.todayNote]) {
+    const lineas = doc.splitTextToSize(nota, w - 28) as string[];
+    // Si no entra, se pasa de página: una nota partida a la mitad por el borde
+    // inferior es una nota que nadie lee.
+    if (ny + lineas.length * 3.4 > doc.internal.pageSize.getHeight() - 16) {
+      doc.addPage();
+      ny = 20;
+    }
+    doc.text(lineas, 14, ny);
+    ny += lineas.length * 3.4 + 2.5;
+  }
+
+  pdfFooter(doc);
+  doc.save(`Exposicion_PNL_${data.range.from}_${data.range.to}.pdf`);
+}

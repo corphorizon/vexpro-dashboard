@@ -21,16 +21,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ShieldAlert, Search, Eye, Clock, Wallet, Info, Check, X, History } from 'lucide-react';
+import { ShieldAlert, Search, Eye, Clock, Wallet, Info, Check, X, History, Zap } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardTitle } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
+import { DataTable, type Column } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
 import { useToasts } from '@/components/ui/toast';
-import { useTablePage, TableSearch, TablePager } from '@/components/ui/table-toolbar';
+import {
+  useTablePage, TableSearch, TablePager, TableCsvButton,
+} from '@/components/ui/table-toolbar';
+import { SectionTabs } from '@/components/ui/section-tabs';
 import {
   QuickDecisionDialog,
   type QuickDecisionTarget,
@@ -89,7 +92,11 @@ export default function RevisionRetirosPage() {
   const { toast, ToastHost } = useToasts();
 
   const [items, setItems] = useState<QueueItem[]>([]);
+  const [instant, setInstant] = useState<QueueItem[]>([]);
   const [resolved, setResolved] = useState<ResolvedItem[]>([]);
+  // Qué sección se está mirando. No va a la URL: es una preferencia de lectura
+  // de un momento, y meterla al historial rompería el botón Atrás.
+  const [seccion, setSeccion] = useState<'solicitados' | 'instant' | 'historial'>('solicitados');
   // El retiro sobre el que está abierto el diálogo de decisión rápida.
   const [target, setTarget] = useState<QuickDecisionTarget | null>(null);
   const [counts, setCounts] = useState<Record<RiskBand, number>>({ low: 0, medium: 0, high: 0 });
@@ -115,6 +122,7 @@ export default function RevisionRetirosPage() {
         .then((res) => {
           if (!alive) return;
           setItems(res.items ?? []);
+          setInstant(res.instant ?? []);
           setResolved(res.resolved ?? []);
           setCounts(res.counts ?? { low: 0, medium: 0, high: 0 });
           setCalibration(res.calibration ?? null);
@@ -165,6 +173,7 @@ export default function RevisionRetirosPage() {
   // resueltos sí se buscan en memoria — son la ventana de los últimos días, ya
   // vienen enteros y no hace falta un viaje por tecla.
   const cola = useTablePage<QueueItem>(items, () => '');
+  const instantaneos = useTablePage<QueueItem>(instant, () => '');
   const cerrados = useTablePage<ResolvedItem>(
     resolved,
     (r) => `${r.username ?? ''} ${r.email ?? ''} ${r.externalId} ${r.statusRaw ?? ''}`,
@@ -196,123 +205,11 @@ export default function RevisionRetirosPage() {
     }
   };
 
-  if (accessDenied) return null;
-
-  const hasFilters = band !== 'all' || appliedQuery !== '';
-
-  return (
-    <div className="space-y-6">
-      {ToastHost}
-
-      <PageHeader
-        icon={ShieldAlert}
-        title={t('wdReview.title')}
-        subtitle={t('wdReview.subtitle')}
-      />
-
-      {/* El aviso es parte del control, no decoración: quien use la pantalla
-          tiene que saber que registrar una decisión no mueve el dinero. */}
-      <div className="flex items-start gap-2 rounded-lg border border-border bg-info/10 px-4 py-3 text-sm">
-        <Info className="h-4 w-4 shrink-0 mt-0.5 text-info" aria-hidden />
-        <p className="text-muted-foreground">{t('wdReview.disclaimer')}</p>
-      </div>
-
-      {loading && items.length === 0 ? (
-        <div className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-3">
-            <Skeleton className="h-28" />
-            <Skeleton className="h-28" />
-            <Skeleton className="h-28" />
-          </div>
-          <Skeleton className="h-10 w-full max-w-md" />
-          <Skeleton className="h-80" />
-        </div>
-      ) : (
-        <>
-          <div className="grid gap-4 sm:grid-cols-3">
-            <StatCard
-              icon={Wallet}
-              label={t('wdReview.kpiPending')}
-              value={money(kpis.sum)}
-              hint={t('wdReview.kpiPendingHint', { count: String(kpis.count) })}
-              emphasis
-            />
-            <StatCard
-              icon={ShieldAlert}
-              tone={kpis.highCount > 0 ? 'negative' : 'neutral'}
-              label={t('wdReview.kpiHigh')}
-              value={String(kpis.highCount)}
-              hint={t('wdReview.kpiHighHint', { amount: money(kpis.highSum) })}
-            />
-            <StatCard
-              icon={Clock}
-              tone={kpis.staleCount > 0 ? 'warning' : 'neutral'}
-              label={t('wdReview.kpiStale')}
-              value={String(kpis.staleCount)}
-              hint={t('wdReview.kpiStaleHint', { amount: money(kpis.staleSum) })}
-            />
-          </div>
-
-          {/* ── Filtros ───────────────────────────────────────────────────── */}
-          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap gap-2">
-              {BAND_FILTERS.map((f) => (
-                <button
-                  key={f.value}
-                  type="button"
-                  onClick={() => setBand(f.value)}
-                  aria-pressed={band === f.value}
-                  className={cn(
-                    'px-3 py-1.5 text-xs font-medium rounded-md border transition-colors',
-                    band === f.value
-                      ? 'bg-primary text-white border-primary'
-                      : 'border-border hover:bg-muted',
-                  )}
-                >
-                  {t(f.key)}
-                  {f.value !== 'all' && counts[f.value] > 0 ? ` (${counts[f.value]})` : ''}
-                </button>
-              ))}
-            </div>
-
-            <form
-              className="relative w-full sm:max-w-xs"
-              onSubmit={(e) => {
-                e.preventDefault();
-                setAppliedQuery(query.trim());
-              }}
-            >
-              <Search
-                className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t('wdReview.searchPlaceholder')}
-                aria-label={t('wdReview.searchPlaceholder')}
-                className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm"
-              />
-            </form>
-          </div>
-
-          <Card className="p-0 overflow-hidden">
-            <DataTable
-              stickyHeader
-              zebra
-              data={cola.pageRows}
-              empty={
-                <EmptyState
-                  compact
-                  icon={ShieldAlert}
-                  title={hasFilters ? t('wdReview.emptyFiltered') : t('wdReview.emptyNone')}
-                  description={
-                    hasFilters ? t('wdReview.emptyFilteredHint') : t('wdReview.emptyNoneHint')
-                  }
-                />
-              }
-              columns={[
+  // ── UNA sola definición de columnas para las DOS colas ──────────────────
+  // Solicitados e instantáneos muestran exactamente lo mismo: cliente, monto,
+  // método, score y factor. Copiar el bloque daría dos tablas que hoy se ven
+  // iguales y en tres meses no, sin que nadie lo note hasta compararlas.
+  const columnasCola: Column<QueueItem>[] = [
                 {
                   header: t('wdReview.colClient'),
                   accessor: (i) => (
@@ -441,7 +338,158 @@ export default function RevisionRetirosPage() {
                     );
                   },
                 },
-              ]}
+                ];
+
+  if (accessDenied) return null;
+
+  const hasFilters = band !== 'all' || appliedQuery !== '';
+
+  return (
+    <div className="space-y-6">
+      {ToastHost}
+
+      <PageHeader
+        icon={ShieldAlert}
+        title={t('wdReview.title')}
+        subtitle={t('wdReview.subtitle')}
+      />
+
+      {/* El aviso es parte del control, no decoración: quien use la pantalla
+          tiene que saber que registrar una decisión no mueve el dinero. */}
+      <div className="flex items-start gap-2 rounded-lg border border-border bg-info/10 px-4 py-3 text-sm">
+        <Info className="h-4 w-4 shrink-0 mt-0.5 text-info" aria-hidden />
+        <p className="text-muted-foreground">{t('wdReview.disclaimer')}</p>
+      </div>
+
+      {loading && items.length === 0 ? (
+        <div className="space-y-6">
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Skeleton className="h-28" />
+            <Skeleton className="h-28" />
+            <Skeleton className="h-28" />
+          </div>
+          <Skeleton className="h-10 w-full max-w-md" />
+          <Skeleton className="h-80" />
+        </div>
+      ) : (
+        <>
+          <div className="grid gap-4 sm:grid-cols-3">
+            <StatCard
+              icon={Wallet}
+              label={t('wdReview.kpiPending')}
+              value={money(kpis.sum)}
+              hint={t('wdReview.kpiPendingHint', { count: String(kpis.count) })}
+              emphasis
+            />
+            <StatCard
+              icon={ShieldAlert}
+              tone={kpis.highCount > 0 ? 'negative' : 'neutral'}
+              label={t('wdReview.kpiHigh')}
+              value={String(kpis.highCount)}
+              hint={t('wdReview.kpiHighHint', { amount: money(kpis.highSum) })}
+            />
+            <StatCard
+              icon={Clock}
+              tone={kpis.staleCount > 0 ? 'warning' : 'neutral'}
+              label={t('wdReview.kpiStale')}
+              value={String(kpis.staleCount)}
+              hint={t('wdReview.kpiStaleHint', { amount: money(kpis.staleSum) })}
+            />
+          </div>
+
+          {/* ── Filtros ───────────────────────────────────────────────────── */}
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2">
+              {BAND_FILTERS.map((f) => (
+                <button
+                  key={f.value}
+                  type="button"
+                  onClick={() => setBand(f.value)}
+                  aria-pressed={band === f.value}
+                  className={cn(
+                    'px-3 py-1.5 text-xs font-medium rounded-md border transition-colors',
+                    band === f.value
+                      ? 'bg-primary text-white border-primary'
+                      : 'border-border hover:bg-muted',
+                  )}
+                >
+                  {t(f.key)}
+                  {f.value !== 'all' && counts[f.value] > 0 ? ` (${counts[f.value]})` : ''}
+                </button>
+              ))}
+            </div>
+
+            <form
+              className="relative w-full sm:max-w-xs"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setAppliedQuery(query.trim());
+              }}
+            >
+              <Search
+                className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden
+              />
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder={t('wdReview.searchPlaceholder')}
+                aria-label={t('wdReview.searchPlaceholder')}
+                className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm"
+              />
+            </form>
+          </div>
+
+          <SectionTabs
+            value={seccion}
+            onChange={setSeccion}
+            label={t('wdReview.sectionsLabel')}
+            tabs={[
+              { value: 'solicitados', label: t('wdReview.tabRequested'), count: items.length },
+              { value: 'instant', label: t('wdReview.tabInstant'), count: instant.length },
+              { value: 'historial', label: t('wdReview.tabHistory'), count: resolved.length },
+            ]}
+          />
+
+          {seccion === 'solicitados' && (
+          <Card className="p-0 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4">
+              <p className="text-xs text-muted-foreground">{t('wdReview.requestedHint')}</p>
+              <TableCsvButton<QueueItem>
+                rows={cola.filtered}
+                filename="Retiros_solicitados"
+                label={t('table.csv')}
+                headers={[
+                  t('wdReview.colClient'), 'email', t('wdReview.colAmount'), t('wdReview.colMethod'),
+                  t('wdReview.colRequested'), t('wdReview.colScore'), t('wdReview.colMainFactor'),
+                  t('wdReview.colDecision'),
+                ]}
+                toRow={(i) => [
+                  i.withdrawal.username ?? '', i.withdrawal.email ?? '',
+                  i.withdrawal.requested_amount ?? 0, i.paymentMethod,
+                  i.withdrawal.requested_at ?? '',
+                  `${i.score.approvalScore} (${t(`wdReview.band.${i.score.band}`)})`,
+                  i.score.factors.find((f) => f.impact === 'down')?.label ?? '',
+                  i.review?.decision ? t(`wdReview.decision.${i.review.decision}`) : '',
+                ]}
+              />
+            </div>
+            <DataTable
+              stickyHeader
+              zebra
+              data={cola.pageRows}
+              empty={
+                <EmptyState
+                  compact
+                  icon={ShieldAlert}
+                  title={hasFilters ? t('wdReview.emptyFiltered') : t('wdReview.emptyNone')}
+                  description={
+                    hasFilters ? t('wdReview.emptyFilteredHint') : t('wdReview.emptyNoneHint')
+                  }
+                />
+              }
+              columns={columnasCola}
             />
             <TablePager
               page={cola.page}
@@ -453,6 +501,62 @@ export default function RevisionRetirosPage() {
               labels={pagerLabels}
             />
           </Card>
+          )}
+
+          {/* ── Instantáneos ─────────────────────────────────────────────────
+              Los aprueba el sistema solo: cuando alguien los mira, el dinero ya
+              salió. No hay nada que decidir — lo que hay que ver es qué tan
+              arriesgado era lo que se fue, que es justo lo que nadie miraba.
+              Por eso tienen score igual que la cola, y por eso van APARTE:
+              mezclados, una lista de trabajo se vuelve una lista de lectura. */}
+          {seccion === 'instant' && (
+          <Card className="p-0 overflow-hidden">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 pt-4">
+              <p className="text-xs text-muted-foreground">{t('wdReview.instantHint')}</p>
+              <TableCsvButton<QueueItem>
+                rows={instantaneos.filtered}
+                filename="Retiros_instantaneos"
+                label={t('table.csv')}
+                headers={[
+                  t('wdReview.colClient'), 'email', t('wdReview.colAmount'), t('wdReview.colMethod'),
+                  t('wdReview.colRequested'), t('wdReview.colScore'), t('wdReview.colMainFactor'),
+                  t('wdReview.colDecision'),
+                ]}
+                toRow={(i) => [
+                  i.withdrawal.username ?? '', i.withdrawal.email ?? '',
+                  i.withdrawal.requested_amount ?? 0, i.paymentMethod,
+                  i.withdrawal.requested_at ?? '',
+                  `${i.score.approvalScore} (${t(`wdReview.band.${i.score.band}`)})`,
+                  i.score.factors.find((f) => f.impact === 'down')?.label ?? '',
+                  i.review?.decision ? t(`wdReview.decision.${i.review.decision}`) : '',
+                ]}
+              />
+            </div>
+            <DataTable
+              stickyHeader
+              zebra
+              data={instantaneos.pageRows}
+              empty={
+                <EmptyState
+                  compact
+                  icon={Zap}
+                  title={t('wdReview.instantEmpty')}
+                  description={t('wdReview.instantEmptyHint')}
+                />
+              }
+              columns={columnasCola}
+            />
+            <TablePager
+              page={instantaneos.page}
+              pageCount={instantaneos.pageCount}
+              shown={instantaneos.pageRows.length}
+              total={instantaneos.total}
+              filteredTotal={instantaneos.filtered.length}
+              onPage={instantaneos.setPage}
+              labels={pagerLabels}
+            />
+          </Card>
+          )}
 
           {/* ── Los que ya cambiaron de estado ──────────────────────────────
               Un retiro no desaparece cuando alguien lo toca: pasa a COMPLETED,
@@ -460,6 +564,7 @@ export default function RevisionRetirosPage() {
               Sin esta sección la fila simplemente se esfumaba de la cola y no
               había forma de saber en qué terminó — ni de contrastar lo que
               nosotros habíamos decidido con lo que el CRM hizo. */}
+          {seccion === 'historial' && (
           <Card className="p-0 overflow-hidden">
             <div className="px-4 pt-4">
               <CardTitle>{t('wdReview.resolvedTitle')}</CardTitle>
@@ -575,6 +680,7 @@ export default function RevisionRetirosPage() {
               labels={pagerLabels}
             />
           </Card>
+          )}
 
           {calibration && (
             <p className="text-xs text-muted-foreground">

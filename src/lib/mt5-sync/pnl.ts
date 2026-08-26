@@ -42,6 +42,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withMt5Connection, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
 import { round2 } from '@/lib/utils';
+import { liveCrmLogins } from '@/lib/crm-sync/account-scope';
 
 /** Categorías que se reportan. Ver el comentario de la columna en la migración. */
 export const PNL_CATEGORIES = ['USD', 'CENT', 'PROPFIRM', 'BOOST'] as const;
@@ -149,12 +150,6 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-function chunk<T>(arr: T[], size: number): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
-  return out;
-}
-
 /** El día UTC de una fecha, como `YYYY-MM-DD`. */
 export function utcDayOf(d: Date): string {
   return d.toISOString().slice(0, 10);
@@ -169,32 +164,6 @@ interface Fila {
   profit: unknown;
   swap: unknown;
   comision?: unknown;
-}
-
-/**
- * Cuáles de estos logins existen en el CRM como cuenta live.
- *
- * Se pregunta sólo por los que aparecieron en MT5 (~1.100 en una corrida
- * normal) y no se baja la lista entera de 23.275: traer 24 páginas de Supabase
- * para descartar mil logins es pagar el viaje al revés.
- */
-async function loginsEnCrm(
-  admin: SupabaseClient,
-  companyId: string,
-  logins: number[],
-): Promise<Set<number>> {
-  const dentro = new Set<number>();
-  for (const part of chunk(logins, 300)) {
-    const { data, error } = await admin
-      .from('crm_trading_accounts')
-      .select('login')
-      .eq('company_id', companyId)
-      .eq('is_live', true)
-      .in('login', part);
-    if (error) throw new Error(`crm_trading_accounts: ${error.message}`);
-    for (const r of data ?? []) dentro.add(Number(r.login));
-  }
-  return dentro;
 }
 
 export async function syncMt5Pnl(
@@ -236,7 +205,7 @@ export async function syncMt5Pnl(
   const todos = new Set<number>();
   for (const f of abiertas) todos.add(num(f.login));
   for (const f of cerradas) todos.add(num(f.login));
-  const enCrm = await loginsEnCrm(admin, companyId, [...todos]);
+  const enCrm = await liveCrmLogins(admin, companyId, [...todos]);
 
   const vacio = (categoria: PnlCategory, moneda: string): PnlCategoryTotals => ({
     category: categoria,

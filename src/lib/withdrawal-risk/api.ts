@@ -32,7 +32,11 @@ export interface CalibrationInfo {
 }
 
 export interface QueueResponse {
+  /** Solicitados y sin tocar: los que esperan una primera decisión. */
   items: QueueItem[];
+  /** Instantáneos: ya cobrados, van siempre aparte. */
+  instant: QueueItem[];
+  /** Cambiaron de estado (cerrados, o abiertos pero ya tocados). */
   resolved: ResolvedItem[];
   totalPending: number;
   counts: Record<RiskBand, number>;
