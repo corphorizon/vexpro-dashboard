@@ -67,9 +67,15 @@ import {
   saveWorkspaceSnapshot,
   type WorkspaceSnapshot,
 } from '@/lib/workspace-cache';
+import { apiFetch } from '@/lib/api-fetch';
 import { LoadingScreen, LoadingError } from '@/components/loading-screen';
 import * as Sentry from '@sentry/nextjs';
-import { LOAD_TIMEOUT_MS, LOAD_WATCHDOG_MS, LOAD_MAX_RETRIES } from '@/lib/config';
+import {
+  LOAD_TIMEOUT_MS,
+  LOAD_WATCHDOG_MS,
+  LOAD_MAX_RETRIES,
+  LOAD_BOOTSTRAP_TIMEOUT_MS,
+} from '@/lib/config';
 import { computeDistributionChain, type PeriodDistInput } from '@/lib/distribution';
 import { buildDistributionInputs } from '@/lib/distribution-inputs';
 
@@ -235,11 +241,24 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // closures viejas guardando datos desactualizados. Stage 1 y Stage 2
   // resuelven en paralelo y cada uno mergea su tanda; refreshSections /
   // refreshCommissions mergean solo las tablas que recargaron.
+  //
+  // El snapshot se guarda por USUARIO + empresa (workspace-cache.ts). Antes la
+  // clave era sólo la empresa y la separación entre personas la daba el
+  // borrado en cada SIGNED_OUT — lo que obligaba a tirar el caché también en
+  // el auto-logout por inactividad de 2h y condenaba a un arranque frío a
+  // quien deja la pestaña abierta durante la jornada. Con el dueño en la clave
+  // (y verificado al hidratar) el snapshot puede sobrevivir a esa salida sin
+  // que el siguiente usuario de la máquina vea nada.
+  //
+  // `auth_user_id` (auth.users.id) y no `id`: identifica a la PERSONA, no a su
+  // fila en company_users/platform_users, que cambia según el camino de login.
+  const snapshotUserId = authUser?.auth_user_id ?? null;
   const snapshotRef = useRef<WorkspaceSnapshot>({});
   const commitSnapshot = useCallback((companyId: string, partial: WorkspaceSnapshot) => {
     snapshotRef.current = { ...snapshotRef.current, ...partial };
-    saveWorkspaceSnapshot(companyId, snapshotRef.current);
-  }, []);
+    if (!snapshotUserId) return; // sin sesión resuelta no hay dueño al que atribuirlo
+    saveWorkspaceSnapshot({ userId: snapshotUserId, companyId }, snapshotRef.current);
+  }, [snapshotUserId]);
 
   // ─── Fetch all data ───
 
@@ -341,7 +360,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // nuevos que el caché) en pantalla — hidratar ahí sería un retroceso.
     if (!silent && effectiveCompanyId) {
       try {
-        const cached = loadWorkspaceSnapshot(effectiveCompanyId);
+        const cached = snapshotUserId
+          ? loadWorkspaceSnapshot({ userId: snapshotUserId, companyId: effectiveCompanyId })
+          : null;
         // Guard de generación: si otro load arrancó mientras parseábamos,
         // este ya no tiene derecho a tocar el state visible.
         if (cached && !isStale()) {
@@ -395,7 +416,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     // ── Stage 1: critical data (with timeout) ──
     // These are the tables needed for the UI to render immediately.
-    const fetchCritical = async () => {
+    const fetchCritical = async (signal: AbortSignal) => {
       // Superadmin on /superadmin (no company chosen yet) → skip data load.
       // The DataProvider still renders, but `company` is null so downstream
       // pages that need company data should guard accordingly.
@@ -414,12 +435,13 @@ export function DataProvider({ children }: { children: ReactNode }) {
       // conocido) — una sola tanda paralela en vez de company → resto en
       // serie (P1b, auditoría de performance 2026-08: ahorra un round-trip
       // completo a la DB en cada bootstrap).
+      const opts = { signal };
       const [comp, pds, emps, cProfiles, mResults] = await Promise.all([
-        fetchCompanyById(effectiveCompanyId),
-        fetchPeriods(effectiveCompanyId),
-        fetchEmployees(effectiveCompanyId),
-        fetchCommercialProfiles(effectiveCompanyId),
-        fetchCommercialMonthlyResults(effectiveCompanyId),
+        fetchCompanyById(effectiveCompanyId, opts),
+        fetchPeriods(effectiveCompanyId, opts),
+        fetchEmployees(effectiveCompanyId, opts),
+        fetchCommercialProfiles(effectiveCompanyId, opts),
+        fetchCommercialMonthlyResults(effectiveCompanyId, undefined, opts),
       ]);
       if (!comp) throw new Error('No se encontró la empresa');
       if (isStale()) return null;
@@ -511,6 +533,112 @@ export function DataProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    // ── Camino PRIMARIO: GET /api/bootstrap ──────────────────────────────
+    //
+    // Los 20 slices en UNA respuesta. El boot por PostgREST son 40 round-trips
+    // (19 preflight OPTIONS de CORS + 20 GET) y el lock de auth de supabase-js
+    // los serializa (medido 2,3×: 1.092 ms con lock vs 480 ms sin). Desde
+    // LatAm/Dubái, con RTT de 250-350 ms, eso es lo que producía el
+    // "La carga tardó demasiado" con el servidor sano.
+    //
+    // ── Por qué el camino viejo sigue existiendo ──────────────────────────
+    // Esta ruta es un punto único de falla nuevo: un deploy a medias, un 500,
+    // un timeout de la función o un usuario sin ningún módulo (403) dejarían
+    // el dashboard inaccesible, y el camino de 20 consultas ya está probado en
+    // producción. Así que si la ruta falla POR LO QUE SEA se cae al camino de
+    // siempre en vez de mostrar un error. El fallback no es transitorio: es la
+    // red de seguridad de una ruta que centraliza todo el arranque.
+    const fetchBootstrap = async (companyId: string, signal: AbortSignal): Promise<boolean> => {
+      const res = await apiFetch('/api/bootstrap', { signal });
+      if (!res.ok) throw new Error(`bootstrap HTTP ${res.status}`);
+      const payload = (await res.json()) as {
+        success?: boolean;
+        companyId?: string;
+        partial?: string[];
+        gated?: string[];
+        data?: Record<string, unknown>;
+      };
+      if (!payload?.success || !payload.data) throw new Error('bootstrap: respuesta inválida');
+      // Guarda multi-tenant: la ruta resuelve la empresa desde el token (o el
+      // ?company_id= del superadmin). Si lo que volvió no es la empresa que
+      // este load está cargando, NO se pinta: sería una fuga cross-tenant en
+      // pantalla. Se cae al fallback, que resuelve la empresa por su cuenta.
+      if (payload.companyId && payload.companyId !== companyId) {
+        throw new Error('bootstrap: la respuesta es de otra empresa');
+      }
+      if (isStale()) return true;
+
+      const d = payload.data;
+      const comp = (d.company ?? null) as Company | null;
+      if (!comp) throw new Error('No se encontró la empresa');
+
+      // Un slice que la ruta no pudo leer viaja como `null` (≠ `[]`) y su
+      // nombre viene en `partial`. NO se pisa el state con `[]`: eso
+      // convertiría "no lo sabemos" en "no hay filas" — el fallo que no da
+      // error de §1.2. Se deja lo que haya (caché o carga previa) y se avisa.
+      const partial = payload.partial ?? [];
+      if (partial.length > 0) {
+        console.warn('[data-context] /api/bootstrap devolvió slices incompletos:', partial);
+        Sentry.addBreadcrumb({
+          category: 'data-context.load',
+          message: 'bootstrap:partial',
+          data: { generation, partial: partial.join(',') },
+        });
+      }
+      if ((payload.gated ?? []).length > 0) {
+        // No es un fallo: son los slices que este usuario no tiene permitido
+        // ver (RRHH). Se registra para que un vacío por permisos nunca se
+        // investigue como un vacío por datos.
+        Sentry.addBreadcrumb({
+          category: 'data-context.load',
+          message: 'bootstrap:gated',
+          data: { generation, gated: (payload.gated ?? []).join(',') },
+        });
+      }
+
+      const snap: WorkspaceSnapshot = { company: comp };
+      setCompany(comp);
+
+      // Cada slice se aplica SOLO si vino (no-null). El snapshot se arma con
+      // lo mismo que se pintó, así el commitSnapshot no guarda un slice que
+      // esta respuesta no trajo.
+      const aplicar = <T,>(
+        key: keyof WorkspaceSnapshot,
+        raw: unknown,
+        set: (rows: T[]) => void,
+      ) => {
+        if (raw === null || raw === undefined) return;
+        const rows = raw as T[];
+        set(rows);
+        (snap as Record<string, unknown>)[key as string] = rows;
+      };
+
+      aplicar<Period>('periods', d.periods, setPeriods);
+      aplicar<Employee>('employees', d.employees, setEmployees);
+      aplicar<CommercialProfile>('commercialProfiles', d.commercialProfiles, setCommercialProfiles);
+      aplicar<CommercialMonthlyResult>('monthlyResults', d.monthlyResults, setMonthlyResults);
+      aplicar<Deposit>('deposits', d.deposits, setDeposits);
+      aplicar<Withdrawal>('withdrawals', d.withdrawals, setWithdrawals);
+      aplicar<Expense>('expenses', d.expenses, setExpenses);
+      aplicar<ExpenseTemplate>('expenseTemplates', d.expenseTemplates, setExpenseTemplates);
+      aplicar<ExpenseTemplateHidden>('expenseTemplateHidden', d.expenseTemplateHidden, setExpenseTemplateHidden);
+      aplicar<PreoperativeExpense>('preoperativeExpenses', d.preoperativeExpenses, setPreoperativeExpenses);
+      aplicar<OperatingIncome>('operatingIncome', d.operatingIncome, setOperatingIncome);
+      aplicar<BrokerBalance>('brokerBalance', d.brokerBalance, setBrokerBalance);
+      aplicar<FinancialStatus>('financialStatus', d.financialStatus, setFinancialStatus);
+      aplicar<Partner>('partners', d.partners, setPartners);
+      aplicar<PartnerDistribution>('partnerDistributions', d.partnerDistributions, setPartnerDistributions);
+      aplicar<PropFirmSale>('propFirmSales', d.propFirmSales, setPropFirmSales);
+      aplicar<P2PTransfer>('p2pTransfers', d.p2pTransfers, setP2PTransfers);
+      aplicar<LiquidityMovement>('liquidityMovements', d.liquidityMovements, setLiquidityMovements);
+      aplicar<Investment>('investments', d.investments, setInvestments);
+
+      // Mismo commitSnapshot de siempre: mergea sobre el acumulador
+      // tenant-scoped y persiste con la clave usuario+empresa.
+      commitSnapshot(companyId, snap);
+      return true;
+    };
+
     // Retry loop with timeout — only for critical stage.
     //
     // Stale handling (Kevin reported 2026-06-06): the previous version
@@ -531,40 +659,80 @@ export function DataProvider({ children }: { children: ReactNode }) {
     let lastError: unknown = null;
     let staleEarly = false;
 
-    // P1c: Stage 2 arranca EN PARALELO con Stage 1 — solo necesita el
-    // company id, que ya conocemos. Antes esperaba a que Stage 1 (con sus
-    // retries) terminara, encadenando ~15 queries detrás del primer batch.
-    // Sigue siendo no bloqueante para el splash: tiene su propio catch y
-    // el guard isStale() descarta resultados de generaciones viejas.
+    /**
+     * Corre `run` con un AbortController propio y un techo de tiempo.
+     *
+     * ── Lo que esto arregla (2026-08-28) ──────────────────────────────────
+     * El timeout anterior era un `Promise.race` contra un `setTimeout` y NO
+     * abortaba nada: la promesa perdedora seguía viva, el fetch seguía
+     * abierto y el reintento salía sobre la MISMA conexión muerta. Con
+     * 2 intentos de 15s el usuario esperaba 31,5s para ver el error.
+     * Ahora al vencer se aborta de verdad y cada intento estrena señal.
+     */
+    const conAborto = async <R,>(
+      timeoutMs: number,
+      mensaje: string,
+      run: (signal: AbortSignal) => Promise<R>,
+    ): Promise<R> => {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        return await run(controller.signal);
+      } catch (err) {
+        if (controller.signal.aborted) throw new Error(mensaje);
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    };
+
+    const MENSAJE_TIMEOUT = 'La carga tardó demasiado. Verifica tu conexión e intenta de nuevo.';
+
+    // ── PRIMARIO: una sola request. Si sale bien, no se toca PostgREST. ──
+    let bootstrapOk = false;
     if (effectiveCompanyId) {
-      void fetchRest(effectiveCompanyId);
+      try {
+        bootstrapOk = await conAborto(LOAD_BOOTSTRAP_TIMEOUT_MS, MENSAJE_TIMEOUT, (signal) =>
+          fetchBootstrap(effectiveCompanyId, signal),
+        );
+      } catch (err) {
+        // Cualquier fallo cae al camino de siempre (ver el comentario de
+        // fetchBootstrap). Es warning, no error: hay plan B.
+        console.warn('[data-context] /api/bootstrap falló, se usa el camino de 20 consultas:', err);
+        Sentry.addBreadcrumb({
+          category: 'data-context.load',
+          message: 'bootstrap:fallback',
+          data: { generation, reason: err instanceof Error ? err.message : 'desconocido' },
+        });
+      }
     }
 
     try {
-      for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-        if (isStale()) { staleEarly = true; break; }
+      if (!bootstrapOk) {
+        // ── FALLBACK: el camino histórico de 20 consultas ──
+        // P1c: Stage 2 arranca EN PARALELO con Stage 1 — solo necesita el
+        // company id, que ya conocemos. Sigue siendo no bloqueante para el
+        // splash: tiene su propio catch y el guard isStale() descarta
+        // resultados de generaciones viejas.
+        if (effectiveCompanyId) {
+          void fetchRest(effectiveCompanyId);
+        }
 
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-          timeoutId = setTimeout(
-            () => reject(new Error('La carga tardó demasiado. Verifica tu conexión e intenta de nuevo.')),
-            LOAD_TIMEOUT_MS
-          );
-        });
-
-        try {
-          await Promise.race([fetchCritical(), timeoutPromise]);
-          lastError = null;
-          break;
-        } catch (err) {
-          lastError = err;
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
           if (isStale()) { staleEarly = true; break; }
-          console.warn(`Data load attempt ${attempt}/${MAX_RETRIES} failed:`, err);
-          if (attempt < MAX_RETRIES) {
-            await new Promise((r) => setTimeout(r, 1500));
+
+          try {
+            await conAborto(LOAD_TIMEOUT_MS, MENSAJE_TIMEOUT, (signal) => fetchCritical(signal));
+            lastError = null;
+            break;
+          } catch (err) {
+            lastError = err;
+            if (isStale()) { staleEarly = true; break; }
+            console.warn(`Data load attempt ${attempt}/${MAX_RETRIES} failed:`, err);
+            if (attempt < MAX_RETRIES) {
+              await new Promise((r) => setTimeout(r, 1500));
+            }
           }
-        } finally {
-          if (timeoutId) clearTimeout(timeoutId);
         }
       }
     } finally {
@@ -606,9 +774,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       return false;
     }
 
-    // Stage 2 (fetchRest) ya se disparó arriba, en paralelo con Stage 1.
+    // Con /api/bootstrap ya vinieron los 20 slices; en el camino de fallback
+    // Stage 2 (fetchRest) se disparó arriba en paralelo con Stage 1.
     return true;
-  }, [effectiveCompanyId, commitSnapshot]);
+  }, [effectiveCompanyId, commitSnapshot, snapshotUserId]);
 
   useEffect(() => {
     // Initial load — ignore the boolean return (success/failure already

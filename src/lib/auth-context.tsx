@@ -7,6 +7,7 @@ import { withActiveCompany } from '@/lib/api-fetch';
 import { getActiveCompanyId, subscribeActiveCompanyId } from '@/lib/active-company';
 import { MODULE_KEYS, canAccessModule } from '@/lib/modules';
 import { isBuiltInRole } from '@/lib/roles';
+import { INACTIVITY_TIMEOUT_MS } from '@/lib/config';
 import type { User as SupabaseUser } from '@supabase/supabase-js';
 
 export type UserRole =
@@ -95,6 +96,24 @@ interface AuthState {
 // La lista vive en src/lib/modules.ts — era la cuarta copia de lo mismo y se
 // había desincronizado (le faltaba `ib_rebates`).
 const ALL_MODULES = MODULE_KEYS;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SALIDA EXPLÍCITA vs. SALIDA AUTOMÁTICA
+//
+// El listener de SIGNED_OUT cubre TODAS las salidas y no puede distinguirlas
+// solo: logout() explícito, auto-logout por inactividad, expiración de sesión
+// y signOut desde otra pestaña llegan por el mismo evento. Hasta el
+// 2026-08-28 borraba el caché SWR del workspace en todas ellas, y por eso el
+// auto-logout de 2h condenaba a un arranque FRÍO (40 round-trips) a cualquiera
+// que dejara la pestaña abierta durante la jornada.
+//
+// Este flag lo marca únicamente `logout()` — la persona apretando "Cerrar
+// sesión". Es lo único que autoriza a tirar el snapshot financiero local.
+// El resto de las salidas lo conservan: el snapshot ya está aislado por
+// usuario (clave + verificación de propiedad en workspace-cache.ts), así que
+// conservarlo NO expone datos al siguiente usuario de la máquina.
+// ─────────────────────────────────────────────────────────────────────────────
+let salidaExplicita = false;
 
 const AuthContext = createContext<AuthState | null>(null);
 
@@ -277,12 +296,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         fetch('/api/auth/2fa-seal', { method: 'DELETE' }).catch(() => {
           /* non-fatal: el sello vence solo y el login lo re-emite */
         });
-        // Fase 4b: limpiar el caché SWR también cuando el sign-out llega
-        // por este listener (auto-logout por inactividad, expiración de
-        // sesión, signOut desde otra pestaña) y no por logout() explícito.
-        import('./workspace-cache')
-          .then(({ clearWorkspaceCache }) => clearWorkspaceCache())
-          .catch(() => { /* non-fatal */ });
+        // Fase 4b: el caché SWR sólo se tira en la salida EXPLÍCITA (ver el
+        // comentario de `salidaExplicita` arriba). En el auto-logout por
+        // inactividad se CONSERVA a propósito: quien vuelve tras 2h es la
+        // misma persona y su snapshot le ahorra el arranque frío.
+        if (salidaExplicita) {
+          salidaExplicita = false;
+          import('./workspace-cache')
+            .then(({ clearWorkspaceCache }) => clearWorkspaceCache())
+            .catch(() => { /* non-fatal */ });
+        }
       }
       if (event === 'SIGNED_IN' && session?.user) {
         const profile = await fetchUserProfile(session.user);
@@ -412,6 +435,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    // Marca la salida como EXPLÍCITA antes del signOut: el listener de
+    // SIGNED_OUT dispara de forma asíncrona y necesita saberlo.
+    salidaExplicita = true;
     const prev = userRef.current;
     if (prev) {
       logAction(prev.id, prev.name, 'logout', 'auth', `Cierre de sesión: ${prev.email}`);
@@ -757,8 +783,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   // ─── Inactivity auto-logout ───────────────────────────────────
-  // Change INACTIVITY_MS to adjust (2 min for testing, 2h for prod).
-  const INACTIVITY_MS = 2 * 60 * 60 * 1000; // 2 hours
+  // La ventana vive en src/lib/config.ts (INACTIVITY_TIMEOUT_MS). Acá había
+  // una SEGUNDA copia con el mismo valor que nadie sincronizaba con la de
+  // config.ts —que no la leía nadie—: el modo de falla número uno del repo
+  // (docs/reglas-del-proyecto.md §1.1). Ajustar la ventana ahora se hace en
+  // config.ts y punto.
+  const INACTIVITY_MS = INACTIVITY_TIMEOUT_MS;
   const WARNING_MS = 60 * 1000; // Show warning 60s before logout
 
   const [showInactivityWarning, setShowInactivityWarning] = useState(false);
@@ -785,6 +815,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (prev) {
         logAction(prev.id, prev.name, 'logout', 'auth', `Cierre por inactividad: ${prev.email}`);
       }
+      // Salida AUTOMÁTICA: no se marca `salidaExplicita`, así que el listener
+      // de SIGNED_OUT conserva el snapshot del workspace.
       supabase.auth.signOut();
       setUser(null);
       setShowInactivityWarning(false);
