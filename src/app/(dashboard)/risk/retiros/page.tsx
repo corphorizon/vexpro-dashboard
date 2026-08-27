@@ -155,7 +155,14 @@ export default function RevisionRetirosPage() {
   );
 
   useEffect(() => {
-    if (accessDenied) return;
+    // Sin acceso NO se consulta, pero hay que apagar el spinner igual: si una
+    // carga ya arrancó y este efecto vuelve a correr saliendo por acá, el
+    // `finally` de la petición anterior ya no toca el estado (su `alive` quedó
+    // en false) y la pantalla se queda en esqueletos para siempre.
+    if (accessDenied) {
+      setLoading(false);
+      return;
+    }
     return fetchQueue(band, appliedQuery, desde, hasta);
   }, [band, appliedQuery, desde, hasta, accessDenied, fetchQueue]);
 
