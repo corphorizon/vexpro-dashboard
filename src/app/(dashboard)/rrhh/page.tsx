@@ -19,13 +19,23 @@ import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { features } from '@/lib/business-model';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt, ChevronDown, ChevronRight, ClipboardCheck } from 'lucide-react';
+import { Users, Briefcase, Download, UserCircle, Plus, X, Pencil, Trash2, CheckCircle, AlertCircle, Upload, FileText, ExternalLink, Handshake, Search, UserX, UserCheck, UserRound, Receipt, ChevronDown, ChevronRight, ClipboardCheck, AlertTriangle, TrendingUp } from 'lucide-react';
 import { FireModal } from '@/components/fire-modal';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import { IbRebatesTab } from './_components/ib-rebates-tab';
 import { OnboardingTab } from './_components/onboarding-tab';
+import { WarningsTab } from './_components/warnings-tab';
+import { NetDepositTab } from './_components/net-deposit-tab';
 
-type Tab = 'employees' | 'commercial' | 'negotiations' | 'ib_rebates' | 'onboarding';
+// `terminated` vive al lado de `employees` y no adentro: Daniela lo pidió así
+// —«arribita, empleados y al lado despedidos»— y son la misma lista partida en
+// dos, no una lista con un filtro escondido. Nadie se borra nunca: los
+// comerciales despedidos siguen colgando de commercial_monthly_results por FK.
+type Tab = 'employees' | 'terminated' | 'commercial' | 'negotiations' | 'ib_rebates' | 'onboarding' | 'warnings' | 'net_deposit';
+
+const RESTORABLE_TABS: readonly Tab[] = [
+  'employees', 'terminated', 'commercial', 'negotiations', 'ib_rebates', 'onboarding', 'warnings', 'net_deposit',
+] as const;
 
 const STATUS_BADGE_CLASSES: Record<string, string> = {
   active: 'bg-positive/10 text-positive',
@@ -800,7 +810,9 @@ export default function RRHHPage() {
   // activa no existe para el modelo, se cae a Empleados en vez de dejar la
   // pantalla en blanco.
   useEffect(() => {
-    if (!hasCommercialTeam && tab !== 'employees') setTab('employees');
+    // Sin fuerza comercial no hay warnings ni net deposit que mostrar, pero
+    // Despedidos sí: una empresa de servicios también despide gente.
+    if (!hasCommercialTeam && tab !== 'employees' && tab !== 'terminated') setTab('employees');
   }, [hasCommercialTeam, tab]);
   // Restaurar la pestaña activa después de un reload disparado por una acción
   // (ej. despedir, que recarga la página). Flag de un solo uso: se lee y se
@@ -809,8 +821,10 @@ export default function RRHHPage() {
     try {
       const restore = sessionStorage.getItem('rrhh-restore-tab');
       if (restore) {
-        if (restore === 'employees' || restore === 'commercial' || restore === 'negotiations' || restore === 'ib_rebates' || restore === 'onboarding') {
-          setTab(restore);
+        // Registro único: la lista de pestañas válidas vive en RESTORABLE_TABS,
+        // no repetida en un `||` que se olvida de actualizar al agregar una.
+        if ((RESTORABLE_TABS as readonly string[]).includes(restore)) {
+          setTab(restore as Tab);
         }
         sessionStorage.removeItem('rrhh-restore-tab');
       }
@@ -1099,6 +1113,27 @@ export default function RRHHPage() {
     );
   }, [unifiedEmployees, searchQuery]);
 
+  // ─── Empleados vs Despedidos ───
+  //
+  // «Los que dicen despedido no eliminarlos, sino pasarlos a una pestaña
+  // diferente… arribita, empleados y al lado despedidos» (Daniela, 27/08/2026).
+  // No se borra NADA: es la misma lista partida por el estado derivado que ya
+  // existía. Un comercial cuenta como despedido cuando tiene status 'inactive' Y
+  // termination_date — la misma regla que <FiredBadge>; un `inactive` a secas
+  // (licencia, pausa) sigue en Empleados, que es donde su jefe lo busca.
+  const activeEmployeesList = useMemo(
+    () => filteredUnifiedEmployees.filter((e) => e.status !== 'fired'),
+    [filteredUnifiedEmployees],
+  );
+  const terminatedEmployeesList = useMemo(
+    () => filteredUnifiedEmployees.filter((e) => e.status === 'fired'),
+    [filteredUnifiedEmployees],
+  );
+  // Lo que se pinta en la pestaña activa. Es UNA sola tabla para las dos
+  // pestañas: duplicar el JSX era garantizar que dentro de tres meses una de
+  // las dos tuviera una columna que la otra no.
+  const employeesTabList = tab === 'terminated' ? terminatedEmployeesList : activeEmployeesList;
+
   const handleDeleteProfile = async (id: string) => {
     try {
       await deleteCommercialProfile(id);
@@ -1136,7 +1171,9 @@ export default function RRHHPage() {
       t('hr.type'), t('hr.hireDate'), t('hr.terminationDate'),
       t('hr.salary'), t('hr.status'),
     ];
-    const rows = filteredUnifiedEmployees.map(e => [
+    // `employeesTabList` y no la lista completa: en Despedidos el CSV tiene que
+    // traer despedidos, no la plantilla entera.
+    const rows = employeesTabList.map(e => [
       e.name, e.email, e.position, e.department,
       e.source === 'commercial' ? t('hr.typeCommercial') : t('hr.typeAdmin'),
       e.start_date || '',
@@ -1439,7 +1476,7 @@ export default function RRHHPage() {
         icon={Users}
         actions={
           <Button
-            onClick={tab === 'employees' ? handleExportEmployees : handleExportCommercial}
+            onClick={tab === 'employees' || tab === 'terminated' ? handleExportEmployees : handleExportCommercial}
             title={t('common.csv')}
           >
             <Download className="w-4 h-4" />
@@ -1489,6 +1526,19 @@ export default function RRHHPage() {
           <Users className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.employees')}
         </button>
+        <button
+          onClick={() => setTab('terminated')}
+          className={cn(
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
+            tab === 'terminated' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <UserX className="w-4 h-4 inline mr-1 sm:mr-2" />
+          {t('hr.terminatedTab')}
+          {terminatedEmployeesList.length > 0 && (
+            <span className="ml-1.5 text-[11px] text-muted-foreground">({terminatedEmployeesList.length})</span>
+          )}
+        </button>
         {hasCommercialTeam && (
         <>
         <button
@@ -1533,9 +1583,35 @@ export default function RRHHPage() {
           <ClipboardCheck className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.onboardingTab')}
         </button>
+        <button
+          onClick={() => setTab('warnings')}
+          className={cn(
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
+            tab === 'warnings' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <AlertTriangle className="w-4 h-4 inline mr-1 sm:mr-2" />
+          {t('hr.warningsTab')}
+        </button>
+        <button
+          onClick={() => setTab('net_deposit')}
+          className={cn(
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
+            tab === 'net_deposit' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <TrendingUp className="w-4 h-4 inline mr-1 sm:mr-2" />
+          {t('hr.netDepositTab')}
+        </button>
         </>
         )}
       </div>
+
+      {/* ═══════════ WARNINGS TAB ═══════════ */}
+      {tab === 'warnings' && hasCommercialTeam && <WarningsTab profiles={profiles} />}
+
+      {/* ═══════════ NET DEPOSIT ROLLUP TAB ═══════════ */}
+      {tab === 'net_deposit' && hasCommercialTeam && <NetDepositTab />}
 
       {/* ═══════════ IB REBATES TAB ═══════════ */}
       {tab === 'ib_rebates' && hasIbRebatesAccess && hasCommercialTeam && <IbRebatesTab />}
@@ -1543,11 +1619,15 @@ export default function RRHHPage() {
       {/* ═══════════ ONBOARDING CHECKLIST TAB ═══════════ */}
       {tab === 'onboarding' && hasCommercialTeam && <OnboardingTab profiles={profiles} />}
 
-      {/* ═══════════ EMPLOYEES TAB ═══════════ */}
-      {tab === 'employees' && (
+      {/* ═══════════ EMPLOYEES / TERMINATED TAB ═══════════ */}
+      {/* Una sola tabla para las dos pestañas: cambia la lista y el título, no
+          el markup. Ver `employeesTabList` arriba. */}
+      {(tab === 'employees' || tab === 'terminated') && (
         <Card>
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-            <h2 className="text-lg font-semibold">{t('hr.employees')}</h2>
+            <h2 className="text-lg font-semibold">
+              {tab === 'terminated' ? t('hr.terminatedTab') : t('hr.employees')}
+            </h2>
             <div className="flex items-center gap-2">
               <div className="relative flex-1 sm:w-64">
                 <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
@@ -1560,12 +1640,16 @@ export default function RRHHPage() {
                   className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                 />
               </div>
-              <button
-                onClick={() => { setEditingEmp(undefined); setShowEmpForm(true); }}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 whitespace-nowrap"
-              >
-                <Plus className="w-4 h-4" /> {t('hr.addEmployee')}
-              </button>
+              {/* En Despedidos no se da de alta a nadie: si alguien vuelve, se
+                  reincorpora desde su fila (UserCheck), no se crea de nuevo. */}
+              {tab === 'employees' && (
+                <button
+                  onClick={() => { setEditingEmp(undefined); setShowEmpForm(true); }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 whitespace-nowrap"
+                >
+                  <Plus className="w-4 h-4" /> {t('hr.addEmployee')}
+                </button>
+              )}
             </div>
           </div>
           {showEmpForm && company && (
@@ -1604,7 +1688,7 @@ export default function RRHHPage() {
                 </tr>
               </thead>
               <tbody>
-                {filteredUnifiedEmployees.map(emp => {
+                {employeesTabList.map(emp => {
                   const isFired = emp.status === 'fired';
                   return (
                     <tr key={`${emp.source}-${emp.id}`} className={cn('border-b border-border/50 hover:bg-muted/50 transition-colors', isFired && 'opacity-60')}>
@@ -1742,9 +1826,11 @@ export default function RRHHPage() {
               </tbody>
             </table>
           </div>
-          {filteredUnifiedEmployees.length === 0 && (
+          {employeesTabList.length === 0 && (
             <p className="text-center text-muted-foreground py-8">
-              {searchQuery ? t('hr.noSearchResults') : t('hr.noEmployees')}
+              {searchQuery
+                ? t('hr.noSearchResults')
+                : tab === 'terminated' ? t('hr.noTerminated') : t('hr.noEmployees')}
             </p>
           )}
         </Card>
