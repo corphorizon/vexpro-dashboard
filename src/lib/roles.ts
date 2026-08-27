@@ -89,7 +89,7 @@ export const HR_ROLES = ['admin', 'hr'] as const;
 export const PAYMENT_ORDER_READ_ROLES = ['admin', 'auditor', 'hr'] as const;
 
 /**
- * Asistente de IA (/asistente, migración 101).
+ * Asistente de IA (/asistente, migración 102).
  *
  * Son TODOS los roles a propósito, y no es un descuido: el asistente NO
  * ESCRIBE NADA. Sus herramientas sólo leen, y cada una vuelve a preguntar por

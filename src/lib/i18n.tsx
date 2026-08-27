@@ -772,7 +772,7 @@ const translations: Record<Locale, TranslationDict> = {
     'cash.unitsLoadError': 'Business units could not be loaded',
     'cash.deleteUnitConfirm': 'Delete "{name}"? Its locations keep their balance and go back to counting toward the fund.',
     'nav.logs': 'Activity Log',
-    // Asistente IA (migración 101)
+    // Asistente IA (migración 102)
     'nav.assistant': 'AI Assistant',
     'assistant.title': 'AI Assistant',
     'assistant.subtitle': 'Ask about a client, the broker as a whole, HR, finance or trading risk. It only reads what you can already see.',
@@ -3057,7 +3057,7 @@ const translations: Record<Locale, TranslationDict> = {
     'cash.unitsLoadError': 'No se pudieron cargar las unidades de negocio',
     'cash.deleteUnitConfirm': '¿Eliminar "{name}"? Sus ubicaciones conservan el saldo y vuelven a sumar al fondo.',
     'nav.logs': 'Registro de Actividad',
-    // Asistente IA (migración 101)
+    // Asistente IA (migración 102)
     'nav.assistant': 'Asistente IA',
     'assistant.title': 'Asistente IA',
     'assistant.subtitle': 'Preguntá por un cliente, por el bróker entero, por RRHH, finanzas o riesgo de trading. Sólo lee lo que ya podés ver.',

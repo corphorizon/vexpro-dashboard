@@ -5,7 +5,7 @@
 //
 // ── POR QUÉ EL FILTRO LLEVA user_id ADEMÁS DE company_id ──────────────────
 // El chat es privado por diseño: nadie lee la conversación de otro, tampoco el
-// admin de la empresa ni el superadmin. La RLS de la migración 101 ya lo
+// admin de la empresa ni el superadmin. La RLS de la migración 102 ya lo
 // impone para la sesión del navegador, pero acá se consulta con el admin
 // client (service_role), y con service_role la RLS NO aplica. El
 // `.eq('user_id', …)` es entonces lo único que separa mi chat del de mi
