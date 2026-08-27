@@ -25,7 +25,7 @@
 // Se elige **OUT** por tres razones, en orden:
 //   1. Es la transferencia que se HIZO: la pata del que la manda.
 //   2. Es el lado más completo: 1.451 patas OUT contra 1.441 IN.
-//   3. Es lo que el repo ya decía querer (`orion-crm/totals.ts`: "P2P
+//   3. Es lo que el repo ya decía querer (el viejo `orion-crm/totals.ts`, hoy eliminado: "P2P
 //      transfers (withdrawals side)"), escrito antes de que hubiera datos.
 //
 // ── LO QUE HAY QUE EXCLUIR, Y POR QUÉ NO SE PUEDE MIRAR SÓLO wallettransfers ─

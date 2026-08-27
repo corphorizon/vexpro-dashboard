@@ -23,7 +23,6 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchCoinsbuyTransfers } from '@/lib/api-integrations/coinsbuy/transfers';
 import { fetchFairpayDeposits } from '@/lib/api-integrations/fairpay/transactions';
 import { fetchUnipaymentDepositsV2 } from '@/lib/api-integrations/unipayment/transactions';
-import { fetchOrionCrmTotals } from '@/lib/api-integrations/orion-crm/totals';
 import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
 import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
@@ -324,27 +323,24 @@ export async function runExternalApiSync(opts: {
             ];
           }
           try {
-            const [usersRes, pnlRes, propRes, totalsRes] = await Promise.all([
+            const [usersRes, pnlRes, propRes] = await Promise.all([
               fetchOrionCrmUsers(company.id, window.from, window.to),
               fetchOrionCrmBrokerPnl(company.id, window.from, window.to),
               fetchOrionCrmPropTrading(company.id, window.from, window.to),
-              fetchOrionCrmTotals(company.id, window.from, window.to),
             ]);
-            const allConnected =
-              usersRes.connected && pnlRes.connected && propRes.connected && totalsRes.connected;
+            const allConnected = usersRes.connected && pnlRes.connected && propRes.connected;
             return [
               {
                 company_id: company.id,
                 company_name: company.name,
                 provider: 'orion_crm',
                 status: allConnected ? ('ok' as const) : ('error' as const),
-                records: allConnected ? 4 : 0,
+                records: allConnected ? 3 : 0,
                 error: allConnected
                   ? undefined
                   : usersRes.errorMessage ??
                     pnlRes.errorMessage ??
                     propRes.errorMessage ??
-                    totalsRes.errorMessage ??
                     'orion endpoints reachable but returned mock/empty',
               },
             ];

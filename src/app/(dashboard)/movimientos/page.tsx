@@ -11,7 +11,6 @@ import {
 } from '@/components/realtime-movements-banner';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { computeDerivedNetDeposit } from '@/lib/broker-logic';
-import { useOrionCrmTotals } from '@/lib/api-integrations/orion-crm/client';
 import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { InfoTip } from '@/components/ui/info-tip';
@@ -123,7 +122,6 @@ export default function MovimientosPage() {
   // apiValue + manualValue with zero migration work when the API lands.
   // Orion CRM totals (prop firm sales + P2P transfers) — sums with manual
   // values under the coexistence rule: `displayedValue = apiValue + manual`.
-  const brokerCrmTotals = useOrionCrmTotals(apiFrom, apiTo, apiRefreshKey);
 
   const handleExport = () => verify2FA(() => {
     if (!summary) return;
@@ -230,21 +228,15 @@ export default function MovimientosPage() {
   // legacy (sin useDerivedBroker) se sigue mostrando el valor histórico.
   const brokerDisplay = storedBroker;
 
-  // ─── Broker CRM coexistence (Prop Firm sales + P2P) ───
-  // Same coexistence rule as Coinsbuy/FairPay/Unipayment: the manual value
-  // stored in Supabase is added on top of whatever the CRM reports. When the
-  // CRM isn't connected yet, the API side is 0 and only the manual value
-  // shows — the UI stays correct either way.
-  const apiPropFirmSales = brokerCrmTotals.propFirmSales;
-  const manualPropFirmSales = summary.propFirmSales;
-  const propFirmSalesDisplay = apiPropFirmSales + manualPropFirmSales;
+  // ── Prop firm / P2P: solo manual + serie del espejo Mongo ──
+  // Kevin (2026-08-28): «desconectala». La vieja API agregada de Orion
+  // (`/v1/totals`) nunca existió — era un placeholder con mock — y si algún
+  // día respondía habría duplicado contra `crm_monthly_totals` (migración
+  // 100), que hoy es la serie automática real y vive en /finanzas/crm.
+  // Aquí queda únicamente lo cargado a mano, como el resto de Broker.
+  const propFirmSalesDisplay = summary.propFirmSales;
+  const p2pTransferDisplay = summary.p2pTransfer;
 
-  const apiP2PTransfer = brokerCrmTotals.p2pTransfer;
-  const manualP2PTransfer = summary.p2pTransfer;
-  const p2pTransferDisplay = apiP2PTransfer + manualP2PTransfer;
-
-  // Prop-firm net income recomputed with the combined sales value so it
-  // tracks what the user sees on screen, not just the stored manual figure.
   const propFirmNetIncomeDisplay = propFirmSalesDisplay - propFirmWithdrawal;
 
   // ─── Depósitos Broker ───
@@ -506,19 +498,9 @@ export default function MovimientosPage() {
                 <tr className="text-muted-foreground">
                   <td className="px-4 py-1">
                     {t('movements.p2pTransfer')}
-                    {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
-                      <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
-                        api+manual
-                      </span>
-                    )}
                   </td>
                   <td className="px-4 py-1 text-right">
                     {formatCurrency(p2pTransferDisplay)}
-                    {brokerCrmTotals.connected && apiP2PTransfer > 0 && manualP2PTransfer > 0 && (
-                      <span className="block text-[10px] text-muted-foreground">
-                        {formatCurrency(apiP2PTransfer)} API + {formatCurrency(manualP2PTransfer)} manual
-                      </span>
-                    )}
                   </td>
                 </tr>
                 <tr className="font-bold border-t border-border">
@@ -544,23 +526,12 @@ export default function MovimientosPage() {
               <tr className="border-b border-border/50">
                 <td className="py-2.5">
                   {t('movements.propFirmSales')}
-                  {brokerCrmTotals.connected && apiPropFirmSales > 0 && manualPropFirmSales > 0 ? (
-                    <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
-                      api+manual
-                    </span>
-                  ) : (
-                    <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                      {brokerCrmTotals.connected ? 'api' : 'manual'}
-                    </span>
-                  )}
+                  <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
+                    manual
+                  </span>
                 </td>
                 <td className="py-2.5 text-right font-medium">
                   {formatCurrency(propFirmSalesDisplay)}
-                  {brokerCrmTotals.connected && apiPropFirmSales > 0 && manualPropFirmSales > 0 && (
-                    <span className="block text-[10px] text-muted-foreground">
-                      {formatCurrency(apiPropFirmSales)} API + {formatCurrency(manualPropFirmSales)} manual
-                    </span>
-                  )}
                 </td>
               </tr>
               <tr className="border-b border-border/50">

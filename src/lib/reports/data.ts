@@ -9,7 +9,6 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getOperatingWalletIds } from '@/lib/pinned-wallets';
-import { fetchOrionCrmTotals } from '@/lib/api-integrations/orion-crm/totals';
 import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
 import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
@@ -105,12 +104,6 @@ export interface ReportData {
     pnl_range: number;
     pnl_month: number;
     pnl_prev_month: number;
-    connected: boolean;
-    isMock: boolean;
-  };
-  orion_totals: {
-    propFirmSales: number;
-    p2pTransfer: number;
     connected: boolean;
     isMock: boolean;
   };
@@ -406,7 +399,6 @@ export async function buildReportData(
     crmUsers,
     crmBrokerPnl,
     crmPropTrading,
-    crmTotals,
     balancesByChannel,
     companyResult,
   ] = await Promise.allSettled([
@@ -460,7 +452,6 @@ export async function buildReportData(
     fetchOrionCrmUsers(companyId, from, to),
     fetchOrionCrmBrokerPnl(companyId, from, to),
     fetchOrionCrmPropTrading(companyId, from, to),
-    fetchOrionCrmTotals(companyId, from, to),
     buildBalancesByChannel(companyId, to),
     buildCompanyResultFor(companyId, from, to),
   ]);
@@ -483,7 +474,6 @@ export async function buildReportData(
   if (crmUsers.status !== 'fulfilled') failures.push('orion_crm_users');
   if (crmBrokerPnl.status !== 'fulfilled') failures.push('orion_crm_broker_pnl');
   if (crmPropTrading.status !== 'fulfilled') failures.push('orion_crm_prop_trading');
-  if (crmTotals.status !== 'fulfilled') failures.push('orion_crm_totals');
   if (balancesByChannel.status !== 'fulfilled') failures.push('balances_by_channel');
   if (companyResult.status !== 'fulfilled') failures.push('company_result');
 
@@ -610,14 +600,6 @@ export async function buildReportData(
     isMock: false,
     errorMessage: null,
   });
-  const orionTotalsResult = unwrap(crmTotals, {
-    propFirmSales: 0,
-    p2pTransfer: 0,
-    connected: false,
-    isMock: false,
-    lastSync: null,
-    errorMessage: null,
-  });
   const balancesByChannelResult = unwrap(balancesByChannel, {
     channels: [],
     total: 0,
@@ -627,8 +609,7 @@ export async function buildReportData(
   const anyMock =
     crmUsersResult.isMock ||
     brokerPnlResult.isMock ||
-    propTradingResult.isMock ||
-    orionTotalsResult.isMock;
+    propTradingResult.isMock;
 
   return {
     range: { from, to },
@@ -680,12 +661,6 @@ export async function buildReportData(
       pnl_prev_month: propTradingResult.pnl_prev_month,
       connected: propTradingResult.connected,
       isMock: propTradingResult.isMock,
-    },
-    orion_totals: {
-      propFirmSales: orionTotalsResult.propFirmSales,
-      p2pTransfer: orionTotalsResult.p2pTransfer,
-      connected: orionTotalsResult.connected,
-      isMock: orionTotalsResult.isMock,
     },
     balances_by_channel: balancesByChannelResult,
     company_result: unwrap<CompanyResultReport | null>(companyResult, null),
