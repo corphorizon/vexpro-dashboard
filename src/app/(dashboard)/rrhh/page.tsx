@@ -26,15 +26,20 @@ import { IbRebatesTab } from './_components/ib-rebates-tab';
 import { OnboardingTab } from './_components/onboarding-tab';
 import { WarningsTab } from './_components/warnings-tab';
 import { NetDepositTab } from './_components/net-deposit-tab';
+import { IbNegotiationsTab } from './_components/ib-negotiations-tab';
 
 // `terminated` vive al lado de `employees` y no adentro: Daniela lo pidió así
 // —«arribita, empleados y al lado despedidos»— y son la misma lista partida en
 // dos, no una lista con un filtro escondido. Nadie se borra nunca: los
 // comerciales despedidos siguen colgando de commercial_monthly_results por FK.
-type Tab = 'employees' | 'terminated' | 'commercial' | 'negotiations' | 'ib_rebates' | 'onboarding' | 'warnings' | 'net_deposit';
+// `ib_negotiations` es OTRA COSA que `negotiations`: aquella es de perfiles
+// comerciales (FK a commercial_profiles) y ésta de IBs del CRM, que son
+// clientes que refieren y casi nunca tienen perfil comercial (114 de 1.793
+// sponsors distintos). Kevin las pidió «por aparte» el 2026-08-27.
+type Tab = 'employees' | 'terminated' | 'commercial' | 'negotiations' | 'ib_negotiations' | 'ib_rebates' | 'onboarding' | 'warnings' | 'net_deposit';
 
 const RESTORABLE_TABS: readonly Tab[] = [
-  'employees', 'terminated', 'commercial', 'negotiations', 'ib_rebates', 'onboarding', 'warnings', 'net_deposit',
+  'employees', 'terminated', 'commercial', 'negotiations', 'ib_negotiations', 'ib_rebates', 'onboarding', 'warnings', 'net_deposit',
 ] as const;
 
 const STATUS_BADGE_CLASSES: Record<string, string> = {
@@ -1561,6 +1566,16 @@ export default function RRHHPage() {
           <Handshake className="w-4 h-4 inline mr-1 sm:mr-2" />
           {t('hr.negotiations')}
         </button>
+        <button
+          onClick={() => setTab('ib_negotiations')}
+          className={cn(
+            'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
+            tab === 'ib_negotiations' ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground'
+          )}
+        >
+          <Handshake className="w-4 h-4 inline mr-1 sm:mr-2" />
+          {t('hr.ibNegotiationsTab')}
+        </button>
         {hasIbRebatesAccess && (
           <button
             onClick={() => setTab('ib_rebates')}
@@ -1609,6 +1624,14 @@ export default function RRHHPage() {
 
       {/* ═══════════ WARNINGS TAB ═══════════ */}
       {tab === 'warnings' && hasCommercialTeam && <WarningsTab profiles={profiles} />}
+
+      {/* ═══════════ NEGOCIACIONES IB TAB ═══════════ */}
+      {/* Va con `hasCommercialTeam` como sus vecinas porque el botón también
+          vive dentro de ese bloque: sin la guarda, un tab restaurado desde el
+          localStorage pintaría contenido sin su pestaña. Que un IB no sea parte
+          de la estructura comercial es cierto, pero el día que haga falta
+          abrirla a empresas sin fuerza comercial hay que mover LAS DOS cosas. */}
+      {tab === 'ib_negotiations' && hasCommercialTeam && <IbNegotiationsTab />}
 
       {/* ═══════════ NET DEPOSIT ROLLUP TAB ═══════════ */}
       {tab === 'net_deposit' && hasCommercialTeam && <NetDepositTab />}
