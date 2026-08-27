@@ -41,6 +41,7 @@ import {
 } from '@/lib/roles';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
+import { loadAccountsOverview } from '@/lib/risk/account-review-read';
 import { serverAuditLog } from '@/lib/server-audit';
 import { loadWithdrawalDetail } from '@/lib/withdrawal-risk/query';
 import { bandsFor, calibrationFromParam, scoreWithdrawal } from '@/lib/withdrawal-risk/score';
@@ -68,9 +69,26 @@ export async function GET(
       return NextResponse.json({ success: false, error: 'Retiro no encontrado' }, { status: 404 });
     }
 
+    // Diagnóstico operativo de las cuentas del cliente. Va en su propia clave
+    // y NO toca el score: es una señal aparte, no una corrección del modelo
+    // calibrado. Si falla, la ficha se sirve igual sin ella — el score y la
+    // decisión no dependen de esto.
+    let accounts = null;
+    try {
+      accounts = await loadAccountsOverview(
+        admin,
+        auth.companyId,
+        detail.withdrawal.user_external_id ?? null,
+        detail.withdrawal.requested_at ?? null,
+      );
+    } catch (err) {
+      console.error('[withdrawal-review/[id]] diagnostico de cuentas:', err);
+    }
+
     return NextResponse.json({
       success: true,
       detail,
+      accounts,
       calibration: {
         id: cal.id,
         window: cal.window,
