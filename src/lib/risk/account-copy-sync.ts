@@ -44,9 +44,27 @@ import {
   type AccountRisk,
 } from '@/lib/risk/account-review';
 
-/** Ventana de análisis. La misma que usa prop firm: acota el costo y la copia
- *  es un comportamiento del presente, no del historial completo. */
-export const DIAS = 120;
+/**
+ * Ventana de análisis.
+ *
+ * ── POR QUÉ 30 Y NO 120 COMO PROP FIRM ─────────────────────────────────────
+ * Porque acá el universo es otro. Prop firm empareja 42.914 aperturas de 1.115
+ * cuentas en 120 días; estas cuentas incluyen bots con 25.000 posiciones cada
+ * uno. Estimado el 2026-08-27 sobre las 237 candidatas ya diagnosticadas:
+ *
+ *     120 días → ~1.083.000 aperturas
+ *      60 días →   ~669.000
+ *      45 días →   ~460.000
+ *      30 días →   ~250.000
+ *
+ * Con 120 días la primera corrida topó el techo y se saltó el veredicto —
+ * correcto, pero significa que la señal nunca se resolvía. Treinta días bajan
+ * el volumen a algo que una función serverless puede mover por el túnel, y
+ * siguen siendo de sobra: se piden 5 coincidencias para considerar un par, y
+ * quien copia opera todas las semanas. La copia es un comportamiento del
+ * presente, no del historial.
+ */
+export const DIAS = 30;
 
 /** Mínimo de operaciones en la ventana para entrar al emparejamiento. */
 export const MIN_OPERACIONES = 10;
@@ -59,8 +77,14 @@ export const MIN_OPERACIONES = 10;
  * mayor. Si se llega al techo se AVISA y no se escribe ningún veredicto de
  * copia: media muestra produciría pares falsos por omisión —una cuenta cuyas
  * operaciones no se trajeron parece «no copia»— y eso es peor que no responder.
+ *
+ * El número sale de la estimación de DIAS: 30 días sobre las 237 candidatas
+ * medidas dan ~250.000, y extrapolado a las ~624 cuentas del universo completo
+ * queda cerca de 390.000. Se deja 600.000 para que el techo sea una red de
+ * seguridad ante un crecimiento raro y no algo que se dispare en la operación
+ * normal — que es exactamente lo que pasó con el valor anterior.
  */
-export const MAX_APERTURAS = 400_000;
+export const MAX_APERTURAS = 600_000;
 
 export interface CopySyncResult {
   candidates: number;
