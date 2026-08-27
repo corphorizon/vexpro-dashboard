@@ -23,11 +23,15 @@
 // muestra al lado del score y no lo modifica. Cuando haya decisiones
 // acumuladas se podrá medir si predice; recién entonces se discute integrarla.
 //
-// ── LOS UMBRALES SON UN PUNTO DE PARTIDA, NO UNA MEDICIÓN ──────────────────
-// RIESGO_ALTO = 4 y RIESGO_MEDIO = 2 salen del pedido («si incumple muchas, que
-// sea riesgo alto»), NO de haber medido contra retiros resueltos. Se declaran
-// acá arriba, en un solo lugar, para poder moverlos el día que haya datos.
-// Cualquiera que lea un «ALTA» tiene que saber que es una heurística.
+// ── NO TODAS LAS SEÑALES CUENTAN PARA EL RIESGO ────────────────────────────
+// Y eso se decidió MIDIENDO, no suponiendo. La primera versión contaba las
+// siete por igual con umbral 4, y el resultado fue que el 72% de las cuentas
+// que operan quedaba en «alto»: cinco de las siete señales se disparan en el
+// 73-94% de las cuentas, porque describen a un trader retail normal, no a una
+// anomalía. Ver SENALES_DE_RIESGO, que trae las frecuencias medidas.
+//
+// Las cinco comunes se siguen mostrando —son el diagnóstico operativo que se
+// pidió— pero el riesgo sale sólo de las que discriminan.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { analyzeReport } from '@/lib/risk/rules';
@@ -53,9 +57,48 @@ const LOTS_DIVISOR = 10_000;
  */
 export const MAX_POSICIONES = 25_000;
 
-/** Señales en `fail` que hacen falta para cada nivel. Heurística — ver cabecera. */
-export const RIESGO_ALTO = 4;
-export const RIESGO_MEDIO = 2;
+/**
+ * QUÉ SEÑALES CUENTAN PARA EL RIESGO — y por qué no todas.
+ *
+ * Medido el 2026-08-27 sobre las primeras 200 cuentas (120 con operaciones):
+ *
+ *   Operaciones de menos de 5 min      94%   ← describe, no alarma
+ *   Grid / cobertura                   84%   ←
+ *   Concentración >30% del beneficio   83%   ←
+ *   Consistencia de lotes              73%   ←
+ *   Martingala                         73%   ←
+ *   Ventana de noticias                23%   ← discrimina
+ *   Densidad sub-minuto (robot)        10%   ← discrimina
+ *
+ * Cinco de las siete se disparan en 73-94% de las cuentas. Eso no es una señal:
+ * es la descripción de cómo opera un trader retail cualquiera. Las reglas
+ * nacieron para prop firm, donde son cláusulas de un contrato que el trader se
+ * CUIDA de no romper; un cliente con su propia plata no tiene ese contrato.
+ *
+ * Con las siete contando por igual, el 72% de las cuentas que operan quedaba en
+ * «alto» — inservible para priorizar, que es justo para lo que existe.
+ *
+ * Así que las cinco comunes se siguen MOSTRANDO (son el diagnóstico operativo
+ * que se pidió: cómo opera cada cuenta) pero NO cuentan para el riesgo. El
+ * riesgo sale de las raras, que son las que separan una cuenta de las demás.
+ *
+ * Es el mismo criterio con el que el score de retiros descartó KYC y «dirección
+ * compartida»: una señal que le pasa a casi todos no distingue a nadie.
+ */
+export const SENALES_DE_RIESGO = new Set(['hft', 'news_window', 'copy_trading']);
+
+/**
+ * Señales de riesgo en `fail` que hacen falta para cada nivel.
+ *
+ * Con tres señales contando (y dos de ellas a menudo sin comprobar), los
+ * umbrales viejos —4 y 2— eran inalcanzables. Ahora: una llama la atención,
+ * dos ya es un patrón.
+ *
+ * Siguen siendo una heurística: cuando haya decisiones acumuladas se podrá
+ * medir si predicen, y recién ahí discutir integrarlas al score.
+ */
+export const RIESGO_ALTO = 2;
+export const RIESGO_MEDIO = 1;
 
 export type SignalStatus = 'pass' | 'fail' | 'unverifiable';
 export type AccountRisk = 'ok' | 'medio' | 'alto';
@@ -70,6 +113,11 @@ export interface AccountSignal {
   offendingTrades: number;
   /** Sólo en `unverifiable`: por qué no se pudo. */
   whyNot?: string;
+  /**
+   * `true` = cuenta para el riesgo. `false` = describe cómo opera la cuenta,
+   * pero no alarma. Ver SENALES_DE_RIESGO y sus mediciones.
+   */
+  countsForRisk: boolean;
 }
 
 export interface AccountFacts {
@@ -325,6 +373,7 @@ export function evaluateAccount(
         ? `${n} de ${trades.length} operaciones (${r.violationPct.toFixed(1)}%)`
         : `${trades.length} operaciones, ninguna dispara la señal`,
       offendingTrades: n,
+      countsForRisk: SENALES_DE_RIESGO.has(r.ruleName),
     });
   }
 
@@ -339,6 +388,7 @@ export function evaluateAccount(
     detail: `${facts.under1min} de ${trades.length} (${pct.toFixed(1)}%) duran menos de un minuto`
       + (pct > 50 ? ' — señal de sistema automático, mirar a mano' : ''),
     offendingTrades: facts.under1min,
+    countsForRisk: true,
   });
 
   // ── Ventana de noticias de alto impacto ─────────────────────────────────
@@ -372,6 +422,7 @@ export function evaluateAccount(
         ? `${infractoras} operación(es): ${ejemplos.join(' · ')}`
         : `Ninguna cerca de las ${opts.noticias.length} noticias del período`,
       offendingTrades: infractoras,
+      countsForRisk: true,
     });
   } else {
     signals.push({
@@ -380,6 +431,7 @@ export function evaluateAccount(
       status: 'unverifiable',
       detail: 'No se comprobó',
       offendingTrades: 0,
+      countsForRisk: true,
       whyNot: 'No se cargó el calendario económico del período.',
     });
   }
@@ -399,6 +451,7 @@ export function evaluateAccount(
           .join(' · ')
         : 'Ninguna cuenta opera sincronizada con ésta',
       offendingTrades: fuertes.reduce((a, p) => a + p.coincidencias, 0),
+      countsForRisk: true,
     });
   } else {
     signals.push({
@@ -407,11 +460,13 @@ export function evaluateAccount(
       status: 'unverifiable',
       detail: 'No se comprobó',
       offendingTrades: 0,
+      countsForRisk: true,
       whyNot: 'La detección de copia necesita las aperturas de todas las cuentas del período.',
     });
   }
 
-  const flagged = signals.filter((s) => s.status === 'fail').length;
+  // Sólo las que discriminan. Ver SENALES_DE_RIESGO.
+  const flagged = signals.filter((s) => s.status === 'fail' && s.countsForRisk).length;
   const unverifiable = signals.filter((s) => s.status === 'unverifiable').length;
   const risk: AccountRisk =
     flagged >= RIESGO_ALTO ? 'alto' : flagged >= RIESGO_MEDIO ? 'medio' : 'ok';

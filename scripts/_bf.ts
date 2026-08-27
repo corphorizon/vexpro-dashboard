@@ -10,9 +10,9 @@ async function main(){
   const admin = createAdminClient();
 
   // 1. Equity de TODAS las cuentas del servidor, en una consulta
-  const equities = await withMt5Connection(CO, async (s:any) => {
+  const equities = await withMt5Connection(CO, async (s) => {
     const r = await s.query('SELECT Login, Equity FROM mt5_accounts');
-    return new Map<number, number>(r.map((x:any)=>[Number(x.Login), Number(x.Equity)]));
+    return new Map<number, number>(r.map((x)=>[Number(x.Login), Number(x.Equity)]));
   });
   console.log(`equity leído de MT5: ${equities.size} cuentas`);
 

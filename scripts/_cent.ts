@@ -7,7 +7,7 @@ async function main(){
   const { withOrionMongo } = await import('../src/lib/api-integrations/orion-mongo/client');
 
   // Transferencias del CRM hacia cuentas Cent, en USD
-  const transfers = await withOrionMongo(CO, async ({ db }:any) =>
+  const transfers = await withOrionMongo(CO, async ({ db }) =>
     db.collection('wallettransfers').find(
       { walletTransferType:'OUT', concept:{ $in:['TRANSFER_FUNDS','WALLET_TRANSFER'] } },
       { projection:{ userId:1, netAmount:1, accountId:1, concept:1, createdAt:1 } }).limit(4000).toArray());
@@ -19,7 +19,7 @@ async function main(){
   }
   console.log(`transferencias del CRM leídas: ${transfers.length}, sobre ${porCuenta.size} cuentas`);
 
-  await withMt5Connection(CO, async (s:any) => {
+  await withMt5Connection(CO, async (s) => {
     const logins = [...porCuenta.keys()].map(Number).filter(Number.isFinite).slice(0,400);
     if (!logins.length) { console.log('sin cuentas cruzables'); return null; }
     const ph = logins.map(()=>'?').join(',');
@@ -41,7 +41,7 @@ async function main(){
         console.log(`  USD  login=${String(x.Login).padEnd(7)} MT5=${String(mt5).padStart(12)}  CRM=${String(crm.toFixed(2)).padStart(10)} USD  ratio=${ratio.toFixed(1)}`); }
     }
     // el veredicto agregado
-    let ratiosC:number[]=[], ratiosU:number[]=[];
+    const ratiosC:number[]=[], ratiosU:number[]=[];
     for (const x of r) {
       const crm = porCuenta.get(String(x.Login)) ?? 0; const mt5 = Number(x.entrado)||0;
       if (crm<=0||mt5<=0) continue;
