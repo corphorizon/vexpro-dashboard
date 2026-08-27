@@ -72,6 +72,7 @@ interface AccountRow {
   email: unknown;
   grp: unknown;
   Balance: unknown;
+  Equity: unknown;
   Registration: unknown;
 }
 
@@ -144,8 +145,15 @@ export async function syncTradingActivity(
     for (const part of chunk(wanted, EMAIL_BATCH)) {
       const ph = part.map(() => '?').join(',');
       const r = await session.query<AccountRow>(
-        `SELECT Login, LOWER(TRIM(Email)) AS email, \`Group\` AS grp, Balance, Registration
-           FROM mt5_users WHERE LOWER(TRIM(Email)) IN (${ph})`,
+        // El equity vive en `mt5_accounts` y el resto en `mt5_users`: hay que
+        // unirlas. Y va en LEFT JOIN porque una cuenta recién creada puede no
+        // tener fila allá todavía — con INNER desaparecería del espejo sin
+        // que nada avisara.
+        `SELECT u.Login, LOWER(TRIM(u.Email)) AS email, u.\`Group\` AS grp,
+                u.Balance, u.Registration, a.Equity
+           FROM mt5_users u
+           LEFT JOIN mt5_accounts a ON a.Login = u.Login
+          WHERE LOWER(TRIM(u.Email)) IN (${ph})`,
         part,
       );
       accounts.push(...r);
@@ -203,6 +211,9 @@ export async function syncTradingActivity(
       first_deal_at: agg ? mt5DateToIso(agg.primera) : null,
       last_deal_at: agg ? mt5DateToIso(agg.ultima) : null,
       account_balance: num(a.Balance),
+      // Saldo y equity son cosas distintas y difieren en el 19% de las
+      // cuentas. Ver el comentario de la columna en la migración.
+      equity: num(a.Equity),
       registration_at: mt5DateToIso(a.Registration),
       synced_at: new Date().toISOString(),
     };

@@ -90,6 +90,7 @@ interface ActivityRow {
   profit: number | null;
   first_deal_at: string | null;
   last_deal_at: string | null;
+  equity: number | null;
   account_balance: number | null;
   registration_at: string | null;
   synced_at: string;
@@ -121,7 +122,7 @@ export async function GET(request: NextRequest) {
     let q = admin
       .from('mt5_account_activity')
       .select(
-        'login, email, group_name, is_demo, deals_count, profit, first_deal_at, last_deal_at, account_balance, registration_at, synced_at',
+        'login, email, group_name, is_demo, deals_count, profit, first_deal_at, last_deal_at, account_balance, equity, registration_at, synced_at',
       )
       .eq('company_id', auth.companyId);
 
@@ -193,7 +194,16 @@ export async function GET(request: NextRequest) {
             login: r.login,
             group: r.group_name,
             family,
+            // ── SALDO Y EQUITY NO SON LO MISMO ─────────────────────────
+            // `balance` es el dinero cerrado. `equity` suma el flotante de las
+            // posiciones abiertas. Difieren en el 19% de las cuentas del
+            // servidor, así que ordenar por uno cuando se quería el otro
+            // ordena mal justo a quien tiene posiciones abiertas.
+            //
+            // Y NINGUNO de los dos es el saldo de la billetera del CRM: ese es
+            // dinero que todavía no entró a ninguna cuenta.
             balance: money(r.account_balance ?? 0, family),
+            equity: money(r.equity ?? 0, family),
             profit: money(r.profit ?? 0, family),
             tradeCount: r.deals_count ?? 0,
             firstTradeAt: r.first_deal_at,
@@ -255,7 +265,7 @@ export async function GET(request: NextRequest) {
 const TRADING_SOURCE = {
   system: 'mt5' as const,
   /** Acá MT5 manda sobre Orion. Son conteos y fechas: comparables siempre. */
-  authoritativeFor: ['accounts', 'tradeCount', 'firstTradeAt', 'lastTradeAt'],
+  authoritativeFor: ['accounts', 'tradeCount', 'firstTradeAt', 'lastTradeAt', 'balance', 'equity'],
   /** Acá NO. Sigue mandando Orion; MT5 no los ve o no son comparables. */
   notAuthoritativeFor: [
     'totalDeposits',
