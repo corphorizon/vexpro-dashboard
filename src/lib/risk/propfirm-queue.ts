@@ -24,7 +24,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
 import { loadCycleFromMt5, evaluateWithdrawal, type PropfirmWithdrawal } from '@/lib/risk/propfirm-auto';
 import { loadHighImpact } from '@/lib/risk/economic-calendar';
-import { loadAperturas, findSynchronizedPairs } from '@/lib/risk/copy-detection';
+import { loadAperturas, findSynchronizedPairs, loadSharedIpFacts, type SharedIpFacts } from '@/lib/risk/copy-detection';
 
 /** Ventana del espejo. Los retiros viejos no cambian y no hace falta releerlos. */
 const DIAS = 180;
@@ -120,6 +120,53 @@ export async function syncPropfirmQueue(
   const aperturas = await loadAperturas(companyId, new Date(Date.now() - 120 * 86_400_000));
   const paresTodos = findSynchronizedPairs(aperturas);
 
+  // ── La IP, como DATO ────────────────────────────────────────────────────
+  // Se resuelve para todos los pendientes de una vez, en UNA conexión al MySQL
+  // del broker. No entra en el veredicto: viaja en `review_facts`, que es lo
+  // que mira una persona. Ver la cabecera de copy-detection.ts para por qué no
+  // puede ser una regla (hay una IP con 164 cuentas).
+  //
+  // Y va en try/catch: quedarse sin el dato de la IP no puede impedir que se
+  // revise el reglamento, que es lo que decide.
+  const loginsPendientes = pendientes.map((p) => num(p.loginAccount) ?? 0).filter((l) => l > 0);
+  let ipPorLogin = new Map<number, SharedIpFacts>();
+  try {
+    ipPorLogin = await loadSharedIpFacts(companyId, loginsPendientes);
+  } catch (err) {
+    warnings.push(`No se pudo leer la IP de las cuentas: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  // ── ¿Hay informe oficial del CRM para esa cuenta? ───────────────────────
+  // `propfirm_audit_reports` guarda el HTML que genera Orion, pero SÓLO cuando
+  // una cuenta se descalifica por pérdida (medido el 2026-08-27: 18 informes,
+  // todos con motivo DAILY_LOSS u OVERALL_LOSS, ninguno de los 3 logins con
+  // retiro pendiente). Por eso el informe que el revisor abre lo generamos
+  // nosotros desde MT5 y éste se ofrece ADEMÁS, cuando existe.
+  //
+  // Se guarda sólo la fecha: el HTML pesa ~220 KB por informe y no tiene por
+  // qué vivir en Postgres cuando la ruta puede traerlo de Orion al abrirlo.
+  const informeOrion = new Map<number, string>();
+  try {
+    await withOrionMongo(companyId, async ({ db }) => {
+      const docs = await db
+        .collection('propfirm_audit_reports')
+        // `login` está guardado como TEXTO en Orion, no como número.
+        .find(
+          { login: { $in: loginsPendientes.map((l) => String(l)) } },
+          { projection: { login: 1, createdAt: 1 } },
+        )
+        .sort({ createdAt: -1 })
+        .toArray();
+      for (const d of docs) {
+        const l = Number(d.login);
+        if (!informeOrion.has(l)) informeOrion.set(l, fecha(d.createdAt) ?? '');
+      }
+      return null;
+    });
+  } catch (err) {
+    warnings.push(`No se pudo consultar los informes del CRM: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
   let reviewed = 0;
   let failed = 0;
   for (const p of pendientes) {
@@ -156,7 +203,14 @@ export async function syncPropfirmQueue(
           review_violations: r.violations,
           review_unverifiable: r.unverifiable,
           review_checks: r.checks,
-          review_facts: r.facts,
+          // Los datos de la IP y la existencia del informe del CRM se suman a
+          // `facts` acá y no dentro de `evaluateWithdrawal`: ese motor decide
+          // el veredicto y estos dos no lo tocan.
+          review_facts: {
+            ...r.facts,
+            ...(ipPorLogin.get(w.login) ?? { ip: null, sharedIpTotal: 0, sharedIpAccounts: [], sharedIpMassive: false }),
+            orionReportAt: informeOrion.get(w.login) ?? null,
+          },
           review_cycle: r.cycle,
           review_error: null,
         })

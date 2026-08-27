@@ -225,3 +225,117 @@ export function findSynchronizedPairs(
 
   return salida.sort((x, y) => y.cobertura - x.cobertura || y.coincidencias - x.coincidencias);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LA IP, COMO DATO Y NUNCA COMO REGLA
+//
+// La cabecera de este archivo explica por qué la IP no puede ser una regla
+// automática: medido el 2026-08-27 sobre las cuentas reales de Vex Pro hay una
+// IP con 164 cuentas, otra con 134 y otra con 115. Eso es una VPN o el CGNAT
+// de una operadora, no 164 personas copiándose.
+//
+// Pero el revisor lo pidió explícitamente (Kevin, 2026-08-27: «da el dato de
+// la ip, si ves que coinciden ips, da ese dato y di con cuántas cuentas y
+// cuáles»), y como DATO sí sirve: dos cuentas de nombres distintos en una IP
+// que sólo comparten ellas dos es algo que mirar. Por eso esto devuelve
+// SIEMPRE el tamaño del grupo junto a la lista: sin el tamaño, «comparte IP
+// con otras cuentas» miente por omisión.
+//
+// El veredicto del retiro NO lo toca: se guarda en `review_facts`, que son los
+// datos para que los lea una persona, no en `review_checks`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A partir de cuántas cuentas el grupo deja de decir nada.
+ *
+ * Diez es holgado a propósito: una familia, un cibercafé o una oficina chica
+ * caben debajo; una VPN de 164 no. Por encima de este número la pantalla dice
+ * que es probable VPN u operadora en vez de listar las cuentas — listarlas
+ * daría un muro de logins que se lee como una acusación.
+ */
+export const UMBRAL_IP_MASIVA = 10;
+
+/** Cuántas cuentas del grupo se guardan cuando el grupo es chico. */
+const MAX_CUENTAS_LISTADAS = 25;
+
+export interface SharedIpFacts {
+  /** `mt5_users.LastIP` del login revisado. */
+  ip: string | null;
+  /** OTRAS cuentas reales (no demo) con esa misma IP. */
+  sharedIpTotal: number;
+  /** Las primeras, con nombre para poder reconocer al titular. */
+  sharedIpAccounts: Array<{ login: number; name: string }>;
+  /** `sharedIpTotal > UMBRAL_IP_MASIVA`: el grupo no distingue nada. */
+  sharedIpMassive: boolean;
+}
+
+/**
+ * Las demo no cuentan: comparten IP con cualquiera y no hay dinero detrás.
+ *
+ * `ESCAPE '~'` por costumbre de este archivo: acá el patrón no lleva barra
+ * invertida, pero el día que alguien lo cambie por un grupo que sí la lleve el
+ * escape ya está puesto y no vuelve a fallar en silencio. Ver el comentario de
+ * GRUPO_PROPFIRM.
+ */
+/** Placeholders explícitos: la expansión de arrays de mysql2 no vale para el
+ *  camino de Postgres del mismo cliente, y acá no cuesta nada escribirlos. */
+const sqlIpDeLogins = (n: number) =>
+  `SELECT Login, LastIP FROM mt5_users WHERE Login IN (${Array.from({ length: n }, () => '?').join(',')})`;
+const SQL_IP_TOTAL = [
+  'SELECT COUNT(*) AS n FROM mt5_users',
+  " WHERE LastIP = ? AND Login <> ? AND `Group` NOT LIKE 'demo%' ESCAPE '~'",
+].join('\n');
+const SQL_IP_CUENTAS = [
+  'SELECT Login, Name FROM mt5_users',
+  " WHERE LastIP = ? AND Login <> ? AND `Group` NOT LIKE 'demo%' ESCAPE '~'",
+  ' ORDER BY Login',
+  ` LIMIT ${MAX_CUENTAS_LISTADAS}`,
+].join('\n');
+
+/**
+ * IP de cada login y las otras cuentas reales que la comparten.
+ *
+ * Se resuelve en una sola conexión para los logins que se le pasen: en el
+ * cron son los pendientes (hoy tres), y abrir una conexión al MySQL del broker
+ * por retiro sería tres veces el mismo saludo.
+ */
+export async function loadSharedIpFacts(
+  companyId: string,
+  logins: number[],
+): Promise<Map<number, SharedIpFacts>> {
+  const salida = new Map<number, SharedIpFacts>();
+  const unicos = [...new Set(logins.filter((l) => Number.isFinite(l) && l > 0))];
+  if (unicos.length === 0) return salida;
+
+  await withMt5Connection(companyId, async (s: Mt5Session) => {
+    const ips = await s.query<Record<string, unknown>>(sqlIpDeLogins(unicos.length), unicos);
+    for (const fila of ips) {
+      const login = Number(fila.Login);
+      const ip = String(fila.LastIP ?? '').trim();
+      if (!ip) {
+        // Sin IP no se inventa una: la cuenta puede no haberse conectado nunca
+        // desde que el servidor guarda el campo.
+        salida.set(login, { ip: null, sharedIpTotal: 0, sharedIpAccounts: [], sharedIpMassive: false });
+        continue;
+      }
+      const total = Number((await s.query<{ n: unknown }>(SQL_IP_TOTAL, [ip, login]))[0]?.n ?? 0);
+      // Cuando el grupo es masivo ni se traen las cuentas: no se van a mostrar
+      // y son 164 filas que nadie va a leer.
+      const cuentas = total > 0 && total <= UMBRAL_IP_MASIVA
+        ? (await s.query<Record<string, unknown>>(SQL_IP_CUENTAS, [ip, login])).map((r) => ({
+            login: Number(r.Login),
+            name: String(r.Name ?? '—'),
+          }))
+        : [];
+      salida.set(login, {
+        ip,
+        sharedIpTotal: total,
+        sharedIpAccounts: cuentas,
+        sharedIpMassive: total > UMBRAL_IP_MASIVA,
+      });
+    }
+    return null;
+  });
+
+  return salida;
+}

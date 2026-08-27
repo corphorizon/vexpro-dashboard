@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
+import { useData } from '@/lib/data-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { cn, formatCurrency, formatPercentValue } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
@@ -84,6 +85,9 @@ const PAGE_SIZE = 50;
 export default function RetirosPropFirmPage() {
   const { t } = useI18n();
   const { user } = useAuth();
+  // La empresa da nombre y logo al PDF en inglés que se le manda al cliente
+  // (mismo camino que /balances con generateChannelBalancesPDF).
+  const { company } = useData();
   const hasRiskAccess = useModuleAccess('risk');
   const router = useRouter();
 
@@ -982,6 +986,7 @@ export default function RetirosPropFirmPage() {
           pending={cola.pending}
           resolved={cola.resolved}
           disclaimer={cola.disclaimer}
+          company={{ name: company?.name ?? 'Dashboard', logoUrl: company?.logo_url ?? null }}
         />
       )}
 
