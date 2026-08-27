@@ -72,8 +72,10 @@ describe('lo que NO se comprobó nunca se da por limpio', () => {
     const sinComprobar = r.signals.filter((s) => s.status === 'unverifiable').length;
     expect(sinComprobar).toBeGreaterThan(0);
     expect(r.unverifiable).toBe(sinComprobar);
-    // `flagged` sólo cuenta los `fail`.
-    expect(r.flagged).toBe(r.signals.filter((s) => s.status === 'fail').length);
+    // `flagged` sólo cuenta los `fail` QUE ADEMÁS discriminan.
+    expect(r.flagged).toBe(
+      r.signals.filter((s) => s.status === 'fail' && s.countsForRisk).length,
+    );
   });
 
   it('con calendario y sin coincidencias, la señal SÍ pasa a pass', () => {
@@ -81,6 +83,43 @@ describe('lo que NO se comprobó nunca se da por limpio', () => {
       noticias: [{ at: Date.UTC(2020, 0, 1), name: 'NFP', currency: 'USD' }],
     });
     expect(r.signals.find((s) => s.id === 'news_window')?.status).toBe('pass');
+  });
+});
+
+describe('sólo las señales que discriminan cuentan para el riesgo', () => {
+  // Medido sobre 200 cuentas: scalping, grid, martingala, consistencia y
+  // concentración se disparan en el 73-94% de las cuentas. Describen a un
+  // trader retail normal. Si volvieran a contar, el 72% de las cuentas que
+  // operan quedaría en "alto" — que es como nació esto y por qué se cambió.
+  const COMUNES = ['tiempoMin', 'grid', 'martingala', 'consistencia', 'profitPct'];
+
+  it('las cinco comunes se MUESTRAN pero no cuentan', () => {
+    const trades = Array.from({ length: 10 }, (_, i) => trade(i, { durationMinutes: 1 }));
+    const r = evaluateAccount(1, trades);
+    for (const id of COMUNES) {
+      const s = r.signals.find((x) => x.id === id);
+      if (!s) continue;
+      expect(s.countsForRisk).toBe(false);
+    }
+  });
+
+  it('las que discriminan sí cuentan', () => {
+    const r = evaluateAccount(1, [trade(0)]);
+    for (const id of ['hft', 'news_window', 'copy_trading']) {
+      expect(r.signals.find((x) => x.id === id)?.countsForRisk).toBe(true);
+    }
+  });
+
+  it('una cuenta que dispara TODAS las comunes y ninguna rara NO es riesgo alto', () => {
+    // Es el caso que rompía la herramienta: scalping + grid + martingala es
+    // un trader retail cualquiera, no una alarma.
+    const trades = Array.from({ length: 20 }, (_, i) =>
+      trade(i, { durationMinutes: 2, volume: i % 2 === 0 ? 0.01 : 5, profit: i === 0 ? 900 : 1 }),
+    );
+    const r = evaluateAccount(1, trades);
+    const comunesEnFail = r.signals.filter((s) => !s.countsForRisk && s.status === 'fail').length;
+    expect(comunesEnFail).toBeGreaterThanOrEqual(2);
+    expect(r.risk).not.toBe('alto');
   });
 });
 
