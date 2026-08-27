@@ -25,6 +25,7 @@
 //   · mt5_sql     → JSON.stringify({ engine, host, port, database, user, password })
 //   · orion_mongo → connection string mongodb:// entera (lleva usuario y
 //                   contraseña adentro; extra_config.database es opcional)
+//   · anthropic   → la API key cruda (sk-ant-…), igual que fairpay
 //
 // `extra_config` stays available for non-sensitive knobs (webhook_url,
 // base_url override, sandbox toggle, etc.) and is returned alongside the
@@ -51,7 +52,9 @@ export type TenantProvider =
   // MongoDB del CRM Orion). No son pasarelas: son orígenes de datos de SOLO
   // LECTURA de los que el dashboard leerá en tandas siguientes.
   | 'mt5_sql'
-  | 'orion_mongo';
+  | 'orion_mongo'
+  // Migración 100: la clave de la API de Anthropic que paga ESTE bróker.
+  | 'anthropic';
 
 interface RawCredentialRow {
   encrypted_secret: string;
@@ -413,6 +416,44 @@ export async function resolveOrionMongoCredentials(
   // extra_config manda sobre el path de la URI: es lo que el superadmin ve
   // y edita en el panel.
   return { uri: parsed.value.uri, database: configured ?? parsed.value.uriDatabase };
+}
+
+// ── Anthropic (asistente de IA) ──────────────────────────────────────────
+//
+// Kevin, 2026-08-27: la clave va POR EMPRESA. En un white-label, una sola
+// clave en env significa que el consumo de todos los brókers cae en la misma
+// factura de Anthropic sin poder atribuirse a nadie; el bróker que usa el
+// asistente todo el día y el que no lo abrió nunca terminan indistinguibles.
+//
+// A DIFERENCIA de coinsbuy, acá el fallback a env SÍ se mantiene. El motivo
+// por el que se le quitó a coinsbuy (2026-05-01) fue una fuga cruzada real: el
+// cron iteraba empresas, caía a env y traía los MISMOS datos de Coinsbuy a
+// varios `company_id`. Acá no puede pasar: la clave de Anthropic no identifica
+// a ningún tenant ni trae datos de nadie — sólo paga la llamada. Los datos
+// salen siempre del `company_id` del token, vía las herramientas. El fallback
+// sirve para que un entorno de desarrollo o una empresa recién dada de alta
+// puedan probar el asistente antes de cargar su clave.
+//
+// El secreto es la api_key cruda, sin envoltura JSON (mismo patrón que
+// fairpay / orion_crm).
+
+export interface AnthropicCredentials {
+  apiKey: string;
+  /** 'company' = la cargó el bróker; 'env' = fallback global. Para el reporte de consumo. */
+  source: 'company' | 'env';
+}
+
+export async function resolveAnthropicCredentials(
+  companyId: string | null | undefined,
+): Promise<AnthropicCredentials | null> {
+  if (companyId) {
+    const raw = await readRaw(companyId, 'anthropic');
+    const apiKey = raw?.plaintext.trim();
+    if (apiKey) return { apiKey, source: 'company' };
+  }
+  const fromEnv = process.env.ANTHROPIC_API_KEY?.trim();
+  if (fromEnv) return { apiKey: fromEnv, source: 'env' };
+  return null;
 }
 
 /**

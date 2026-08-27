@@ -45,7 +45,10 @@ import { parseMongoUri } from '@/lib/api-integrations/orion-mongo/validate';
 //               para que el panel muestre a dónde apunta sin descifrar.
 // 'orion_mongo' guarda la connection string ENTERA (lleva usuario y contraseña)
 //               y en extra_config {database, host_hint}.
-const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'fairpay_banking', 'orion_crm', 'paypros', 'mt5_sql', 'orion_mongo'];
+// Migración 100 — 'anthropic' guarda la API key cruda (sk-ant-…), igual que
+// fairpay. Es la clave que paga el asistente de IA de ESE bróker: en un
+// white-label una sola clave global haría el consumo inatribuible.
+const SUPPORTED_PROVIDERS = ['sendgrid', 'coinsbuy', 'unipayment', 'fairpay', 'fairpay_banking', 'orion_crm', 'paypros', 'mt5_sql', 'orion_mongo', 'anthropic'];
 
 /**
  * Origen público del dashboard, para armar la URL del webhook que el

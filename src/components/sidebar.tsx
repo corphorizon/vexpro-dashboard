@@ -46,6 +46,7 @@ import {
   ChevronRight,
   ScrollText,
   Contact,
+  Sparkles,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -146,6 +147,10 @@ const NAV_STRUCTURE: NavEntry[] = [
   // Registro de Actividad — arriba de todo lo que audita, no dentro de un
   // grupo: aplica a los movimientos de TODOS los modulos, no de uno.
   { type: 'link', href: '/logs', i18nKey: 'nav.logs', icon: ScrollText, module: 'logs' },
+  // Asistente IA — transversal como el Registro de Actividad: responde de
+  // finanzas, RRHH y riesgo a la vez, así que meterlo dentro de un grupo
+  // sugeriría un alcance que no tiene.
+  { type: 'link', href: '/asistente', i18nKey: 'nav.assistant', icon: Sparkles, module: 'assistant' },
 ];
 
 // Mapa href → icono, derivado de NAV_STRUCTURE. Lo usa el modo flat (los

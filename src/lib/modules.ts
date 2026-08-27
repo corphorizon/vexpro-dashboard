@@ -52,6 +52,12 @@ const MODULE_DEFS = [
   { key: 'risk',           labelEs: 'Gestión de Riesgo',  labelEn: 'Risk Management' },
   { key: 'users',          labelEs: 'Usuarios',           labelEn: 'Users' },
   { key: 'logs',           labelEs: 'Registro de Actividad', labelEn: 'Activity Log' },
+  // Migración 100 — el asistente de IA. Es de SOLO LECTURA por construcción:
+  // sus herramientas no escriben nada, y cada una vuelve a preguntar por el
+  // módulo que necesita. Por eso alcanza con tener este módulo asignado; lo
+  // que la persona puede LEER por el chat sigue siendo exactamente lo que
+  // podría leer por pantalla.
+  { key: 'assistant',      labelEs: 'Asistente IA',       labelEn: 'AI Assistant' },
 ] as const satisfies readonly ModuleDef[];
 
 /**
