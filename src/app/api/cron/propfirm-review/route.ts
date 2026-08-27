@@ -24,6 +24,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { syncPropfirmQueue } from '@/lib/risk/propfirm-queue';
+import { syncCalendar } from '@/lib/risk/economic-calendar';
 import { apiError } from '@/lib/api-error';
 
 export const dynamic = 'force-dynamic';
@@ -61,6 +62,34 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: true, companies: 0, note: 'ninguna empresa con Orion configurado' });
     }
 
+    // ── Mantener fresco el calendario económico ─────────────────────────
+    // Vive acá y no en un cron propio porque este módulo es su único
+    // consumidor: la regla de noticias se evalúa unas líneas más abajo.
+    //
+    // Los 120 días históricos se cargaron a mano el 2026-08-27; sin esto, el
+    // espejo envejece EN SILENCIO — la regla seguiría en verde porque "no hay
+    // noticias en el período" y "el calendario dejó de actualizarse" se ven
+    // idénticos. La ventana va 7 días atrás (los ActualValue se rellenan
+    // cuando sale el dato) y 7 adelante; el upsert por event_id es idempotente.
+    //
+    // En try/catch: una caída de mql5.com no puede impedir la revisión de los
+    // retiros, que es lo que este cron decide. Pero se reporta, porque un
+    // calendario viejo degrada la regla de noticias sin romper nada.
+    let calendar: Record<string, unknown> | null = null;
+    try {
+      const r = await syncCalendar(
+        admin,
+        new Date(Date.now() - 7 * 86_400_000),
+        new Date(Date.now() + 7 * 86_400_000),
+      );
+      calendar = { ok: true, fetched: r.fetched, high: r.high };
+      for (const w of r.warnings) console.warn(`[cron/propfirm-review] calendario: ${w}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(`[cron/propfirm-review] calendario: ${message}`);
+      calendar = { ok: false, error: message };
+    }
+
     const results: Array<Record<string, unknown>> = [];
     for (const companyId of ids) {
       try {
@@ -75,7 +104,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true, companies: ids.length, results });
+    return NextResponse.json({ success: true, companies: ids.length, calendar, results });
   } catch (err) {
     return apiError('cron/propfirm-review', err, { status: 500 });
   }
