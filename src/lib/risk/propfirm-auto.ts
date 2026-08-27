@@ -294,6 +294,11 @@ export function evaluateWithdrawal(
    * cumplida — no tener el calendario a mano no es evidencia de nada.
    */
   noticias: Array<{ at: number; name: string; currency: string | null }> | null = null,
+  /**
+   * Cuentas que operan sincronizadas con ésta, ya calculadas por el llamador
+   * (`findSynchronizedPairs`). `null` deja la regla como "no comprobada".
+   */
+  sincronizadas: Array<{ otroLogin: number; cobertura: number; coincidencias: number; retrasoMedianoSeg: number }> | null = null,
 ): WithdrawalReview {
   const warnings: string[] = [];
   const trades = cycle.trades;
@@ -424,6 +429,27 @@ export function evaluateWithdrawal(
     });
   }
 
+  // ── Copia entre cuentas ─────────────────────────────────────────────────
+  const copiaSpec = tieneRegla('copy_trading');
+  if (copiaSpec && sincronizadas) {
+    const umbral = (copiaSpec.params?.minCoberturaPct ?? 60) / 100;
+    const fuertes = sincronizadas.filter((p) => p.cobertura >= umbral);
+    checks.push({
+      id: 'copy_trading',
+      label: copiaSpec.label,
+      status: fuertes.length > 0 ? 'fail' : 'pass',
+      detail: fuertes.length > 0
+        // El retraso es lo que hay que leer: un humano no hace clic con medio
+        // segundo de diferencia en dos cuentas separadas.
+        ? `Opera sincronizada con ${fuertes.length} cuenta(s): ` +
+          fuertes.slice(0, 3).map((p) =>
+            `${p.otroLogin} (${Math.round(p.cobertura * 100)}% de coincidencia, retraso ~${p.retrasoMedianoSeg}s)`,
+          ).join(' · ')
+        : 'Ninguna cuenta opera sincronizada con ésta',
+      offendingTrades: fuertes.reduce((a, p) => a + p.coincidencias, 0),
+    });
+  }
+
   // ── Días desde la primera operación ─────────────────────────────────────
   const desdePrimera = tieneRegla('days_since_first_trade');
   if (desdePrimera && trades.length > 0) {
@@ -533,4 +559,49 @@ export function evaluateWithdrawal(
     withdrawal: w, program, trades: trades.length, checks, violations,
     unverifiable, outcome, warnings, facts, cycle: cicloInfo,
   };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La revisión completa de un retiro, de punta a punta.
+//
+// Existe para que quien la use no tenga que acordarse de traer el ciclo, las
+// noticias del período y las cuentas sincronizadas por separado. Olvidarse de
+// uno de los tres no da error: deja esa regla como "no comprobada", que se lee
+// como si el reglamento no la tuviera.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { loadHighImpact } from '@/lib/risk/economic-calendar';
+import { loadAperturas, findSynchronizedPairs } from '@/lib/risk/copy-detection';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+export async function reviewWithdrawal(
+  admin: SupabaseClient,
+  companyId: string,
+  w: PropfirmWithdrawal,
+  accountSize: number | null,
+): Promise<WithdrawalReview> {
+  const cycle = await loadCycleFromMt5(companyId, w.login);
+
+  // El período de la revisión es el CICLO. Sin marca de inicio se mira una
+  // ventana amplia y `evaluateWithdrawal` ya avisa de que revisó todo.
+  const desde = cycle.startedAt ?? new Date(Date.now() - 120 * 86_400_000);
+
+  const [noticias, aperturas] = await Promise.all([
+    loadHighImpact(admin, desde, w.requestedDate),
+    loadAperturas(companyId, desde),
+  ]);
+
+  // Los pares se calculan sobre TODAS las cuentas del período y después se
+  // filtra por la nuestra: la sincronía es una relación entre dos, y buscarla
+  // mirando sólo una cuenta no la encuentra.
+  const sincronizadas = findSynchronizedPairs(aperturas)
+    .filter((p) => p.loginA === w.login || p.loginB === w.login)
+    .map((p) => ({
+      otroLogin: p.loginA === w.login ? p.loginB : p.loginA,
+      cobertura: p.cobertura,
+      coincidencias: p.coincidencias,
+      retrasoMedianoSeg: p.retrasoMedianoSeg,
+    }));
+
+  return evaluateWithdrawal(w, cycle, accountSize, noticias, sincronizadas);
 }

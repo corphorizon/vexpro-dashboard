@@ -101,11 +101,17 @@ const PROHIBIDAS_SIEMPRE: RuleSpec[] = [
     // reglamento, así que se marca para revisión humana en vez de fallar sola.
     params: { maxSubMinutePct: 50 },
   },
+  /**
+   * ── YA SE PUEDE COMPROBAR (2026-08-27) ───────────────────────────────────
+   * Se detecta por SINCRONÍA de operaciones, no por IP. La IP no distingue
+   * copiar de compartir operadora: la más compartida del servidor tiene 164
+   * cuentas reales, que es una VPN, no 164 personas copiándose.
+   */
   {
     id: 'copy_trading',
-    label: 'Copia de operaciones entre usuarios',
-    checkable: false,
-    whyNot: 'Exige correlacionar las operaciones de varias cuentas entre sí. Es posible, pero no está construido.',
+    label: 'Copia de operaciones entre cuentas',
+    checkable: true,
+    params: { minCoberturaPct: 60 },
   },
   {
     id: 'account_delegation',

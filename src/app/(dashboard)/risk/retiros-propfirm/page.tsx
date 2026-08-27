@@ -12,6 +12,7 @@ import { parseTradeReport, type ParseResult } from '@/lib/risk/parser';
 import { analyzeReport } from '@/lib/risk/rules';
 import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode } from '@/lib/risk/types';
 import { computeDurationDistribution } from '@/lib/risk/duration-distribution';
+import { PROGRAM_RULES, rulesForProgram } from '@/lib/risk/programs';
 import { DurationDistributionTable } from '@/components/risk/duration-distribution-table';
 import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import {
@@ -98,6 +99,8 @@ export default function RetirosPropFirmPage() {
 
   // State
   const [config, setConfig] = useState<RuleConfig>(structuredClone(DEFAULT_RULE_CONFIG));
+  // Programa cuyo reglamento se está aplicando. Ver `aplicarPrograma`.
+  const [programa, setPrograma] = useState<string>('');
   const [configOpen, setConfigOpen] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -899,6 +902,39 @@ export default function RetirosPropFirmPage() {
   // ─── Render ───
 
   // Module access guard — render nothing while the effect redirects.
+  // ── EL REGLAMENTO VIENE DEL REGISTRO, NO DE ESTA PANTALLA ────────────────
+  // Estos cinco números eran los de Vex Instant y Elite, fijos, y no se
+  // guardaban en ningún lado: al recargar volvían al valor por defecto. Eso
+  // los convertía en una SEGUNDA definición de las mismas reglas, que ya no
+  // coincidía con la revisión automática.
+  //
+  // Y no coincidir tiene consecuencias concretas: a un X12 le marcaba
+  // infracciones de grid y de martingala, que ese programa PERMITE — o sea,
+  // infracciones que el cliente compró el derecho a no tener. A un Vex2Pro le
+  // exigía 5 minutos por operación cuando su reglamento pide 2.
+  //
+  // Ahora se elige el programa y los parámetros salen de `risk/programs.ts`,
+  // que es el mismo origen que usa la revisión automática. Una sola
+  // definición: si el reglamento cambia, cambia en los dos lados a la vez.
+  function aplicarPrograma(nombre: string) {
+    setPrograma(nombre);
+    if (!nombre) { setConfig(structuredClone(DEFAULT_RULE_CONFIG)); return; }
+    const reglas = rulesForProgram(nombre);
+    if (!reglas) return;
+    const p = (id: string) => reglas.rules.find(r => r.id === id);
+    const dur = p('min_duration'), cons = p('lot_consistency'), conc = p('profit_concentration');
+    const grid = p('grid'), mart = p('martingale');
+    // `enabled: false` cuando el programa NO tiene la regla. No es que la
+    // cumpla: es que no le aplica, y evaluarla inventaría una infracción.
+    setConfig({
+      consistencia: { enabled: !!cons, factorMin: cons?.params?.factorMin ?? 0.25, factorMax: cons?.params?.factorMax ?? 2 },
+      profitPct:    { enabled: !!conc, pct: conc?.params?.maxPct ?? 30 },
+      tiempoMin:    { enabled: !!dur,  minutos: dur?.params?.minutos ?? 5 },
+      grid:         { enabled: !!grid, minGrid: grid?.params?.minSimultaneas ?? 3 },
+      martingala:   { enabled: !!mart, gapMaximo: mart?.params?.gapMaximo ?? 5 },
+    });
+  }
+
   if (accessDenied) return null;
 
   return (
@@ -941,6 +977,26 @@ export default function RetirosPropFirmPage() {
 
         {configOpen && (
           <div className="border-t border-border px-5 py-4">
+            <div className="mb-4 flex flex-wrap items-end gap-3">
+              <label className="text-xs text-muted-foreground">
+                <span className="mb-1 block font-medium">Programa</span>
+                <select
+                  value={programa}
+                  onChange={(e) => aplicarPrograma(e.target.value)}
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
+                >
+                  <option value="">Manual (valores de abajo)</option>
+                  {PROGRAM_RULES.map((p) => (
+                    <option key={p.label} value={p.orionNames[0]}>{p.label}</option>
+                  ))}
+                </select>
+              </label>
+              <p className="flex-1 text-xs text-muted-foreground">
+                {programa
+                  ? 'Los parámetros salen del reglamento del programa, el mismo que usa la revisión automática. Una regla apagada no es que se cumpla: es que ese programa no la tiene.'
+                  : 'Sin programa elegido se usan los valores de abajo, que son los de Vex Instant y Elite. Para otro programa, elegilo arriba: aplicarle estos daría infracciones que no le corresponden.'}
+              </p>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {/* R1: Consistencia */}
               <ConfigCard
