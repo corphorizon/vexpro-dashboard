@@ -1463,3 +1463,221 @@ export async function generateExposurePDF(data: PdfExposureData) {
   pdfFooter(doc);
   doc.save(`Exposicion_PNL_${data.range.from}_${data.range.to}.pdf`);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Prueba de revisión de un retiro de prop firm — EN INGLÉS, para el cliente.
+//
+// ── POR QUÉ ESTE DOCUMENTO ESTÁ EN INGLÉS Y LOS DEMÁS NO ───────────────────
+// Kevin, 2026-08-27: «permite descargar un informe en inglés bien bonito que
+// se le pueda enviar al cliente en pdf (con logos y colores de marca) como
+// prueba de la revisión». No es un informe interno traducido: es el único PDF
+// de la casa cuyo lector es el trader, no el revisor. Por eso no pasa por el
+// diccionario es/en de los otros —no tiene versión en español que mantener— y
+// por eso el disclaimer del pie es parte del contenido y no una nota de
+// pantalla: el archivo viaja solo, sin la pantalla que lo generó.
+//
+// ── «NOT VERIFIABLE» NUNCA SE PINTA COMO CUMPLIDA ──────────────────────────
+// Es la doctrina del módulo entero (ver propfirm-auto.ts): una regla sin
+// comprobar NO está cumplida, está sin mirar. En un documento que se le manda
+// al cliente el riesgo es mayor que en la pantalla —acá quedaría escrito— así
+// que las tres categorías se cuentan por separado en las tarjetas, la columna
+// de resultado dice literalmente «Not verifiable» y el pie lo explica.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export interface PdfPropfirmReviewCheck {
+  label: string;
+  status: 'pass' | 'fail' | 'unverifiable';
+  detail: string;
+  whyNot?: string;
+}
+
+export interface PdfPropfirmReviewData {
+  company: { name: string; logoUrl?: string | null };
+  withdrawal: {
+    client: string;
+    email: string | null;
+    account: number | null;
+    program: string | null;
+    amount: number;
+    requestedAt: string | null;
+    status: string | null;
+  };
+  /** Período revisado. `startedAt` null = no se encontró el inicio del ciclo. */
+  cycle: { startedAt: string | null; startedBy: string; excludedTrades: number } | null;
+  outcome: string | null;
+  checks: PdfPropfirmReviewCheck[];
+  facts: {
+    maxDrawdown: number;
+    maxDrawdownPct: number | null;
+    accountSize: number | null;
+    netResult: number;
+    durations: Array<{ label: string; count: number; profit: number }>;
+  } | null;
+  reviewedAt: string | null;
+}
+
+/** Lo que el REGLAMENTO establece, dicho en inglés y sin prometer una decisión. */
+const PROPFIRM_OUTCOME_EN: Record<string, string> = {
+  ok: 'No rule violations found',
+  denied_new_period: 'Rulebook: payout denied, new trading period granted',
+  denied_no_new_period: 'Rulebook: payout denied, no new trading period',
+  cannot_review: 'Could not be reviewed',
+};
+
+const CHECK_STATUS_EN: Record<PdfPropfirmReviewCheck['status'], string> = {
+  pass: 'Passed',
+  fail: 'Failed',
+  // Nunca «passed with reservations» ni un guion: el cliente tiene que leer
+  // que esa regla no se miró.
+  unverifiable: 'Not verifiable',
+};
+
+export async function generatePropfirmReviewPDF(data: PdfPropfirmReviewData) {
+  const doc = new jsPDF('portrait', 'mm', 'a4');
+  const logoDataUrl = await loadLogoDataUrl(data.company.logoUrl);
+
+  const fecha = (iso: string | null | undefined) =>
+    iso ? new Date(iso).toISOString().slice(0, 16).replace('T', ' ') + ' UTC' : '—';
+
+  let y = pdfHeader(doc, {
+    logoDataUrl,
+    title: 'Withdrawal Review Report',
+    company: data.company.name,
+    right: [
+      `Account ${data.withdrawal.account ?? '—'}`,
+      `Reviewed: ${fecha(data.reviewedAt)}`,
+    ],
+  });
+
+  const pasa = data.checks.filter((c) => c.status === 'pass').length;
+  const falla = data.checks.filter((c) => c.status === 'fail').length;
+  const sinMirar = data.checks.filter((c) => c.status === 'unverifiable').length;
+
+  // Los tres números SIEMPRE juntos, igual que en la pantalla: un solo
+  // semáforo escondería justamente el que importa.
+  y = pdfCards(doc, y, [
+    { label: 'Requested amount', value: money(data.withdrawal.amount), tone: 'primary' },
+    { label: 'Rules passed', value: String(pasa), tone: 'positive' },
+    { label: 'Rules failed', value: String(falla), tone: falla > 0 ? 'negative' : 'ink' },
+    { label: 'Not verifiable', value: String(sinMirar), tone: sinMirar > 0 ? 'accent' : 'ink' },
+  ]);
+
+  // ── Datos del retiro ─────────────────────────────────────────────────────
+  y = pdfSection(doc, 'Withdrawal request', y + 2);
+  autoTable(doc, {
+    startY: y,
+    body: [
+      ['Client', data.withdrawal.client],
+      ['Email', data.withdrawal.email ?? '—'],
+      ['Trading account', String(data.withdrawal.account ?? '—')],
+      ['Program', data.withdrawal.program ?? '—'],
+      ['Amount requested', money(data.withdrawal.amount)],
+      ['Requested on', fecha(data.withdrawal.requestedAt)],
+      ['Status in CRM', data.withdrawal.status ?? '—'],
+      [
+        'Trading period reviewed',
+        data.cycle
+          ? `${data.cycle.startedAt ? data.cycle.startedAt.slice(0, 10) : 'account inception'} — ${data.withdrawal.requestedAt ? data.withdrawal.requestedAt.slice(0, 10) : 'request date'}` +
+            (data.cycle.startedBy === 'retiro_pagado' ? ' (period started at the last paid withdrawal)' : ' (period started at account creation)')
+          : '—',
+      ],
+    ],
+    theme: 'plain',
+    styles: { fontSize: 9.5, cellPadding: 1.8 },
+    columnStyles: { 0: { fontStyle: 'bold', textColor: C.muted, cellWidth: 52 } },
+    margin: { left: 14, right: 14 },
+  });
+
+  // ── Regla por regla ──────────────────────────────────────────────────────
+  y = pdfSection(doc, 'Rule-by-rule result', getLastTableY(doc, y + 40));
+  autoTable(doc, {
+    startY: y,
+    head: [['Rule', 'Result', 'What was measured']],
+    body: data.checks.map((c) => [
+      c.label,
+      CHECK_STATUS_EN[c.status],
+      c.status === 'unverifiable' ? (c.whyNot ?? 'This rule was not checked.') : c.detail,
+    ]),
+    theme: 'striped',
+    styles: { fontSize: 8.8, cellPadding: 2.2, valign: 'top' },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    columnStyles: { 0: { cellWidth: 46, fontStyle: 'bold' }, 1: { cellWidth: 26 }, 2: { cellWidth: 'auto' } },
+    // El color va en la CELDA del resultado, no en la fila entera: pintar la
+    // fila de rojo entero hace ilegible el texto de lo medido.
+    didParseCell: (hook) => {
+      if (hook.section !== 'body' || hook.column.index !== 1) return;
+      const s = data.checks[hook.row.index]?.status;
+      if (s === 'fail') { hook.cell.styles.textColor = C.negative; hook.cell.styles.fontStyle = 'bold'; }
+      else if (s === 'pass') { hook.cell.styles.textColor = C.positive; }
+      else { hook.cell.styles.textColor = C.warning; hook.cell.styles.fontStyle = 'bold'; }
+    },
+    margin: { left: 14, right: 14 },
+  });
+
+  // ── Los datos del ciclo ──────────────────────────────────────────────────
+  if (data.facts) {
+    y = pdfSection(doc, 'Cycle figures', getLastTableY(doc, y + 40));
+    autoTable(doc, {
+      startY: y,
+      body: [
+        [
+          'Maximum drawdown of the cycle',
+          data.facts.maxDrawdownPct !== null
+            ? `${money(data.facts.maxDrawdown)} (${data.facts.maxDrawdownPct}% of ${money(data.facts.accountSize ?? 0)})`
+            : money(data.facts.maxDrawdown),
+        ],
+        ['Net result of the cycle', money(data.facts.netResult)],
+      ],
+      theme: 'plain',
+      styles: { fontSize: 9.5, cellPadding: 1.8 },
+      columnStyles: { 0: { fontStyle: 'bold', textColor: C.muted, cellWidth: 68 } },
+      margin: { left: 14, right: 14 },
+    });
+
+    if (data.facts.durations.length > 0) {
+      y = pdfSection(doc, 'Trade duration distribution', getLastTableY(doc, y + 30));
+      autoTable(doc, {
+        startY: y,
+        head: [['Duration', 'Trades', 'Result']],
+        body: data.facts.durations.map((d) => [d.label, fmt(d.count), money(d.profit)]),
+        theme: 'striped',
+        styles: { fontSize: 9, cellPadding: 2 },
+        headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+        alternateRowStyles: { fillColor: C.surface },
+        columnStyles: { 1: { halign: 'right' }, 2: { halign: 'right' } },
+        margin: { left: 14, right: 14 },
+      });
+    }
+  }
+
+  // ── El veredicto del reglamento y el disclaimer ──────────────────────────
+  let ny = getLastTableY(doc, y + 40, 8);
+  const w = doc.internal.pageSize.getWidth();
+  const alto = doc.internal.pageSize.getHeight();
+  const notas = [
+    `Rulebook outcome: ${data.outcome ? (PROPFIRM_OUTCOME_EN[data.outcome] ?? data.outcome) : 'not available'}.`,
+    'This report states what the program rulebook provides for the number of rule violations found. ' +
+      'It is not an approval or a rejection: payouts are authorised separately.',
+    sinMirar > 0
+      ? `${sinMirar} rule(s) are marked "Not verifiable". They were NOT checked and must not be read as compliant: ` +
+        'the data required to verify them is not available to this review.'
+      : 'Every rule of the program was checked.',
+    'The maximum drawdown above is measured on closed trades (balance). The CRM measures it on equity, ' +
+      'which includes floating positions, so its figure will be equal or higher — and that is the one that disqualifies an account.',
+    'Trades are taken from the trading server for the current trading cycle only: the cycle that started at the ' +
+      'last paid withdrawal, or at account creation when no withdrawal has been paid yet.',
+  ];
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...C.muted);
+  for (const nota of notas) {
+    const lineas = doc.splitTextToSize(nota, w - 28) as string[];
+    if (ny + lineas.length * 3.6 > alto - 16) { doc.addPage(); ny = 20; }
+    doc.text(lineas, 14, ny);
+    ny += lineas.length * 3.6 + 2.6;
+  }
+
+  pdfFooter(doc);
+  doc.save(`Withdrawal_Review_${data.withdrawal.account ?? 'account'}_${(data.withdrawal.requestedAt ?? '').slice(0, 10) || 'report'}.pdf`);
+}
