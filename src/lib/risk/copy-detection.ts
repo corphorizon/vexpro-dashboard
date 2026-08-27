@@ -113,6 +113,58 @@ export interface ParSincronizado {
   simbolos: string[];
 }
 
+/**
+ * Aperturas de un conjunto EXPLÍCITO de cuentas.
+ *
+ * Es la variante que usa la revisión de cuentas normales (BROKER/SOCIAL), donde
+ * el universo no es «un grupo de MT5» sino la lista de logins que ya venimos
+ * analizando.
+ *
+ * Filtrar por `Login IN (...)` en vez de por `Group LIKE` esquiva de raíz la
+ * trampa del escape de la barra invertida, que ya falló dos veces en este repo
+ * — y de paso usa el índice que arranca por `Login`.
+ *
+ * El llamador acota la lista: el costo depende enteramente de cuántas cuentas
+ * y cuánta actividad tengan.
+ */
+export async function loadAperturasByLogins(
+  companyId: string,
+  logins: number[],
+  desde: Date,
+): Promise<Apertura[]> {
+  if (logins.length === 0) return [];
+  const corte = desde.toISOString().slice(0, 19).replace('T', ' ');
+  const ph = logins.map(() => '?').join(',');
+  const sql = [
+    'SELECT Login AS login, Symbol AS simbolo, Action AS direccion, TimeMsc AS cuando',
+    '  FROM mt5_deals',
+    ` WHERE Login IN (${ph})`,
+    '   AND Entry = 0 AND Action IN (0,1)',
+    '   AND TimeMsc >= ?',
+    ' ORDER BY Symbol, Action, TimeMsc',
+  ].join('\n');
+
+  const filas = await withMt5Connection(companyId, async (s: Mt5Session) =>
+    s.query<Record<string, unknown>>(sql, [...logins, corte]),
+  );
+
+  const out: Apertura[] = [];
+  for (const r of filas) {
+    // Parseo UTC explícito, igual que en el resto: acá los emparejamientos usan
+    // DIFERENCIAS (la zona se cancela), pero normalizar evita que alguien
+    // compare estos epochs contra Orion y herede el desfase fantasma.
+    const t = mt5DateUtc(r.cuando);
+    if (!t) continue;
+    out.push({
+      login: Number(r.login),
+      simbolo: String(r.simbolo ?? ''),
+      direccion: Number(r.direccion),
+      cuando: t.getTime(),
+    });
+  }
+  return out;
+}
+
 /** Trae las aperturas de las cuentas de prop firm desde una fecha. */
 export async function loadAperturas(
   companyId: string,
