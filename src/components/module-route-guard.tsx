@@ -34,6 +34,7 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/usuarios(\/|$)/, 'users'],
   [/^\/logs(\/|$)/, 'logs'],
   [/^\/ordenes-pago(\/|$)/, 'payment_orders'],
+  [/^\/asistente(\/|$)/, 'assistant'],
   [/^\/finanzas\/reportes(\/|$)/, 'reports'],
   [/^\/finanzas\/forecast(\/|$)/, 'reports'],
   [/^\/finanzas\/consolidado(\/|$)/, 'reports'],

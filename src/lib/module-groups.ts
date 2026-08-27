@@ -83,6 +83,10 @@ export const MODULE_GROUPS: ModuleGroup[] = [
     homeHref: '/usuarios',
     items: [
       { module: 'users', href: '/usuarios', labelEs: 'Usuarios' },
+      // El asistente cuelga de acá y no de Finanzas/RRHH/Risk a propósito:
+      // responde de los tres dominios a la vez, así que ponerlo dentro de uno
+      // sugeriría un alcance que no tiene.
+      { module: 'assistant', href: '/asistente', labelEs: 'Asistente IA' },
     ],
   },
 ];

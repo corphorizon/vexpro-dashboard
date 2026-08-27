@@ -45,7 +45,8 @@ type Provider =
   | 'orion_crm'
   | 'paypros'
   | 'mt5_sql'
-  | 'orion_mongo';
+  | 'orion_mongo'
+  | 'anthropic';
 
 /** URL de producción de Pay-Pros (prefill del campo Base URL). */
 const PAYPROS_DEFAULT_BASE_URL = 'https://master-api.pay-pros.com/';
@@ -157,6 +158,12 @@ const PROVIDER_META: Record<Provider, ProviderMeta> = {
     form: { kind: 'mt5sql' },
     dbProbePath: '/api/superadmin/mt5-sql-probe',
   },
+  anthropic: {
+    label: 'Anthropic (Asistente IA)',
+    description:
+      'Clave de la API de Anthropic que paga el asistente de /asistente. Va por empresa: con una clave global el consumo de todos los brókers cae en la misma factura y no se puede atribuir. Sin clave cargada, el asistente avisa que no está configurado.',
+    form: { kind: 'apiKey' },
+  },
   orion_mongo: {
     label: 'Orion CRM (MongoDB)',
     description:
@@ -178,6 +185,7 @@ const PROVIDER_ORDER: Provider[] = [
   'orion_crm',
   'mt5_sql',
   'orion_mongo',
+  'anthropic',
 ];
 
 interface Props {
