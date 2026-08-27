@@ -19,6 +19,9 @@ import type {
   ResolvedItem,
 } from '@/lib/withdrawal-risk/query';
 import type { RiskBand } from '@/lib/withdrawal-risk/score';
+// Mismo criterio de `import type`: account-review-read.ts es código de
+// servidor (habla con Supabase y con MT5).
+import type { AccountsOverview } from '@/lib/risk/account-review-read';
 
 export type { QueueItem, WithdrawalDetail, QueueFilters, ResolvedItem, RiskBand };
 
@@ -48,6 +51,12 @@ export interface QueueResponse {
 
 export interface DetailResponse {
   detail: WithdrawalDetail;
+  /**
+   * Diagnóstico operativo de las cuentas del cliente. `null` cuando el cálculo
+   * falló — la ficha se sirve igual, porque el score y la decisión no dependen
+   * de esto. Es una señal APARTE, no una corrección del score.
+   */
+  accounts: AccountsOverview | null;
   calibration: CalibrationInfo;
   disclaimer: string;
 }
