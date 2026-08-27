@@ -28,6 +28,7 @@ import { withMt5Connection, type Mt5Session } from '@/lib/api-integrations/mt5-s
 import { analyzeReport } from '@/lib/risk/rules';
 import type { Trade, RuleConfig } from '@/lib/risk/types';
 import { rulesForProgram, type ProgramRules, type CheckId, type RuleSpec } from '@/lib/risk/programs';
+import { computeDurationDistribution, WITHDRAWAL_REVIEW_BUCKETS } from '@/lib/risk/duration-distribution';
 
 /** `Volume` viene en diezmilésimas de lote. Mismo divisor que la exposición. */
 const LOTS_DIVISOR = 10_000;
@@ -57,6 +58,31 @@ const SQL_POSICIONES = [
   ' GROUP BY PositionID',
   'HAVING apertura IS NOT NULL AND cierre IS NOT NULL',
   ' ORDER BY apertura',
+].join('\n');
+
+/**
+ * Operaciones de SALDO de la cuenta: creación y pagos de retiro.
+ *
+ * ── POR QUÉ IMPORTAN MÁS QUE NINGUNA OTRA COSA ──────────────────────────────
+ * Cuando se aprueba un retiro, la cuenta vuelve al balance inicial y empieza un
+ * ciclo nuevo (Kevin, 2026-08-27). La revisión siguiente SÓLO puede mirar lo
+ * operado desde ese reinicio.
+ *
+ * Sin esto, a un cliente en su tercer retiro se lo juzgaría con las operaciones
+ * de los ciclos uno y dos — que ya se revisaron y ya se le pagaron. Y no daría
+ * ningún error: daría un informe con más operaciones de las que corresponden y
+ * con infracciones que ya estaban saldadas.
+ *
+ * El reinicio está DENTRO de MT5, no hay que inferirlo desde Orion:
+ *   `ACC-CREATED 150130`            → la cuenta se creó
+ *   `Withdrawal trx: 950d4b02964e`  → se pagó un retiro
+ * `Action = 2` son las operaciones de saldo (depósitos, retiros, crédito).
+ */
+const SQL_SALDO = [
+  'SELECT TimeMsc AS cuando, Profit AS importe, Comment AS comentario',
+  '  FROM mt5_deals',
+  ' WHERE Login = ? AND Action = 2',
+  ' ORDER BY TimeMsc',
 ].join('\n');
 
 const num = (v: unknown): number => {
@@ -95,6 +121,30 @@ export interface CheckResult {
   whyNot?: string;
 }
 
+export interface CycleFacts {
+  /**
+   * Caída máxima del ciclo, en dinero: la mayor distancia entre un pico del
+   * saldo acumulado y el valle posterior.
+   *
+   * ── NO ES EL DRAWDOWN DEL CRM, Y LA DIFERENCIA IMPORTA ──────────────────
+   * Esto se calcula con operaciones CERRADAS, o sea sobre el saldo. El CRM
+   * mide sobre el EQUITY, que incluye lo flotante de las posiciones abiertas
+   * — y por eso el suyo siempre será igual o mayor que este.
+   *
+   * El que decide si la cuenta se descalifica es el del CRM. Este es para
+   * mirar, y por eso se informa en vez de compararse contra un límite.
+   */
+  maxDrawdown: number;
+  /** La misma caída como % del capital del programa, si se conoce. */
+  maxDrawdownPct: number | null;
+  /** Capital del programa (Orion `userpropfirms.accountBalance`). */
+  accountSize: number | null;
+  /** Resultado neto del ciclo, con swap y comisiones. */
+  netResult: number;
+  /** Reparto de duraciones con los tramos de la revisión. */
+  durations: Array<{ label: string; count: number; profit: number }>;
+}
+
 export interface WithdrawalReview {
   withdrawal: PropfirmWithdrawal;
   program: ProgramRules | null;
@@ -104,25 +154,61 @@ export interface WithdrawalReview {
   violations: number;
   /** Reglas que no se pudieron comprobar. Ver la cabecera. */
   unverifiable: number;
+  /** Datos del ciclo para que los lea una persona. No son reglas. */
+  facts: CycleFacts;
+  /** Cuándo arrancó el ciclo y qué lo arrancó. */
+  cycle: { startedAt: Date | null; startedBy: string; excludedTrades: number };
   /** Lo que el reglamento dice que pasa con ese número de violaciones. */
   outcome: 'ok' | 'denied_new_period' | 'denied_no_new_period' | 'cannot_review';
   warnings: string[];
 }
 
-/** Trae las operaciones cerradas de una cuenta y las pasa a la forma del motor. */
-export async function loadTradesFromMt5(
+export interface AccountCycle {
+  /** Operaciones del ciclo VIGENTE, no de toda la vida de la cuenta. */
+  trades: Trade[];
+  /** Cuándo arrancó el ciclo: la creación, o el último retiro pagado. */
+  startedAt: Date | null;
+  /** Qué lo arrancó, para poder mostrarlo. */
+  startedBy: 'creacion' | 'retiro_pagado' | 'desconocido';
+  /** Operaciones que quedaron FUERA por ser de ciclos anteriores. */
+  excludedFromPreviousCycles: number;
+}
+
+/**
+ * Trae las operaciones del CICLO VIGENTE y las pasa a la forma del motor.
+ *
+ * Ver `SQL_SALDO`: el ciclo arranca en el último pago de retiro, o en la
+ * creación de la cuenta si todavía no cobró ninguno.
+ */
+export async function loadCycleFromMt5(
   companyId: string,
   login: number,
-): Promise<Trade[]> {
-  const filas = await withMt5Connection(companyId, async (s: Mt5Session) =>
-    s.query<Record<string, unknown>>(SQL_POSICIONES, [login]),
-  );
+): Promise<AccountCycle> {
+  const { filas, saldo } = await withMt5Connection(companyId, async (s: Mt5Session) => ({
+    filas: await s.query<Record<string, unknown>>(SQL_POSICIONES, [login]),
+    saldo: await s.query<Record<string, unknown>>(SQL_SALDO, [login]),
+  }));
+
+  // El último retiro pagado manda; si no hubo, la creación de la cuenta.
+  let startedAt: Date | null = null;
+  let startedBy: AccountCycle['startedBy'] = 'desconocido';
+  for (const m of saldo) {
+    const cuando = fecha(m.cuando);
+    if (!cuando) continue;
+    const comentario = String(m.comentario ?? '');
+    if (/withdraw/i.test(comentario)) { startedAt = cuando; startedBy = 'retiro_pagado'; }
+    else if (/ACC-CREATED/i.test(comentario) && !startedAt) { startedAt = cuando; startedBy = 'creacion'; }
+  }
 
   const trades: Trade[] = [];
-  for (const [i, r] of filas.entries()) {
+  let excluidas = 0;
+  for (const r of filas) {
     const apertura = fecha(r.apertura);
     const cierre = fecha(r.cierre);
     if (!apertura || !cierre) continue;
+    // Del ciclo anterior: ya se revisó y ya se pagó.
+    if (startedAt && apertura < startedAt) { excluidas += 1; continue; }
+    const i = trades.length;
     trades.push({
       // DESDE CERO, no desde uno: `ruleGrid` hace `trades[t.index]`, así que
       // `index` TIENE que ser la posición en el array. Numerar desde 1 no da
@@ -146,7 +232,7 @@ export async function loadTradesFromMt5(
       durationMinutes: (cierre.getTime() - apertura.getTime()) / 60_000,
     });
   }
-  return trades;
+  return { trades, startedAt, startedBy, excludedFromPreviousCycles: excluidas };
 }
 
 /** El reglamento del programa traducido a la config que espera `analyzeReport`. */
@@ -173,6 +259,25 @@ function configFor(program: ProgramRules): RuleConfig {
   };
 }
 
+/**
+ * Caída máxima del saldo acumulado dentro del ciclo.
+ *
+ * Se recorre el resultado acumulado operación a operación —en orden de
+ * CIERRE, que es cuando el saldo se mueve— y se guarda la mayor distancia
+ * entre un pico y el valle que le sigue.
+ */
+function caidaMaxima(trades: Trade[]): number {
+  const porCierre = [...trades].sort((a, b) => a.closeTime.getTime() - b.closeTime.getTime());
+  let acumulado = 0, pico = 0, peor = 0;
+  for (const t of porCierre) {
+    acumulado += t.profit + t.swap + t.commission;
+    if (acumulado > pico) pico = acumulado;
+    const caida = pico - acumulado;
+    if (caida > peor) peor = caida;
+  }
+  return Math.round(peor * 100) / 100;
+}
+
 /** Días distintos en los que hubo al menos un cierre. */
 function diasOperados(trades: Trade[]): number {
   return new Set(trades.map((t) => t.closeTime.toISOString().slice(0, 10))).size;
@@ -180,10 +285,30 @@ function diasOperados(trades: Trade[]): number {
 
 export function evaluateWithdrawal(
   w: PropfirmWithdrawal,
-  trades: Trade[],
+  cycle: AccountCycle,
+  /** `userpropfirms.accountBalance` de Orion. Viene en las 280 cuentas activas. */
+  accountSize: number | null = null,
 ): WithdrawalReview {
   const warnings: string[] = [];
+  const trades = cycle.trades;
   const program = rulesForProgram(w.programName);
+
+  const caida = caidaMaxima(trades);
+  const facts: CycleFacts = {
+    maxDrawdown: caida,
+    maxDrawdownPct: accountSize && accountSize > 0
+      ? Math.round((caida / accountSize) * 10_000) / 100
+      : null,
+    accountSize,
+    netResult: Math.round(trades.reduce((a, t) => a + t.profit + t.swap + t.commission, 0) * 100) / 100,
+    durations: computeDurationDistribution(trades, WITHDRAWAL_REVIEW_BUCKETS).buckets
+      .map((b) => ({ label: b.label, count: b.count, profit: b.profitTotal })),
+  };
+  const cicloInfo = {
+    startedAt: cycle.startedAt,
+    startedBy: cycle.startedBy,
+    excludedTrades: cycle.excludedFromPreviousCycles,
+  };
 
   if (!program) {
     // Sin reglamento no se inventa uno: aplicarle a un programa desconocido
@@ -194,6 +319,7 @@ export function evaluateWithdrawal(
     return {
       withdrawal: w, program: null, trades: trades.length, checks: [],
       violations: 0, unverifiable: 0, outcome: 'cannot_review', warnings,
+      facts, cycle: cicloInfo,
     };
   }
 
@@ -348,5 +474,20 @@ export function evaluateWithdrawal(
     warnings.push(`${unverifiable} regla(s) del reglamento NO se pudieron comprobar con los datos disponibles.`);
   }
 
-  return { withdrawal: w, program, trades: trades.length, checks, violations, unverifiable, outcome, warnings };
+  if (cycle.excludedFromPreviousCycles > 0) {
+    warnings.push(
+      `${cycle.excludedFromPreviousCycles} operación(es) quedaron fuera por ser de ciclos anteriores ` +
+      `(el ciclo arrancó el ${cycle.startedAt?.toISOString().slice(0, 10)} por ${cycle.startedBy === 'retiro_pagado' ? 'un retiro pagado' : 'la creación de la cuenta'}).`,
+    );
+  }
+  if (!cycle.startedAt) {
+    // Sin marca de inicio no se sabe qué es "este ciclo": se revisa todo, y se
+    // dice. Callarlo haría pasar por revisión de un ciclo lo que es de varios.
+    warnings.push('No se encontró el inicio del ciclo en MetaTrader: se revisaron TODAS las operaciones de la cuenta.');
+  }
+
+  return {
+    withdrawal: w, program, trades: trades.length, checks, violations,
+    unverifiable, outcome, warnings, facts, cycle: cicloInfo,
+  };
 }

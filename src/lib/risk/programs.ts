@@ -39,11 +39,9 @@ export type CheckId =
   | 'trades_after_request'
   | 'days_since_first_trade'
   | 'min_trading_days'
-  | 'min_profit_pct'
   | 'hft'
   // ── Declaradas pero NO verificables con los datos de hoy ────────────────
   | 'news_window'
-  | 'latency_arbitrage'
   | 'copy_trading'
   | 'account_delegation';
 
@@ -78,6 +76,21 @@ export interface ProgramRules {
   rules: RuleSpec[];
 }
 
+// ── LO QUE EL CRM YA BLOQUEA, ACÁ NO SE REPITE ─────────────────────────────
+// Ganancia mínima y drawdown los verifica el CRM antes de dejar pedir el
+// retiro: si no se cumplen, la solicitud no llega a existir. Duplicarlos acá
+// sólo crearía una segunda definición que puede discrepar de la primera, y
+// discrepar en silencio.
+//
+// El drawdown SÍ se informa, pero como DATO —cuánto llegó a caer la cuenta en
+// el ciclo— no como regla que apruebe o rechace.
+//
+// ── EL ARBITRAJE DE LATENCIA TAMPOCO ES UNA REGLA ─────────────────────────
+// No se puede probar sin el flujo de ticks del proveedor. En su lugar se
+// informa el reparto de duraciones de las operaciones, que es lo que Kevin
+// pidió mirar: un dato que una persona interpreta, no un veredicto que el
+// motor inventa.
+
 /** Reglas prohibidas en TODOS los programas de fondeo (T&C 2.1). */
 const PROHIBIDAS_SIEMPRE: RuleSpec[] = [
   {
@@ -87,12 +100,6 @@ const PROHIBIDAS_SIEMPRE: RuleSpec[] = [
     // Aproximación por densidad: no existe una definición formal de HFT en el
     // reglamento, así que se marca para revisión humana en vez de fallar sola.
     params: { maxSubMinutePct: 50 },
-  },
-  {
-    id: 'latency_arbitrage',
-    label: 'Arbitraje de latencia',
-    checkable: false,
-    whyNot: 'Haría falta el flujo de ticks del proveedor para comparar precios y latencias. No lo tenemos.',
   },
   {
     id: 'copy_trading',
@@ -166,7 +173,6 @@ export const PROGRAM_RULES: ProgramRules[] = [
       MARTINGALA,
       POST_SOLICITUD,
       { id: 'days_since_first_trade', label: '30 días desde la primera operación', checkable: true, params: { dias: 30 } },
-      { id: 'min_profit_pct', label: 'Al menos 1% de ganancia', checkable: true, params: { pct: 1 } },
       ...PROHIBIDAS_SIEMPRE,
     ],
   },
@@ -188,7 +194,6 @@ export const PROGRAM_RULES: ProgramRules[] = [
       SIN_NOTICIAS,
       { id: 'days_since_first_trade', label: '30 días desde la primera operación', checkable: true, params: { dias: 30 } },
       { id: 'min_trading_days', label: 'Al menos 5 días operados', checkable: true, params: { dias: 5 } },
-      { id: 'min_profit_pct', label: 'Al menos 1% de ganancia', checkable: true, params: { pct: 1 } },
       ...PROHIBIDAS_SIEMPRE,
     ],
   },
@@ -206,7 +211,6 @@ export const PROGRAM_RULES: ProgramRules[] = [
       MARTINGALA,
       POST_SOLICITUD,
       { id: 'days_since_first_trade', label: '14 días desde la primera operación', checkable: true, params: { dias: 14 } },
-      { id: 'min_profit_pct', label: 'Al menos 10% de ganancia', checkable: true, params: { pct: 10 } },
       ...PROHIBIDAS_SIEMPRE,
     ],
   },

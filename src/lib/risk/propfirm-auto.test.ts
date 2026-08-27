@@ -35,10 +35,16 @@ const trade = (i: number, over: Partial<Trade> = {}): Trade => {
 
 const trades = Array.from({ length: 10 }, (_, i) => trade(i));
 
+/** Un ciclo ya resuelto, para no tener que hablar con MT5 en las pruebas. */
+const ciclo = (t: Trade[] = trades) => ({
+  trades: t, startedAt: new Date('2026-06-30T00:00:00Z'),
+  startedBy: 'creacion' as const, excludedFromPreviousCycles: 0,
+});
+
 describe('ninguna regla del reglamento desaparece', () => {
   for (const p of PROGRAM_RULES) {
     it(`${p.label}: informa TODAS las reglas declaradas`, () => {
-      const r = evaluateWithdrawal(retiro(p.orionNames[0]), trades);
+      const r = evaluateWithdrawal(retiro(p.orionNames[0]), ciclo());
       const informadas = new Set(r.checks.map((c) => c.id));
       for (const spec of p.rules) {
         expect(informadas.has(spec.id), `falta ${spec.id} en ${p.label}`).toBe(true);
@@ -46,7 +52,7 @@ describe('ninguna regla del reglamento desaparece', () => {
     });
 
     it(`${p.label}: lo no comprobado se marca, nunca se da por cumplido`, () => {
-      const r = evaluateWithdrawal(retiro(p.orionNames[0]), trades);
+      const r = evaluateWithdrawal(retiro(p.orionNames[0]), ciclo());
       for (const c of r.checks) {
         if (c.status === 'unverifiable') expect(c.whyNot).toBeTruthy();
         // Un `pass` sin haber mirado nada sería la mentira peligrosa.
@@ -67,7 +73,7 @@ describe('cada programa aplica SU reglamento', () => {
     expect(ids.has('lot_consistency')).toBe(false);
     expect(ids.has('min_duration')).toBe(false);
     // Pero lo que sigue prohibido, sigue declarado.
-    expect(ids.has('latency_arbitrage')).toBe(true);
+    expect(ids.has('copy_trading')).toBe(true);
     expect(ids.has('trades_after_request')).toBe(true);
   });
 
@@ -80,7 +86,7 @@ describe('cada programa aplica SU reglamento', () => {
   });
 
   it('un programa desconocido NO se revisa con el reglamento de otro', () => {
-    const r = evaluateWithdrawal(retiro('PROGRAMA QUE NO EXISTE'), trades);
+    const r = evaluateWithdrawal(retiro('PROGRAMA QUE NO EXISTE'), ciclo());
     expect(r.outcome).toBe('cannot_review');
     expect(r.checks).toHaveLength(0);
     expect(r.warnings.join(' ')).toContain('no está en el registro');
@@ -93,7 +99,7 @@ describe('operar después de solicitar rechaza solo', () => {
       openTime: new Date('2026-08-21T10:00:00Z'),
       closeTime: new Date('2026-08-21T12:00:00Z'),
     })];
-    const r = evaluateWithdrawal(retiro('LEVERAGE X12'), despues);
+    const r = evaluateWithdrawal(retiro('LEVERAGE X12'), ciclo(despues));
     expect(r.outcome).toBe('denied_no_new_period');
     const c = r.checks.find((x) => x.id === 'trades_after_request');
     expect(c?.status).toBe('fail');
