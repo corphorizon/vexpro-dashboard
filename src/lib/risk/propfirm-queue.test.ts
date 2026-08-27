@@ -62,3 +62,18 @@ describe('propfirmAlertFor', () => {
     }
   });
 });
+
+
+describe('violaciones sin denegación también avisan', () => {
+  it("outcome 'ok' con violaciones > 0 notifica", () => {
+    // El reglamento perdona 1-2 violaciones (el retiro sigue), pero el equipo
+    // tiene que enterarse: el primer caso real fue un retiro de $8.165 con 3
+    // operaciones sobre una noticia de alto impacto y veredicto 'ok'.
+    expect(propfirmAlertFor({ outcome: 'ok', violations: 1 })).toBe('propfirm.review_violations');
+    expect(propfirmAlertFor({ outcome: 'ok', violations: 3 })).toBe('propfirm.review_violations');
+  });
+  it("outcome 'ok' limpio sigue sin avisar", () => {
+    expect(propfirmAlertFor({ outcome: 'ok', violations: 0 })).toBeNull();
+    expect(propfirmAlertFor({ outcome: 'ok' })).toBeNull();
+  });
+});

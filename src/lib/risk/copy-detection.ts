@@ -30,7 +30,7 @@
 // diferencia no está en los datos.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { withMt5Connection, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
+import { withMt5Connection, mt5DateUtc, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
 
 /**
  * Ventana para considerar dos aperturas "a la vez", en segundos.
@@ -135,8 +135,11 @@ export async function loadAperturas(
   }
   const out: Apertura[] = [];
   for (const r of filas) {
-    const t = r.cuando instanceof Date ? r.cuando : new Date(String(r.cuando));
-    if (Number.isNaN(t.getTime())) continue;
+    // Parseo UTC explícito. Acá los emparejamientos usan DIFERENCIAS de tiempo
+    // (la zona se cancela), pero normalizar igual evita que alguien compare
+    // estos epochs contra Orion o el calendario y herede el desfase fantasma.
+    const t = mt5DateUtc(r.cuando);
+    if (!t) continue;
     out.push({
       login: Number(r.login),
       simbolo: String(r.simbolo ?? ''),

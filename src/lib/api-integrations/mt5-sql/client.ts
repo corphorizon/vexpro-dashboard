@@ -239,3 +239,41 @@ async function withPostgres<T>(
 function postgresSslOption(): { rejectUnauthorized: boolean } {
   return { rejectUnauthorized: process.env.MT5_SQL_PG_STRICT_SSL === 'true' };
 }
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Parseo de fechas de MT5 — SIEMPRE como UTC, nunca al gusto del runtime.
+//
+// ── LA MEDICIÓN FANTASMA QUE MOTIVÓ ESTO ───────────────────────────────────
+// El 2026-08-27 una medición reportó «MT5 va 4 horas atrás de Orion, constante
+// en 266/269 casos, sin horario de verano». Sonaba a zona horaria del bróker.
+// Era la NUESTRA: este cliente devuelve DATETIME como texto (`dateStrings`), y
+// `new Date('2026-08-25 18:10:00')` sin zona se interpreta en la del proceso.
+// La Mac de Kevin corre en UTC+4 (Golfo, sin DST — por eso el desfase era
+// «constante sin verano»); Vercel corre en UTC y por eso producción acertaba.
+//
+// Verificado con parseo explícito contra Orion (authorizedDate, UTC real):
+// Δ = 0 minutos en los 8 casos sondeados. Los sellos de MT5 SON UTC.
+//
+// La moraleja: producción era correcta DE CASUALIDAD — dependía de que el
+// runtime estuviera en UTC. Esta función quita esa dependencia. Todo consumo
+// de fechas venidas de MT5 pasa por acá.
+// ─────────────────────────────────────────────────────────────────────────────
+export function mt5DateUtc(v: unknown): Date | null {
+  if (v === null || v === undefined) return null;
+  if (v instanceof Date) return Number.isNaN(v.getTime()) ? null : v;
+  const s = String(v).trim();
+  if (!s) return null;
+  // `2026-08-25 18:10:00.593000` → `2026-08-25T18:10:00.593Z`. Los microsegundos
+  // se truncan a milisegundos: JS no tiene más resolución.
+  const m = s.match(/^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?$/);
+  if (!m) {
+    // Cualquier otro formato (ISO con zona, etc.) se parsea tal cual: si trae
+    // zona propia, respetarla es lo correcto.
+    const d = new Date(s);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  const ms = m[3] ? m[3].slice(0, 3).padEnd(3, '0') : '000';
+  const d = new Date(`${m[1]}T${m[2]}.${ms}Z`);
+  return Number.isNaN(d.getTime()) ? null : d;
+}

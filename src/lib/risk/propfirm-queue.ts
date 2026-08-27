@@ -23,6 +23,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
 import { loadCycleFromMt5, evaluateWithdrawal, type PropfirmWithdrawal } from '@/lib/risk/propfirm-auto';
+import { withMt5Connection, mt5DateUtc } from '@/lib/api-integrations/mt5-sql/client';
 import { loadHighImpact } from '@/lib/risk/economic-calendar';
 import { loadAperturas, findSynchronizedPairs, loadSharedIpFacts, type SharedIpFacts } from '@/lib/risk/copy-detection';
 import { notify } from '@/lib/notifications/notify';
@@ -91,13 +92,19 @@ export interface PropfirmAlertInput {
   error?: string | null;
 }
 
-export function propfirmAlertFor({ outcome, error }: PropfirmAlertInput): PropfirmAlertType | null {
+export function propfirmAlertFor({ outcome, error, violations }: PropfirmAlertInput): PropfirmAlertType | null {
   // El error primero: si algo reventó, lo que diga `outcome` es de una
   // revisión que no terminó y no se puede tomar como veredicto.
   if (error) return 'propfirm.review_failed';
   // `null` es el mismo caso sin excepción: no hay veredicto que leer.
   if (outcome === null || outcome === 'cannot_review') return 'propfirm.review_failed';
-  if (outcome === 'ok') return null;
+  // ── VIOLACIONES SIN DENEGACIÓN TAMBIÉN AVISAN ─────────────────────────────
+  // El reglamento deja pasar 1-2 violaciones (se deducen operaciones), así que
+  // el veredicto puede ser 'ok' con infracciones adentro. El primer caso real
+  // lo demostró: un retiro de $8.165 con 3 operaciones sobre una noticia de
+  // alto impacto quedó en 'ok' — y sin esto, nadie se habría enterado hasta
+  // abrir la pantalla. Kevin pidió avisar «con violaciones», no «denegados».
+  if (outcome === 'ok') return (violations ?? 0) > 0 ? 'propfirm.review_violations' : null;
   return 'propfirm.review_violations';
 }
 
@@ -183,6 +190,51 @@ export async function syncPropfirmQueue(
   const pendientes = retiros.filter((r) => String(r.status) === 'PENDING');
   if (pendientes.length === 0) {
     return { mirrored: filas.length, reviewed: 0, failed: 0, elapsedMs: Date.now() - started, warnings };
+  }
+
+  // ── LA SONDA DEL RELOJ ──────────────────────────────────────────────────
+  // Las reglas de tiempo comparan sellos de MT5 contra fechas de Orion y del
+  // calendario. Eso asume DOS cosas que hoy son ciertas y pueden dejar de
+  // serlo sin ningún error: que el servidor del bróker sella en UTC, y que
+  // nuestro parseo lo lee como UTC. Una medición del 2026-08-27 ya produjo un
+  // desfase FANTASMA de 4 horas que era la zona horaria de la máquina que
+  // medía — con ventanas de ±5 minutos, cualquier desfase real destruye la
+  // regla de noticias en silencio.
+  //
+  // La sonda: el pago de un retiro existe en los dos sistemas a la vez
+  // (authorizedDate en Orion, `Withdrawal trx` en mt5_deals). La mediana de la
+  // diferencia debe ser ~0. Si se corre, se AVISA — no se corrige solo, porque
+  // el remedio depende de cuál de los dos relojes cambió.
+  try {
+    const conPago = retiros
+      .filter((r) => String(r.status) === 'APPROVED' && r.authorizedDate && num(r.loginAccount))
+      .slice(-10);
+    if (conPago.length >= 3) {
+      const deltas = await withMt5Connection(companyId, async (s) => {
+        const out: number[] = [];
+        for (const r of conPago) {
+          const filas = await s.query<{ TimeMsc: unknown }>(
+            "SELECT TimeMsc FROM mt5_deals WHERE Login=? AND Action=2 AND Comment LIKE 'Withdrawal%' ORDER BY TimeMsc DESC LIMIT 1",
+            [num(r.loginAccount)],
+          );
+          const mt5 = mt5DateUtc(filas[0]?.TimeMsc);
+          const ori = new Date(String(r.authorizedDate));
+          if (mt5 && !Number.isNaN(ori.getTime())) out.push((mt5.getTime() - ori.getTime()) / 60_000);
+        }
+        return out;
+      });
+      if (deltas.length >= 3) {
+        const mediana = deltas.sort((a, b) => a - b)[Math.floor(deltas.length / 2)];
+        if (Math.abs(mediana) > 30) {
+          warnings.push(
+            `SONDA DEL RELOJ: los pagos difieren ~${Math.round(mediana)} min entre MT5 y Orion ` +
+            `(n=${deltas.length}). Las reglas de tiempo están comparando relojes distintos: revisar ANTES de confiar en ellas.`,
+          );
+        }
+      }
+    }
+  } catch {
+    // La sonda es un control, no una dependencia: si falla, la revisión sigue.
   }
 
   // Las aperturas de TODAS las cuentas, una sola vez. Ver la cabecera.
@@ -297,7 +349,7 @@ export async function syncPropfirmQueue(
       //
       // `notify` NUNCA tira (ver su cabecera), así que no hace falta envolverlo:
       // un fallo del aviso no puede deshacer una revisión que ya quedó escrita.
-      const tipo = propfirmAlertFor({ outcome: r.outcome });
+      const tipo = propfirmAlertFor({ outcome: r.outcome, violations: r.violations });
       if (tipo === 'propfirm.review_violations') {
         await notify(admin, {
           companyId,
