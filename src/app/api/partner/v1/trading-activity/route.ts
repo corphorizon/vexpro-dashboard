@@ -81,7 +81,7 @@ export const maxDuration = 30;
 const MAX_LIMIT = 500;
 const DEFAULT_LIMIT = 200;
 
-interface ActivityRow {
+export interface ActivityRow {
   login: number;
   email: string | null;
   group_name: string | null;
@@ -298,7 +298,7 @@ const HISTORICAL_NOTICE =
  * Resume las cuentas REALES de un cliente. Las demo se cuentan aparte y nunca
  * suman: operar en demo no es evidencia de haber operado el dinero depositado.
  */
-function summarize(real: ActivityRow[], demoCount: number) {
+export function summarize(real: ActivityRow[], demoCount: number) {
   const times = (xs: (string | null)[]) =>
     xs.filter((x): x is string => !!x).map((x) => new Date(x).getTime());
   const firsts = times(real.map((r) => r.first_deal_at));
