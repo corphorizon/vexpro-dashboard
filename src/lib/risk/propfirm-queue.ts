@@ -25,6 +25,7 @@ import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
 import { loadCycleFromMt5, evaluateWithdrawal, type PropfirmWithdrawal } from '@/lib/risk/propfirm-auto';
 import { loadHighImpact } from '@/lib/risk/economic-calendar';
 import { loadAperturas, findSynchronizedPairs, loadSharedIpFacts, type SharedIpFacts } from '@/lib/risk/copy-detection';
+import { notify } from '@/lib/notifications/notify';
 
 /** Ventana del espejo. Los retiros viejos no cambian y no hace falta releerlos. */
 const DIAS = 180;
@@ -54,6 +55,74 @@ const fecha = (v: unknown): string | null => {
   const d = v instanceof Date ? v : new Date(String(v));
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ¿ESTE VEREDICTO SE AVISA?
+//
+// Se extrae acá, pura y exportada, porque es la ÚNICA decisión de todo este
+// archivo que se puede probar sin Mongo, sin MT5 y sin Postgres. El resto es
+// mover filas; esto es criterio, y el criterio se rompe en silencio.
+//
+// ── QUÉ AVISA Y QUÉ NO ─────────────────────────────────────────────────────
+// · Veredicto con infracciones (outcome ≠ 'ok') → avisa. Es el pedido literal:
+//   un retiro con problemas tiene que buscar a la persona, no al revés.
+//
+// · Revisión que NO SE PUDO HACER ('cannot_review', o el catch) → TAMBIÉN
+//   avisa, y es el caso que más lo necesita. Una fila revisada y limpia y una
+//   fila que nadie pudo revisar se ven IDÉNTICAS desde afuera: las dos están
+//   sin infracciones. El silencio ahí se lee como "todo bien", que es
+//   justamente lo contrario de lo que pasó. Un programa que no está en el
+//   registro de reglamentos, un MT5 que no responde o una cuenta sin ciclo
+//   dejan el retiro sin ningún control — y se paga igual.
+//
+// · Veredicto 'ok' → NO avisa. Con 3 pendientes y una corrida cada 30 minutos
+//   serían 144 avisos diarios diciendo "todo bien". Una campanita que suena
+//   por todo deja de leerse, y el día que suene por algo real nadie la va a
+//   mirar. El 'ok' ya está en la pantalla para quien lo quiera ver.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Los dos tipos del catálogo que puede emitir esta cola. */
+export type PropfirmAlertType = 'propfirm.review_violations' | 'propfirm.review_failed';
+
+export interface PropfirmAlertInput {
+  /** Veredicto de `evaluateWithdrawal`. null = la revisión ni llegó a emitirlo. */
+  outcome: 'ok' | 'denied_new_period' | 'denied_no_new_period' | 'cannot_review' | null;
+  /** Mensaje del error si la revisión reventó. Manda sobre `outcome`. */
+  error?: string | null;
+}
+
+export function propfirmAlertFor({ outcome, error }: PropfirmAlertInput): PropfirmAlertType | null {
+  // El error primero: si algo reventó, lo que diga `outcome` es de una
+  // revisión que no terminó y no se puede tomar como veredicto.
+  if (error) return 'propfirm.review_failed';
+  // `null` es el mismo caso sin excepción: no hay veredicto que leer.
+  if (outcome === null || outcome === 'cannot_review') return 'propfirm.review_failed';
+  if (outcome === 'ok') return null;
+  return 'propfirm.review_violations';
+}
+
+/** Mismo formato de monto que las órdenes de pago. Los retiros son en USD. */
+const monto = (n: number): string =>
+  `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+/**
+ * Dedupe POR RETIRO, no por día (a diferencia de `dailyKey`, que es lo que usa
+ * el resto de los crons).
+ *
+ * El pendiente se re-revisa cada 30 minutos y su veredicto no cambia solo: con
+ * clave diaria serían 48 avisos idénticos por día y por retiro. Con esta clave
+ * el aviso sale UNA vez y se queda; y si mañana entra OTRO retiro con
+ * infracciones, ese sí avisa, porque el withdrawId es distinto.
+ *
+ * Contrapartida asumida: si nadie lo atiende, no vuelve a insistir. Es
+ * deliberado — el retiro sigue pendiente en la pantalla, que es donde se
+ * resuelve; lo que este aviso garantiza es que NADIE PUEDA DECIR que no se
+ * enteró, no que se le recuerde para siempre.
+ */
+const claveRetiro = (withdrawId: string): string => `propfirm-review:${withdrawId}`;
+
+/** Adónde lleva el click: la cola con el informe de cada retiro. */
+const LINK_COLA = '/risk/retiros-propfirm';
 
 export async function syncPropfirmQueue(
   admin: SupabaseClient,
@@ -220,6 +289,46 @@ export async function syncPropfirmQueue(
 
       reviewed += 1;
       for (const x of r.warnings) warnings.push(`${w.username ?? w.login}: ${x}`);
+
+      // ── El aviso ────────────────────────────────────────────────────────
+      // Va DESPUÉS del update y no antes: avisar de un veredicto que después
+      // no se pudo guardar mandaría a la gente a una pantalla que sigue
+      // mostrando la revisión vieja.
+      //
+      // `notify` NUNCA tira (ver su cabecera), así que no hace falta envolverlo:
+      // un fallo del aviso no puede deshacer una revisión que ya quedó escrita.
+      const tipo = propfirmAlertFor({ outcome: r.outcome });
+      if (tipo === 'propfirm.review_violations') {
+        await notify(admin, {
+          companyId,
+          type: tipo,
+          params: {
+            user: w.username ?? String(w.login),
+            program: w.programName ?? '—',
+            amount: monto(w.requestedAmount),
+            violations: r.violations,
+          },
+          link: LINK_COLA,
+          dedupeKey: claveRetiro(w.withdrawId),
+        });
+      } else if (tipo === 'propfirm.review_failed') {
+        // `cannot_review`: la revisión corrió pero no pudo decidir. El motivo
+        // ya viene explicado en el primer warning (típico: el programa no está
+        // en el registro de reglamentos); sin él el aviso sería "no se pudo" a
+        // secas, que no le dice a nadie qué arreglar.
+        await notify(admin, {
+          companyId,
+          type: tipo,
+          params: {
+            user: w.username ?? String(w.login),
+            program: w.programName ?? '—',
+            amount: monto(w.requestedAmount),
+            reason: r.warnings[0] ?? 'La revisión no pudo llegar a un veredicto.',
+          },
+          link: LINK_COLA,
+          dedupeKey: claveRetiro(w.withdrawId),
+        });
+      }
     } catch (err) {
       // Un retiro que falla no puede impedir la revisión de los demás, y el
       // error se GUARDA: una fila sin revisión y sin motivo se lee como "no
@@ -232,6 +341,26 @@ export async function syncPropfirmQueue(
         .eq('company_id', companyId)
         .eq('withdraw_id', w.withdrawId);
       warnings.push(`No se pudo revisar el retiro de ${w.username ?? w.login}: ${message}`);
+
+      // El mismo aviso que el `cannot_review`, y por el mismo motivo: desde la
+      // cola, un retiro que reventó al revisarse y uno revisado sin problemas
+      // se ven igual de tranquilos. Con la MISMA clave de dedupe, así que si
+      // el retiro vuelve a fallar en la corrida de dentro de 30 minutos no
+      // genera un aviso nuevo.
+      await notify(admin, {
+        companyId,
+        // Por la misma función que el camino feliz: la decisión de "esto
+        // avisa" vive en UN solo lugar o los dos caminos se desincronizan.
+        type: propfirmAlertFor({ outcome: null, error: message }) as PropfirmAlertType,
+        params: {
+          user: w.username ?? String(w.login),
+          program: w.programName ?? '—',
+          amount: monto(w.requestedAmount),
+          reason: message,
+        },
+        link: LINK_COLA,
+        dedupeKey: claveRetiro(w.withdrawId),
+      });
     }
   }
 

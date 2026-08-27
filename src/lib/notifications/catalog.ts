@@ -112,6 +112,29 @@ export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
     email: false, i18nKey: 'notif.periodStillOpen',
   },
 
+  // ── Retiros de prop firm: el veredicto que nadie va a ir a buscar ───────
+  // La revisión automática ya corre cada 30 minutos y deja el veredicto en la
+  // cola, pero el veredicto sólo existe para quien ENTRA a la pantalla. Un
+  // retiro con infracciones que nadie abre se paga igual que uno limpio.
+  {
+    // Va con correo y como crítica porque lo que está del otro lado es un
+    // pago: cuando se autoriza, el dinero salió y no hay vuelta atrás. Sólo
+    // se emite cuando el veredicto NO es 'ok' — ver propfirmAlertFor().
+    key: 'propfirm.review_violations',
+    severity: 'critical', audience: 'admins', module: 'risk',
+    email: true, i18nKey: 'notif.propfirmReviewViolations',
+  },
+  {
+    // La revisión no se pudo hacer (faltó MT5, faltó el ciclo, reventó algo).
+    // Existe como aviso propio porque el silencio acá MIENTE: una fila sin
+    // veredicto se ve igual que una revisada y limpia. Sin correo y como
+    // 'high' y no 'critical': es un fallo operativo nuestro, no un cliente
+    // incumpliendo — se arregla en horario de oficina.
+    key: 'propfirm.review_failed',
+    severity: 'high', audience: 'admins', module: 'risk',
+    email: false, i18nKey: 'notif.propfirmReviewFailed',
+  },
+
   // ── Seguridad. Estas rutas no dejaban NINGÚN rastro (ni audit log) ───────
   {
     key: 'security.twofa_reset',
