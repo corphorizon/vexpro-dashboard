@@ -39,6 +39,7 @@ const trades = Array.from({ length: 10 }, (_, i) => trade(i));
 const ciclo = (t: Trade[] = trades) => ({
   trades: t, startedAt: new Date('2026-06-30T00:00:00Z'),
   startedBy: 'creacion' as const, excludedFromPreviousCycles: 0,
+  firstTradeEverAt: t[0]?.openTime ?? null,
 });
 
 describe('ninguna regla del reglamento desaparece', () => {
@@ -104,5 +105,36 @@ describe('operar después de solicitar rechaza solo', () => {
     const c = r.checks.find((x) => x.id === 'trades_after_request');
     expect(c?.status).toBe('fail');
     expect(c?.offendingTrades).toBe(1);
+  });
+});
+
+describe('las deducibles: hasta 3 operaciones se perdonan (T&C 14)', () => {
+  // El motor fallaba con UNA infracción cuando el reglamento perdona hasta 3.
+  // Medido en el histórico: con el criterio duro el 83,3% de los retiros
+  // APROBADOS «violaba» el tiempo mínimo; con el del reglamento, el 41,7%.
+  const rapida = (i: number) => trade(i, { durationMinutes: 0.5,
+    openTime: new Date(`2026-07-${String(1 + i).padStart(2, '0')}T10:00:00Z`),
+    closeTime: new Date(`2026-07-${String(1 + i).padStart(2, '0')}T10:00:30Z`) });
+
+  it('3 infractoras de tiempo mínimo se deducen y la regla PASA', () => {
+    const t = [...Array.from({ length: 7 }, (_, i) => trade(i)), rapida(7), rapida(8), rapida(9)];
+    const r = evaluateWithdrawal(retiro('VEX INSTANT FOREX'), ciclo(t));
+    const c = r.checks.find((x) => x.id === 'min_duration');
+    expect(c?.status).toBe('pass');
+    expect(c?.offendingTrades).toBe(3);
+    expect(c?.detail).toContain('deducibles');
+  });
+
+  it('4 infractoras ya no: la regla FALLA', () => {
+    const t = [...Array.from({ length: 6 }, (_, i) => trade(i)), rapida(6), rapida(7), rapida(8), rapida(9)];
+    const r = evaluateWithdrawal(retiro('VEX INSTANT FOREX'), ciclo(t));
+    expect(r.checks.find((x) => x.id === 'min_duration')?.status).toBe('fail');
+  });
+
+  it('operar tras solicitar NO es deducible: una sola deniega', () => {
+    // La deducción es de las reglas de estilo; el T&C 11 no admite perdón.
+    const despues = [...trades, trade(trades.length, {
+      openTime: new Date('2026-08-21T10:00:00Z'), closeTime: new Date('2026-08-21T12:00:00Z') })];
+    expect(evaluateWithdrawal(retiro('LEVERAGE X12'), ciclo(despues)).outcome).toBe('denied_no_new_period');
   });
 });

@@ -24,10 +24,10 @@
 // como "cumple" afirmaría un cumplimiento que nadie verificó.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { withMt5Connection, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
+import { withMt5Connection, mt5DateUtc, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
 import { analyzeReport } from '@/lib/risk/rules';
 import type { Trade, RuleConfig } from '@/lib/risk/types';
-import { rulesForProgram, type ProgramRules, type CheckId, type RuleSpec } from '@/lib/risk/programs';
+import { rulesForProgram, VIOLATION_OUTCOME, type ProgramRules, type CheckId, type RuleSpec } from '@/lib/risk/programs';
 import { computeDurationDistribution, WITHDRAWAL_REVIEW_BUCKETS } from '@/lib/risk/duration-distribution';
 
 /** `Volume` viene en diezmilésimas de lote. Mismo divisor que la exposición. */
@@ -91,11 +91,11 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const fecha = (v: unknown): Date | null => {
-  if (!v) return null;
-  const d = v instanceof Date ? v : new Date(String(v));
-  return Number.isNaN(d.getTime()) ? null : d;
-};
+// Todo lo que llega de MT5 se parsea como UTC EXPLÍCITO. `new Date(texto)` sin
+// zona depende de la zona del proceso: en Vercel (UTC) acierta, en una máquina
+// en UTC+4 corre todo 4 horas — y así nació una medición fantasma de «desfase
+// MT5↔Orion» que era el reloj de la Mac. Ver mt5DateUtc en el cliente.
+const fecha = mt5DateUtc;
 
 export interface PropfirmWithdrawal {
   withdrawId: string;
@@ -172,6 +172,16 @@ export interface AccountCycle {
   startedBy: 'creacion' | 'retiro_pagado' | 'desconocido';
   /** Operaciones que quedaron FUERA por ser de ciclos anteriores. */
   excludedFromPreviousCycles: number;
+  /**
+   * La primera operación DE LA CUENTA, ciclos anteriores incluidos.
+   *
+   * La regla «30 días desde la primera operación» habla de la antigüedad del
+   * TRADER, no del ciclo: medida contra el ciclo, un segundo retiro dispara
+   * siempre (el ciclo acaba de arrancar). Medido en el histórico: contra el
+   * ciclo la violaban el 70,8% de los retiros APROBADOS; contra la cuenta, el
+   * 58,3%. La diferencia entera son falsos positivos.
+   */
+  firstTradeEverAt: Date | null;
 }
 
 /**
@@ -202,10 +212,14 @@ export async function loadCycleFromMt5(
 
   const trades: Trade[] = [];
   let excluidas = 0;
+  let primeraDeLaCuenta: Date | null = null;
   for (const r of filas) {
     const apertura = fecha(r.apertura);
     const cierre = fecha(r.cierre);
     if (!apertura || !cierre) continue;
+    // La primera de la cuenta se captura ANTES del recorte por ciclo: es el
+    // dato que usa la regla de antigüedad (ver AccountCycle.firstTradeEverAt).
+    if (!primeraDeLaCuenta || apertura < primeraDeLaCuenta) primeraDeLaCuenta = apertura;
     // Del ciclo anterior: ya se revisó y ya se pagó.
     if (startedAt && apertura < startedAt) { excluidas += 1; continue; }
     const i = trades.length;
@@ -232,7 +246,7 @@ export async function loadCycleFromMt5(
       durationMinutes: (cierre.getTime() - apertura.getTime()) / 60_000,
     });
   }
-  return { trades, startedAt, startedBy, excludedFromPreviousCycles: excluidas };
+  return { trades, startedAt, startedBy, excludedFromPreviousCycles: excluidas, firstTradeEverAt: primeraDeLaCuenta };
 }
 
 /** El reglamento del programa traducido a la config que espera `analyzeReport`. */
@@ -347,20 +361,32 @@ export function evaluateWithdrawal(
     consistencia: 'lot_consistency', profitPct: 'profit_concentration',
     tiempoMin: 'min_duration', grid: 'grid', martingala: 'martingale',
   };
+  // ── LAS DEDUCIBLES: hasta 3 operaciones se perdonan (T&C 14 y 3.6) ──────
+  // El reglamento dice que por consistencia, regla del 30% y tiempo mínimo se
+  // pueden DEDUCIR hasta 3 operaciones infractoras antes de que cuente como
+  // violación. El motor fallaba con UNA sola, y el histórico midió el costo:
+  // con el criterio duro, el 83,3% de los retiros APROBADOS «violaba» el
+  // tiempo mínimo; con el del reglamento, el 41,7%. La mitad del rojo era
+  // severidad inventada, no conducta del trader.
+  const DEDUCIBLES = new Set<CheckId>(['min_duration', 'lot_consistency', 'profit_concentration']);
   for (const r of motor.ruleResults) {
     const id = mapa[r.ruleName];
     const spec = id ? tieneRegla(id) : undefined;
     // Una regla que el programa NO tiene no se reporta: no es que la cumpla,
     // es que no le aplica.
     if (!spec || r.status === 'skipped') continue;
+    const n = r.violations.length;
+    const dentroDelPerdon = DEDUCIBLES.has(id!) && n > 0 && n <= VIOLATION_OUTCOME.deductibleTrades;
     checks.push({
       id: id!,
       label: spec.label,
-      status: r.status === 'fail' ? 'fail' : 'pass',
-      detail: r.violations.length > 0
-        ? `${r.violations.length} de ${trades.length} operaciones (${r.violationPct.toFixed(1)}%)`
+      status: r.status !== 'fail' || dentroDelPerdon ? 'pass' : 'fail',
+      detail: n > 0
+        ? dentroDelPerdon
+          ? `${n} operación(es) infractoras — dentro de las ${VIOLATION_OUTCOME.deductibleTrades} deducibles del reglamento: se deducen, no cuenta como violación`
+          : `${n} de ${trades.length} operaciones (${r.violationPct.toFixed(1)}%)`
         : `${trades.length} operaciones, ninguna incumple`,
-      offendingTrades: r.violations.length,
+      offendingTrades: n,
     });
   }
 
@@ -453,7 +479,11 @@ export function evaluateWithdrawal(
   // ── Días desde la primera operación ─────────────────────────────────────
   const desdePrimera = tieneRegla('days_since_first_trade');
   if (desdePrimera && trades.length > 0) {
-    const primera = trades.reduce((a, t) => (t.openTime < a ? t.openTime : a), trades[0].openTime);
+    // Contra la primera operación DE LA CUENTA, no del ciclo. Ver el comentario
+    // en AccountCycle.firstTradeEverAt: medida contra el ciclo, un segundo
+    // retiro la viola siempre.
+    const primera = cycle.firstTradeEverAt
+      ?? trades.reduce((a, t) => (t.openTime < a ? t.openTime : a), trades[0].openTime);
     const dias = Math.floor((w.requestedDate.getTime() - primera.getTime()) / 86_400_000);
     const exigidos = desdePrimera.params?.dias ?? 30;
     checks.push({
