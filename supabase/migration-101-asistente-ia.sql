@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Migración 100 — Asistente de IA (chat privado por usuario) + credencial
+-- Migración 101 (renumerada: la 100 la tomó crm_monthly_totals en un merge paralelo) — Asistente de IA (chat privado por usuario) + credencial
 -- `anthropic` por empresa.
 --
 -- QUÉ PIDIÓ KEVIN (2026-08-27, textual)
