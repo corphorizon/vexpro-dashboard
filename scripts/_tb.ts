@@ -13,9 +13,9 @@ async function main(){
   const logins = r.rows.map(x=>String(x.login));
   console.log('cuentas de prueba:', logins.length);
   const { withMt5Connection } = await import('../src/lib/api-integrations/mt5-sql/client');
-  await withMt5Connection(CID, async (s:any) => {
+  await withMt5Connection(CID, async (s) => {
     const ph = logins.map(()=>'?').join(',');
-    let t=Date.now();
+    const t=Date.now();
     // duración por posición: se emparejan entrada y salida por PositionID
     const dur = await s.query(
       `SELECT Login, COUNT(*) posiciones,
@@ -30,7 +30,7 @@ async function main(){
                 HAVING COUNT(*) >= 2) x
         GROUP BY Login`, logins);
     console.log('\n## Duración de operaciones (' + (Date.now()-t) + ' ms) — ' + dur.length + ' cuentas');
-    console.table(dur.slice(0,6).map((x:any)=>({ Login:String(x.Login), posiciones:Number(x.posiciones),
+    console.table(dur.slice(0,6).map((x)=>({ Login:String(x.Login), posiciones:Number(x.posiciones),
       dur_media_seg:Math.round(Number(x.dur_media_seg)), menos_1min:Number(x.menos_1min), menos_5min:Number(x.menos_5min) })));
     return null;
   });

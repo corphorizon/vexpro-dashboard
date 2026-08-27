@@ -5,6 +5,13 @@
 > el sistema sin leer 2.800 líneas de un componente. Si algo acá ya no es cierto,
 > corregilo en el mismo PR que lo cambió.
 
+> ⚠️ **Desactualizado desde agosto 2026.** Este documento no cubre los módulos
+> que se construyeron después: MT5, Orion Mongo, revisión de retiros, revisión de
+> prop firm, exposición de riesgo y la API para aplicativos (Atlas). Tampoco el
+> conteo de tests (dice 76; hoy son 831).
+> Para el estado actual y las reglas que no se rompen, ver
+> **[docs/reglas-del-proyecto.md](docs/reglas-del-proyecto.md)**.
+
 ## 1. Qué es
 
 Dashboard financiero multi-tenant (SaaS white-label) para brokers / prop firms.

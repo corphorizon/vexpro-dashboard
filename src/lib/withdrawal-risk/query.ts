@@ -473,11 +473,25 @@ export async function loadQueue(
   const counts: Record<RiskBand, number> = { low: 0, medium: 0, high: 0 };
   for (const i of [...items, ...instant]) counts[i.score.band] += 1;
 
-  // Lo más riesgoso arriba; a igual banda, lo que más tiempo lleva esperando.
+  // ── SOLICITADOS: por fecha, lo más RECIENTE arriba ──────────────────────
+  // Antes mandaba el riesgo (el score más bajo arriba). Cambiado a pedido de
+  // Stiven (2026-08-27): la cola se lee como una bandeja de entrada, lo último
+  // que entró primero.
+  //
+  // OJO AL LEERLA: un retiro de riesgo ALTO puede quedar abajo si es viejo.
+  // La señal de riesgo ahora vive en la columna Score y en el filtro de bandas,
+  // NO en la posición de la fila. Los contadores de banda de arriba siguen
+  // siendo el semáforo de "cuánto riesgo hay esperando".
+  filtered.sort((a, b) =>
+    (b.withdrawal.requested_at ?? '').localeCompare(a.withdrawal.requested_at ?? ''),
+  );
 
+  // ── INSTANTÁNEOS: sin cambios, lo más riesgoso arriba ───────────────────
+  // Estos YA salieron sin que nadie los mirara, así que acá el orden por
+  // riesgo sí es lo útil: lo que hay que auditar primero es lo más riesgoso,
+  // no lo más nuevo. A igual score, lo que más tiempo lleva esperando.
   const porRiesgo = (a: QueueItem, b: QueueItem) =>
     a.score.approvalScore - b.score.approvalScore || (b.ageDays ?? 0) - (a.ageDays ?? 0);
-  filtered.sort(porRiesgo);
   instantFiltrados.sort(porRiesgo);
 
   return {
