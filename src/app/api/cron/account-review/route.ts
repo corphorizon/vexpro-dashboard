@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { syncAccountReviews } from '@/lib/risk/account-review-sync';
+import { syncAccountCopyDetection } from '@/lib/risk/account-copy-sync';
 import { loadHighImpact } from '@/lib/risk/economic-calendar';
 import { apiError } from '@/lib/api-error';
 
@@ -96,7 +97,26 @@ export async function GET(request: NextRequest) {
       try {
         const r = await syncAccountReviews(admin, companyId, { noticias });
         for (const w of r.warnings) console.warn(`[cron/account-review] ${companyId}: ${w}`);
-        results.push({ companyId, ...r });
+
+        // ── Fase 2: copia entre cuentas ─────────────────────────────────
+        // Va DESPUÉS y sobre todas las candidatas a la vez, no dentro de la
+        // rotación: la sincronía es una relación entre dos cuentas y por
+        // lotes sólo se verían los pares que caen en la misma tanda.
+        //
+        // En su propio try/catch: si falla, el diagnóstico de la fase 1 ya
+        // quedó guardado y la señal de copia se queda como estaba.
+        let copia: Record<string, unknown> | null = null;
+        try {
+          const c = await syncAccountCopyDetection(admin, companyId);
+          for (const w of c.warnings) console.warn(`[cron/account-review] copia ${companyId}: ${w}`);
+          copia = { ...c };
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`[cron/account-review] copia ${companyId}: ${message}`);
+          copia = { ok: false, error: message };
+        }
+
+        results.push({ companyId, ...r, copia });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         // «Sin credenciales» no es un fallo: es una empresa que no usa MT5.
