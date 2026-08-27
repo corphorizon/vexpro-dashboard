@@ -23,6 +23,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { Sparkles, Send, Plus, Trash2, Lock, Wrench, AlertTriangle } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card } from '@/components/ui/card';
@@ -50,6 +52,47 @@ interface Turno {
   enCurso?: boolean;
 }
 
+
+/**
+ * Respuesta del asistente renderizada como Markdown (GFM: tablas incluidas).
+ * Sin `rehype-raw`: el HTML embebido queda como texto, nunca como DOM — las
+ * respuestas citan datos del CRM que son contenido no confiable.
+ */
+function MarkdownRespuesta({ texto }: { texto: string }) {
+  return (
+    <div className="asistente-md space-y-2 [&_p]:leading-relaxed">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          h1: (p) => <p className="font-semibold text-base" {...p} />,
+          h2: (p) => <p className="font-semibold" {...p} />,
+          h3: (p) => <p className="font-semibold" {...p} />,
+          ul: (p) => <ul className="list-disc pl-5 space-y-1" {...p} />,
+          ol: (p) => <ol className="list-decimal pl-5 space-y-1" {...p} />,
+          a: ({ children }) => (
+            // Los datos vienen del CRM (no confiables): ningún enlace vivo.
+            <span className="underline decoration-dotted">{children}</span>
+          ),
+          code: (p) => (
+            <code className="rounded bg-background/60 px-1 py-0.5 text-[0.85em]" {...p} />
+          ),
+          table: (p) => (
+            <div className="overflow-x-auto -mx-1">
+              <table className="w-full text-xs border-collapse" {...p} />
+            </div>
+          ),
+          th: (p) => (
+            <th className="border border-border/60 bg-background/40 px-2 py-1 text-left font-semibold" {...p} />
+          ),
+          td: (p) => <td className="border border-border/60 px-2 py-1 align-top" {...p} />,
+        }}
+      >
+        {texto}
+      </ReactMarkdown>
+    </div>
+  );
+}
+
 export default function AsistentePage() {
   const { t } = useI18n();
   const { toast, ToastHost } = useToasts();
@@ -64,6 +107,7 @@ export default function AsistentePage() {
   const [herramientaActual, setHerramientaActual] = useState<string | null>(null);
   const [noConfigurado, setNoConfigurado] = useState(false);
   const finRef = useRef<HTMLDivElement | null>(null);
+  const listaRef = useRef<HTMLDivElement | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const etiquetaHerramienta = useCallback(
@@ -93,7 +137,12 @@ export default function AsistentePage() {
   }, [puede, cargarChats]);
 
   useEffect(() => {
-    finRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    // Kevin (2026-08-28): la tarjeta crecía con la conversación y empujaba la
+    // caja de escribir fuera de pantalla. Ahora la tarjeta tiene altura fija y
+    // el scroll vive adentro; al llegar texto nuevo se baja el contenedor
+    // interno (scrollIntoView movería la página entera, no este scroll).
+    const el = listaRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
   }, [turnos, herramientaActual]);
 
   const abrirChat = useCallback(async (id: string) => {
@@ -315,8 +364,8 @@ export default function AsistentePage() {
         </Card>
 
         {/* Conversación */}
-        <Card className="flex flex-col p-0 overflow-hidden min-h-[60vh]">
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <Card className="flex flex-col p-0 overflow-hidden h-[calc(100dvh-13.5rem)] min-h-[26rem]">
+          <div ref={listaRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
             {noConfigurado && (
               <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
                 <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" aria-hidden />
@@ -341,9 +390,9 @@ export default function AsistentePage() {
               >
                 <div
                   className={cn(
-                    'max-w-[85%] rounded-xl px-3 py-2 text-sm whitespace-pre-wrap break-words',
+                    'max-w-[85%] rounded-xl px-3 py-2 text-sm break-words',
                     turno.role === 'user'
-                      ? 'bg-primary text-primary-foreground'
+                      ? 'bg-primary text-brand-on-primary whitespace-pre-wrap'
                       : 'bg-muted text-foreground',
                   )}
                 >
@@ -355,7 +404,7 @@ export default function AsistentePage() {
                       })}
                     </p>
                   )}
-                  {turno.content}
+                  {turno.role === 'user' ? turno.content : <MarkdownRespuesta texto={turno.content} />}
                   {turno.enCurso && (
                     <span className="ml-1 inline-block w-1.5 h-4 align-middle bg-current animate-pulse" />
                   )}

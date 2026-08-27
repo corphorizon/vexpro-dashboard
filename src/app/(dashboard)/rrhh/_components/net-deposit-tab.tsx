@@ -96,7 +96,7 @@ export function NetDepositTab() {
               onClick={() => setVista(v)}
               className={cn(
                 'px-3 py-1.5 rounded-md text-sm transition-colors',
-                vista === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+                vista === v ? 'bg-primary text-brand-on-primary' : 'text-muted-foreground hover:text-foreground',
               )}
             >
               {t(key)}
