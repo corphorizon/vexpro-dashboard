@@ -288,6 +288,12 @@ export function evaluateWithdrawal(
   cycle: AccountCycle,
   /** `userpropfirms.accountBalance` de Orion. Viene en las 280 cuentas activas. */
   accountSize: number | null = null,
+  /**
+   * Noticias de ALTO impacto del período, del calendario de MetaQuotes.
+   * Si no se pasan, la regla queda como "no comprobada" en vez de darse por
+   * cumplida — no tener el calendario a mano no es evidencia de nada.
+   */
+  noticias: Array<{ at: number; name: string; currency: string | null }> | null = null,
 ): WithdrawalReview {
   const warnings: string[] = [];
   const trades = cycle.trades;
@@ -378,6 +384,43 @@ export function evaluateWithdrawal(
       status: enFinde.length > 0 ? 'fail' : 'pass',
       detail: enFinde.length > 0 ? `${enFinde.length} operación(es) abiertas en sábado o domingo` : 'Ninguna apertura en fin de semana',
       offendingTrades: enFinde.length,
+    });
+  }
+
+  // ── Ventana de noticias de alto impacto ─────────────────────────────────
+  const noticiaSpec = tieneRegla('news_window');
+  if (noticiaSpec && noticias) {
+    const ventana = (noticiaSpec.params?.minutos ?? 5) * 60_000;
+    const infractoras: string[] = [];
+    for (const t of trades) {
+      // ── POR QUÉ SE CRUZA LA MONEDA CON EL SÍMBOLO ─────────────────────
+      // Un dato de empleo de Estados Unidos mueve los pares con USD; no mueve
+      // un índice sintético como Boom 1000, que no responde a la economía
+      // real. Marcar TODAS las operaciones alrededor de cada noticia
+      // convertiría media jornada en zona prohibida y llenaría el informe de
+      // infracciones que nadie va a sostener frente al cliente.
+      //
+      // El cruce es un heurístico: se mira si el símbolo contiene el código de
+      // la moneda. EURUSD contra una noticia de USD, sí; Boom 1000 Index, no.
+      const cerca = noticias.find((n) => {
+        if (!n.currency) return false;
+        if (!t.symbol.toUpperCase().includes(n.currency.toUpperCase())) return false;
+        const dt = Math.min(
+          Math.abs(t.openTime.getTime() - n.at),
+          Math.abs(t.closeTime.getTime() - n.at),
+        );
+        return dt <= ventana;
+      });
+      if (cerca) infractoras.push(`#${t.index} ${t.symbol} · ${cerca.name}`);
+    }
+    checks.push({
+      id: 'news_window',
+      label: noticiaSpec.label,
+      status: infractoras.length > 0 ? 'fail' : 'pass',
+      detail: infractoras.length > 0
+        ? `${infractoras.length} operación(es) dentro de ±5 min de una noticia de alto impacto: ${infractoras.slice(0, 3).join(' · ')}`
+        : `Ninguna operación cerca de las ${noticias.length} noticias de alto impacto del período`,
+      offendingTrades: infractoras.length,
     });
   }
 

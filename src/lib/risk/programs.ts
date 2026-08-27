@@ -115,11 +115,18 @@ const PROHIBIDAS_SIEMPRE: RuleSpec[] = [
   },
 ];
 
+/**
+ * ── YA SE PUEDE COMPROBAR (2026-08-27) ─────────────────────────────────────
+ * Antes decía que hacía falta un calendario económico y no había ninguno.
+ * Ahora está: el de MetaQuotes, que es EL MISMO que el trader ve en su
+ * terminal. Eso importa más que la exactitud — si se rechaza un retiro por
+ * operar en una noticia, tiene que ser la noticia que él tenía delante.
+ */
 const SIN_NOTICIAS: RuleSpec = {
   id: 'news_window',
   label: 'No operar 5 min antes ni después de noticias de alto impacto',
-  checkable: false,
-  whyNot: 'Haría falta un calendario económico con marca de alto impacto. No hay ninguno conectado.',
+  checkable: true,
+  params: { minutos: 5 },
 };
 
 /**
