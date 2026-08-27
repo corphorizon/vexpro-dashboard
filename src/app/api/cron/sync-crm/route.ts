@@ -31,6 +31,7 @@ import {
 import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
 import { syncExposure, type ExposureResult } from '@/lib/mt5-sync/exposure';
 import { syncWalletSources, type WalletSourcesResult } from '@/lib/crm-sync/wallet-sources';
+import { syncIbProduction, type IbProductionResult } from '@/lib/crm-sync/ib-production';
 import { syncTradingAccounts, type TradingAccountsResult } from '@/lib/crm-sync/trading-accounts';
 import { syncTradingBehavior, type BehaviorResult } from '@/lib/mt5-sync/behavior';
 import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users';
@@ -301,6 +302,7 @@ export async function GET(request: NextRequest) {
       mt5?: Mt5SyncResult | null;
       exposure?: ExposureResult | null;
       walletSources?: WalletSourcesResult | null;
+      ibProduction?: IbProductionResult | null;
       tradingAccounts?: TradingAccountsResult | null;
       behavior?: BehaviorResult | null;
       allUsers?: AllUsersResult | null;
@@ -413,6 +415,7 @@ export async function GET(request: NextRequest) {
         // comportamiento paga ir a la fila en una tabla de 68M — ninguno de
         // los dos cambia lo suficiente en 15 minutos para justificar ese costo.
         let walletSources: WalletSourcesResult | null = null;
+        let ibProduction: IbProductionResult | null = null;
         let behavior: BehaviorResult | null = null;
         let tradingAccounts: TradingAccountsResult | null = null;
         const extraErrors: string[] = [];
@@ -437,6 +440,30 @@ export async function GET(request: NextRequest) {
           } catch (err) {
             extraErrors.push(`fuentes: ${err instanceof Error ? err.message : 'unknown'}`);
           }
+          // ── Produccion IB por estructura (migracion 098) ──────────────
+          // Va con el modo COMPLETO y no cada 15 minutos por dos razones
+          // medidas: `ib_reward_daily` son 37.146 documentos que se recorren
+          // enteros, y el desglose por simbolo entra por el indice
+          // {ibUserId, dealTime} de `ibrewards` un IB a la vez porque un
+          // barrido por fecha sobre sus 11.829.132 documentos se pasa de los
+          // 15 s del lector de Orion.
+          //
+          // LO QUE NO SE ESPEJA HOY SE PIERDE: el broker purga `ibrewards` a
+          // los quince dias, asi que este es el unico momento en que el
+          // desglose forex/sinteticos de un dia se puede capturar. Si esta
+          // llamada deja de correr, la pantalla no muestra ceros: muestra
+          // "sin dato", que es lo correcto y lo visible.
+          try {
+            ibProduction = await syncIbProduction(admin, company.id);
+            for (const w of ibProduction.warnings) {
+              console.warn(`[cron/sync-crm] produccion ib ${company.id}: ${w}`);
+            }
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : 'unknown';
+            if (!/no configurad|not configured|sin credencial/i.test(msg)) {
+              extraErrors.push(`produccion ib: ${msg}`);
+            }
+          }
           try {
             const cuentas = await accountsNeedingBehavior(admin, company.id);
             if (cuentas.length > 0) {
@@ -460,6 +487,7 @@ export async function GET(request: NextRequest) {
           mt5,
           exposure,
           walletSources,
+          ibProduction,
           behavior,
           tradingAccounts,
           allUsers,

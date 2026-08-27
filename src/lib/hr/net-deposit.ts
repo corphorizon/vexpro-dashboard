@@ -71,21 +71,30 @@ export type RollupNode = {
 export type NetDepositGoal = { salary: number; min_net_deposit: number };
 
 /**
- * Arma el bosque por `head_id` y calcula own/team/total de abajo hacia arriba.
+ * El ARMADO DEL ÁRBOL, sin métricas: la única implementación del bosque por
+ * `head_id` que hay en el repo.
  *
- * `netByProfile` viene del RPC y NO trae a todos: un perfil sin clientes con
- * movimiento simplemente no aparece, y vale 0. `manualByProfile` es opcional
- * porque hay meses sin período contable creado.
+ * Existe separada de `buildRollup` porque hay más de una cosa que rollar hacia
+ * arriba por la misma estructura —el net deposit y, desde 2026-08, la
+ * producción IB (lotes, comisión, PNL, forex/sintéticos)— y tener dos copias
+ * del recorrido es cómo se termina con dos organigramas distintos en dos
+ * pantallas. Quien necesite otra métrica llama a esto y pliega lo suyo.
+ *
+ * `combine` suma la métrica de un hijo al acumulado; `zero` es el neutro; `rank`
+ * dice por qué número se ordenan los hermanos (de mayor a menor).
  *
  * Los perfiles cuyo `head_id` apunta a alguien que no está en la lista (por
  * ejemplo si se filtró por activos) se tratan como raíces: perder una rama
  * entera por un padre ausente sería peor que mostrarla suelta.
  */
-export function buildRollup(
+export function buildForest<T, N extends { children: N[] }>(
   profiles: RollupProfile[],
-  netByProfile: Map<string, number>,
-  manualByProfile?: Map<string, number>,
-): RollupNode[] {
+  make: (p: RollupProfile, own: T, team: T, total: T, children: N[]) => N,
+  ownOf: (p: RollupProfile) => T,
+  combine: (a: T, b: T) => T,
+  zero: () => T,
+  rank: (n: N) => number,
+): N[] {
   const byId = new Map(profiles.map((p) => [p.id, p]));
   const childrenOf = new Map<string, RollupProfile[]>();
   const roots: RollupProfile[] = [];
@@ -105,26 +114,24 @@ export function buildRollup(
   // set de visitados el ciclo se corta y el resto del árbol se sigue viendo.
   const seen = new Set<string>();
 
-  const build = (p: RollupProfile): RollupNode => {
+  // El `total` de cada hijo se necesita para acumular el del padre, pero `N` es
+  // opaco acá adentro (cada llamador arma su propio nodo). Se guarda al costado
+  // en vez de exigirle a `N` una forma concreta.
+  const totalDe = new WeakMap<object, T>();
+
+  const build = (p: RollupProfile): N => {
     seen.add(p.id);
-    const own = netByProfile.get(p.id) ?? 0;
+    const own = ownOf(p);
     const kids = (childrenOf.get(p.id) ?? [])
       .filter((c) => !seen.has(c.id))
-      .map(build);
-    const team = kids.reduce((s, k) => s + k.total, 0);
-    const manual = manualByProfile?.get(p.id);
-    return {
-      profileId: p.id,
-      name: p.name,
-      role: p.role,
-      headId: p.head_id,
-      own,
-      team,
-      total: own + team,
-      adjustment: own,
-      manual: manual === undefined ? null : manual,
-      children: kids.sort((a, b) => b.total - a.total),
-    };
+      .map(build)
+      .sort((a, b) => rank(b) - rank(a));
+    let team = zero();
+    for (const k of kids) team = combine(team, totalDe.get(k) as T);
+    const total = combine(own, team);
+    const node = make(p, own, team, total, kids);
+    totalDe.set(node, total);
+    return node;
   };
 
   const out = roots.filter((r) => !seen.has(r.id)).map(build);
@@ -137,7 +144,43 @@ export function buildRollup(
     if (!seen.has(p.id)) out.push(build(p));
   }
 
-  return out.sort((a, b) => b.total - a.total);
+  return out.sort((a, b) => rank(b) - rank(a));
+}
+
+/**
+ * Arma el bosque por `head_id` y calcula own/team/total de abajo hacia arriba.
+ *
+ * `netByProfile` viene del RPC y NO trae a todos: un perfil sin clientes con
+ * movimiento simplemente no aparece, y vale 0. `manualByProfile` es opcional
+ * porque hay meses sin período contable creado.
+ */
+export function buildRollup(
+  profiles: RollupProfile[],
+  netByProfile: Map<string, number>,
+  manualByProfile?: Map<string, number>,
+): RollupNode[] {
+  return buildForest<number, RollupNode>(
+    profiles,
+    (p, own, team, total, children) => {
+      const manual = manualByProfile?.get(p.id);
+      return {
+        profileId: p.id,
+        name: p.name,
+        role: p.role,
+        headId: p.head_id,
+        own,
+        team,
+        total,
+        adjustment: own,
+        manual: manual === undefined ? null : manual,
+        children,
+      };
+    },
+    (p) => netByProfile.get(p.id) ?? 0,
+    (a, b) => a + b,
+    () => 0,
+    (n) => n.total,
+  );
 }
 
 /** Recorre el árbol en orden de lectura (padre, después hijos). */

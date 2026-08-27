@@ -7,6 +7,7 @@ import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import type { RollupNode } from '@/lib/hr/net-deposit';
+import { IbProductionView } from './ib-production-tab';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña Net Deposit — lo que Daniela arma hoy a mano, ya armado.
@@ -53,9 +54,64 @@ function moneyClass(v: number): string {
   return 'text-muted-foreground';
 }
 
+/**
+ * Las dos miradas de LA MISMA estructura comercial.
+ *
+ * Están en una sola pestaña y no en dos a propósito: Kevin pidió la producción
+ * IB por estructura (2026-08-27) y es el mismo árbol de `head_id` con otras
+ * columnas. Partirlo en dos pestañas obligaría a Daniela a acordarse de en cuál
+ * está cada mitad del dato del mismo equipo.
+ */
+type Vista = 'net_deposit' | 'production';
+
 export function NetDepositTab() {
   const { t } = useI18n();
   const [month, setMonth] = useState(defaultMonth);
+  const [vista, setVista] = useState<Vista>('net_deposit');
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <label className="text-sm text-muted-foreground" htmlFor="nd-month">{t('hr.warningMonth')}</label>
+          <input
+            id="nd-month"
+            type="month"
+            value={month}
+            onChange={(e) => setMonth(e.target.value)}
+            className="px-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm"
+          />
+        </div>
+        {/* El selector de mes es UNO SOLO y vive acá arriba: cambiar de vista no
+            puede hacerle perder a nadie el mes que estaba mirando. */}
+        <div className="inline-flex rounded-lg border border-border p-0.5" role="tablist">
+          {([
+            ['net_deposit', 'hr.prodViewNetDeposit'],
+            ['production', 'hr.prodViewProduction'],
+          ] as const).map(([v, key]) => (
+            <button
+              key={v}
+              role="tab"
+              aria-selected={vista === v}
+              onClick={() => setVista(v)}
+              className={cn(
+                'px-3 py-1.5 rounded-md text-sm transition-colors',
+                vista === v ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground',
+              )}
+            >
+              {t(key)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {vista === 'net_deposit' ? <NetDepositView month={month} /> : <IbProductionView month={month} />}
+    </div>
+  );
+}
+
+function NetDepositView({ month }: { month: string }) {
+  const { t } = useI18n();
   const [data, setData] = useState<RollupResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState(false);
@@ -95,19 +151,8 @@ export function NetDepositTab() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-muted-foreground" htmlFor="nd-month">{t('hr.warningMonth')}</label>
-          <input
-            id="nd-month"
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="px-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm"
-          />
-        </div>
-      </div>
-
+      {/* El selector de mes vive en `NetDepositTab`, arriba del conmutador de
+          vistas: es uno solo para las dos miradas de la misma estructura. */}
       <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 p-3">
         <Info className="w-4 h-4 text-info mt-0.5 shrink-0" />
         <p className="text-xs text-muted-foreground">{t('hr.ndHint')}</p>
