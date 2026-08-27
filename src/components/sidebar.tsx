@@ -46,6 +46,7 @@ import {
   ChevronRight,
   ScrollText,
   Contact,
+  Database,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -105,6 +106,10 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/finanzas/consolidado', i18nKey: 'nav.consolidado', icon: Table, module: 'reports' },
       // Forecast (tanda 5 de la auditoría): la única vista forward-looking.
       { href: '/finanzas/forecast', i18nKey: 'nav.forecast', icon: TrendingUp, module: 'reports' },
+      // Los totales que ya salen solos del CRM (P2P, ventas y retiros de prop
+      // firm), al lado de lo cargado a mano. Puerta 'income': es información
+      // de ingresos, y quien la mira es quien carga los ingresos.
+      { href: '/finanzas/crm', i18nKey: 'nav.crmTotals', icon: Database, module: 'income' },
     ],
   },
 

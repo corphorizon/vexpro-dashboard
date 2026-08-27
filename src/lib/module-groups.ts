@@ -49,6 +49,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
       { module: 'periods',     href: '/periodos',        labelEs: 'Períodos' },
       { module: 'reports',     href: '/finanzas/reportes', labelEs: 'Reportes' },
       { module: 'reports',     href: '/finanzas/consolidado', labelEs: 'Consolidados' },
+      { module: 'income',      href: '/finanzas/crm',      labelEs: 'Totales del CRM' },
     ],
   },
   {
