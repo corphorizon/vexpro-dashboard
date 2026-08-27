@@ -62,6 +62,7 @@ import {
   type Decision,
   type RiskBand,
 } from '@/lib/withdrawal-risk/api';
+import type { AccountsOverview } from '@/lib/risk/account-review-read';
 
 const BAND_VARIANT: Record<RiskBand, 'success' | 'warning' | 'danger'> = {
   low: 'success',
@@ -89,6 +90,9 @@ export default function RetiroDetallePage() {
   const { toast, ToastHost } = useToasts();
 
   const [detail, setDetail] = useState<WithdrawalDetail | null>(null);
+  // Señal APARTE del score: el diagnóstico operativo de las cuentas del
+  // cliente. Nunca modifica `detail.score` — se muestra al lado.
+  const [accounts, setAccounts] = useState<AccountsOverview | null>(null);
   const [calibration, setCalibration] = useState<CalibrationInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [notes, setNotes] = useState('');
@@ -107,10 +111,12 @@ export default function RetiroDetallePage() {
     try {
       const res = await loadDetail(decodeURIComponent(id));
       setDetail(res.detail);
+      setAccounts(res.accounts ?? null);
       setCalibration(res.calibration);
       setNotes(res.detail.review?.notes ?? '');
     } catch (err: unknown) {
       setDetail(null);
+      setAccounts(null);
       toast.error(err instanceof Error ? err.message : t('wdReview.loadError'));
     } finally {
       setLoading(false);
@@ -324,6 +330,157 @@ export default function RetiroDetallePage() {
                 </p>
               )}
             </>
+          )}
+        </Card>
+      )}
+
+      {/* ── Diagnóstico operativo por cuenta ─────────────────────────────── */}
+      {/* Señal APARTE del score, no una corrección de él: el score está
+          calibrado sobre 9.785 retiros resueltos y estas señales todavía no se
+          midieron contra ninguna decisión. Por eso van en su propia tarjeta y
+          con su propio vocabulario. */}
+      {accounts && accounts.accounts.length > 0 && (
+        <Card>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle>Operativa de las cuentas del cliente</CardTitle>
+            <span
+              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                accounts.risk === 'alto'
+                  ? 'bg-negative/10 text-negative'
+                  : accounts.risk === 'medio'
+                    ? 'bg-warning/10 text-warning'
+                    : 'bg-positive/10 text-positive'
+              }`}
+            >
+              {accounts.risk === 'alto' ? 'RIESGO ALTO' : accounts.risk === 'medio' ? 'RIESGO MEDIO' : 'SIN SEÑALES'}
+            </span>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Cómo opera cada cuenta de trading y social del cliente, con las mismas reglas que la
+            revisión de prop firm. No son infracciones —una cuenta normal no tiene reglamento— sino
+            señales para mirar. <strong>No afectan el score de arriba.</strong>
+          </p>
+
+          <div className="mt-3 flex flex-wrap gap-4 text-sm">
+            <span><strong>{accounts.accounts.length}</strong> cuenta(s)</span>
+            <span><strong>{accounts.totalFlagged}</strong> señal(es) disparadas</span>
+            {accounts.highRiskAccounts > 0 && (
+              <span className="text-negative">
+                <strong>{accounts.highRiskAccounts}</strong> cuenta(s) en riesgo alto
+              </span>
+            )}
+            {accounts.tradedAfterRequestCount > 0 && (
+              <span className="text-warning">
+                <strong>{accounts.tradedAfterRequestCount}</strong> operó después de solicitar el retiro
+              </span>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-3">
+            {accounts.accounts.map((a) => (
+              <div key={a.login} className="rounded-lg border border-border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium tabular-nums">{a.login}</span>
+                  <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">
+                    {a.accountType === 'SOCIAL' ? 'social' : 'trading'}
+                  </span>
+                  {a.groupName && (
+                    <span className="text-xs text-muted-foreground">{a.groupName}</span>
+                  )}
+                  <span
+                    className={`ml-auto rounded-full px-2 py-0.5 text-[11px] font-semibold ${
+                      a.risk === 'alto'
+                        ? 'bg-negative/10 text-negative'
+                        : a.risk === 'medio'
+                          ? 'bg-warning/10 text-warning'
+                          : 'bg-positive/10 text-positive'
+                    }`}
+                  >
+                    {a.flagged} señal(es)
+                  </span>
+                </div>
+
+                {/* La operativa: qué hace esta cuenta */}
+                <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
+                  <Field label="Operaciones" value={a.positions.toLocaleString('es')} />
+                  <Field
+                    label="Resultado neto"
+                    value={a.netResult === null ? '—' : formatCurrency(a.netResult)}
+                    tone={a.netResult !== null && a.netResult < 0 ? 'negative' : undefined}
+                  />
+                  <Field
+                    label="Duración media"
+                    value={a.avgDurationSec === null ? '—' : `${Math.round(a.avgDurationSec / 60)} min`}
+                  />
+                  <Field
+                    label="Menos de 1 min"
+                    value={a.positions > 0 ? `${((a.under1min / a.positions) * 100).toFixed(0)}%` : '—'}
+                  />
+                  <Field
+                    label="Caída máxima"
+                    value={a.maxDrawdown === null ? '—' : formatCurrency(a.maxDrawdown)}
+                  />
+                </dl>
+
+                {a.topSymbols.length > 0 && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Símbolos: {a.topSymbols.map((s) => `${s.symbol} (${s.positions})`).join(' · ')}
+                  </p>
+                )}
+
+                {/* Operar después de pedir el retiro: lo más objetivo que hay */}
+                {a.tradedAfterRequest === true && (
+                  <p className="mt-2 text-sm text-warning">
+                    Abrió operaciones DESPUÉS de solicitar el retiro
+                    {a.lastTradeAt ? ` (última: ${formatDate(a.lastTradeAt)})` : ''}.
+                  </p>
+                )}
+
+                {/* Las señales, una por línea */}
+                {a.signals.length > 0 && (
+                  <ul className="mt-3 space-y-1 text-sm">
+                    {a.signals.map((s) => (
+                      <li key={s.id} className="flex gap-2">
+                        <span
+                          className={
+                            s.status === 'fail'
+                              ? 'text-negative'
+                              : s.status === 'unverifiable'
+                                ? 'text-muted-foreground'
+                                : 'text-positive'
+                          }
+                        >
+                          {s.status === 'fail' ? '✕' : s.status === 'unverifiable' ? '?' : '✓'}
+                        </span>
+                        <span className="flex-1">
+                          <span className={s.status === 'fail' ? 'font-medium' : ''}>{s.label}</span>
+                          <span className="block text-xs text-muted-foreground">
+                            {s.detail}
+                            {s.whyNot ? ` — ${s.whyNot}` : ''}
+                          </span>
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                {/* Un recorte silencioso es indistinguible de "opera poco" */}
+                {a.truncated && (
+                  <p className="mt-2 text-xs text-warning">
+                    Cuenta muy grande: se analizó una parte de su historial.
+                  </p>
+                )}
+                {a.warnings.map((w) => (
+                  <p key={w} className="mt-2 text-xs text-muted-foreground">{w}</p>
+                ))}
+              </div>
+            ))}
+          </div>
+
+          {accounts.oldestComputedAt && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              Diagnóstico calculado el {formatDate(accounts.oldestComputedAt)}. Se recalcula solo cada 30 minutos.
+            </p>
           )}
         </Card>
       )}
