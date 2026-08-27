@@ -90,6 +90,12 @@ export interface PropfirmAlertInput {
   outcome: 'ok' | 'denied_new_period' | 'denied_no_new_period' | 'cannot_review' | null;
   /** Mensaje del error si la revisión reventó. Manda sobre `outcome`. */
   error?: string | null;
+  /**
+   * Violaciones del veredicto. Importa porque 'ok' NO significa limpio: el
+   * reglamento perdona 1-2 violaciones deduciendo operaciones, y esas también
+   * tienen que avisar.
+   */
+  violations?: number | null;
 }
 
 export function propfirmAlertFor({ outcome, error, violations }: PropfirmAlertInput): PropfirmAlertType | null {
