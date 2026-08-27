@@ -89,6 +89,24 @@ export const HR_ROLES = ['admin', 'hr'] as const;
 export const PAYMENT_ORDER_READ_ROLES = ['admin', 'auditor', 'hr'] as const;
 
 /**
+ * Asistente de IA (/asistente, migración 102).
+ *
+ * Son TODOS los roles a propósito, y no es un descuido: el asistente NO
+ * ESCRIBE NADA. Sus herramientas sólo leen, y cada una vuelve a preguntar por
+ * el módulo que necesita antes de devolver un dato. Quien decide qué se puede
+ * ver por el chat es `allowed_modules`, exactamente igual que por pantalla
+ * (§4.1: leer lo decide el módulo).
+ *
+ * La lista existe únicamente porque el endpoint es POST —el mensaje va en el
+ * cuerpo— y `puedeLlamarRuta` trata todo lo que no es GET/HEAD como escritura.
+ * Sin esta lista, el fallback histórico (admin/auditor/hr) dejaría afuera
+ * justo a los dos roles que Kevin nombró en el pedido: `socio` y `soporte`.
+ * Es el mismo tropiezo que ya sufrió Sergio el 2026-08-22 con seis módulos
+ * marcados y ninguna pantalla que le respondiera.
+ */
+export const ASSISTANT_ROLES = BUILT_IN_ROLES;
+
+/**
  * Revisión de Retiros. El reparto es de Kevin (2026-08-24) y es una
  * segregación de funciones, no una comodidad: **soporte triajea y escala, el
  * auditor aprueba**.
