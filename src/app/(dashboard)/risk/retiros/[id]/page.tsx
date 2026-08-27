@@ -436,32 +436,61 @@ export default function RetiroDetallePage() {
                   </p>
                 )}
 
-                {/* Las señales, una por línea */}
-                {a.signals.length > 0 && (
-                  <ul className="mt-3 space-y-1 text-sm">
-                    {a.signals.map((s) => (
-                      <li key={s.id} className="flex gap-2">
-                        <span
-                          className={
-                            s.status === 'fail'
-                              ? 'text-negative'
-                              : s.status === 'unverifiable'
-                                ? 'text-muted-foreground'
-                                : 'text-positive'
-                          }
-                        >
-                          {s.status === 'fail' ? '✕' : s.status === 'unverifiable' ? '?' : '✓'}
-                        </span>
-                        <span className="flex-1">
-                          <span className={s.status === 'fail' ? 'font-medium' : ''}>{s.label}</span>
-                          <span className="block text-xs text-muted-foreground">
-                            {s.detail}
-                            {s.whyNot ? ` — ${s.whyNot}` : ''}
+                {/* ── Señales de riesgo vs. perfil operativo ──────────────
+                    Separadas porque miden cosas distintas. Las de riesgo son
+                    las que discriminan (se disparan en el 10-23% de las
+                    cuentas); las del perfil describen a un trader retail
+                    normal — se disparan en el 73-94% y por eso no alarman. */}
+                {a.signals.some((s) => s.countsForRisk) && (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Señales de riesgo
+                    </p>
+                    <ul className="mt-1 space-y-1 text-sm">
+                      {a.signals.filter((s) => s.countsForRisk).map((s) => (
+                        <li key={s.id} className="flex gap-2">
+                          <span
+                            className={
+                              s.status === 'fail'
+                                ? 'text-negative'
+                                : s.status === 'unverifiable'
+                                  ? 'text-muted-foreground'
+                                  : 'text-positive'
+                            }
+                          >
+                            {s.status === 'fail' ? '✕' : s.status === 'unverifiable' ? '?' : '✓'}
                           </span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
+                          <span className="flex-1">
+                            <span className={s.status === 'fail' ? 'font-medium' : ''}>{s.label}</span>
+                            <span className="block text-xs text-muted-foreground">
+                              {s.detail}
+                              {s.whyNot ? ` — ${s.whyNot}` : ''}
+                            </span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {a.signals.some((s) => !s.countsForRisk) && (
+                  <div className="mt-3">
+                    <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                      Perfil operativo{' '}
+                      <span className="font-normal normal-case">— describe cómo opera, no alarma</span>
+                    </p>
+                    <ul className="mt-1 space-y-1 text-sm">
+                      {a.signals.filter((s) => !s.countsForRisk).map((s) => (
+                        <li key={s.id} className="flex gap-2 text-muted-foreground">
+                          <span>{s.status === 'fail' ? '•' : '·'}</span>
+                          <span className="flex-1">
+                            {s.label}
+                            <span className="block text-xs">{s.detail}</span>
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 )}
 
                 {/* Un recorte silencioso es indistinguible de "opera poco" */}
