@@ -13,6 +13,7 @@ import { analyzeReport } from '@/lib/risk/rules';
 import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode } from '@/lib/risk/types';
 import { computeDurationDistribution } from '@/lib/risk/duration-distribution';
 import { PROGRAM_RULES, rulesForProgram } from '@/lib/risk/programs';
+import { PropfirmQueuePanel, type QueueRow } from '@/components/risk/propfirm-queue-panel';
 import { DurationDistributionTable } from '@/components/risk/duration-distribution-table';
 import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import {
@@ -101,6 +102,9 @@ export default function RetirosPropFirmPage() {
   const [config, setConfig] = useState<RuleConfig>(structuredClone(DEFAULT_RULE_CONFIG));
   // Programa cuyo reglamento se está aplicando. Ver `aplicarPrograma`.
   const [programa, setPrograma] = useState<string>('');
+  // La cola automática: llega la solicitud y ya viene revisada. La subida
+  // manual de abajo sigue existiendo para analizar una cuenta suelta.
+  const [cola, setCola] = useState<{ pending: QueueRow[]; resolved: QueueRow[]; disclaimer: string } | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -140,6 +144,13 @@ export default function RetirosPropFirmPage() {
     let cancelled = false;
     (async () => {
       try {
+        // La cola automática se pide en paralelo: es de otra fuente y un fallo
+        // suyo no puede dejar sin historial a la pantalla.
+        apiFetch('/api/admin/propfirm-queue')
+          .then((r) => r.json())
+          .then((b) => { if (b?.success) setCola({ pending: b.pending ?? [], resolved: b.resolved ?? [], disclaimer: b.disclaimer ?? '' }); })
+          .catch(() => { /* la pantalla funciona sin la cola */ });
+
         const res = await apiFetch('/api/risk/revisions');
         const data = await res.json();
         if (cancelled) return;
@@ -961,6 +972,18 @@ export default function RetirosPropFirmPage() {
           Historial ({history.length})
         </button>
       </div>
+
+      {/* ── La cola automática ────────────────────────────────────────────
+          Va ARRIBA de todo lo demás: es lo que hay que mirar cuando se entra.
+          La subida manual queda abajo, para analizar una cuenta suelta que no
+          tiene un retiro pendiente. */}
+      {cola && (
+        <PropfirmQueuePanel
+          pending={cola.pending}
+          resolved={cola.resolved}
+          disclaimer={cola.disclaimer}
+        />
+      )}
 
       {/* Rule Config Panel */}
       <Card className="p-0 overflow-hidden">

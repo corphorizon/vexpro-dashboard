@@ -79,6 +79,10 @@
     {
       "path": "/api/cron/mt5-pnl",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/cron/propfirm-review",
+      "schedule": "*/30 * * * *"
     }
   ]
 }
