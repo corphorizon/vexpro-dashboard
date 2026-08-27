@@ -216,6 +216,14 @@ export type AuthInfo = {
   email: string;
   /** True when the caller is a platform superadmin acting on a tenant. */
   isSuperadmin?: boolean;
+  /**
+   * `company_users.allowed_modules` del caller (null para el superadmin, que
+   * no tiene fila de empresa). Viaja en el mismo select que ya se hacía: cero
+   * queries extra. Lo necesita cualquier ruta que además del gate de la ruta
+   * tenga que decidir POR SLICE — hoy /api/bootstrap, que responde 20 tablas
+   * en una sola respuesta y no puede apoyarse en RLS (usa el service role).
+   */
+  allowedModules?: string[] | null;
 };
 
 /**
@@ -305,6 +313,7 @@ export async function verifyAdminAuth(
       name: pu.name ?? '',
       email: pu.email ?? user.email ?? '',
       isSuperadmin: true,
+      allowedModules: null,
     };
   }
 
@@ -371,6 +380,7 @@ export async function verifyAdminAuth(
     role: profile.role,
     name: profile.name ?? '',
     email: profile.email ?? user.email ?? '',
+    allowedModules: Array.isArray(profile.allowed_modules) ? profile.allowed_modules : null,
   };
 }
 
@@ -487,6 +497,7 @@ export async function verifyAuth(
       name: pu.name ?? '',
       email: pu.email ?? user.email ?? '',
       isSuperadmin: true,
+      allowedModules: null,
     };
   }
 
@@ -525,5 +536,6 @@ export async function verifyAuth(
     role: profile.role,
     name: profile.name ?? '',
     email: profile.email ?? user.email ?? '',
+    allowedModules: Array.isArray(profile.allowed_modules) ? profile.allowed_modules : null,
   };
 }

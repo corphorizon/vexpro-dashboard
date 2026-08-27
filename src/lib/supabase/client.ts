@@ -1,5 +1,7 @@
 import { createBrowserClient } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import * as Sentry from '@sentry/nextjs';
+import { AUTH_LOCK_HOLD_CEILING_MS, AUTH_LOCK_ACQUIRE_CEILING_MS } from '@/lib/config';
 
 // Singleton — Kevin (2026-05-03): la página se quedaba colgada en
 // "Cargando…" con el warning de gotrue-js:
@@ -54,10 +56,24 @@ let cachedClient: SupabaseClient | undefined;
 //   3. GC arreglado: la versión anterior comparaba contra una promesa
 //      RECIÉN creada (`previous.then(...)` genera un objeto nuevo), así
 //      que la condición era siempre false y el map nunca se limpiaba.
+//
+// ── DESACOPLADO DE LOAD_TIMEOUT_MS (2026-08-28) ──────────────────────────────
+// El techo de retención valía 15_000 — EXACTAMENTE lo mismo que
+// LOAD_TIMEOUT_MS en config.ts. Cuando el lock reventaba, el error subía por
+// la cadena de fetches y el usuario veía "La carga tardó demasiado": el mismo
+// mensaje, al mismo tiempo, que un fallo real de datos. En telemetría los dos
+// modos de falla eran EL MISMO evento y nunca supimos cuál pesaba más.
+//
+// Ahora los dos números viven en config.ts, son distintos a propósito (6s vs
+// 8s vs 15s, fijado por config-timeouts.test.ts) y reventar el techo emite su
+// PROPIO evento — `[auth-lock] hold-ceiling-exceeded` en consola y un
+// captureMessage con tag `area: 'auth-lock.hold-ceiling'`, el mismo mecanismo
+// que ya usa data-context para 'loadAllData:start/end'. Un fallo de AUTH ya no
+// se puede confundir con un fallo de DATOS.
 type LockFn = <R>(name: string, acquireTimeout: number, fn: () => Promise<R>) => Promise<R>;
 const memoryLockMap = new Map<string, Promise<unknown>>();
-const LOCK_HOLD_CEILING_MS = 15_000; // máximo que una operación de auth puede retener el lock
-const LOCK_ACQUIRE_CEILING_MS = 10_000; // máximo que esperamos por el holder anterior
+const LOCK_HOLD_CEILING_MS = AUTH_LOCK_HOLD_CEILING_MS;
+const LOCK_ACQUIRE_CEILING_MS = AUTH_LOCK_ACQUIRE_CEILING_MS;
 
 const memoryLock: LockFn = async (name, acquireTimeout, fn) => {
   const previous = memoryLockMap.get(name) ?? Promise.resolve();
@@ -88,15 +104,21 @@ const memoryLock: LockFn = async (name, acquireTimeout, fn) => {
     return await Promise.race([
       fn(),
       new Promise<never>((_, reject) => {
-        holdTimer = setTimeout(
-          () =>
-            reject(
-              new Error(
-                `Auth lock "${name}" superó ${LOCK_HOLD_CEILING_MS / 1000}s — liberado para no bloquear la pestaña`,
-              ),
+        holdTimer = setTimeout(() => {
+          // Evento PROPIO y distinguible: esto NO es un fallo de datos.
+          const detalle = { lock: name, ceilingMs: LOCK_HOLD_CEILING_MS };
+          console.error('[auth-lock] hold-ceiling-exceeded', detalle);
+          Sentry.captureMessage('auth-lock hold ceiling exceeded', {
+            level: 'error',
+            tags: { area: 'auth-lock.hold-ceiling' },
+            extra: detalle,
+          });
+          reject(
+            new Error(
+              `Auth lock "${name}" superó ${LOCK_HOLD_CEILING_MS / 1000}s — liberado para no bloquear la pestaña`,
             ),
-          LOCK_HOLD_CEILING_MS,
-        );
+          );
+        }, LOCK_HOLD_CEILING_MS);
       }),
     ]);
   } finally {

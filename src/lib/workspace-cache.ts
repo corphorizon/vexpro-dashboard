@@ -8,8 +8,25 @@
 // pueda hidratar el dashboard INSTANTÁNEAMENTE mientras el refresh normal
 // de red corre en background y sobreescribe con datos frescos al llegar.
 //
-// Claves: `fd_ws_cache_v${CACHE_VERSION}_${companyId}` — una por empresa,
-// así el snapshot de la empresa A jamás se filtra en la empresa B.
+// Claves: `fd_ws_cache_v${CACHE_VERSION}_${userId}_${companyId}` — una por
+// USUARIO y empresa.
+//
+// ── Por qué el userId está en la clave (2026-08-28) ────────────────────────
+// Hasta hoy la clave era sólo `_${companyId}` y el snapshot se borraba en TODO
+// SIGNED_OUT, así que la separación entre usuarios la daba el borrado, no la
+// clave. Eso obligaba a tirar el caché también en el auto-logout por
+// inactividad de 2h: quien deja la pestaña abierta durante la jornada volvía
+// SIEMPRE a un arranque frío (40 round-trips desde LatAm/Dubái).
+//
+// Para poder conservar el snapshot en el auto-logout hay que cerrar antes la
+// trampa conocida del repo — «caché de cliente con clave global = el
+// siguiente usuario en la misma máquina ve los datos del anterior». Dos
+// candados, no uno:
+//   1. La CLAVE lleva userId + companyId.
+//   2. El SOBRE guarda userId + companyId y `loadWorkspaceSnapshot` los
+//      compara contra la sesión actual antes de devolver nada. Una clave
+//      escrita a mano en localStorage no alcanza para hidratar datos ajenos.
+// Fijado por workspace-cache.test.ts (usuario B no hidrata el snapshot de A).
 
 import type {
   Company,
@@ -38,7 +55,10 @@ import type {
 // slices, renombrar campos, cambios de tipos en ./types que afecten datos
 // cacheados). Un bump invalida todos los snapshots viejos: loadWorkspaceSnapshot
 // simplemente no encuentra la clave nueva y el flujo cae a red como siempre.
-export const CACHE_VERSION = 1;
+// v2: la clave pasó a incluir el userId y el sobre guarda su dueño. Los
+// snapshots v1 (clave sin usuario) quedan inalcanzables — el arranque
+// siguiente cae a red como siempre y reescribe con la clave nueva.
+export const CACHE_VERSION = 2;
 
 // Un snapshot más viejo que esto se descarta — mejor splash normal que
 // pintar números financieros de hace días.
@@ -46,8 +66,21 @@ const MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24h
 
 const KEY_PREFIX = 'fd_ws_cache'; // cualquier versión arranca con esto
 
-function cacheKey(companyId: string): string {
-  return `${KEY_PREFIX}_v${CACHE_VERSION}_${companyId}`;
+/**
+ * Dueño de un snapshot. `userId` es `auth.users.id` (el `auth_user_id` del
+ * perfil): identifica a la PERSONA de la sesión, no la fila de company_users.
+ */
+export interface SnapshotScope {
+  userId: string;
+  companyId: string;
+}
+
+function cacheKey(scope: SnapshotScope): string {
+  return `${KEY_PREFIX}_v${CACHE_VERSION}_${scope.userId}_${scope.companyId}`;
+}
+
+function scopeIsUsable(scope: SnapshotScope | null | undefined): scope is SnapshotScope {
+  return !!scope && !!scope.userId && !!scope.companyId;
 }
 
 /**
@@ -81,6 +114,9 @@ export interface WorkspaceSnapshot {
 
 interface StoredEnvelope {
   savedAt: number;
+  /** Dueño del snapshot. Se verifica al hidratar — ver cabecera del archivo. */
+  userId?: string;
+  companyId?: string;
   data: WorkspaceSnapshot;
 }
 
@@ -99,11 +135,16 @@ function hasLocalStorage(): boolean {
  * quota exceeded / private mode limpia todo el caché fd_ws_cache_* y
  * sigue de largo — el caché es una optimización, no una fuente de verdad.
  */
-export function saveWorkspaceSnapshot(companyId: string, snapshot: WorkspaceSnapshot): void {
-  if (!hasLocalStorage() || !companyId) return;
-  const envelope: StoredEnvelope = { savedAt: Date.now(), data: snapshot };
+export function saveWorkspaceSnapshot(scope: SnapshotScope, snapshot: WorkspaceSnapshot): void {
+  if (!hasLocalStorage() || !scopeIsUsable(scope)) return;
+  const envelope: StoredEnvelope = {
+    savedAt: Date.now(),
+    userId: scope.userId,
+    companyId: scope.companyId,
+    data: snapshot,
+  };
   try {
-    window.localStorage.setItem(cacheKey(companyId), JSON.stringify(envelope));
+    window.localStorage.setItem(cacheKey(scope), JSON.stringify(envelope));
   } catch (err) {
     // QuotaExceededError (u otro fallo de escritura): liberar espacio
     // borrando TODOS los snapshots (cualquier versión) y no reintentar.
@@ -114,22 +155,33 @@ export function saveWorkspaceSnapshot(companyId: string, snapshot: WorkspaceSnap
 }
 
 /**
- * Devuelve el snapshot cacheado para la empresa, o null si no existe,
- * es de otra versión (clave distinta), tiene más de 24h, o está corrupto.
+ * Devuelve el snapshot cacheado para ESTE usuario en ESTA empresa, o null si
+ * no existe, es de otra versión (clave distinta), tiene más de 24h, está
+ * corrupto, o **no le pertenece al usuario de la sesión actual**.
+ *
+ * La verificación de propiedad es el segundo candado (el primero es la clave):
+ * un snapshot cuyo sobre diga otro userId/companyId se descarta Y se borra,
+ * pase lo que pase con la clave.
  */
-export function loadWorkspaceSnapshot(companyId: string): WorkspaceSnapshot | null {
-  if (!hasLocalStorage() || !companyId) return null;
+export function loadWorkspaceSnapshot(scope: SnapshotScope): WorkspaceSnapshot | null {
+  if (!hasLocalStorage() || !scopeIsUsable(scope)) return null;
   try {
-    const raw = window.localStorage.getItem(cacheKey(companyId));
+    const raw = window.localStorage.getItem(cacheKey(scope));
     if (!raw) return null;
     const envelope = JSON.parse(raw) as StoredEnvelope | null;
     if (!envelope || typeof envelope !== 'object') return null;
     if (typeof envelope.savedAt !== 'number' || !envelope.data || typeof envelope.data !== 'object') {
       return null;
     }
+    // Candado 2 — propiedad. Un sobre sin dueño (o con otro dueño) NO hidrata:
+    // datos financieros de una persona no se pintan en la sesión de otra.
+    if (envelope.userId !== scope.userId || envelope.companyId !== scope.companyId) {
+      try { window.localStorage.removeItem(cacheKey(scope)); } catch { /* no-op */ }
+      return null;
+    }
     if (Date.now() - envelope.savedAt > MAX_AGE_MS) {
       // Vencido — borrarlo para no re-parsearlo en cada load.
-      try { window.localStorage.removeItem(cacheKey(companyId)); } catch { /* no-op */ }
+      try { window.localStorage.removeItem(cacheKey(scope)); } catch { /* no-op */ }
       return null;
     }
     return envelope.data;
@@ -141,8 +193,13 @@ export function loadWorkspaceSnapshot(companyId: string): WorkspaceSnapshot | nu
 
 /**
  * Borra TODOS los snapshots del workspace (cualquier versión, cualquier
- * empresa). Se llama en logout: datos financieros no deben sobrevivir el
- * cierre de sesión en máquinas compartidas.
+ * usuario, cualquier empresa).
+ *
+ * Se llama en el LOGOUT EXPLÍCITO (la persona apretó "Cerrar sesión"), no en
+ * el auto-logout por inactividad — ver src/lib/auth-context.tsx. Datos
+ * financieros no deben sobrevivir a alguien que se va de una máquina
+ * compartida; pero quien dejó la pestaña abierta 2h y vuelve es la MISMA
+ * persona, y tirarle el caché la condenaba a un arranque frío cada tarde.
  */
 export function clearWorkspaceCache(): void {
   if (!hasLocalStorage()) return;
