@@ -542,6 +542,37 @@ export default function UploadPage() {
   // toasts genéricos (auditoría 2026-08-06, hallazgo prioritario).
   const selectedPeriodIsClosed = !!periods.find((p) => p.id === selectedPeriod)?.is_closed;
 
+  // ── El número que el CRM ya tiene, al lado del campo que se teclea ───────
+  // Ventas Prop Firm y Transferencias P2P se cargan a mano acá, y el CRM las
+  // tiene calculadas al centavo (migración 100, /finanzas/crm). Se muestra
+  // como PISTA, nunca como autocompletado: pisar lo que alguien escribió es
+  // exactamente lo que este repo no hace. Medido: en 6 de los 9 meses
+  // cerrados de Vex Pro el manual y el automático ya son idénticos, así que
+  // la pista casi siempre confirma; los meses en que difiere son los que hay
+  // que mirar.
+  const [crmTotals, setCrmTotals] = useState<Array<{ year: number; month: number; metric: string; auto: number | null }>>([]);
+  useEffect(() => {
+    let alive = true;
+    apiFetch('/api/admin/crm-monthly-totals')
+      .then((r) => r.json())
+      .then((j: { success?: boolean; rows?: Array<{ year: number; month: number; metric: string; auto: number | null }> }) => {
+        if (alive && j?.success) setCrmTotals(j.rows ?? []);
+      })
+      // Que falle no puede romper la carga de datos: sin pista se sigue
+      // cargando igual, que es como funcionó hasta hoy.
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+
+  const crmHint = (metric: string): number | null => {
+    const p = periods.find((x) => x.id === selectedPeriod);
+    if (!p) return null;
+    const row = crmTotals.find((r) => r.metric === metric && r.year === p.year && r.month === p.month);
+    // `undefined` (no hay fila) y `null` (no se pudo calcular) se tratan
+    // igual acá: en los dos casos no hay pista que mostrar.
+    return row?.auto ?? null;
+  };
+
   // Reload data when the PERIOD changes. Intentionally depends only on
   // `selectedPeriod` (and `dirtySection`). Earlier this effect also listed
   // the `loadXForPeriod` callbacks + raw `allExpenses` etc. as deps — but
@@ -2211,6 +2242,11 @@ export default function UploadPage() {
               <div>
                 <label className="text-sm font-medium">{t('movements.propFirmSales')}</label>
                 <p className="text-xs text-muted-foreground">{t('upload.notInDepositsTotal')}</p>
+                {crmHint('propfirm_sales') !== null && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t('upload.crmHint')}: {formatCurrency(crmHint('propfirm_sales') as number)}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {userCanAdd ? (
@@ -2340,6 +2376,11 @@ export default function UploadPage() {
               <div>
                 <label className="text-sm font-medium">{t('upload.p2pTransfers')}</label>
                 <p className="text-xs text-muted-foreground">{t('upload.notInWithdrawalsTotal')}</p>
+                {crmHint('p2p_transfers') !== null && (
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t('upload.crmHint')}: {formatCurrency(crmHint('p2p_transfers') as number)}
+                  </p>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {userCanAdd ? (

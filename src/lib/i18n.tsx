@@ -773,6 +773,28 @@ const translations: Record<Locale, TranslationDict> = {
     'cash.deleteUnitConfirm': 'Delete "{name}"? Its locations keep their balance and go back to counting toward the fund.',
     'nav.logs': 'Activity Log',
     'nav.forecast': 'Cash Forecast',
+    'nav.crmTotals': 'CRM Totals',
+
+    // /finanzas/crm — automatic monthly totals from the CRM, side by side
+    // with what was typed by hand. They are NEVER added together: same money.
+    'crmTotals.title': 'CRM Totals',
+    'crmTotals.subtitle': 'Monthly figures the CRM already has, next to what was entered by hand.',
+    'crmTotals.explainer': 'The automatic column is computed from the CRM by the sync; the manual one is what someone typed in Data Upload. They are the same money counted twice, so they are never added up — the difference is shown so it can be reviewed. This screen never writes anything.',
+    'crmTotals.month': 'Month',
+    'crmTotals.auto': 'From the CRM',
+    'crmTotals.manual': 'Loaded by hand',
+    'crmTotals.difference': 'Difference',
+    'crmTotals.txCount': 'Transactions',
+    'crmTotals.excluded': 'Excluded',
+    'crmTotals.excludedHint': 'Left out of the total: rejected, pending or without a status to confirm them.',
+    'crmTotals.notComputed': 'Not computed',
+    'crmTotals.notLoaded': 'Not loaded',
+    'crmTotals.closed': 'Closed',
+    'crmTotals.computedAt': 'Last computed',
+    'crmTotals.loadFailed': 'The CRM totals could not be loaded.',
+    'crmTotals.truncated': 'The list was cut off: there are more months than shown.',
+    'crmTotals.emptyTitle': 'No CRM totals yet',
+    'crmTotals.emptyDesc': 'They are computed by the full CRM sync. If the company has no prop firm or P2P transfers, there is nothing to show.',
 
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Channel ledger',
@@ -1644,6 +1666,7 @@ const translations: Record<Locale, TranslationDict> = {
     'upload.notInWithdrawalsTotal': 'Not added to the withdrawals total',
     'upload.brokerCoexistNote': 'Broker: the manual field above coexists with the auto-derived Coinsbuy amount. Movements shows both separately and adds them to the total.',
     'upload.p2pTransfers': 'P2P Transfers',
+    'upload.crmHint': 'The CRM has',
     'upload.extraWithdrawalsTitle': 'Additional manual withdrawals',
     'upload.extraWithdrawalsDesc': 'Saved in the database together with the 4 aggregates above; they coexist with API data.',
     'upload.extraWithdrawalsEmptyAdd': 'Add free-form entries when you need to record a withdrawal outside the 4 aggregates.',
@@ -3005,6 +3028,28 @@ const translations: Record<Locale, TranslationDict> = {
     'cash.deleteUnitConfirm': '¿Eliminar "{name}"? Sus ubicaciones conservan el saldo y vuelven a sumar al fondo.',
     'nav.logs': 'Registro de Actividad',
     'nav.forecast': 'Forecast de Caja',
+    'nav.crmTotals': 'Totales del CRM',
+
+    // /finanzas/crm — los totales mensuales que salen solos del CRM, al lado
+    // de lo cargado a mano. NUNCA se suman: es el mismo dinero.
+    'crmTotals.title': 'Totales del CRM',
+    'crmTotals.subtitle': 'Los números del mes que el CRM ya tiene, al lado de lo cargado a mano.',
+    'crmTotals.explainer': 'La columna automática la calcula el sync desde el CRM; la manual es lo que alguien cargó en Carga de Datos. Es el mismo dinero contado dos veces, así que no se suman — se muestra la diferencia para poder revisarla. Esta pantalla no escribe nada.',
+    'crmTotals.month': 'Mes',
+    'crmTotals.auto': 'Del CRM',
+    'crmTotals.manual': 'Cargado a mano',
+    'crmTotals.difference': 'Diferencia',
+    'crmTotals.txCount': 'Movimientos',
+    'crmTotals.excluded': 'Excluido',
+    'crmTotals.excludedHint': 'Fuera del total: rechazadas, pendientes o sin un estado que las confirme.',
+    'crmTotals.notComputed': 'Sin calcular',
+    'crmTotals.notLoaded': 'Sin cargar',
+    'crmTotals.closed': 'Cerrado',
+    'crmTotals.computedAt': 'Último cálculo',
+    'crmTotals.loadFailed': 'No se pudieron cargar los totales del CRM.',
+    'crmTotals.truncated': 'La lista quedó recortada: hay más meses de los que se muestran.',
+    'crmTotals.emptyTitle': 'Todavía no hay totales del CRM',
+    'crmTotals.emptyDesc': 'Los calcula el sync completo del CRM. Si la empresa no tiene prop firm ni transferencias P2P, no hay nada que mostrar.',
 
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Libro del canal',
@@ -3871,6 +3916,7 @@ const translations: Record<Locale, TranslationDict> = {
     'upload.notInWithdrawalsTotal': 'No se suma al total de retiros',
     'upload.brokerCoexistNote': 'Broker: el campo manual de arriba convive con el monto auto-derivado de Coinsbuy. En Movimientos se muestran ambos por separado y se suman al total.',
     'upload.p2pTransfers': 'Transferencias P2P',
+    'upload.crmHint': 'El CRM tiene',
     'upload.extraWithdrawalsTitle': 'Retiros manuales adicionales',
     'upload.extraWithdrawalsDesc': 'Se guardan en la BD junto con los 4 agregados arriba y conviven con los datos de las APIs.',
     'upload.extraWithdrawalsEmptyAdd': 'Agrega entradas libres cuando necesites registrar un retiro fuera de los 4 agregados.',

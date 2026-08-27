@@ -32,6 +32,7 @@ import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-
 import { syncExposure, type ExposureResult } from '@/lib/mt5-sync/exposure';
 import { syncWalletSources, type WalletSourcesResult } from '@/lib/crm-sync/wallet-sources';
 import { syncIbProduction, type IbProductionResult } from '@/lib/crm-sync/ib-production';
+import { syncCrmMonthlyTotals, type CrmMonthlyTotalsResult } from '@/lib/crm-sync/monthly-totals';
 import { syncTradingAccounts, type TradingAccountsResult } from '@/lib/crm-sync/trading-accounts';
 import { syncTradingBehavior, type BehaviorResult } from '@/lib/mt5-sync/behavior';
 import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users';
@@ -307,6 +308,7 @@ export async function GET(request: NextRequest) {
       behavior?: BehaviorResult | null;
       allUsers?: AllUsersResult | null;
       aggregates?: AggregatesResult | null;
+      monthlyTotals?: CrmMonthlyTotalsResult | null;
     })[] = [];
     for (const company of companies) {
       try {
@@ -415,6 +417,7 @@ export async function GET(request: NextRequest) {
         // comportamiento paga ir a la fila en una tabla de 68M — ninguno de
         // los dos cambia lo suficiente en 15 minutos para justificar ese costo.
         let walletSources: WalletSourcesResult | null = null;
+        let monthlyTotals: CrmMonthlyTotalsResult | null = null;
         let ibProduction: IbProductionResult | null = null;
         let behavior: BehaviorResult | null = null;
         let tradingAccounts: TradingAccountsResult | null = null;
@@ -439,6 +442,23 @@ export async function GET(request: NextRequest) {
             }
           } catch (err) {
             extraErrors.push(`fuentes: ${err instanceof Error ? err.message : 'unknown'}`);
+          }
+          // ── Totales mensuales del CRM (migración 100) ──────────────────
+          // P2P, ventas de prop firm y retiros de prop firm aprobados, mes a
+          // mes. Va con el modo COMPLETO y recalcula la serie entera: son
+          // cuatro consultas de menos de un segundo sobre colecciones de
+          // miles de documentos, y un cursor sólo agregaría el bug de dejar
+          // contada para siempre una transferencia que después se rechazó.
+          //
+          // NO escribe en p2p_transfers ni en prop_firm_sales: lo cargado a
+          // mano no se toca. La pantalla muestra las dos columnas al lado.
+          try {
+            monthlyTotals = await syncCrmMonthlyTotals(admin, company.id);
+            for (const w of monthlyTotals.warnings) {
+              console.warn(`[cron/sync-crm] totales mensuales ${company.id}: ${w}`);
+            }
+          } catch (err) {
+            extraErrors.push(`totales mensuales: ${err instanceof Error ? err.message : 'unknown'}`);
           }
           // ── Produccion IB por estructura (migracion 098) ──────────────
           // Va con el modo COMPLETO y no cada 15 minutos por dos razones
@@ -487,6 +507,7 @@ export async function GET(request: NextRequest) {
           mt5,
           exposure,
           walletSources,
+          monthlyTotals,
           ibProduction,
           behavior,
           tradingAccounts,
