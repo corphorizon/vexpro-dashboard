@@ -1,6 +1,17 @@
 // ─── Risk Management Types ───
 
 export interface Trade {
+  /**
+   * Posición en el array `trades`, EMPEZANDO EN CERO.
+   *
+   * No es un identificador: `ruleGrid` y `ruleMartingala` juntan violaciones
+   * por este campo y después resuelven la operación con `trades[index]`. Si
+   * `index` no coincide con la posición, no falla nada — se señala la
+   * operación equivocada, y la última da `undefined`.
+   *
+   * El acoplamiento estaba implícito y ya hizo tropezar a un segundo cargador
+   * de datos (el automático desde MT5, que numeraba desde 1).
+   */
   index: number;
   position: number;
   symbol: string;
