@@ -388,6 +388,8 @@ export function toUserRow(
     sponsor_email: toStr(doc.sponsorEmail),
     ib_program_name: toStr(doc.ibProgramName),
     ib_program_broker_name: toStr(doc.ibProgramBrokerName),
+    ib_rewards: toIbRewards(doc.ibRewards),
+    hierarchy: toHierarchy(doc.hierarchy),
     raw: toRaw(doc, DROP_USERS),
     synced_at: syncedAt,
   };
@@ -398,6 +400,39 @@ export function toUserRow(
  * buena; `createdAt` es el respaldo para los docs viejos que nunca se tocaron
  * y no tienen updatedAt.
  */
+
+/**
+ * `ibRewards` del doc de users: totales EN DÓLARES por línea de negocio.
+ * Devuelve null si el campo no existe (≠ ceros). Un total no numérico va como
+ * null dentro del objeto: "no lo sabemos" ≠ "es cero".
+ */
+export function toIbRewards(v: unknown): CrmUserRow['ib_rewards'] {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  return {
+    totalAmount: toNum(o.totalAmount),
+    totalAmountByBroker: toNum(o.totalAmountByBroker),
+    totalAmountByPropFirm: toNum(o.totalAmountByPropFirm),
+    totalAmountByHedge: toNum(o.totalAmountByHedge),
+  };
+}
+
+/**
+ * `hierarchy` reducida a {userId, position}. Es la cadena de ANCESTROS
+ * (raíz → patrocinador), no la red hacia abajo. Eslabones legacy sin
+ * userId/position (existen: solo atJoinTs+_id) se conservan con nulls —
+ * omitirlos haría la cadena más corta de lo que es, sin error.
+ * null = el doc no trae el campo; [] = está en la cima de su estructura.
+ */
+export function toHierarchy(v: unknown): CrmUserRow['hierarchy'] {
+  if (v === undefined || v === null) return null;
+  if (!Array.isArray(v)) return null;
+  return v.map((e) => {
+    const o = (e && typeof e === 'object' ? e : {}) as Record<string, unknown>;
+    return { userId: toStr(o.userId), position: toNum(o.position) };
+  });
+}
+
 export function docWatermark(doc: MongoDoc): string | null {
   return toIso(doc.updatedAt) ?? toIso(doc.createdAt);
 }

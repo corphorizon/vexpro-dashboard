@@ -103,7 +103,7 @@ const PROFILE_COLS =
   'user_external_id, username, email, country, status, kyc_status, user_type, register_date, ' +
   'sponsor_username, rank, source_updated_at, first_name, last_name, phone_raw, ' +
   'phone_country_code, country_iso, language, sponsor_email, ib_program_name, ' +
-  'ib_program_broker_name';
+  'ib_program_broker_name, ib_rewards, hierarchy';
 
 interface AggRow {
   user_external_id: string;
@@ -143,6 +143,13 @@ interface ProfileRow {
   sponsor_email: string | null;
   ib_program_name: string | null;
   ib_program_broker_name: string | null;
+  ib_rewards: {
+    totalAmount: number | null;
+    totalAmountByBroker: number | null;
+    totalAmountByPropFirm: number | null;
+    totalAmountByHedge: number | null;
+  } | null;
+  hierarchy: Array<{ userId: string | null; position: number | null }> | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -261,7 +268,15 @@ const CUSTOMER_SOURCE = {
     'status',
     'kycStatus',
     'kycLevel',
+    'ibRewards',
+    'hierarchy',
   ],
+  ibNotice:
+    'ibRewards está EN DÓLARES (verificado contra docs reales: decimales; centavos sería entero). ' +
+    'hierarchy es la cadena de ANCESTROS de la raíz al patrocinador — no el árbol hacia abajo — y ' +
+    'position cuenta DESDE LA RAÍZ: el patrocinador directo es el de position más alta, no 1. ' +
+    'Hay eslabones legacy con userId/position en null: cuentan como nivel, no los descartes. ' +
+    'En los dos campos null = "no re-sincronizado aún", distinto de 0 o de [].',
   note:
     'Movimientos de la PLATAFORMA y perfil del cliente. Para la ACTIVIDAD de trading (cuántas ' +
     'cuentas operan, cuánto operó, última operación) manda MT5: ver /api/partner/v1/trading-activity.',
@@ -317,6 +332,17 @@ function shape(a: AggRow, p: ProfileRow | null) {
     sponsorEmail: p?.sponsor_email ?? null,
     ibProgramName: p?.ib_program_name ?? null,
     ibProgramBrokerName: p?.ib_program_broker_name ?? null,
+    // Lo cobrado como IB por línea de negocio, EN DÓLARES (no centavos:
+    // verificado contra docs reales, 539/550 con decimales). null = aún no
+    // re-sincronizado con el normalizador que lo extrae, o el doc no lo trae.
+    ibRewards: p?.ib_rewards ?? null,
+    // Cadena de ANCESTROS (raíz → patrocinador), NO la red hacia abajo;
+    // `position` es profundidad DESDE LA RAÍZ. Reducida a {userId, position}
+    // (atJoinTs, que viene en epoch SEGUNDOS, no se sirve). Eslabones legacy
+    // sin userId/position van con null — se conservan para no acortar la
+    // cadena en silencio. null = aún no re-sincronizado; [] = cima de su
+    // estructura (dato legítimo, no un vacío).
+    hierarchy: p?.hierarchy ?? null,
     registerDate: p?.register_date ?? null,
     enabledWithdrawals: a.enabled_withdrawals,
 

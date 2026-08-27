@@ -359,3 +359,41 @@ describe('docWatermark', () => {
     expect(docWatermark({})).toBeNull();
   });
 });
+
+// ── ib_rewards + hierarchy (migración 103, pedidos por Atlas) ──────────────
+import { toIbRewards, toHierarchy } from './normalize';
+
+describe('toIbRewards', () => {
+  it('extrae los cuatro totales en dólares tal cual', () => {
+    expect(
+      toIbRewards({ totalAmount: 8.9194, totalAmountByBroker: 7.4194, totalAmountByPropFirm: 1.5, totalAmountByHedge: 0 }),
+    ).toEqual({ totalAmount: 8.9194, totalAmountByBroker: 7.4194, totalAmountByPropFirm: 1.5, totalAmountByHedge: 0 });
+  });
+  it('campo ausente → null (≠ ceros)', () => {
+    expect(toIbRewards(undefined)).toBeNull();
+    expect(toIbRewards(null)).toBeNull();
+  });
+  it('total no numérico → null dentro del objeto, no 0', () => {
+    const r = toIbRewards({ totalAmount: 'x', totalAmountByBroker: 1 });
+    expect(r?.totalAmount).toBeNull();
+    expect(r?.totalAmountByBroker).toBe(1);
+  });
+});
+
+describe('toHierarchy', () => {
+  it('reduce a {userId, position} y descarta atJoinTs', () => {
+    expect(
+      toHierarchy([{ userId: 'u1', position: 1, atJoinTs: 1759939940, _id: 'x' }]),
+    ).toEqual([{ userId: 'u1', position: 1 }]);
+  });
+  it('eslabón legacy sin userId/position se CONSERVA con nulls (no acorta la cadena)', () => {
+    expect(toHierarchy([{ atJoinTs: 1759939940, _id: 'x' }, { userId: 'u2', position: 2 }])).toEqual([
+      { userId: null, position: null },
+      { userId: 'u2', position: 2 },
+    ]);
+  });
+  it('doc sin campo → null; array vacío (cima de estructura) → []', () => {
+    expect(toHierarchy(undefined)).toBeNull();
+    expect(toHierarchy([])).toEqual([]);
+  });
+});

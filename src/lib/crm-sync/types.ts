@@ -103,6 +103,27 @@ export interface CrmUserRow {
   sponsor_email: string | null;
   ib_program_name: string | null;
   ib_program_broker_name: string | null;
+  /**
+   * Lo que el cliente ya cobró como IB, POR LÍNEA DE NEGOCIO y EN DÓLARES
+   * (verificado contra docs reales 2026-08-28: 1.2489…, con decimales — un
+   * campo en centavos sería entero). null = el doc no trae `ibRewards`;
+   * {totalAmount: 0, …} = trae ceros. No son lo mismo.
+   */
+  ib_rewards: {
+    totalAmount: number | null;
+    totalAmountByBroker: number | null;
+    totalAmountByPropFirm: number | null;
+    totalAmountByHedge: number | null;
+  } | null;
+  /**
+   * Cadena de ANCESTROS (de la raíz al patrocinador), NO el árbol hacia
+   * abajo. `position` es la profundidad desde la raíz. Reducida a
+   * {userId, position}: `atJoinTs` viene en epoch SEGUNDOS y nadie la pidió.
+   * Hay eslabones legacy sin userId/position (solo atJoinTs+_id, visto en
+   * docs reales): van como null, no se omiten — omitirlos acortaría la
+   * cadena en silencio. null = doc sin campo; [] = cima de su estructura.
+   */
+  hierarchy: Array<{ userId: string | null; position: number | null }> | null;
 }
 
 /** Conteos por colección que devuelve el sync. */
