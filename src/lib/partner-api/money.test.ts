@@ -4,7 +4,7 @@
 // que están denominadas en centavos.
 
 import { describe, it, expect } from 'vitest';
-import { moneyByFamily, familyOf, unitOf, isVirtualFamily } from './money';
+import { moneyByFamily, familyOf, unitOf, isVirtualFamily, normalizeToUsd } from './money';
 
 const cuenta = (group: string | null, balance: number, profit = 0, deals = 1) => ({
   group_name: group,
@@ -104,5 +104,51 @@ describe('moneyByFamily', () => {
     expect(moneyByFamily(filas).map((f) => f.family)).toEqual(
       moneyByFamily([...filas].reverse()).map((f) => f.family),
     );
+  });
+});
+
+describe('total normalizado a dólares', () => {
+  it('una cuenta Cent vale la centésima parte de su número', () => {
+    // Medido contra el CRM: el ratio mediano entre lo que MT5 registra y lo
+    // que la billetera descontó en dólares es 100,00 en 218 cuentas Cent.
+    // Sin dividir, un cliente con 215,57 en una Cent aparece con $215 en vez
+    // de $2,16 — y se ordena cien puestos por encima de donde va.
+    const r = normalizeToUsd([
+      { group: 'real\\Cent\\STP', amount: { amount: 215.57, unit: 'cents' } },
+    ]);
+    expect(r.realUsd).toBe(2.16);
+  });
+
+  it('una cuenta en dólares vale su número', () => {
+    const r = normalizeToUsd([
+      { group: 'real\\Broker\\STP', amount: { amount: 500, unit: 'account_currency' } },
+    ]);
+    expect(r.realUsd).toBe(500);
+  });
+
+  it('el capital de prop firm NO entra en el total del cliente', () => {
+    // Es capital de desafío del broker. Sumarlo diría que alguien con una
+    // cuenta de $200.000 tiene $200.000, y sobre eso se ordenaría a quién
+    // llamar primero.
+    const r = normalizeToUsd([
+      { group: 'real\\Broker\\STP', amount: { amount: 100, unit: 'account_currency' } },
+      { group: 'real\\PropFirm\\LeverageX12', amount: { amount: 200000, unit: 'account_currency' } },
+    ]);
+    expect(r.realUsd).toBe(100);
+    expect(r.virtualUsd).toBe(200000);
+  });
+
+  it('mezcla Cent y dólares sin que la Cent domine', () => {
+    // El caso que motivó todo: sumar sin convertir daría 10.215,57 y pondría
+    // a este cliente por delante de uno que tiene diez mil dólares de verdad.
+    const r = normalizeToUsd([
+      { group: 'real\\Cent\\STP', amount: { amount: 10000, unit: 'cents' } },
+      { group: 'real\\Broker\\STP', amount: { amount: 215.57, unit: 'account_currency' } },
+    ]);
+    expect(r.realUsd).toBe(315.57);
+  });
+
+  it('sin cuentas devuelve cero, no NaN', () => {
+    expect(normalizeToUsd([])).toEqual({ realUsd: 0, virtualUsd: 0 });
   });
 });

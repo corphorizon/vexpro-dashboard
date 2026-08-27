@@ -72,7 +72,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyPartnerAuth } from '@/lib/partner-api/auth';
 import { apiError } from '@/lib/api-error';
-import { moneyByFamily, money, familyOf } from '@/lib/partner-api/money';
+import { moneyByFamily, money, familyOf, normalizeToUsd } from '@/lib/partner-api/money';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 30;
@@ -281,7 +281,13 @@ const TRADING_SOURCE = {
   moneyNotice:
     'El dinero va desglosado por familia de cuenta y NO sumado: las cuentas Cent están ' +
     'denominadas en CENTAVOS y las PropFirm llevan capital virtual de desafío. Sumarlas da ' +
-    '101 millones contra 7,6 realmente depositados. Cada familia trae su propia unidad.',
+    '101 millones contra 7,6 realmente depositados. Cada familia trae su propia unidad. ' +
+    'PARA ORDENAR usá accountEquityUsd o accountBalanceUsd del resumen: son el total del cliente ' +
+    'ya convertido a dólares por nosotros, con el capital virtual de prop firm EXCLUIDO. ' +
+    'unit "cents" son centésimas de dólar (dividir por 100; medido contra el CRM, ratio 100,00 ' +
+    'sobre 218 cuentas) y unit "account_currency" es SIEMPRE USD: en el servidor sólo existen ' +
+    'USD (19.046 cuentas) y USC (5.666). Ojo con el nombre: accountEquityUsd es el dinero en las ' +
+    'CUENTAS de MetaTrader, distinto del saldo de la billetera del CRM.',
 };
 
 const HISTORICAL_NOTICE =
@@ -298,11 +304,32 @@ function summarize(real: ActivityRow[], demoCount: number) {
   const firsts = times(real.map((r) => r.first_deal_at));
   const lasts = times(real.map((r) => r.last_deal_at));
 
+  // ── EL TOTAL NORMALIZADO, PARA PODER ORDENAR ────────────────────────────
+  // Ordenar leads por equity presupone UN número por cliente. El desglose por
+  // familia no lo es: está en unidades incomparables, y sumarlo da un número
+  // sin significado sin dar ningún error.
+  //
+  // El nombre lleva `account` adelante a propósito: Atlas ya tiene un
+  // `balanceUsd` que es el saldo de la BILLETERA del CRM, que es otro dinero.
+  // Dos campos distintos con el mismo nombre es cómo se propaga un error.
+  const equity = normalizeToUsd(
+    real.map((r) => ({ group: r.group_name, amount: money(r.equity ?? 0, familyOf(r.group_name)) })),
+  );
+  const balance = normalizeToUsd(
+    real.map((r) => ({ group: r.group_name, amount: money(r.account_balance ?? 0, familyOf(r.group_name)) })),
+  );
+
   return {
     // Conteos y fechas: comparables entre familias, se pueden sumar.
     accounts: real.length,
     demoAccounts: demoCount,
     tradeCount: real.reduce((s, r) => s + (r.deals_count ?? 0), 0),
+    // Dinero REAL del cliente, ya convertido. Es el campo para ordenar.
+    accountEquityUsd: equity.realUsd,
+    accountBalanceUsd: balance.realUsd,
+    // Capital de desafío de prop firm: NO es del cliente y nunca se suma a lo
+    // de arriba. Va aparte para que se vea que existe, no para sumarlo.
+    propFirmVirtualEquityUsd: equity.virtualUsd,
     firstTradeAt: firsts.length ? new Date(Math.min(...firsts)).toISOString() : null,
     lastTradeAt: lasts.length ? new Date(Math.max(...lasts)).toISOString() : null,
 

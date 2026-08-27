@@ -107,3 +107,67 @@ export function moneyByFamily(accounts: AccountLike[]): FamilyMoney[] {
     // Orden estable: dos llamadas iguales devuelven lo mismo.
     .sort((a, b) => a.family.localeCompare(b.family));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El total normalizado en dólares.
+//
+// ── POR QUÉ EXISTE, SI ARRIBA DICE QUE NO SE EXPONE NINGÚN ESCALAR ─────────
+// Porque esa decisión se pasó de frenada. El razonamiento era bueno —un número
+// suelto llamado `balance` invita a sumarse con otro de distinta unidad— pero
+// la conclusión no: al no dar NINGÚN total, la conversión no desaparece, se
+// muda al consumidor. Y cada consumidor la reconstruye por su cuenta y se
+// equivoca distinto.
+//
+// Lo dijo Atlas el 2026-08-27 con un caso concreto: Kevin pidió ordenar los
+// leads por equity, que presupone UN número por cliente. Lo que devolvíamos era
+// un desglose por familia en unidades incomparables, y ordenar sumándolo da un
+// resultado sin significado SIN NINGÚN ERROR.
+//
+// ── EL FACTOR ESTÁ MEDIDO, NO SUPUESTO ────────────────────────────────────
+// Contra el CRM, que es la fuente externa: el ratio mediano entre lo que MT5
+// registra como entrado y lo que la billetera del CRM registra como salido en
+// dólares es 100,00 en cuentas Cent (n=218) y 1,00 en USD (n=356).
+//
+// ── LO QUE EL TOTAL DEJA FUERA, Y POR QUÉ ─────────────────────────────────
+// El capital de PropFirm es VIRTUAL: es capital de desafío del broker, no
+// dinero del cliente. Sumarlo a su equity diría que alguien con una cuenta de
+// desafío de $200.000 tiene $200.000, y sobre eso se ordenaría una lista de
+// llamadas. Va aparte y con su propio nombre.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Centésimas de dólar por dólar en las cuentas Cent. Medido, no supuesto. */
+export const CENTS_PER_USD = 100;
+
+/** Un importe de MT5 llevado a dólares. */
+export function toUsd(m: Money): number {
+  return m.unit === 'cents' ? m.amount / CENTS_PER_USD : m.amount;
+}
+
+export interface NormalizedTotals {
+  /** Dinero REAL del cliente en sus cuentas, en dólares. Sirve para ordenar. */
+  realUsd: number;
+  /** Capital de desafío de prop firm. NO es del cliente. Nunca se suma al real. */
+  virtualUsd: number;
+}
+
+/**
+ * Suma a dólares separando lo real de lo virtual.
+ *
+ * `familyOf` decide qué es virtual, con el mismo criterio que el resto del
+ * módulo — no una segunda lista que pueda divergir.
+ */
+export function normalizeToUsd(
+  cuentas: Array<{ group: string | null; amount: Money }>,
+): NormalizedTotals {
+  let realUsd = 0;
+  let virtualUsd = 0;
+  for (const c of cuentas) {
+    const usd = toUsd(c.amount);
+    if (isVirtualFamily(familyOf(c.group))) virtualUsd += usd;
+    else realUsd += usd;
+  }
+  return {
+    realUsd: Math.round(realUsd * 100) / 100,
+    virtualUsd: Math.round(virtualUsd * 100) / 100,
+  };
+}
