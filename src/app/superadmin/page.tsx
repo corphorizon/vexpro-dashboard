@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Plus, Users, Building2, ArrowRight, Settings, PowerOff, AlertTriangle, KeyRound } from 'lucide-react';
+import { Plus, Users, Building2, ArrowRight, Settings, PowerOff, AlertTriangle, KeyRound, Droplets } from 'lucide-react';
 import { formatDate } from '@/lib/dates';
 import { DataTable } from '@/components/ui/data-table';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -88,6 +88,12 @@ export default function SuperadminHome() {
             className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
           >
             <KeyRound className="w-4 h-4" /> Tokens
+          </Link>
+          <Link
+            href="/superadmin/liquidity"
+            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+          >
+            <Droplets className="w-4 h-4" /> Liquidez
           </Link>
           <Link
             href="/superadmin/companies/new"
