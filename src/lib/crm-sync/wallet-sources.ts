@@ -27,46 +27,22 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
+import { CONCEPT_GROUPS } from '@/lib/crm-wallet-concepts';
 import { round2 } from '@/lib/utils';
 
 /** Los ÚNICOS campos que se piden. La proyección es la aduana. */
 export const ORION_TRANSFER_FIELDS = ['userId', 'concept', 'walletTransferType', 'netAmount'] as const;
 
 /**
- * Cómo se agrupan los 26 conceptos de `wallettransfers` en las categorías que
- * le importan al analista. Los nombres salen de la base, no de una suposición.
+ * Cómo se agrupan los conceptos de `wallettransfers` en las categorías que le
+ * importan al analista. Los nombres salen de la base, no de una suposición.
+ *
+ * La tabla YA NO VIVE ACÁ: se mudó a `@/lib/crm-wallet-concepts` (módulo puro)
+ * cuando los totales mensuales informativos necesitaron la misma lista sin
+ * arrastrar el lector de Mongo, que es `server-only`. Se reexporta con el
+ * mismo nombre para no partir la lista en dos.
  */
-export const CONCEPT_GROUPS: Record<string, string> = {
-  IB_REWARDS_BROKER: 'ib',
-  IB_PROP_FIRM_REWARD: 'ib',
-  'IB_REWARDS_BROKER ADJUSTMENT': 'ib',
-  IB_REWARDS_BROKER_ADJUSTMENT: 'ib',
-  SOCIAL_PERFORMANCE_FEE: 'social',
-  SOCIAL_PERFORMANCE_FEE_SHARE: 'social',
-  SOCIAL_SUBSCRIPTION_SHARE: 'social',
-  PERFORMANCE_FEE_REVERSAL: 'social',
-  PERFORMANCE_FEE_REVERSAL_ADJUSTMENT: 'social',
-  PROP_FIRM_WITHDRAW: 'propfirm',
-  // Dinero que vuelve DE una cuenta de trading a la billetera: es la ganancia
-  // (o lo que quede) de operar.
-  TRANSFER_FUNDS: 'trading',
-  WALLET_TRANSFER: 'trading',
-  TRANSFER_P2P: 'p2p',
-  DEPOSIT: 'deposit',
-  // ── DEVOLUCIONES: dinero que YA ESTABA y volvió ──────────────────────────
-  // Un retiro rechazado o cancelado devuelve el importe a la billetera. NO es
-  // dinero nuevo: contarlo como ingreso lo duplicaría, porque entró una vez
-  // como depósito (o como lo que fuera) antes del intento de retiro.
-  // Medido: $455.233 devueltos por rechazo y $676.115 por cancelación.
-  REJECTED_WITHDRAW: 'returned',
-  CANCELED_WITHDRAW: 'returned',
-  CANCELLED_WITHDRAW: 'returned',
-  // Reembolso de una suscripción de social trading: misma lógica.
-  SOCIAL_SUBSCRIPTION: 'returned',
-  // Variante con espacios del mismo concepto de comisiones IB. El broker lo
-  // escribe de tres formas distintas; las tres van al mismo lugar.
-  'IB REWARDS BROKER ADJUSTMENT': 'ib',
-};
+export { CONCEPT_GROUPS };
 
 /** Dominios del personal del broker. Ver la cabecera. */
 const STAFF_DOMAINS = ['@vexprofx.com', '@mail.vexprofx.com'];
