@@ -40,6 +40,7 @@ export const MODULE_GROUPS: ModuleGroup[] = [
       { module: 'expenses',    href: '/egresos',         labelEs: 'Egresos' },
       { module: 'income',      href: '/ingresos',        labelEs: 'Ingresos' },
       { module: 'liquidity',   href: '/liquidez',        labelEs: 'Liquidez' },
+      { module: 'liquidity_pool', href: '/liquidez-pool', labelEs: 'Pool de Liquidez' },
       { module: 'investments', href: '/inversiones',     labelEs: 'Inversiones' },
       { module: 'balances',    href: '/balances',        labelEs: 'Balances' },
       { module: 'partners',    href: '/socios',          labelEs: 'Socios' },

@@ -93,6 +93,7 @@ const NAV_STRUCTURE: NavEntry[] = [
       // viviendo en "Carga de Datos".
       { href: '/ingresos', i18nKey: 'nav.income', icon: TrendingUp, module: 'income' },
       { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
+      { href: '/liquidez-pool', i18nKey: 'nav.liquidityPool', icon: Droplets, module: 'liquidity_pool' },
       { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
       { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
       { href: '/socios', i18nKey: 'nav.partners', icon: Briefcase, module: 'partners' },
