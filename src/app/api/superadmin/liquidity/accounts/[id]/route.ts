@@ -1,19 +1,31 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // /api/superadmin/liquidity/accounts/[id]
 //
-//   PATCH  → editar la nota (lo único editable a mano)
+//   PATCH  → editar la nota y la fecha de conexión
 //   DELETE → sacar la cuenta del pool
 //
-// ── POR QUÉ SÓLO LA NOTA ES EDITABLE ───────────────────────────────────────
+// ── QUÉ SE PUEDE EDITAR Y QUÉ NO ───────────────────────────────────────────
 // Balance, equity y grupo los manda MT5; el `balance_liquidez` lo decide el
 // análisis de duplicados. Dejarlos editables a mano crearía dos verdades sobre
 // el mismo número y ganaría la última que alguien tocó.
+//
+// La fecha de conexión sí, porque no es un dato leído sino una DECISIÓN: desde
+// cuándo esta cuenta cuenta para el pool. Sirve para dar de alta cuentas que ya
+// venían operando y recuperarles la historia.
+//
+// ── LO QUE ARRASTRA CAMBIARLA ──────────────────────────────────────────────
+// El PnL mensual es un derivado de esta fecha, guardado en otra tabla. Cambiar
+// la fecha sin rehacerlo dejaría meses del rango viejo sumando al total. Por
+// eso el recálculo NO es opcional acá: si falla, el PATCH falla y la fecha no
+// se mueve. Guardar la fecha nueva con el PnL viejo daría un total plausible y
+// equivocado, que es peor que un error.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
+import { validarFechaConexion, recalcularPnlMensual } from '@/lib/liquidity/connection-date';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,19 +38,75 @@ export async function PATCH(
     if (auth instanceof NextResponse) return auth;
     const { id } = await params;
 
-    const body = (await request.json().catch(() => ({}))) as { note?: unknown };
-    if (!('note' in body)) {
+    const body = (await request.json().catch(() => ({}))) as {
+      note?: unknown;
+      connection_date?: unknown;
+    };
+    const tocaNota = 'note' in body;
+    const tocaFecha = 'connection_date' in body;
+    if (!tocaNota && !tocaFecha) {
       return NextResponse.json(
-        { success: false, error: 'Sólo se puede editar la nota.' },
+        { success: false, error: 'Sólo se pueden editar la nota y la fecha de conexión.' },
         { status: 400 },
       );
     }
-    const note = body.note === null || body.note === '' ? null : String(body.note);
 
     const admin = createAdminClient();
+
+    // Se lee la cuenta primero: el recálculo necesita su empresa y su login, y
+    // además así el 404 sale antes de escribir nada.
+    const { data: cuenta, error: eLectura } = await admin
+      .from('platform_liquidity_accounts')
+      .select('id, company_id, mt5_account, connection_date')
+      .eq('id', id)
+      .maybeSingle();
+    if (eLectura) return apiError('superadmin/liquidity/accounts PATCH', eLectura, { status: 500 });
+    if (!cuenta) {
+      return NextResponse.json({ success: false, error: 'Cuenta no encontrada.' }, { status: 404 });
+    }
+
+    const cambios: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (tocaNota) {
+      cambios.note = body.note === null || body.note === '' ? null : String(body.note);
+    }
+
+    let fechaNueva: Date | null = null;
+    if (tocaFecha) {
+      const v = validarFechaConexion(body.connection_date);
+      if (!v.ok) return NextResponse.json({ success: false, error: v.error }, { status: 400 });
+      // Sólo cuenta como cambio si el día es otro. Reguardar la misma fecha no
+      // tiene por qué disparar una consulta a MT5 de 68 millones de filas.
+      const antes = new Date(String(cuenta.connection_date)).toISOString().slice(0, 10);
+      if (v.fecha.toISOString().slice(0, 10) !== antes) fechaNueva = v.fecha;
+    }
+
+    // El recálculo va PRIMERO y puede cortar. Si MT5 no responde, la fecha no
+    // se mueve y la cuenta queda coherente con el PnL que ya tenía.
+    let meses: number | null = null;
+    if (fechaNueva) {
+      try {
+        meses = await recalcularPnlMensual(
+          admin,
+          { id: String(cuenta.id), company_id: String(cuenta.company_id), mt5_account: String(cuenta.mt5_account) },
+          fechaNueva,
+        );
+      } catch (err) {
+        return NextResponse.json(
+          {
+            success: false,
+            error:
+              `No se pudo recalcular el PnL con la fecha nueva, así que la fecha no se cambió: ` +
+              `${err instanceof Error ? err.message : String(err)}`,
+          },
+          { status: 502 },
+        );
+      }
+      cambios.connection_date = fechaNueva.toISOString();
+    }
+
     const { data, error } = await admin
       .from('platform_liquidity_accounts')
-      .update({ note, updated_at: new Date().toISOString() })
+      .update(cambios)
       .eq('id', id)
       .select('id')
       .maybeSingle();
@@ -47,7 +115,7 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'Cuenta no encontrada.' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, monthsRecalculated: meses });
   } catch (err) {
     return apiError('superadmin/liquidity/accounts PATCH', err, { status: 500 });
   }
