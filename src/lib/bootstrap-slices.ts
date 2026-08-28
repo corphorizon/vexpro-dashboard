@@ -18,7 +18,7 @@
 // Los slices de RRHH se leen si —y sólo si— se cumplen las DOS condiciones:
 //   1. ROL: espejo de `auth_is_hr_reader()` (migración 064) → admin, hr, o
 //      superadmin de plataforma. Es lo que la DB aplica hoy.
-//   2. MÓDULO: `canAccessModule('hr', …)` del registro canónico de módulos
+//   2. (retirado 2026-08-28 por paridad con RLS: el módulo no influye)
 //      (src/lib/modules.ts). §4.1 del manual: leer lo decide el módulo.
 //
 // Es un AND, no un OR, y por eso NUNCA es más permisivo que RLS hoy. Dónde SÍ
@@ -36,7 +36,7 @@
 // La ruta reproduce el gate que existe; no inventa uno.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { canAccessModule, type ModuleAccessContext } from '@/lib/modules';
+import { type ModuleAccessContext } from '@/lib/modules';
 import { HR_ROLES } from '@/lib/roles';
 
 /**
@@ -102,9 +102,15 @@ export function esLectorDeRrhh(ctx: BootstrapAccessContext): boolean {
   return (HR_ROLES as readonly string[]).includes(ctx.role ?? '');
 }
 
-/** ¿Este caller puede recibir los slices de RRHH? Rol Y módulo (ver cabecera). */
+/**
+ * ¿Este caller puede recibir los slices de RRHH? SOLO por rol — paridad exacta
+ * con la RLS de hoy (`auth_is_hr_reader()` no mira módulos). Kevin (2026-08-28)
+ * eligió paridad sobre el AND rol+módulo: un admin de una empresa sin módulo
+ * RRHH vuelve a recibir estos slices, igual que se los daba RLS en el camino
+ * de 20 consultas. Si algún día RLS agrega el módulo, agregarlo acá también.
+ */
 export function puedeLeerSlicesRrhh(ctx: BootstrapAccessContext): boolean {
-  return esLectorDeRrhh(ctx) && canAccessModule('hr', ctx);
+  return esLectorDeRrhh(ctx);
 }
 
 /**

@@ -83,15 +83,11 @@ describe('gate de RRHH — espejo de auth_is_hr_reader() (migración 064)', () =
     expect(puedeLeerSlicesRrhh(ctx('soporte', { allowedModules: ['hr'] }))).toBe(false);
   });
 
-  it('un admin sin el módulo hr en su empresa NO recibe los slices', () => {
+  it('paridad con RLS: el módulo NO influye — un admin sin el módulo hr los recibe igual (auth_is_hr_reader no mira módulos)', () => {
     const sinHr = MODULE_KEYS.filter((m) => m !== 'hr');
-    expect(puedeLeerSlicesRrhh(ctx('admin', { activeModules: sinHr }))).toBe(false);
-    expect(slicesVedados(ctx('admin', { activeModules: sinHr }))).toHaveLength(3);
-  });
-
-  it('un hr con el módulo quitado a mano NO recibe los slices', () => {
-    const sinHr = MODULE_KEYS.filter((m) => m !== 'hr');
-    expect(puedeLeerSlicesRrhh(ctx('hr', { allowedModules: sinHr }))).toBe(false);
+    expect(puedeLeerSlicesRrhh(ctx('admin', { activeModules: sinHr }))).toBe(true);
+    expect(puedeLeerSlicesRrhh(ctx('hr', { allowedModules: sinHr }))).toBe(true);
+    expect(slicesVedados(ctx('admin', { activeModules: sinHr }))).toEqual([]);
   });
 
   it('admin y hr con el módulo SÍ los reciben (nada vedado)', () => {

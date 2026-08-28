@@ -422,6 +422,11 @@ export const ORION_USER_FIELDS = [
   'preferredLanguage',
   'ibProgramName',
   'ibProgramBrokerName',
+  // Agregados el 2026-08-28 (pedido de Atlas): sin estar acá, la proyección
+  // los deja fuera y toUserRow los ve undefined → columnas en null SIN error.
+  // Así falló el primer backfill: 21.296 filas reescritas, 0 con el dato.
+  'ibRewards',
+  'hierarchy',
 ] as const;
 
 const USER_PROJECTION: Record<string, 1> = Object.fromEntries(
