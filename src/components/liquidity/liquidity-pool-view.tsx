@@ -52,6 +52,43 @@ interface Empresa {
  *  cada visita. Es una comodidad por navegador, no un dato del sistema. */
 const CLAVE_EMPRESA = 'liquidity-pool:company-id';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Cuánto esperan las operaciones que hablan con MT5.
+//
+// `apiFetch` corta a los 25 s por defecto, y para casi todo el dashboard está
+// bien. Acá no: agregar una cuenta abre TRES conexiones a MT5 —los datos de la
+// cuenta, el saldo a la fecha de conexión y el PnL mes a mes— y cada una
+// levanta su propio túnel SOCKS, porque en serverless no hay pool que
+// sobreviva entre invocaciones.
+//
+// El resultado era el peor de los dos mundos: el navegador abortaba a los 25 s
+// y mostraba «signal is aborted without reason», pero el servidor seguía y
+// terminaba de crear la cuenta. La operación salía bien y la pantalla decía
+// que había fallado.
+//
+// Estos números siguen a los `maxDuration` de cada endpoint. Si allá cambian,
+// acá también: que el cliente corte antes que el servidor es exactamente el
+// bug que esto arregla.
+// ─────────────────────────────────────────────────────────────────────────────
+const ESPERA_MT5_MS = 120_000;
+/** `refresh-all` recorre hasta 60 cuentas; su `maxDuration` es 300. */
+const ESPERA_REFRESCAR_TODO_MS = 300_000;
+
+/**
+ * Si la espera se cortó del lado del navegador.
+ *
+ * Importa distinguirlo de un error de verdad: acá el servidor probablemente
+ * TERMINÓ el trabajo, así que corresponde recargar la lista y decir eso, en vez
+ * de dar por fallida una operación que salió bien.
+ */
+function esAborto(e: unknown): boolean {
+  return e instanceof Error && (e.name === 'AbortError' || /abort/i.test(e.message));
+}
+
+const AVISO_ABORTO =
+  'La operación tardó más de lo esperado y se cortó la espera, pero puede haber ' +
+  'terminado igual. Se recargó la lista: fijate si ya está.';
+
 interface Cuenta {
   id: string;
   company_id: string;
@@ -200,7 +237,10 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
   async function refrescarTodo() {
     setOcupado('all');
     try {
-      const res = await apiFetch(`/api/superadmin/liquidity/refresh-all?company_id=${companyId}`, { method: 'POST' });
+      const res = await apiFetch(
+        `/api/superadmin/liquidity/refresh-all?company_id=${companyId}`,
+        { method: 'POST', timeoutMs: ESPERA_REFRESCAR_TODO_MS },
+      );
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       await cargar();
@@ -210,7 +250,9 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
           (json.warnings?.length ? ` ${json.warnings.join(' · ')}` : ''),
       });
     } catch (err) {
-      setAviso({ tipo: 'error', texto: err instanceof Error ? err.message : 'Error al refrescar' });
+      // Un aborto no es un fallo: el servidor pudo haber terminado igual.
+      if (esAborto(err)) { await cargar(); setAviso({ tipo: 'error', texto: AVISO_ABORTO }); }
+      else setAviso({ tipo: 'error', texto: err instanceof Error ? err.message : 'Error al refrescar' });
     } finally {
       setOcupado(null);
     }
@@ -219,13 +261,17 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
   async function refrescarUna(id: string) {
     setOcupado(id);
     try {
-      const res = await apiFetch(`/api/superadmin/liquidity/accounts/${id}/refresh`, { method: 'POST' });
+      const res = await apiFetch(
+        `/api/superadmin/liquidity/accounts/${id}/refresh`,
+        { method: 'POST', timeoutMs: ESPERA_MT5_MS },
+      );
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       await cargar();
       setAviso({ tipo: 'ok', texto: `Cuenta refrescada · ${json.monthsCalculated} mes(es) de PnL.` });
     } catch (err) {
-      setAviso({ tipo: 'error', texto: err instanceof Error ? err.message : 'Error al refrescar' });
+      if (esAborto(err)) { await cargar(); setAviso({ tipo: 'error', texto: AVISO_ABORTO }); }
+      else setAviso({ tipo: 'error', texto: err instanceof Error ? err.message : 'Error al refrescar' });
     } finally {
       setOcupado(null);
     }
@@ -644,6 +690,7 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
     try {
       const res = await apiFetch('/api/superadmin/liquidity/accounts', {
         method: 'POST',
+        timeoutMs: ESPERA_MT5_MS,
         body: JSON.stringify({ mt5_account: v, company_id: companyId, connection_date: fecha }),
       });
       const json = await res.json();
@@ -655,10 +702,17 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
           + (w.length > 0 ? ` Avisos: ${w.join(' · ')}` : ''),
       });
     } catch (e) {
-      setErr(e instanceof Error ? e.message : 'Error al agregar');
-    } finally {
-      setGuardando(false);
+      // Con un aborto el alta pudo haber terminado en el servidor, así que se
+      // cierra el modal y se recarga la lista. Dejarlo abierto con un error
+      // invita a apretar «Agregar» de nuevo sobre una cuenta que ya existe.
+      if (esAborto(e)) onDone({ tipo: 'error', texto: AVISO_ABORTO });
+      else {
+        setErr(e instanceof Error ? e.message : 'Error al agregar');
+        setGuardando(false);
+      }
+      return;
     }
+    setGuardando(false);
   }
 
   return (
@@ -752,6 +806,7 @@ function ModalNota({ cuenta, onClose, onDone }: {
     try {
       const res = await apiFetch(`/api/superadmin/liquidity/accounts/${cuenta.id}`, {
         method: 'PATCH',
+        timeoutMs: ESPERA_MT5_MS,
         // Sólo se mandan los campos que REALMENTE cambiaron.
         //
         // Mandarlos siempre tenía un efecto que no se veía: el campo llegaba
