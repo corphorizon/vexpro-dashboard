@@ -430,6 +430,10 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                 <th className="text-left py-2.5 px-3 font-medium">Cuenta</th>
                 <th className="text-left py-2.5 px-3 font-medium">Usuario</th>
                 <th className="text-left py-2.5 px-3 font-medium">Grupo</th>
+                {/* Va pegada al equity de esa fecha: los dos datos se leen
+                    juntos —«conectada el X, con Y»— y separarlos obligaría a
+                    abrir el detalle para saber a qué día corresponde el monto. */}
+                <th className="text-left py-2.5 px-3 font-medium">Conectada</th>
                 <th className="text-right py-2.5 px-3 font-medium">Equity a la conexión</th>
                 <th className="text-right py-2.5 px-3 font-medium">Balance MT5</th>
                 <th className="text-right py-2.5 px-3 font-medium">Equity a Liquidez</th>
@@ -452,6 +456,9 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                   </td>
                   <td className="py-2 px-3 text-muted-foreground">{c.mt5_email ?? '—'}</td>
                   <td className="py-2 px-3 text-muted-foreground">{c.mt5_group ?? '—'}</td>
+                  <td className="py-2 px-3 tabular-nums">
+                    {formatFechaConexion(c.connection_date) || '—'}
+                  </td>
                   {/* El saldo QUE TENÍA el día que entró al pool, reconstruido
                       desde MT5. `null` es «no se pudo calcular», que no es cero
                       — por eso va un guion y no un $0,00. */}
