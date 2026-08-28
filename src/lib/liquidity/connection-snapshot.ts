@@ -71,12 +71,31 @@ const SQL_SALDO = [
   '     FROM mt5_deals d WHERE d.Login = ? AND d.TimeMsc >= ?) AS movido,',
   // El NOT EXISTS mira el cierre CONTRA LA MISMA FECHA, no contra hoy: una
   // posición que abrió antes y cerró después seguía abierta en ese momento.
+  //
+  // ── DOS FILTROS QUE PARECEN DE MÁS Y NO LO SON ────────────────────────
+  //
+  // `x.Login = d.Login` — `PositionID` NO es único entre cuentas. Las
+  // operaciones de balance llevan `PositionID = 0`, y ese cero lo comparten
+  // miles de logins. Sin atar el login, el NOT EXISTS encontraba el "cierre"
+  // de la posición 0 de OTRA cuenta y daba por cerrada la propia.
+  //
+  // De paso es lo que hace que la consulta use el índice: sin el login, MySQL
+  // barría `idx_deals_entry_timemsc_login` —1.090.454 filas medidas— por cada
+  // fila candidata. Con él baja a 244. En la cuenta 136773: 3.754 ms → 637 ms.
+  //
+  // `d.Action IN (0,1)` — un depósito es `Action = 2`, `Entry = 0` y
+  // `PositionID = 0`: tiene exactamente la forma de "una entrada que nunca
+  // cerró". Sin este filtro, la 136773 contaba como posición abierta un
+  // depósito de 8.000 del 26/02.
+  //
+  // Control de que la cuenta sigue bien: a las 14:27 del 31/03, dentro del
+  // ticket 3342152 (abierto 14:26:02, cerrado 14:28:09), devuelve 1.
   '  (SELECT COUNT(*) FROM (',
   '     SELECT d.PositionID FROM mt5_deals d',
-  '      WHERE d.Login = ? AND d.Entry = 0 AND d.TimeMsc < ?',
+  '      WHERE d.Login = ? AND d.Action IN (0,1) AND d.Entry = 0 AND d.TimeMsc < ?',
   '        AND NOT EXISTS (',
   '          SELECT 1 FROM mt5_deals x',
-  '           WHERE x.PositionID = d.PositionID',
+  '           WHERE x.Login = d.Login AND x.PositionID = d.PositionID',
   '             AND x.Entry IN (1,3) AND x.TimeMsc < ?)',
   '      GROUP BY d.PositionID) t) AS abiertas',
 ].join('\n');
