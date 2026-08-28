@@ -30,6 +30,10 @@ import { recalcularPnlMensual } from '@/lib/liquidity/monthly-pnl-calculator';
 import { calcularSaldoALaFecha } from '@/lib/liquidity/connection-snapshot';
 
 export const dynamic = 'force-dynamic';
+// El PATCH puede recalcular el PnL mensual y el saldo a la conexión, y eso son
+// dos consultas a MT5 por el túnel. Sin este margen el servidor corta la
+// operación a mitad de camino, con la fecha ya movida y el PnL a medio rehacer.
+export const maxDuration = 120;
 
 export async function PATCH(
   request: NextRequest,
