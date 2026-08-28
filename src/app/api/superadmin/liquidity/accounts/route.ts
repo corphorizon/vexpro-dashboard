@@ -25,11 +25,12 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
-import { fetchMt5Account } from '@/lib/liquidity/mt5-account';
+import { leerCuentaEnSesion, type Mt5AccountInfo } from '@/lib/liquidity/mt5-account';
 import { analizarCuentaNueva } from '@/lib/liquidity/duplicate-account-detector';
-import { calculateMonthlyPnL } from '@/lib/liquidity/monthly-pnl-calculator';
+import { pnlMensualEnSesion, type MonthlyPnl } from '@/lib/liquidity/monthly-pnl-calculator';
 import { validarFechaConexion } from '@/lib/liquidity/connection-date';
-import { calcularSaldoALaFecha } from '@/lib/liquidity/connection-snapshot';
+import { saldoALaFechaEnSesion, type SaldoALaFecha } from '@/lib/liquidity/connection-snapshot';
+import { withMt5Connection } from '@/lib/api-integrations/mt5-sql/client';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -111,20 +112,64 @@ export async function POST(request: NextRequest) {
 
     const warnings: string[] = [];
 
-    // ── 1. MT5 ────────────────────────────────────────────────────────────
-    let mt5: Awaited<ReturnType<typeof fetchMt5Account>> = null;
+    // ── 1. MT5, TODO EN UNA SOLA CONEXIÓN ─────────────────────────────────
+    //
+    // Las tres lecturas —datos de la cuenta, saldo a la fecha de conexión y PnL
+    // mes a mes— comparten sesión. Cada `withMt5Connection` levanta su propio
+    // túnel SOCKS, y ahí está el costo real: medido contra la cuenta 146059,
+    // 4.248 + 4.988 + 4.017 ms para consultas que no llegan al segundo. Con una
+    // sola conexión eso baja a ~5 s.
+    //
+    // Ninguna de las tres depende del análisis de duplicados, así que Mongo
+    // queda afuera de la sesión y corre después (246 ms medidos).
+    // Los tres resultados se DEVUELVEN de la sesión en vez de asignarse a
+    // variables de afuera: TypeScript no sigue las asignaciones hechas dentro
+    // de un callback, y con `let` de afuera terminaba tipando todo como `never`.
+    interface LecturaMt5 {
+      cuenta: Mt5AccountInfo | null;
+      saldo: SaldoALaFecha | null;
+      pnl: MonthlyPnl[];
+    }
+
+    let lectura: LecturaMt5 | null = null;
     let syncError: string | null = null;
+
     try {
-      mt5 = await fetchMt5Account(companyId, Number(mt5Account));
-      if (!mt5) {
-        return NextResponse.json(
-          { success: false, error: `La cuenta ${mt5Account} no existe en MT5.` },
-          { status: 404 },
-        );
-      }
+      lectura = await withMt5Connection<LecturaMt5>(companyId, async (s) => {
+        const cuenta = await leerCuentaEnSesion(s, Number(mt5Account));
+        // Sin cuenta no tiene sentido seguir consultando: se corta la lectura y
+        // el 404 se arma afuera, con la conexión ya cerrada.
+        if (!cuenta) return { cuenta: null, saldo: null, pnl: [] };
+        return {
+          cuenta,
+          saldo: await saldoALaFechaEnSesion(s, mt5Account, fechaConexion),
+          pnl: await pnlMensualEnSesion(s, mt5Account, fechaConexion),
+        };
+      });
     } catch (err) {
       syncError = err instanceof Error ? err.message : String(err);
       warnings.push(`No se pudo leer MT5: ${syncError}. La cuenta se guardó sin datos — refrescar a mano.`);
+    }
+
+    // `lectura && !lectura.cuenta` es «MT5 respondió y la cuenta no está».
+    // Distinto de `lectura === null`, que es «MT5 no respondió» y sí se guarda.
+    if (lectura && !lectura.cuenta) {
+      return NextResponse.json(
+        { success: false, error: `La cuenta ${mt5Account} no existe en MT5.` },
+        { status: 404 },
+      );
+    }
+
+    const mt5 = lectura?.cuenta ?? null;
+    const saldoConexion = lectura?.saldo ?? null;
+    const pnlMeses = lectura?.pnl ?? [];
+
+    if (saldoConexion && !saldoConexion.exacto) {
+      warnings.push(
+        `Había ${saldoConexion.posicionesAbiertas} posición(es) abierta(s) al conectar: ` +
+        `el equity de esa fecha era distinto del balance y MT5 no guarda el precio de ese ` +
+        `momento. Se guardó el balance — editalo a mano si tenés el equity real.`,
+      );
     }
 
     // ── 2. ¿Su dinero ya está contado? ────────────────────────────────────
@@ -140,27 +185,6 @@ export async function POST(request: NextRequest) {
       } catch (err) {
         const m = err instanceof Error ? err.message : String(err);
         warnings.push(`No se pudo analizar duplicados: ${m}. El balance se contó completo.`);
-      }
-    }
-
-    // ── 2b. El saldo QUE TENÍA en la fecha de conexión ────────────────────
-    // No es el balance de hoy. En un alta retroactiva son números distintos, y
-    // guardar el de hoy en un campo que dice "a la conexión" es exactamente el
-    // fallo que no da error: un dato plausible en el lugar equivocado.
-    let saldoConexion: Awaited<ReturnType<typeof calcularSaldoALaFecha>> = null;
-    if (mt5) {
-      try {
-        saldoConexion = await calcularSaldoALaFecha(companyId, mt5Account, fechaConexion);
-        if (saldoConexion && !saldoConexion.exacto) {
-          warnings.push(
-            `Había ${saldoConexion.posicionesAbiertas} posición(es) abierta(s) al conectar: ` +
-            `el equity de esa fecha era distinto del balance y MT5 no guarda el precio de ese ` +
-            `momento. Se guardó el balance — editalo a mano si tenés el equity real.`,
-          );
-        }
-      } catch (err) {
-        const m = err instanceof Error ? err.message : String(err);
-        warnings.push(`No se pudo reconstruir el saldo de la fecha de conexión: ${m}`);
       }
     }
 
@@ -249,22 +273,17 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // ── 5. PnL mensual ────────────────────────────────────────────────────
+    // ── 5. Guardar el PnL mensual ─────────────────────────────────────────
+    // Ya está calculado: salió de la misma sesión del paso 1. Acá sólo se
+    // escribe, así que no hay ninguna vuelta más a MT5.
     let meses = 0;
-    if (mt5) {
-      try {
-        const pnl = await calculateMonthlyPnL(companyId, mt5Account, new Date(creada.connection_date));
-        if (pnl.length > 0) {
-          const { error } = await admin.from('platform_liquidity_monthly_pnl').upsert(
-            pnl.map((m) => ({ account_id: creada.id, ...m })),
-            { onConflict: 'account_id,year,month' },
-          );
-          if (error) warnings.push(`No se pudo guardar el PnL mensual: ${error.message}`);
-          else meses = pnl.length;
-        }
-      } catch (err) {
-        warnings.push(`No se pudo calcular el PnL: ${err instanceof Error ? err.message : String(err)}`);
-      }
+    if (pnlMeses.length > 0) {
+      const { error } = await admin.from('platform_liquidity_monthly_pnl').upsert(
+        pnlMeses.map((m) => ({ account_id: creada.id, ...m })),
+        { onConflict: 'account_id,year,month' },
+      );
+      if (error) warnings.push(`No se pudo guardar el PnL mensual: ${error.message}`);
+      else meses = pnlMeses.length;
     }
 
     return NextResponse.json({

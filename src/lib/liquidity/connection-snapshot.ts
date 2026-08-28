@@ -98,28 +98,41 @@ export async function calcularSaldoALaFecha(
   mt5Account: string,
   fecha: Date,
 ): Promise<SaldoALaFecha | null> {
+  return withMt5Connection(companyId, (s) => saldoALaFechaEnSesion(s, mt5Account, fecha));
+}
+
+/**
+ * Igual, pero sobre una sesión YA abierta.
+ *
+ * Abrir el túnel SOCKS cuesta más que las tres consultas juntas, y en
+ * serverless no hay pool que sobreviva entre invocaciones. Cuando el llamador
+ * ya tiene una sesión, reusarla ahorra varios segundos por cuenta.
+ */
+export async function saldoALaFechaEnSesion(
+  s: Mt5Session,
+  mt5Account: string,
+  fecha: Date,
+): Promise<SaldoALaFecha | null> {
   const login = Number(mt5Account);
   if (!Number.isFinite(login) || login <= 0) return null;
 
   const desde = comoSql(fecha);
 
-  return withMt5Connection(companyId, async (s: Mt5Session) => {
-    const usuario = await s.query<Record<string, unknown>>(SQL_BALANCE_HOY, [login]);
-    if (!usuario[0]) return null;
-    const balanceHoy = num(usuario[0].balance);
+  const usuario = await s.query<Record<string, unknown>>(SQL_BALANCE_HOY, [login]);
+  if (!usuario[0]) return null;
+  const balanceHoy = num(usuario[0].balance);
 
-    const mov = await s.query<Record<string, unknown>>(SQL_MOVIDO_DESDE, [login, desde]);
-    // `SUM` sobre cero filas devuelve NULL, no 0: sin cuenta abierta después de
-    // esa fecha, lo movido es cero y el saldo de entonces es el de hoy.
-    const movido = num(mov[0]?.movido);
+  const mov = await s.query<Record<string, unknown>>(SQL_MOVIDO_DESDE, [login, desde]);
+  // `SUM` sobre cero filas devuelve NULL, no 0: sin cuenta abierta después de
+  // esa fecha, lo movido es cero y el saldo de entonces es el de hoy.
+  const movido = num(mov[0]?.movido);
 
-    const ab = await s.query<Record<string, unknown>>(SQL_ABIERTAS_EN, [login, desde, desde]);
-    const posicionesAbiertas = ab[0] ? num(ab[0].n) : null;
+  const ab = await s.query<Record<string, unknown>>(SQL_ABIERTAS_EN, [login, desde, desde]);
+  const posicionesAbiertas = ab[0] ? num(ab[0].n) : null;
 
-    return {
-      balance: Math.round((balanceHoy - movido) * 100) / 100,
-      posicionesAbiertas,
-      exacto: posicionesAbiertas === 0,
-    };
-  });
+  return {
+    balance: Math.round((balanceHoy - movido) * 100) / 100,
+    posicionesAbiertas,
+    exacto: posicionesAbiertas === 0,
+  };
 }

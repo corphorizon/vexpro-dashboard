@@ -20,8 +20,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
-import { fetchMt5Account } from '@/lib/liquidity/mt5-account';
-import { calculateMonthlyPnL } from '@/lib/liquidity/monthly-pnl-calculator';
+import { leerCuentaEnSesion } from '@/lib/liquidity/mt5-account';
+import { pnlMensualEnSesion } from '@/lib/liquidity/monthly-pnl-calculator';
+import { withMt5Connection } from '@/lib/api-integrations/mt5-sql/client';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
@@ -60,9 +61,25 @@ export async function POST(request: NextRequest) {
 
     let ok = 0;
     let fallidas = 0;
+
+    // ── UNA SOLA CONEXIÓN PARA TODA LA TANDA ──────────────────────────────
+    //
+    // Antes cada cuenta abría dos túneles SOCKS —uno para sus datos y otro para
+    // el PnL—, o sea hasta 120 túneles por corrida. Medido: el túnel tarda unos
+    // 4 s y las consultas no llegan al segundo, así que la corrida se iba a
+    // varios minutos haciendo casi puro handshake.
+    //
+    // Todas las cuentas de la tanda son de la MISMA empresa (el endpoint filtra
+    // por `company_id`), así que comparten credencial y pueden compartir sesión.
+    //
+    // El manejo de errores no cambia: una cuenta que falla se marca y la
+    // corrida sigue. Lo que sí cambia es que un fallo de CONEXIÓN ahora tumba
+    // la tanda entera en vez de cuenta por cuenta — y está bien, porque si el
+    // túnel no abre, reintentarlo 60 veces no lo va a arreglar.
+    await withMt5Connection(companyId, async (s) => {
     for (const c of tanda) {
       try {
-        const mt5 = await fetchMt5Account(c.company_id, Number(c.mt5_account));
+        const mt5 = await leerCuentaEnSesion(s, Number(c.mt5_account));
         if (!mt5) {
           fallidas += 1;
           await admin
@@ -89,8 +106,8 @@ export async function POST(request: NextRequest) {
           })
           .eq('id', c.id);
 
-        const pnl = await calculateMonthlyPnL(
-          c.company_id,
+        const pnl = await pnlMensualEnSesion(
+          s,
           String(c.mt5_account),
           new Date(c.connection_date),
         );
@@ -112,6 +129,7 @@ export async function POST(request: NextRequest) {
           .eq('id', c.id);
       }
     }
+    });
 
     return NextResponse.json({
       success: true,
