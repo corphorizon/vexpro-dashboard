@@ -45,6 +45,23 @@ interface FilaMes {
   is_partial: boolean;
 }
 
+/**
+ * Si el mes que se está mirando es el de conexión de esa cuenta.
+ *
+ * Distingue los dos motivos por los que una fila sale «parcial»: entró a mitad
+ * de mes, o el mes no terminó. Se compara en UTC porque la fecha de conexión se
+ * guarda anclada a las 00:00 UTC.
+ */
+function esMesDeConexion(
+  f: { connection_date: string },
+  sel: { year: number; month: number } | null,
+): boolean {
+  if (!sel) return false;
+  const d = new Date(f.connection_date);
+  if (Number.isNaN(d.getTime())) return false;
+  return d.getUTCFullYear() === sel.year && d.getUTCMonth() + 1 === sel.month;
+}
+
 export function ResumenMensual({ companyId }: { companyId: string }) {
   const [meses, setMeses] = useState<MesResumen[] | null>(null);
   const [totales, setTotales] = useState<{ pnl: number; ops: number }>({ pnl: 0, ops: 0 });
@@ -153,6 +170,23 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
 
   const tono = (n: number) => (n < 0 ? 'negative' as const : n > 0 ? 'positive' as const : 'muted' as const);
 
+  // El total ya NO se marca con `is_partial`.
+  //
+  // Esa bandera es `true` si CUALQUIER fila del mes lo es, y una fila lo es por
+  // dos motivos distintos: el mes no terminó, o esa cuenta entró a mitad de mes.
+  // Junio 2026 salía como «Mes parcial» estando terminado, sólo porque 3 de 29
+  // cuentas se conectaron el 10 y el 12 — daba a entender que faltaban datos del
+  // mes cuando el total estaba completo.
+  //
+  // Lo que sí vale decir del TOTAL es si el mes sigue corriendo, y eso se sabe
+  // por el calendario, sin preguntarle a las filas. El aviso por cuenta se
+  // queda donde significa algo: en la fila.
+  const ahora = new Date();
+  const mesEnCurso =
+    sel !== null &&
+    sel.year === ahora.getUTCFullYear() &&
+    sel.month === ahora.getUTCMonth() + 1;
+
   return (
     <div className="space-y-6">
       {/* Año + los 12 meses */}
@@ -197,7 +231,7 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
           label={sel ? `PnL de ${mesLabel(sel.year, sel.month)}` : 'PnL del mes'}
           value={formatCurrency(mesActual?.total ?? 0)}
           tone={tono(mesActual?.total ?? 0)}
-          sub={mesActual?.is_partial ? 'Mes parcial' : undefined}
+          sub={mesEnCurso ? 'Mes en curso' : undefined}
         />
         <Stat label="Operaciones" value={String(mesActual?.operations ?? 0)} />
         <Stat
@@ -244,8 +278,20 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
                     f.pnl < 0 ? 'text-negative' : f.pnl > 0 ? 'text-positive' : 'text-muted-foreground'
                   }`}>
                     {formatCurrency(f.pnl)}
+                    {/* «Parcial» tiene dos motivos y el tooltip dice cuál, que
+                        es la pregunta que la palabra sola dejaba abierta. */}
                     {f.is_partial && (
-                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">parcial</span>
+                      <span
+                        className="ml-1 text-[10px] font-normal text-muted-foreground"
+                        title={
+                          esMesDeConexion(f, sel)
+                            ? `Entró al pool el ${formatFechaConexion(f.connection_date)}: el PnL cuenta `
+                              + 'desde esa fecha, no desde el 1. Si operó antes, eso no está acá.'
+                            : 'El mes todavía no terminó.'
+                        }
+                      >
+                        parcial
+                      </span>
                     )}
                   </td>
                   <td className="py-2 px-3 text-right text-muted-foreground">{f.operations_count}</td>
