@@ -30,6 +30,22 @@ export interface ModuleDef {
    * No aparece como destino propio en el menú.
    */
   parent?: string;
+  /**
+   * El módulo existe SÓLO en las empresas que lo tienen activado — superadmin
+   * incluido.
+   *
+   * El superadmin normalmente ve todos los módulos en todas las empresas
+   * (`canAccessModule`, paso 2), y para casi todos está bien: son módulos que
+   * cualquier empresa podría tener. Pero algunos viven en UNA empresa por
+   * diseño, y el bypass los mostraba en el sidebar de todas, dando a entender
+   * que cada empresa tenía el suyo.
+   *
+   * Con esta marca, `active_modules` manda también sobre el superadmin. No es
+   * una regla de seguridad —la escritura la siguen decidiendo el rol y los
+   * endpoints— sino de ubicación: que el menú diga la verdad sobre dónde vive
+   * el módulo.
+   */
+  onlyWhereActivated?: boolean;
 }
 
 const MODULE_DEFS = [
@@ -42,7 +58,13 @@ const MODULE_DEFS = [
   // conciliación que ya usa Vex Pro, con sus propias tablas. Éste lee MT5 y
   // calcula cuánto hay que reservar, descontando la plata que un mismo cliente
   // mueve entre cuentas propias. Son módulos distintos y conviven.
-  { key: 'liquidity_pool', labelEs: 'Pool de Liquidez',   labelEn: 'Liquidity Pool' },
+  // `onlyWhereActivated`: vive en la empresa administradora y desde ahí se
+  // elige a qué empresa mirarle el pool. Sin esta marca el bypass de superadmin
+  // lo dibujaba en el sidebar de TODAS las empresas, y ahí se leía como si cada
+  // una tuviera su propio pool — cuando en realidad era siempre la misma
+  // pantalla con un selector adentro.
+  { key: 'liquidity_pool', labelEs: 'Pool de Liquidez',   labelEn: 'Liquidity Pool',
+    onlyWhereActivated: true },
   { key: 'investments',    labelEs: 'Inversiones',        labelEn: 'Investments' },
   { key: 'balances',       labelEs: 'Balances',           labelEn: 'Balances' },
   { key: 'partners',       labelEs: 'Socios',             labelEn: 'Partners' },
@@ -72,6 +94,11 @@ const MODULE_DEFS = [
 export type ModuleKey = (typeof MODULE_DEFS)[number]['key'];
 
 export const MODULES: ModuleDef[] = MODULE_DEFS.map((m) => ({ ...m }));
+
+/** Índice por clave, derivado de la MISMA lista. `canAccessModule` corre en
+ *  cada ítem del sidebar en cada render: buscar con `.find()` ahí dentro sería
+ *  recorrer las ~30 filas por ítem. */
+const MODULE_BY_KEY = new Map<string, ModuleDef>(MODULES.map((m) => [m.key, m]));
 
 /**
  * `audit` NO está en la lista: es exclusivo del superadmin y hasModuleAccess
@@ -186,6 +213,20 @@ export interface ModuleAccessContext {
 export function canAccessModule(module: string, ctx: ModuleAccessContext): boolean {
   // 1. El modelo de negocio manda sobre todo, superadmin incluido.
   if (!moduleAllowedForModel(ctx.businessModel, module)) return false;
+
+  // 1b. Módulos que viven en UNA empresa por diseño: `active_modules` manda
+  // también sobre el superadmin. Va ANTES del bypass, como la regla del modelo
+  // de negocio, porque si no el módulo aparecería en el sidebar de todas las
+  // empresas para quien administra la plataforma.
+  //
+  // Sólo cuando `activeModules` llegó: `undefined` es "todavía no cargó", no
+  // "no lo tiene". Tratarlos igual haría desaparecer el módulo mientras la
+  // empresa está en vuelo, y volvería a aparecer después — un parpadeo que se
+  // lee como un bug.
+  if (ctx.activeModules && !ctx.activeModules.includes(module)) {
+    const def = MODULE_BY_KEY.get(module);
+    if (def?.onlyWhereActivated) return false;
+  }
 
   // 2. Superadmin de plataforma: ve el resto sin filtros de tenant.
   if (ctx.isSuperadmin) return true;
