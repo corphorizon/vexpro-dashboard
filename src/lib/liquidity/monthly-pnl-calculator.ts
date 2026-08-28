@@ -21,6 +21,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { withMt5Connection, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export interface MonthlyPnl {
   year: number;
@@ -136,4 +137,50 @@ export async function calculateMonthlyPnL(
   }
 
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Rehacer el PnL guardado cuando cambia la fecha de conexión.
+//
+// El PnL mensual NO se calcula al leer: se calcula una vez y se guarda en
+// `platform_liquidity_monthly_pnl`. Esas filas son un DERIVADO de la fecha de
+// conexión, así que cambiarla las invalida.
+//
+// El alta usa `upsert`, que agrega y pisa pero NUNCA borra. Mover la fecha
+// hacia adelante con un upsert dejaría vivos los meses del rango viejo —meses
+// en los que la cuenta ya no estaba en el pool— sumando al total sin que nada
+// avise. Es el modo de falla que este repo persigue: un número plausible y
+// equivocado, sin excepción de por medio.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Borra el PnL guardado de una cuenta y lo vuelve a calcular desde
+ * `fechaConexion`. Devuelve cuántos meses quedaron.
+ *
+ * Lanza si MT5 no responde: el llamador decide si eso corta la operación o
+ * sólo avisa.
+ */
+export async function recalcularPnlMensual(
+  admin: SupabaseClient,
+  cuenta: { id: string; company_id: string; mt5_account: string },
+  fechaConexion: Date,
+): Promise<number> {
+  const pnl = await calculateMonthlyPnL(cuenta.company_id, cuenta.mt5_account, fechaConexion);
+
+  // El borrado va DESPUÉS del cálculo: si MT5 falla, la cuenta se queda con el
+  // PnL viejo —desactualizado pero coherente— en vez de quedarse sin ninguno.
+  const { error: eBorrado } = await admin
+    .from('platform_liquidity_monthly_pnl')
+    .delete()
+    .eq('account_id', cuenta.id);
+  if (eBorrado) throw new Error(`No se pudo limpiar el PnL anterior: ${eBorrado.message}`);
+
+  if (pnl.length === 0) return 0;
+
+  const { error } = await admin
+    .from('platform_liquidity_monthly_pnl')
+    .insert(pnl.map((m) => ({ account_id: cuenta.id, ...m })));
+  if (error) throw new Error(`No se pudo guardar el PnL mensual: ${error.message}`);
+
+  return pnl.length;
 }

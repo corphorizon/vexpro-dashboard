@@ -30,8 +30,9 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { formatCurrency } from '@/lib/utils';
-import { formatDate, formatDateTime } from '@/lib/dates';
+import { formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
+import { formatFechaConexion } from '@/lib/liquidity/connection-date';
 
 // Antes acá vivía el UUID de Vex Pro escrito a mano. Se fue: la empresa la
 // elige quien mira, porque desde esta pantalla se administran varias. Un ID
@@ -243,7 +244,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
     const rows = filtradas.map((c) => [
       c.mt5_account, c.mt5_email ?? '', c.mt5_group ?? '',
       c.balance, c.balance_liquidez, c.equity, c.status,
-      c.connection_date ? formatDate(c.connection_date) : '',
+      c.connection_date ? formatFechaConexion(c.connection_date) : '',
       c.last_synced_at ? formatDateTime(c.last_synced_at) : '',
       c.note ?? '',
     ] as (string | number)[]);
@@ -743,7 +744,7 @@ function ModalDetalle({ cuenta, onClose }: { cuenta: Cuenta; onClose: () => void
         <Campo label="Balance MT5" value={formatCurrency(cuenta.balance)} />
         <Campo label="Balance Liquidez" value={formatCurrency(cuenta.balance_liquidez)} />
         <Campo label="Equity" value={formatCurrency(cuenta.equity)} />
-        <Campo label="Conectada" value={formatDate(cuenta.connection_date)} />
+        <Campo label="Conectada" value={formatFechaConexion(cuenta.connection_date)} />
         <Campo label="Actualizada" value={cuenta.last_synced_at ? formatDateTime(cuenta.last_synced_at) : '—'} />
       </dl>
 

@@ -25,7 +25,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
-import { validarFechaConexion, recalcularPnlMensual } from '@/lib/liquidity/connection-date';
+import { validarFechaConexion } from '@/lib/liquidity/connection-date';
+import { recalcularPnlMensual } from '@/lib/liquidity/monthly-pnl-calculator';
 
 export const dynamic = 'force-dynamic';
 
@@ -74,10 +75,13 @@ export async function PATCH(
     if (tocaFecha) {
       const v = validarFechaConexion(body.connection_date);
       if (!v.ok) return NextResponse.json({ success: false, error: v.error }, { status: 400 });
-      // Sólo cuenta como cambio si el día es otro. Reguardar la misma fecha no
-      // tiene por qué disparar una consulta a MT5 de 68 millones de filas.
-      const antes = new Date(String(cuenta.connection_date)).toISOString().slice(0, 10);
-      if (v.fecha.toISOString().slice(0, 10) !== antes) fechaNueva = v.fecha;
+      // Se comparan INSTANTES, no días. Reguardar la misma fecha exacta no
+      // dispara nada —no tiene por qué costar una consulta a una tabla de 68
+      // millones de filas—, pero una cuenta guardada con el ancla vieja de
+      // mediodía sí se recalcula al reguardarla: el día es el mismo y el
+      // instante no, así que la pantalla la repara sola.
+      const antes = new Date(String(cuenta.connection_date)).getTime();
+      if (v.fecha.getTime() !== antes) fechaNueva = v.fecha;
     }
 
     // El recálculo va PRIMERO y puede cortar. Si MT5 no responde, la fecha no

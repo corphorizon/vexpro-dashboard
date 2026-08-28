@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { validarFechaConexion } from './connection-date';
+import { validarFechaConexion, formatFechaConexion } from './connection-date';
 
 describe('validarFechaConexion', () => {
   it('acepta el YYYY-MM-DD que manda un <input type="date">', () => {
@@ -8,14 +8,26 @@ describe('validarFechaConexion', () => {
     if (r.ok) expect(r.fecha.toISOString().slice(0, 10)).toBe('2026-03-15');
   });
 
-  it('ancla el día a mediodía UTC y no a medianoche', () => {
-    // El bug que evita: a las 00:00 UTC, un navegador en UTC-5 lee la fecha
-    // como el día ANTERIOR. Si eso cae un día 1, el mes de conexión cambia y
-    // el PnL arranca un mes antes sin que nadie lo haya pedido.
+  it('ancla el día a las 00:00 UTC, no a mediodía', () => {
+    // El bug que fija: con el ancla en 12:00, la cuenta 136773 conectada el
+    // 06/03 daba -2.662,49 en marzo contra los -3.437,67 del MT5 Manager. Las
+    // 17 operaciones que faltaban eran de esa madrugada, 02h y 03h. Medio día
+    // de operaciones desaparecía sin ningún error de por medio.
+    const r = validarFechaConexion('2026-03-06');
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.fecha.toISOString()).toBe('2026-03-06T00:00:00.000Z');
+      expect(r.fecha.getUTCHours()).toBe(0);
+    }
+  });
+
+  it('no corre el día aunque el navegador esté al oeste de UTC', () => {
+    // La `Z` explícita es lo que lo garantiza: sin ella, el texto se
+    // interpretaría en el huso local y un día 1 se volvería el último del mes
+    // anterior.
     const r = validarFechaConexion('2026-03-01');
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.fecha.getUTCHours()).toBe(12);
       expect(r.fecha.getUTCDate()).toBe(1);
       expect(r.fecha.getUTCMonth()).toBe(2); // marzo
     }
@@ -55,5 +67,21 @@ describe('validarFechaConexion', () => {
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.error.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe('formatFechaConexion', () => {
+  it('muestra el día guardado, no el del huso del navegador', () => {
+    // `formatDate` del repo usa hora local: con la conexión a las 00:00 UTC,
+    // un navegador en UTC-5 mostraría el 5 de marzo. La fecha de conexión es
+    // un DÍA, así que se lee en el mismo huso en que se guardó.
+    expect(formatFechaConexion('2026-03-06T00:00:00.000Z')).toBe('06/03/2026');
+  });
+
+  it('no se rompe con nulo, vacío ni basura', () => {
+    expect(formatFechaConexion(null)).toBe('');
+    expect(formatFechaConexion(undefined)).toBe('');
+    expect(formatFechaConexion('')).toBe('');
+    expect(formatFechaConexion('ayer')).toBe('');
   });
 });
