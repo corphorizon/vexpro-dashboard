@@ -109,7 +109,7 @@ export async function syncAccountCopyDetection(
   // ── 1. Candidatas: las que ya tienen diagnóstico y actividad suficiente ──
   const { data: filas, error } = await admin
     .from('mt5_account_review')
-    .select('login, positions, checks, unverifiable')
+    .select('login, positions, first_trade_at, last_trade_at, checks, unverifiable')
     .eq('company_id', companyId)
     .gte('positions', MIN_OPERACIONES);
   if (error) throw new Error(`mt5_account_review: ${error.message}`);
@@ -117,8 +117,43 @@ export async function syncAccountCopyDetection(
   const candidatas = (filas ?? []).map((f) => Number(f.login)).filter((n) => Number.isFinite(n));
   if (candidatas.length < 2) return vacio({ candidates: candidatas.length });
 
-  // ── 2. Aperturas de todas, de una sola vez ──────────────────────────────
-  const desde = new Date(Date.now() - DIAS * 86_400_000);
+  // ── 2. Elegir la ventana ANTES de consultar ─────────────────────────────
+  // El volumen crece con el universo, y el universo crece solo (cada retiro
+  // nuevo suma cuentas). Una ventana fija se pasa del techo tarde o temprano y
+  // ahí la señal deja de resolverse — ya pasó una vez con 120 días.
+  //
+  // Se estima con lo que YA está guardado (posiciones y fechas de cada cuenta,
+  // prorrateadas a la ventana): cuesta cero y evita descubrir el problema
+  // después de haber traído un millón de filas por el túnel.
+  //
+  // Se toma la ventana MÁS LARGA que entre bajo el techo. Más ventana es mejor
+  // detección; el techo sólo marca hasta dónde se puede.
+  const DIA = 86_400_000;
+  const estimar = (dias: number): number => {
+    const corte = Date.now() - dias * DIA;
+    let total = 0;
+    for (const f of filas ?? []) {
+      const p = Number(f.positions) || 0;
+      const ini = f.first_trade_at ? new Date(f.first_trade_at).getTime() : 0;
+      const fin = f.last_trade_at ? new Date(f.last_trade_at).getTime() : 0;
+      if (!ini || !fin || fin < corte) continue; // no operó en la ventana
+      const spanDias = Math.max(1, (fin - ini) / DIA);
+      const solapa = Math.max(0, (fin - Math.max(ini, corte)) / DIA);
+      total += p * Math.min(1, solapa / spanDias);
+    }
+    return Math.round(total);
+  };
+
+  const VENTANAS = [DIAS, 21, 14, 7];
+  const dias = VENTANAS.find((d) => estimar(d) < MAX_APERTURAS) ?? VENTANAS[VENTANAS.length - 1];
+  if (dias !== DIAS) {
+    warnings.push(
+      `Ventana reducida a ${dias} días (con ${DIAS} la estimación era ${estimar(DIAS).toLocaleString('es')} aperturas, sobre el techo de ${MAX_APERTURAS.toLocaleString('es')}).`,
+    );
+  }
+
+  // ── 3. Aperturas de todas, de una sola vez ──────────────────────────────
+  const desde = new Date(Date.now() - dias * DIA);
   const aperturas = await loadAperturasByLogins(companyId, candidatas, desde);
 
   if (aperturas.length >= MAX_APERTURAS) {
@@ -131,7 +166,7 @@ export async function syncAccountCopyDetection(
     return vacio({ candidates: candidatas.length, aperturas: aperturas.length });
   }
 
-  // ── 3. Emparejar ────────────────────────────────────────────────────────
+  // ── 4. Emparejar ────────────────────────────────────────────────────────
   const pares = findSynchronizedPairs(aperturas);
 
   // Por cuenta, con quién sincroniza.
@@ -151,7 +186,7 @@ export async function syncAccountCopyDetection(
     empujar(p.loginB, p.loginA, p);
   }
 
-  // ── 4. Actualizar la señal de copia, y sólo esa ─────────────────────────
+  // ── 5. Actualizar la señal de copia, y sólo esa ─────────────────────────
   // Las cuentas SIN par también se actualizan: pasan de «no comprobado» a
   // «ninguna cuenta opera sincronizada con ésta», que es una respuesta y no
   // una omisión. Ésa es toda la diferencia que aporta esta fase.
@@ -173,7 +208,7 @@ export async function syncAccountCopyDetection(
           .slice(0, 3)
           .map((p) => `${p.otroLogin} (${Math.round(p.cobertura * 100)}%, retraso ~${p.retrasoMedianoSeg}s)`)
           .join(' · ')
-        : `Ninguna de las ${candidatas.length} cuentas analizadas opera sincronizada con ésta`,
+        : `Ninguna de las ${candidatas.length} cuentas analizadas opera sincronizada con ésta (últimos ${dias} días)`,
       offendingTrades: fuertes.reduce((a, p) => a + p.coincidencias, 0),
       countsForRisk: true,
     };

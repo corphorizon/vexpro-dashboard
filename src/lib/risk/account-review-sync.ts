@@ -111,18 +111,42 @@ export async function syncAccountReviews(
   const warnings: string[] = [];
   const instantFee = opts.instantFee ?? 5;
 
-  // ── 1. Los clientes con retiro instantáneo ──────────────────────────────
-  const retiros = await fetchAll<{ user_external_id: string | null }>((d, h) =>
-    admin
-      .from('crm_withdrawals')
-      .select('user_external_id')
-      .eq('company_id', companyId)
-      .eq('fee', instantFee)
-      .not('user_external_id', 'is', null)
-      .order('requested_at', { ascending: false })
-      .range(d, h),
-  );
-  const usuarios = [...new Set(retiros.map((r) => r.user_external_id).filter(Boolean))] as string[];
+  // ── 1. Los clientes cuyo retiro hay que entender ────────────────────────
+  // Dos poblaciones, por razones opuestas y las dos válidas:
+  //
+  //   INSTANTÁNEOS (fee = 5) — el dinero YA SALIÓ sin que nadie lo mirara.
+  //     Entender al cliente es lo único que queda por hacer.
+  //   PENDIENTES (status_norm = 'pending') — el dinero TODAVÍA NO SALIÓ y hay
+  //     una decisión por tomar. Acá el diagnóstico llega a tiempo de servir.
+  //
+  // Se agregaron los pendientes el 2026-08-27: son 45 usuarios, de los cuales
+  // 36 no tenían ningún instantáneo, y suman 232 cuentas. El universo pasa de
+  // ~655 a ~887 — cuatro o cinco corridas de rotación, no un problema.
+  const [instantaneos, pendientes] = await Promise.all([
+    fetchAll<{ user_external_id: string | null }>((d, h) =>
+      admin
+        .from('crm_withdrawals')
+        .select('user_external_id')
+        .eq('company_id', companyId)
+        .eq('fee', instantFee)
+        .not('user_external_id', 'is', null)
+        .order('requested_at', { ascending: false })
+        .range(d, h),
+    ),
+    fetchAll<{ user_external_id: string | null }>((d, h) =>
+      admin
+        .from('crm_withdrawals')
+        .select('user_external_id')
+        .eq('company_id', companyId)
+        .eq('status_norm', 'pending')
+        .not('user_external_id', 'is', null)
+        .order('requested_at', { ascending: false })
+        .range(d, h),
+    ),
+  ]);
+  const usuarios = [
+    ...new Set([...instantaneos, ...pendientes].map((r) => r.user_external_id).filter(Boolean)),
+  ] as string[];
   if (usuarios.length === 0) {
     return { candidates: 0, reviewed: 0, skipped: 0, failed: 0, elapsedMs: Date.now() - started, warnings };
   }
@@ -162,12 +186,32 @@ export async function syncAccountReviews(
   const calculadoEn = new Map<number, string>();
   for (const r of yaCalculadas) calculadoEn.set(Number(r.login), r.computed_at);
 
-  const orden = [...porLogin.keys()].sort((a, b) => {
-    // La cadena vacía ordena antes que cualquier fecha: nunca-calculada primero.
-    const ca = calculadoEn.get(a) ?? '';
-    const cb = calculadoEn.get(b) ?? '';
-    return ca.localeCompare(cb);
-  });
+  // ── LOS PENDIENTES VAN PRIMERO, SIEMPRE ─────────────────────────────────
+  // Un retiro en Solicitados NO se queda ahí: alguien lo toca y pasa a otro
+  // estado. Si su diagnóstico esperara el turno de la rotación —cuatro o cinco
+  // corridas, más de dos horas— llegaría DESPUÉS de la decisión, que es la
+  // única para la que servía.
+  //
+  // Los instantáneos no tienen esa urgencia: el dinero ya salió, así que lo que
+  // se mira es historia y puede esperar su turno.
+  //
+  // Mismo criterio que el sync del CRM con los retiros pendientes.
+  const usuariosPendientes = new Set(
+    pendientes.map((r) => r.user_external_id).filter(Boolean) as string[],
+  );
+  const esPrioritaria = (login: number) => {
+    const uid = porLogin.get(login)?.user_external_id;
+    return uid ? usuariosPendientes.has(uid) : false;
+  };
+  // Dentro de cada grupo, lo más viejo primero. La cadena vacía ordena antes
+  // que cualquier fecha: las nunca-calculadas encabezan.
+  const porAntiguedad = (a: number, b: number) =>
+    (calculadoEn.get(a) ?? '').localeCompare(calculadoEn.get(b) ?? '');
+  const todas = [...porLogin.keys()];
+  const orden = [
+    ...todas.filter(esPrioritaria).sort(porAntiguedad),
+    ...todas.filter((l) => !esPrioritaria(l)).sort(porAntiguedad),
+  ];
   const tanda = orden.slice(0, MAX_POR_CORRIDA);
   const skipped = orden.length - tanda.length;
   if (skipped > 0) {
@@ -223,6 +267,7 @@ export async function syncAccountReviews(
         lots_total: rev.facts.lotsTotal,
         max_drawdown: rev.facts.maxDrawdown,
         top_symbols: rev.facts.topSymbols,
+        durations: rev.facts.durations,
         checks: rev.signals,
         violations: rev.flagged,
         unverifiable: rev.unverifiable,

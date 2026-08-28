@@ -38,7 +38,7 @@ import { analyzeReport } from '@/lib/risk/rules';
 import { DEFAULT_RULE_CONFIG } from '@/lib/risk/types';
 import type { Trade } from '@/lib/risk/types';
 import { mt5DateUtc, withMt5Connection, type Mt5Session } from '@/lib/api-integrations/mt5-sql/client';
-import { computeDurationDistribution, WITHDRAWAL_REVIEW_BUCKETS } from '@/lib/risk/duration-distribution';
+import { computeDurationDistribution } from '@/lib/risk/duration-distribution';
 
 /** `Volume` viene en diezmilésimas de lote. Mismo divisor que exposición y prop firm. */
 const LOTS_DIVISOR = 10_000;
@@ -293,7 +293,10 @@ function hechos(trades: Trade[]): AccountFacts {
       .map(([symbol, v]) => ({ symbol, positions: v.positions, profit: Math.round(v.profit * 100) / 100 }))
       .sort((a, b) => b.positions - a.positions)
       .slice(0, 5),
-    durations: computeDurationDistribution(trades, WITHDRAWAL_REVIEW_BUCKETS).buckets
+    // Sin segundo argumento: usa BUCKET_DEFINITIONS (<1, 1-2, 2-3, 3-4, 4-5,
+    // 5-10, >10 min), los MISMOS que la pantalla de subida. Una sola definicion
+    // para que dos pantallas no muestren repartos distintos del mismo dato.
+    durations: computeDurationDistribution(trades).buckets
       .map((b) => ({ label: b.label, count: b.count, profit: b.profitTotal })),
   };
 }
