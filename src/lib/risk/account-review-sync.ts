@@ -45,6 +45,31 @@ export const MAX_POR_CORRIDA = 200;
 /** Tipos de cuenta que entran. FUNDING queda fuera (tiene su propio módulo). */
 export const TIPOS = ['BROKER', 'SOCIAL'] as const;
 
+/**
+ * Cuánto vale el diagnóstico de una cuenta prioritaria antes de rehacerlo.
+ *
+ * ── LA INANICIÓN QUE ESTO ARREGLA (medido, 2026-08-28) ─────────────────────
+ * «Prioritaria» tiene que significar «entra primero cuando le hace falta», no
+ * «se rehace en todas las corridas». Sin este corte, los 202 pendientes contra
+ * un techo de 200 dejaron CERO lugar para el resto durante horas: las mismas
+ * 202 cuentas se recalcularon en cada corrida y las otras 700 quedaron
+ * congeladas, sin que nada avisara.
+ *
+ * Dos horas porque la operativa de una cuenta no cambia en treinta minutos: lo
+ * que importa es que un pendiente NUEVO entre en la corrida siguiente, y eso
+ * se cumple igual (nunca calculada = siempre prioritaria).
+ */
+export const FRESCURA_PRIORITARIA_MS = 2 * 60 * 60 * 1000;
+
+/**
+ * Parte del cupo reservada SIEMPRE a la rotación, aunque sobren prioritarias.
+ *
+ * Es la red contra la inanición, no el mecanismo principal: aun con el corte de
+ * frescura, un pico de pendientes podría volver a llenar el cupo. Con esto, el
+ * resto del universo avanza siempre — más lento, pero avanza.
+ */
+export const RESERVA_ROTACION = 0.25;
+
 export interface AccountReviewSyncResult {
   candidates: number;
   reviewed: number;
@@ -199,19 +224,45 @@ export async function syncAccountReviews(
   const usuariosPendientes = new Set(
     pendientes.map((r) => r.user_external_id).filter(Boolean) as string[],
   );
+  // Una prioritaria recién calculada NO vuelve a entrar: ver
+  // FRESCURA_PRIORITARIA_MS. Sin este corte, las mismas cuentas se rehacían en
+  // cada corrida y el resto del universo no avanzaba nunca.
+  const ahoraMs = Date.now();
+  const estaFresca = (login: number) => {
+    const c = calculadoEn.get(login);
+    if (!c) return false; // nunca calculada: siempre prioritaria
+    const t = new Date(c).getTime();
+    return Number.isFinite(t) && ahoraMs - t < FRESCURA_PRIORITARIA_MS;
+  };
   const esPrioritaria = (login: number) => {
     const uid = porLogin.get(login)?.user_external_id;
-    return uid ? usuariosPendientes.has(uid) : false;
+    if (!uid || !usuariosPendientes.has(uid)) return false;
+    return !estaFresca(login);
   };
   // Dentro de cada grupo, lo más viejo primero. La cadena vacía ordena antes
   // que cualquier fecha: las nunca-calculadas encabezan.
   const porAntiguedad = (a: number, b: number) =>
     (calculadoEn.get(a) ?? '').localeCompare(calculadoEn.get(b) ?? '');
+
   const todas = [...porLogin.keys()];
+  const prioritarias = todas.filter(esPrioritaria).sort(porAntiguedad);
+  const resto = todas.filter((l) => !esPrioritaria(l)).sort(porAntiguedad);
+
+  // Las prioritarias entran primero pero NO pueden ocupar el cupo entero: se
+  // reserva una parte para la rotación. Lo que no entra de las prioritarias va
+  // al final — no se pierde, entra en la corrida siguiente.
+  const cupoPrioritarias = Math.max(1, Math.floor(MAX_POR_CORRIDA * (1 - RESERVA_ROTACION)));
   const orden = [
-    ...todas.filter(esPrioritaria).sort(porAntiguedad),
-    ...todas.filter((l) => !esPrioritaria(l)).sort(porAntiguedad),
+    ...prioritarias.slice(0, cupoPrioritarias),
+    ...resto,
+    ...prioritarias.slice(cupoPrioritarias),
   ];
+  if (prioritarias.length > cupoPrioritarias) {
+    warnings.push(
+      `${prioritarias.length} cuenta(s) prioritarias para ${cupoPrioritarias} lugares: ` +
+      `las demás van después de la rotación para no congelarla.`,
+    );
+  }
   const tanda = orden.slice(0, MAX_POR_CORRIDA);
   const skipped = orden.length - tanda.length;
   if (skipped > 0) {
