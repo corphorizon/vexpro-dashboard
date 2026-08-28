@@ -231,7 +231,7 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
                 <th className="py-2 px-3 text-left font-medium">Usuario</th>
                 <th className="py-2 px-3 text-right font-medium">PnL del mes</th>
                 <th className="py-2 px-3 text-right font-medium">Ops</th>
-                <th className="py-2 px-3 text-right font-medium">Balance Liquidez</th>
+                <th className="py-2 px-3 text-right font-medium">Equity a Liquidez</th>
                 <th className="py-2 px-3 text-left font-medium">Conectada</th>
               </tr>
             </thead>

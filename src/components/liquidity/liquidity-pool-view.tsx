@@ -11,7 +11,7 @@
 // Las rutas son envoltorios de tres líneas; toda la lógica vive acá.
 //
 // ── LA DISTINCIÓN QUE LA PANTALLA TIENE QUE DEJAR CLARA ────────────────────
-// «Balance MT5» y «Balance Liquidez» NO son lo mismo, y confundirlos es el
+// «Balance MT5» y «Equity a Liquidez» NO son lo mismo, y confundirlos es el
 // error que este módulo existe para evitar. El primero es lo que el cliente
 // tiene en su cuenta; el segundo es lo que Horizon debe reservar. Si un cliente
 // mueve plata entre dos cuentas propias, el balance MT5 aparece dos veces pero
@@ -61,6 +61,8 @@ interface Cuenta {
   balance: number;
   equity: number;
   balance_liquidez: number;
+  /** El equity a liquidez se cargó a mano y no lo pisa ningún cálculo. */
+  liquidez_manual: boolean;
   /** Saldo reconstruido para la fecha de conexión. `null` = no se pudo. */
   equity_at_connection: number | null;
   /** Se cargó a mano; el recálculo automático no lo pisa. */
@@ -246,7 +248,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
   }
 
   function exportarCsv() {
-    const headers = ['Cuenta', 'Usuario', 'Grupo', 'Equity a la conexion', 'Origen equity conexion', 'Balance MT5', 'Balance Liquidez', 'Equity', 'Status', 'Fecha conexion', 'Ultima actualizacion', 'Nota'];
+    const headers = ['Cuenta', 'Usuario', 'Grupo', 'Equity a la conexion', 'Origen equity conexion', 'Balance MT5', 'Equity a Liquidez', 'Equity', 'Status', 'Fecha conexion', 'Ultima actualizacion', 'Nota'];
     const rows = filtradas.map((c) => [
       c.mt5_account, c.mt5_email ?? '', c.mt5_group ?? '',
       c.equity_at_connection ?? '', c.connection_values_manual ? 'manual' : (typeof c.connection_open_positions === 'number' && c.connection_open_positions > 0 ? 'calculado (aprox)' : 'calculado'),
@@ -276,7 +278,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
             <Droplets className="w-6 h-6 text-[var(--color-secondary)]" /> Liquidez
           </h1>
           <p className="text-sm text-muted-foreground mt-1">
-            Cuentas MT5 que aportan al pool. El <strong>Balance Liquidez</strong> es lo que hay que
+            Cuentas MT5 que aportan al pool. El <strong>Equity a Liquidez</strong> es lo que hay que
             reservar: si un cliente mueve plata entre cuentas propias, se cuenta una sola vez.
           </p>
 
@@ -391,7 +393,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
         <Stat label="Activas" value={String(stats.activas)} tone="positive" />
         <Stat label="No activas" value={String(stats.inactivas)} tone="muted" />
         <Stat
-          label="Balance Liquidez (pool)"
+          label="Equity a Liquidez (pool)"
           value={formatCurrency(stats.pool)}
           sub={`Balance MT5: ${formatCurrency(stats.mt5)}`}
           tone="primary"
@@ -430,7 +432,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                 <th className="text-left py-2.5 px-3 font-medium">Grupo</th>
                 <th className="text-right py-2.5 px-3 font-medium">Equity a la conexión</th>
                 <th className="text-right py-2.5 px-3 font-medium">Balance MT5</th>
-                <th className="text-right py-2.5 px-3 font-medium">Balance Liquidez</th>
+                <th className="text-right py-2.5 px-3 font-medium">Equity a Liquidez</th>
                 <th className="text-left py-2.5 px-3 font-medium">Status</th>
                 <th className="text-left py-2.5 px-3 font-medium">Actualizado</th>
                 <th className="text-right py-2.5 px-3 font-medium">Acciones</th>
@@ -482,6 +484,14 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                   <td className="py-2 px-3 text-right tabular-nums">{formatCurrency(c.balance)}</td>
                   <td className="py-2 px-3 text-right tabular-nums font-medium">
                     {formatCurrency(c.balance_liquidez)}
+                    {c.liquidez_manual && (
+                      <span
+                        className="block text-[11px] font-normal text-muted-foreground"
+                        title="Monto cargado a mano."
+                      >
+                        manual
+                      </span>
+                    )}
                     {/* Cuando difieren, el porqué no es obvio: se marca para
                         que nadie lo lea como un error de cálculo. */}
                     {Number(c.balance_liquidez) !== Number(c.balance) && (
@@ -690,11 +700,17 @@ function ModalNota({ cuenta, onClose, onDone }: {
   const fechaOriginal = cuenta.connection_date.slice(0, 10);
   const [fecha, setFecha] = useState(fechaOriginal);
   // Vacío = «que lo calcule MT5». Se distingue de un 0 escrito a propósito.
-  const [equity, setEquity] = useState(
+  const equityOriginal =
     cuenta.equity_at_connection === null || cuenta.equity_at_connection === undefined
       ? ''
-      : String(cuenta.equity_at_connection),
-  );
+      : String(cuenta.equity_at_connection);
+  const [equity, setEquity] = useState(equityOriginal);
+
+  const liquidezOriginal =
+    cuenta.balance_liquidez === null || cuenta.balance_liquidez === undefined
+      ? ''
+      : String(cuenta.balance_liquidez);
+  const [liquidez, setLiquidez] = useState(liquidezOriginal);
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -708,12 +724,24 @@ function ModalNota({ cuenta, onClose, onDone }: {
     try {
       const res = await apiFetch(`/api/superadmin/liquidity/accounts/${cuenta.id}`, {
         method: 'PATCH',
+        // Sólo se mandan los campos que REALMENTE cambiaron.
+        //
+        // Mandarlos siempre tenía un efecto que no se veía: el campo llegaba
+        // precargado con el valor guardado, y apretar «Guardar» lo reenviaba
+        // como si alguien lo hubiera escrito — la cuenta quedaba marcada
+        // «manual» sin que nadie tocara el número, y eso bloquea el recálculo
+        // automático. Guardar el formulario no es editar el campo.
         body: JSON.stringify({
           note: nota.trim() || null,
-          connection_date: fecha,
+          ...(fecha !== fechaOriginal ? { connection_date: fecha } : {}),
           // Cadena vacía = soltar el valor manual y volver al calculado. Es
-          // distinto de no mandar el campo, que sería «no lo toques».
-          equity_at_connection: equity.trim() === '' ? null : equity.trim(),
+          // distinto de no mandar el campo, que significa «no lo toques».
+          ...(equity.trim() !== equityOriginal
+            ? { equity_at_connection: equity.trim() === '' ? null : equity.trim() }
+            : {}),
+          ...(liquidez.trim() !== liquidezOriginal
+            ? { balance_liquidez: liquidez.trim() === '' ? null : liquidez.trim() }
+            : {}),
         }),
       });
       const json = await res.json();
@@ -791,6 +819,21 @@ function ModalNota({ cuenta, onClose, onDone }: {
         </div>
       )}
 
+      <label className="block text-sm font-medium mt-4 mb-1.5">Equity a Liquidez</label>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={liquidez}
+        onChange={(e) => setLiquidez(e.target.value)}
+        placeholder="Lo decide el análisis de duplicados"
+        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+      />
+      <p className="mt-1.5 text-xs text-muted-foreground">
+        {cuenta.liquidez_manual
+          ? 'Cargado a mano. Vaciá el campo para volver a lo que calculó el análisis de duplicados.'
+          : 'Cuánto aporta esta cuenta al pool. Sale del análisis de duplicados: si el cliente movió plata entre cuentas propias, se cuenta una sola vez. Editalo si sabés el monto real que se envió.'}
+      </p>
+
       <label className="block text-sm font-medium mt-4 mb-1.5">Nota</label>
       <textarea
         value={nota}
@@ -840,7 +883,7 @@ function ModalDetalle({ cuenta, onClose }: { cuenta: Cuenta; onClose: () => void
         <Campo label="Grupo" value={cuenta.mt5_group ?? '—'} />
         <Campo label="Status" value={cuenta.status} />
         <Campo label="Balance MT5" value={formatCurrency(cuenta.balance)} />
-        <Campo label="Balance Liquidez" value={formatCurrency(cuenta.balance_liquidez)} />
+        <Campo label="Equity a Liquidez" value={formatCurrency(cuenta.balance_liquidez)} />
         <Campo
           label="Equity a la conexión"
           value={
