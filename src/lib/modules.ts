@@ -38,6 +38,11 @@ const MODULE_DEFS = [
   { key: 'expenses',       labelEs: 'Egresos',            labelEn: 'Expenses' },
   { key: 'income',         labelEs: 'Ingresos',           labelEn: 'Income' },
   { key: 'liquidity',      labelEs: 'Liquidez',           labelEn: 'Liquidity' },
+  // Pool de liquidez sobre cuentas MT5. NO reemplaza a `liquidity`: aquél es la
+  // conciliación que ya usa Vex Pro, con sus propias tablas. Éste lee MT5 y
+  // calcula cuánto hay que reservar, descontando la plata que un mismo cliente
+  // mueve entre cuentas propias. Son módulos distintos y conviven.
+  { key: 'liquidity_pool', labelEs: 'Pool de Liquidez',   labelEn: 'Liquidity Pool' },
   { key: 'investments',    labelEs: 'Inversiones',        labelEn: 'Investments' },
   { key: 'balances',       labelEs: 'Balances',           labelEn: 'Balances' },
   { key: 'partners',       labelEs: 'Socios',             labelEn: 'Partners' },
