@@ -921,13 +921,22 @@ export default function RRHHPage() {
     p.email.toLowerCase().includes(q) ||
     (ROLE_LABELS_HR[p.role] || '').toLowerCase().includes(q);
   const commercialQ = commercialSearch.trim().toLowerCase();
+  // Filtro «sin salario»: checklist para que RRHH cargue los que faltan
+  // (Kevin 2026-08-28: el salario es opcional, pero las metas por net deposit
+  // muestran vacío sin él; hoy ~103/126 perfiles no lo tienen).
+  const [soloSinSalario, setSoloSinSalario] = useState(false);
+  const sinSalario = (p: CommercialProfile) => !p.salary || Number(p.salary) === 0;
+  const pasaFiltroSalario = (p: CommercialProfile) => !soloSinSalario || sinSalario(p);
+  const totalSinSalario = profiles.filter(sinSalario).length;
   // Un equipo se muestra si matchea el líder O algún BDM bajo su estructura.
   const teamHasMatch = (leader: CommercialProfile) =>
-    matchesCommercial(leader, commercialQ) ||
-    profiles.some((p) => p.head_id === leader.id && matchesCommercial(p, commercialQ));
+    (matchesCommercial(leader, commercialQ) && pasaFiltroSalario(leader)) ||
+    profiles.some((p) => p.head_id === leader.id && matchesCommercial(p, commercialQ) && pasaFiltroSalario(p));
   const visibleSalesManagers = salesManagers.filter(teamHasMatch);
   const visibleHeads = heads.filter(teamHasMatch);
-  const visibleIndependentBdms = independentBdms.filter((b) => matchesCommercial(b, commercialQ));
+  const visibleIndependentBdms = independentBdms.filter(
+    (b) => matchesCommercial(b, commercialQ) && pasaFiltroSalario(b),
+  );
 
   const totalCommissionsFiltered = filteredResults.reduce((sum, r) => sum + r.total_earned, 0);
   const activeProfiles = profiles.filter(p => p.status === 'active').length;
@@ -1904,6 +1913,17 @@ export default function RRHHPage() {
                   <button onClick={() => setCommercialSearch('')} className="absolute right-2 text-muted-foreground hover:text-foreground" aria-label={t('comm.clearSearch')}>✕</button>
                 )}
               </div>
+              <button
+                onClick={() => setSoloSinSalario((v) => !v)}
+                aria-pressed={soloSinSalario}
+                className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
+                  soloSinSalario
+                    ? 'bg-primary text-brand-on-primary border-primary'
+                    : 'border-border hover:bg-muted'
+                }`}
+              >
+                {t('hr.noSalaryFilter', { count: String(totalSinSalario) })}
+              </button>
               {!commercialQ && (
                 <div className="flex items-center gap-2">
                   <button
