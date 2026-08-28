@@ -12,7 +12,22 @@
 //      (comparado contra un epoch devuelve la tabla entera, 68 millones de
 //      filas «con cara de dato bueno») y `Time` no tiene índice (31 s por
 //      consulta). Comparar `TimeMsc` contra un número devuelve CERO filas.
-//   2. `Entry IN (1,3)` — la ganancia realizada vive en el deal de SALIDA.
+//   2. La ganancia realizada vive en el deal de SALIDA (`Entry IN (1,3)`); el
+//      de entrada trae `Profit = 0`. Pero ESE FILTRO NO VA EN LOS IMPORTES:
+//      la comisión se cobra en la apertura Y en el cierre, así que filtrando
+//      por salida se perdía la mitad.
+//
+//      Medido en la cuenta 137983, marzo 2026: comisión -136,30 en las
+//      entradas y -136,60 en las salidas. Sumando sólo las salidas daba
+//      -11.411,61 contra los -11.547,91 del MT5 Manager; sumando todo da
+//      -11.547,91 exacto, con profit -11.184,70 y swap -90,31 idénticos.
+//
+//      No hay riesgo de contar el profit dos veces: en los deals de entrada
+//      vale cero. Por eso los importes se suman sobre TODOS los deals y sólo
+//      el CONTEO de operaciones se restringe a las salidas.
+//
+//      Este fallo estuvo invisible en la primera cuenta que se probó (136773),
+//      que no tenía comisiones: ahí las dos fórmulas daban lo mismo.
 //   3. `Action IN (0,1)` — sin esto, los depósitos (`Action = 2`) entran como
 //      si fueran ganancia. Medido en el repo: suman 425 millones.
 //
@@ -40,13 +55,17 @@ export interface MonthlyPnl {
 const SQL_POR_MES = [
   'SELECT YEAR(TimeMsc)  AS anio,',
   '       MONTH(TimeMsc) AS mes,',
-  '       COUNT(*)       AS ops,',
-  '       SUM(Profit)    AS profit,',
-  '       SUM(Storage)   AS swap,',
+  // Se cuentan las SALIDAS: una operación es una posición cerrada. Contar todas
+  // las filas daría el doble, porque cada operación deja un deal de entrada y
+  // otro de salida.
+  '       SUM(CASE WHEN Entry IN (1,3) THEN 1 ELSE 0 END) AS ops,',
+  // Los importes se suman sobre TODOS los deals — ver la nota 2 de la cabecera.
+  '       SUM(Profit)     AS profit,',
+  '       SUM(Storage)    AS swap,',
   '       SUM(Commission) AS comision',
   '  FROM mt5_deals',
   ' WHERE Login = ?',
-  '   AND Entry IN (1,3) AND Action IN (0,1)',
+  '   AND Action IN (0,1)',
   '   AND TimeMsc >= ? AND TimeMsc < ?',
   ' GROUP BY anio, mes',
   ' ORDER BY anio, mes',
