@@ -29,6 +29,7 @@ import { fetchMt5Account } from '@/lib/liquidity/mt5-account';
 import { analizarCuentaNueva } from '@/lib/liquidity/duplicate-account-detector';
 import { calculateMonthlyPnL } from '@/lib/liquidity/monthly-pnl-calculator';
 import { validarFechaConexion } from '@/lib/liquidity/connection-date';
+import { calcularSaldoALaFecha } from '@/lib/liquidity/connection-snapshot';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -142,6 +143,27 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // ── 2b. El saldo QUE TENÍA en la fecha de conexión ────────────────────
+    // No es el balance de hoy. En un alta retroactiva son números distintos, y
+    // guardar el de hoy en un campo que dice "a la conexión" es exactamente el
+    // fallo que no da error: un dato plausible en el lugar equivocado.
+    let saldoConexion: Awaited<ReturnType<typeof calcularSaldoALaFecha>> = null;
+    if (mt5) {
+      try {
+        saldoConexion = await calcularSaldoALaFecha(companyId, mt5Account, fechaConexion);
+        if (saldoConexion && !saldoConexion.exacto) {
+          warnings.push(
+            `Había ${saldoConexion.posicionesAbiertas} posición(es) abierta(s) al conectar: ` +
+            `el equity de esa fecha era distinto del balance y MT5 no guarda el precio de ese ` +
+            `momento. Se guardó el balance — editalo a mano si tenés el equity real.`,
+          );
+        }
+      } catch (err) {
+        const m = err instanceof Error ? err.message : String(err);
+        warnings.push(`No se pudo reconstruir el saldo de la fecha de conexión: ${m}`);
+      }
+    }
+
     // ── 3. Guardar la cuenta ──────────────────────────────────────────────
     const { data: creada, error: insErr } = await admin
       .from('platform_liquidity_accounts')
@@ -155,8 +177,16 @@ export async function POST(request: NextRequest) {
         // Sin análisis se cuenta completo: para el pool, reservar de más es
         // seguro y reservar de menos no.
         balance_liquidez: analisis ? analisis.balanceLiquidez : (mt5?.balance ?? 0),
-        balance_at_connection: mt5?.balance ?? null,
-        equity_at_connection: mt5?.equity ?? null,
+        // Reconstruido para la fecha de conexión. Si el cálculo falló queda
+        // `null` —«no lo sabemos»— y no el balance de hoy, que sería mentira.
+        balance_at_connection: saldoConexion ? saldoConexion.balance : null,
+        // Sin posiciones abiertas, el equity de ese instante ES el balance. Con
+        // posiciones abiertas no se puede reconstruir, así que se guarda el
+        // balance y `connection_open_positions` deja constancia de por qué es
+        // una aproximación.
+        equity_at_connection: saldoConexion ? saldoConexion.balance : null,
+        connection_open_positions: saldoConexion?.posicionesAbiertas ?? null,
+        connection_values_manual: false,
         // El PnL se mide desde que la cuenta entró al pool, no desde que existe
         // en MT5. Por defecto eso es hoy; se puede fechar antes para dar de
         // alta una cuenta que ya venía operando.

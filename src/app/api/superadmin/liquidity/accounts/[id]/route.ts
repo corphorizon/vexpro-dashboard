@@ -27,6 +27,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 import { validarFechaConexion } from '@/lib/liquidity/connection-date';
 import { recalcularPnlMensual } from '@/lib/liquidity/monthly-pnl-calculator';
+import { calcularSaldoALaFecha } from '@/lib/liquidity/connection-snapshot';
 
 export const dynamic = 'force-dynamic';
 
@@ -42,12 +43,17 @@ export async function PATCH(
     const body = (await request.json().catch(() => ({}))) as {
       note?: unknown;
       connection_date?: unknown;
+      equity_at_connection?: unknown;
     };
     const tocaNota = 'note' in body;
     const tocaFecha = 'connection_date' in body;
-    if (!tocaNota && !tocaFecha) {
+    const tocaEquity = 'equity_at_connection' in body;
+    if (!tocaNota && !tocaFecha && !tocaEquity) {
       return NextResponse.json(
-        { success: false, error: 'Sólo se pueden editar la nota y la fecha de conexión.' },
+        {
+          success: false,
+          error: 'Sólo se pueden editar la nota, la fecha de conexión y el equity a la conexión.',
+        },
         { status: 400 },
       );
     }
@@ -58,7 +64,7 @@ export async function PATCH(
     // además así el 404 sale antes de escribir nada.
     const { data: cuenta, error: eLectura } = await admin
       .from('platform_liquidity_accounts')
-      .select('id, company_id, mt5_account, connection_date')
+      .select('id, company_id, mt5_account, connection_date, connection_values_manual')
       .eq('id', id)
       .maybeSingle();
     if (eLectura) return apiError('superadmin/liquidity/accounts PATCH', eLectura, { status: 500 });
@@ -66,9 +72,37 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'Cuenta no encontrada.' }, { status: 404 });
     }
 
+    const avisos: string[] = [];
     const cambios: Record<string, unknown> = { updated_at: new Date().toISOString() };
     if (tocaNota) {
       cambios.note = body.note === null || body.note === '' ? null : String(body.note);
+    }
+
+    // El equity a la conexión se puede escribir a mano: cuando había posiciones
+    // abiertas en ese instante, el flotante no se puede reconstruir y el único
+    // que tiene el número real es quien lo saca del reporte de MT5.
+    //
+    // Al escribirlo se marca `connection_values_manual`. Sin esa marca, un
+    // recálculo posterior pisaría el valor cargado a mano y nadie se enteraría
+    // —el campo seguiría teniendo un número con cara de correcto.
+    if (tocaEquity) {
+      const crudo = body.equity_at_connection;
+      if (crudo === null || crudo === '') {
+        // Volver a `null` es volver a "no lo sabemos", y con eso se suelta la
+        // marca: el próximo cálculo automático vuelve a mandar.
+        cambios.equity_at_connection = null;
+        cambios.connection_values_manual = false;
+      } else {
+        const n = typeof crudo === 'number' ? crudo : Number(String(crudo).replace(',', '.'));
+        if (!Number.isFinite(n)) {
+          return NextResponse.json(
+            { success: false, error: 'El equity a la conexión tiene que ser un número.' },
+            { status: 400 },
+          );
+        }
+        cambios.equity_at_connection = Math.round(n * 100) / 100;
+        cambios.connection_values_manual = true;
+      }
     }
 
     let fechaNueva: Date | null = null;
@@ -106,6 +140,35 @@ export async function PATCH(
         );
       }
       cambios.connection_date = fechaNueva.toISOString();
+
+      // El saldo a la conexión también depende de la fecha: dejarlo con el de
+      // la fecha vieja sería un número correcto para un día que ya no es el que
+      // dice la ficha.
+      //
+      // Salvo que esté cargado a mano —y no lo estén reescribiendo en esta
+      // misma llamada—: ahí manda la persona, que es justamente para lo que
+      // existe la marca.
+      const respetarManual = Boolean(cuenta.connection_values_manual) && !tocaEquity;
+      if (!respetarManual) {
+        try {
+          const saldo = await calcularSaldoALaFecha(
+            String(cuenta.company_id),
+            String(cuenta.mt5_account),
+            fechaNueva,
+          );
+          if (saldo) {
+            cambios.balance_at_connection = saldo.balance;
+            if (!tocaEquity) cambios.equity_at_connection = saldo.balance;
+            cambios.connection_open_positions = saldo.posicionesAbiertas;
+            if (!tocaEquity) cambios.connection_values_manual = false;
+          }
+        } catch {
+          // El saldo a la conexión es informativo; el PnL es el número que
+          // manda y ése ya se recalculó bien. Cortar acá obligaría a repetir
+          // todo por un dato secundario.
+          avisos.push('No se pudo recalcular el saldo de la fecha de conexión. Editalo a mano si lo necesitás.');
+        }
+      }
     }
 
     const { data, error } = await admin
@@ -119,7 +182,7 @@ export async function PATCH(
       return NextResponse.json({ success: false, error: 'Cuenta no encontrada.' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, monthsRecalculated: meses });
+    return NextResponse.json({ success: true, monthsRecalculated: meses, warnings: avisos });
   } catch (err) {
     return apiError('superadmin/liquidity/accounts PATCH', err, { status: 500 });
   }

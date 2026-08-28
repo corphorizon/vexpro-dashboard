@@ -61,6 +61,12 @@ interface Cuenta {
   balance: number;
   equity: number;
   balance_liquidez: number;
+  /** Saldo reconstruido para la fecha de conexión. `null` = no se pudo. */
+  equity_at_connection: number | null;
+  /** Se cargó a mano; el recálculo automático no lo pisa. */
+  connection_values_manual: boolean;
+  /** Posiciones abiertas ese día. `null` = no se calculó; `0` = no había. */
+  connection_open_positions: number | null;
   connection_date: string;
   status: 'active' | 'inactive' | 'error';
   note: string | null;
@@ -240,9 +246,10 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
   }
 
   function exportarCsv() {
-    const headers = ['Cuenta', 'Usuario', 'Grupo', 'Balance MT5', 'Balance Liquidez', 'Equity', 'Status', 'Fecha conexion', 'Ultima actualizacion', 'Nota'];
+    const headers = ['Cuenta', 'Usuario', 'Grupo', 'Equity a la conexion', 'Origen equity conexion', 'Balance MT5', 'Balance Liquidez', 'Equity', 'Status', 'Fecha conexion', 'Ultima actualizacion', 'Nota'];
     const rows = filtradas.map((c) => [
       c.mt5_account, c.mt5_email ?? '', c.mt5_group ?? '',
+      c.equity_at_connection ?? '', c.connection_values_manual ? 'manual' : (typeof c.connection_open_positions === 'number' && c.connection_open_positions > 0 ? 'calculado (aprox)' : 'calculado'),
       c.balance, c.balance_liquidez, c.equity, c.status,
       c.connection_date ? formatFechaConexion(c.connection_date) : '',
       c.last_synced_at ? formatDateTime(c.last_synced_at) : '',
@@ -421,6 +428,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                 <th className="text-left py-2.5 px-3 font-medium">Cuenta</th>
                 <th className="text-left py-2.5 px-3 font-medium">Usuario</th>
                 <th className="text-left py-2.5 px-3 font-medium">Grupo</th>
+                <th className="text-right py-2.5 px-3 font-medium">Equity a la conexión</th>
                 <th className="text-right py-2.5 px-3 font-medium">Balance MT5</th>
                 <th className="text-right py-2.5 px-3 font-medium">Balance Liquidez</th>
                 <th className="text-left py-2.5 px-3 font-medium">Status</th>
@@ -442,6 +450,35 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                   </td>
                   <td className="py-2 px-3 text-muted-foreground">{c.mt5_email ?? '—'}</td>
                   <td className="py-2 px-3 text-muted-foreground">{c.mt5_group ?? '—'}</td>
+                  {/* El saldo QUE TENÍA el día que entró al pool, reconstruido
+                      desde MT5. `null` es «no se pudo calcular», que no es cero
+                      — por eso va un guion y no un $0,00. */}
+                  <td className="py-2 px-3 text-right tabular-nums">
+                    {c.equity_at_connection === null || c.equity_at_connection === undefined
+                      ? <span className="text-muted-foreground">—</span>
+                      : formatCurrency(c.equity_at_connection)}
+                    {c.connection_values_manual && (
+                      <span
+                        className="block text-[11px] font-normal text-muted-foreground"
+                        title="Valor cargado a mano. El recálculo automático no lo pisa."
+                      >
+                        manual
+                      </span>
+                    )}
+                    {/* Con posiciones abiertas ese día el equity real era otro y
+                        no se puede reconstruir: se avisa en vez de presentar una
+                        aproximación como si fuera exacta. */}
+                    {!c.connection_values_manual
+                      && typeof c.connection_open_positions === 'number'
+                      && c.connection_open_positions > 0 && (
+                      <span
+                        className="block text-[11px] font-normal text-warning"
+                        title={`Había ${c.connection_open_positions} posición(es) abierta(s): es el balance, no el equity.`}
+                      >
+                        aprox.
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2 px-3 text-right tabular-nums">{formatCurrency(c.balance)}</td>
                   <td className="py-2 px-3 text-right tabular-nums font-medium">
                     {formatCurrency(c.balance_liquidez)}
@@ -652,6 +689,12 @@ function ModalNota({ cuenta, onClose, onDone }: {
   const [nota, setNota] = useState(cuenta.note ?? '');
   const fechaOriginal = cuenta.connection_date.slice(0, 10);
   const [fecha, setFecha] = useState(fechaOriginal);
+  // Vacío = «que lo calcule MT5». Se distingue de un 0 escrito a propósito.
+  const [equity, setEquity] = useState(
+    cuenta.equity_at_connection === null || cuenta.equity_at_connection === undefined
+      ? ''
+      : String(cuenta.equity_at_connection),
+  );
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -665,7 +708,13 @@ function ModalNota({ cuenta, onClose, onDone }: {
     try {
       const res = await apiFetch(`/api/superadmin/liquidity/accounts/${cuenta.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ note: nota.trim() || null, connection_date: fecha }),
+        body: JSON.stringify({
+          note: nota.trim() || null,
+          connection_date: fecha,
+          // Cadena vacía = soltar el valor manual y volver al calculado. Es
+          // distinto de no mandar el campo, que sería «no lo toques».
+          equity_at_connection: equity.trim() === '' ? null : equity.trim(),
+        }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
@@ -702,6 +751,41 @@ function ModalNota({ cuenta, onClose, onDone }: {
               El PnL guardado se borra y se vuelve a pedir a MT5 con la fecha nueva. Puede tardar
               unos segundos. Si MT5 no responde, la fecha <strong>no</strong> se cambia y queda
               todo como está.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <label className="block text-sm font-medium mt-4 mb-1.5">Equity MT5 a la fecha de conexión</label>
+      <input
+        type="text"
+        inputMode="decimal"
+        value={equity}
+        onChange={(e) => setEquity(e.target.value)}
+        placeholder="Se calcula solo desde MT5"
+        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+      />
+      <p className="mt-1.5 text-xs text-muted-foreground">
+        {cuenta.connection_values_manual
+          ? 'Cargado a mano. Vaciá el campo para que vuelva a calcularse solo desde MT5.'
+          : 'Se reconstruye desde MT5 restándole al saldo de hoy todo lo que se movió después. Escribilo sólo si tenés el número real y el calculado no sirve.'}
+      </p>
+
+      {/* Sólo cuando el calculado es una aproximación. Decirlo siempre
+          enseñaría a ignorar el aviso. */}
+      {!cuenta.connection_values_manual
+        && typeof cuenta.connection_open_positions === 'number'
+        && cuenta.connection_open_positions > 0 && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-2.5 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">
+              Había {cuenta.connection_open_positions} posición(es) abierta(s) ese día
+            </p>
+            <p className="mt-0.5">
+              El número de arriba es el <strong>balance</strong>. El equity incluía además el
+              flotante de esas posiciones, y MT5 no guarda el precio de ese momento — no se puede
+              reconstruir. Si tenés el equity real del reporte, escribilo acá.
             </p>
           </div>
         </div>
@@ -757,6 +841,19 @@ function ModalDetalle({ cuenta, onClose }: { cuenta: Cuenta; onClose: () => void
         <Campo label="Status" value={cuenta.status} />
         <Campo label="Balance MT5" value={formatCurrency(cuenta.balance)} />
         <Campo label="Balance Liquidez" value={formatCurrency(cuenta.balance_liquidez)} />
+        <Campo
+          label="Equity a la conexión"
+          value={
+            cuenta.equity_at_connection === null || cuenta.equity_at_connection === undefined
+              ? '—'
+              : formatCurrency(cuenta.equity_at_connection)
+              + (cuenta.connection_values_manual
+                ? ' (manual)'
+                : typeof cuenta.connection_open_positions === 'number' && cuenta.connection_open_positions > 0
+                  ? ' (aprox.)'
+                  : '')
+          }
+        />
         <Campo label="Equity" value={formatCurrency(cuenta.equity)} />
         <Campo label="Conectada" value={formatFechaConexion(cuenta.connection_date)} />
         <Campo label="Actualizada" value={cuenta.last_synced_at ? formatDateTime(cuenta.last_synced_at) : '—'} />
