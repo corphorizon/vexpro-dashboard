@@ -33,6 +33,8 @@ import { formatCurrency } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { formatFechaConexion } from '@/lib/liquidity/connection-date';
+import { mesLabel, Stat } from './ui';
+import { ResumenMensual } from './resumen-mensual';
 
 // Antes acá vivía el UUID de Vex Pro escrito a mano. Se fue: la empresa la
 // elige quien mira, porque desde esta pantalla se administran varias. Un ID
@@ -76,14 +78,12 @@ interface MesPnl {
   is_partial: boolean;
 }
 
-const MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-const mesLabel = (y: number, m: number) => `${MESES[m - 1] ?? m} ${String(y).slice(2)}`;
-
 export function LiquidityPoolView({ backHref }: { backHref?: string }) {
   const [empresas, setEmpresas] = useState<Empresa[] | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [cuentas, setCuentas] = useState<Cuenta[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [vista, setVista] = useState<'cuentas' | 'meses'>('cuentas');
   const [busqueda, setBusqueda] = useState('');
   const [ocupado, setOcupado] = useState<string | null>(null);
   const [aviso, setAviso] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
@@ -351,6 +351,33 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
         </div>
       )}
 
+      {/* Tabs. "Cuentas" es el estado del pool HOY; "Resumen mensual" es cómo
+          rindió mes a mes. Son preguntas distintas y por eso no comparten
+          pantalla: mezclarlas obligaría a mirar un total que a veces es un
+          saldo y a veces un resultado. */}
+      <div className="flex gap-1 border-b border-border">
+        {([
+          ['cuentas', 'Cuentas'],
+          ['meses', 'Resumen mensual'],
+        ] as const).map(([id, label]) => (
+          <button
+            key={id}
+            onClick={() => setVista(id)}
+            className={`px-4 h-9 text-sm font-medium border-b-2 -mb-px transition-colors ${
+              vista === id
+                ? 'border-[var(--color-primary)] text-foreground'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {vista === 'meses' && companyId && <ResumenMensual companyId={companyId} />}
+
+      {vista === 'cuentas' && (
+      <>
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat label="Cuentas" value={String(stats.total)} />
@@ -456,6 +483,8 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
           </table>
         )}
       </div>
+      </>
+      )}
 
       {nuevaAbierta && companyId && (
         <ModalNuevaCuenta
@@ -481,21 +510,6 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
 }
 
 // ─── Piezas ────────────────────────────────────────────────────────────────
-
-function Stat({ label, value, sub, tone }: {
-  label: string; value: string; sub?: string; tone?: 'positive' | 'muted' | 'primary';
-}) {
-  const color = tone === 'positive' ? 'text-positive'
-    : tone === 'muted' ? 'text-muted-foreground'
-    : tone === 'primary' ? 'text-[var(--color-primary)]' : '';
-  return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <p className="text-xs text-muted-foreground">{label}</p>
-      <p className={`text-xl font-bold mt-1 ${color}`}>{value}</p>
-      {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
-    </div>
-  );
-}
 
 function IconBtn({ children, title, onClick, disabled, danger }: {
   children: React.ReactNode; title: string; onClick: () => void; disabled?: boolean; danger?: boolean;
