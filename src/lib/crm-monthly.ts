@@ -103,6 +103,8 @@
 // typecheck ni los tests, así que se descubre tarde y en Vercel.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { conceptsOf, type WalletConceptGroup } from './crm-wallet-concepts';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Registro ÚNICO de métricas. Agregar una es agregar una fila acá; la tabla
 // `crm_monthly_totals` no repite la lista a propósito (listas duplicadas que
@@ -113,8 +115,21 @@ export interface CrmMonthlyMetricDef {
   key: string;
   labelEs: string;
   labelEn: string;
-  /** Con qué se compara en pantalla, para que nadie las sume por error. */
-  manualSource: string;
+  /**
+   * Con qué se compara en pantalla, para que nadie las sume por error.
+   * `null` SÓLO en las métricas informativas: no tienen contraparte manual
+   * porque no entran a ninguna cifra de finanzas (ver `informational`).
+   */
+  manualSource: string | null;
+  /**
+   * `true` = el número es DATO, no finanzas. No se compara con nada, no se
+   * suma a nada y la pantalla lo muestra aparte, con la advertencia.
+   * El porqué está en el bloque «MÉTRICAS INFORMATIVAS» más abajo.
+   */
+  informational?: boolean;
+  /** Explicación corta de por qué no cuenta. Sólo en las informativas. */
+  whyNotFinanceEs?: string;
+  whyNotFinanceEn?: string;
 }
 
 const METRIC_DEFS = [
@@ -136,12 +151,69 @@ const METRIC_DEFS = [
     labelEn: 'Approved prop firm withdrawals',
     manualSource: "withdrawals.amount (category 'prop_firm')",
   },
+  // ── MÉTRICAS INFORMATIVAS (decisión de Kevin, 2026-08-28) ────────────────
+  //
+  // El dashboard de finanzas es BASE CAJA. Estas tres mueven la BILLETERA del
+  // cliente o del IB, no la caja del bróker:
+  //
+  //   · La comisión IB acreditada es DEUDA INTERNA. La caja se mueve el día
+  //     que el IB retira — y ese retiro YA se cuenta en los egresos. Sumar la
+  //     acreditación al resultado sería contar el mismo dólar dos veces.
+  //   · El social trading fee es el mismo caso: se acredita en la billetera
+  //     del gestor y sale, si sale, como retiro.
+  //   · El fee debt recovery es plata que se DESCUENTA de una billetera para
+  //     cancelar un fee que había quedado adeudado. No entra ni sale de la
+  //     caja: cambia de bolsillo dentro del CRM.
+  //
+  // Se muestran porque el dato sirve (cuánto se le debe al canal IB, cuánto
+  // generó social trading), separadas y con la advertencia visible.
+  {
+    key: 'ib_commissions',
+    labelEs: 'Comisiones IB acreditadas',
+    labelEn: 'IB commissions credited',
+    manualSource: null,
+    informational: true,
+    whyNotFinanceEs:
+      'Es deuda interna con el IB: la caja se mueve cuando el IB retira, y ese retiro ya se cuenta como egreso.',
+    whyNotFinanceEn:
+      'It is internal debt owed to the IB: cash only moves when the IB withdraws, and that withdrawal is already counted as an outflow.',
+  },
+  {
+    key: 'social_trading_fees',
+    labelEs: 'Social trading fees',
+    labelEn: 'Social trading fees',
+    manualSource: null,
+    informational: true,
+    whyNotFinanceEs:
+      'Se acredita en la billetera del gestor, no en la caja: sale recién cuando se retira, y ese retiro ya se cuenta.',
+    whyNotFinanceEn:
+      'Credited to the manager’s wallet, not to cash: it only leaves when withdrawn, and that withdrawal is already counted.',
+  },
+  {
+    key: 'fee_debt_recovery',
+    labelEs: 'Fee debt recovery',
+    labelEn: 'Fee debt recovery',
+    manualSource: null,
+    informational: true,
+    whyNotFinanceEs:
+      'Descuenta de la billetera del cliente un fee que había quedado adeudado: cambia de bolsillo dentro del CRM, no entra a la caja.',
+    whyNotFinanceEn:
+      'Debits a previously owed fee from the customer’s wallet: it moves between pockets inside the CRM, it does not reach cash.',
+  },
 ] as const satisfies readonly CrmMonthlyMetricDef[];
 
 export type CrmMonthlyMetric = (typeof METRIC_DEFS)[number]['key'];
 
 export const CRM_MONTHLY_METRICS: CrmMonthlyMetricDef[] = METRIC_DEFS.map((m) => ({ ...m }));
 export const CRM_MONTHLY_METRIC_KEYS: string[] = CRM_MONTHLY_METRICS.map((m) => m.key);
+
+/** Las que se comparan contra lo cargado a mano (la tabla de arriba). */
+export const CRM_MONTHLY_COMPARED_METRICS: CrmMonthlyMetricDef[] =
+  CRM_MONTHLY_METRICS.filter((m) => m.informational !== true);
+
+/** Las que son DATO y no cuentan en el resultado (la sección de abajo). */
+export const CRM_MONTHLY_INFO_METRICS: CrmMonthlyMetricDef[] =
+  CRM_MONTHLY_METRICS.filter((m) => m.informational === true);
 
 /** Los ÚNICOS campos que se piden de cada colección. La proyección es la aduana. */
 export const ORION_P2P_LEG_FIELDS = [
@@ -392,6 +464,241 @@ export function aggregatePropfirmWithdrawalsByMonth(
     b.cross.requested = round2(b.cross.requested);
   }
   return out;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MÉTRICAS INFORMATIVAS — comisiones IB, social trading fees, fee debt
+// recovery.
+//
+// ── DE DÓNDE SALEN ─────────────────────────────────────────────────────────
+// De `wallettransfers`, la misma colección que ya alimenta el P2P. Sondeadas
+// contra los documentos REALES el 2026-08-28 (Vex Pro: 32 combinaciones de
+// concepto × dirección; AP Markets: 19). Los conceptos NO se adivinaron: el
+// registro único está en `crm-wallet-concepts.ts` y estas listas se DERIVAN
+// de él.
+//
+// ── LA DIRECCIÓN ES PARTE DE LA DEFINICIÓN ─────────────────────────────────
+// Comisiones IB y social trading fees son patas **IN** (dinero que entra a la
+// billetera de alguien). Fee debt recovery es una pata **OUT** (dinero que se
+// le descuenta al cliente). Contar las dos direcciones juntas mezcla el
+// crédito con su corrección.
+//
+// Las patas de la dirección CONTRARIA no se tiran: van a `excluded_*`. Son
+// pocas y son correcciones reales — medidas en Vex Pro:
+//   · 3 patas OUT de IB_REWARDS_BROKER por $1.843,74 ("IB REWARDS
+//     (Correction)" ×2 en 2026-01 y "Ajuste mar-26" en 2026-04).
+//   · 1 pata OUT de SOCIAL_PERFORMANCE_FEE por $51,55 en 2026-06.
+//   · 0 patas IN de FEE_DEBT_RECOVERY.
+// Una exclusión silenciosa es indistinguible de un cruce roto.
+//
+// ── `netAmount`, NUNCA `grossAmount` ───────────────────────────────────────
+// La trampa más cara de estas tres. En `IB_PROP_FIRM_REWARD` el bruto es el
+// precio de la cuenta de prop firm y el neto es la parte del IB: 5.286
+// documentos, gross $629.868,70 contra net $22.357,85 — VEINTIOCHO veces.
+// Usar el bruto convertiría $871.632 en $1.479.143. El bruto se guarda en
+// `detail.gross` para que la diferencia se vea sin volver a Mongo.
+//
+// ── ¿QUÉ ESTADOS SE CUENTAN? NINGUNO: NO HAY ESTADO ────────────────────────
+// La pregunta obligada («¿sólo los completados?») tiene respuesta medida y es
+// que NO APLICA. `wallettransfers` no tiene campo de estado: las 19 claves
+// distintas de una muestra de 3.000 documentos son _id, walletTransferId,
+// walletId, walletType, userId, concept, relatedConceptId,
+// relatedConceptName, grossAmount, fee, netAmount, walletTransferType,
+// walletTransferDate, couponId, couponName, discountApplied, createdAt,
+// updatedAt y __v. La fila ES el asiento: si existe, el movimiento ya se
+// aplicó al saldo. Es distinto del P2P, donde el estado vive en otra
+// colección (`transferp2ps`) porque una transferencia puede quedar pendiente
+// o rechazarse; acá la corrección se escribe como OTRO movimiento, y por eso
+// las patas contrarias se cuentan como excluidas en vez de filtrarse.
+//
+// ── EL REVERSO NO ES UN FEE ────────────────────────────────────────────────
+// `PERFORMANCE_FEE_REVERSAL` y `PERFORMANCE_FEE_REVERSAL_ADJUSTMENT` son 35
+// movimientos, todos del 2026-07-26, por $1.630,90. Su propio `internalNote`
+// dice qué son: "Reverso perf-fee fantasma (bug balance EOD congelado en
+// retiro, fix eb3dd1a1)". Sumarlos daría $144.596,58 de social trading fees
+// donde lo cobrado fue $142.965,68 — y encima cargados a julio, un mes en el
+// que los fees revertidos ni siquiera se cobraron. Van a `detail.reversals`,
+// visibles y sin sumar.
+//
+// ── LA CONCILIACIÓN ────────────────────────────────────────────────────────
+// Contra la medición de la sesión anterior (2026-08-27), Vex Pro:
+//   · social trading fees   142.965,68 acumulado hoy · 142.964,83 al corte
+//     del 27 → el número de la sesión anterior ($142.965) es EXACTO.
+//   · comisiones IB         871.632,72 acumulado hoy · 864.426,33 al corte
+//     del 27 y 869.702,66 al del 28 → los $868.757 de la sesión anterior caen
+//     dentro del día 27, que es cuando se midió. IB_REWARDS_BROKER acredita
+//     todos los días (105.961 documentos sólo en agosto): la serie se mueve
+//     sola, no hay discrepancia.
+//   · fee debt recovery     2.336,27 en 32 movimientos (2026-06 a 2026-08).
+// AP Markets tiene IB ($1.045,75) y social ($1.212,42) pero CERO
+// FEE_DEBT_RECOVERY: esa métrica no escribe ninguna fila para AP, que es
+// "sin datos" y no "$0".
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Una fila ya agrupada por Mongo: (concepto, dirección, mes). Se agrupa allá
+ * y no acá porque las comisiones IB de Vex Pro son 225.569 documentos —
+ * traerlos enteros para sumarlos en JS cuesta memoria y red por nada. Lo que
+ * SÍ decide esta capa (qué concepto cuenta, en qué dirección, qué es
+ * contraste y qué queda sin clasificar) es puro y está testeado.
+ */
+export interface WalletConceptMonthRow {
+  concept: string;
+  /** 'IN' | 'OUT' tal como viene de `walletTransferType`. */
+  direction: string;
+  /** 'YYYY-MM' en UTC, o null si la fecha del documento no se pudo convertir. */
+  monthKey: string | null;
+  count: number;
+  net: number;
+  gross: number;
+}
+
+export interface WalletMetricSpec {
+  metric: string;
+  /**
+   * La familia del registro de conceptos de la que sale la métrica. El sync
+   * le pasa TODAS las filas del grupo, no sólo las de `concepts`: así, si
+   * mañana alguien agrega un concepto a la familia sin decidir si suma, cae
+   * en `unclassified` y avisa, en vez de desaparecer.
+   */
+  group: WalletConceptGroup;
+  /** Los conceptos que suman a `amount`. */
+  concepts: readonly string[];
+  /** La dirección que suma. La contraria va a `excluded_*`. */
+  direction: 'IN' | 'OUT';
+  /** Conceptos que NO suman y se informan aparte (los reversos). */
+  contrastConcepts?: readonly string[];
+  /** Con qué nombre van al `detail`. */
+  contrastKey?: string;
+}
+
+export interface WalletMetricResult {
+  buckets: Map<string, MonthlyBucket>;
+  /**
+   * Conceptos que llegaron y la spec no conoce, con su monto. NO se los traga
+   * en silencio: el sync los convierte en aviso. Un concepto nuevo del broker
+   * tiene que verse, no desaparecer.
+   */
+  unclassified: Map<string, { count: number; amount: number }>;
+  /** Filas sin mes utilizable. Inventarles uno sería un dato falso. */
+  noMonth: { count: number; amount: number };
+}
+
+/** Las specs, DERIVADAS del registro de conceptos. Nunca literales sueltos. */
+export const WALLET_METRIC_SPECS: WalletMetricSpec[] = [
+  {
+    metric: 'ib_commissions',
+    group: 'ib',
+    concepts: conceptsOf('ib', 'credit'),
+    direction: 'IN',
+  },
+  {
+    metric: 'social_trading_fees',
+    group: 'social',
+    concepts: conceptsOf('social', 'credit'),
+    direction: 'IN',
+    contrastConcepts: conceptsOf('social', 'reversal'),
+    contrastKey: 'reversals',
+  },
+  {
+    metric: 'fee_debt_recovery',
+    group: 'feeDebt',
+    concepts: conceptsOf('feeDebt', 'credit'),
+    direction: 'OUT',
+  },
+];
+
+/**
+ * Todos los conceptos que hay que traer de Mongo para las tres métricas: la
+ * familia ENTERA de cada una, no sólo los que suman. Ver `group` en la spec.
+ */
+export const WALLET_METRIC_CONCEPTS: string[] = [
+  ...new Set(WALLET_METRIC_SPECS.flatMap((s) => conceptsOf(s.group))),
+];
+
+/**
+ * Agrega las filas ya agrupadas en la serie mensual de UNA métrica.
+ *
+ * Un mes existe si tuvo algún movimiento de la métrica —contado, excluido o
+ * de contraste—. Un mes sin ninguno NO se inventa en cero: la empresa que no
+ * tiene la serie no escribe filas, y eso es "sin datos".
+ */
+export function aggregateWalletMetricByMonth(
+  rows: readonly WalletConceptMonthRow[],
+  spec: WalletMetricSpec,
+): WalletMetricResult {
+  const counted = new Set(spec.concepts);
+  const contrast = new Set(spec.contrastConcepts ?? []);
+  const contrastKey = spec.contrastKey ?? 'contrast';
+
+  const out = new Map<string, MonthlyBucket>();
+  const unclassified = new Map<string, { count: number; amount: number }>();
+  const noMonth = { count: 0, amount: 0 };
+
+  const bucket = (key: string): MonthlyBucket => {
+    let b = out.get(key);
+    if (!b) {
+      b = {
+        amount: 0,
+        count: 0,
+        excludedCount: 0,
+        excludedAmount: 0,
+        cross: { gross: 0, [contrastKey]: 0, contraCount: 0 },
+      };
+      out.set(key, b);
+    }
+    return b;
+  };
+
+  for (const r of rows) {
+    const esContado = counted.has(r.concept);
+    const esContraste = contrast.has(r.concept);
+    if (!esContado && !esContraste) {
+      // Ni de la métrica ni de su contraste: se cuenta y se avisa.
+      const prev = unclassified.get(r.concept) ?? { count: 0, amount: 0 };
+      prev.count += r.count;
+      prev.amount = round2(prev.amount + (numOrNull(r.net) ?? 0));
+      unclassified.set(r.concept, prev);
+      continue;
+    }
+
+    const neto = numOrNull(r.net);
+    if (neto === null) continue;
+
+    if (!r.monthKey || !splitMonthKey(r.monthKey)) {
+      // Sin mes no puede caer en ninguna fila. Se cuenta y se avisa.
+      noMonth.count += r.count;
+      noMonth.amount = round2(noMonth.amount + neto);
+      continue;
+    }
+
+    const b = bucket(r.monthKey);
+
+    if (esContraste) {
+      b.cross[contrastKey] += neto;
+      continue;
+    }
+
+    if (r.direction === spec.direction) {
+      b.amount += neto;
+      b.count += r.count;
+      b.cross.gross += numOrNull(r.gross) ?? 0;
+    } else {
+      // La pata contraria es la CORRECCIÓN del crédito. Fuera del total,
+      // pero contada y con monto.
+      b.excludedCount += r.count;
+      b.excludedAmount += neto;
+      b.cross.contraCount += r.count;
+    }
+  }
+
+  for (const b of out.values()) {
+    b.amount = round2(b.amount);
+    b.excludedAmount = round2(b.excludedAmount);
+    for (const k of Object.keys(b.cross)) b.cross[k] = round2(b.cross[k]);
+  }
+
+  return { buckets: out, unclassified, noMonth };
 }
 
 /** Total por mes de las patas de billetera de compras de prop firm. */

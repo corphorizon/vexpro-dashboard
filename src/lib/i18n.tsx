@@ -825,6 +825,17 @@ const translations: Record<Locale, TranslationDict> = {
     'crmTotals.truncated': 'The list was cut off: there are more months than shown.',
     'crmTotals.emptyTitle': 'No CRM totals yet',
     'crmTotals.emptyDesc': 'They are computed by the full CRM sync. If the company has no prop firm or P2P transfers, there is nothing to show.',
+    // Sección informativa: DATO, no finanzas. Ver la cabecera de la página.
+    'crmInfo.title': 'CRM data (does not count towards the result)',
+    'crmInfo.subtitle': 'Monthly series kept for reference only. They are not added to income, expenses or the period result.',
+    'crmInfo.warningTitle': 'These figures do not count towards the result',
+    'crmInfo.warningBody': 'This dashboard works on a cash basis. These movements shift the customer’s or the IB’s wallet, not the broker’s cash: a credited IB commission is internal debt, and cash only moves when the IB withdraws — a withdrawal that is already counted as an outflow. Adding them to the result would count the same dollar twice.',
+    'crmInfo.amount': 'Amount',
+    'crmInfo.corrections': 'Corrections',
+    'crmInfo.correctionsHint': 'Movements in the opposite direction (adjustments and clawbacks). Counted here, never inside the total.',
+    'crmInfo.reversals': 'Reversals',
+    'crmInfo.reversalsHint': 'Fees reversed that month. They are not a fee, so they are shown apart instead of being subtracted.',
+    'crmInfo.footnote': 'Computed from the CRM wallet movements by the full sync. This screen never writes anything, and these series are not part of any financial figure.',
 
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Channel ledger',
@@ -3111,6 +3122,17 @@ const translations: Record<Locale, TranslationDict> = {
     'crmTotals.truncated': 'La lista quedó recortada: hay más meses de los que se muestran.',
     'crmTotals.emptyTitle': 'Todavía no hay totales del CRM',
     'crmTotals.emptyDesc': 'Los calcula el sync completo del CRM. Si la empresa no tiene prop firm ni transferencias P2P, no hay nada que mostrar.',
+    // Sección informativa: DATO, no finanzas. Ver la cabecera de la página.
+    'crmInfo.title': 'Datos del CRM (no cuentan en el resultado)',
+    'crmInfo.subtitle': 'Series mensuales que se muestran sólo para tener el dato. No se suman a ingresos, egresos ni al resultado del período.',
+    'crmInfo.warningTitle': 'Estos números no cuentan en el resultado',
+    'crmInfo.warningBody': 'Este dashboard es base caja. Estos movimientos mueven la billetera del cliente o del IB, no la caja del bróker: la comisión IB acreditada es deuda interna, y la caja se mueve recién cuando el IB retira — retiro que ya se cuenta como egreso. Sumarlas al resultado contaría el mismo dólar dos veces.',
+    'crmInfo.amount': 'Monto',
+    'crmInfo.corrections': 'Correcciones',
+    'crmInfo.correctionsHint': 'Movimientos en la dirección contraria (ajustes y devoluciones). Se cuentan acá, nunca dentro del total.',
+    'crmInfo.reversals': 'Reversos',
+    'crmInfo.reversalsHint': 'Fees revertidos ese mes. No son un fee, así que se muestran aparte en vez de restarse.',
+    'crmInfo.footnote': 'Se calcula desde los movimientos de billetera del CRM en el sync completo. Esta pantalla no escribe nada, y estas series no forman parte de ninguna cifra de finanzas.',
 
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Libro del canal',

@@ -10,8 +10,13 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
 import { CONCEPT_GROUPS } from './wallet-sources';
+import { isUnknownConcept } from '@/lib/crm-wallet-concepts';
 import {
   CRM_MONTHLY_METRIC_KEYS,
+  WALLET_METRIC_CONCEPTS,
+  WALLET_METRIC_SPECS,
+  aggregateWalletMetricByMonth,
+  type WalletConceptMonthRow,
   ORION_P2P_LEG_FIELDS,
   ORION_PROPFIRM_WITHDRAWAL_FIELDS,
   ORION_TRANSFER_P2P_FIELDS,
@@ -93,14 +98,25 @@ function toRows(
 }
 
 /**
- * Recalcula la serie mensual COMPLETA de las tres métricas y la deja en
+ * Recalcula la serie mensual COMPLETA de las SEIS métricas y la deja en
  * `crm_monthly_totals`.
+ *
+ * Tres se comparan contra lo cargado a mano (P2P, ventas y retiros de prop
+ * firm) y tres son INFORMATIVAS y no cuentan en el resultado (comisiones IB,
+ * social trading fees, fee debt recovery — ver el bloque de métricas
+ * informativas en `crm-monthly.ts`).
  *
  * Completa y no incremental a propósito: son 2.892 patas P2P, 1.599
  * transferencias, 1.559 compras y 250 retiros en la empresa más grande —
  * cuatro consultas de menos de un segundo. Un cursor acá sólo agregaría la
  * clase de bug que introduce (una transferencia que cambia de estado después
  * del corte quedaría contada para siempre como completada).
+ *
+ * Las dos consultas de billetera que agregan las series informativas NO
+ * traen documentos: agrupan en Mongo y devuelven decenas de filas, aunque
+ * detrás haya 225.569 patas de comisiones IB. Medido contra producción el
+ * 2026-08-28 (Vex Pro, dos corridas): la serie 1.200 y 1.165 ms para 56
+ * filas, y el censo de conceptos 458 y 484 ms para 25 conceptos.
  */
 export async function syncCrmMonthlyTotals(
   admin: SupabaseClient,
@@ -113,7 +129,52 @@ export async function syncCrmMonthlyTotals(
     Object.fromEntries(fields.map((f) => [f, 1])) as Record<string, 1>;
 
   const datos = await withOrionMongo(companyId, async ({ db }) => {
-    const [p2pLegs, transfers, compras, comprasWallet, retiros] = await Promise.all([
+    // ── Las tres series informativas ─────────────────────────────────────
+    // Se agrupan EN MONGO por (concepto, dirección, mes) porque las patas de
+    // comisiones IB de Vex Pro son 225.569 documentos: traerlos enteros para
+    // sumarlos en JS sería mover megabytes por un puñado de números. El
+    // resultado son ~60 filas.
+    //
+    // El mes sale de `$dateToString` con `timezone: 'UTC'` explícito. Y no
+    // por prolijidad: `walletTransferDate` es un BSON **date**, no un string
+    // (verificado el 2026-08-28 con `$type`), así que compararlo o cortarlo
+    // como texto devuelve CERO FILAS SIN ERROR — el fallo silencioso de
+    // siempre. `$convert ... onError/onNull: null` deja pasar el documento
+    // con fecha rota como mes nulo, que se cuenta y se avisa en vez de
+    // caerse o de inventarle un mes.
+    const walletPipeline = [
+      { $match: { concept: { $in: WALLET_METRIC_CONCEPTS } } },
+      {
+        $group: {
+          _id: {
+            c: '$concept',
+            t: '$walletTransferType',
+            m: {
+              $convert: {
+                input: {
+                  $dateToString: { format: '%Y-%m', date: '$walletTransferDate', timezone: 'UTC' },
+                },
+                to: 'string',
+                onError: null,
+                onNull: null,
+              },
+            },
+          },
+          n: { $sum: 1 },
+          net: { $sum: '$netAmount' },
+          gross: { $sum: '$grossAmount' },
+        },
+      },
+    ];
+
+    // Y el censo de conceptos: para poder avisar si el broker inventa uno
+    // que el registro no conoce. Es un $group sobre la colección entera, el
+    // mismo costo que ya paga `wallet-sources`.
+    const censoPipeline = [
+      { $group: { _id: '$concept', n: { $sum: 1 }, net: { $sum: '$netAmount' } } },
+    ];
+
+    const [p2pLegs, transfers, compras, comprasWallet, retiros, walletGrouped, censo] = await Promise.all([
       db.collection('wallettransfers')
         .find({ concept: { $in: P2P_CONCEPTS } }, { projection: proj(ORION_P2P_LEG_FIELDS) })
         .toArray(),
@@ -129,8 +190,14 @@ export async function syncCrmMonthlyTotals(
       db.collection('withdrawalpropfirms')
         .find({}, { projection: proj(ORION_PROPFIRM_WITHDRAWAL_FIELDS) })
         .toArray(),
+      db.collection('wallettransfers')
+        .aggregate(walletPipeline, { allowDiskUse: false, maxTimeMS: 180_000 })
+        .toArray(),
+      db.collection('wallettransfers')
+        .aggregate(censoPipeline, { allowDiskUse: false, maxTimeMS: 180_000 })
+        .toArray(),
     ]);
-    return { p2pLegs, transfers, compras, comprasWallet, retiros };
+    return { p2pLegs, transfers, compras, comprasWallet, retiros, walletGrouped, censo };
   });
 
   const estados = new Map<string, string>(
@@ -142,10 +209,62 @@ export async function syncCrmMonthlyTotals(
   const billetera = aggregateWalletPropfirmByMonth(datos.comprasWallet as P2pLeg[]);
   const retiros = aggregatePropfirmWithdrawalsByMonth(datos.retiros as PropfirmWithdrawalDoc[]);
 
+  // ── Las tres series INFORMATIVAS ────────────────────────────────────────
+  // No cuentan en el resultado (base caja: mueven la billetera, no la caja —
+  // el porqué está en la cabecera del bloque de métricas informativas de
+  // `crm-monthly.ts`). Se calculan igual porque el dato sirve.
+  const walletRows: WalletConceptMonthRow[] = (datos.walletGrouped as Array<Record<string, unknown>>)
+    .map((g) => {
+      const id = g._id as { c?: unknown; t?: unknown; m?: unknown };
+      return {
+        concept: String(id.c ?? ''),
+        direction: String(id.t ?? ''),
+        monthKey: typeof id.m === 'string' && id.m !== '' ? id.m : null,
+        count: Number(g.n) || 0,
+        net: Number(g.net) || 0,
+        gross: Number(g.gross) || 0,
+      };
+    });
+
+  const filasInfo: Row[] = [];
+  for (const spec of WALLET_METRIC_SPECS) {
+    const delGrupo = walletRows.filter((r) => CONCEPT_GROUPS[r.concept] === spec.group);
+    // Una empresa sin la serie NO escribe filas: AP Markets no tiene un solo
+    // FEE_DEBT_RECOVERY (verificado el 2026-08-28), y su mes tiene que salir
+    // "sin datos", no en cero.
+    if (delGrupo.length === 0) continue;
+    const res = aggregateWalletMetricByMonth(delGrupo, spec);
+    filasInfo.push(...toRows(companyId, spec.metric, res.buckets, now));
+    for (const [concepto, v] of res.unclassified) {
+      warnings.push(
+        `${spec.metric}: el concepto '${concepto}' está en la familia '${spec.group}' pero la métrica no lo clasifica — ${v.count} movimiento(s) por $${v.amount} SIN contar.`,
+      );
+    }
+    if (res.noMonth.count > 0) {
+      warnings.push(
+        `${spec.metric}: ${res.noMonth.count} movimiento(s) por $${res.noMonth.amount} sin fecha utilizable — fuera de la serie.`,
+      );
+    }
+  }
+
+  // Un concepto que el broker inventa y el registro no conoce tiene que
+  // VERSE. Sin esto, dinero nuevo entraría por un flujo que nadie clasificó y
+  // el número seguiría pareciendo correcto.
+  const desconocidos = (datos.censo as Array<Record<string, unknown>>)
+    .filter((c) => isUnknownConcept(String(c._id ?? '')))
+    .sort((a, b) => (Number(b.net) || 0) - (Number(a.net) || 0));
+  if (desconocidos.length > 0) {
+    const detalle = desconocidos
+      .map((c) => `'${String(c._id)}' (${Number(c.n) || 0} mov., $${round2(Number(c.net) || 0)})`)
+      .join(', ');
+    warnings.push(`Conceptos de billetera SIN clasificar en el registro: ${detalle}.`);
+  }
+
   const filas: Row[] = [
     ...toRows(companyId, 'p2p_transfers', p2p, now),
     ...toRows(companyId, 'propfirm_sales', ventas, now, (k) => ({ wallet: billetera.get(k) ?? 0 })),
     ...toRows(companyId, 'propfirm_withdrawals', retiros, now),
+    ...filasInfo,
   ];
 
   // Avisos: lo que hay que mirar sin tener que abrir la tabla.

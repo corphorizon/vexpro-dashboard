@@ -19,7 +19,7 @@ import { verifyAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { CRM_MONTHLY_METRIC_KEYS } from '@/lib/crm-monthly';
 
-/** Techo defensivo: 3 métricas × 12 meses × 10 años no llega a esto. */
+/** Techo defensivo: 6 métricas × 12 meses × 10 años no llega a esto. */
 const MAX_ROWS = 5_000;
 
 export interface CrmMonthlyRow {
@@ -92,6 +92,11 @@ export async function GET(request: NextRequest) {
       for (const r of rows) m.set(r.period_id, (m.get(r.period_id) ?? 0) + (Number(r.amount) || 0));
       return m;
     };
+    // Sólo las tres métricas comparables tienen contraparte manual. Las
+    // INFORMATIVAS (comisiones IB, social trading fees, fee debt recovery) no
+    // se cargan a mano en ningún lado y no cuentan en el resultado: su
+    // `manual` sale null, que es lo correcto — inventarles un 0 invitaría a
+    // restarlas contra una cifra de finanzas.
     const manualByMetric: Record<string, Map<string, number>> = {
       p2p_transfers: sumByPeriod(p2p),
       propfirm_sales: sumByPeriod(ventas),
