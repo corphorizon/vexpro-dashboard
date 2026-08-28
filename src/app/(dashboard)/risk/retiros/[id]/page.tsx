@@ -401,10 +401,14 @@ export default function RetiroDetallePage() {
                 </div>
 
                 {/* La operativa: qué hace esta cuenta */}
-                <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-5">
+                <dl className="mt-3 grid gap-3 text-sm sm:grid-cols-3 lg:grid-cols-6">
                   <Field label="Operaciones" value={a.positions.toLocaleString('es')} />
                   <Field
-                    label="Resultado neto"
+                    label="Total de lotes"
+                    value={a.lotsTotal === null ? '—' : a.lotsTotal.toLocaleString('es', { maximumFractionDigits: 2 })}
+                  />
+                  <Field
+                    label="PnL neto"
                     value={a.netResult === null ? '—' : formatCurrency(a.netResult)}
                     tone={a.netResult !== null && a.netResult < 0 ? 'negative' : undefined}
                   />
@@ -421,6 +425,45 @@ export default function RetiroDetallePage() {
                     value={a.maxDrawdown === null ? '—' : formatCurrency(a.maxDrawdown)}
                   />
                 </dl>
+
+                {/* ── Reparto por duración ────────────────────────────────
+                    La lectura que separa «hace scalping» de «GANA con el
+                    scalping», que son cosas distintas: el conteo dice cómo
+                    opera y el dinero dice de dónde sale el resultado. Se
+                    muestran las dos cifras juntas por eso. */}
+                {a.durations.some((d) => d.count > 0) && (() => {
+                  const maxCount = Math.max(...a.durations.map((d) => d.count), 1);
+                  return (
+                    <div className="mt-3">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Duración de las operaciones
+                      </p>
+                      <ul className="mt-1.5 space-y-1">
+                        {a.durations.map((d) => (
+                          <li key={d.label} className="text-sm">
+                            <div className="flex items-baseline gap-2">
+                              <span className="w-20 shrink-0 text-muted-foreground">{d.label}</span>
+                              <span className="w-12 shrink-0 text-right tabular-nums">{d.count}</span>
+                              <span
+                                className={`w-24 shrink-0 text-right tabular-nums text-xs ${
+                                  d.profit < 0 ? 'text-negative' : 'text-positive'
+                                }`}
+                              >
+                                {formatCurrency(d.profit)}
+                              </span>
+                              <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                                <span
+                                  className="block h-full rounded-full bg-[var(--color-secondary)]"
+                                  style={{ width: `${(d.count / maxCount) * 100}%` }}
+                                />
+                              </span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
 
                 {a.topSymbols.length > 0 && (
                   <p className="mt-2 text-xs text-muted-foreground">

@@ -223,6 +223,7 @@ export async function syncAccountReviews(
         lots_total: rev.facts.lotsTotal,
         max_drawdown: rev.facts.maxDrawdown,
         top_symbols: rev.facts.topSymbols,
+        durations: rev.facts.durations,
         checks: rev.signals,
         violations: rev.flagged,
         unverifiable: rev.unverifiable,
