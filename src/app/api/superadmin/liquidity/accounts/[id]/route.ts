@@ -44,18 +44,30 @@ export async function PATCH(
       note?: unknown;
       connection_date?: unknown;
       equity_at_connection?: unknown;
+      balance_liquidez?: unknown;
     };
     const tocaNota = 'note' in body;
     const tocaFecha = 'connection_date' in body;
     const tocaEquity = 'equity_at_connection' in body;
-    if (!tocaNota && !tocaFecha && !tocaEquity) {
+    const tocaLiquidez = 'balance_liquidez' in body;
+    if (!tocaNota && !tocaFecha && !tocaEquity && !tocaLiquidez) {
       return NextResponse.json(
         {
           success: false,
-          error: 'Sólo se pueden editar la nota, la fecha de conexión y el equity a la conexión.',
+          error:
+            'Sólo se pueden editar la nota, la fecha de conexión, el equity a la conexión ' +
+            'y el equity a liquidez.',
         },
         { status: 400 },
       );
+    }
+
+    /** Un monto que llega del formulario. Acepta coma decimal. */
+    function montoDelFormulario(crudo: unknown): number | null | 'invalido' {
+      if (crudo === null || crudo === '') return null;
+      const n = typeof crudo === 'number' ? crudo : Number(String(crudo).replace(',', '.'));
+      if (!Number.isFinite(n)) return 'invalido';
+      return Math.round(n * 100) / 100;
     }
 
     const admin = createAdminClient();
@@ -86,22 +98,44 @@ export async function PATCH(
     // recálculo posterior pisaría el valor cargado a mano y nadie se enteraría
     // —el campo seguiría teniendo un número con cara de correcto.
     if (tocaEquity) {
-      const crudo = body.equity_at_connection;
-      if (crudo === null || crudo === '') {
-        // Volver a `null` es volver a "no lo sabemos", y con eso se suelta la
-        // marca: el próximo cálculo automático vuelve a mandar.
-        cambios.equity_at_connection = null;
-        cambios.connection_values_manual = false;
+      const v = montoDelFormulario(body.equity_at_connection);
+      if (v === 'invalido') {
+        return NextResponse.json(
+          { success: false, error: 'El equity a la conexión tiene que ser un número.' },
+          { status: 400 },
+        );
+      }
+      // Vaciarlo es volver a "no lo sabemos", y con eso se suelta la marca: el
+      // próximo cálculo automático vuelve a mandar.
+      cambios.equity_at_connection = v;
+      cambios.connection_values_manual = v !== null;
+    }
+
+    // ── Equity a Liquidez ─────────────────────────────────────────────────
+    // Es cuánto aporta la cuenta al pool. Lo propone el análisis de duplicados
+    // al dar de alta, pero el monto REAL que se envió lo sabe la persona, así
+    // que se puede corregir.
+    //
+    // Es seguro dejarlo editable porque el refresh nunca lo tocó: si lo
+    // recalculara en cada corrida, una transferencia detectada hace un mes se
+    // descontaría de nuevo y el pool encogería solo hasta cero. Esa regla sigue
+    // intacta; esto sólo agrega quién más puede escribirlo.
+    if (tocaLiquidez) {
+      const v = montoDelFormulario(body.balance_liquidez);
+      if (v === 'invalido') {
+        return NextResponse.json(
+          { success: false, error: 'El equity a liquidez tiene que ser un número.' },
+          { status: 400 },
+        );
+      }
+      if (v === null) {
+        // Vaciarlo suelta la marca, pero NO recalcula: rehacer el análisis de
+        // duplicados acá volvería a descontar transferencias ya aplicadas. Se
+        // deja el valor que había y se devuelve el control.
+        cambios.liquidez_manual = false;
       } else {
-        const n = typeof crudo === 'number' ? crudo : Number(String(crudo).replace(',', '.'));
-        if (!Number.isFinite(n)) {
-          return NextResponse.json(
-            { success: false, error: 'El equity a la conexión tiene que ser un número.' },
-            { status: 400 },
-          );
-        }
-        cambios.equity_at_connection = Math.round(n * 100) / 100;
-        cambios.connection_values_manual = true;
+        cambios.balance_liquidez = v;
+        cambios.liquidez_manual = true;
       }
     }
 
