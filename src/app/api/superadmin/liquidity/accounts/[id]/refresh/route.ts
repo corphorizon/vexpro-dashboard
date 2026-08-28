@@ -59,6 +59,19 @@ export async function POST(
       !cuenta.connection_values_manual &&
       (cuenta.equity_at_connection === null || cuenta.equity_at_connection === undefined);
 
+    // ── LA CONEXIÓN DE HOY NO SE RECONSTRUYE ──────────────────────────────
+    // Si la cuenta entró al pool hoy, el equity de esa fecha ES el equity
+    // actual: no hay nada que reconstruir. Y el actual es MEJOR que lo
+    // reconstruido, porque `mt5_accounts` ya trae el flotante de las
+    // posiciones abiertas, que el cálculo a una fecha pasada no puede saber.
+    //
+    // Esto saca del camino normal la consulta más cara del módulo. La
+    // reconstrucción queda sólo para las altas retroactivas, que es para lo
+    // único que existe.
+    const hoyUtc = new Date().toISOString().slice(0, 10);
+    const esConexionDeHoy = String(cuenta.connection_date).slice(0, 10) >= hoyUtc;
+    const reconstruir = faltaSaldo && !esConexionDeHoy;
+
     let mt5: Mt5AccountInfo | null = null;
     let pnl: MonthlyPnl[] = [];
     let saldo: SaldoALaFecha | null = null;
@@ -71,7 +84,7 @@ export async function POST(
         return {
           cuenta: c,
           pnl: await pnlMensualEnSesion(s, String(cuenta.mt5_account), fecha),
-          saldo: faltaSaldo
+          saldo: reconstruir
             ? await saldoALaFechaEnSesion(s, String(cuenta.mt5_account), fecha)
             : null,
         };
@@ -120,7 +133,18 @@ export async function POST(
               equity_at_connection: saldo.balance,
               connection_open_positions: saldo.posicionesAbiertas,
             }
-          : {}),
+          : faltaSaldo && esConexionDeHoy
+            ? {
+                balance_at_connection: mt5!.balance,
+                // El equity de HOY, no el balance: ya incluye el flotante, así
+                // que es el número exacto y no una aproximación.
+                equity_at_connection: mt5!.equity,
+                // Cero = «no hay flotante DESCONOCIDO». Puede haber posiciones
+                // abiertas ahora mismo, pero su flotante ya está adentro del
+                // equity que se guardó, así que no hay nada que advertir.
+                connection_open_positions: 0,
+              }
+            : {}),
       })
       .eq('id', id);
     if (e2) return apiError('superadmin/liquidity/refresh', e2, { status: 500 });
