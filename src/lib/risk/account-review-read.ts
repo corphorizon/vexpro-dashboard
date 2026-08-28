@@ -36,6 +36,8 @@ export interface AccountReviewRow {
   lotsTotal: number | null;
   maxDrawdown: number | null;
   topSymbols: Array<{ symbol: string; positions: number; profit: number }>;
+  /** Reparto por tramo de duracion. Separa "hace scalping" de "gana scalpeando". */
+  durations: Array<{ label: string; count: number; profit: number }>;
   signals: AccountSignal[];
   flagged: number;
   unverifiable: number;
@@ -124,6 +126,7 @@ export async function loadAccountsOverview(
     lotsTotal: r.lots_total === null || r.lots_total === undefined ? null : Number(r.lots_total),
     maxDrawdown: r.max_drawdown === null || r.max_drawdown === undefined ? null : Number(r.max_drawdown),
     topSymbols: Array.isArray(r.top_symbols) ? r.top_symbols : [],
+    durations: Array.isArray(r.durations) ? r.durations : [],
     signals: Array.isArray(r.checks) ? r.checks : [],
     flagged: Number(r.violations ?? 0),
     unverifiable: Number(r.unverifiable ?? 0),
