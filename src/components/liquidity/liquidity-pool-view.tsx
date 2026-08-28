@@ -30,7 +30,7 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { formatCurrency } from '@/lib/utils';
-import { formatDateTime } from '@/lib/dates';
+import { formatDate, formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { formatFechaConexion } from '@/lib/liquidity/connection-date';
 import { mesLabel, Stat } from './ui';
@@ -423,30 +423,30 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
               : 'Sin resultados para la búsqueda.'}
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full text-[13px]">
             <thead>
               <tr className="border-b border-border bg-muted/50 text-muted-foreground">
-                <th className="text-left py-2.5 px-3 font-medium">#</th>
-                <th className="text-left py-2.5 px-3 font-medium">Cuenta</th>
-                <th className="text-left py-2.5 px-3 font-medium">Usuario</th>
-                <th className="text-left py-2.5 px-3 font-medium">Grupo</th>
+                <th className="text-left py-2.5 px-2 font-medium">#</th>
+                <th className="text-left py-2.5 px-2 font-medium">Cuenta</th>
+                <th className="text-left py-2.5 px-2 font-medium">Usuario</th>
+                <th className="text-left py-2.5 px-2 font-medium">Grupo</th>
                 {/* Va pegada al equity de esa fecha: los dos datos se leen
                     juntos —«conectada el X, con Y»— y separarlos obligaría a
                     abrir el detalle para saber a qué día corresponde el monto. */}
-                <th className="text-left py-2.5 px-3 font-medium">Conectada</th>
-                <th className="text-right py-2.5 px-3 font-medium">Equity a la conexión</th>
-                <th className="text-right py-2.5 px-3 font-medium">Balance MT5</th>
-                <th className="text-right py-2.5 px-3 font-medium">Equity a Liquidez</th>
-                <th className="text-left py-2.5 px-3 font-medium">Status</th>
-                <th className="text-left py-2.5 px-3 font-medium">Actualizado</th>
+                <th className="text-left py-2.5 px-2 font-medium">Conectada</th>
+                <th className="text-right py-2.5 px-2 font-medium whitespace-nowrap">Equity conexión</th>
+                <th className="text-right py-2.5 px-2 font-medium">Balance MT5</th>
+                <th className="text-right py-2.5 px-2 font-medium">Equity a Liquidez</th>
+                <th className="text-left py-2.5 px-2 font-medium">Status</th>
+                <th className="text-left py-2.5 px-2 font-medium">Actualizado</th>
                 <th className="text-right py-2.5 px-3 font-medium">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {filtradas.map((c, i) => (
                 <tr key={c.id} className="border-b border-border last:border-0">
-                  <td className="py-2 px-3 text-muted-foreground">{i + 1}</td>
-                  <td className="py-2 px-3 font-medium tabular-nums">
+                  <td className="py-2 px-2 text-muted-foreground">{i + 1}</td>
+                  <td className="py-2 px-2 font-medium tabular-nums">
                     {c.mt5_account}
                     {c.has_multiple_accounts_warning && (
                       <span title="El cliente tiene varias cuentas y no se detectó transferencia">
@@ -454,15 +454,30 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                       </span>
                     )}
                   </td>
-                  <td className="py-2 px-3 text-muted-foreground">{c.mt5_email ?? '—'}</td>
-                  <td className="py-2 px-3 text-muted-foreground">{c.mt5_group ?? '—'}</td>
-                  <td className="py-2 px-3 tabular-nums">
+                  {/* Los correos largos se cortan con el valor completo en el
+                      title: uno de 40 caracteres estiraba la tabla hasta obligar
+                      a desplazarse en horizontal para llegar a los montos, que
+                      es lo que la gente viene a mirar. */}
+                  <td className="py-2 px-2 text-muted-foreground">
+                    <span className="block max-w-[190px] truncate" title={c.mt5_email ?? undefined}>
+                      {c.mt5_email ?? '—'}
+                    </span>
+                  </td>
+                  {/* Todos los grupos arrancan con `real\`, así que ese prefijo
+                      no distingue nada y sólo ocupa lugar. Se muestra el resto y
+                      el valor entero queda en el title. */}
+                  <td className="py-2 px-2 text-muted-foreground">
+                    <span className="block max-w-[150px] truncate" title={c.mt5_group ?? undefined}>
+                      {c.mt5_group ? c.mt5_group.replace(/^real\\/, '') : '—'}
+                    </span>
+                  </td>
+                  <td className="py-2 px-2 tabular-nums whitespace-nowrap">
                     {formatFechaConexion(c.connection_date) || '—'}
                   </td>
                   {/* El saldo QUE TENÍA el día que entró al pool, reconstruido
                       desde MT5. `null` es «no se pudo calcular», que no es cero
                       — por eso va un guion y no un $0,00. */}
-                  <td className="py-2 px-3 text-right tabular-nums">
+                  <td className="py-2 px-2 text-right tabular-nums">
                     {c.equity_at_connection === null || c.equity_at_connection === undefined
                       ? <span className="text-muted-foreground">—</span>
                       : formatCurrency(c.equity_at_connection)}
@@ -488,8 +503,8 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                       </span>
                     )}
                   </td>
-                  <td className="py-2 px-3 text-right tabular-nums">{formatCurrency(c.balance)}</td>
-                  <td className="py-2 px-3 text-right tabular-nums font-medium">
+                  <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(c.balance)}</td>
+                  <td className="py-2 px-2 text-right tabular-nums font-medium">
                     {formatCurrency(c.balance_liquidez)}
                     {c.liquidez_manual && (
                       <span
@@ -507,7 +522,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                       </span>
                     )}
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-2 px-2">
                     <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
                       c.status === 'active' ? 'bg-positive/10 text-positive'
                         : c.status === 'error' ? 'bg-negative/10 text-negative'
@@ -516,10 +531,16 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                       {c.status === 'active' ? 'Activa' : c.status === 'error' ? 'Error' : 'No activa'}
                     </span>
                   </td>
-                  <td className="py-2 px-3 text-xs text-muted-foreground">
-                    {c.last_synced_at ? formatDateTime(c.last_synced_at) : '—'}
+                  {/* Sólo el día. La hora exacta del último refresco casi nunca
+                      se necesita de un vistazo, y partía la celda en dos
+                      renglones; queda en el title y en el detalle. */}
+                  <td
+                    className="py-2 px-2 text-xs text-muted-foreground whitespace-nowrap"
+                    title={c.last_synced_at ? formatDateTime(c.last_synced_at) : undefined}
+                  >
+                    {c.last_synced_at ? formatDate(c.last_synced_at) : '—'}
                   </td>
-                  <td className="py-2 px-3">
+                  <td className="py-2 px-2">
                     <div className="flex items-center justify-end gap-1">
                       <IconBtn title="Ver detalle" onClick={() => setDetalle(c)}><Eye className="w-4 h-4" /></IconBtn>
                       <IconBtn title="Editar nota" onClick={() => setEditando(c)}><Pencil className="w-4 h-4" /></IconBtn>
