@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Migración 103 — Reparto de duraciones por cuenta en el diagnóstico operativo
+-- Migración 104 — Reparto de duraciones por cuenta en el diagnóstico operativo
 --
 -- QUÉ SE PIDIÓ (Stiven, 2026-08-27)
 -- Ver por cuenta el mismo desglose que ya existe en la pantalla de subida:
