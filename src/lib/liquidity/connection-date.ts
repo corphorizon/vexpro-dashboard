@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// La fecha de conexión de una cuenta al pool: validación y recálculo.
+// La fecha de conexión de una cuenta al pool: validarla y mostrarla.
 //
 // ── POR QUÉ SE PUEDE EDITAR ────────────────────────────────────────────────
 // Al agregar una cuenta, la fecha de conexión es hoy: el PnL se mide desde que
@@ -7,27 +7,33 @@
 // venían operando y ver su historia — con la fecha de hoy el PnL arrancaría
 // vacío y no habría nada que comparar.
 //
-// ── LO QUE HACE PELIGROSO CAMBIARLA ────────────────────────────────────────
-// El PnL mensual NO se calcula al leer: se calcula una vez y se guarda en
-// `platform_liquidity_monthly_pnl`. Esas filas son un DERIVADO de esta fecha.
-//
-// El guardado usa `upsert`, que agrega y pisa pero nunca borra. Entonces mover
-// la fecha hacia adelante dejaría vivos los meses del rango viejo —meses en los
-// que la cuenta ya no estaba en el pool— sumando al total sin que nada avise.
-// Es exactamente el modo de falla que este repo persigue: un número plausible
-// y equivocado, sin excepción de por medio.
-//
-// Por eso `recalcularPnlMensual` BORRA y vuelve a calcular, en vez de upsertear
-// encima.
+// ── ESTE ARCHIVO NO TOCA MT5 NI LA BASE, A PROPÓSITO ───────────────────────
+// Lo importa la pantalla, que es un componente de cliente. El recálculo del
+// PnL —que sí abre MT5— vive en `monthly-pnl-calculator.ts`: tenerlo acá
+// arrastraría el cliente MySQL al bundle del navegador.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { SupabaseClient } from '@supabase/supabase-js';
-import { calculateMonthlyPnL } from '@/lib/liquidity/monthly-pnl-calculator';
 
 /** Nada anterior a esto es una conexión real: es un dedazo o un dato corrupto.
  *  Sin piso, un año tipeado mal (1900) haría que el calculador recorriera dos
  *  siglos de calendario y devolviera una tabla sin sentido. */
 const PISO = Date.UTC(2000, 0, 1);
+
+/**
+ * `DD/MM/YYYY` leyendo el instante en UTC.
+ *
+ * `formatDate` del repo usa `getDate()`, que es hora local: con la conexión
+ * guardada a las 00:00 UTC, un navegador en UTC-5 mostraría el día anterior.
+ * Acá la fecha de conexión ES un día —no un instante—, así que se lee en el
+ * mismo huso en el que se guardó.
+ */
+export function formatFechaConexion(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getUTCDate())}/${p(d.getUTCMonth() + 1)}/${d.getUTCFullYear()}`;
+}
 
 export type FechaValidada =
   | { ok: true; fecha: Date }
@@ -39,16 +45,28 @@ export type FechaValidada =
  * endpoints dicen exactamente lo mismo ante el mismo dato malo.
  *
  * Acepta `YYYY-MM-DD` (lo que manda un <input type="date">) y también un ISO
- * completo. El primero se ancla a mediodía UTC a propósito: a medianoche, un
- * navegador en UTC-5 corre la fecha al día anterior y el mes de conexión sale
- * cambiado.
+ * completo.
+ *
+ * ── EL DÍA ARRANCA A LAS 00:00 UTC, NO A MEDIODÍA ──────────────────────────
+ * La primera versión anclaba a las 12:00 para que `formatDate` —que usa hora
+ * local— no mostrara el día anterior en un navegador al oeste de UTC. Costó
+ * medio día de operaciones: la cuenta 136773, conectada el 06/03, daba
+ * -2.662,49 en marzo contra los -3.437,67 que mostraba el MT5 Manager. Las 17
+ * operaciones que faltaban eran de esa madrugada, entre las 02h y las 03h.
+ *
+ * "Conectada el 6 de marzo" significa desde el arranque del 6 de marzo. El
+ * problema de cómo se ve la fecha se arregla donde se ve —formateándola en
+ * UTC—, no corriendo el instante que se guarda.
  */
 export function validarFechaConexion(valor: unknown): FechaValidada {
   const texto = String(valor ?? '').trim();
   if (!texto) return { ok: false, error: 'Falta la fecha de conexión.' };
 
   const soloDia = /^\d{4}-\d{2}-\d{2}$/.test(texto);
-  const fecha = new Date(soloDia ? `${texto}T12:00:00.000Z` : texto);
+  // La `Z` explícita es lo que evita el corrimiento de día: sin ella, el
+  // navegador interpretaría el texto en su propio huso. Con ella, las 00:00
+  // UTC son las 00:00 UTC en todas partes.
+  const fecha = new Date(soloDia ? `${texto}T00:00:00.000Z` : texto);
 
   if (Number.isNaN(fecha.getTime())) {
     return { ok: false, error: 'La fecha de conexión no es válida.' };
@@ -64,39 +82,4 @@ export function validarFechaConexion(valor: unknown): FechaValidada {
   }
 
   return { ok: true, fecha };
-}
-
-/**
- * Rehace el PnL mensual de una cuenta para una fecha de conexión nueva.
- *
- * Borra primero. El `upsert` solo no alcanza: los meses del rango anterior que
- * ya no entran en el nuevo se quedarían, y una fila vieja y una nueva se ven
- * idénticas en la tabla.
- *
- * Devuelve cuántos meses quedaron, o lanza si MT5 no responde — el llamador
- * decide si eso corta la operación o sólo avisa.
- */
-export async function recalcularPnlMensual(
-  admin: SupabaseClient,
-  cuenta: { id: string; company_id: string; mt5_account: string },
-  fechaConexion: Date,
-): Promise<number> {
-  const pnl = await calculateMonthlyPnL(cuenta.company_id, cuenta.mt5_account, fechaConexion);
-
-  // El borrado va DESPUÉS del cálculo: si MT5 falla, la cuenta se queda con el
-  // PnL viejo —desactualizado pero coherente— en vez de quedarse sin ninguno.
-  const { error: eBorrado } = await admin
-    .from('platform_liquidity_monthly_pnl')
-    .delete()
-    .eq('account_id', cuenta.id);
-  if (eBorrado) throw new Error(`No se pudo limpiar el PnL anterior: ${eBorrado.message}`);
-
-  if (pnl.length === 0) return 0;
-
-  const { error } = await admin
-    .from('platform_liquidity_monthly_pnl')
-    .insert(pnl.map((m) => ({ account_id: cuenta.id, ...m })));
-  if (error) throw new Error(`No se pudo guardar el PnL mensual: ${error.message}`);
-
-  return pnl.length;
 }
