@@ -56,35 +56,29 @@ const num = (v: unknown): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const SQL_BALANCE_HOY = 'SELECT Balance AS balance FROM mt5_users WHERE Login = ? LIMIT 1';
-
-// Se filtra por `TimeMsc` contra una fecha, como en todo el repo: `Timestamp`
-// es FILETIME y devuelve la tabla entera, y `Time` no tiene índice.
-const SQL_MOVIDO_DESDE = [
-  'SELECT SUM(Profit + Storage + Commission) AS movido',
-  '  FROM mt5_deals',
-  ' WHERE Login = ?',
-  '   AND TimeMsc >= ?',
-].join('\n');
-
-/**
- * Posiciones que estaban abiertas en ese instante: entraron antes (`Entry = 0`)
- * y todavía no habían salido (`Entry IN (1,3)`).
- *
- * El `NOT EXISTS` mira el cierre CONTRA LA MISMA FECHA, no contra hoy: una
- * posición que abrió antes y cerró después seguía abierta en ese momento, y
- * comparando contra hoy desaparecería.
- */
-const SQL_ABIERTAS_EN = [
-  'SELECT COUNT(*) AS n FROM (',
-  '  SELECT d.PositionID',
-  '    FROM mt5_deals d',
-  '   WHERE d.Login = ? AND d.Entry = 0 AND d.TimeMsc < ?',
-  '     AND NOT EXISTS (',
-  '       SELECT 1 FROM mt5_deals x',
-  '        WHERE x.PositionID = d.PositionID',
-  '          AND x.Entry IN (1,3) AND x.TimeMsc < ?)',
-  '   GROUP BY d.PositionID) t',
+// ── UNA SOLA IDA Y VUELTA ──────────────────────────────────────────────────
+// Las tres lecturas van como subconsultas de un mismo SELECT. Eran tres
+// consultas separadas, y contra un MT5 al otro lado de un túnel SOCKS lo que se
+// paga no es el trabajo del motor sino cada viaje: las tres juntas medían
+// 1.556 ms cuando ninguna llega a 500 ms por sí sola.
+//
+// `balance_hoy` sale NULL cuando el login no existe — distinto de un balance
+// en cero, que es un login que existe y está vacío.
+const SQL_SALDO = [
+  'SELECT',
+  '  (SELECT u.Balance FROM mt5_users u WHERE u.Login = ?) AS balance_hoy,',
+  '  (SELECT SUM(d.Profit + d.Storage + d.Commission)',
+  '     FROM mt5_deals d WHERE d.Login = ? AND d.TimeMsc >= ?) AS movido,',
+  // El NOT EXISTS mira el cierre CONTRA LA MISMA FECHA, no contra hoy: una
+  // posición que abrió antes y cerró después seguía abierta en ese momento.
+  '  (SELECT COUNT(*) FROM (',
+  '     SELECT d.PositionID FROM mt5_deals d',
+  '      WHERE d.Login = ? AND d.Entry = 0 AND d.TimeMsc < ?',
+  '        AND NOT EXISTS (',
+  '          SELECT 1 FROM mt5_deals x',
+  '           WHERE x.PositionID = d.PositionID',
+  '             AND x.Entry IN (1,3) AND x.TimeMsc < ?)',
+  '      GROUP BY d.PositionID) t) AS abiertas',
 ].join('\n');
 
 /**
@@ -118,17 +112,20 @@ export async function saldoALaFechaEnSesion(
 
   const desde = comoSql(fecha);
 
-  const usuario = await s.query<Record<string, unknown>>(SQL_BALANCE_HOY, [login]);
-  if (!usuario[0]) return null;
-  const balanceHoy = num(usuario[0].balance);
+  const filas = await s.query<Record<string, unknown>>(
+    SQL_SALDO,
+    [login, login, desde, login, desde, desde],
+  );
+  const r = filas[0];
+  // `balance_hoy` en NULL es «el login no existe». Un login que existe con
+  // saldo cero devuelve 0, y son cosas distintas.
+  if (!r || r.balance_hoy === null || r.balance_hoy === undefined) return null;
 
-  const mov = await s.query<Record<string, unknown>>(SQL_MOVIDO_DESDE, [login, desde]);
-  // `SUM` sobre cero filas devuelve NULL, no 0: sin cuenta abierta después de
-  // esa fecha, lo movido es cero y el saldo de entonces es el de hoy.
-  const movido = num(mov[0]?.movido);
-
-  const ab = await s.query<Record<string, unknown>>(SQL_ABIERTAS_EN, [login, desde, desde]);
-  const posicionesAbiertas = ab[0] ? num(ab[0].n) : null;
+  const balanceHoy = num(r.balance_hoy);
+  // `SUM` sobre cero filas devuelve NULL, no 0: sin operaciones después de esa
+  // fecha, lo movido es cero y el saldo de entonces es el de hoy.
+  const movido = num(r.movido);
+  const posicionesAbiertas = r.abiertas === null || r.abiertas === undefined ? null : num(r.abiertas);
 
   return {
     balance: Math.round((balanceHoy - movido) * 100) / 100,

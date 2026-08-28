@@ -611,7 +611,15 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
         <ModalNuevaCuenta
           companyId={companyId}
           onClose={() => setNuevaAbierta(false)}
-          onDone={async (msg) => { setNuevaAbierta(false); await cargar(); setAviso(msg); }}
+          onDone={async (msg) => {
+            setNuevaAbierta(false);
+            await cargar();
+            setAviso(msg);
+            // La cuenta ya está en la tabla. Ahora se pide el histórico en una
+            // petición aparte: si ésta falla, la cuenta igual quedó creada y se
+            // arregla con el botón de refrescar de su fila.
+            if (msg.refrescar) await refrescarUna(msg.refrescar);
+          }}
         />
       )}
       {detalle && <ModalDetalle cuenta={detalle} onClose={() => setDetalle(null)} />}
@@ -669,7 +677,7 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
    *  tabla, y el error recién se vería al refrescar. */
   companyId: string;
   onClose: () => void;
-  onDone: (aviso: { tipo: 'ok' | 'error'; texto: string }) => void;
+  onDone: (aviso: { tipo: 'ok' | 'error'; texto: string; refrescar?: string }) => void;
 }) {
   const [cuenta, setCuenta] = useState('');
   // Arranca en hoy, que es el caso normal. Se puede correr hacia atrás para dar
@@ -696,10 +704,20 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       const w = (json.warnings ?? []) as string[];
+
+      // La cuenta YA está creada. El histórico —saldo a la conexión y PnL mes a
+      // mes— lo calcula el refresh, en una petición aparte.
+      //
+      // Se parte en dos porque juntas tardaban tanto que se perdía el alta
+      // entera. Así, si esta segunda falla, la cuenta igual quedó: se ve en la
+      // tabla y se arregla con el botón de refrescar.
       onDone({
         tipo: w.length > 0 ? 'error' : 'ok',
-        texto: `Cuenta ${v} agregada (${json.escenario}, ${json.monthsCalculated} mes/es de PnL).`
+        texto: `Cuenta ${v} agregada (${json.escenario}).`
+          + (json.historyPending ? ' Calculando su histórico…' : '')
           + (w.length > 0 ? ` Avisos: ${w.join(' · ')}` : ''),
+        // El id viaja para que la pantalla sepa a quién refrescar.
+        refrescar: json.historyPending ? String(json.account?.id ?? '') : undefined,
       });
     } catch (e) {
       // Con un aborto el alta pudo haber terminado en el servidor, así que se
