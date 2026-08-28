@@ -468,7 +468,11 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
         <ModalNota
           cuenta={editando}
           onClose={() => setEditando(null)}
-          onDone={async () => { setEditando(null); await cargar(); setAviso({ tipo: 'ok', texto: 'Nota guardada.' }); }}
+          onDone={async (aviso) => {
+            setEditando(null);
+            await cargar();
+            setAviso(aviso ?? { tipo: 'ok', texto: 'Cambios guardados.' });
+          }}
         />
       )}
     </div>
@@ -532,18 +536,25 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
   onDone: (aviso: { tipo: 'ok' | 'error'; texto: string }) => void;
 }) {
   const [cuenta, setCuenta] = useState('');
+  // Arranca en hoy, que es el caso normal. Se puede correr hacia atrás para dar
+  // de alta una cuenta que ya venía operando y recuperarle la historia.
+  const [fecha, setFecha] = useState(() => new Date().toISOString().slice(0, 10));
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  const hoy = new Date().toISOString().slice(0, 10);
+  const retroactiva = fecha < hoy;
 
   async function guardar() {
     const v = cuenta.trim();
     if (!/^\d+$/.test(v)) { setErr('El número de cuenta debe ser numérico.'); return; }
+    if (!fecha) { setErr('Elegí la fecha de conexión.'); return; }
     setGuardando(true);
     setErr(null);
     try {
       const res = await apiFetch('/api/superadmin/liquidity/accounts', {
         method: 'POST',
-        body: JSON.stringify({ mt5_account: v, company_id: companyId }),
+        body: JSON.stringify({ mt5_account: v, company_id: companyId, connection_date: fecha }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
@@ -571,10 +582,37 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
         placeholder="146059"
         className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
       />
-      <p className="mt-2 text-xs text-muted-foreground">
-        El resto se completa solo: usuario, grupo, balance y equity salen de MT5, y el PnL mes a mes
-        se calcula desde hoy. Si el cliente ya tiene otra cuenta en el pool, se analiza si el dinero
-        ya estaba contado.
+      <label className="block text-sm font-medium mt-4 mb-1.5">Fecha de conexión</label>
+      <input
+        type="date"
+        value={fecha}
+        max={hoy}
+        onChange={(e) => setFecha(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+      />
+      <p className="mt-1.5 text-xs text-muted-foreground">
+        Desde cuándo esta cuenta cuenta para el pool. El PnL mes a mes se calcula a partir de acá.
+      </p>
+
+      {/* Sólo cuando la fecha es vieja: en el caso normal este texto sería
+          ruido, y avisar de algo que no está pasando enseña a ignorar avisos. */}
+      {retroactiva && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-2.5 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">Alta retroactiva</p>
+            <p className="mt-0.5">
+              El PnL se va a calcular desde esa fecha. El <strong>balance al conectar</strong>, en
+              cambio, se guarda con el valor de HOY: MT5 no expone el balance histórico. Para
+              validar la historia mirá el PnL mes a mes, no ese campo.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <p className="mt-3 text-xs text-muted-foreground">
+        El resto se completa solo: usuario, grupo, balance y equity salen de MT5. Si el cliente ya
+        tiene otra cuenta en el pool, se analiza si el dinero ya estaba contado.
       </p>
       {err && <p className="mt-2 text-sm text-negative">{err}</p>}
       <div className="mt-4 flex justify-end gap-2">
@@ -591,21 +629,38 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
   );
 }
 
-function ModalNota({ cuenta, onClose, onDone }: { cuenta: Cuenta; onClose: () => void; onDone: () => void }) {
+function ModalNota({ cuenta, onClose, onDone }: {
+  cuenta: Cuenta;
+  onClose: () => void;
+  onDone: (aviso?: { tipo: 'ok' | 'error'; texto: string }) => void;
+}) {
   const [nota, setNota] = useState(cuenta.note ?? '');
+  const fechaOriginal = cuenta.connection_date.slice(0, 10);
+  const [fecha, setFecha] = useState(fechaOriginal);
   const [guardando, setGuardando] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const hoy = new Date().toISOString().slice(0, 10);
+  const cambioFecha = fecha !== fechaOriginal;
+
   async function guardar() {
+    if (!fecha) { setErr('Elegí la fecha de conexión.'); return; }
     setGuardando(true);
+    setErr(null);
     try {
       const res = await apiFetch(`/api/superadmin/liquidity/accounts/${cuenta.id}`, {
         method: 'PATCH',
-        body: JSON.stringify({ note: nota.trim() || null }),
+        body: JSON.stringify({ note: nota.trim() || null, connection_date: fecha }),
       });
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
-      onDone();
+      // El recálculo se avisa con el número de meses: cambiar una fecha y no
+      // ver nada moverse dejaría la duda de si el PnL se rehizo o no.
+      onDone(
+        json.monthsRecalculated !== null && json.monthsRecalculated !== undefined
+          ? { tipo: 'ok', texto: `Fecha actualizada. PnL recalculado: ${json.monthsRecalculated} mes/es.` }
+          : undefined,
+      );
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Error al guardar');
       setGuardando(false);
@@ -613,12 +668,35 @@ function ModalNota({ cuenta, onClose, onDone }: { cuenta: Cuenta; onClose: () =>
   }
 
   return (
-    <Modal title={`Nota — cuenta ${cuenta.mt5_account}`} onClose={onClose}>
+    <Modal title={`Editar cuenta ${cuenta.mt5_account}`} onClose={onClose}>
+      <label className="block text-sm font-medium mb-1.5">Fecha de conexión</label>
+      <input
+        type="date"
+        value={fecha}
+        max={hoy}
+        onChange={(e) => setFecha(e.target.value)}
+        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+      />
+
+      {cambioFecha && (
+        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-2.5 text-xs">
+          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-medium">Se va a recalcular el PnL mes a mes</p>
+            <p className="mt-0.5">
+              El PnL guardado se borra y se vuelve a pedir a MT5 con la fecha nueva. Puede tardar
+              unos segundos. Si MT5 no responde, la fecha <strong>no</strong> se cambia y queda
+              todo como está.
+            </p>
+          </div>
+        </div>
+      )}
+
+      <label className="block text-sm font-medium mt-4 mb-1.5">Nota</label>
       <textarea
-        autoFocus
         value={nota}
         onChange={(e) => setNota(e.target.value)}
-        rows={5}
+        rows={4}
         className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
       />
       {err && <p className="mt-2 text-sm text-negative">{err}</p>}
@@ -629,7 +707,7 @@ function ModalNota({ cuenta, onClose, onDone }: { cuenta: Cuenta; onClose: () =>
           disabled={guardando}
           className="h-9 px-4 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-60"
         >
-          {guardando ? 'Guardando…' : 'Guardar'}
+          {guardando ? (cambioFecha ? 'Recalculando PnL…' : 'Guardando…') : 'Guardar'}
         </button>
       </div>
     </Modal>

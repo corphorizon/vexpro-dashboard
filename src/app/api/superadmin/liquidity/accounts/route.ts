@@ -28,6 +28,7 @@ import { apiError } from '@/lib/api-error';
 import { fetchMt5Account } from '@/lib/liquidity/mt5-account';
 import { analizarCuentaNueva } from '@/lib/liquidity/duplicate-account-detector';
 import { calculateMonthlyPnL } from '@/lib/liquidity/monthly-pnl-calculator';
+import { validarFechaConexion } from '@/lib/liquidity/connection-date';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -65,9 +66,20 @@ export async function POST(request: NextRequest) {
     const body = (await request.json().catch(() => ({}))) as {
       mt5_account?: unknown;
       company_id?: unknown;
+      connection_date?: unknown;
     };
     const mt5Account = String(body.mt5_account ?? '').trim();
     const companyId = String(body.company_id ?? '').trim();
+
+    // Sin fecha explícita, hoy: el caso normal es conectar una cuenta ahora.
+    // Con fecha, sirve para dar de alta una cuenta que ya venía operando y
+    // recuperarle la historia.
+    let fechaConexion = new Date();
+    if (body.connection_date !== undefined && body.connection_date !== null && body.connection_date !== '') {
+      const v = validarFechaConexion(body.connection_date);
+      if (!v.ok) return NextResponse.json({ success: false, error: v.error }, { status: 400 });
+      fechaConexion = v.fecha;
+    }
 
     if (!mt5Account || !/^\d+$/.test(mt5Account)) {
       return NextResponse.json(
@@ -145,9 +157,10 @@ export async function POST(request: NextRequest) {
         balance_liquidez: analisis ? analisis.balanceLiquidez : (mt5?.balance ?? 0),
         balance_at_connection: mt5?.balance ?? null,
         equity_at_connection: mt5?.equity ?? null,
-        // La fecha de conexión es HOY: el PnL se mide desde que entró al pool,
-        // no desde que la cuenta existe en MT5.
-        connection_date: new Date().toISOString(),
+        // El PnL se mide desde que la cuenta entró al pool, no desde que existe
+        // en MT5. Por defecto eso es hoy; se puede fechar antes para dar de
+        // alta una cuenta que ya venía operando.
+        connection_date: fechaConexion.toISOString(),
         status: syncError ? 'error' : (mt5 && mt5.balance > 0 ? 'active' : 'inactive'),
         has_multiple_accounts_warning: analisis?.warning ?? false,
         related_account_ids: analisis?.previas.map((p) => p.id) ?? null,
