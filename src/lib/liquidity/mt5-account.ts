@@ -64,9 +64,27 @@ export async function fetchMt5Account(
   companyId: string,
   login: number,
 ): Promise<Mt5AccountInfo | null> {
-  const filas = await withMt5Connection(companyId, async (s: Mt5Session) =>
-    s.query<Record<string, unknown>>(SQL_CUENTA, [login]),
-  );
+  return withMt5Connection(companyId, (s) => leerCuentaEnSesion(s, login));
+}
+
+/**
+ * Igual que `fetchMt5Account`, pero sobre una sesión YA abierta.
+ *
+ * Existe porque el túnel cuesta más que la consulta. Medido contra la cuenta
+ * 146059: leer la cuenta, reconstruir el saldo a la conexión y calcular el PnL
+ * tardaban 4.248, 4.988 y 4.017 ms — unos 4 s cada una, cuando las consultas en
+ * sí no llegan al segundo. Lo que se paga tres veces es abrir el túnel SOCKS,
+ * porque en serverless no hay pool que sobreviva entre invocaciones.
+ *
+ * Compartiendo la sesión, esas tres pasan de ~13 s a ~5 s. En `refresh-all`,
+ * que hacía dos por cada una de hasta 60 cuentas, la diferencia es de 120
+ * túneles a uno.
+ */
+export async function leerCuentaEnSesion(
+  s: Mt5Session,
+  login: number,
+): Promise<Mt5AccountInfo | null> {
+  const filas = await s.query<Record<string, unknown>>(SQL_CUENTA, [login]);
   const r = filas[0];
   if (!r) return null;
 

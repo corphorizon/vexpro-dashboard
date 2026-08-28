@@ -95,6 +95,20 @@ export async function calculateMonthlyPnL(
   mt5Account: string,
   connectionDate: Date,
 ): Promise<MonthlyPnl[]> {
+  return withMt5Connection(companyId, (s) => pnlMensualEnSesion(s, mt5Account, connectionDate));
+}
+
+/**
+ * Igual, pero sobre una sesión YA abierta.
+ *
+ * El túnel SOCKS cuesta más que la consulta, y en serverless no hay pool que
+ * sobreviva. Quien ya tenga una sesión abierta debería usar esta variante.
+ */
+export async function pnlMensualEnSesion(
+  s: Mt5Session,
+  mt5Account: string,
+  connectionDate: Date,
+): Promise<MonthlyPnl[]> {
   const login = Number(mt5Account);
   if (!Number.isFinite(login) || login <= 0) return [];
 
@@ -108,9 +122,7 @@ export async function calculateMonthlyPnL(
   // Fin exclusivo: el instante actual. Así el mes en curso queda hasta hoy.
   const hasta = comoSql(new Date(ahora.getTime() + 1000));
 
-  const filas = await withMt5Connection(companyId, async (s: Mt5Session) =>
-    s.query<Record<string, unknown>>(SQL_POR_MES, [login, desde, hasta]),
-  );
+  const filas = await s.query<Record<string, unknown>>(SQL_POR_MES, [login, desde, hasta]);
 
   const porClave = new Map<string, { pnl: number; ops: number }>();
   for (const r of filas) {
@@ -183,8 +195,12 @@ export async function recalcularPnlMensual(
   admin: SupabaseClient,
   cuenta: { id: string; company_id: string; mt5_account: string },
   fechaConexion: Date,
+  /** Sesión ya abierta. Sin ella se abre una propia — un túnel más. */
+  sesion?: Mt5Session,
 ): Promise<number> {
-  const pnl = await calculateMonthlyPnL(cuenta.company_id, cuenta.mt5_account, fechaConexion);
+  const pnl = sesion
+    ? await pnlMensualEnSesion(sesion, cuenta.mt5_account, fechaConexion)
+    : await calculateMonthlyPnL(cuenta.company_id, cuenta.mt5_account, fechaConexion);
 
   // El borrado va DESPUÉS del cálculo: si MT5 falla, la cuenta se queda con el
   // PnL viejo —desactualizado pero coherente— en vez de quedarse sin ninguno.

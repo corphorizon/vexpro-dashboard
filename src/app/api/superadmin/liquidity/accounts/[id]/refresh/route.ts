@@ -17,8 +17,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
-import { fetchMt5Account } from '@/lib/liquidity/mt5-account';
-import { calculateMonthlyPnL } from '@/lib/liquidity/monthly-pnl-calculator';
+import { leerCuentaEnSesion, type Mt5AccountInfo } from '@/lib/liquidity/mt5-account';
+import { pnlMensualEnSesion, type MonthlyPnl } from '@/lib/liquidity/monthly-pnl-calculator';
+import { withMt5Connection } from '@/lib/api-integrations/mt5-sql/client';
 
 export const dynamic = 'force-dynamic';
 export const maxDuration = 120;
@@ -44,10 +45,23 @@ export async function POST(
     }
 
     const warnings: string[] = [];
-    let mt5: Awaited<ReturnType<typeof fetchMt5Account>> = null;
+    // Los datos de la cuenta y el PnL comparten UNA conexión. Abrir dos túneles
+    // SOCKS costaba ~8 s para consultas que no llegan al segundo, y en
+    // serverless no hay pool que sobreviva entre invocaciones.
+    let mt5: Mt5AccountInfo | null = null;
+    let pnl: MonthlyPnl[] = [];
     let syncError: string | null = null;
     try {
-      mt5 = await fetchMt5Account(cuenta.company_id, Number(cuenta.mt5_account));
+      const lectura = await withMt5Connection(cuenta.company_id, async (s) => {
+        const c = await leerCuentaEnSesion(s, Number(cuenta.mt5_account));
+        if (!c) return { cuenta: null, pnl: [] as MonthlyPnl[] };
+        return {
+          cuenta: c,
+          pnl: await pnlMensualEnSesion(s, String(cuenta.mt5_account), new Date(cuenta.connection_date)),
+        };
+      });
+      mt5 = lectura.cuenta;
+      pnl = lectura.pnl;
       if (!mt5) syncError = `La cuenta ${cuenta.mt5_account} ya no existe en MT5.`;
     } catch (err) {
       syncError = err instanceof Error ? err.message : String(err);
@@ -86,23 +100,15 @@ export async function POST(
     if (e2) return apiError('superadmin/liquidity/refresh', e2, { status: 500 });
 
     // El PnL sí se recalcula: son hechos de MT5, no una decisión sobre el pool.
+    // Ya vino de la misma sesión de arriba, así que acá sólo se escribe.
     let meses = 0;
-    try {
-      const pnl = await calculateMonthlyPnL(
-        cuenta.company_id,
-        String(cuenta.mt5_account),
-        new Date(cuenta.connection_date),
+    if (pnl.length > 0) {
+      const { error } = await admin.from('platform_liquidity_monthly_pnl').upsert(
+        pnl.map((m) => ({ account_id: id, ...m })),
+        { onConflict: 'account_id,year,month' },
       );
-      if (pnl.length > 0) {
-        const { error } = await admin.from('platform_liquidity_monthly_pnl').upsert(
-          pnl.map((m) => ({ account_id: id, ...m })),
-          { onConflict: 'account_id,year,month' },
-        );
-        if (error) warnings.push(`No se pudo guardar el PnL: ${error.message}`);
-        else meses = pnl.length;
-      }
-    } catch (err) {
-      warnings.push(`No se pudo calcular el PnL: ${err instanceof Error ? err.message : String(err)}`);
+      if (error) warnings.push(`No se pudo guardar el PnL: ${error.message}`);
+      else meses = pnl.length;
     }
 
     return NextResponse.json({ success: true, monthsCalculated: meses, warnings });
