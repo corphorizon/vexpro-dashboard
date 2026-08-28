@@ -38,8 +38,26 @@ import {
 } from '@/lib/risk/account-review';
 import type { Trade } from '@/lib/risk/types';
 
-/** Cuántos logins van en cada consulta a MT5. */
+/** Techo de logins por consulta a MT5. Ver también PRESUPUESTO_POSICIONES. */
 export const LOGIN_BATCH = 40;
+
+/**
+ * Posiciones que puede traer UNA consulta.
+ *
+ * ── POR QUÉ LOS LOTES NO PUEDEN SER DE TAMAÑO FIJO (medido, 2026-08-28) ────
+ * Porque las cuentas no se parecen entre sí: la mediana tiene 29 posiciones y
+ * el máximo 25.000. Un lote de 40 cuentas chicas trae 1.000 filas; uno que
+ * agarre varias grandes intenta traer un millón, y la función se queda sin
+ * tiempo antes de terminar.
+ *
+ * El síntoma era una cadencia errática —corridas de 200 cuentas alternadas con
+ * corridas de 2— que no se explicaba por nada visible: dependía de qué cuentas
+ * caían juntas en el lote.
+ *
+ * Con presupuesto por volumen, cada consulta trae más o menos lo mismo pase lo
+ * que pase: un lote puede ser de 40 cuentas chicas o de una sola enorme.
+ */
+export const PRESUPUESTO_POSICIONES = 120_000;
 /** Techo por corrida. Ver la cabecera: el costo es lineal en cuentas. */
 export const MAX_POR_CORRIDA = 200;
 /** Tipos de cuenta que entran. FUNDING queda fuera (tiene su propio módulo). */
@@ -201,15 +219,21 @@ export async function syncAccountReviews(
   }
 
   // ── 3. Rotación: las nunca calculadas primero, después las más viejas ───
-  const yaCalculadas = await fetchAll<{ login: number; computed_at: string }>((d, h) =>
+  const yaCalculadas = await fetchAll<{ login: number; computed_at: string; positions: number }>((d, h) =>
     admin
       .from('mt5_account_review')
-      .select('login, computed_at')
+      .select('login, computed_at, positions')
       .eq('company_id', companyId)
       .range(d, h),
   );
   const calculadoEn = new Map<number, string>();
-  for (const r of yaCalculadas) calculadoEn.set(Number(r.login), r.computed_at);
+  // Tamaño conocido de cada cuenta: es lo que permite presupuestar los lotes
+  // por volumen en vez de por cantidad. Ver PRESUPUESTO_POSICIONES.
+  const posicionesDe = new Map<number, number>();
+  for (const r of yaCalculadas) {
+    calculadoEn.set(Number(r.login), r.computed_at);
+    posicionesDe.set(Number(r.login), Number(r.positions) || 0);
+  }
 
   // ── LOS PENDIENTES VAN PRIMERO, SIEMPRE ─────────────────────────────────
   // Un retiro en Solicitados NO se queda ahí: alguien lo toca y pasa a otro
@@ -276,7 +300,28 @@ export async function syncAccountReviews(
   let failed = 0;
   const ahora = new Date().toISOString();
 
-  for (const lote of chunk(tanda, LOGIN_BATCH)) {
+  // Lotes por VOLUMEN, no por cantidad. Ver PRESUPUESTO_POSICIONES: con lotes
+  // de tamaño fijo, uno que agarre varias cuentas enormes intenta traer un
+  // millón de filas y la función se queda sin tiempo.
+  const TAMANO_DESCONOCIDO = 500;
+  const lotes: number[][] = [];
+  let actual: number[] = [];
+  let acumulado = 0;
+  for (const login of tanda) {
+    const tam = posicionesDe.get(login) ?? TAMANO_DESCONOCIDO;
+    // Una cuenta sola que supere el presupuesto va igual: sin esto quedaría
+    // afuera para siempre y su diagnóstico no se calcularía nunca.
+    if (actual.length > 0 && (acumulado + tam > PRESUPUESTO_POSICIONES || actual.length >= LOGIN_BATCH)) {
+      lotes.push(actual);
+      actual = [];
+      acumulado = 0;
+    }
+    actual.push(login);
+    acumulado += tam;
+  }
+  if (actual.length > 0) lotes.push(actual);
+
+  for (const lote of lotes) {
     let porCuenta: Map<number, Trade[]>;
     try {
       porCuenta = await loadTradesByLogin(companyId, lote);
