@@ -37,7 +37,7 @@ import {
   type AccountReview,
 } from '@/lib/risk/account-review';
 import type { Trade } from '@/lib/risk/types';
-import { esGrupoDemo } from '@/lib/mt5-groups';
+import { esCuentaDemoCrm } from '@/lib/mt5-groups';
 
 /** Techo de logins por consulta a MT5. Ver también PRESUPUESTO_POSICIONES. */
 export const LOGIN_BATCH = 40;
@@ -104,6 +104,11 @@ interface CuentaCandidata {
   email: string | null;
   account_type: string | null;
   group_name: string | null;
+  /**
+   * Demo o real. El CRM lo distingue por ACÁ, no por `group_name` — ese guarda
+   * un nombre corto (`SYNTHETICS`) que es igual en las dos. Ver `mt5-groups.ts`.
+   */
+  is_live: boolean | null;
 }
 
 function chunk<T>(arr: T[], size: number): T[][] {
@@ -202,7 +207,7 @@ export async function syncAccountReviews(
     const filas = await fetchAll<CuentaCandidata>((d, h) =>
       admin
         .from('crm_trading_accounts')
-        .select('login, user_external_id, email, account_type, group_name')
+        .select('login, user_external_id, email, account_type, group_name, is_live')
         .eq('company_id', companyId)
         .in('user_external_id', lote)
         .in('account_type', TIPOS as unknown as string[])
@@ -215,6 +220,12 @@ export async function syncAccountReviews(
   // ensucia la pantalla de retiros con señales sobre saldos que no existen.
   // Medido en Vex Pro: 2.290 cuentas demo, 1.496 sólo en `demo\Broker\Synthetics`.
   //
+  // Se filtra por `is_live`, NO por `group_name`. El del CRM es un nombre corto
+  // —`SYNTHETICS`— que es idéntico en la demo y en la real: filtrarlo con la
+  // regla de MT5 (`empieza con demo`) devuelve `false` para todas y deja pasar
+  // las demo enteras. Ese fue el primer intento, el 2026-08-29, y no dio ningún
+  // error: simplemente no filtró nada.
+  //
   // Se cuenta cuántas se dejaron afuera y se avisa. Un recorte silencioso es
   // indistinguible de «no había más cuentas».
   const porLogin = new Map<number, CuentaCandidata>();
@@ -222,7 +233,7 @@ export async function syncAccountReviews(
   for (const c of cuentas) {
     const n = Number(c.login);
     if (!Number.isFinite(n) || n <= 0) continue;
-    if (esGrupoDemo(c.group_name)) { demoOmitidas += 1; continue; }
+    if (esCuentaDemoCrm(c)) { demoOmitidas += 1; continue; }
     porLogin.set(n, c);
   }
   if (demoOmitidas > 0) {

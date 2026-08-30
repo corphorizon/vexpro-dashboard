@@ -34,3 +34,32 @@ export function esGrupoDemo(grupo: string | null | undefined): boolean {
 
 /** El fragmento SQL equivalente, para las consultas que filtran en el motor. */
 export const SQL_NO_DEMO = "`Group` NOT LIKE 'demo%'";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LA MISMA PREGUNTA, DEL LADO DEL CRM — Y NO SE RESPONDE IGUAL
+//
+// `esGrupoDemo` sirve para el `Group` de MT5 (`demo\Broker\Synthetics`). Las
+// tablas del CRM guardan otra cosa: `crm_trading_accounts.group_name` es un
+// nombre corto —`SYNTHETICS`, `CENT`, `STP_Bonus1`— que NO distingue demo de
+// real. La cuenta 149426 es `demo\Broker\Synthetics` en MT5 y `SYNTHETICS` a
+// secas en el CRM.
+//
+// Filtrar el `group_name` del CRM con la regla de MT5 no da error: devuelve
+// `false` para TODAS y deja pasar las demo enteras. Es exactamente el fallo que
+// este repo persigue —un resultado plausible y equivocado— y ya se cometió una
+// vez, el 2026-08-29.
+//
+// Lo que el CRM sí trae es `is_live`. Contrastado contra el `Group` de MT5 el
+// 2026-08-30: 370 cuentas, CERO desacuerdos (36 con `is_live=false` eran demo,
+// 334 con `is_live=true` eran reales).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Si una cuenta del CRM es demo.
+ *
+ * `is_live` en `null` devuelve `false`, igual que un grupo desconocido: "no
+ * sabemos" no es "es demo", y excluir por las dudas escondería cuentas reales.
+ */
+export function esCuentaDemoCrm(cuenta: { is_live?: boolean | null }): boolean {
+  return cuenta.is_live === false;
+}
