@@ -37,6 +37,7 @@ import {
   type AccountReview,
 } from '@/lib/risk/account-review';
 import type { Trade } from '@/lib/risk/types';
+import { esGrupoDemo } from '@/lib/mt5-groups';
 
 /** Techo de logins por consulta a MT5. Ver también PRESUPUESTO_POSICIONES. */
 export const LOGIN_BATCH = 40;
@@ -209,10 +210,23 @@ export async function syncAccountReviews(
     );
     cuentas.push(...filas);
   }
+  // ── Las demo no se revisan ──────────────────────────────────────────────
+  // No son dinero real: diagnosticarlas gasta presupuesto de consultas a MT5 y
+  // ensucia la pantalla de retiros con señales sobre saldos que no existen.
+  // Medido en Vex Pro: 2.290 cuentas demo, 1.496 sólo en `demo\Broker\Synthetics`.
+  //
+  // Se cuenta cuántas se dejaron afuera y se avisa. Un recorte silencioso es
+  // indistinguible de «no había más cuentas».
   const porLogin = new Map<number, CuentaCandidata>();
+  let demoOmitidas = 0;
   for (const c of cuentas) {
     const n = Number(c.login);
-    if (Number.isFinite(n) && n > 0) porLogin.set(n, c);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    if (esGrupoDemo(c.group_name)) { demoOmitidas += 1; continue; }
+    porLogin.set(n, c);
+  }
+  if (demoOmitidas > 0) {
+    warnings.push(`${demoOmitidas} cuenta(s) demo omitidas: no son dinero real.`);
   }
   if (porLogin.size === 0) {
     return { candidates: 0, reviewed: 0, skipped: 0, failed: 0, elapsedMs: Date.now() - started, warnings };
