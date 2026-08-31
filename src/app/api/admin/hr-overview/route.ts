@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
-import { monthToFirstDay, type NetDepositGoal, type RollupProfile } from '@/lib/hr/net-deposit';
+import { monthToFirstDay, type NetDepositGoal } from '@/lib/hr/net-deposit';
+import { leerNetDelCrm, leerPerfilesComerciales } from '@/lib/hr/crm-net-server';
 import {
   armarOverview,
   HR_OVERVIEW_CRITICAL,
@@ -115,43 +116,22 @@ export async function GET(request: NextRequest) {
     const period = (periodRow ?? null) as HrPeriodRow | null;
 
     const [profiles, netRows, monthlyResults, goalRows, allWarnings] = await Promise.all([
-      // Se traen TODOS los perfiles, incluidos los despedidos: un BDM que se fue
-      // el 20 igual produjo hasta ese día y su plata tiene que aparecer bajo su
-      // head, o el total del equipo no cierra contra el CRM.
-      leerTodo<RollupProfile>(
-        (from, to) =>
-          admin
-            .from('commercial_profiles')
-            .select('id, name, role, head_id, salary, hire_date, status, termination_date')
-            .eq('company_id', companyId)
-            .order('id', { ascending: true })
-            .range(from, to),
-        'profiles',
-      ),
-      // El trabajo pesado (subir la cadena de sponsors de 21.182 clientes) lo
-      // hace Postgres en `hr_net_deposit_by_profile` (migración 097 + índices y
-      // timeout propio en la 115). Acá sólo se separa lo atribuido de lo huérfano.
-      admin
-        .rpc('hr_net_deposit_by_profile', { p_company_id: companyId, p_month: month })
-        .then(
-          ({ data, error }) => {
-            if (error) {
-              console.error('[hr-overview] slice "net" falló:', error);
-              return null;
-            }
-            return (data ?? []) as { profile_id: string | null; net: number | string }[];
-          },
-          (err) => {
-            console.error('[hr-overview] slice "net" lanzó:', err);
-            return null;
-          },
-        ),
+      // Las dos primeras salen del registro único src/lib/hr/crm-net-server.ts:
+      // el paginado de perfiles y la RPC del rollup estaban copiados acá, en
+      // /api/admin/hr-net-deposit-rollup y —desde la tanda 2— los pedía también
+      // /api/admin/commission-net-input. Tres copias de la misma llamada es cómo
+      // se termina con dos pantallas mostrando dos netos distintos.
+      leerPerfilesComerciales(admin, companyId),
+      leerNetDelCrm(admin, companyId, month),
       period
         ? leerTodo<HrMonthlyResultRow>(
             (from, to) =>
               admin
                 .from('commercial_monthly_results')
-                .select('profile_id, net_deposit_current')
+                // `head_id` viaja desde la tanda 2: sin él no se puede saber si
+                // una fila es el total de la estructura o la línea propia del
+                // head en su propio grupo (ver `manualDeEstructura`).
+                .select('profile_id, net_deposit_current, head_id')
                 .eq('company_id', companyId)
                 .eq('period_id', period.id)
                 .order('id', { ascending: true })

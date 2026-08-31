@@ -64,6 +64,13 @@ export type HrWarningRow = {
 export type HrMonthlyResultRow = {
   profile_id: string;
   net_deposit_current: number | string | null;
+  /**
+   * Bajo qué head está cargada esa fila. Hace falta para distinguir la fila del
+   * head EN SU PROPIO GRUPO (head_id === profile_id, donde el
+   * `net_deposit_current` no es la producción de su estructura) de la fila que
+   * lleva su total hacia arriba. Ver `manualDeEstructura`.
+   */
+  head_id?: string | null;
 };
 
 export type HrPeriodRow = { id: string; year: number; month: number; is_closed?: boolean };
@@ -126,6 +133,30 @@ export function sumarManualPorPerfil(rows: readonly HrMonthlyResultRow[]): Map<s
   const out = new Map<string, number>();
   for (const r of rows) {
     if (!r.profile_id) continue;
+    out.set(r.profile_id, (out.get(r.profile_id) ?? 0) + (Number(r.net_deposit_current) || 0));
+  }
+  return out;
+}
+
+/**
+ * Lo cargado a mano COMO TOTAL DE ESTRUCTURA, que es lo que compite contra el
+ * `total` del rollup.
+ *
+ * Se diferencia de `sumarManualPorPerfil` a propósito, y la diferencia es una
+ * sola fila: la del head en SU PROPIO grupo (`head_id === profile_id`). En esa
+ * fila el `net_deposit_current` no es la producción de la estructura —es 0 en
+ * los heads con padre, y la línea de ajuste personal en los heads sin padre
+ * (Hugo Ortiz, julio 2026: −3.489, contra los 535.154 que produjo su estructura
+ * entera). Sumarla como si fuera producción hacía que un head raíz apareciera
+ * "con override manual de −3.489" tapando medio millón del CRM.
+ *
+ * Los BDM no se ven afectados: su fila va bajo su head, nunca bajo sí mismos.
+ */
+export function manualDeEstructura(rows: readonly HrMonthlyResultRow[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    if (!r.profile_id) continue;
+    if (r.head_id && r.head_id === r.profile_id) continue;
     out.set(r.profile_id, (out.get(r.profile_id) ?? 0) + (Number(r.net_deposit_current) || 0));
   }
   return out;

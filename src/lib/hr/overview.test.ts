@@ -5,6 +5,7 @@ import {
   contarWarningsPorPerfil,
   separarNetDelCrm,
   sumarManualPorPerfil,
+  manualDeEstructura,
   warningsDelMes,
   type HrOverviewInput,
   type HrWarningRow,
@@ -143,5 +144,38 @@ describe('armarOverview', () => {
       allWarnings: null,
     });
     expect([...todoRoto.partial].sort()).toEqual([...HR_OVERVIEW_SLICES].sort());
+  });
+});
+
+describe('manualDeEstructura', () => {
+  it('ignora la fila del head en su PROPIO grupo (ahí el ND no es la estructura)', () => {
+    // Julio 2026: Hugo Ortiz, head raíz. Su única fila lleva head_id = su id y
+    // net_deposit_current = −3.489, que es su línea personal, no los 535.154 que
+    // produjo su estructura. Contarla como manual tapaba medio millón del CRM.
+    const m = manualDeEstructura([
+      { profile_id: 'hugo', head_id: 'hugo', net_deposit_current: -3489 },
+    ]);
+    expect(m.has('hugo')).toBe(false);
+  });
+
+  it('un head con padre suma sólo la fila del grupo del padre', () => {
+    const m = manualDeEstructura([
+      { profile_id: 'luka', head_id: 'luka', net_deposit_current: 0 },
+      { profile_id: 'luka', head_id: 'hugo', net_deposit_current: 485340 },
+    ]);
+    expect(m.get('luka')).toBe(485340);
+  });
+
+  it('un BDM no se ve afectado: su fila va bajo su head', () => {
+    const m = manualDeEstructura([
+      { profile_id: 'eric', head_id: 'giancarlo', net_deposit_current: 112056 },
+    ]);
+    expect(m.get('eric')).toBe(112056);
+  });
+
+  it('sin head_id se comporta como sumarManualPorPerfil (datos viejos)', () => {
+    const rows = [{ profile_id: 'x', net_deposit_current: 100 }, { profile_id: 'x', net_deposit_current: 50 }];
+    expect(manualDeEstructura(rows).get('x')).toBe(150);
+    expect(sumarManualPorPerfil(rows).get('x')).toBe(150);
   });
 });
