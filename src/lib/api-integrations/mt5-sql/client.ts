@@ -170,9 +170,48 @@ async function withMysql<T>(
       (Array.isArray(versionRows) ? (versionRows[0] as { v?: unknown })?.v : '') ?? '',
     );
 
+    // ── EL TIMEOUT QUE ESTA CABECERA PROMETÍA Y NO CUMPLÍA ────────────────
+    //
+    // Arriba dice «15 s por consulta», pero eso sólo se pedía con el
+    // `SET SESSION max_execution_time` de más arriba — que va con `.catch(() =>
+    // {})` porque MariaDB no lo tiene, y que además sólo limita la EJECUCIÓN en
+    // el motor, no la espera de la respuesta por la red.
+    //
+    // `mysql2` no tiene un equivalente a `query_timeout` de `pg`: si los
+    // paquetes dejan de llegar, `conn.query()` no resuelve NUNCA. Y como acá la
+    // conexión sale por un túnel SOCKS —Londres → el proxy en Virginia → el
+    // MySQL del broker en Europa—, hay bastante camino donde quedarse esperando.
+    //
+    // Sin este corte, una consulta trabada se come el presupuesto entero de la
+    // función y Vercel la mata con «Task timed out after 120 seconds». Se vio en
+    // producción el 2026-08-28 en `/api/superadmin/liquidity/accounts` y en el
+    // cron `account-review`: 504 exactamente en el límite, que es la firma de un
+    // cuelgue y no de un trabajo lento.
+    //
+    // Con el corte, lo mismo falla en 15 s con un mensaje que dice qué pasó.
     const query: Mt5Query = async <R = Record<string, unknown>>(sql: string, params?: unknown[]) => {
-      const [rows] = await conn!.query(sql, params ?? []);
-      return (Array.isArray(rows) ? rows : []) as R[];
+      let temporizador: NodeJS.Timeout | undefined;
+      try {
+        const rows = await Promise.race([
+          conn!.query(sql, params ?? []).then(([r]) => r),
+          new Promise<never>((_, rechazar) => {
+            temporizador = setTimeout(() => {
+              // La conexión se destruye: quedó en un estado del que no se
+              // vuelve, y reutilizarla colgaría la consulta siguiente.
+              conn?.destroy();
+              rechazar(new Error(
+                `La consulta a MT5 superó los ${MT5_QUERY_TIMEOUT_MS / 1000} s sin respuesta. ` +
+                `Puede ser el enlace con el broker o una consulta demasiado pesada.`,
+              ));
+            }, MT5_QUERY_TIMEOUT_MS);
+          }),
+        ]);
+        return (Array.isArray(rows) ? rows : []) as R[];
+      } finally {
+        // Se limpia siempre: un temporizador vivo mantiene despierto el proceso
+        // aunque la consulta ya haya respondido.
+        if (temporizador) clearTimeout(temporizador);
+      }
     };
 
     return await fn({ engine: 'mysql', serverVersion, database: creds.database, query });

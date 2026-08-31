@@ -338,6 +338,41 @@ tiene ND guardado y quedaría en 0 → confirmación estándar si ya había dato
 
 ---
 
+### 3.2 El Pool de Liquidez (`liquidity_pool`)
+
+Módulo nuevo (agosto 2026). Vive en la organización **Exura Liquidez** y desde
+ahí se administran las demás: la empresa cuyas cuentas se miran se elige con un
+selector, y hoy sólo Vex Pro tiene credenciales de MT5. **No confundirlo con
+`liquidity`**, que es la conciliación que usa Vex Pro y es otra cosa.
+
+| # | Regla | Por qué |
+|---|---|---|
+| L1 | El **«Equity a Liquidez»** no lo recalcula el refresh, nunca | Lo fija el análisis de duplicados al dar de alta. Recalcularlo restaría la misma transferencia en cada corrida y **el pool encogería solo hasta cero** |
+| L2 | La fecha de conexión es el **arranque del día en UTC** | Anclarla a mediodía se comía media jornada: la 136773 daba -2.662,49 contra los -3.437,67 del MT5 Manager |
+| L3 | En el PnL, `Entry IN (1,3)` va **sólo en el conteo**, no en los importes | La comisión se cobra en la apertura Y en el cierre. Filtrando por salida se perdía la mitad: -136,30 de 272,90 en la 137983 |
+| L4 | Todo `NOT EXISTS` sobre `mt5_deals` **ata el `Login`** | `PositionID` NO es único entre cuentas: las operaciones de balance llevan `PositionID = 0` y ese cero lo comparten miles de logins. Además es lo que hace que use el índice: 1.090.454 filas → 244 |
+| L5 | Contar posiciones abiertas exige **`Action IN (0,1)`** | Un depósito es `Action=2`, `Entry=0`, `PositionID=0`: tiene la forma exacta de «una entrada que nunca cerró» |
+| L6 | El alta **crea la cuenta primero** y calcula el histórico después | Juntos, un cuelgue perdía las dos cosas. Separados, el peor caso es una cuenta sin histórico — visible y arreglable con Refrescar |
+| L7 | El equity de una conexión **de hoy** no se reconstruye | Es el equity actual, que además es *mejor*: ya trae el flotante que un cálculo retroactivo no puede saber |
+
+**La trampa que más costó:** el `PositionID = 0`. Dos consultas distintas daban
+resultados distintos y las **dos** estaban mal — una encontraba el cierre de
+otra cuenta, la otra contaba un depósito como posición abierta. El control que
+lo destrabó fue mirar un instante donde se sabía la respuesta: el ticket
+3342152, abierto 14:26:02 y cerrado 14:28:09.
+
+**Timeouts:** `mysql2` no tiene el `query_timeout` de `pg`. Sin un corte del
+lado del cliente, una consulta trabada no resuelve nunca y Vercel mata la
+función — se vio como `504` **exactamente** en 120 s y en 300 s. El corte está
+en `mt5-sql/client.ts`; un 504 justo en el límite es firma de cuelgue, no de
+trabajo lento.
+
+**El proxy falla intermitentemente bajo concurrencia** (medido: 3 conexiones en
+paralelo, 1 falló con `Proxy connection timed out`). Empeora con el tráfico, y
+los cron se pisan en `:15` y `:45`.
+
+---
+
 ## 8. Referencias rápidas
 
 | Necesito… | Está en |
@@ -350,5 +385,7 @@ tiene ND guardado y quedaría en 0 → confirmación estándar si ya había dato
 | Credenciales cifradas | `src/lib/api-integrations/credentials.ts` · `src/lib/crypto.ts` |
 | El score de retiros | `src/lib/withdrawal-risk/score.ts` (y `features.ts` para las señales) |
 | Reglas de prop firm por programa | `src/lib/risk/programs.ts` |
+| El Pool de Liquidez | `src/components/liquidity/` (pantalla) · `src/lib/liquidity/` (cálculo) · §3.2 |
+| Dónde está prendido el Pool | `supabase/donde-vive-liquidity-pool.sql` |
 | El contrato con Atlas | `src/app/api/partner/v1/*/route.ts` (cabeceras) |
 | Qué avisa el sistema | `src/lib/notifications/catalog.ts` |

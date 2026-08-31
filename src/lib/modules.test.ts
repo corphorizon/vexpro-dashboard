@@ -124,3 +124,41 @@ describe('la carga de datos es solo para quien puede escribir', () => {
     expect(canAccessModule('summary', ctx('socio'))).toBe(true);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// `onlyWhereActivated` — el módulo que vive en UNA empresa.
+//
+// El bug que fija: `liquidity_pool` está activo sólo en Exura, pero el sidebar
+// lo dibujaba también dentro de Vex Pro. Causa: el bypass de superadmin
+// (paso 2) devolvía `true` antes de mirar `active_modules`, así que quien
+// administra la plataforma veía el módulo en todas las empresas.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('canAccessModule · onlyWhereActivated', () => {
+  const superadmin = (activeModules: string[] | null) => ({
+    role: 'superadmin',
+    isSuperadmin: true,
+    allowedModules: null,
+    activeModules,
+    businessModel: 'broker',
+  });
+
+  it('se lo oculta al superadmin en una empresa que no lo tiene activo', () => {
+    expect(canAccessModule('liquidity_pool', superadmin(['summary', 'liquidity']))).toBe(false);
+  });
+
+  it('se lo muestra al superadmin donde sí está activo', () => {
+    expect(canAccessModule('liquidity_pool', superadmin(['summary', 'liquidity_pool']))).toBe(true);
+  });
+
+  it('no lo oculta mientras la empresa todavía no cargó', () => {
+    // `null` es "no sabemos", no "no lo tiene": ocultarlo acá haría que el
+    // módulo parpadee al entrar.
+    expect(canAccessModule('liquidity_pool', superadmin(null))).toBe(true);
+  });
+
+  it('deja intacto el bypass para los módulos sin la marca', () => {
+    // Ésta es la garantía de que el arreglo no cambió el resto: un módulo
+    // común lo sigue viendo el superadmin aunque la empresa no lo tenga.
+    expect(canAccessModule('investments', superadmin(['summary']))).toBe(true);
+  });
+});

@@ -27,6 +27,25 @@ export interface Trade {
   swap: number;
   profit: number;
   durationMinutes: number;
+
+  // ── Contexto de ejecución (opcional; sólo lo llena el cargador de MT5) ────
+  // Existe para el análisis de toxicidad hacia el bróker. Es opcional a
+  // propósito: el cargador manual (planillas de prop firm) no tiene estos
+  // datos, y las reglas viejas no deben cambiar de comportamiento por eso.
+  //
+  // `undefined` significa «este origen no lo trae», que no es «no pasó».
+
+  /** `Reason` de MT5 en el cierre: 4=SL, 5=TP, 6=stop-out, 16=close-by. */
+  closeReason?: number;
+  /** `Reason` en la apertura: 0=cliente, 1=móvil, 2=web, 3=experto. */
+  openReason?: number;
+  /** Comentario del deal. Lleva el nombre del EA; `ExpertID` viene en 0. */
+  comment?: string | null;
+  /** Bid y ask del mercado en el instante de abrir y de cerrar. */
+  openBid?: number;
+  openAsk?: number;
+  closeBid?: number;
+  closeAsk?: number;
 }
 
 export interface RuleViolation {
