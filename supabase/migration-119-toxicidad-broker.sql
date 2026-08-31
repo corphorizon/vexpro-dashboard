@@ -1,5 +1,9 @@
+-- APLICADA EL 2026-08-31. El número NO indica el orden real: nació con otro
+-- (105/106/107/108) y se renumeró al chocar con las del equipo, que iban por la
+-- 115. Ver la nota de numeración en docs/reglas-del-proyecto.md §0.
+
 -- ─────────────────────────────────────────────────────────────────────────────
--- migration-107 — Toxicidad hacia el bróker en el diagnóstico de cuentas.
+-- migration-119 — Toxicidad hacia el bróker en el diagnóstico de cuentas.
 --
 -- ── POR QUÉ COLUMNAS NUEVAS Y NO SE MEZCLA CON `risk` ──────────────────────
 -- `risk` / `checks` / `violations` responden «cómo opera este cliente»:
