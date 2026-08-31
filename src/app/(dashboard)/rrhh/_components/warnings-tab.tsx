@@ -6,8 +6,10 @@ import type { CommercialProfile } from '@/lib/types';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
-import { ROLE_LABELS_HR } from '@/lib/hr-data';
+import { hrRoleLabel } from '@/lib/hr/domain';
 import { WARNING_MOTIVES, type WarningMotive } from '@/lib/hr/net-deposit';
+import type { HrWarningsSlice } from '@/lib/hr/overview';
+import { useHrPeriod } from './hr-period-context';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña Warnings — los llamados de atención del mes.
@@ -28,29 +30,16 @@ import { WARNING_MOTIVES, type WarningMotive } from '@/lib/hr/net-deposit';
 // servidor contra hire_date; no hay forma de apagarla desde acá.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type Warning = {
-  id: string;
-  profile_id: string;
-  month: string;
-  motive: string;
-  detail: string | null;
-  created_by_name: string | null;
-  created_at: string;
-};
-
-type Suggestion = {
-  profileId: string;
-  name: string;
-  role: string;
-  salary: number;
-  goal: number;
-  net: number;
-  shortfall: number;
-};
+// Las formas de los warnings, las sugerencias y las métricas ya no se declaran
+// acá: son las del contrato del overview (src/lib/hr/overview.ts). Tenerlas
+// escritas dos veces era el modo de falla número uno del repo en versión tipos.
 
 type Goal = { id?: string; salary: number | string; min_net_deposit: number | string };
 
-type Metric = { profileId: string; net: number; goal: number | null };
+/** Literales vacíos estables: un `[]` nuevo por render invalida los memos. */
+const EMPTY_WARNINGS: HrWarningsSlice['ofMonth'] = [];
+const EMPTY_SUGGESTIONS: HrWarningsSlice['suggestions'] = [];
+const EMPTY_TOTALS: HrWarningsSlice['totals'] = {};
 
 const MOTIVE_LABEL_KEY: Record<WarningMotive, string> = {
   net_deposit: 'hr.warningMotiveNetDeposit',
@@ -58,24 +47,25 @@ const MOTIVE_LABEL_KEY: Record<WarningMotive, string> = {
   team_creation: 'hr.warningMotiveTeamCreation',
 };
 
-/** El mes anterior al actual: es el que se revisa, el corriente todavía corre. */
-function defaultMonth(): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
+// El mes ya no se elige acá: viene del selector único del módulo
+// (rrhh/_components/hr-period-context.tsx), igual que para el resto de las
+// pestañas. El default sigue siendo el mes ANTERIOR — el corriente todavía
+// corre — sólo que ahora lo decide el módulo entero, no esta pantalla.
 
 export function WarningsTab({ profiles }: { profiles: CommercialProfile[] }) {
   const { t } = useI18n();
-  const [month, setMonth] = useState(defaultMonth);
-  const [warnings, setWarnings] = useState<Warning[]>([]);
-  const [totals, setTotals] = useState<Record<string, number>>({});
-  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
-  const [metrics, setMetrics] = useState<Metric[]>([]);
+  // Todo lo del mes sale del overview del módulo — una sola llamada compartida
+  // con las demás pestañas. Antes esta pantalla pedía /api/admin/hr-warnings
+  // (que repite la RPC del rollup) cada vez que se entraba.
+  const { month, overview, loading, error, refetch } = useHrPeriod();
+  const warningsSlice = overview?.data.warnings ?? null;
+  const warnings = warningsSlice?.ofMonth ?? EMPTY_WARNINGS;
+  const totals = warningsSlice?.totals ?? EMPTY_TOTALS;
+  const suggestions = warningsSlice?.suggestions ?? EMPTY_SUGGESTIONS;
+  // Las metas SÍ son estado local: el editor las modifica antes de guardar. Se
+  // re-siembran cada vez que llega un overview nuevo.
   const [goals, setGoals] = useState<Goal[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  const loadError = error || (!!overview && overview.partial.includes('warnings'));
   const [busyId, setBusyId] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -87,32 +77,22 @@ export function WarningsTab({ profiles }: { profiles: CommercialProfile[] }) {
     return m;
   }, [profiles]);
 
+  // Las métricas se indexan una vez por overview. Los literales vacíos van en
+  // constantes de módulo (arriba) para no crear un array nuevo en cada render y
+  // recalcular esto sin motivo.
   const metricById = useMemo(() => {
-    const m = new Map<string, Metric>();
-    for (const x of metrics) m.set(x.profileId, x);
+    const m = new Map<string, HrWarningsSlice['metrics'][number]>();
+    for (const x of warningsSlice?.metrics ?? []) m.set(x.profileId, x);
     return m;
-  }, [metrics]);
+  }, [warningsSlice]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError(false);
-    try {
-      const res = await apiFetch(`/api/admin/hr-warnings?month=${month}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'load failed');
-      setWarnings(json.warnings ?? []);
-      setTotals(json.totals ?? {});
-      setSuggestions(json.suggestions ?? []);
-      setMetrics(json.metrics ?? []);
-      setGoals(json.goals ?? []);
-    } catch {
-      setLoadError(true);
-    } finally {
-      setLoading(false);
-    }
-  }, [month]);
+  // `goalRows` viaja aparte en la respuesta porque el editor necesita el `id`
+  // de cada escalón; el overview normaliza los números para el cálculo.
+  const goalRows = overview?.goalRows;
+  useEffect(() => { setGoals(goalRows ?? []); }, [goalRows]);
 
-  useEffect(() => { load(); }, [load]);
+  /** Recargar = invalidar el overview del mes. No hay una segunda carga acá. */
+  const load = useCallback(async () => { refetch(); }, [refetch]);
 
   const flash = (type: 'success' | 'error', msg: string) => {
     setToast({ type, msg });
@@ -191,16 +171,8 @@ export function WarningsTab({ profiles }: { profiles: CommercialProfile[] }) {
 
       {/* ── Cabecera: mes + acciones ────────────────────────────────────── */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-muted-foreground" htmlFor="warning-month">{t('hr.warningMonth')}</label>
-          <input
-            id="warning-month"
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="px-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm"
-          />
-        </div>
+        {/* El mes lo pone el selector del módulo, arriba de las pestañas. */}
+        <div />
         <div className="flex items-center gap-2">
           <button
             onClick={() => setShowGoals((v) => !v)}
@@ -311,7 +283,7 @@ export function WarningsTab({ profiles }: { profiles: CommercialProfile[] }) {
                 {suggestions.map((s) => (
                   <tr key={s.profileId} className="border-b border-border/50">
                     <td className="py-2 px-3 font-medium">{s.name}</td>
-                    <td className="py-2 px-3 hidden sm:table-cell text-muted-foreground">{ROLE_LABELS_HR[s.role]}</td>
+                    <td className="py-2 px-3 hidden sm:table-cell text-muted-foreground">{hrRoleLabel(s.role)}</td>
                     <td className="py-2 px-3 text-right">{formatCurrency(s.net)}</td>
                     <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(s.goal)}</td>
                     <td className="py-2 px-3 text-right text-negative">{formatCurrency(s.shortfall)}</td>
@@ -437,7 +409,7 @@ function NewWarningForm({ profiles, onCancel, onSave }: {
         >
           <option value="">{t('hr.warningProfile')}</option>
           {sorted.map((p) => (
-            <option key={p.id} value={p.id}>{p.name} — {ROLE_LABELS_HR[p.role]}</option>
+            <option key={p.id} value={p.id}>{p.name} — {hrRoleLabel(p.role)}</option>
           ))}
         </select>
         <select

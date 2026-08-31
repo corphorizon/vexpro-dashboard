@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { Card, CardTitle, CardValue } from '@/components/ui/card';
-import { ROLE_LABELS_HR } from '@/lib/hr-data';
+import { HR_COMMERCIAL_ROLES, hrRoleLabel, possibleHeads } from '@/lib/hr/domain';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
@@ -90,7 +90,9 @@ export default function PerfilPage() {
 
   useEffect(() => { fetchNegotiations(); }, [fetchNegotiations]);
 
-  const possibleHeads = commercialProfiles.filter(p => p.role === 'sales_manager' || p.role === 'head');
+  // Registro único (src/lib/hr/domain.ts): quién puede ser supervisor no se
+  // decide con un literal escrito acá — era una de las cuatro copias.
+  const heads = possibleHeads(commercialProfiles, { excludeId: profileId ?? undefined });
 
   // Early returns AFTER all hooks
   if (!profileId) {
@@ -233,7 +235,7 @@ export default function PerfilPage() {
               <h1 className="text-2xl font-bold">{profileData.name}</h1>
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <span className="px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/50 text-violet-700 text-xs font-medium">
-                  {ROLE_LABELS_HR[profileData.role]}
+                  {hrRoleLabel(profileData.role)}
                 </span>
                 <Mail className="w-3 h-3" />
                 <span>{profileData.email}</span>
@@ -336,9 +338,10 @@ export default function PerfilPage() {
             <div className="flex flex-col gap-1">
               <label className="text-xs text-muted-foreground">{t('hr.role')}</label>
               <select aria-label={t('hr.role')} value={editRole} onChange={e => setEditRole(e.target.value as CommercialProfile['role'])} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-                <option value="sales_manager">Sales Manager</option>
-                <option value="head">HEAD</option>
-                <option value="bdm">BDM</option>
+                {/* Las opciones salen del registro de roles comerciales. */}
+                {HR_COMMERCIAL_ROLES.map((r) => (
+                  <option key={r} value={r}>{hrRoleLabel(r)}</option>
+                ))}
               </select>
             </div>
             {editRole === 'bdm' && (
@@ -346,8 +349,8 @@ export default function PerfilPage() {
                 <label className="text-xs text-muted-foreground">{t('hr.supervisor')}</label>
                 <select aria-label={t('hr.supervisor')} value={editHeadId} onChange={e => setEditHeadId(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
                   <option value="">{t('hr.noSupervisor')}</option>
-                  {possibleHeads.map(h => (
-                    <option key={h.id} value={h.id}>{h.name} ({ROLE_LABELS_HR[h.role]})</option>
+                  {heads.map(h => (
+                    <option key={h.id} value={h.id}>{h.name} ({hrRoleLabel(h.role)})</option>
                   ))}
                 </select>
               </div>
@@ -404,12 +407,12 @@ export default function PerfilPage() {
             </div>
             <div>
               <span className="text-muted-foreground">{t('hr.role')}:</span>{' '}
-              <span className="font-medium">{ROLE_LABELS_HR[profileData.role]}</span>
+              <span className="font-medium">{hrRoleLabel(profileData.role)}</span>
             </div>
             {profileData.role === 'bdm' && profileData.head_id && (
               <div>
                 <span className="text-muted-foreground">{t('hr.supervisor')}:</span>{' '}
-                <span className="font-medium">{possibleHeads.find(h => h.id === profileData.head_id)?.name || '-'}</span>
+                <span className="font-medium">{heads.find((h) => h.id === profileData.head_id)?.name || '-'}</span>
               </div>
             )}
             <div>

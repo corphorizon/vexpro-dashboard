@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Info } from 'lucide-react';
-import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
-import { ROLE_LABELS_HR } from '@/lib/hr-data';
+import { hrRoleLabel } from '@/lib/hr/domain';
 import type { RollupNode } from '@/lib/hr/net-deposit';
 import { IbProductionView } from './ib-production-tab';
+import { useHrPeriod } from './hr-period-context';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña Net Deposit — lo que Daniela arma hoy a mano, ya armado.
@@ -31,21 +31,9 @@ import { IbProductionView } from './ib-production-tab';
 // Aparecen aparte en vez de repartirse, porque repartirlos sería inventar.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type RollupResponse = {
-  month: string;
-  hasPeriod: boolean;
-  tree: RollupNode[];
-  unassigned: number;
-  totalAssigned: number;
-  totalCrm: number;
-};
-
-function defaultMonth(): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
+// El mes ya NO se elige acá: viene del selector único del módulo
+// (rrhh/_components/hr-period-context.tsx). El <input type="month"> que vivía en
+// esta pestaña era uno de los tres relojes del módulo.
 
 /** Verde/rojo por el signo — un net deposit negativo es plata que se fue. */
 function moneyClass(v: number): string {
@@ -66,24 +54,15 @@ type Vista = 'net_deposit' | 'production';
 
 export function NetDepositTab() {
   const { t } = useI18n();
-  const [month, setMonth] = useState(defaultMonth);
+  const { month } = useHrPeriod();
   const [vista, setVista] = useState<Vista>('net_deposit');
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-muted-foreground" htmlFor="nd-month">{t('hr.warningMonth')}</label>
-          <input
-            id="nd-month"
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="px-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm"
-          />
-        </div>
-        {/* El selector de mes es UNO SOLO y vive acá arriba: cambiar de vista no
-            puede hacerle perder a nadie el mes que estaba mirando. */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
+        {/* El mes lo pone el selector del módulo, arriba de las pestañas:
+            cambiar de vista (o de pestaña) no le hace perder a nadie el mes
+            que estaba mirando. */}
         <div className="inline-flex rounded-lg border border-border p-0.5" role="tablist">
           {([
             ['net_deposit', 'hr.prodViewNetDeposit'],
@@ -105,35 +84,24 @@ export function NetDepositTab() {
         </div>
       </div>
 
-      {vista === 'net_deposit' ? <NetDepositView month={month} /> : <IbProductionView month={month} />}
+      {vista === 'net_deposit' ? <NetDepositView /> : <IbProductionView month={month} />}
     </div>
   );
 }
 
-function NetDepositView({ month }: { month: string }) {
+function NetDepositView() {
   const { t } = useI18n();
-  const [data, setData] = useState<RollupResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  // Los datos salen del overview del módulo, que ya los pidió una vez para el
+  // mes del selector. Esta pestaña NO llama más a /api/admin/hr-net-deposit-
+  // rollup (que sigue vivo para otros consumidores): volver a pedirlos cada vez
+  // que alguien entraba acá repetía la RPC del rollup entera.
+  const { overview, loading, error } = useHrPeriod();
+  // `net` es null cuando el slice falló: se muestra el mismo error que antes,
+  // nunca un árbol vacío que se leería como "este mes no produjo nadie".
+  const data = overview?.data.net ?? null;
+  const hasPeriod = overview?.hasPeriod ?? false;
+  const loadError = error || (!!overview && overview.partial.includes('net'));
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError(false);
-    try {
-      const res = await apiFetch(`/api/admin/hr-net-deposit-rollup?month=${month}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'load failed');
-      setData(json as RollupResponse);
-    } catch {
-      setLoadError(true);
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [month]);
-
-  useEffect(() => { load(); }, [load]);
 
   const toggle = (id: string) => setCollapsed((prev) => {
     const next = new Set(prev);
@@ -181,7 +149,7 @@ function NetDepositView({ month }: { month: string }) {
             </div>
           </div>
 
-          {!data.hasPeriod && (
+          {!hasPeriod && (
             <p className="text-xs text-muted-foreground">{t('hr.ndNoPeriod')}</p>
           )}
 
@@ -246,7 +214,7 @@ function RollupRows({ node, depth, collapsed, toggle }: {
             {node.name}
           </div>
         </td>
-        <td className="py-2 px-3 text-muted-foreground hidden sm:table-cell">{ROLE_LABELS_HR[node.role]}</td>
+        <td className="py-2 px-3 text-muted-foreground hidden sm:table-cell">{hrRoleLabel(node.role)}</td>
         <td className={cn('py-2 px-3 text-right', moneyClass(node.team))}>
           {hasKids ? formatCurrency(node.team) : '-'}
         </td>

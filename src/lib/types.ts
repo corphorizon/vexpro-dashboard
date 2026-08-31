@@ -310,7 +310,13 @@ export interface PeriodSummary {
 }
 
 // HR Types
-export type CommercialRole = 'sales_manager' | 'head' | 'bdm' | 'bdm_global' | (string & {});
+/**
+ * Los roles conocidos salen del registro único (src/lib/hr/domain.ts) — acá
+ * había una quinta copia del literal. El `(string & {})` se queda: el CHECK de
+ * `commercial_profiles.role` se eliminó en la migración 011 y pueden aparecer
+ * roles libres, que el registro sabe mostrar capitalizados.
+ */
+export type CommercialRole = import('./hr/domain').HrCommercialRole | (string & {});
 
 export interface Employee {
   id: string;
