@@ -50,7 +50,7 @@ interface FilaPnl {
   month: number;
   pnl: number | string | null;
   operations_count: number | string | null;
-  /** NULL = calculado antes de la migracion 108. No es cero lotes. */
+  /** NULL = calculado antes de la migracion 116. No es cero lotes. */
   lots: number | string | null;
   is_partial: boolean | null;
 }

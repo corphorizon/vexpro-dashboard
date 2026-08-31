@@ -1,5 +1,5 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- migration-108 — Lotes operados por mes en el pool de liquidez.
+-- migration-116 — Lotes operados por mes en el pool de liquidez.
 --
 -- El resumen mensual mostraba PnL y operaciones. Faltaba el VOLUMEN: dos
 -- cuentas con el mismo resultado no son lo mismo si una movió 2 lotes y la otra
@@ -28,7 +28,7 @@ ALTER TABLE platform_liquidity_monthly_pnl
 COMMENT ON COLUMN platform_liquidity_monthly_pnl.lots IS
   'Lotes cerrados en el mes: SUM(VolumeClosed)/10000 sobre los deals de salida. '
   'VolumeClosed y no Volume porque el primero está en el índice cubriente '
-  '(regla G6). NULL = calculado antes de la migración 108, no es cero lotes.';
+  '(regla G6). NULL = calculado antes de la migración 116, no es cero lotes.';
 
 -- Verificación — tiene que devolver una fila.
 SELECT column_name, data_type, is_nullable

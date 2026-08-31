@@ -44,7 +44,7 @@ interface FilaMes {
   connection_date: string;
   pnl: number;
   operations_count: number;
-  /** `null` = calculado antes de la migracion 108, no es cero lotes. */
+  /** `null` = calculado antes de la migracion 116, no es cero lotes. */
   lots: number | null;
   is_partial: boolean;
 }
