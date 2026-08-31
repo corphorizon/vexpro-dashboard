@@ -56,6 +56,7 @@ import { cn, formatNumber } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dates';
 import { generateExposurePDF } from '@/lib/pdf-export';
 import type { RiskSnapshot, MarginRow, ExposureRow, PnlRow } from '@/lib/mt5-sync/risk-query';
+import type { CrmDailyPnlRow } from '@/lib/crm-sync/daily-pnl-query';
 
 interface PnlBlock {
   snapshotAt: string | null;
@@ -65,7 +66,39 @@ interface PnlBlock {
 }
 type Payload = RiskSnapshot & { pnl?: PnlBlock };
 
-type Seccion = 'pnl' | 'margen' | 'concentracion' | 'detalle' | 'historico';
+/**
+ * ── LA PESTAÑA "CIERRE DIARIO (CRM)" ────────────────────────────────────────
+ * Vive acá y no en una pantalla aparte a propósito: es EL MISMO número que el
+ * histórico de al lado, contado por otra fuente. Kevin (2026-08-31) pidió ver
+ * "cómo aparece en el CRM y cómo aparece en Smart Dashboard"; separarlos en
+ * dos pantallas es garantizar que nadie los compare.
+ *
+ * Diferencias que hay que tener presentes al mirarlas juntas:
+ *   · El CRM NO incluye prop firm (cero documentos en grupos `real\PropFirm\*`
+ *     durante todo agosto); nuestro MT5 sí.
+ *   · Nuestro MT5 excluye las cuentas que todavía no están espejadas en
+ *     `crm_trading_accounts`; el CRM las tiene desde el primer día. Medido el
+ *     2026-08-27: la cuenta 159324 hizo +54.106,96 y estaba en el CRM y no en
+ *     nuestra cifra (USD 9.259,66 nuestro vs 64.852,12 del CRM).
+ *   · Los días con el universo de cuentas estable coinciden: el 2026-08-29,
+ *     119.407,63 nuestro contra 120.094,60 del CRM (0,6%).
+ */
+type CrmSeries = {
+  range: { from: string; to: string };
+  rows: CrmDailyPnlRow[];
+  daysMissing: string[];
+  totals: {
+    clientsPnl: number | null;
+    brokerPnl: number | null;
+    volumeLots: number;
+    dealsCount: number;
+    daysWithData: number;
+    unmatchedAccounts: number;
+  };
+  last: CrmDailyPnlRow | null;
+};
+
+type Seccion = 'pnl' | 'crm' | 'margen' | 'concentracion' | 'detalle' | 'historico';
 
 /**
  * Un importe SIEMPRE con su unidad. Nunca se pinta un número de dinero solo:
@@ -106,6 +139,13 @@ export default function ExposicionPage() {
   const [seccion, setSeccion] = useState<Seccion>('pnl');
   const [pdfBusy, setPdfBusy] = useState(false);
 
+  // El cierre del CRM se pide aparte y sólo cuando se abre su pestaña: es otra
+  // tabla y otro rango, y cargarla siempre haría más lenta una pantalla de
+  // riesgo que se abre para mirar el margen.
+  const [crm, setCrm] = useState<CrmSeries | null>(null);
+  const [crmRange, setCrmRange] = useState<{ from: string; to: string } | null>(null);
+  const [crmLoading, setCrmLoading] = useState(false);
+
   useEffect(() => {
     if (user === null) return;
     if (!hasRiskAccess) router.replace('/');
@@ -138,6 +178,30 @@ export default function ExposicionPage() {
     if (!accessDenied) void load();
   }, [accessDenied, load]);
 
+  const loadCrm = useCallback(
+    async (r?: { from: string; to: string }) => {
+      setCrmLoading(true);
+      try {
+        const qs = r ? `?from=${r.from}&to=${r.to}` : '';
+        const res = await apiFetch(`/api/admin/crm-daily-pnl${qs}`);
+        const body = await res.json();
+        if (!res.ok || body?.success === false) throw new Error(body?.error ?? t('exposure.loadError'));
+        setCrm(body as CrmSeries);
+        if (body?.range) setCrmRange(body.range);
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : t('exposure.loadError'));
+      } finally {
+        setCrmLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  useEffect(() => {
+    if (seccion === 'crm' && crm === null && !crmLoading) void loadCrm();
+  }, [seccion, crm, crmLoading, loadCrm]);
+
   const enRiesgo = [...(data?.critical ?? []), ...(data?.watch ?? [])];
 
   // Los hooks van SIEMPRE antes de cualquier return condicional: llamarlos
@@ -154,6 +218,7 @@ export default function ExposicionPage() {
     data?.pnl?.history ?? [],
     (r) => `${r.utc_day} ${r.category}`,
   );
+  const cierreCrm = useTablePage<CrmDailyPnlRow>(crm?.rows ?? [], (r) => r.utc_day);
 
   const pagerLabels = {
     prev: t('table.prev'),
@@ -217,6 +282,7 @@ export default function ExposicionPage() {
 
   const tabs = [
     { value: 'pnl' as const, label: t('exposure.tabPnl'), count: pnlRows.length },
+    { value: 'crm' as const, label: t('crmPnl.tab'), count: crm?.rows.length },
     {
       value: 'margen' as const,
       label: t('exposure.tabMargin'),
@@ -365,6 +431,205 @@ export default function ExposicionPage() {
               })}
             </div>
           )}
+        </Card>
+      )}
+
+      {/* ── Cierre diario del CRM: el número real, guardado día a día ────── */}
+      {seccion === 'crm' && (
+        <Card className="p-0 overflow-hidden">
+          <div className="px-4 pt-4">
+            <CardTitle>{t('crmPnl.title')}</CardTitle>
+            <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('crmPnl.hint')}</p>
+
+            <div className="mb-3 flex flex-wrap items-end gap-3">
+              <label className="text-xs text-muted-foreground">
+                <span className="mb-1 block">{t('exposure.historyFrom')}</span>
+                <input
+                  type="date"
+                  value={crmRange?.from ?? ''}
+                  max={crmRange?.to ?? hoy}
+                  onChange={(e) => {
+                    const next = { from: e.target.value, to: crmRange?.to ?? hoy };
+                    setCrmRange(next);
+                    if (e.target.value) void loadCrm(next);
+                  }}
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
+                />
+              </label>
+              <label className="text-xs text-muted-foreground">
+                <span className="mb-1 block">{t('exposure.historyTo')}</span>
+                <input
+                  type="date"
+                  value={crmRange?.to ?? ''}
+                  min={crmRange?.from ?? ''}
+                  max={hoy}
+                  onChange={(e) => {
+                    const next = { from: crmRange?.from ?? hoy, to: e.target.value };
+                    setCrmRange(next);
+                    if (e.target.value) void loadCrm(next);
+                  }}
+                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
+                />
+              </label>
+              <TableCsvButton<CrmDailyPnlRow>
+                rows={cierreCrm.filtered}
+                filename="Cierre_diario_PNL_CRM"
+                label={t('table.csv')}
+                headers={[
+                  t('exposure.colDay'), t('crmPnl.colClientsPnl'), t('crmPnl.colBrokerPnl'),
+                  t('crmPnl.colVolume'), t('crmPnl.colDeals'), t('crmPnl.colAccounts'),
+                  t('crmPnl.colExcluded'),
+                ]}
+                toRow={(r) => [
+                  r.utc_day === hoy ? `${r.utc_day} (${t('exposure.inProgress')})` : r.utc_day,
+                  // Un CSV se abre sin contexto: el hueco viaja como texto y
+                  // NUNCA como 0, que en una hoja de cálculo se suma solo.
+                  r.pnl_usd === null ? t('crmPnl.noData') : r.pnl_usd,
+                  r.pnl_usd === null ? t('crmPnl.noData') : -r.pnl_usd,
+                  r.volume_lots, r.deals_count, r.accounts_count, r.unmatched_accounts,
+                ]}
+              />
+            </div>
+
+            {crmLoading && !crm ? (
+              <div className="pb-4">
+                <Skeleton className="h-40" />
+              </div>
+            ) : (
+              <>
+                <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                  <StatCard
+                    icon={Activity}
+                    emphasis
+                    tone={
+                      crm?.totals.brokerPnl === null || crm?.totals.brokerPnl === undefined
+                        ? 'neutral'
+                        : crm.totals.brokerPnl >= 0
+                          ? 'positive'
+                          : 'negative'
+                    }
+                    label={t('crmPnl.kpiBrokerRange')}
+                    value={
+                      crm?.totals.brokerPnl === null || crm?.totals.brokerPnl === undefined
+                        ? '—'
+                        : formatNumber(crm.totals.brokerPnl)
+                    }
+                    hint={t('crmPnl.kpiBrokerRangeHint', {
+                      days: String(crm?.totals.daysWithData ?? 0),
+                    })}
+                  />
+                  <StatCard
+                    icon={CalendarDays}
+                    label={t('crmPnl.kpiLastClose')}
+                    value={
+                      crm?.last == null || crm.last.pnl_usd === null
+                        ? '—'
+                        : formatNumber(-crm.last.pnl_usd)
+                    }
+                    hint={
+                      crm?.last
+                        ? t('crmPnl.kpiLastCloseHint', { day: crm.last.utc_day })
+                        : t('crmPnl.noData')
+                    }
+                  />
+                  <StatCard
+                    icon={Layers}
+                    label={t('crmPnl.kpiVolume')}
+                    value={crm ? formatNumber(crm.totals.volumeLots) : '—'}
+                    hint={t('crmPnl.kpiVolumeHint')}
+                  />
+                  <StatCard
+                    icon={Activity}
+                    label={t('crmPnl.kpiDeals')}
+                    value={crm ? formatNumber(crm.totals.dealsCount) : '—'}
+                    hint={t('crmPnl.kpiDealsHint')}
+                  />
+                </div>
+
+                {/* Un hueco NO puede ser invisible: un acumulado de treinta
+                    días construido con veinticinco es un número más chico y
+                    perfectamente creíble. */}
+                {crm && crm.daysMissing.length > 0 && (
+                  <p className="mb-3 flex items-start gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
+                    <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+                    {t('crmPnl.missingDays', {
+                      n: String(crm.daysMissing.length),
+                      days: crm.daysMissing.slice(0, 8).join(', '),
+                    })}
+                  </p>
+                )}
+                {crm && crm.totals.unmatchedAccounts > 0 && (
+                  <p className="mb-3 text-xs text-muted-foreground">
+                    {t('crmPnl.excludedNotice', { n: String(crm.totals.unmatchedAccounts) })}
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <DataTable<CrmDailyPnlRow>
+            stickyHeader
+            zebra
+            density="compact"
+            data={cierreCrm.pageRows}
+            empty={
+              <EmptyState
+                compact
+                icon={CalendarDays}
+                title={t('crmPnl.empty')}
+                description={t('crmPnl.emptyHint')}
+              />
+            }
+            columns={[
+              {
+                header: t('exposure.colDay'),
+                accessor: (r) => (
+                  <span className="tabular-nums">
+                    {r.utc_day}
+                    {r.utc_day === hoy && (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {t('exposure.inProgress')}
+                      </span>
+                    )}
+                  </span>
+                ),
+              },
+              {
+                header: t('crmPnl.colBrokerPnl'),
+                align: 'right',
+                accessor: (r) => <Money value={r.pnl_usd === null ? null : -r.pnl_usd} unit="usd" />,
+              },
+              {
+                header: t('crmPnl.colClientsPnl'),
+                align: 'right',
+                accessor: (r) => <Money value={r.pnl_usd} unit="usd" />,
+              },
+              {
+                header: t('crmPnl.colVolume'),
+                align: 'right',
+                accessor: (r) => <span className="tabular-nums">{formatNumber(r.volume_lots)}</span>,
+              },
+              {
+                header: t('crmPnl.colDeals'),
+                align: 'right',
+                accessor: (r) => <span className="tabular-nums">{formatNumber(r.deals_count)}</span>,
+              },
+              {
+                header: t('crmPnl.colAccounts'),
+                align: 'right',
+                accessor: (r) => <span className="tabular-nums">{formatNumber(r.accounts_count)}</span>,
+              },
+            ]}
+          />
+          <TablePager
+            page={cierreCrm.page}
+            pageCount={cierreCrm.pageCount}
+            shown={cierreCrm.pageRows.length}
+            total={cierreCrm.total}
+            filteredTotal={cierreCrm.filtered.length}
+            onPage={cierreCrm.setPage}
+            labels={pagerLabels}
+          />
         </Card>
       )}
 
