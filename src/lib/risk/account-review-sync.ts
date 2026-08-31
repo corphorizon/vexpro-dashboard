@@ -12,21 +12,38 @@
 // reglamento y su ciclo — pasarles ADEMÁS estas señales sería contar dos veces
 // lo mismo con dos vocabularios distintos.
 //
-// ── POR QUÉ NO SE HACE AL ABRIR LA FICHA ───────────────────────────────────
-// Porque abrir el túnel a MT5 cuesta ~3,5 s y emparejar posiciones por
-// `PositionID` —que NO está en el índice— cuesta ~0,28 s por cuenta (medido:
-// 60 cuentas en 16,7 s, ver mt5-sync/behavior.ts). Con 595 cuentas serían ~166
-// s. La regla del repo es explícita: nunca se consulta MT5 en vivo desde una
-// pantalla. Se espeja y la ficha lee del espejo.
+// ── DOS CAMINOS, Y EL PRINCIPAL ES EL BOTÓN (2026-08-31) ───────────────────
+// Al principio esto era sólo un cron: se espejaban todas las cuentas y la ficha
+// leía del espejo, porque abrir el túnel a MT5 cuesta ~3,5 s y emparejar
+// posiciones por `PositionID` —que NO está en el índice— cuesta ~0,28 s por
+// cuenta. La regla G10 del repo lo dice: nunca se consulta MT5 en vivo desde
+// una pantalla.
 //
-// ── LA ROTACIÓN ────────────────────────────────────────────────────────────
-// No entran todas en una corrida, así que cada una toma un lote ordenado por
-// antigüedad del cálculo, las nunca-calculadas primero. Con MAX_POR_CORRIDA =
-// 200 y el cron cada 30 minutos, las ~600 cuentas convergen en hora y media y
-// después se mantienen solas.
+// No alcanzó. Medido sobre ocho corridas reales, ninguna pasó de 80 cuentas y
+// varias quedaron en 7 o 9: no las frenaba el techo, se quedaban sin tiempo y
+// Vercel las mataba con `504`. Un cliente nuevo esperaba hasta hora y media, o
+// sea que para un retiro PENDIENTE el diagnóstico llegaba después de la
+// decisión — lo único para lo que servía.
 //
-// El techo NO es silencioso: `skipped` viaja en el resultado. Un recorte que no
-// se cuenta es indistinguible de «ya estaban todas al día».
+// Y el fondo del problema era otro: se mantenían ~1.023 diagnósticos rotando y
+// casi ninguno se leía. Mucho trabajo sobre un enlace frágil, para datos que
+// nadie abría.
+//
+// Ahora:
+//   · `revisarCuentasDeCliente` — el botón de la ficha. Calcula las cuentas de
+//     UN cliente en el momento. Es lo que se usa cuando hace falta de verdad.
+//   · `syncAccountReviews` — el cron, ahora cobertura de fondo con un techo que
+//     sí se alcanza (60), para que la corrida TERMINE en vez de morir a los
+//     300 s ocupando el enlace.
+//
+// G10 sigue en pie: apunta a la carga AUTOMÁTICA, una conexión por visita. El
+// botón es un clic explícito con su espera a la vista, igual que el refresco
+// del pool de liquidez.
+//
+// Los dos comparten `evaluarYGuardar`: la diferencia entre ellos es QUÉ cuentas
+// entran, no cómo se evalúan.
+//
+// Ningún recorte es silencioso: `skipped` y los avisos viajan en el resultado.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -59,8 +76,23 @@ export const LOGIN_BATCH = 40;
  * que pase: un lote puede ser de 40 cuentas chicas o de una sola enorme.
  */
 export const PRESUPUESTO_POSICIONES = 120_000;
-/** Techo por corrida. Ver la cabecera: el costo es lineal en cuentas. */
-export const MAX_POR_CORRIDA = 200;
+/**
+ * Techo por corrida.
+ *
+ * ── POR QUÉ BAJÓ DE 200 A 60 (2026-08-31) ─────────────────────────────────
+ * El techo era teórico: medido sobre ocho corridas reales, ninguna pasó de 80
+ * y varias quedaron en 7, 9 o 22. No las frenaba el techo — se quedaban sin
+ * tiempo y Vercel las mataba con `504` a los 300 s. Un techo que nunca se
+ * alcanza no limita nada; sólo esconde que la corrida no terminó.
+ *
+ * Con 60, la corrida TERMINA. Rinde parecido —el trabajo real por corrida no
+ * cambia— pero deja el enlace a MT5 libre en vez de ocuparlo hasta que la
+ * matan, que es lo que competía con todo lo demás.
+ *
+ * Lo urgente ya no depende de esto: la ficha del retiro tiene un botón que
+ * calcula en el momento. El cron pasó a ser cobertura de fondo.
+ */
+export const MAX_POR_CORRIDA = 60;
 /** Tipos de cuenta que entran. FUNDING queda fuera (tiene su propio módulo). */
 export const TIPOS = ['BROKER', 'SOCIAL'] as const;
 
@@ -323,7 +355,6 @@ export async function syncAccountReviews(
   // ── 4. Traer operaciones y evaluar ──────────────────────────────────────
   let reviewed = 0;
   let failed = 0;
-  const ahora = new Date().toISOString();
 
   // Lotes por VOLUMEN, no por cantidad. Ver PRESUPUESTO_POSICIONES: con lotes
   // de tamaño fijo, uno que agarre varias cuentas enormes intenta traer un
@@ -347,22 +378,57 @@ export async function syncAccountReviews(
   if (actual.length > 0) lotes.push(actual);
 
   for (const lote of lotes) {
-    let porCuenta: Map<number, Trade[]>;
-    try {
-      porCuenta = await loadTradesByLogin(companyId, lote);
-    } catch (err) {
-      // Un lote que falla no tira la corrida entera: las demás cuentas siguen.
-      failed += lote.length;
-      warnings.push(`Lote de ${lote.length} cuenta(s) falló: ${err instanceof Error ? err.message : String(err)}`);
-      continue;
-    }
+    const r = await evaluarYGuardar(admin, companyId, lote, porLogin, opts.noticias ?? null);
+    reviewed += r.reviewed;
+    failed += r.failed;
+    warnings.push(...r.warnings);
+  }
 
+  return {
+    candidates: orden.length,
+    reviewed,
+    skipped,
+    failed,
+    elapsedMs: Date.now() - started,
+    warnings,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Evaluar un lote de cuentas y guardar el resultado.
+//
+// Lo comparten el cron y el botón de «analizar ahora». Estaba escrito dentro
+// del bucle del cron, y duplicarlo para el botón habría dejado dos evaluaciones
+// que se desincronizan en silencio — el modo de falla número uno de este repo.
+// La diferencia entre los dos llamadores es QUÉ cuentas entran, no cómo se
+// evalúan.
+// ─────────────────────────────────────────────────────────────────────────────
+async function evaluarYGuardar(
+  admin: SupabaseClient,
+  companyId: string,
+  lote: number[],
+  porLogin: Map<number, CuentaCandidata>,
+  noticias: Array<{ at: number; name: string; currency: string | null }> | null,
+): Promise<{ reviewed: number; failed: number; warnings: string[] }> {
+  const warnings: string[] = [];
+  const ahora = new Date().toISOString();
+
+  let porCuenta: Map<number, Trade[]>;
+  try {
+    porCuenta = await loadTradesByLogin(companyId, lote);
+  } catch (err) {
+    // Un lote que falla no tira la corrida entera: las demás cuentas siguen.
+    warnings.push(`Lote de ${lote.length} cuenta(s) falló: ${err instanceof Error ? err.message : String(err)}`);
+    return { reviewed: 0, failed: lote.length, warnings };
+  }
+
+  {
     const filas = lote.map((login) => {
       const meta = porLogin.get(login)!;
       const trades = porCuenta.get(login) ?? [];
       const truncated = trades.length >= MAX_POSICIONES;
       const rev: AccountReview = evaluateAccount(login, trades, {
-        noticias: opts.noticias ?? null,
+        noticias,
         // La detección de copia necesita las aperturas de TODAS las cuentas del
         // período y hoy vive en el módulo de prop firm. Se deja sin comprobar
         // a propósito en vez de darla por limpia.
@@ -403,18 +469,98 @@ export async function syncAccountReviews(
       .from('mt5_account_review')
       .upsert(filas, { onConflict: 'company_id,login' });
     if (error) {
-      failed += filas.length;
       warnings.push(`mt5_account_review: ${error.message}`);
-      continue;
+      return { reviewed: 0, failed: filas.length, warnings };
     }
-    reviewed += filas.length;
+    return { reviewed: filas.length, failed: 0, warnings };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BAJO DEMANDA: las cuentas de UN cliente, ahora.
+//
+// ── POR QUÉ EXISTE ─────────────────────────────────────────────────────────
+// El cron mantiene ~1.023 diagnósticos rotando, y casi ninguno se lee. Medido
+// el 2026-08-31: las corridas procesan entre 7 y 80 cuentas contra un techo de
+// 200 —no llegan, se quedan sin tiempo— así que un cliente nuevo espera entre
+// media hora y hora y media. Para un retiro PENDIENTE eso llega después de la
+// decisión, que era lo único para lo que servía.
+//
+// Con el botón se calcula lo que alguien va a leer, en el momento en que lo va
+// a leer. Es una consulta a MT5 por clic y no cientos por hora sin lector.
+//
+// ── LA REGLA G10 SIGUE EN PIE ──────────────────────────────────────────────
+// «Nunca consultar MT5 en vivo desde una PANTALLA» es contra la carga
+// automática: una conexión al broker por cada visita. Esto es un clic
+// explícito, con su espera visible — el mismo criterio que el botón de
+// refrescar del pool de liquidez.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface RevisionBajoDemandaResult {
+  /** Cuentas del cliente que entraron (reales, BROKER/SOCIAL). */
+  candidates: number;
+  reviewed: number;
+  failed: number;
+  /** Cuentas demo que se dejaron afuera. */
+  demoSkipped: number;
+  elapsedMs: number;
+  warnings: string[];
+}
+
+export async function revisarCuentasDeCliente(
+  admin: SupabaseClient,
+  companyId: string,
+  userExternalId: string,
+  opts: { noticias?: Array<{ at: number; name: string; currency: string | null }> | null } = {},
+): Promise<RevisionBajoDemandaResult> {
+  const started = Date.now();
+  const warnings: string[] = [];
+
+  const cuentas = await fetchAll<CuentaCandidata>((d, h) =>
+    admin
+      .from('crm_trading_accounts')
+      .select('login, user_external_id, email, account_type, group_name, is_live')
+      .eq('company_id', companyId)
+      .eq('user_external_id', userExternalId)
+      .in('account_type', TIPOS as unknown as string[])
+      .range(d, h),
+  );
+
+  const porLogin = new Map<number, CuentaCandidata>();
+  let demoSkipped = 0;
+  for (const c of cuentas) {
+    const n = Number(c.login);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    // Misma regla que el cron: `is_live`, no `group_name`. Ver `mt5-groups.ts`.
+    if (esCuentaDemoCrm(c)) { demoSkipped += 1; continue; }
+    porLogin.set(n, c);
+  }
+  if (demoSkipped > 0) {
+    warnings.push(`${demoSkipped} cuenta(s) demo omitidas: no son dinero real.`);
+  }
+  if (porLogin.size === 0) {
+    return { candidates: 0, reviewed: 0, failed: 0, demoSkipped, elapsedMs: Date.now() - started, warnings };
   }
 
+  // Un cliente tiene pocas cuentas, pero el techo se respeta igual: si alguna
+  // vez aparece uno con cincuenta, no se lo lleva todo en una sola consulta.
+  const logins = [...porLogin.keys()].slice(0, LOGIN_BATCH);
+  if (porLogin.size > logins.length) {
+    warnings.push(
+      `El cliente tiene ${porLogin.size} cuentas; se revisaron las primeras ${logins.length}.`,
+    );
+  }
+
+  const { reviewed, failed, warnings: avisos } = await evaluarYGuardar(
+    admin, companyId, logins, porLogin, opts.noticias ?? null,
+  );
+  warnings.push(...avisos);
+
   return {
-    candidates: orden.length,
+    candidates: logins.length,
     reviewed,
-    skipped,
     failed,
+    demoSkipped,
     elapsedMs: Date.now() - started,
     warnings,
   };

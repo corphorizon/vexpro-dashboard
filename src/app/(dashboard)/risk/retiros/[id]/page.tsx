@@ -36,6 +36,7 @@ import {
   CheckCircle2,
   XCircle,
   ArrowUpCircle,
+  RefreshCw,
 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardTitle } from '@/components/ui/card';
@@ -44,6 +45,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Badge } from '@/components/ui/badge';
+import { apiFetch } from '@/lib/api-fetch';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToasts } from '@/components/ui/toast';
@@ -98,6 +100,8 @@ export default function RetiroDetallePage() {
   const [notes, setNotes] = useState('');
   const [pending, setPending] = useState<Decision | null>(null);
   const [busy, setBusy] = useState(false);
+  /** El botón que pide el diagnóstico de cuentas en el momento. */
+  const [analizando, setAnalizando] = useState(false);
 
   useEffect(() => {
     if (user === null) return;
@@ -123,6 +127,43 @@ export default function RetiroDetallePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // ── Pedir el diagnóstico AHORA ──────────────────────────────────────────
+  // El cron rota ~1.000 cuentas y no llega: medido el 2026-08-31, cada corrida
+  // alcanza entre 7 y 80 contra un techo de 200. Un cliente nuevo esperaba
+  // hasta hora y media, o sea que para un retiro pendiente el diagnóstico
+  // llegaba DESPUÉS de la decisión.
+  //
+  // Acá se paga la espera una vez, a propósito y a la vista.
+  const analizarCuentas = useCallback(async () => {
+    if (!id || analizando) return;
+    setAnalizando(true);
+    try {
+      const res = await apiFetch(
+        `/api/admin/withdrawal-review/${encodeURIComponent(decodeURIComponent(id))}/analizar-cuentas`,
+        { method: 'POST', timeoutMs: 120_000 },
+      );
+      const json = await res.json();
+      if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
+      if (json.reviewed === 0) {
+        toast.error(
+          json.candidates === 0
+            ? 'El cliente no tiene cuentas de trading reales para analizar.'
+            : 'No se pudo analizar ninguna cuenta. Probá de nuevo en un momento.',
+        );
+      } else {
+        toast.success(`${json.reviewed} cuenta(s) analizadas.`);
+      }
+      // Se recarga la ficha entera: el diagnóstico llega por el mismo endpoint
+      // que el resto, y así no hay dos caminos para el mismo dato.
+      await load();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'No se pudo analizar');
+    } finally {
+      setAnalizando(false);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id, analizando, load]);
 
   useEffect(() => {
     if (!accessDenied) void load();
@@ -339,22 +380,50 @@ export default function RetiroDetallePage() {
           calibrado sobre 9.785 retiros resueltos y estas señales todavía no se
           midieron contra ninguna decisión. Por eso van en su propia tarjeta y
           con su propio vocabulario. */}
-      {accounts && accounts.accounts.length > 0 && (
+      {/* La tarjeta se dibuja SIEMPRE, tenga o no diagnóstico. Antes sólo
+          aparecía si ya estaba calculado, así que su ausencia se leía como «este
+          cliente no tiene nada raro» cuando en realidad era «todavía no se
+          miró». Son cosas distintas y ahora se distinguen. */}
+      {accounts && (
         <Card>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <CardTitle>Operativa de las cuentas del cliente</CardTitle>
-            <span
-              className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
-                accounts.risk === 'alto'
-                  ? 'bg-negative/10 text-negative'
-                  : accounts.risk === 'medio'
-                    ? 'bg-warning/10 text-warning'
-                    : 'bg-positive/10 text-positive'
-              }`}
-            >
-              {accounts.risk === 'alto' ? 'RIESGO ALTO' : accounts.risk === 'medio' ? 'RIESGO MEDIO' : 'SIN SEÑALES'}
-            </span>
+            <div className="flex items-center gap-2">
+              {accounts.accounts.length > 0 && (
+                <span
+                  className={`rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                    accounts.risk === 'alto'
+                      ? 'bg-negative/10 text-negative'
+                      : accounts.risk === 'medio'
+                        ? 'bg-warning/10 text-warning'
+                        : 'bg-positive/10 text-positive'
+                  }`}
+                >
+                  {accounts.risk === 'alto' ? 'RIESGO ALTO' : accounts.risk === 'medio' ? 'RIESGO MEDIO' : 'SIN SEÑALES'}
+                </span>
+              )}
+              <button
+                onClick={() => void analizarCuentas()}
+                disabled={analizando}
+                className="inline-flex items-center gap-1.5 h-8 px-3 rounded-lg border border-border bg-card text-xs font-medium hover:bg-muted disabled:opacity-60"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${analizando ? 'animate-spin' : ''}`} />
+                {analizando
+                  ? 'Analizando…'
+                  : accounts.accounts.length > 0 ? 'Volver a analizar' : 'Analizar ahora'}
+              </button>
+            </div>
           </div>
+
+          {/* Sin diagnóstico todavía: se dice por qué y qué hacer, en vez de
+              mostrar una tarjeta vacía. */}
+          {accounts.accounts.length === 0 && (
+            <p className="mt-2 text-sm text-muted-foreground">
+              Todavía no se analizaron las cuentas de este cliente.{' '}
+              <strong>Analizar ahora</strong> lo calcula en el momento — tarda unos segundos porque
+              consulta MT5 directo.
+            </p>
+          )}
           <p className="mt-1 text-xs text-muted-foreground">
             Cómo opera cada cuenta de trading y social del cliente, con las mismas reglas que la
             revisión de prop firm. No son infracciones —una cuenta normal no tiene reglamento— sino
