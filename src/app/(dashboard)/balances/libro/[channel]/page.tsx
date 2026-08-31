@@ -295,6 +295,11 @@ export default function ChannelLedgerPage() {
                 const autoLabel = autoCategoryLabel(row.category, locale === 'en' ? 'en' : 'es');
                 const isAdjustment = row.category === AUTO_CATEGORIES.adjustment;
                 const isInternal = row.category === AUTO_CATEGORIES.internal;
+                // «Variación del saldo» NO es un ajuste: es el movimiento del
+                // día de un canal sin extracto (FairPay). Comparte aritmética
+                // con el ajuste pero no su explicación — decirle «diferencia
+                // que no cuadra» a un movimiento real invita a corregirlo.
+                const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                 return (
                   <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
                     <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
@@ -302,9 +307,13 @@ export default function ChannelLedgerPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium">{autoLabel ?? row.concept}</div>
-                      {(isAdjustment || isInternal) && (
+                      {(isAdjustment || isInternal || isBalanceDelta) && (
                         <div className="text-xs text-muted-foreground mt-0.5 max-w-md">
-                          {isAdjustment ? t('ledger.adjustmentHint') : t('ledger.internalHint')}
+                          {isBalanceDelta
+                            ? t('ledger.balanceDeltaHint')
+                            : isAdjustment
+                              ? t('ledger.adjustmentHint')
+                              : t('ledger.internalHint')}
                         </div>
                       )}
                       {!autoLabel && row.category && (

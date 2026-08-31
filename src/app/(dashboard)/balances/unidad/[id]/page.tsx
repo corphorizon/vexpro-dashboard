@@ -468,6 +468,12 @@ export default function BusinessUnitLedgerPage() {
                   const autoLabel = autoCategoryLabel(row.category, lang);
                   const isAdjustment = row.category === AUTO_CATEGORIES.adjustment;
                   const isInternal = row.category === AUTO_CATEGORIES.internal;
+                  // Ver la nota gemela en balances/libro/[channel]: la
+                  // variación del saldo comparte aritmética con el ajuste pero
+                  // no su explicación. Hoy esta pantalla solo lista canales sin
+                  // libro automático, así que no debería aparecer — está por si
+                  // esa condición cambia, no para tapar un caso conocido.
+                  const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                   return (
                     <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
@@ -491,11 +497,13 @@ export default function BusinessUnitLedgerPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium">{autoLabel ?? row.concept}</div>
-                        {(isAdjustment || isInternal) && (
+                        {(isAdjustment || isInternal || isBalanceDelta) && (
                           <div className="text-xs text-muted-foreground mt-0.5 max-w-md">
-                            {isAdjustment
-                              ? t('unitLedger.adjustmentHint')
-                              : t('unitLedger.internalHint')}
+                            {isBalanceDelta
+                              ? t('ledger.balanceDeltaHint')
+                              : isAdjustment
+                                ? t('unitLedger.adjustmentHint')
+                                : t('unitLedger.internalHint')}
                           </div>
                         )}
                       </td>

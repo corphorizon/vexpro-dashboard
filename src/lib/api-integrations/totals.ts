@@ -42,8 +42,14 @@ export const ACCEPTED_STATUS = {
  * No entra en `computeProviderTotals`, que devuelve el total del slug tal
  * como se muestra en la fila de Depósitos. Los payouts se cuentan en el libro
  * del canal (RPC 082) y se exponen aparte en `countPayprosPayouts` para que
- * su existencia NUNCA sea silenciosa: hoy Vex Pro tiene 0 filas
- * 'payout_paid', y si aparecen, la fila de depósitos las estaría ignorando.
+ * su existencia NUNCA sea silenciosa.
+ *
+ * CORRECCIÓN 2026-08-31: este comentario decía «hoy Vex Pro tiene 0 filas
+ * 'payout_paid'». Era cierto y dejó de serlo el mismo día: el espejo del CRM
+ * ahora proyecta los retiros aprobados de Pay-Pros con este status
+ * (src/lib/api-integrations/paypros/withdrawals-from-crm.ts — al 2026-08-31,
+ * 6 retiros por US$ 2.617,62). El «si aparecen» ya pasó, y por eso
+ * `useApiTotals` los suma a Retiros Totales vía `API_WITHDRAWAL_CHANNELS`.
  */
 export const PAYPROS_PAYOUT_STATUS = 'payout_paid';
 
@@ -139,10 +145,11 @@ export function computeProviderTotals(dataset: ProviderDataset): ProviderTotals 
       };
     }
     case 'paypros': {
-      // Solo 'paid'. Los 'payout_paid' son salidas y NO se restan acá: la fila
-      // de Retiros de /movimientos es, por decisión de Kevin (2026-06-06),
-      // Coinsbuy + el manual de Broker. Restarlos de los depósitos escondería
-      // un retiro dentro de un número de depósitos. Ver countPayprosPayouts.
+      // Solo 'paid'. Los 'payout_paid' son salidas y NO se restan acá:
+      // restarlos de los depósitos escondería un retiro dentro de un número de
+      // depósitos. Desde el 2026-08-31 se suman del lado de los RETIROS, por
+      // el registro `src/lib/withdrawal-channels.ts` — que es donde
+      // correspondía, y no acá. Ver countPayprosPayouts.
       const rows = (dataset.transactions as PayprosDepositTx[]).filter(
         (t) => t.status === 'paid'
       );

@@ -21,7 +21,11 @@ import {
 import { useAuth } from '@/lib/auth-context';
 import { apiFetch } from '@/lib/api-fetch';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { computeProviderTotals, acceptedTransactions } from '@/lib/api-integrations/totals';
+import {
+  computeProviderTotals,
+  acceptedTransactions,
+  countPayprosPayouts,
+} from '@/lib/api-integrations/totals';
 import { ExcludeToggleButton } from './_components/exclude-toggle-button';
 import type {
   ProviderDataset,
@@ -171,6 +175,13 @@ export default function BreakdownPage({
   );
   const accepted = useMemo(
     () => (dataset ? acceptedTransactions(dataset) : []),
+    [dataset]
+  );
+
+  // Payouts de Pay-Pros que este desglose NO lista (ver el cartel más abajo).
+  // `countPayprosPayouts` devuelve {0,0} para cualquier otro slug.
+  const payprosPayouts = useMemo(
+    () => (dataset ? countPayprosPayouts(dataset) : { count: 0, total: 0 }),
     [dataset]
   );
 
@@ -398,6 +409,24 @@ export default function BreakdownPage({
           </p>
         </Card>
       </div>
+
+      {/* Pay-Pros: la exclusión de los payouts se AVISA, no se disimula.
+          Este desglose es el de DEPÓSITOS (status 'paid'); los payouts
+          ('payout_paid') son retiros y viven en la sección de Retiros de
+          /movimientos, que desde el 2026-08-31 los suma. Sin este cartel, un
+          usuario que compara el total de acá con el de allá encuentra una
+          diferencia y no tiene forma de saber de dónde sale — una exclusión
+          silenciosa es indistinguible de un cruce roto. */}
+      {payprosPayouts.count > 0 && (
+        <Card>
+          <p className="text-xs text-amber-600">
+            Además de lo listado acá hay {payprosPayouts.count} retiro(s) por Pay-Pros
+            por {formatCurrency(payprosPayouts.total)}. No entran a este desglose
+            porque esta pantalla es la de depósitos: se cuentan en Retiros
+            Totales, en Movimientos.
+          </p>
+        </Card>
+      )}
 
       {/* Transactions table */}
       <Card>

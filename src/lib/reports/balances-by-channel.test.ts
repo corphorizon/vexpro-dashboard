@@ -57,6 +57,33 @@ describe('pickChannelAmount', () => {
     });
   });
 
+  it('FairPay: el cero del libro tapaba el saldo real — así se veía el bug', () => {
+    // Reproduce exactamente el estado de producción del 2026-08-31: el libro
+    // de `fairpay` tenía UN asiento (apertura manual de $0,00 del 05/08) y el
+    // snapshot del día decía $7.163,47. Este test NO es un bug: fija que la
+    // prioridad libro > snapshot es intencional. El arreglo es que el cron le
+    // escriba el libro a FairPay (API_LEDGER_CHANNELS), no cambiar la
+    // prioridad — si se cambiara, todas las ubicaciones manuales operadas por
+    // libro volverían a mostrar un snapshot viejo (auditoría A1).
+    expect(
+      pickChannelAmount({
+        channelKey: 'fairpay',
+        ledgerBalance: 0,
+        snapshot: { amount: 7_163.47, source: 'api' },
+      }),
+    ).toEqual({ amount: 0, source: 'ledger' });
+
+    // Y con el libro ya asentado por el cron, la misma pantalla muestra el
+    // saldo real de la cuenta bancaria.
+    expect(
+      pickChannelAmount({
+        channelKey: 'fairpay',
+        ledgerBalance: 7_163.47,
+        snapshot: { amount: 7_163.47, source: 'api' },
+      }),
+    ).toEqual({ amount: 7_163.47, source: 'ledger' });
+  });
+
   it('un balance de libro no numérico no se toma por bueno', () => {
     expect(
       pickChannelAmount({

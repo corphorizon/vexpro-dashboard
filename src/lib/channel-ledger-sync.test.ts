@@ -14,6 +14,7 @@ import {
   ONCHAIN_MAX_ADJUSTMENT,
   maxAdjustmentFor,
 } from './channel-ledger-sync';
+import { API_LEDGER_CHANNELS } from './channel-ledger';
 
 describe('maxAdjustmentFor', () => {
   it('respeta el tope propio de cada canal built-in', () => {
@@ -45,5 +46,24 @@ describe('maxAdjustmentFor', () => {
     // 17.613 cargado a mano → ~17.116 reales. Si el tope no lo cubriera, el
     // primer asiento abortaría y la wallet nunca arrancaría.
     expect(ONCHAIN_MAX_ADJUSTMENT).toBeGreaterThan(600);
+  });
+
+  it('el tope de FairPay cubre su salto real de agosto (+6.747,05)', () => {
+    // FairPay no tiene extracto: la variación ENTERA del saldo cae en la línea
+    // de conciliación, todos los días. Con el default de 1.000 el asiento del
+    // 2026-08-17 (0 → 6.747,05) habría abortado y el canal seguiría en $0,00,
+    // que es justo el síntoma que este trabajo vino a arreglar.
+    expect(maxAdjustmentFor('fairpay')).toBe(MAX_ADJUSTMENT.fairpay);
+    expect(maxAdjustmentFor('fairpay')).toBeGreaterThan(6_747.05);
+    expect(maxAdjustmentFor('fairpay')).toBeGreaterThan(DEFAULT_MAX_ADJUSTMENT);
+  });
+
+  it('todo canal de libro automático tiene tope propio, no el default', () => {
+    // Itera el registro: un canal automático nuevo que se olvide de su tope
+    // rompe acá en vez de abortar todas las noches en producción.
+    for (const key of API_LEDGER_CHANNELS) {
+      expect(MAX_ADJUSTMENT[key]).toBeDefined();
+      expect(maxAdjustmentFor(key)).not.toBe(DEFAULT_MAX_ADJUSTMENT);
+    }
   });
 });

@@ -16,6 +16,16 @@
 // En Coinsbuy absorbe las comisiones de red (~$1-4/día); en UniPayment, las
 // liquidaciones de salida que su API no expone. Verificado contra 6 días de
 // producción: con estas 4 líneas el cierre da exacto al centavo.
+//
+// CANALES SIN FUENTE DE MOVIMIENTOS (`opts.noMovementFeed`, 2026-08-31)
+// FairPay entró al libro automático sin tener de dónde sacar los movimientos
+// del día: su saldo viene de banking.fairpay.online, que no expone extracto, y
+// las filas de `api_transactions.provider='fairpay'` son cobros del PORTAL,
+// otro sistema (ver src/lib/channel-ledger.ts). Para esos canales el día se
+// asienta con UNA sola línea —la variación del saldo real— y la nota lo dice
+// con todas las letras, en vez de dejar creer que hubo depósitos que nadie
+// midió. El caudal de la línea es correcto; lo que no sabemos es su desglose,
+// y eso se escribe, no se disimula.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { createAdminClient } from '@/lib/supabase/admin';
@@ -54,11 +64,20 @@ const CENT = 0.01;
  * que ellos hagan de su lado — todo eso cae en el ajuste. Arranca en 5.000
  * como umbral conservador hasta ver los primeros días reales; si el ajuste
  * típico resulta mayor, subirlo con dato en la mano, no a ciegas.
+ *
+ * FairPay: caso EXTREMO y por eso el tope más alto. Su libro NO tiene fuente de
+ * movimientos —el banking no expone extracto y las filas del portal de cobros
+ * son otro sistema (ver channel-ledger.ts)—, así que la variación del saldo
+ * ENTERA cae en el ajuste, siempre. No es ruido: es el movimiento real, y es lo
+ * único que sabemos de él. Observado en agosto 2026: dos saltos, +6.747,05
+ * (18/08) y +416,42 (25/08). 25.000 deja pasar una liquidación grande y sigue
+ * frenando un desastre.
  */
 export const MAX_ADJUSTMENT: Record<string, number> = {
   coinsbuy: 500,
   unipayment: 25_000,
   paypros: 5_000,
+  fairpay: 25_000,
 };
 
 /** Tope por defecto para un canal sin entrada propia. */
@@ -127,7 +146,7 @@ export async function syncChannelLedgerDay(
   channelKey: string,
   entryDate: string,
   actualClose: number,
-  opts: { onchain?: boolean } = {},
+  opts: { onchain?: boolean; noMovementFeed?: boolean } = {},
 ): Promise<LedgerSyncResult> {
   // ── Saldo con el que veníamos ──────────────────────────────────────────
   const { data: priorRows, error: priorError } = await admin.rpc('get_channel_ledger_balances', {
@@ -233,12 +252,16 @@ export async function syncChannelLedgerDay(
     lines.push({
       entry_date: entryDate,
       kind: adjustment >= 0 ? 'in' : 'out',
-      concept: 'Ajuste de conciliación',
-      category: AUTO_CATEGORIES.adjustment,
+      concept: opts.noMovementFeed ? 'Variación del saldo' : 'Ajuste de conciliación',
+      category: opts.noMovementFeed
+        ? AUTO_CATEGORIES.balanceDelta
+        : AUTO_CATEGORIES.adjustment,
       amount: Math.abs(adjustment),
-      notes: opts.onchain
-        ? 'Diferencia contra el saldo real de la cadena: fees de gas consumidos, variación del precio del gas y transferencias de redes sin historial disponible (BEP20/ERC20 sin API key de explorador).'
-        : 'Diferencia contra el saldo real de la API (comisiones de red y movimientos no detallados por el proveedor).',
+      notes: opts.noMovementFeed
+        ? 'Variación del saldo real informado por la API. Este canal no tiene extracto: el proveedor no expone los movimientos, así que se conoce cuánto se movió pero no su desglose en depósitos y retiros.'
+        : opts.onchain
+          ? 'Diferencia contra el saldo real de la cadena: fees de gas consumidos, variación del precio del gas y transferencias de redes sin historial disponible (BEP20/ERC20 sin API key de explorador).'
+          : 'Diferencia contra el saldo real de la API (comisiones de red y movimientos no detallados por el proveedor).',
     });
   }
 
