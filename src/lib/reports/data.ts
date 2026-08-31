@@ -205,7 +205,28 @@ export interface ReportData {
   /** Sources that failed outright. Used by the cron to add a "could not
    *  reach X" note in the email footer. */
   failures: string[];
+  /**
+   * Fuentes cuya consulta tocó el TECHO DE FILAS: sus cifras pueden estar
+   * CORTAS. Es distinto de `failures` —ahí la fuente no respondió y se ve un
+   * cero o un hueco; acá respondió un número plausible y menor que el real—, y
+   * por eso va aparte y con su propia nota en el pie del correo.
+   *
+   * Los tres `.limit(10000)` sobre `api_transactions` estaban desde siempre y
+   * sin flag: un rango largo devolvía menos depósitos y menos retiros, y el
+   * informe salía firmado con esa cifra. Un recorte silencioso es
+   * indistinguible de «no hay más» (docs/reglas-del-proyecto.md §1.2) — y en un
+   * informe mensual, indistinguible de un mes flojo (2026-08-31, auditoría de
+   * finanzas, ítem 19).
+   */
+  truncated: string[];
 }
+
+/**
+ * Techo de filas de las consultas a `api_transactions` del informe. Se compara
+ * con `>=` y no con `===`: PostgREST puede cortar antes por su propio
+ * `db_max_rows`, y eso también es un recorte.
+ */
+const REPORT_TX_ROW_CAP = 10_000;
 
 function monthBounds(year: number, month: number): { from: string; to: string } {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -565,21 +586,21 @@ export async function buildReportData(
       .eq('company_id', companyId)
       .gte('transaction_date', `${from}T00:00:00.000Z`)
       .lte('transaction_date', `${to}T23:59:59.999Z`)
-      .limit(10000),
+      .limit(REPORT_TX_ROW_CAP),
     admin
       .from('api_transactions')
       .select('provider, amount, status, transaction_date, wallet_id, internal')
       .eq('company_id', companyId)
       .gte('transaction_date', `${thisMonth.from}T00:00:00.000Z`)
       .lte('transaction_date', `${thisMonth.to}T23:59:59.999Z`)
-      .limit(10000),
+      .limit(REPORT_TX_ROW_CAP),
     admin
       .from('api_transactions')
       .select('provider, amount, status, transaction_date, wallet_id, internal')
       .eq('company_id', companyId)
       .gte('transaction_date', `${prevMonth.from}T00:00:00.000Z`)
       .lte('transaction_date', `${prevMonth.to}T23:59:59.999Z`)
-      .limit(10000),
+      .limit(REPORT_TX_ROW_CAP),
     // Usuarios y Prop Trading salen del ESPEJO, no del REST (auditoría
     // 2026-08-31): `api_credentials` no tiene ninguna fila `orion_crm` en
     // producción, así que los fetchers REST caían a mock/ceros y el informe
@@ -624,6 +645,19 @@ export async function buildReportData(
   if (crmPropTrading.status !== 'fulfilled') failures.push('crm_monthly_totals');
   if (balancesByChannel.status !== 'fulfilled') failures.push('balances_by_channel');
   if (companyResult.status !== 'fulfilled') failures.push('company_result');
+
+  // Las tres ventanas de api_transactions pueden venir recortadas por el techo.
+  // Se informa POR VENTANA porque no es lo mismo que esté corto el rango del
+  // informe que el mes anterior con el que se compara.
+  const truncated: string[] = [];
+  const capHit = (r: PromiseSettledResult<{ data: unknown[] | null } | unknown>): boolean => {
+    if (r.status !== 'fulfilled') return false;
+    const v = r.value as { data?: unknown[] | null } | null | undefined;
+    return (v?.data?.length ?? 0) >= REPORT_TX_ROW_CAP;
+  };
+  if (capHit(apiTransactionsRange)) truncated.push('api_transactions (rango)');
+  if (capHit(apiTransactionsMonth)) truncated.push('api_transactions (mes)');
+  if (capHit(apiTransactionsPrevMonth)) truncated.push('api_transactions (mes anterior)');
 
   const manualDepRange = groupRows(safeData<DepositRow>(manualDepositsRange), (r) => r.channel);
   const manualWdrRange = groupRows(safeData<WithdrawalRow>(manualWithdrawalsRange), (r) => r.category);
@@ -877,5 +911,6 @@ export async function buildReportData(
     company_result: unwrap<CompanyResultReport | null>(companyResult, null),
     anyMock,
     failures,
+    truncated,
   };
 }

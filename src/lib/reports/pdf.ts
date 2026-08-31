@@ -19,14 +19,11 @@ import type { ReportCadence } from './email-template';
 import jsPDF from 'jspdf';
 import { BRAND_RGB, hexToRgb } from '@/lib/brand';
 import autoTable from 'jspdf-autotable';
+import { allSectionsOn, allSectionsOff, type ReportSections } from './sections';
 
-export interface ReportSectionToggles {
-  deposits_withdrawals: boolean;
-  balances_by_channel: boolean;
-  crm_users: boolean;
-  broker_pnl: boolean;
-  prop_trading: boolean;
-}
+// Del registro único (./sections): la interfaz estaba escrita acá otra vez, con
+// DOS defaults propios más abajo (2026-08-31, ítem 15).
+export type ReportSectionToggles = ReportSections;
 
 export interface DownloadReportPdfParams {
   data: ReportData;
@@ -197,24 +194,12 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     companyLogoDataUrl,
     primaryColor,
     companyReport,
-    sections = {
-      deposits_withdrawals: true,
-      balances_by_channel: true,
-      crm_users: true,
-      broker_pnl: true,
-      prop_trading: true,
-    },
+    sections = allSectionsOn(),
   } = params;
 
-  const brokerSections: ReportSectionToggles = companyReport
-    ? {
-        deposits_withdrawals: false,
-        balances_by_channel: false,
-        crm_users: false,
-        broker_pnl: false,
-        prop_trading: false,
-      }
-    : sections;
+  // El reporte de EMPRESA no lleva ninguna sección de bróker: la lista completa
+  // en cero era el segundo default literal de este archivo.
+  const brokerSections: ReportSectionToggles = companyReport ? allSectionsOff() : sections;
 
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();

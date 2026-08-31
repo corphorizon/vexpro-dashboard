@@ -29,6 +29,7 @@ import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-
 import { isOrionCrmConfigured } from '@/lib/api-integrations/orion-crm/auth';
 import { persistDataset } from '@/lib/api-integrations/persistence';
 import { notify, dailyKey } from '@/lib/notifications/notify';
+import { providerLabel } from '@/lib/api-channels';
 
 export interface SyncProviderResult {
   company_id: string;
@@ -63,15 +64,13 @@ function defaultWindow(): { from: string; to: string } {
   return { from: iso(from), to: iso(to) };
 }
 
-/** Nombre legible del proveedor. Coinsbuy reporta dos datasets (depósitos y
- *  payouts) que salen del MISMO fetch: en el aviso tienen que ser uno solo. */
-const PROVIDER_LABELS: Record<string, string> = {
-  'coinsbuy-deposits': 'Coinsbuy',
-  'coinsbuy-withdrawals': 'Coinsbuy',
-  fairpay: 'FairPay',
-  unipayment: 'UniPayment',
-  orion_crm: 'Orion CRM',
-};
+// El nombre legible del proveedor sale del registro único
+// (`providerLabel`, src/lib/api-channels.ts). Este Record local NO tenía
+// `paypros`, que entró el 2026-07-22: un fallo de sincronización de Pay-Pros
+// llegaba al aviso como la cadena cruda «paypros» (2026-08-31, ítem 14).
+// Coinsbuy reporta dos datasets (depósitos y payouts) que salen del MISMO
+// fetch: en el aviso tienen que ser uno solo, y por eso `PROVIDER_META` guarda
+// `provider` aparte de `cardLabel`.
 
 /**
  * Un aviso por empresa y por día con los proveedores CONFIGURADOS que
@@ -83,7 +82,7 @@ async function notifyFailedProviders(details: SyncProviderResult[]): Promise<voi
   for (const d of details) {
     if (d.status !== 'error') continue;
     const set = failedByCompany.get(d.company_id) ?? new Set<string>();
-    set.add(PROVIDER_LABELS[d.provider] ?? d.provider);
+    set.add(providerLabel(d.provider));
     failedByCompany.set(d.company_id, set);
   }
   if (failedByCompany.size === 0) return;

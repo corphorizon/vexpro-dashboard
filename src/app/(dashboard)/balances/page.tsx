@@ -358,7 +358,6 @@ export default function BalancesPage() {
   const [walletsError, setWalletsError] = useState<string | null>(null);
   const [walletsFetchedAt, setWalletsFetchedAt] = useState<string | null>(null);
   const [walletsIsMock, setWalletsIsMock] = useState(false);
-  const [walletToggles, setWalletToggles] = useState<Record<string, boolean>>({});
 
   const fetchWallets = useCallback(async () => {
     setWalletsLoading(true);
@@ -370,14 +369,6 @@ export default function BalancesPage() {
       setWallets(json.wallets ?? []);
       setWalletsFetchedAt(json.fetchedAt ?? new Date().toISOString());
       setWalletsIsMock(json.isMock ?? false);
-      // Initialize toggles for new wallets (default: on)
-      setWalletToggles(prev => {
-        const next = { ...prev };
-        for (const w of json.wallets ?? []) {
-          if (next[w.id] === undefined) next[w.id] = true;
-        }
-        return next;
-      });
     } catch (err) {
       setWalletsError(err instanceof Error ? err.message : 'Error');
     } finally {
@@ -414,13 +405,16 @@ export default function BalancesPage() {
     };
   }, [fetchWallets]);
 
-  const toggleWallet = (id: string) => {
-    setWalletToggles(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const walletTotal = wallets
-    .filter(w => walletToggles[w.id] !== false)
-    .reduce((sum, w) => sum + w.balanceConfirmed, 0);
+  // ── El toggle que prometía excluir y no excluía (borrado 2026-08-31) ──────
+  // Cada wallet de Coinsbuy tenía un interruptor rotulado «Excluir del total» /
+  // «Incluir en el total». Lo único que hacía era filtrar `walletTotal`, una
+  // constante que NO se renderizaba en ninguna parte: el total consolidado sale
+  // de las wallets FIJADAS (`pinned_coinsbuy_wallets`, migración 084) y de ahí
+  // no lo sacaba nadie. O sea: el usuario apagaba una wallet, la fila se ponía
+  // gris, y el total seguía igual. Un control que miente sobre el dinero es
+  // peor que no tener control — quien quiera sacar una wallet del total la
+  // despinnea, que es el mecanismo real y el que ya está a dos centímetros.
+  // Ver la auditoría de finanzas, ítem 20.
 
   // Load pinned wallets from Supabase
   const loadPinnedWallets = useCallback(async () => {
@@ -755,61 +749,6 @@ export default function BalancesPage() {
     return candidate.kind === 'onchain' && Array.isArray(candidate.networks) ? candidate : null;
   };
 
-  // Carga manual del saldo de un canal sin libro. La tarjeta unificada es la
-  // dueña del formulario; acá vive la escritura porque también recarga los
-  // snapshots de la fecha elegida.
-  const saveChannelBalance = async (key: string, value: number) => {
-    if (!company) return;
-    // Reject NaN / Infinity explicitly — `|| 0` would silently turn a bad
-    // input into a real save of "0", which is data corruption.
-    if (!Number.isFinite(value)) {
-      throw new Error(t('balances.invalidNumber'));
-    }
-    setErrMsg(null);
-    try {
-      // Server-side write via the admin endpoint (service-role + audit log).
-      // 10s timeout on each leg so a stalled Supabase / network hang surfaces
-      // as a TimeoutError instead of leaving the spinner up forever.
-      const res = await withTimeout(
-        apiFetch('/api/admin/channel-balances', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            channel_key: key,
-            snapshot_date: selectedDate,
-            amount: value,
-            source: 'manual',
-          }),
-        }),
-        10_000,
-        t('balances.opSaveBalance'),
-      );
-      const json = (await res.json()) as { success: boolean; error?: string };
-      if (!res.ok || !json.success) {
-        throw new Error(json.error ?? t('balances.saveErrorHttp', { status: String(res.status) }));
-      }
-      // Refresh BEFORE collapsing the editor so the displayed value reflects
-      // what's actually persisted. If the refresh itself stalls we still show
-      // success — the write was confirmed by the 200 above.
-      try {
-        await withTimeout(loadSnapshots(), 10_000, t('balances.opReloadBalances'));
-      } catch (refreshErr) {
-        console.warn('[balances] refresh after save failed:', refreshErr);
-      }
-      setOkMsg(t('balances.savedOk'));
-      setTimeout(() => setOkMsg(null), 4000);
-    } catch (err) {
-      const msg =
-        err instanceof TimeoutError
-          ? `${err.message}. ${t('balances.timeoutRetry')}`
-          : err instanceof Error
-            ? err.message
-            : t('balances.saveErrorGeneric');
-      setErrMsg(msg);
-      throw new Error(msg);
-    }
-  };
-
   const exportChannelsPdf = () => {
     generateChannelBalancesPDF({
       company: { name: company?.name ?? 'Dashboard', logoUrl: company?.logo_url ?? null },
@@ -892,14 +831,12 @@ export default function BalancesPage() {
         getValue={getChannelValue}
         onChanged={loadChannelConfigs}
         canManage={isAdmin}
-        canEditBalance={userCanAdd}
         selectedDate={selectedDate}
         onSelectedDate={setSelectedDate}
         reloading={loadingSnap}
         onReload={loadSnapshots}
         onExportPdf={exportChannelsPdf}
         onConfigure={() => setShowChannelConfig(true)}
-        onSaveBalance={saveChannelBalance}
         getSnapshotMeta={getSnapshotMeta}
         getBalanceMeta={getChannelMeta}
         extraActions={(key) =>
@@ -1184,25 +1121,12 @@ export default function BalancesPage() {
               {wallets.length > 0 ? (
                 <div className="space-y-2">
                   {wallets.map((w) => {
-                    const isOn = walletToggles[w.id] !== false;
                     return (
                       <div
                         key={w.id}
-                        className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
-                          isOn ? 'border-border hover:bg-muted/30' : 'border-border/50 bg-muted/20 opacity-60'
-                        }`}
+                        className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <button
-                            onClick={() => toggleWallet(w.id)}
-                            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                            title={isOn ? t('balances.excludeFromTotal') : t('balances.includeInTotal')}
-                          >
-                            {isOn
-                              ? <ToggleRight className="w-6 h-6 text-emerald-500" />
-                              : <ToggleLeft className="w-6 h-6" />
-                            }
-                          </button>
                           <div className="min-w-0">
                             <p className="font-medium truncate">{w.label}</p>
                             <p className="text-xs text-muted-foreground">
@@ -1216,7 +1140,7 @@ export default function BalancesPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className={`font-semibold text-sm tabular-nums ${isOn ? '' : 'text-muted-foreground'}`}>
+                          <span className="font-semibold text-sm tabular-nums">
                             {w.balanceConfirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} {w.currencyCode}
                           </span>
                           {isPinned(w.id) ? (

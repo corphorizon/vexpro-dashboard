@@ -1668,8 +1668,17 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.channelLabel.unipayment': 'Unipayment (Card)',
     'movements.channelLabel.paypros': 'Pay-Pros (Local payment)',
     'movements.channelLabel.other': 'Other deposits',
+    // Categorías de RETIRO. Faltaban: `WITHDRAWAL_LABELS` era castellano fijo,
+    // así que la tarjeta de Retiros (y el CSV) salían en español al lado de una
+    // tarjeta de Depósitos traducida (2026-08-31, ítem 15).
+    'movements.categoryLabel.ib_commissions': 'IB commissions',
+    'movements.categoryLabel.broker': 'Broker',
+    'movements.categoryLabel.prop_firm': 'Prop Firm',
+    'movements.categoryLabel.other': 'Other',
     // «Sin datos» ≠ «$0,00»: the first means we could not read the channel.
     'movements.noData': 'no data',
+    // Rótulo de una fila que se muestra pero NO entra en el total de arriba.
+    'movements.informationalOnly': 'informational',
     'movements.withdrawalsMissingChannels':
       'Not included in the total — could not read: {channels}',
     'movements.channel': 'Channel',
@@ -1763,6 +1772,9 @@ const translations: Record<Locale, TranslationDict> = {
     'upload.notInDepositsTotal': 'Not added to the deposits total',
     'upload.notInWithdrawalsTotal': 'Not added to the withdrawals total',
     'upload.brokerCoexistNote': 'Broker: the manual field above coexists with the auto-derived Coinsbuy amount. Movements shows both separately and adds them to the total.',
+    'upload.ibFromCrm': 'From the CRM: {amount} (auto)',
+    'upload.ibSplitNote':
+      'IB commissions come from the CRM mirror while nothing is entered by hand. They are subtracted from the derived Broker amount, so the total below does not change — only the split between Broker and IB. Closed periods keep the value they were closed with.',
     'upload.p2pTransfers': 'P2P Transfers',
     'upload.crmHint': 'The CRM has',
     'upload.extraWithdrawalsTitle': 'Additional manual withdrawals',
@@ -4037,8 +4049,14 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.channelLabel.unipayment': 'Unipayment (Tarjeta)',
     'movements.channelLabel.paypros': 'Pay-Pros (Medio Local)',
     'movements.channelLabel.other': 'Otros Depósitos',
+    'movements.categoryLabel.ib_commissions': 'Comisiones IB',
+    'movements.categoryLabel.broker': 'Broker',
+    'movements.categoryLabel.prop_firm': 'Prop Firm',
+    'movements.categoryLabel.other': 'Otros',
     // «Sin datos» ≠ «$0,00»: el primero es que no se pudo leer el canal.
     'movements.noData': 'sin datos',
+    // Rótulo de una fila que se muestra pero NO entra en el total de arriba.
+    'movements.informationalOnly': 'informativa',
     'movements.withdrawalsMissingChannels':
       'No entran al total — no se pudo leer: {channels}',
     'movements.channel': 'Canal',
@@ -4132,6 +4150,9 @@ const translations: Record<Locale, TranslationDict> = {
     'upload.notInDepositsTotal': 'No se suma al total de depósitos',
     'upload.notInWithdrawalsTotal': 'No se suma al total de retiros',
     'upload.brokerCoexistNote': 'Broker: el campo manual de arriba convive con el monto auto-derivado de Coinsbuy. En Movimientos se muestran ambos por separado y se suman al total.',
+    'upload.ibFromCrm': 'Del CRM: {amount} (auto)',
+    'upload.ibSplitNote':
+      'Las comisiones IB salen del espejo del CRM mientras no se cargue nada a mano. Se descuentan del Broker derivado, así que el total de abajo NO cambia: lo que cambia es el reparto entre Broker e IB. Los períodos cerrados conservan el valor con el que se cerraron.',
     'upload.p2pTransfers': 'Transferencias P2P',
     'upload.crmHint': 'El CRM tiene',
     'upload.extraWithdrawalsTitle': 'Retiros manuales adicionales',

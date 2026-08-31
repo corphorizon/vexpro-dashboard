@@ -44,16 +44,13 @@ export const GLOSSARY = {
   consolidatedMode:
     'Modo Consolidado: estás viendo los totales sumados de varios meses. Algunas ediciones (egresos, socios) se desactivan en este modo para evitar ambigüedad sobre a qué período aplicar el cambio.',
 
-  // ⚠ ENTRADA SIN USO (auditoría 2026-08-31). `apiManualCoexist` no la
-  // referencia NADIE en el repo, y la etiqueta «api+manual» que describe no
-  // existe en ninguna pantalla: los canales se rotulan 'api' | 'manual' | 'auto'
-  // (channel-configs.ts). Es una definición de algo que no se ve.
-  //
-  // NO se borra todavía porque lo que dice SÍ es cierto y sigue sin estar
-  // explicado en ningún lado —los depósitos por canal suman integración +
-  // carga manual, ver `brokerDeposits` arriba—. Se deja marcada para que la
-  // próxima tanda decida: engancharla al indicador de Depósitos Totales, o
-  // borrarla. Lo que no puede quedar es sin usar y sin decirlo.
+  // ENGANCHADA (2026-08-31, auditoría de finanzas, ítem 20). Estaba definida y
+  // sin usar: una explicación correcta que no leía nadie. La tanda anterior la
+  // dejó marcada con las dos salidas posibles —engancharla o borrarla— y se
+  // elige la primera, porque lo que dice es justo lo que la tabla de Depósitos
+  // de /movimientos NO explica: cada fila es «API + manual», los dos suman y el
+  // manual nunca se pisa. Va en el encabezado de la columna Canal, que es donde
+  // aparece el rótulo «api» que la motiva.
   apiManualCoexist:
     'Los canales con integración suman dos fuentes: lo reportado por la API y lo cargado manualmente en Carga de Datos. Ambos conviven — el manual nunca se sobrescribe.',
 } as const;

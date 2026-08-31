@@ -489,6 +489,12 @@ export const CHANNEL_LABELS: Record<string, string> = {
   other: 'Otros Depósitos',
 };
 
+/**
+ * Castellano fijo. NO se usa directo en pantalla: es el RESPALDO de
+ * `withdrawalCategoryLabel` (src/lib/withdrawal-categories.ts), que traduce.
+ * Hasta el 2026-08-31 esto se renderizaba tal cual y la tarjeta de Retiros
+ * salía en castellano al lado de una de Depósitos traducida.
+ */
 export const WITHDRAWAL_LABELS: Record<string, string> = {
   ib_commissions: 'Comisiones IB',
   broker: 'Broker',

@@ -36,6 +36,7 @@
 
 import type { createAdminClient } from '@/lib/supabase/admin';
 import { AUTO_CATEGORIES, previousDay, resolveInternalTransfers } from '@/lib/channel-ledger';
+import { API_CHANNELS } from '@/lib/api-channels';
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -104,15 +105,28 @@ const CENT = 0.01;
  * ⚠ EL NÚMERO NO ES EL ARREGLO. Subir el tope evita ESTE congelamiento, no el
  * próximo. Lo que lo evita es que el guard deje de ser una puerta de una sola
  * dirección: ver `RECOVERY_AFTER_DAYS` más abajo.
+ *
+ * ── DERIVADO, NO ESCRITO A MANO (2026-08-31, auditoría de finanzas, ítem 14) ─
+ * Hasta hoy esto era un `Record` literal, la QUINTA lista por canal del repo.
+ * Un built-in `auto` nuevo no aparecía acá y caía al `DEFAULT_MAX_ADJUSTMENT`
+ * de 1.000 sin que nadie lo decidiera: su libro se congelaba la primera noche
+ * que se moviera más de mil dólares, exactamente como Coinsbuy con su tope de
+ * 500. Los números NO cambiaron —son los mismos cuatro— pero ahora viven en
+ * `src/lib/api-channels.ts` junto al resto de lo que se sabe del canal, y
+ * `apiChannelRegistryDrift()` (con su test) hace que agregar un canal sin tope
+ * rompa la build en vez de romper el libro.
  */
-export const MAX_ADJUSTMENT: Record<string, number> = {
-  coinsbuy: 150_000,
-  unipayment: 25_000,
-  paypros: 5_000,
-  fairpay: 25_000,
-};
+export const MAX_ADJUSTMENT: Record<string, number> = Object.fromEntries(
+  API_CHANNELS.map((c) => [c.key, c.maxAdjustment]),
+);
 
-/** Tope por defecto para un canal sin entrada propia. */
+/**
+ * Tope por defecto para un canal sin entrada propia.
+ *
+ * Sigue existiendo para las ubicaciones que NO son built-in (un `custom_*` sin
+ * direcciones on-chain), no como red para un canal automático olvidado: eso lo
+ * cubre el registro.
+ */
 export const DEFAULT_MAX_ADJUSTMENT = 1_000;
 
 /**

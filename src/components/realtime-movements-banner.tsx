@@ -23,6 +23,7 @@ import {
   sumApiWithdrawals,
   type WithdrawalsByChannel,
 } from '@/lib/withdrawal-channels';
+import { PROVIDER_META } from '@/lib/api-channels';
 import { apiFetch } from '@/lib/api-fetch';
 import {
   pinCoinsbuyWallet,
@@ -55,21 +56,10 @@ function timeAgo(iso: string): string {
   return `hace ${diffH} h`;
 }
 
-const SLUG_LABEL: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'Coinsbuy · Depósitos',
-  'coinsbuy-withdrawals': 'Coinsbuy · Retiros',
-  fairpay: 'FairPay · Depósitos',
-  unipayment: 'Unipayment · Depósitos',
-  paypros: 'Pay-Pros · Depósitos',
-};
-
-const SLUG_ACCENT: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'text-info',
-  'coinsbuy-withdrawals': 'text-negative',
-  fairpay: 'text-positive',
-  unipayment: 'text-violet-600 dark:text-violet-400',
-  paypros: 'text-amber-600 dark:text-amber-400',
-};
+// Las etiquetas y el color de cada tarjeta salen del registro único
+// (src/lib/api-channels.ts, PROVIDER_META). Eran DOS `Record<ProviderSlug,…>`
+// escritos acá, en un archivo de UI, mientras `integrations-sync.ts` tenía un
+// tercero para los avisos al que le faltaba `paypros` (2026-08-31, ítem 14).
 
 // ── Current month helpers ──
 
@@ -167,6 +157,11 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
 
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  // Proveedores cuyo dataset vino RECORTADO por el techo de paginación del
+  // endpoint. Hasta el 2026-08-31 ese corte sólo dejaba un console.warn del
+  // lado del servidor y la tarjeta mostraba un total corto con cara de total
+  // completo (auditoría de finanzas, ítem 19).
+  const [truncatedSlugs, setTruncatedSlugs] = useState<ProviderSlug[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -290,6 +285,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (!json.success) throw new Error(json.error || 'Error cargando datos persistidos');
       setDatasets(json.datasets ?? []);
       setFetchedAt(json.fetchedAt);
+      setTruncatedSlugs(json.truncatedSlugs ?? []);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Error de red');
     } finally {
@@ -325,6 +321,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
         }),
       );
       setFetchedAt(json.fetchedAt);
+      setTruncatedSlugs(json.truncatedSlugs ?? []);
       // Wait briefly for the server-side fire-and-forget persist to complete,
       // THEN tell the parent page to re-read from Supabase. Without this
       // delay the tables below could fetch persisted-movements before the
@@ -559,6 +556,18 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
         </div>
       )}
 
+      {/* Un recorte silencioso es indistinguible de «no hay más». Si el
+          endpoint tocó su techo de páginas, la tarjeta de ese proveedor muestra
+          MENOS de lo que hay y hay que decirlo antes de que alguien lo sume. */}
+      {truncatedSlugs.length > 0 && (
+        <div className="p-2 mb-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs">
+          Datos incompletos en{' '}
+          {truncatedSlugs.map((s) => PROVIDER_META[s]?.provider ?? s).join(', ')}: se
+          alcanzó el máximo de filas que se pueden leer de una vez. Los importes de
+          esa(s) tarjeta(s) están CORTOS — achicá el rango de fechas.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
         {datasets.flatMap((ds) => {
           const totals = computeProviderTotals(ds);
@@ -575,7 +584,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
             >
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold truncate">
-                  {SLUG_LABEL[ds.slug]}
+                  {PROVIDER_META[ds.slug].cardLabel}
                 </span>
                 {ds.status === 'fresh' ? (
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
@@ -587,7 +596,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                   <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
                 )}
               </div>
-              <p className={`text-base font-bold ${SLUG_ACCENT[ds.slug]}`}>
+              <p className={`text-base font-bold ${PROVIDER_META[ds.slug].accent}`}>
                 {formatCurrency(totals.total)}
               </p>
               <div className="flex items-center justify-between mt-0.5">

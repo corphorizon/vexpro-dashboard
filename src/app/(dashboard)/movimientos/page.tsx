@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { StatCard } from '@/components/ui/stat-card';
@@ -10,6 +10,8 @@ import {
   DEFAULT_WALLET_ID,
 } from '@/components/realtime-movements-banner';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { useCrmMonthlyAuto } from '@/lib/use-crm-monthly-auto';
+import { resolveAutoOrManual } from '@/lib/crm-auto-values';
 import { computeDerivedNetDeposit } from '@/lib/broker-logic';
 import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
@@ -20,7 +22,10 @@ import { usePeriod } from '@/lib/period-context';
 import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
-import { WITHDRAWAL_LABELS } from '@/lib/types';
+import {
+  ALL_WITHDRAWAL_CATEGORIES,
+  withdrawalCategoryLabel,
+} from '@/lib/withdrawal-categories';
 import {
   ALL_DEPOSIT_CHANNELS,
   apiSlugForChannel,
@@ -44,12 +49,22 @@ import { Download } from 'lucide-react';
 // hook, y cuando entró Pay-Pros ninguna de las dos se enteró: la pantalla
 // mostraba $44.653,95 menos que el backend. Ver la cabecera del registro.
 const ALL_CHANNELS = ALL_DEPOSIT_CHANNELS;
-const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'> = [
+// Las categorías de retiro salen del registro único
+// (src/lib/withdrawal-categories.ts), igual que los canales de depósito. El
+// orden es parte del registro: acá y el selector de /upload lo comparten.
+const ALL_CATEGORIES = ALL_WITHDRAWAL_CATEGORIES;
+
+/**
+ * Series del espejo del CRM que esta pantalla consume. Las claves son las de
+ * `CRM_MONTHLY_METRICS` (src/lib/crm-monthly.ts): una sola lectura del endpoint
+ * para las cuatro, en vez de un efecto por métrica.
+ */
+const CRM_AUTO_METRICS = [
+  'propfirm_sales',
+  'propfirm_withdrawals',
+  'p2p_transfers',
   'ib_commissions',
-  'broker',
-  'prop_firm',
-  'other',
-];
+] as const;
 
 export default function MovimientosPage() {
   const { t } = useI18n();
@@ -124,52 +139,31 @@ export default function MovimientosPage() {
   // número que después consume la cadena de distribución.
   const coexist = useApiCoexistence(activePeriods, '', apiRefreshKey);
 
-  // ── Prop Firm automático (Kevin, 2026-08-31: «debería aparecer lo de prop
-  // firm con el dato en automático») ─────────────────────────────────────────
-  // La serie vive en crm_monthly_totals (metrics propfirm_sales /
-  // propfirm_withdrawals, calculadas del espejo del CRM). Regla: en períodos
-  // DERIVADOS (abr-2026+) el automático es el valor efectivo y el manual, si
-  // existe (>0), actúa como OVERRIDE explícito y se muestra rotulado. En
-  // históricos manda el manual, como todo lo demás. null = serie sin datos
-  // para ese mes («sin datos», no $0) — la auditoría midió agosto en $0 manual
-  // contra $11.981,70 reales.
-  const [pfAuto, setPfAuto] = useState<{ sales: number | null; withdrawals: number | null }>({
-    sales: null,
-    withdrawals: null,
-  });
-  useEffect(() => {
-    let cancel = false;
-    (async () => {
-      try {
-        const res = await apiFetch('/api/admin/crm-monthly-totals');
-        if (!res.ok || cancel) return;
-        const json = await res.json();
-        const rows: Array<{ year: number; month: number; metric: string; auto: number | null }> =
-          json.rows ?? [];
-        const meses = new Set(
-          activePeriods.map((per) => `${per.year}-${per.month}`),
-        );
-        let sales: number | null = null;
-        let wdr: number | null = null;
-        for (const r of rows) {
-          if (!meses.has(`${r.year}-${r.month}`)) continue;
-          if (r.auto === null) continue; // sin dato ≠ 0
-          if (r.metric === 'propfirm_sales') sales = (sales ?? 0) + r.auto;
-          if (r.metric === 'propfirm_withdrawals') wdr = (wdr ?? 0) + r.auto;
-        }
-        if (!cancel) setPfAuto({ sales, withdrawals: wdr });
-      } catch {
-        // La tarjeta cae al manual con su rótulo; no se inventa un $0.
-      }
-    })();
-    return () => { cancel = true; };
-  }, [activePeriods, apiRefreshKey]);
-  const { useDerivedBroker, apiFrom, apiTo } = coexist;
-  // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0
-  // until the CRM endpoint exists), but wired so the display already sums
-  // apiValue + manualValue with zero migration work when the API lands.
-  // Orion CRM totals (prop firm sales + P2P transfers) — sums with manual
-  // values under the coexistence rule: `displayedValue = apiValue + manual`.
+  // ── Las series automáticas del espejo del CRM ──────────────────────────────
+  // Viven en `crm_monthly_totals` (migración 100) y las calcula el cron desde
+  // Orion. Las cuatro se resuelven con la MISMA regla, que vive una sola vez en
+  // `resolveAutoOrManual` (src/lib/crm-auto-values.ts): en períodos DERIVADOS
+  // (abr-2026+) manda el automático, y un manual > 0 es un override explícito
+  // que se muestra rotulado; en históricos manda el manual siempre.
+  //
+  // Qué arregla cada una, medido el 2026-08-31:
+  //   · propfirm_sales / propfirm_withdrawals — cableadas ese mismo día. Agosto
+  //     mostraba $0 manual contra $11.981,70 reales.
+  //   · p2p_transfers — la fila del pie de Retiros mostraba $0,00 desde hace
+  //     SEIS MESES contra Dic 136.213,42 · Feb 76.693,78 · Jun 39.474,91 ·
+  //     Jul 31.629,80 · Ago 29.403,67. El único mes cargado a mano en toda la
+  //     historia de Vex Pro es nov-2025 y coincide al centavo con el automático
+  //     ($9.787,04): se respeta igual como override, porque la regla no puede
+  //     depender de que los dos números coincidan.
+  //   · ib_commissions — la categoría manual está vacía desde ABRIL contra una
+  //     serie de $125-180K/mes. Es INFORMATIVA (crm-monthly.ts la marca
+  //     `informational: true`): NO suma a Retiros Totales ni al Net Deposit,
+  //     porque la comisión acreditada es deuda interna con el IB y la caja se
+  //     mueve recién cuando el IB retira — y ESE retiro ya se cuenta. Lo que sí
+  //     arregla es el RÓTULO del split: con el IB en cero, los $125-180K que la
+  //     API reporta como retiro quedaban atribuidos enteros a «Broker».
+  const crmAuto = useCrmMonthlyAuto(activePeriods, CRM_AUTO_METRICS, apiRefreshKey);
+  const { useDerivedBroker } = coexist;
 
   const handleExport = () => verify2FA(() => {
     if (!summary) return;
@@ -181,7 +175,7 @@ export default function MovimientosPage() {
       ),
       ...summary.withdrawals.map(
         (w) =>
-          [t('movements.withdrawal'), WITHDRAWAL_LABELS[w.category], w.amount] as (
+          [t('movements.withdrawal'), withdrawalCategoryLabel(w.category, t), w.amount] as (
             | string
             | number
           )[]
@@ -255,9 +249,7 @@ export default function MovimientosPage() {
 
   // Stored manual amounts per withdrawal category.
   const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-  const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
   const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
-  const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
 
   // "Retiros Totales (API)" tracks the real Coinsbuy-side outflow. For
   // historical periods it reduces to the stored broker value.
@@ -294,20 +286,66 @@ export default function MovimientosPage() {
   // día respondía habría duplicado contra `crm_monthly_totals` (migración
   // 100), que hoy es la serie automática real y vive en /finanzas/crm.
   // Aquí queda únicamente lo cargado a mano, como el resto de Broker.
-  const manualPropFirmSales = summary.propFirmSales;
-  // Efectivo: en derivados, manual>0 = override explícito; si no, el automático
-  // del CRM; sin serie → manual (aunque sea 0, rotulado). Históricos: manual.
-  const propFirmSalesDisplay = useDerivedBroker
-    ? (manualPropFirmSales > 0 ? manualPropFirmSales : (pfAuto.sales ?? manualPropFirmSales))
-    : manualPropFirmSales;
-  const pfSalesSource: 'manual' | 'api' =
-    useDerivedBroker && !(manualPropFirmSales > 0) && pfAuto.sales !== null ? 'api' : 'manual';
-  const propFirmWithdrawalDisplay = useDerivedBroker
-    ? (propFirmWithdrawal > 0 ? propFirmWithdrawal : (pfAuto.withdrawals ?? propFirmWithdrawal))
-    : propFirmWithdrawal;
-  const pfWdrSource: 'manual' | 'api' =
-    useDerivedBroker && !(propFirmWithdrawal > 0) && pfAuto.withdrawals !== null ? 'api' : 'manual';
-  const p2pTransferDisplay = summary.p2pTransfer;
+  // La misma regla para las cuatro series (ver `resolveAutoOrManual`): en
+  // derivados manda el automático y un manual > 0 es override rotulado; en
+  // históricos manda el manual.
+  const auto = (metric: string) => crmAuto.auto[metric] ?? null;
+  const pfSales = resolveAutoOrManual({
+    derived: useDerivedBroker,
+    manual: summary.propFirmSales,
+    auto: auto('propfirm_sales'),
+  });
+  const pfWdr = resolveAutoOrManual({
+    derived: useDerivedBroker,
+    manual: propFirmWithdrawal,
+    auto: auto('propfirm_withdrawals'),
+  });
+  const propFirmSalesDisplay = pfSales.value;
+  const pfSalesSource = pfSales.source;
+  const propFirmWithdrawalDisplay = pfWdr.value;
+  const pfWdrSource = pfWdr.source;
+
+  // ── P2P: la fila que decía $0,00 desde hace seis meses ─────────────────────
+  // `summary.p2pTransfer` es la tabla manual `p2p_transfers`, que en toda la
+  // historia de Vex Pro tiene UN período cargado (nov-2025, $9.787,04) y
+  // coincide al centavo con el automático. Todo lo demás estaba en cero contra
+  // una serie real de decenas de miles por mes. No suma a ningún total: es una
+  // línea informativa al pie de Retiros, y por eso cablearla no mueve ni
+  // Retiros Totales ni el Net Deposit — sólo deja de mentir.
+  const p2p = resolveAutoOrManual({
+    derived: useDerivedBroker,
+    manual: summary.p2pTransfer,
+    auto: auto('p2p_transfers'),
+  });
+  const p2pTransferDisplay = p2p.value;
+
+  // ── Comisiones IB: INFORMATIVA, no un retiro ───────────────────────────────
+  // El manual está vacío desde abril contra $125-180K/mes en la serie. Se
+  // muestra el automático rotulado, y NO entra a Retiros Totales ni al Net
+  // Deposit: `crm-monthly.ts` la marca `informational: true` porque la comisión
+  // acreditada es deuda interna con el IB —la caja se mueve el día que el IB
+  // retira, y ese retiro ya se cuenta como egreso—. Sumarla contaría el mismo
+  // dólar dos veces.
+  const ib = resolveAutoOrManual({
+    derived: useDerivedBroker,
+    manual: summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0,
+    auto: auto('ib_commissions'),
+  });
+
+  // Lo que muestra cada fila de la tabla de Retiros, y de dónde salió. Vive en
+  // una función y no en tres ternarios repartidos por el JSX porque la columna
+  // del importe y la del rótulo TIENEN que decir lo mismo.
+  const withdrawalRowAmount = (category: string, manual: number): number => {
+    if (category === 'broker') return brokerDisplay;
+    if (category === 'ib_commissions') return ib.value;
+    if (category === 'prop_firm') return propFirmWithdrawalDisplay;
+    return manual;
+  };
+  const withdrawalRowSource = (category: string): 'manual' | 'api' => {
+    if (category === 'ib_commissions') return ib.source;
+    if (category === 'prop_firm') return pfWdrSource;
+    return 'manual';
+  };
 
   const propFirmNetIncomeDisplay = propFirmSalesDisplay - propFirmWithdrawalDisplay;
 
@@ -453,7 +491,17 @@ export default function MovimientosPage() {
             data={depositRows}
             columns={[
               {
-                header: t('movements.channel'),
+                header: (
+                  <span className="inline-flex items-center gap-1.5">
+                    {t('movements.channel')}
+                    {/* La entrada del glosario existía desde hace meses y no la
+                        usaba nadie: explicaba justo lo que esta tabla no dice,
+                        que cada fila es API + manual y que el manual nunca se
+                        pisa. Va acá, al lado del rótulo «api» que la motiva
+                        (2026-08-31, auditoría de finanzas, ítem 20). */}
+                    <InfoTip text={GLOSSARY.apiManualCoexist} />
+                  </span>
+                ),
                 accessor: (d) => (
                   <>
                     {depositChannelLabel(d.channel, t)}
@@ -546,26 +594,45 @@ export default function MovimientosPage() {
             columns={[
               {
                 header: t('movements.category'),
-                accessor: (w) => (
-                  <>
-                    {WITHDRAWAL_LABELS[w.category]}
-                    <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                      manual
-                    </span>
-                  </>
-                ),
+                accessor: (w) => {
+                  const src = withdrawalRowSource(w.category);
+                  return (
+                    <>
+                      {withdrawalCategoryLabel(w.category, t)}
+                      <span
+                        className={`ml-2 text-[10px] uppercase tracking-wide ${
+                          src === 'api' ? 'text-positive' : 'text-muted-foreground'
+                        }`}
+                      >
+                        {src === 'api' ? 'api' : 'manual'}
+                      </span>
+                      {/* «Informativa» no es decoración: dice por qué este
+                          número NO está en Retiros Totales. Sin el rótulo, una
+                          fila de $180.000 arriba de un total que no la incluye
+                          se lee como un error de suma. */}
+                      {w.category === 'ib_commissions' && (
+                        <span className="ml-2 text-[10px] text-muted-foreground/80 uppercase tracking-wide">
+                          {t('movements.informationalOnly')}
+                        </span>
+                      )}
+                    </>
+                  );
+                },
               },
               {
                 header: t('movements.amount'),
                 align: 'right',
                 // Broker — Kevin (2026-05-03): es informativo manual,
                 // siempre se muestra solo lo cargado en Carga de Datos.
-                // Las demás categorías (Comisiones IB, Prop Firm, Otros)
-                // también son manuales. Ninguna lleva splitting API+MANUAL
-                // porque los retiros reales viven en "Retiros Totales".
+                // Comisiones IB y Prop Firm muestran desde el 2026-08-31 el
+                // valor EFECTIVO (automático del espejo del CRM, o el manual si
+                // hay override), el mismo que ya usaban las tarjetas de abajo:
+                // tener la tabla en $0 y la tarjeta en $11.981,70 era el mismo
+                // dato contado dos veces con dos resultados. Ninguna suma a
+                // «Retiros Totales» — los retiros reales viven ahí.
                 accessor: (w) => (
                   <span className="font-medium">
-                    {formatCurrency(w.category === 'broker' ? brokerDisplay : w.amount)}
+                    {formatCurrency(withdrawalRowAmount(w.category, w.amount))}
                   </span>
                 ),
               },
@@ -610,6 +677,13 @@ export default function MovimientosPage() {
                 <tr className="text-muted-foreground">
                   <td className="px-4 py-1">
                     {t('movements.p2pTransfer')}
+                    <span
+                      className={`ml-2 text-[10px] uppercase tracking-wide ${
+                        p2p.source === 'api' ? 'text-positive' : 'text-muted-foreground'
+                      }`}
+                    >
+                      {p2p.source === 'api' ? 'api' : 'manual'}
+                    </span>
                   </td>
                   <td className="px-4 py-1 text-right">
                     {formatCurrency(p2pTransferDisplay)}

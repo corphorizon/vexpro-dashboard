@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { getBalanceWalletIds } from '@/lib/pinned-wallets';
-import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
-import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
+import { fetchLiveChannelBalances } from '@/lib/api-integrations/live-balances';
 import { apiError } from '@/lib/api-error';
 import { resolveChannels, type ChannelConfigRow } from '@/lib/channel-configs';
 import { pickChannelAmount, type ReportChannelSource } from '@/lib/reports/balances-by-channel';
@@ -27,12 +25,26 @@ import { isLiquid, normalizeLocationType, type LocationType } from '@/lib/cash-l
 // (resolveChannels + is_visible) y se lee el mismo saldo.
 //
 // Resolution rules (mirror /balances `getChannelValue`):
-//   · coinsbuy   → live API, sum of pinned wallets only
-//   · unipayment → live API, sum of availableBalance
+//   · canal automático con saldo en vivo → API del proveedor, AHORA
 //   · resto      → LIBRO (channel_ledger_entries vía RPC), snapshot como
 //                  respaldo para el canal que todavía no abrió libro
 //   · liquidez   → running sum of liquidity_movements (deposit − withdrawal)
 //   · inversiones → running sum of investments (deposit − withdrawal + profit)
+//
+// ── QUIÉN SE REFRESCA EN VIVO SALE DEL REGISTRO ────────────────────────────
+// (2026-08-31, auditoría de finanzas, ítem 14)
+// Hasta hoy eran DOS ramas escritas a mano: `ch.key === 'coinsbuy'` y
+// `ch.key === 'unipayment'`. Los otros dos canales automáticos —FairPay y
+// Pay-Pros, los dos con endpoint de saldo y los dos leídos por el cron cada
+// noche— caían al libro. Medido ese día en Vex Pro: **Pay-Pros con $39.944
+// mostraba el saldo de anoche y UniPayment con $21 se refrescaba**. La tarjeta
+// dice «ahora mismo» y era mentira justo para el canal grande.
+// Ahora la lista sale de `LIVE_BALANCE_CHANNELS` y los fetchers de
+// `api-integrations/live-balances.ts`, con un test que cruza las dos.
+//
+// Un canal que no se pudo leer en vivo NO baja el total: cae a libro/snapshot
+// y su clave viaja en `liveUnavailable` para que la pantalla pueda decirlo.
+// `null` es "no lo sabemos", nunca 0 (§1.2 / §1.3 de las reglas).
 //
 // La elección libro-vs-snapshot NO se reimplementa acá: es `pickChannelAmount`
 // de reports/balances-by-channel, la misma que usa el reporte. Tres copias de
@@ -51,15 +63,6 @@ import { isLiquid, normalizeLocationType, type LocationType } from '@/lib/cash-l
 
 const API_TIMEOUT_MS = 5000;
 
-function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`timeout after ${ms}ms`)), ms),
-    ),
-  ]);
-}
-
 export async function GET(request: NextRequest) {
   try {
     // Sigue en verifyAuth (cualquier rol) A PROPÓSITO: la tarjeta de total
@@ -77,9 +80,7 @@ export async function GET(request: NextRequest) {
       configsRes,
       ledgerRes,
       asOfRes,
-      pinnedRes,
-      coinsbuyRes,
-      unipaymentRes,
+      liveRes,
       liquidityRes,
       investmentsRes,
     ] = await Promise.allSettled([
@@ -95,12 +96,12 @@ export async function GET(request: NextRequest) {
         p_asof: today,
       }),
       admin.rpc('channel_balances_as_of', { p_company_id: auth.companyId, p_date: today }),
-      // BALANCE → TODAS las wallets pineadas, operativas e internas: la plata
-      // que está en la wallet de ahorro o en la de egresos sigue siendo plata
-      // de la empresa (migración 084).
-      getBalanceWalletIds(auth.companyId),
-      withTimeout(fetchCoinsbuyWallets(auth.companyId), API_TIMEOUT_MS),
-      withTimeout(fetchUnipaymentBalances(auth.companyId), API_TIMEOUT_MS),
+      // Saldo en vivo de TODOS los canales automáticos del registro, en
+      // paralelo y con timeout por canal. Coinsbuy scopea a las wallets
+      // FIJADAS (todas, operativas e internas: la plata de la wallet de ahorro
+      // o la de egresos sigue siendo plata de la empresa — migración 084);
+      // esa regla vive dentro del fetcher, no acá.
+      fetchLiveChannelBalances(auth.companyId, { timeoutMs: API_TIMEOUT_MS }),
       admin
         .from('liquidity_movements')
         .select('deposit, withdrawal')
@@ -146,38 +147,14 @@ export async function GET(request: NextRequest) {
       ]),
     );
 
-    // ── Coinsbuy: sum of pinned wallets from live API ────────────────────
-    const pinnedIds: Set<string> = new Set(
-      pinnedRes.status === 'fulfilled' ? pinnedRes.value : [],
-    );
-
-    type WalletLike = { id: string; balanceConfirmed?: number };
-    let coinsbuyLive: number | null = null;
-    if (
-      coinsbuyRes.status === 'fulfilled' &&
-      Array.isArray((coinsbuyRes.value as { wallets?: WalletLike[] }).wallets)
-    ) {
-      const wallets = (coinsbuyRes.value as { wallets: WalletLike[] }).wallets;
-      // If user pinned some, sum only those. If they haven't pinned anything
-      // we fall through to libro/snapshot (no ambiguous "all wallets" sum).
-      if (pinnedIds.size > 0) {
-        coinsbuyLive = wallets
-          .filter((w) => pinnedIds.has(w.id))
-          .reduce((s, w) => s + (w.balanceConfirmed ?? 0), 0);
-      }
-    }
-
-    // ── UniPayment: live availableBalance sum ────────────────────────────
-    type UniBal = { availableBalance?: number };
-    let unipaymentLive: number | null = null;
-    if (
-      unipaymentRes.status === 'fulfilled' &&
-      Array.isArray((unipaymentRes.value as { balances?: UniBal[] }).balances)
-    ) {
-      const balances = (unipaymentRes.value as { balances: UniBal[] }).balances;
-      const sum = balances.reduce((s, b) => s + (b.availableBalance ?? 0), 0);
-      if (sum > 0) unipaymentLive = sum;
-    }
+    // ── Saldo en vivo por canal automático ───────────────────────────────
+    // Todo el que falle queda fuera del Map y su clave viaja en
+    // `liveUnavailable`: el canal cae a libro/snapshot y la exclusión se
+    // informa en vez de tragarse.
+    const liveByChannel =
+      liveRes.status === 'fulfilled' ? liveRes.value.byChannel : new Map<string, number>();
+    const liveUnavailable =
+      liveRes.status === 'fulfilled' ? liveRes.value.unavailable : [];
 
     // ── Liquidez running balance ─────────────────────────────────────────
     type LiqRow = { deposit: number | null; withdrawal: number | null };
@@ -218,11 +195,8 @@ export async function GET(request: NextRequest) {
       } else if (ch.key === 'inversiones') {
         amount = inversiones;
         source = 'computed';
-      } else if (ch.key === 'coinsbuy' && coinsbuyLive !== null) {
-        amount = coinsbuyLive;
-        source = 'live';
-      } else if (ch.key === 'unipayment' && unipaymentLive !== null) {
-        amount = unipaymentLive;
+      } else if (liveByChannel.has(ch.key)) {
+        amount = liveByChannel.get(ch.key) as number;
         source = 'live';
       } else {
         const picked = pickChannelAmount({
@@ -251,6 +225,13 @@ export async function GET(request: NextRequest) {
       lent,
       asOf: new Date().toISOString(),
       breakdown,
+      /**
+       * Canales automáticos que NO se pudieron leer en vivo y por lo tanto se
+       * muestran con el saldo del libro/snapshot (dato viejo, pero verdadero).
+       * Viaja hasta el cliente porque «$39.944 de ahora» y «$39.944 de anoche»
+       * son afirmaciones distintas.
+       */
+      liveUnavailable,
     });
   } catch (err) {
     return apiError('balances/total-consolidado', err, { status: 500 });
