@@ -13,6 +13,7 @@ import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
 import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
 import { buildBalancesByChannel, type ReportBalancesByChannel } from './balances-by-channel';
+import { loadCrmDailyPnl, type CrmDailyPnlSeries } from '@/lib/crm-sync/daily-pnl-query';
 import { features } from '@/lib/business-model';
 import {
   buildCompanyResult,
@@ -68,6 +69,27 @@ export interface ReportBucket {
   net_deposit: number;
 }
 
+/**
+ * El PNL que el CRM da como cerrado, listo para el correo.
+ *
+ * Todos los importes ya están en DÓLARES y con el signo del BRÓKER (positivo =
+ * ganó el bróker). En la tabla se guarda el del cliente, que es el signo del
+ * panel de Orion; la inversión ocurre UNA vez, acá, y no en cada plantilla.
+ */
+export interface ReportCrmPnl {
+  /** El día que cerró y su resultado. Para el reporte DIARIO es "el" número. */
+  last_day: string | null;
+  last_broker_pnl: number | null;
+  /** Acumulado del rango del reporte (semanal/mensual). */
+  broker_pnl_range: number | null;
+  volume_lots_range: number;
+  deals_range: number;
+  /** Sobre cuántos días se calculó, y cuáles faltan. Un total incompleto
+   *  tiene que poder decirlo: si no, es un número más chico y creíble. */
+  days_with_data: number;
+  days_missing: string[];
+}
+
 export interface ReportData {
   range: { from: string; to: string };
   this_month: { from: string; to: string };
@@ -94,6 +116,15 @@ export interface ReportData {
     pnl_prev_month: number;
     connected: boolean;
     isMock: boolean;
+    /**
+     * El cierre diario que da el CRM (`crm_daily_pnl`, migración 106).
+     *
+     * `null` cuando el tenant todavía no tiene ni un día guardado — y ahí, y
+     * sólo ahí, los tres números de arriba siguen viniendo del endpoint REST
+     * de Orion (que para Vex Pro no está configurado y devuelve datos falsos).
+     * Cuando hay dato, los tres SALEN DE ACÁ y `isMock` es false.
+     */
+    crm: ReportCrmPnl | null;
   };
   prop_trading: {
     products: Array<{ name: string; quantity: number; amount: number }>;
@@ -401,6 +432,9 @@ export async function buildReportData(
     crmPropTrading,
     balancesByChannel,
     companyResult,
+    crmPnlRange,
+    crmPnlMonth,
+    crmPnlPrevMonth,
   ] = await Promise.allSettled([
     fetchManualDepsForMonths(rangeMonths),
     fetchManualWdrForMonths(rangeMonths),
@@ -454,6 +488,12 @@ export async function buildReportData(
     fetchOrionCrmPropTrading(companyId, from, to),
     buildBalancesByChannel(companyId, to),
     buildCompanyResultFor(companyId, from, to),
+    // El PNL que el CRM da como cerrado (migración 106). Tres rangos porque el
+    // correo compara el rango contra el mes y contra el anterior, igual que
+    // hacía el endpoint REST al que reemplaza.
+    loadCrmDailyPnl(admin, companyId, from, to),
+    loadCrmDailyPnl(admin, companyId, thisMonth.from, thisMonth.to),
+    loadCrmDailyPnl(admin, companyId, prevMonth.from, prevMonth.to),
   ]);
 
   const safeData = <T>(
@@ -606,9 +646,79 @@ export async function buildReportData(
     asOf: to,
   });
 
+  // ── El PNL del bróker, ahora con el número real del CRM ─────────────────
+  //
+  // Kevin, 2026-08-31: «debemos tomar el dato que da el crm». Hasta hoy esta
+  // sección salía de `fetchOrionCrmBrokerPnl`, que pega contra un endpoint
+  // REST `/v1/broker-pnl` de Orion. Vex Pro NO tiene la credencial `orion_crm`
+  // cargada (ocho credenciales configuradas ese día, y esa no está), así que
+  // la llamada caía al generador de datos falsos y el correo salía con un
+  // número inventado bajo el título "Broker P&L".
+  //
+  // Cuando hay aunque sea un día guardado en `crm_daily_pnl`, los tres números
+  // salen de ahí. Si no hay ninguno se conserva el camino viejo: quitarlo
+  // dejaría sin sección a un tenant que sí tenga el endpoint.
+  //
+  // EL SIGNO SE INVIERTE ACÁ Y SÓLO ACÁ. La tabla guarda el PNL del CLIENTE
+  // (el signo del panel de Orion); "Broker P&L" es lo contrario. Hacerlo una
+  // vez, en un lugar con nombre, evita que la mitad de las plantillas termine
+  // mostrando la ganancia del cliente con el rótulo del bróker.
+  const serieVacia: CrmDailyPnlSeries = {
+    range: { from, to },
+    rows: [],
+    daysMissing: [],
+    totals: {
+      clientsPnl: null, brokerPnl: null, volumeLots: 0,
+      dealsCount: 0, daysWithData: 0, unmatchedAccounts: 0,
+    },
+    last: null,
+  };
+  const crmRango = unwrap(crmPnlRange, serieVacia);
+  const crmMes = unwrap(crmPnlMonth, serieVacia);
+  const crmMesPrevio = unwrap(crmPnlPrevMonth, serieVacia);
+  if (crmPnlRange.status !== 'fulfilled') failures.push('crm_daily_pnl');
+
+  const hayCrmPnl =
+    crmRango.totals.daysWithData > 0 ||
+    crmMes.totals.daysWithData > 0 ||
+    crmMesPrevio.totals.daysWithData > 0;
+
+  const crmPnl: ReportCrmPnl | null = hayCrmPnl
+    ? {
+        last_day: crmRango.last?.utc_day ?? null,
+        last_broker_pnl:
+          crmRango.last == null || crmRango.last.pnl_usd === null
+            ? null
+            : -crmRango.last.pnl_usd,
+        broker_pnl_range: crmRango.totals.brokerPnl,
+        volume_lots_range: crmRango.totals.volumeLots,
+        deals_range: crmRango.totals.dealsCount,
+        days_with_data: crmRango.totals.daysWithData,
+        days_missing: crmRango.daysMissing,
+      }
+    : null;
+
+  const brokerPnlFinal = crmPnl
+    ? {
+        pnl_range: crmRango.totals.brokerPnl ?? 0,
+        pnl_month: crmMes.totals.brokerPnl ?? 0,
+        pnl_prev_month: crmMesPrevio.totals.brokerPnl ?? 0,
+        connected: true,
+        isMock: false,
+        crm: crmPnl,
+      }
+    : {
+        pnl_range: brokerPnlResult.pnl_range,
+        pnl_month: brokerPnlResult.pnl_month,
+        pnl_prev_month: brokerPnlResult.pnl_prev_month,
+        connected: brokerPnlResult.connected,
+        isMock: brokerPnlResult.isMock,
+        crm: null,
+      };
+
   const anyMock =
     crmUsersResult.isMock ||
-    brokerPnlResult.isMock ||
+    brokerPnlFinal.isMock ||
     propTradingResult.isMock;
 
   return {
@@ -643,13 +753,7 @@ export async function buildReportData(
       connected: crmUsersResult.connected,
       isMock: crmUsersResult.isMock,
     },
-    broker_pnl: {
-      pnl_range: brokerPnlResult.pnl_range,
-      pnl_month: brokerPnlResult.pnl_month,
-      pnl_prev_month: brokerPnlResult.pnl_prev_month,
-      connected: brokerPnlResult.connected,
-      isMock: brokerPnlResult.isMock,
-    },
+    broker_pnl: brokerPnlFinal,
     prop_trading: {
       products: propTradingResult.products,
       total_sales_range: propTradingResult.total_sales_range,

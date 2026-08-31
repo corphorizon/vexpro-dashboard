@@ -129,6 +129,16 @@ const L: Record<EmailLocale, Record<string, string>> = {
     pnlPrevMonth: 'P&L mes anterior',
     pnlRange: 'P&L del rango',
     variationVsPrev: 'Variación vs mes anterior',
+    crmPnlDay: 'P&L del día (CRM)',
+    crmPnlPeriod: 'P&L del período (CRM)',
+    crmPnlVolume: 'Volumen (lotes)',
+    crmPnlDeals: 'Operaciones',
+    crmPnlDays: 'sobre {days} día(s) con dato',
+    crmPnlNoData: 'sin dato',
+    crmPnlSource: 'Cierre diario tomado del CRM. Las cuentas Cent ya están convertidas a dólares.',
+    crmPnlMissing: 'faltan {n} día(s) en el período: {days}',
+    textCrmPnlDay: 'P&L del día (CRM)',
+    textCrmPnlPeriod: 'P&L del período (CRM)',
     propTradingTitle: 'Prop Trading Firm',
     productsSold: 'Productos vendidos',
     product: 'Producto',
@@ -232,6 +242,16 @@ const L: Record<EmailLocale, Record<string, string>> = {
     pnlPrevMonth: 'P&L (prev. month)',
     pnlRange: 'P&L (range)',
     variationVsPrev: 'Change vs previous month',
+    crmPnlDay: 'P&L for the day (CRM)',
+    crmPnlPeriod: 'P&L for the period (CRM)',
+    crmPnlVolume: 'Volume (lots)',
+    crmPnlDeals: 'Trades',
+    crmPnlDays: 'over {days} day(s) with data',
+    crmPnlNoData: 'no data',
+    crmPnlSource: 'Daily close taken from the CRM. Cent accounts are already converted to dollars.',
+    crmPnlMissing: '{n} day(s) missing in the period: {days}',
+    textCrmPnlDay: 'P&L for the day (CRM)',
+    textCrmPnlPeriod: 'P&L for the period (CRM)',
     propTradingTitle: 'Prop Trading Firm',
     productsSold: 'Products sold',
     product: 'Product',
@@ -718,9 +738,50 @@ function renderBrokerPnlSection(
   `;
 
   const title = `Broker P&amp;L${p.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
+
+  // ── El cierre que da el CRM ──────────────────────────────────────────────
+  // El diario lleva EL DÍA (que es lo que se pregunta a la mañana); el
+  // semanal y el mensual llevan el acumulado del período. Y los dos llevan
+  // sobre cuántos días se calculó: un acumulado al que le faltan días es un
+  // número más chico y perfectamente creíble si nadie lo dice.
+  const c = p.crm;
+  const crmBlock = !c
+    ? ''
+    : `
+    <table cellspacing="0" cellpadding="0" style="width:100%;">
+      <tr>
+        ${
+          cadence === 'daily'
+            ? renderKpi(
+                lt(locale, 'crmPnlDay'),
+                c.last_broker_pnl === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.last_broker_pnl),
+                c.last_broker_pnl === null ? 'neutral' : c.last_broker_pnl >= 0 ? 'positive' : 'negative',
+                c.last_day ?? undefined,
+              )
+            : renderKpi(
+                lt(locale, 'crmPnlPeriod'),
+                c.broker_pnl_range === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.broker_pnl_range),
+                c.broker_pnl_range === null ? 'neutral' : c.broker_pnl_range >= 0 ? 'positive' : 'negative',
+                lt(locale, 'crmPnlDays', { days: String(c.days_with_data) }),
+              )
+        }
+        ${renderKpi(lt(locale, 'crmPnlVolume'), c.volume_lots_range.toLocaleString(locale === 'es' ? 'es-ES' : 'en-US'), 'neutral')}
+        ${renderKpi(lt(locale, 'crmPnlDeals'), c.deals_range.toLocaleString(locale === 'es' ? 'es-ES' : 'en-US'), 'neutral')}
+      </tr>
+    </table>
+    <p style="font-size:11px;color:${BRAND_HEX.muted};margin:4px 10px 0 10px;">
+      ${lt(locale, 'crmPnlSource')}${
+        c.days_missing.length > 0
+          ? ` · ${escapeHtml(lt(locale, 'crmPnlMissing', { n: String(c.days_missing.length), days: c.days_missing.slice(0, 5).join(', ') }))}`
+          : ''
+      }
+    </p>
+  `;
+
   return `
     ${sectionHeader(primary, '📈', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">${kpiRow}</table>
+    ${crmBlock}
   `;
 }
 
@@ -980,8 +1041,23 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
       `  ${lt(locale, 'textRange')}: ${formatCurrency(data.broker_pnl.pnl_range)}`,
       `  ${lt(locale, 'textMonth')}: ${formatCurrency(data.broker_pnl.pnl_month)}`,
       `  ${lt(locale, 'textPrevMonth')}: ${formatCurrency(data.broker_pnl.pnl_prev_month)}`,
-      ``,
     );
+    const c = data.broker_pnl.crm;
+    if (c) {
+      // Mismo criterio que el HTML: el diario lleva el día, el resto el
+      // acumulado, y los dos dicen sobre cuántos días se calcularon.
+      lines.push(
+        cadence === 'daily'
+          ? `  ${lt(locale, 'textCrmPnlDay')}${c.last_day ? ` (${c.last_day})` : ''}: ${c.last_broker_pnl === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.last_broker_pnl)}`
+          : `  ${lt(locale, 'textCrmPnlPeriod')}: ${c.broker_pnl_range === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.broker_pnl_range)} (${lt(locale, 'crmPnlDays', { days: String(c.days_with_data) })})`,
+      );
+      if (c.days_missing.length > 0) {
+        lines.push(
+          `  ${lt(locale, 'crmPnlMissing', { n: String(c.days_missing.length), days: c.days_missing.slice(0, 5).join(', ') })}`,
+        );
+      }
+    }
+    lines.push(``);
   }
 
   if (sections.prop_trading) {
