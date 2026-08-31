@@ -190,21 +190,30 @@ export async function GET(request: NextRequest) {
         page++;
       }
 
-      if (page === MAX_PAGES && lastPageSize === PAGE_SIZE) {
+      // El corte por MAX_PAGES VIAJA (2026-08-31, auditoría de finanzas, ítem
+      // 19). Hasta hoy sólo se escribía un console.warn: en Vercel eso es un
+      // renglón que nadie lee, mientras la pantalla mostraba un total corto con
+      // cara de total completo. Un recorte silencioso es indistinguible de «no
+      // hay más» (§1.2).
+      const truncated = page === MAX_PAGES && lastPageSize === PAGE_SIZE;
+      if (truncated) {
         console.warn(
           `[persisted-movements] ${slug}: hit MAX_PAGES=${MAX_PAGES} cap, posible truncamiento. ` +
             `Filas leídas: ${accumulated.length}. Revisar volumen del slug.`,
         );
       }
 
-      return accumulated;
+      return { rows: accumulated, truncated };
     };
 
     const slugsToFetch: ProviderSlug[] = requestedSlug ? [requestedSlug] : [...SLUGS];
-    const perSlugRows = await Promise.all(slugsToFetch.map(runOne));
+    const perSlug = await Promise.all(slugsToFetch.map(runOne));
+
+    /** Proveedores cuyo dataset puede estar CORTO. Llega hasta la UI. */
+    const truncatedSlugs = slugsToFetch.filter((_, i) => perSlug[i].truncated);
 
     // Flatten — `buildDataset` filters to its own slug below.
-    const rows = perSlugRows.flat();
+    const rows = perSlug.flatMap((r) => r.rows);
 
     // Last sync timestamp — when slug is requested, scope to that provider so
     // the breakdown page can show "datos del último sync hace Xh" precisely.
@@ -313,6 +322,7 @@ export async function GET(request: NextRequest) {
         success: true,
         dataset: buildDataset(requestedSlug),
         fetchedAt: lastSyncRow?.last_synced_at ?? null,
+        truncatedSlugs,
       });
     }
 
@@ -322,6 +332,7 @@ export async function GET(request: NextRequest) {
       success: true,
       datasets,
       fetchedAt: lastSyncRow?.last_synced_at ?? null,
+      truncatedSlugs,
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

@@ -157,6 +157,11 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
 
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  // Proveedores cuyo dataset vino RECORTADO por el techo de paginación del
+  // endpoint. Hasta el 2026-08-31 ese corte sólo dejaba un console.warn del
+  // lado del servidor y la tarjeta mostraba un total corto con cara de total
+  // completo (auditoría de finanzas, ítem 19).
+  const [truncatedSlugs, setTruncatedSlugs] = useState<ProviderSlug[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -280,6 +285,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (!json.success) throw new Error(json.error || 'Error cargando datos persistidos');
       setDatasets(json.datasets ?? []);
       setFetchedAt(json.fetchedAt);
+      setTruncatedSlugs(json.truncatedSlugs ?? []);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Error de red');
     } finally {
@@ -315,6 +321,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
         }),
       );
       setFetchedAt(json.fetchedAt);
+      setTruncatedSlugs(json.truncatedSlugs ?? []);
       // Wait briefly for the server-side fire-and-forget persist to complete,
       // THEN tell the parent page to re-read from Supabase. Without this
       // delay the tables below could fetch persisted-movements before the
@@ -546,6 +553,18 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       {errorMsg && (
         <div className="p-2 mb-2 rounded bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
           {errorMsg}
+        </div>
+      )}
+
+      {/* Un recorte silencioso es indistinguible de «no hay más». Si el
+          endpoint tocó su techo de páginas, la tarjeta de ese proveedor muestra
+          MENOS de lo que hay y hay que decirlo antes de que alguien lo sume. */}
+      {truncatedSlugs.length > 0 && (
+        <div className="p-2 mb-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs">
+          Datos incompletos en{' '}
+          {truncatedSlugs.map((s) => PROVIDER_META[s]?.provider ?? s).join(', ')}: se
+          alcanzó el máximo de filas que se pueden leer de una vez. Los importes de
+          esa(s) tarjeta(s) están CORTOS — achicá el rango de fechas.
         </div>
       )}
 

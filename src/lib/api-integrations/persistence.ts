@@ -238,11 +238,28 @@ export async function persistBalanceSnapshot(
 
 // ─── Read helpers ────────────────────────────────────────────────────────
 
+/**
+ * Techo defensivo de filas. Un mes típico son <10K; esto protege contra un
+ * rango de varios años consumiendo memoria en silencio.
+ */
+const TX_ROW_CAP = 10_000;
+
 export interface PersistedTotals {
   by: Record<ProviderSlug, number>;
   depositsTotal: number;
   withdrawalsTotal: number;
   lastSyncedAt: string | null;
+  /**
+   * La consulta tocó el techo de filas: estos totales pueden estar CORTOS.
+   *
+   * El `.limit(10000)` estaba desde siempre y sin flag, así que un rango que lo
+   * superara devolvía un Depósitos/Retiros más chico que el real, sin ningún
+   * aviso — y de ahí sale el Net Deposit que consume la cadena de
+   * distribución. Un recorte silencioso es indistinguible de «no hay más»
+   * (docs/reglas-del-proyecto.md §1.2), y acá además es indistinguible de un
+   * mes flojo (2026-08-31, auditoría de finanzas, ítem 19).
+   */
+  truncated: boolean;
 }
 
 /**
@@ -280,9 +297,7 @@ export async function loadPersistedTotals(
     .eq('company_id', companyId)
     .gte('transaction_date', fromISO)
     .lte('transaction_date', toISO)
-    // Defensive cap — typical month is <10K rows; this protects against a
-    // pathological multi-year range silently consuming memory.
-    .limit(10000);
+    .limit(TX_ROW_CAP);
 
   if (walletId) {
     // Only apply filter for rows that have a wallet_id — others (fairpay/uni)
@@ -304,8 +319,13 @@ export async function loadPersistedTotals(
       depositsTotal: 0,
       withdrawalsTotal: 0,
       lastSyncedAt: null,
+      truncated: false,
     };
   }
+
+  // `>=` y no `===`: PostgREST puede devolver menos de lo pedido por su propio
+  // techo de servidor, y en ese caso también hay recorte.
+  const truncated = data.length >= TX_ROW_CAP;
 
   const by: Record<ProviderSlug, number> = {
     'coinsbuy-deposits': 0,
@@ -373,5 +393,6 @@ export async function loadPersistedTotals(
     depositsTotal: by['coinsbuy-deposits'] + by.fairpay + by.unipayment + by.paypros,
     withdrawalsTotal: by['coinsbuy-withdrawals'] + payprosPayouts,
     lastSyncedAt: syncRows?.[0]?.last_synced_at ?? null,
+    truncated,
   };
 }

@@ -50,6 +50,7 @@ function report(overrides: Partial<ReportData> = {}): ReportData {
     company_result: null,
     anyMock: false,
     failures: [],
+    truncated: [],
     ...overrides,
   } as ReportData;
 }
@@ -155,5 +156,47 @@ describe('«Productos vendidos» sin desglose', () => {
     expect(out).toContain('Sin desglose disponible');
     // Y el total del rango SÍ se muestra: lo que falta es el desglose.
     expect(out).toContain('11,981.70');
+  });
+});
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// El flag `truncated` tiene que LLEGAR al correo, no morir en la API
+// (2026-08-31, auditoría de finanzas, ítem 19).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('cifras recortadas por el techo de filas', () => {
+  it('sin recorte no hay aviso', () => {
+    expect(html(report())).not.toContain('CIFRAS INCOMPLETAS');
+  });
+
+  it('con recorte el correo lo dice, y nombra la fuente', () => {
+    const out = html(report({ truncated: ['api_transactions (rango)'] }));
+    expect(out).toContain('CIFRAS INCOMPLETAS');
+    expect(out).toContain('api_transactions (rango)');
+    // Y dice en qué DIRECCIÓN está el error: un total corto se confunde con un
+    // mes flojo, y saber que sólo puede ser menor cambia qué se hace con él.
+    expect(out).toContain('CORTOS');
+  });
+
+  it('la versión de texto plano también lo lleva', () => {
+    // El correo se manda multipart: quien lo lea en texto no puede quedarse sin
+    // el aviso que sí lleva el HTML.
+    const txt = renderReportEmailText({
+      data: report({ truncated: ['api_transactions (mes)'] }),
+      cadence: 'daily',
+      companyName: 'Vex Pro',
+      locale: 'es',
+    });
+    expect(txt).toContain('CIFRAS INCOMPLETAS');
+    expect(txt).toContain('api_transactions (mes)');
+  });
+
+  it('es un aviso DISTINTO del de una fuente caída', () => {
+    // `failures` = no respondió y se ve un hueco. `truncated` = respondió un
+    // número plausible y menor que el real. Confundirlos hace que el segundo se
+    // lea como «faltan datos de una sección» en vez de «este número está mal».
+    const out = html(report({ failures: ['crm_daily_pnl'], truncated: ['api_transactions (rango)'] }));
+    expect(out).toContain('no respondieron');
+    expect(out).toContain('CIFRAS INCOMPLETAS');
   });
 });

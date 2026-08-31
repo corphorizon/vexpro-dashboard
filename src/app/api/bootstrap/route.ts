@@ -58,7 +58,12 @@ export const maxDuration = 30;
 /** Cota defensiva idéntica a la de src/lib/supabase/queries.ts (PERF-02). */
 const ROW_CAP = 10_000;
 
-type SliceResult = { rows: unknown[] | null; failed: boolean };
+type SliceResult = {
+  rows: unknown[] | null;
+  failed: boolean;
+  /** La consulta tocó `ROW_CAP`: hay más filas de las que se devolvieron. */
+  truncated: boolean;
+};
 
 export async function GET(request: NextRequest) {
   try {
@@ -110,18 +115,36 @@ export async function GET(request: NextRequest) {
       slice: BootstrapSliceKey,
       build: () => PromiseLike<{ data: unknown[] | null; error: unknown }>,
     ): Promise<[BootstrapSliceKey, SliceResult]> => {
-      if (estaVedado(slice)) return Promise.resolve([slice, { rows: [], failed: false }]);
+      if (estaVedado(slice)) {
+        return Promise.resolve([slice, { rows: [], failed: false, truncated: false }]);
+      }
       return Promise.resolve(build()).then(
         ({ data, error }) => {
           if (error) {
             console.error(`[bootstrap] slice "${slice}" falló:`, error);
-            return [slice, { rows: null, failed: true }] as [BootstrapSliceKey, SliceResult];
+            return [slice, { rows: null, failed: true, truncated: false }] as [
+              BootstrapSliceKey,
+              SliceResult,
+            ];
           }
-          return [slice, { rows: data ?? [], failed: false }] as [BootstrapSliceKey, SliceResult];
+          const rows = data ?? [];
+          // ── El techo de filas AVISA (2026-08-31, auditoría, ítem 19) ──────
+          // Los `.limit(ROW_CAP)` estaban sin flag. Un tenant que pase las
+          // 10.000 filas de egresos recibe las primeras 10.000 y la pantalla
+          // suma ESAS: un total más chico, plausible y firmado. Un recorte
+          // silencioso es indistinguible de «no hay más» (§1.2).
+          // `>=` y no `===`: PostgREST puede cortar antes por db_max_rows.
+          return [slice, { rows, failed: false, truncated: rows.length >= ROW_CAP }] as [
+            BootstrapSliceKey,
+            SliceResult,
+          ];
         },
         (err) => {
           console.error(`[bootstrap] slice "${slice}" lanzó:`, err);
-          return [slice, { rows: null, failed: true }] as [BootstrapSliceKey, SliceResult];
+          return [slice, { rows: null, failed: true, truncated: false }] as [
+            BootstrapSliceKey,
+            SliceResult,
+          ];
         },
       );
     };
@@ -163,6 +186,8 @@ export async function GET(request: NextRequest) {
 
     const porSlice = new Map<BootstrapSliceKey, SliceResult>(resultados);
     const partial = resultados.filter(([, r]) => r.failed).map(([slice]) => slice);
+    /** Slices que tocaron el techo de filas: sus totales pueden estar CORTOS. */
+    const truncated = resultados.filter(([, r]) => r.truncated).map(([slice]) => slice);
 
     // `periods` es crítico: sin él no hay dashboard. Que la respuesta salga
     // "exitosa" pero sin períodos sería justamente el fallo que no da error.
@@ -201,6 +226,11 @@ export async function GET(request: NextRequest) {
       partial,
       /** Slices que este usuario no tiene permitido ver. Vienen como `[]`. */
       gated,
+      /**
+       * Slices recortados por el techo de filas. Distinto de `partial`: acá el
+       * slice SÍ respondió, con menos filas de las que hay. La UI lo muestra.
+       */
+      truncated,
       data: {
         company,
         periods: rows('periods'),

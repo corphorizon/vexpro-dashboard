@@ -114,6 +114,17 @@ export interface SaldoInfo {
 export interface DataContextValue {
   loading: boolean;
   error: string | null;
+  /**
+   * Slices que /api/bootstrap devolvió RECORTADOS por su techo de filas
+   * (`ROW_CAP` = 10.000). No es un fallo: el slice respondió, con menos filas
+   * de las que hay, así que todo lo que se sume a partir de él está CORTO —
+   * menor que lo real, nunca mayor. Vacío = todo completo.
+   *
+   * Existe porque un recorte silencioso es indistinguible de «no hay más»
+   * (docs/reglas-del-proyecto.md §1.2) y los `.limit(ROW_CAP)` no tenían flag
+   * (2026-08-31, auditoría de finanzas, ítem 19).
+   */
+  truncatedSlices: string[];
   company: Company | null;
   periods: Period[];
 
@@ -210,6 +221,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     ? activeCompanyId
     : authUser?.company_id ?? null;
   const [loading, setLoading] = useState(true);
+  const [truncatedSlices, setTruncatedSlices] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Core data
@@ -600,6 +612,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         companyId?: string;
         partial?: string[];
         gated?: string[];
+        truncated?: string[];
         data?: Record<string, unknown>;
       };
       if (!payload?.success || !payload.data) throw new Error('bootstrap: respuesta inválida');
@@ -627,6 +640,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
           category: 'data-context.load',
           message: 'bootstrap:partial',
           data: { generation, partial: partial.join(',') },
+        });
+      }
+      // El recorte no es un fallo: el slice respondió, con menos filas. Viaja
+      // al contexto para que la pantalla pueda decirlo — un total corto y
+      // creíble es peor que un error.
+      const truncated = payload.truncated ?? [];
+      setTruncatedSlices(truncated);
+      if (truncated.length > 0) {
+        console.warn('[data-context] /api/bootstrap devolvió slices recortados:', truncated);
+        Sentry.addBreadcrumb({
+          category: 'data-context.load',
+          message: 'bootstrap:truncated',
+          data: { generation, truncated: truncated.join(',') },
         });
       }
       if ((payload.gated ?? []).length > 0) {
@@ -1279,6 +1305,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     () => ({
       loading,
       error,
+      truncatedSlices,
       company,
       periods,
 
@@ -1415,6 +1442,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [
       loading,
       error,
+      truncatedSlices,
       company,
       periods,
       getPeriodSummary,

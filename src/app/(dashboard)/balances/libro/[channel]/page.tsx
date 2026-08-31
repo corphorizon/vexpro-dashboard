@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, BookOpen, Plus, Pencil, Trash2, FileDown, Lock } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BookOpen, Plus, Pencil, Trash2, FileDown, Lock } from 'lucide-react';
 import { useAuth, canAdd } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
@@ -76,6 +76,14 @@ export default function ChannelLedgerPage() {
   const [range, setRange] = useState(monthRange);
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [priorEntries, setPriorEntries] = useState<LedgerEntry[]>([]);
+  // El endpoint tocó su techo de filas. `opening` es el grave: sin toda la
+  // historia previa el saldo de arranque queda mal y con él TODO el saldo
+  // corrido de la pantalla — y un libro corrido no se distingue de uno correcto
+  // mirándolo (2026-08-31, auditoría de finanzas, ítem 19).
+  const [truncated, setTruncated] = useState<{ entries: boolean; opening: boolean }>({
+    entries: false,
+    opening: false,
+  });
   const [loading, setLoading] = useState(true);
   const [channelLabel, setChannelLabel] = useState(channelKey);
   const [dialogEntry, setDialogEntry] = useState<LedgerEntry | null>(null);
@@ -110,6 +118,7 @@ export default function ChannelLedgerPage() {
       if (json.success) {
         setEntries(json.entries ?? []);
         setPriorEntries(json.priorEntries ?? []);
+        setTruncated(json.truncated ?? { entries: false, opening: false });
       } else {
         toast.error(json.error ?? 'No se pudo cargar el libro');
       }
@@ -192,6 +201,31 @@ export default function ChannelLedgerPage() {
   return (
     <div className="space-y-6">
       {ToastHost}
+
+      {(truncated.entries || truncated.opening) && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {truncated.opening ? (
+              <>
+                <strong className="font-semibold">Saldo de arranque incompleto.</strong>{' '}
+                No se pudo leer toda la historia anterior al rango: el saldo inicial y
+                el saldo corrido de TODAS las filas de abajo están equivocados. Elegí
+                un rango que empiece más tarde o pedí ayuda al equipo técnico.
+              </>
+            ) : (
+              <>
+                <strong className="font-semibold">Asientos incompletos.</strong> Se
+                alcanzó el máximo de filas que se pueden leer de una vez: faltan
+                asientos del rango y los totales están cortos. Achicá el rango.
+              </>
+            )}
+          </span>
+        </div>
+      )}
 
       <PageHeader
         title={`${t('ledger.title')} · ${channelLabel}`}

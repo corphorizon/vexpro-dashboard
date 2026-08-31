@@ -31,6 +31,26 @@ import {
 } from '@/lib/channel-ledger';
 import { unitLocationShares } from '@/lib/cash-locations';
 
+/**
+ * Techos de filas del libro, y por qué son DOS distintos.
+ *
+ * (2026-08-31, auditoría de finanzas, ítem 19)
+ * `ENTRIES_CAP` ya existía como `.limit(5000)` pelado y sin flag. El
+ * `priorQuery` de abajo —los asientos ANTERIORES al rango, de donde sale el
+ * SALDO DE ARRANQUE— no tenía NINGÚN límite, así que quedaba a merced del
+ * `db_max_rows` de PostgREST (1.000 por defecto): pasadas mil filas previas, el
+ * front sumaba sólo mil y **todo el libro del rango se mostraba corrido**, con
+ * un saldo inicial equivocado y sin ningún error. Un canal con dos años de
+ * asiento diario (hasta 5 líneas por día) llega a esas mil filas en siete
+ * meses.
+ *
+ * `PRIOR_CAP` es más alto que `ENTRIES_CAP` a propósito: lo previo es TODA la
+ * historia del canal, mientras que las entries son sólo el rango pedido. Y las
+ * previas no se renderizan —se suman— así que traerlas es barato.
+ */
+const ENTRIES_CAP = 5_000;
+const PRIOR_CAP = 20_000;
+
 const SELECT_COLS =
   'id, company_id, channel_key, entry_date, kind, source, concept, category, reference, amount, notes, created_by, created_at, updated_at';
 
@@ -168,11 +188,14 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
     .order('entry_date', { ascending: true })
     .order('created_at', { ascending: true })
-    .limit(5000);
+    .limit(ENTRIES_CAP);
 
   if (error) return apiError('admin/channel-ledger', error, { status: 500 });
 
+  const entriesTruncated = (data ?? []).length >= ENTRIES_CAP;
+
   let opening: unknown[] = [];
+  let openingTruncated = false;
   if (from && (channelKey || unitChannelKeys)) {
     let priorQuery = admin
       .from('channel_ledger_entries')
@@ -182,8 +205,13 @@ export async function GET(request: NextRequest) {
     priorQuery = unitChannelKeys
       ? priorQuery.in('channel_key', unitChannelKeys)
       : priorQuery.eq('channel_key', channelKey!);
-    const { data: op } = await priorQuery;
+    // Límite ALTO y EXPLÍCITO. Sin él mandaba el db_max_rows de PostgREST y el
+    // saldo de arranque se corría en silencio (ver PRIOR_CAP arriba).
+    const { data: op } = await priorQuery
+      .order('entry_date', { ascending: true })
+      .limit(PRIOR_CAP);
     opening = op ?? [];
+    openingTruncated = opening.length >= PRIOR_CAP;
   }
 
   return NextResponse.json({
@@ -195,6 +223,15 @@ export async function GET(request: NextRequest) {
     // Ubicaciones de la unidad, incluidas las que no tienen ni un asiento:
     // el desglose por ubicación tiene que poder mostrarlas en cero.
     ...(unitChannelKeys ? { channelKeys: unitChannelKeys, shares: unitShares } : {}),
+    /**
+     * Se alcanzó el techo de filas. Los dos son graves y de formas distintas:
+     *   · `entries`  → faltan asientos del rango: el listado está corto.
+     *   · `opening`  → falta HISTORIA previa: el saldo de arranque está mal y
+     *                  con él TODO el saldo corrido de la pantalla.
+     * Viaja al cliente porque un libro corrido no se distingue de uno correcto
+     * mirándolo (§1.2).
+     */
+    truncated: { entries: entriesTruncated, opening: openingTruncated },
   });
 }
 

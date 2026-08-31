@@ -158,6 +158,8 @@ const L: Record<EmailLocale, Record<string, string>> = {
     withdrawalsCount: '{count} retiros',
     failureNote:
       '⚠️ Algunas fuentes no respondieron y se omitieron del reporte: {failures}. El resto de los datos son correctos.',
+    truncatedNote:
+      '⚠️ CIFRAS INCOMPLETAS. Estas fuentes alcanzaron el máximo de filas que se pueden leer de una vez: {sources}. Los importes que salen de ellas están CORTOS — son MENORES que los reales, no mayores. Pedí un rango más chico antes de usar estos números.',
     mockNote:
       'Los datos de Orion CRM provienen del entorno mock. Configure las credenciales en Superadmin → APIs externas para recibir datos reales.',
     generatedBy: 'Reporte generado automáticamente por',
@@ -274,6 +276,8 @@ const L: Record<EmailLocale, Record<string, string>> = {
     withdrawalsCount: '{count} withdrawals',
     failureNote:
       '⚠️ Some data sources did not respond and were omitted from this report: {failures}. The remaining figures are accurate.',
+    truncatedNote:
+      '⚠️ INCOMPLETE FIGURES. These sources hit the maximum number of rows that can be read at once: {sources}. Any amount derived from them is SHORT — lower than the real one, never higher. Ask for a narrower range before relying on these numbers.',
     mockNote:
       'Orion CRM data comes from the mock environment. Configure credentials in Superadmin → External APIs to receive real data.',
     generatedBy: 'Report generated automatically by',
@@ -979,6 +983,18 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   `
       : '';
 
+  // Distinto de `failureNote`: ahí la fuente no respondió y se ve un hueco;
+  // acá respondió un número plausible y MENOR que el real. Es más peligroso, y
+  // por eso tiene su propia nota (2026-08-31, auditoría de finanzas, ítem 19).
+  const truncatedNote =
+    (data.truncated?.length ?? 0) > 0
+      ? `
+    <div style="margin:16px 0;padding:12px;background:#FEF3C7;border:1px solid ${BRAND_HEX.warning};border-radius:8px;color:#92400E;font-size:12px;">
+      ${lt(locale, 'truncatedNote', { sources: data.truncated.join(', ') })}
+    </div>
+  `
+      : '';
+
   const mockNote = data.anyMock
     ? `
     <div style="margin:16px 0;padding:10px;background:#FEF9C3;border:1px solid #FACC15;border-radius:8px;color:#854D0E;font-size:11px;">
@@ -1026,6 +1042,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
           <tr>
             <td style="padding:8px 32px 32px 32px;">
               ${failureNote}
+              ${truncatedNote}
               ${mockNote}
               ${data.company_result ? renderCompanyResultSection(data.company_result, primary, locale) : ''}
               ${sections.deposits_withdrawals ? renderDepositsWithdrawalsSection(data, cadence, primary, locale) : ''}
@@ -1089,6 +1106,10 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
       `  ${lt(locale, 'textCashResult')}: ${formatCurrency(r.cashResult)}`,
       ``,
     );
+  }
+
+  if ((data.truncated?.length ?? 0) > 0) {
+    lines.push(lt(locale, 'truncatedNote', { sources: data.truncated.join(', ') }), ``);
   }
 
   if (sections.deposits_withdrawals) {
