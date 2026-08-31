@@ -164,7 +164,7 @@ export default function MovimientosPage() {
     })();
     return () => { cancel = true; };
   }, [activePeriods, apiRefreshKey]);
-  const { useDerivedBroker, apiFrom, apiTo } = coexist;
+  const { useDerivedBroker } = coexist;
   // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0
   // until the CRM endpoint exists), but wired so the display already sums
   // apiValue + manualValue with zero migration work when the API lands.
@@ -255,9 +255,7 @@ export default function MovimientosPage() {
 
   // Stored manual amounts per withdrawal category.
   const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-  const ibCommissions = summary.withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
   const propFirmWithdrawal = summary.withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
-  const otherWithdrawal = summary.withdrawals.find((w) => w.category === 'other')?.amount || 0;
 
   // "Retiros Totales (API)" tracks the real Coinsbuy-side outflow. For
   // historical periods it reduces to the stored broker value.
@@ -453,7 +451,17 @@ export default function MovimientosPage() {
             data={depositRows}
             columns={[
               {
-                header: t('movements.channel'),
+                header: (
+                  <span className="inline-flex items-center gap-1.5">
+                    {t('movements.channel')}
+                    {/* La entrada del glosario existía desde hace meses y no la
+                        usaba nadie: explicaba justo lo que esta tabla no dice,
+                        que cada fila es API + manual y que el manual nunca se
+                        pisa. Va acá, al lado del rótulo «api» que la motiva
+                        (2026-08-31, auditoría de finanzas, ítem 20). */}
+                    <InfoTip text={GLOSSARY.apiManualCoexist} />
+                  </span>
+                ),
                 accessor: (d) => (
                   <>
                     {depositChannelLabel(d.channel, t)}

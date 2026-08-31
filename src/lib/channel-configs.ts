@@ -15,7 +15,15 @@
 
 import type { OnchainWallet, UnitShare } from './cash-locations';
 
-export type ChannelType = 'api' | 'manual' | 'auto';
+/**
+ * `'api'` se borró el 2026-08-31 (auditoría de finanzas, ítem 20): CERO usos en
+ * el código y CERO filas en `channel_configs.channel_type` en producción. Era
+ * un tercer valor que sólo servía para que cada `switch` tuviera una rama
+ * imposible y para hacer dudar sobre la diferencia entre «api» y «auto», que no
+ * existía. Un canal de proveedor externo es `auto`, y quién es se pregunta con
+ * `isAutoLedger` / `API_LEDGER_CHANNELS`, no por este campo.
+ */
+export type ChannelType = 'manual' | 'auto';
 
 export interface BuiltinChannel {
   key: string;

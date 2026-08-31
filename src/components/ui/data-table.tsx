@@ -12,7 +12,13 @@ import { cn } from '@/lib/utils';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface Column<T> {
-  header: string;
+  /**
+   * `ReactNode` y no `string` desde el 2026-08-31: un encabezado a veces
+   * necesita llevar su propia aclaración al lado (un `<InfoTip>`), y la
+   * alternativa era duplicar la tabla o poner la explicación lejos de la
+   * columna que explica.
+   */
+  header: React.ReactNode;
   accessor: keyof T | ((row: T) => React.ReactNode);
   className?: string;
   align?: 'left' | 'right' | 'center';

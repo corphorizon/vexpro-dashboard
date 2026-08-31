@@ -77,15 +77,12 @@ interface Props {
   /** Recarga la config de canales en el padre tras guardar. */
   onChanged: () => void;
   canManage: boolean;
-  /** Puede cargar el saldo a mano de los canales sin libro. */
-  canEditBalance: boolean;
   selectedDate: string;
   onSelectedDate: (date: string) => void;
   reloading: boolean;
   onReload: () => void;
   onExportPdf: () => void;
   onConfigure: () => void;
-  onSaveBalance: (channelKey: string, amount: number) => Promise<void>;
   /** Sub-filas propias de un canal (wallets fijadas de Coinsbuy). */
   extraRows?: (channelKey: string) => ReactNode;
   /** Acciones propias de un canal (elegir wallets de Coinsbuy). */
@@ -116,14 +113,12 @@ export function ChannelBalancesCard({
   getValue,
   onChanged,
   canManage,
-  canEditBalance,
   selectedDate,
   onSelectedDate,
   reloading,
   onReload,
   onExportPdf,
   onConfigure,
-  onSaveBalance,
   extraRows,
   extraActions,
   getSnapshotMeta,
@@ -137,8 +132,6 @@ export function ChannelBalancesCard({
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null);
-  const [balanceDraft, setBalanceDraft] = useState<Record<string, string>>({});
-  const [savingBalanceKey, setSavingBalanceKey] = useState<string | null>(null);
 
   const loadUnits = useCallback(async () => {
     try {
@@ -341,30 +334,6 @@ export function ChannelBalancesCard({
     }
   };
 
-  const saveBalance = async (channelKey: string) => {
-    const value = parseFloat(balanceDraft[channelKey] ?? '');
-    if (!Number.isFinite(value)) {
-      setStatus({ kind: 'err', msg: t('balances.invalidNumber') });
-      return;
-    }
-    setSavingBalanceKey(channelKey);
-    setStatus(null);
-    try {
-      await onSaveBalance(channelKey, value);
-      setBalanceDraft((prev) => {
-        const { [channelKey]: _omit, ...rest } = prev;
-        return rest;
-      });
-    } catch (err) {
-      setStatus({
-        kind: 'err',
-        msg: err instanceof Error ? err.message : t('balances.saveErrorGeneric'),
-      });
-    } finally {
-      setSavingBalanceKey(null);
-    }
-  };
-
   const typeLabel = (type: LocationType) => LOCATION_TYPE_LABELS[type][lang];
 
   return (
@@ -536,13 +505,12 @@ export function ChannelBalancesCard({
                 const onchain = isOnchain(loc);
                 const automatic = isAutomatic(loc.location_type) || onchain;
                 const onchainMeta = onchain ? getSnapshotMeta?.(loc.channel_key) ?? null : null;
-                const editingBalance = balanceDraft[loc.channel_key] !== undefined;
                 // El saldo de un canal con libro no se sobreescribe a mano: se
                 // carga un asiento. Dos vías serían dos fuentes de verdad para
-                // el mismo número.
+                // el mismo número — y desde 2026-08-31 NO queda ninguna otra
+                // vía: el editor de saldo suelto y su endpoint se borraron
+                // (ver la cabecera de este archivo).
                 const isPrimary = primaryGroupOf.get(loc.channel_key) === (group.unit?.id ?? '');
-                const canTypeBalance =
-                  isPrimary && canEditBalance && !hasLedger(loc.channel_key) && !automatic;
                 const partial = loc.share < 0.9999;
                 return (
                   <div key={`${group.unit?.id ?? 'none'}-${loc.channel_key}`} className="p-3">
@@ -578,79 +546,23 @@ export function ChannelBalancesCard({
                       </div>
 
                       <div className="flex items-center gap-1 shrink-0">
-                        {editingBalance ? (
-                          <>
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={balanceDraft[loc.channel_key]}
-                              onChange={(e) =>
-                                setBalanceDraft((prev) => ({ ...prev, [loc.channel_key]: e.target.value }))
-                              }
-                              className={`${INPUT} w-32 text-right`}
-                              aria-label={t('balances.editBalance')}
-                              autoFocus
-                            />
-                            <button
-                              onClick={() => saveBalance(loc.channel_key)}
-                              disabled={savingBalanceKey === loc.channel_key}
-                              className={`${ICON_BTN} text-positive hover:bg-positive/10 disabled:opacity-40`}
-                              aria-label={t('common.save')}
-                            >
-                              {savingBalanceKey === loc.channel_key ? (
-                                <RefreshCw className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <Check className="w-4 h-4" />
-                              )}
-                            </button>
-                            <button
-                              onClick={() =>
-                                setBalanceDraft((prev) => {
-                                  const { [loc.channel_key]: _omit, ...rest } = prev;
-                                  return rest;
-                                })
-                              }
-                              className={`${ICON_BTN} text-muted-foreground hover:bg-muted`}
-                              aria-label={t('common.cancel')}
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </>
-                        ) : (
-                          <>
-                            <span
-                              className={`font-semibold tabular-nums ${
-                                isLiquid(loc.location_type) ? '' : 'text-warning'
-                              }`}
-                            >
-                              {formatCurrency(loc.balance)}
-                            </span>
-                            {hasLedger(loc.channel_key) ? (
-                              <Link
-                                href={`/balances/libro/${encodeURIComponent(loc.channel_key)}`}
-                                className={`${ICON_BTN} text-accent hover:bg-accent/10`}
-                                title={t('ledger.openBook')}
-                                aria-label={`${t('ledger.openBook')} — ${loc.label}`}
-                              >
-                                <BookOpen className="w-4 h-4" />
-                              </Link>
-                            ) : (
-                              canTypeBalance && (
-                                <button
-                                  onClick={() =>
-                                    setBalanceDraft((prev) => ({
-                                      ...prev,
-                                      [loc.channel_key]: String(loc.fullBalance),
-                                    }))
-                                  }
-                                  className={`${ICON_BTN} text-accent hover:bg-accent/10`}
-                                  title={t('balances.editBalance')}
-                                  aria-label={`${t('balances.editBalance')} — ${loc.label}`}
-                                >
-                                  <Pencil className="w-4 h-4" />
-                                </button>
-                              )
-                            )}
+                        <span
+                          className={`font-semibold tabular-nums ${
+                            isLiquid(loc.location_type) ? '' : 'text-warning'
+                          }`}
+                        >
+                          {formatCurrency(loc.balance)}
+                        </span>
+                        {hasLedger(loc.channel_key) && (
+                          <Link
+                            href={`/balances/libro/${encodeURIComponent(loc.channel_key)}`}
+                            className={`${ICON_BTN} text-accent hover:bg-accent/10`}
+                            title={t('ledger.openBook')}
+                            aria-label={`${t('ledger.openBook')} — ${loc.label}`}
+                          >
+                            <BookOpen className="w-4 h-4" />
+                          </Link>
+                        )}
                             {isPrimary && extraActions?.(loc.channel_key)}
                             {isPrimary && canManage && !editing && (
                               <button
@@ -686,8 +598,6 @@ export function ChannelBalancesCard({
                                 <Trash2 className="w-4 h-4" />
                               </button>
                             )}
-                          </>
-                        )}
                       </div>
                     </div>
 

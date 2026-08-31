@@ -22,6 +22,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { withdrawalChannelLabel } from '@/lib/withdrawal-channels';
 import { manualDepositsByChannel } from '@/lib/deposit-channels';
 import {
   ArrowDownCircle,
@@ -223,8 +224,6 @@ export default function ResumenPage() {
     });
   });
 
-  const fs = summary.financialStatus;
-
   return (
     <div className="space-y-6">
       {Modal2FA}
@@ -274,9 +273,24 @@ export default function ResumenPage() {
               icon={ArrowDownCircle}
               tone="info"
             />
+            {/* Un canal de retiro que no se pudo leer NO está en este total, y
+                decirlo es obligatorio: un recorte silencioso es indistinguible
+                de «no hay más» (docs/reglas-del-proyecto.md §1.2). /movimientos
+                ya lo avisaba desde la tanda 1; acá el mismo número se mostraba
+                pelado, así que la MISMA exclusión era visible en una pantalla e
+                invisible en la otra (2026-08-31, auditoría de finanzas). */}
             <StatCard
               label={t('summary.withdrawals')}
               value={formatCurrency(consolidatedWithdrawals)}
+              hint={
+                useDerivedBroker && coexist.withdrawalChannelsWithoutData.length > 0
+                  ? t('movements.withdrawalsMissingChannels', {
+                      channels: coexist.withdrawalChannelsWithoutData
+                        .map((c) => withdrawalChannelLabel(c, t))
+                        .join(', '),
+                    })
+                  : undefined
+              }
               icon={ArrowUpCircle}
               tone="negative"
             />

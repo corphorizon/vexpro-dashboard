@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import { useApiTotals, DEFAULT_WALLET_ID } from '@/components/realtime-movements-banner';
-import { allPeriodsUseDerivedBroker, computeDerivedBroker } from '@/lib/broker-logic';
+import { allPeriodsUseDerivedBroker } from '@/lib/broker-logic';
 import {
   API_DEPOSIT_CHANNELS,
   manualDepositsByChannel,
@@ -24,8 +24,13 @@ import type { Deposit, Period } from '@/lib/types';
 // Rules implemented here (same as prior inline code in both pages):
 //   - `useDerivedBroker` flips ON only when EVERY active period is Abr-2026+.
 //     Historical consolidations fall back to stored values untouched.
-//   - `apiFrom / apiTo` = first day of earliest active period → last day of
-//     latest active period (used as the date range for API reads).
+//   - El rango de fechas de la lectura de API (primer día del período activo
+//     más viejo → último día del más nuevo) se calcula acá adentro y ya NO se
+//     devuelve: `apiFrom`/`apiTo` salían del hook, /movimientos los
+//     desestructuraba y no los usaba, y monthly-chart.tsx tiene su propia copia
+//     del cálculo porque necesita otro conjunto de períodos. Devolver un dato
+//     que nadie consume invita a que alguien lo use creyendo que significa algo
+//     más (2026-08-31, auditoría de finanzas, ítem 20).
 //   - Per-channel display  = apiValue + manualValue (both coexist, always).
 //     Los canales salen de `API_DEPOSIT_CHANNELS` (src/lib/deposit-channels.ts),
 //     que es el registro único. Hasta el 2026-08-31 estaban cableados acá y
@@ -42,9 +47,6 @@ import type { Deposit, Period } from '@/lib/types';
 export interface ApiCoexistenceTotals {
   /** True when every active period is on the derived-broker rule (Abr-2026+). */
   useDerivedBroker: boolean;
-  /** ISO date range (empty strings when `useDerivedBroker` is false). */
-  apiFrom: string;
-  apiTo: string;
   /**
    * Importe de API por CANAL (0 en períodos históricos). Sale del registro
    * único `API_DEPOSIT_CHANNELS`: nada de campos sueltos por canal, que es
@@ -78,8 +80,6 @@ export interface ApiCoexistenceTotals {
   apiDepositsTotal: (manualByChannel: Record<DepositChannel, number>) => number;
   /** The `api_transactions`-backed totals keyed by provider slug. */
   apiTotalsBy: Record<ProviderSlug, number>;
-  /** Derived broker withdrawal from the API side only (pre-manual-add). */
-  derivedBrokerFromApi: (ibCommissions: number, propFirmWithdrawal: number, otherWithdrawal: number) => number;
 }
 
 /** Azúcar para las páginas: manual por canal a partir de `summary.deposits`. */
@@ -143,26 +143,19 @@ export function useApiCoexistence(
   const apiDepositsTotal = (manualByChannel: Record<DepositChannel, number>) =>
     sumApiDeposits(apiByChannel, manualByChannel);
 
-  const derivedBrokerFromApi = (ib: number, pf: number, other: number) =>
-    useDerivedBroker
-      ? computeDerivedBroker({
-          apiWithdrawalsTotal,
-          ibCommissions: ib,
-          propFirm: pf,
-          other,
-        })
-      : 0;
+  // `derivedBrokerFromApi` se borró el 2026-08-31 (ítem 20): CERO consumidores.
+  // El único lugar donde el broker derivado se calcula de verdad es /upload
+  // (`derivedBrokerAmount`), que llama a `computeDerivedBroker` directo. Acá
+  // quedaba una segunda puerta a la misma fórmula, sin usar — y una segunda
+  // puerta a una fórmula de dinero es cómo empiezan las dos verdades.
 
   return {
     useDerivedBroker,
-    apiFrom,
-    apiTo,
     apiByChannel,
     apiWithdrawalsTotal,
     apiWithdrawalsByChannel,
     withdrawalChannelsWithoutData,
     apiDepositsTotal,
     apiTotalsBy: apiTotals.by,
-    derivedBrokerFromApi,
   };
 }
