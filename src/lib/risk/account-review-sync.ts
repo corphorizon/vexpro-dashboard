@@ -56,6 +56,7 @@ import {
 import type { Trade } from '@/lib/risk/types';
 import { esCuentaDemoCrm } from '@/lib/mt5-groups';
 import { evaluarToxicidad } from '@/lib/risk/broker-toxicity';
+import { detectarCoberturaCruzada } from '@/lib/risk/cross-account-hedge';
 
 /** Techo de logins por consulta a MT5. Ver también PRESUPUESTO_POSICIONES. */
 export const LOGIN_BATCH = 40;
@@ -423,6 +424,37 @@ async function evaluarYGuardar(
     return { reviewed: 0, failed: lote.length, warnings };
   }
 
+  // ── Cobertura entre cuentas del MISMO cliente ─────────────────────────
+  // Se agrupa por `user_external_id` porque cubrirse es algo que pasa ENTRE
+  // cuentas, no dentro de una. Sale gratis: las operaciones ya están cargadas.
+  //
+  // Un cliente cuyas otras cuentas no cayeron en este lote queda con la señal
+  // sin comprobar, no en limpio — verlo a medias y darlo por bueno sería peor
+  // que no mirarlo.
+  const coberturaPorLogin = new Map<number, { pares: number; conCuentas: number[] }>();
+  {
+    const porCliente = new Map<string, number[]>();
+    for (const login of lote) {
+      const uid = porLogin.get(login)?.user_external_id;
+      if (!uid) continue;
+      const arr = porCliente.get(uid) ?? [];
+      arr.push(login);
+      porCliente.set(uid, arr);
+    }
+    for (const logins of porCliente.values()) {
+      if (logins.length < 2) continue;
+      const sub = new Map(logins.map((l) => [l, porCuenta.get(l) ?? []]));
+      const r = detectarCoberturaCruzada(sub);
+      for (const login of logins) {
+        const suyos = r.pares.filter((p) => p.loginA === login || p.loginB === login);
+        coberturaPorLogin.set(login, {
+          pares: suyos.reduce((s, p) => s + p.pares, 0),
+          conCuentas: [...new Set(suyos.map((p) => (p.loginA === login ? p.loginB : p.loginA)))],
+        });
+      }
+    }
+  }
+
   {
     const filas = lote.map((login) => {
       const meta = porLogin.get(login)!;
@@ -430,7 +462,7 @@ async function evaluarYGuardar(
       const truncated = trades.length >= MAX_POSICIONES;
       // Las mismas operaciones, dos lecturas distintas. Ninguna influye en la
       // otra: mezclarlas daría un puntaje que no significa nada.
-      const tox = evaluarToxicidad(trades);
+      const tox = evaluarToxicidad(trades, coberturaPorLogin.get(login));
       const rev: AccountReview = evaluateAccount(login, trades, {
         noticias,
         // La detección de copia necesita las aperturas de TODAS las cuentas del

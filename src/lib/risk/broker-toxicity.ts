@@ -247,7 +247,17 @@ export function analizarOrigen(trades: Trade[]): Origen {
  * es «no se pudo comprobar», que NO cuenta como limpio — la diferencia importa
  * cuando faltan datos de mercado.
  */
-export function evaluarToxicidad(trades: Trade[]): BrokerToxicity {
+export function evaluarToxicidad(
+  trades: Trade[],
+  /**
+   * Cobertura con OTRAS cuentas del mismo cliente, si el llamador la calculó.
+   *
+   * Se pasa desde afuera porque no se puede ver mirando una cuenta sola: hace
+   * falta cruzarla contra las demás del cliente. `undefined` deja la señal en
+   * «no comprobada» en vez de darla por limpia.
+   */
+  cobertura?: { pares: number; conCuentas: number[] },
+): BrokerToxicity {
   const origen = analizarOrigen(trades);
   const ejecucion = analizarEjecucion(trades);
   const n = trades.length;
@@ -343,6 +353,24 @@ export function evaluarToxicidad(trades: Trade[]): BrokerToxicity {
     detail: pocas
       ? `Sólo ${n} operación(es): no alcanza para medirlo.`
       : `${closeBy} de ${n} (${pctCloseBy}%) cerraron contra una posición opuesta de la misma cuenta.`,
+  });
+
+  // ── 6. Cobertura con otras cuentas del mismo cliente ──────────────────
+  // Posiciones opuestas, mismo símbolo, mismo instante, en cuentas distintas.
+  // En conjunto el riesgo de mercado es cero: lo que queda es lo que se extrae
+  // del bróker. Es la contracara de la detección de copia, que busca la MISMA
+  // dirección.
+  senales.push({
+    key: 'cobertura_entre_cuentas',
+    label: 'Se cubre con otras cuentas del mismo cliente',
+    hit: cobertura === undefined ? null : cobertura.pares > 0,
+    detail:
+      cobertura === undefined
+        ? 'No se comprobó — hace falta cruzar esta cuenta con las demás del cliente.'
+        : cobertura.pares > 0
+          ? `${cobertura.pares} par(es) de posiciones opuestas simultáneas con la(s) cuenta(s) ` +
+            `${cobertura.conCuentas.join(', ')}.`
+          : 'Ninguna posición opuesta simultánea con las otras cuentas del cliente.',
   });
 
   const flagged = senales.filter((s) => s.hit === true).length;
