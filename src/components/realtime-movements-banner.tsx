@@ -176,6 +176,16 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   // se las llevó puestas: Retiros Totales $932.444,83 en vez de $469.650,98
   // (la Main 1079) y Net Deposit −$231.127 alimentando la distribución.
   const [pinned, setPinned] = useState<PinnedCoinsbuyWallet[]>([]);
+  // ── Retiros de Coinsbuy POR WALLET OPERATIVA (Kevin, 2026-08-31: «en
+  // retiros de coinsbuy deben sumar 2: la VexPro Main Wallet y la Vex
+  // Instant, creale otra tarjeta y sube esa data»). El selector de wallet
+  // filtra lo que viaja al navegador, así que con Main seleccionada los
+  // retiros de la Instant NI EXISTEN en el payload — hace falta una carga
+  // aparte con walletId=all. null = no cargó (se cae a la tarjeta agregada
+  // del dataset filtrado, nunca a un $0 inventado).
+  const [retirosPorWallet, setRetirosPorWallet] = useState<
+    Array<{ walletId: string; label: string; total: number; count: number }> | null
+  >(null);
   const pinnedIds = useMemo(() => pinned.map((p) => p.wallet_id), [pinned]);
   const operatingPins = useMemo(() => selectOperatingWallets(pinned), [pinned]);
   const [pinBusy, setPinBusy] = useState(false);
@@ -292,6 +302,48 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       setLoading(false);
     }
   }, [from, to, walletId]);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        if (from) qs.set('from', from);
+        if (to) qs.set('to', to);
+        qs.set('walletId', 'all');
+        const res = await apiFetch(`/api/integrations/persisted-movements?${qs.toString()}`);
+        const json = await res.json();
+        if (!json.success || cancel) return;
+        const ds = (json.datasets ?? []).find(
+          (d: { slug: string }) => d.slug === 'coinsbuy-withdrawals',
+        );
+        if (!ds) { if (!cancel) setRetirosPorWallet(null); return; }
+        const porWallet = new Map<string, { label: string; total: number; count: number }>();
+        for (const t of ds.transactions ?? []) {
+          // Mismos criterios que el total del dataset: Approved, no excluida,
+          // no interna (una interna mueve wallets pero no es un retiro).
+          if (t.status !== 'Approved' || t.excluded === true || t.internal === true) continue;
+          const wid = String(t.walletId ?? '');
+          if (!wid) continue;
+          const prev = porWallet.get(wid) ?? { label: String(t.walletLabel ?? `#${wid}`), total: 0, count: 0 };
+          prev.total += Number(t.amount ?? t.netAmount ?? 0);
+          prev.count += 1;
+          porWallet.set(wid, prev);
+        }
+        const idsOperativas = operatingPins.length > 0
+          ? new Set(operatingPins.map((w) => w.wallet_id))
+          : null;
+        const filas = [...porWallet.entries()]
+          .filter(([wid]) => idsOperativas === null || idsOperativas.has(wid))
+          .map(([walletId, v]) => ({ walletId, label: v.label, total: v.total, count: v.count }))
+          .sort((a, b) => b.total - a.total);
+        if (!cancel) setRetirosPorWallet(filas.length > 0 ? filas : null);
+      } catch {
+        if (!cancel) setRetirosPorWallet(null);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [from, to, fetchedAt, operatingPins]);
 
   const loadLive = useCallback(async () => {
     setLoading(true);
@@ -571,6 +623,34 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
         {datasets.flatMap((ds) => {
           const totals = computeProviderTotals(ds);
+          // Retiros de Coinsbuy: una tarjeta POR WALLET OPERATIVA cuando la
+          // carga sin filtro respondió; si no, la agregada de siempre (que
+          // sigue el selector). Nunca un $0 inventado por fallo de red.
+          if (ds.slug === 'coinsbuy-withdrawals' && retirosPorWallet !== null) {
+            return retirosPorWallet.map((w) => (
+              <Link
+                key={`cbw-${w.walletId}`}
+                href={`/movimientos/desglose/coinsbuy-withdrawals${linkQs ? `?${linkQs}&` : '?'}walletId=${w.walletId}`}
+                className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold truncate" title={w.label}>
+                    Coinsbuy · Retiros · {w.label}
+                  </span>
+                  {ds.status === 'fresh' ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                  )}
+                </div>
+                <p className="text-base font-bold text-negative">{formatCurrency(w.total)}</p>
+                <div className="flex items-center justify-between mt-0.5">
+                  <p className="text-[10px] text-muted-foreground">{w.count} tx · Approved</p>
+                  <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </Link>
+            ));
+          }
           // Kevin (2026-08-31): «pon aquí también una tarjeta con la info de
           // los retiros de paypros». Pay-Pros es UN provider con dos sentidos
           // separados por status; la tarjeta de retiros sale del mismo dataset
