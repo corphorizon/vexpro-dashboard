@@ -245,6 +245,38 @@ const METRIC_DEFS = [
       { key: 'capitalReturned', labelEs: 'Capital devuelto', labelEn: 'Capital returned' },
     ],
   },
+  // ── Ajuste FairPay (decisión de Kevin, 2026-08-31) ──────────────────────
+  // Quinta serie informativa, y la única que NO sale de Orion: los dos lados
+  // viven en el mismo Postgres (`api_transactions` y `crm_deposits`).
+  //
+  // QUÉ MIDE: FairPay informa el importe con un recargo de ~4% que el cliente
+  // PAGA y que nunca se le acredita en la billetera. `api_transactions.amount`
+  // es el bruto (lo cobrado por la pasarela) y `crm_deposits.amount_paid` es
+  // el neto (lo acreditado). La diferencia es un costo real del canal.
+  //
+  // POR QUÉ ES INFORMATIVA Y NO ENTRA SOLA AL RESULTADO: el costo entra a las
+  // finanzas por un EGRESO manual «Ajuste FairPay» que se carga cada mes
+  // (decisión de Kevin: el primero, del 2026-08-31, cubre el histórico
+  // abr→ago 2026 por $2.994,83). Si además se descontara desde acá, el mismo
+  // dólar se contaría dos veces. El checklist de cierre avisa cuando el mes
+  // tiene ajuste calculado y el egreso no está cargado
+  // (`period-close-checklist.ts`).
+  {
+    key: 'fairpay_adjustment',
+    labelEs: 'Ajuste FairPay (recargo no acreditado)',
+    labelEn: 'FairPay adjustment (uncredited surcharge)',
+    manualSource: null,
+    informational: true,
+    whyNotFinanceEs:
+      'Es un costo real, pero entra a las finanzas por el egreso manual «Ajuste FairPay» que se carga cada mes. Descontarlo también desde acá contaría el mismo dólar dos veces.',
+    whyNotFinanceEn:
+      'It is a real cost, but it reaches the books through the manual «Ajuste FairPay» expense loaded every month. Deducting it here as well would count the same dollar twice.',
+    detailColumns: [
+      { key: 'gross', labelEs: 'Bruto cobrado (FairPay)', labelEn: 'Gross charged (FairPay)' },
+      { key: 'credited', labelEs: 'Acreditado en el CRM', labelEn: 'Credited in the CRM' },
+      { key: 'notCredited', labelEs: 'Pagos no acreditados', labelEn: 'Payments not credited' },
+    ],
+  },
 ] as const satisfies readonly CrmMonthlyMetricDef[];
 
 export type CrmMonthlyMetric = (typeof METRIC_DEFS)[number]['key'];
@@ -812,6 +844,153 @@ export function aggregateWalletMetricByMonth(
   }
 
   return { buckets: out, unclassified, noMonth };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AJUSTE FAIRPAY — el recargo que el cliente paga y nunca se le acredita.
+//
+// ── LA LLAVE DEL CRUCE, MIRADA EN FILAS REALES ─────────────────────────────
+// No se adivinó. El `raw` de `api_transactions` de FairPay tiene DIEZ claves y
+// ninguna se llama `depositId` (medido el 2026-08-31 sobre las 1.225 filas:
+// id, kind, net, mdr, billed, status, currency, provider, createdAt,
+// customerEmail). La que cruza es `raw->>'id'`, que el fetcher ya guardó en la
+// columna `external_id`. Del otro lado, `crm_deposits.raw->>'depositId'` es
+// exactamente `crm_deposits.external_id` — las dos formas del join cruzan las
+// MISMAS 1.142 de 1.225 filas.
+//
+// Se usa la COLUMNA `external_id` y no el jsonb por dos razones medibles:
+// entra por el índice único `crm_deposits_unique (company_id, external_id)`, y
+// ese mismo UNIQUE garantiza que el cruce sea 1 a 1 — un cruce que duplica
+// filas inflaría el ajuste sin dar ningún error. La tercera candidata,
+// `crm_deposits.external_payment_id` (el id en la pasarela), cruza CERO filas:
+// FairPay no es esa pasarela.
+//
+// ── QUÉ ENTRA Y QUÉ NO ─────────────────────────────────────────────────────
+// Sólo las filas `status = 'Completed'` de FairPay: es el único estado que
+// suma en `loadPersistedTotals`, y un pago pendiente todavía no cobró recargo.
+//
+// Un pago Completed SIN contraparte en el CRM no entra al ajuste: va a
+// `excluded_*` con su bruto. Son las 24 filas de junio 2026 por $4.383,00 —
+// las únicas Completed sin cruce de toda la serie. Sin contraparte no sabemos
+// cuánto se acreditó, y suponer que se acreditó cero convertiría los $4.383 en
+// un costo inventado. Una exclusión silenciosa es indistinguible de un cruce
+// roto (§1.2), así que se cuenta y se ve en pantalla.
+//
+// ── EL ESTADO DEL CRM NO FILTRA EL CRUCE, PERO SE INFORMA ──────────────────
+// De las 402 filas Completed que cruzan, 401 están `completed` en el CRM y UNA
+// está `cancelled`: el pago 0d039080… del 2026-08-07, bruto $93,60 y
+// `amount_paid = 0`. No es recargo: es un depósito que el CRM canceló entero.
+// Se cuenta igual en el ajuste —así el total coincide con los $2.994,83 que
+// Kevin ya cargó como egreso— pero va aparte en `detail.notCredited`, para que
+// nadie lea los $432,05 de agosto como si fueran todo recargo.
+//
+// ── LA CONCILIACIÓN, MES A MES (producción, 2026-08-31) ────────────────────
+//     mes        bruto cruzado   acreditado CRM     ajuste   sin cruce
+//     2026-04         4.313,72        4.145,41      168,31        0
+//     2026-05         9.547,00        9.165,99      381,01        0
+//     2026-06        16.438,00       15.685,25      752,75       24 ($4.383,00)
+//     2026-07        29.089,68       27.828,97    1.260,71        0
+//     2026-08         6.479,20        6.047,15      432,05        0
+//     ───────────────────────────────────────────────────────────────────────
+//     TOTAL                                       2.994,83
+// Clavado contra el egreso «Ajuste FairPay (recargo cobrado no acreditado,
+// histórico abr→ago 2026)» de Ago-26.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** El único proveedor de `api_transactions` que cobra este recargo. */
+export const FAIRPAY_PROVIDER = 'fairpay';
+/** El único estado de FairPay en el que el cliente ya pagó el recargo. */
+export const FAIRPAY_COMPLETED = 'Completed';
+/** El estado normalizado del CRM en el que el depósito SÍ se acreditó. */
+export const CRM_DEPOSIT_COMPLETED = 'completed';
+
+export interface FairpayPayment {
+  /** `api_transactions.transaction_date`. */
+  paidAt: unknown;
+  /** `api_transactions.amount` — el bruto, con el recargo adentro. */
+  gross: unknown;
+  /** ¿El CRM tiene un depósito con ese mismo id? */
+  crossed: boolean;
+  /** `crm_deposits.amount_paid` del depósito cruzado. `null` si no cruzó. */
+  credited: number | null;
+  /** ¿Ese depósito está `completed` en el CRM? Sólo informa; no filtra. */
+  creditedInCrm: boolean;
+}
+
+export interface FairpayAdjustmentResult {
+  buckets: Map<string, MonthlyBucket>;
+  /** Pagos sin fecha utilizable. Inventarles un mes sería un costo falso. */
+  noMonth: { count: number; amount: number };
+}
+
+/**
+ * El ajuste de cada mes: bruto cobrado menos neto acreditado, pago por pago.
+ *
+ * Se cruza POR PAGO y no por totales del mes a propósito: sumar los dos lados
+ * por separado y restarlos daría un número aunque el cruce estuviera roto —
+ * exactamente el fallo que no da error. Cruzando pago a pago, lo que no cruza
+ * se ve.
+ *
+ * NO hay clamp a 0. Si un mes diera negativo (el CRM acreditó MÁS de lo que
+ * FairPay cobró) eso es un hallazgo, no un cero: taparlo lo escondería. Medido
+ * el 2026-08-31: 0 de 402 pagos tienen `amount_paid` mayor que el bruto.
+ */
+export function aggregateFairpayAdjustmentByMonth(
+  payments: readonly FairpayPayment[],
+): FairpayAdjustmentResult {
+  const out = new Map<string, MonthlyBucket>();
+  const noMonth = { count: 0, amount: 0 };
+
+  const bucket = (key: string): MonthlyBucket => {
+    let b = out.get(key);
+    if (!b) {
+      b = {
+        amount: 0,
+        count: 0,
+        excludedCount: 0,
+        excludedAmount: 0,
+        cross: { gross: 0, credited: 0, notCredited: 0, notCreditedCount: 0 },
+      };
+      out.set(key, b);
+    }
+    return b;
+  };
+
+  for (const p of payments) {
+    const bruto = numOrNull(p.gross);
+    const key = monthKeyUtc(p.paidAt as string);
+    if (!key || !splitMonthKey(key)) {
+      noMonth.count += 1;
+      noMonth.amount = round2(noMonth.amount + (bruto ?? 0));
+      continue;
+    }
+    const b = bucket(key);
+
+    // Sin contraparte —o sin importe de un lado— no hay resta posible. Va a
+    // excluido con lo que se sepa, nunca al ajuste.
+    if (!p.crossed || p.credited === null || !Number.isFinite(p.credited) || bruto === null) {
+      b.excludedCount += 1;
+      b.excludedAmount += bruto ?? 0;
+      continue;
+    }
+
+    b.amount += bruto - p.credited;
+    b.count += 1;
+    b.cross.gross += bruto;
+    b.cross.credited += p.credited;
+    if (!p.creditedInCrm) {
+      b.cross.notCredited += bruto;
+      b.cross.notCreditedCount += 1;
+    }
+  }
+
+  for (const b of out.values()) {
+    b.amount = round2(b.amount);
+    b.excludedAmount = round2(b.excludedAmount);
+    for (const k of Object.keys(b.cross)) b.cross[k] = round2(b.cross[k]);
+  }
+
+  return { buckets: out, noMonth };
 }
 
 /** Total por mes de las patas de billetera de compras de prop firm. */

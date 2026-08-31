@@ -71,6 +71,8 @@ export const CHECKLIST_LABEL_KEYS = {
   crm_drift: 'periodClose.crmDrift',
   expenses_accrual_cash_gap: 'periodClose.accrualCashGap',
   earlier_periods_open: 'periodClose.earlierPeriodsOpen',
+  fairpay_adjustment_missing: 'periodClose.fairpayAdjustmentMissing',
+  fairpay_adjustment_no_data: 'periodClose.fairpayAdjustmentNoData',
 } as const;
 
 export type ChecklistKey = keyof typeof CHECKLIST_LABEL_KEYS;
@@ -157,6 +159,84 @@ export function computeAccrualCashGap(params: {
   if (params.businessModel !== 'company') return null;
   const gap = params.totalPaid - params.totalAccrued;
   return Math.abs(gap) < 0.005 ? 0 : gap;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// b3) El egreso «Ajuste FairPay» del mes
+//
+// FairPay cobra al cliente un recargo de ~4% que nunca se le acredita en la
+// billetera. Es un costo real del canal y Kevin decidió (2026-08-31)
+// contabilizarlo como un EGRESO manual, uno por mes. El cálculo lo deja el
+// sync en `crm_monthly_totals` como la métrica `fairpay_adjustment` (el porqué
+// del cruce está en `crm-monthly.ts`); acá sólo se pregunta si el egreso está.
+//
+// El primer egreso, cargado en Ago-26 por $2.994,83, cubre el histórico
+// abr→ago 2026 completo. Por eso Ago-26 tiene que dar CUBIERTO: la fila
+// existe. De septiembre en adelante, cada mes necesita el suyo.
+//
+// Las tres reglas que hacen que esto no falle en silencio:
+//   1. Un mes SIN pagos de FairPay no genera ítem. Sin esto, las empresas que
+//      no usan el canal (AP Markets, Horizon) y los meses anteriores a abril
+//      de 2026 gritarían para siempre — y un checklist que siempre grita
+//      enseña a cerrar sin leer.
+//   2. Un mes CON pagos pero SIN métrica no pasa en silencio ni se asume $0:
+//      dice «sin dato del CRM». Es la señal de que el sync no corrió o falló,
+//      y es información distinta de «no hay recargo» (§1.3).
+//   3. El ajuste en 0 (o negativo) NO pide egreso: se miró y no hay nada que
+//      cargar. Se informa igual, con su cifra, para que el cero sea VISIBLE.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** La métrica de `crm_monthly_totals` que trae el ajuste ya calculado. */
+export const FAIRPAY_ADJUSTMENT_METRIC = 'fairpay_adjustment';
+
+/**
+ * Con qué se reconoce el egreso del mes. Es un `ILIKE 'Ajuste FairPay%'`: el
+ * egreso real que Kevin cargó se llama «Ajuste FairPay (recargo cobrado no
+ * acreditado, histórico abr→ago 2026)», así que anclar el texto completo no
+ * serviría para ningún mes siguiente.
+ */
+export const FAIRPAY_EXPENSE_PREFIX = 'Ajuste FairPay';
+
+/** Debajo de un centavo no hay egreso que cargar. */
+export const FAIRPAY_ADJUSTMENT_MIN = 0.005;
+
+export type FairpayCheck =
+  /** El mes no tuvo pagos de FairPay: el chequeo no corresponde. */
+  | { state: 'not_applicable' }
+  /** Hubo pagos pero el CRM no calculó la métrica: no se inventa un $0. */
+  | { state: 'no_data' }
+  /** Se calculó y da (prácticamente) cero: no hay nada que cargar. */
+  | { state: 'nothing_to_load'; amount: number }
+  /** Hay ajuste y el egreso está cargado. */
+  | { state: 'covered'; amount: number }
+  /** Hay ajuste y falta el egreso. Esto es lo que atrapa plata. */
+  | { state: 'missing'; amount: number };
+
+/**
+ * ¿Le falta a este mes el egreso «Ajuste FairPay»?
+ *
+ * `crmAdjustment === null` significa «el CRM no tiene la métrica de este mes»,
+ * que NO es cero (§1.3): afirmar que el recargo fue $0 cuando nadie lo calculó
+ * es exactamente el número plausible y equivocado que este repo persigue.
+ */
+export function checkFairpayAdjustment(params: {
+  /** Pagos de FairPay `Completed` del mes calendario. 0 → no corresponde. */
+  fairpayPaymentsInMonth: number;
+  /** `crm_monthly_totals.amount` de `fairpay_adjustment`, o `null` si no hay fila. */
+  crmAdjustment: number | null;
+  /** ¿Hay un egreso del período con concepto `Ajuste FairPay…`? */
+  expenseLoaded: boolean;
+}): FairpayCheck {
+  if (!(params.fairpayPaymentsInMonth > 0)) return { state: 'not_applicable' };
+  if (params.crmAdjustment === null || !Number.isFinite(params.crmAdjustment)) {
+    return { state: 'no_data' };
+  }
+  if (params.crmAdjustment <= FAIRPAY_ADJUSTMENT_MIN) {
+    return { state: 'nothing_to_load', amount: params.crmAdjustment };
+  }
+  return params.expenseLoaded
+    ? { state: 'covered', amount: params.crmAdjustment }
+    : { state: 'missing', amount: params.crmAdjustment };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

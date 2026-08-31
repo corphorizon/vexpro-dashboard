@@ -9,9 +9,15 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
+import { fetchAllRows } from '@/lib/supabase/fetch-all-rows';
 import { CONCEPT_GROUPS } from './wallet-sources';
 import { isUnknownConcept } from '@/lib/crm-wallet-concepts';
 import {
+  CRM_DEPOSIT_COMPLETED,
+  FAIRPAY_COMPLETED,
+  FAIRPAY_PROVIDER,
+  aggregateFairpayAdjustmentByMonth,
+  type FairpayPayment,
   CRM_MONTHLY_METRIC_KEYS,
   WALLET_METRIC_CONCEPTS,
   WALLET_METRIC_SPECS,
@@ -98,13 +104,142 @@ function toRows(
 }
 
 /**
- * Recalcula la serie mensual COMPLETA de las SEIS métricas y la deja en
- * `crm_monthly_totals`.
+ * Escribe filas en `crm_monthly_totals` de a 500 y devuelve cuántas por
+ * métrica. Una sola copia: el upsert vive acá y no repetido en cada paso.
+ */
+async function upsertRows(
+  admin: SupabaseClient,
+  filas: Row[],
+  rows: Record<string, number>,
+): Promise<void> {
+  for (let i = 0; i < filas.length; i += 500) {
+    const part = filas.slice(i, i + 500);
+    const { error } = await admin
+      .from('crm_monthly_totals')
+      .upsert(part, { onConflict: 'company_id,year,month,metric' });
+    if (error) throw new Error(`crm_monthly_totals: ${error.message}`);
+    for (const r of part) rows[r.metric] = (rows[r.metric] ?? 0) + 1;
+  }
+}
+
+/** Cuántos ids se piden por vuelta al cruzar contra `crm_deposits`. 200 deja
+ *  la URL de PostgREST cómodamente por debajo de cualquier límite y la
+ *  respuesta muy por debajo de las 1.000 filas que corta el servidor. */
+const LOTE_CRUCE = 200;
+
+/**
+ * La serie mensual del AJUSTE FAIRPAY, en `crm_monthly_totals`.
+ *
+ * ── POR QUÉ ESTÁ SEPARADA DE `syncCrmMonthlyTotals` ────────────────────────
+ * Las otras cinco métricas salen de Orion (Mongo). Ésta NO toca Mongo: los dos
+ * lados del cruce —`api_transactions` y `crm_deposits`— viven en el mismo
+ * Postgres. Si fuera un paso más adentro de la función grande, un Orion caído
+ * se llevaría puesta una métrica que no depende de Orion, y el mes quedaría
+ * "sin dato" por una razón que no tiene nada que ver. Es la regla §5.1 del
+ * repo: cada tarea en su propio `try/catch`.
+ *
+ * El PORQUÉ del cruce (qué llave, qué entra, qué se excluye y la conciliación
+ * mes a mes contra los $2.994,83 ya cargados) está en `crm-monthly.ts`, junto
+ * a la función pura que lo calcula.
+ *
+ * Recalcula la serie ENTERA, igual que el resto: son 426 filas Completed en la
+ * empresa más grande (medido el 2026-08-31) y un estado puede cambiar después
+ * del corte.
+ */
+export async function syncFairpayAdjustment(
+  admin: SupabaseClient,
+  companyId: string,
+): Promise<{ rows: number; monthKeys: string[]; warnings: string[] }> {
+  const warnings: string[] = [];
+  const now = new Date().toISOString();
+
+  // `.order('id')` por columna única: sin él las páginas no son consistentes
+  // entre sí y una fila puede salir dos veces o ninguna (ver fetch-all-rows).
+  const pagos = await fetchAllRows<{ id: string; external_id: string; amount: number | string; transaction_date: string }>(
+    (from, to) =>
+      admin
+        .from('api_transactions')
+        .select('id, external_id, amount, transaction_date')
+        .eq('company_id', companyId)
+        .eq('provider', FAIRPAY_PROVIDER)
+        .eq('status', FAIRPAY_COMPLETED)
+        .order('id')
+        .range(from, to),
+  );
+
+  // Una empresa sin FairPay NO escribe filas: "no aplica" no es "cero".
+  if (pagos.length === 0) return { rows: 0, monthKeys: [], warnings };
+
+  // El cruce, de a lotes. `external_id` (no el jsonb) para entrar por el
+  // índice único, que además garantiza que el cruce sea 1 a 1.
+  const acreditado = new Map<string, { paid: number | null; completed: boolean }>();
+  const ids = [...new Set(pagos.map((p) => p.external_id).filter(Boolean))];
+  for (let i = 0; i < ids.length; i += LOTE_CRUCE) {
+    const lote = ids.slice(i, i + LOTE_CRUCE);
+    const { data, error } = await admin
+      .from('crm_deposits')
+      .select('external_id, amount_paid, status_norm')
+      .eq('company_id', companyId)
+      .in('external_id', lote);
+    if (error) throw new Error(`crm_deposits (cruce FairPay): ${error.message}`);
+    for (const d of (data ?? []) as Array<{ external_id: string; amount_paid: number | string | null; status_norm: string }>) {
+      acreditado.set(d.external_id, {
+        // `null` = el CRM no dice cuánto acreditó. NO es 0 (§1.3): el pago se
+        // excluye del ajuste en vez de contarse entero como recargo.
+        paid: d.amount_paid === null || d.amount_paid === undefined ? null : Number(d.amount_paid),
+        completed: d.status_norm === CRM_DEPOSIT_COMPLETED,
+      });
+    }
+  }
+
+  const entrada: FairpayPayment[] = pagos.map((p) => {
+    const cruce = acreditado.get(p.external_id);
+    return {
+      paidAt: p.transaction_date,
+      gross: p.amount,
+      crossed: cruce !== undefined,
+      credited: cruce?.paid ?? null,
+      creditedInCrm: cruce?.completed ?? false,
+    };
+  });
+
+  const { buckets, noMonth } = aggregateFairpayAdjustmentByMonth(entrada);
+
+  const sinCruce = [...buckets.values()].reduce((s, b) => s + b.excludedCount, 0);
+  if (sinCruce > 0) {
+    const monto = round2([...buckets.values()].reduce((s, b) => s + b.excludedAmount, 0));
+    warnings.push(
+      `Ajuste FairPay: ${sinCruce} pago(s) Completed por $${monto} SIN contraparte en el CRM — fuera del ajuste (no se sabe cuánto se acreditó).`,
+    );
+  }
+  if (noMonth.count > 0) {
+    warnings.push(
+      `Ajuste FairPay: ${noMonth.count} pago(s) por $${noMonth.amount} sin fecha utilizable — fuera de la serie.`,
+    );
+  }
+  for (const [k, b] of buckets) {
+    if (b.amount < 0) {
+      warnings.push(
+        `Ajuste FairPay ${k}: el ajuste da NEGATIVO ($${b.amount}) — el CRM acreditó más de lo que FairPay cobró. Mirar antes de cargar el egreso.`,
+      );
+    }
+  }
+
+  const filas = toRows(companyId, 'fairpay_adjustment', buckets, now);
+  const contador: Record<string, number> = {};
+  await upsertRows(admin, filas, contador);
+  return { rows: contador.fairpay_adjustment ?? 0, monthKeys: [...buckets.keys()], warnings };
+}
+
+/**
+ * Recalcula la serie mensual COMPLETA de todas las métricas del registro
+ * (`CRM_MONTHLY_METRIC_KEYS`) y la deja en `crm_monthly_totals`.
  *
  * Tres se comparan contra lo cargado a mano (P2P, ventas y retiros de prop
- * firm) y tres son INFORMATIVAS y no cuentan en el resultado (comisiones IB,
- * social trading fees, fee debt recovery — ver el bloque de métricas
- * informativas en `crm-monthly.ts`).
+ * firm) y el resto son INFORMATIVAS y no cuentan en el resultado (comisiones
+ * IB, social trading fees, fee debt recovery, hedge fund y ajuste FairPay —
+ * ver el bloque de métricas informativas en `crm-monthly.ts`). La cuenta no se
+ * escribe acá a propósito: el registro es el único lugar donde vive la lista.
  *
  * Completa y no incremental a propósito: son 2.892 patas P2P, 1.599
  * transferencias, 1.559 compras y 250 retiros en la empresa más grande —
@@ -125,6 +260,27 @@ export async function syncCrmMonthlyTotals(
   const started = Date.now();
   const warnings: string[] = [];
   const now = new Date().toISOString();
+
+  const rows: Record<string, number> = {};
+  for (const metric of CRM_MONTHLY_METRIC_KEYS) rows[metric] = 0;
+
+  // ── El ajuste FairPay va PRIMERO y aparte ──────────────────────────────
+  // No toca Mongo (los dos lados están en Postgres) y ya deja sus filas
+  // escritas antes de que se abra la conexión a Orion: un Orion caído no
+  // puede llevarse puesta una métrica que no depende de Orion. Su `catch`
+  // es propio por la misma razón (§5.1).
+  const mesesFairpay: string[] = [];
+  try {
+    const fp = await syncFairpayAdjustment(admin, companyId);
+    rows.fairpay_adjustment = fp.rows;
+    mesesFairpay.push(...fp.monthKeys);
+    warnings.push(...fp.warnings);
+  } catch (err) {
+    warnings.push(
+      `Ajuste FairPay: NO se pudo calcular (${err instanceof Error ? err.message : 'error desconocido'}). La serie del mes queda SIN DATO, no en cero.`,
+    );
+  }
+
   const proj = (fields: readonly string[]) =>
     Object.fromEntries(fields.map((f) => [f, 1])) as Record<string, 1>;
 
@@ -287,21 +443,19 @@ export async function syncCrmMonthlyTotals(
     }
   }
 
-  const rows: Record<string, number> = {};
-  for (const metric of CRM_MONTHLY_METRIC_KEYS) rows[metric] = 0;
-
-  for (let i = 0; i < filas.length; i += 500) {
-    const part = filas.slice(i, i + 500);
-    const { error } = await admin
-      .from('crm_monthly_totals')
-      .upsert(part, { onConflict: 'company_id,year,month,metric' });
-    if (error) throw new Error(`crm_monthly_totals: ${error.message}`);
-    for (const r of part) rows[r.metric] = (rows[r.metric] ?? 0) + 1;
-  }
+  await upsertRows(admin, filas, rows);
 
   return {
     rows,
-    months: new Set(filas.map((f) => `${f.year}-${f.month}`)).size,
+    // Los meses de FairPay llegan como 'YYYY-MM' y hay que normalizarlos a la
+    // misma forma o el Set contaría 2026-04 y 2026-4 como dos meses distintos.
+    months: new Set([
+      ...filas.map((f) => `${f.year}-${f.month}`),
+      ...mesesFairpay.flatMap((k) => {
+        const ym = splitMonthKey(k);
+        return ym ? [`${ym.year}-${ym.month}`] : [];
+      }),
+    ]).size,
     elapsedMs: Date.now() - started,
     warnings,
   };

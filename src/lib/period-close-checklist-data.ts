@@ -15,9 +15,13 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { features } from '@/lib/business-model';
+import { FAIRPAY_COMPLETED, FAIRPAY_PROVIDER } from '@/lib/crm-monthly';
 import {
   CHECKLIST_LABEL_KEYS,
   CRM_DRIFT_METRICS,
+  FAIRPAY_ADJUSTMENT_METRIC,
+  FAIRPAY_EXPENSE_PREFIX,
+  checkFairpayAdjustment,
   computeAccrualCashGap,
   computeCrmDrift,
   earlierOpenPeriods,
@@ -40,6 +44,8 @@ const FALLBACK_LABEL: Record<ChecklistKey, string> = {
   crm_drift: 'Diferencias contra lo que el CRM ya calculó',
   expenses_accrual_cash_gap: 'Los egresos se congelan por devengado, no por caja',
   earlier_periods_open: 'Hay meses anteriores sin cerrar',
+  fairpay_adjustment_missing: 'Falta cargar el egreso Ajuste FairPay del mes',
+  fairpay_adjustment_no_data: 'Ajuste FairPay: sin dato del CRM',
 };
 
 /** Nombre de la métrica dentro del texto del detalle (que es una sola cadena;
@@ -83,6 +89,13 @@ export async function buildPeriodCloseChecklist(
   const pad = (n: number) => String(n).padStart(2, '0');
   const monthStart = `${period.year}-${pad(period.month)}-01`;
   const monthEnd = `${period.year}-${pad(period.month)}-${pad(new Date(period.year, period.month, 0).getDate())}`;
+  // Para las columnas `timestamptz` el corte va con `< el 1 del mes siguiente`
+  // y no con `<= monthEnd`: `monthEnd` es una fecha suelta, que Postgres lee
+  // como medianoche, y se comería las 24 horas del último día del mes.
+  const nextMonthStart =
+    period.month === 12
+      ? `${period.year + 1}-01-01`
+      : `${period.year}-${pad(period.month + 1)}-01`;
 
   // El checklist tiene que hablar del negocio que cierra el mes. Una
   // consultora no tiene cuentas MT ni inversiones: esos dos ítems le daban
@@ -114,6 +127,8 @@ export async function buildPeriodCloseChecklist(
     crmTotals,
     propFirmSales,
     propFirmWithdrawals,
+    fairpayPayments,
+    fairpayExpense,
   ] = await Promise.all([
     // Egresos del período sin referencia NI comprobante — lo primero que
     // pide cualquier contador al revisar el mes.
@@ -187,6 +202,24 @@ export async function buildPeriodCloseChecklist(
       .eq('company_id', companyId)
       .eq('period_id', periodId)
       .eq('category', 'prop_firm'),
+    // ¿Este mes tuvo pagos por FairPay? Es lo que decide si el chequeo del
+    // ajuste corresponde: una empresa sin el canal —o un mes anterior a que
+    // existiera— no tiene que ver el ítem. Se cuenta, no se traen filas.
+    admin.from('api_transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('company_id', companyId)
+      .eq('provider', FAIRPAY_PROVIDER)
+      .eq('status', FAIRPAY_COMPLETED)
+      .gte('transaction_date', monthStart)
+      .lt('transaction_date', nextMonthStart),
+    // ¿Ya está cargado el egreso del mes? El concepto real lleva el detalle
+    // del período adentro, así que se busca por prefijo.
+    admin.from('expenses')
+      .select('id, concept, amount', { count: 'exact' })
+      .eq('company_id', companyId)
+      .eq('period_id', periodId)
+      .ilike('concept', `${FAIRPAY_EXPENSE_PREFIX}%`)
+      .limit(5),
   ]);
 
   const pendingLines = (incomePending.data ?? []) as Array<{
@@ -293,6 +326,36 @@ export async function buildPeriodCloseChecklist(
             `${FALLBACK_METRIC_LABEL[d.key] ?? d.key}: cargado ${money(d.manual)} · CRM ${money(d.crm ?? 0)} (${d.diff < 0 ? 'falta' : 'sobra'} ${money(d.diff)})`,
         )
         .join(' · '),
+    );
+  }
+
+  // ── Egreso «Ajuste FairPay» del mes (chequeo nuevo) ─────────────────────
+  // Las reglas están en period-close-checklist.ts; acá sólo se arma el texto.
+  const fairpay = checkFairpayAdjustment({
+    fairpayPaymentsInMonth: fairpayPayments.count ?? 0,
+    crmAdjustment: crmByMetric.has(FAIRPAY_ADJUSTMENT_METRIC)
+      ? (crmByMetric.get(FAIRPAY_ADJUSTMENT_METRIC) as number)
+      : null,
+    expenseLoaded: (fairpayExpense.count ?? 0) > 0,
+  });
+  if (fairpay.state === 'no_data') {
+    push(
+      'fairpay_adjustment_no_data',
+      1,
+      `${fairpayPayments.count ?? 0} pago(s) de FairPay en el mes y el CRM todavía no calculó el ajuste. NO es cero: falta el dato.`,
+    );
+  } else if (fairpay.state !== 'not_applicable') {
+    const cargado = (fairpayExpense.data ?? []) as Array<{ concept: string; amount: number | string }>;
+    push(
+      'fairpay_adjustment_missing',
+      fairpay.state === 'missing' ? 1 : 0,
+      fairpay.state === 'missing'
+        ? `Calculado ${money(fairpay.amount)} y no hay egreso «${FAIRPAY_EXPENSE_PREFIX}…» en el período.`
+        : fairpay.state === 'nothing_to_load'
+          ? `Calculado ${money(fairpay.amount)}: no hay recargo que cargar este mes.`
+          : `Calculado ${money(fairpay.amount)} · cargado ${money(
+              cargado.reduce((s, e) => s + (Number(e.amount) || 0), 0),
+            )} en ${cargado.length} egreso(s).`,
     );
   }
 

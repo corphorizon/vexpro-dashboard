@@ -12,10 +12,13 @@ import { join } from 'node:path';
 import {
   CHECKLIST_LABEL_KEYS,
   CRM_DRIFT_METRICS,
+  FAIRPAY_ADJUSTMENT_METRIC,
+  checkFairpayAdjustment,
   computeAccrualCashGap,
   computeCrmDrift,
   earlierOpenPeriods,
 } from './period-close-checklist';
+import { CRM_MONTHLY_METRIC_KEYS } from './crm-monthly';
 
 describe('deriva contra el CRM', () => {
   it('Feb-26: los $2.373,37 de retiros prop firm que no se cargaron', () => {
@@ -120,6 +123,100 @@ describe('salto devengado / caja de los egresos', () => {
     expect(sinSalto).toBe(0);
     expect(noAplica).toBeNull();
     expect(sinSalto).not.toBe(noAplica);
+  });
+});
+
+describe('egreso «Ajuste FairPay» del mes', () => {
+  it('Ago-26 está CUBIERTO: el egreso histórico de $2.994,83 ya está cargado', () => {
+    // El primer egreso cubre abr→ago 2026 entero y vive en Ago-26. El chequeo
+    // sobre ese período no puede pedir otro.
+    expect(
+      checkFairpayAdjustment({
+        fairpayPaymentsInMonth: 44,
+        crmAdjustment: 432.05,
+        expenseLoaded: true,
+      }),
+    ).toEqual({ state: 'covered', amount: 432.05 });
+  });
+
+  it('un mes con ajuste y sin egreso queda PENDIENTE', () => {
+    expect(
+      checkFairpayAdjustment({
+        fairpayPaymentsInMonth: 161,
+        crmAdjustment: 1_260.71,
+        expenseLoaded: false,
+      }),
+    ).toEqual({ state: 'missing', amount: 1_260.71 });
+  });
+
+  it('sin métrica del CRM dice «sin dato», NO $0 (§1.3)', () => {
+    // El caso peligroso: el sync no corrió. Asumir cero cerraría el mes
+    // afirmando que no hubo recargo, que es un número plausible y falso.
+    const r = checkFairpayAdjustment({
+      fairpayPaymentsInMonth: 44,
+      crmAdjustment: null,
+      expenseLoaded: false,
+    });
+    expect(r).toEqual({ state: 'no_data' });
+    expect(r).not.toEqual({ state: 'nothing_to_load', amount: 0 });
+  });
+
+  it('«sin dato» tampoco se tapa porque el egreso esté cargado', () => {
+    expect(
+      checkFairpayAdjustment({
+        fairpayPaymentsInMonth: 44,
+        crmAdjustment: null,
+        expenseLoaded: true,
+      }),
+    ).toEqual({ state: 'no_data' });
+  });
+
+  it('un mes sin pagos de FairPay no genera el ítem', () => {
+    // Vex Pro antes de abril de 2026, y todas las empresas sin el canal. Un
+    // checklist que siempre grita enseña a cerrar sin leer.
+    expect(
+      checkFairpayAdjustment({
+        fairpayPaymentsInMonth: 0,
+        crmAdjustment: null,
+        expenseLoaded: false,
+      }),
+    ).toEqual({ state: 'not_applicable' });
+  });
+
+  it('un ajuste calculado en cero no pide egreso, pero se informa', () => {
+    expect(
+      checkFairpayAdjustment({
+        fairpayPaymentsInMonth: 12,
+        crmAdjustment: 0,
+        expenseLoaded: false,
+      }),
+    ).toEqual({ state: 'nothing_to_load', amount: 0 });
+  });
+
+  it('un ajuste negativo tampoco pide egreso (y no se recorta a 0)', () => {
+    expect(
+      checkFairpayAdjustment({
+        fairpayPaymentsInMonth: 12,
+        crmAdjustment: -3.5,
+        expenseLoaded: false,
+      }),
+    ).toEqual({ state: 'nothing_to_load', amount: -3.5 });
+  });
+
+  it('un NaN se trata como «sin dato», no como cero', () => {
+    expect(
+      checkFairpayAdjustment({
+        fairpayPaymentsInMonth: 12,
+        crmAdjustment: Number.NaN,
+        expenseLoaded: false,
+      }),
+    ).toEqual({ state: 'no_data' });
+  });
+
+  it('la métrica que se busca existe en el registro único del CRM', () => {
+    // Un typo acá dejaría el chequeo diciendo «sin dato» para siempre, con la
+    // serie calculada al lado.
+    expect(CRM_MONTHLY_METRIC_KEYS).toContain(FAIRPAY_ADJUSTMENT_METRIC);
   });
 });
 
