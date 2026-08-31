@@ -98,6 +98,8 @@ const MAX_RETRIES = LOAD_MAX_RETRIES;
 // campos canónicos (reserva-ahorro + deuda arrastrada + montoDistribuir).
 export interface SaldoInfo {
   ingresosNetos: number;
+  /** De dónde sale ingresosNetos — ver PeriodDistResult.desglose. */
+  desglose: import('./distribution').PeriodDistResult['desglose'];
   egresosNetos: number;
   saldoAFavor: number;
   deudaArrastradaEntrada: number;

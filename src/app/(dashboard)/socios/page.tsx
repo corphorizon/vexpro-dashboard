@@ -573,6 +573,24 @@ export default function SociosPage() {
           value={formatCurrency(ingresosNetos)}
           icon={Users}
           tone={ingresosNetos >= 0 ? 'positive' : 'negative'}
+          hint={
+            currentChain
+              ? [
+                  `${t('summary.brokerPnl')} ${formatCurrency(currentChain.desglose.brokerPnl)}`,
+                  currentChain.desglose.other !== 0
+                    ? `${t('summary.otherIncome')} ${formatCurrency(currentChain.desglose.other)}`
+                    : null,
+                  currentChain.desglose.propFirmNetIncome !== 0
+                    ? `Prop Firm ${formatCurrency(currentChain.desglose.propFirmNetIncome)}`
+                    : null,
+                  currentChain.desglose.investmentProfits !== 0
+                    ? `Inversiones ${formatCurrency(currentChain.desglose.investmentProfits)}`
+                    : null,
+                ]
+                  .filter(Boolean)
+                  .join(' + ')
+              : undefined
+          }
         />
         <StatCard
           label={t('partners.egresosNetos')}

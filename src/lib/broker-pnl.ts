@@ -188,13 +188,33 @@ export interface ResolvedBrokerPnl {
  * `manual` es lo que hay hoy en `operating_income.broker_pnl` (o el congelado
  * del cierre, que es el mismo número): sólo se usa si el período está CERRADO.
  */
+/**
+ * Corte del automático: AGOSTO 2026 en adelante.
+ *
+ * Kevin (2026-08-31, textual): «julio ya lo cerramos como estaba, dejalo como
+ * estaba, cambia es el de agosto». Julio-26 sigue ABIERTO en la base (el
+ * cierre fue de negocio, no del sistema), así que la regla «cerrado→congelado»
+ * no lo cubría y la pantalla le mostraba el CRM (+$32.321,80 sobre el manual
+ * ya pactado con los socios). El corte por fecha lo fija: todo período
+ * anterior a 2026-08 usa su manual guardado aunque siga abierto en el sistema.
+ */
+export const BROKER_PNL_AUTO_DESDE = { year: 2026, month: 8 } as const;
+
+function antesDelCorte(period: BrokerPnlPeriodLike): boolean {
+  return (
+    period.year * 100 + period.month <
+    BROKER_PNL_AUTO_DESDE.year * 100 + BROKER_PNL_AUTO_DESDE.month
+  );
+}
+
 export function resolveBrokerPnl(
   period: BrokerPnlPeriodLike,
   monthsByKey: ReadonlyMap<string, BrokerPnlMonth>,
   manual: number | null | undefined,
 ): ResolvedBrokerPnl {
-  // Regla 1: cerrado manda el congelado, sin mirar el CRM.
-  if (period.is_closed) {
+  // Regla 1: cerrado —o anterior al corte de agosto-26— manda el manual
+  // congelado, sin mirar el CRM.
+  if (period.is_closed || antesDelCorte(period)) {
     return {
       value: manual === null || manual === undefined ? null : Number(manual),
       source: 'frozen',

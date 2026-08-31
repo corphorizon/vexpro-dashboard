@@ -104,9 +104,10 @@ export default function ResumenPage() {
           ingresosNetos: acc.ingresosNetos + e.ingresosNetos,
           egresosNetos: acc.egresosNetos + e.egresosNetos,
           saldoAFavor: acc.saldoAFavor + e.saldoAFavor,
+          otherIncome: acc.otherIncome + e.desglose.other,
         };
       },
-      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0 },
+      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0, otherIncome: 0 },
     );
   }, [saldoChain, mode, selectedPeriodId, selectedPeriodIds]);
 
@@ -349,6 +350,15 @@ export default function ResumenPage() {
               <div className="flex justify-between">
                 <span>Profits Inversiones</span>
                 <span>{formatCurrency(summary.investmentProfits)}</span>
+              </div>
+            )}
+            {/* «Otros ingresos» (income_lines cobradas → operating_income.other):
+                el sumando que faltaba para que las líneas EXPLIQUEN el total.
+                Sale del desglose de la cadena, no se recomputa acá. */}
+            {chainTotals.otherIncome !== 0 && (
+              <div className="flex justify-between">
+                <span>{t('summary.otherIncome')}</span>
+                <span>{formatCurrency(chainTotals.otherIncome)}</span>
               </div>
             )}
             {/* ── Broker P&L: automático desde el CRM ────────────────────
