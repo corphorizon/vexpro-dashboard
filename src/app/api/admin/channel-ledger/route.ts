@@ -6,11 +6,17 @@
 //      una unidad de negocio (libro consolidado).
 // POST { action: 'create' | 'update' | 'delete', ... }
 //
-// Los canales por API (coinsbuy / unipayment) son SOLO LECTURA acá: su libro
-// lo escribe el cron de las 00:00 UTC contra el saldo real del proveedor, y
-// un asiento a mano solo podría descuadrarlo. La regla vive en
-// channel-ledger.ts (validateEntry) para que la UI y el endpoint no puedan
-// discrepar, y se revalida server-side en cada escritura.
+// Los canales de libro AUTOMÁTICO son SOLO LECTURA acá: su libro lo escribe el
+// cron de las 00:00 UTC contra el saldo real del proveedor, y un asiento a mano
+// solo podría descuadrarlo. La regla vive en channel-ledger.ts (validateEntry)
+// para que la UI y el endpoint no puedan discrepar, y se revalida server-side
+// en cada escritura.
+//
+// La enumeración «(coinsbuy / unipayment)» que estaba acá quedó vieja dos veces
+// —entró `fairpay` el 2026-08-31 y `paypros` el mismo día, más las ubicaciones
+// on-chain, que ni siquiera tienen clave fija— así que se saca: la lista se
+// deriva de BUILTIN_CHANNELS y quien quiera saber cuáles son mira
+// `API_LEDGER_CHANNELS`, no este comentario.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';

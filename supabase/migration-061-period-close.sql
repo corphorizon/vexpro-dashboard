@@ -15,6 +15,23 @@
 --   · investments (date-keyed), p2p_transfers, partner_distributions y
 --     periods.reserve_pct NO están cubiertos por el guard.
 --   · El snapshot todavía no se LEE — la cadena sigue recalculando en vivo.
+--
+-- ⚠ ESOS HUECOS YA ESTÁN TAPADOS — corrección 2026-08-31 (auditoría de
+-- finanzas). El párrafo de arriba describía el estado del día que se escribió
+-- esta migración; como comentario VIGENTE era falso, y mandaba a arreglar de
+-- nuevo algo ya arreglado:
+--   · La migración 066 extendió el guard a `investments` (por company_id + mes
+--     de `date`, chequeando el lado nuevo Y el viejo), a `p2p_transfers` y a
+--     `periods.reserve_pct`.
+--   · `partner_distributions` quedó afuera A PROPÓSITO, no por olvido: la
+--     distribución se guarda DESPUÉS de cerrar el mes —ese es el flujo— y
+--     borrar un socio limpia sus filas históricas. La inmutabilidad de los
+--     montos la da el snapshot, no esa tabla. Ver la cabecera de la 066.
+--   · El snapshot SÍ se lee, desde el snapshot-en-cadena del 2026-08-07:
+--     src/lib/distribution-snapshot.ts lo consume (`period.closing_snapshot`)
+--     y por eso un mes cerrado deja de recalcularse en vivo.
+-- No se borra el párrafo viejo: §5.2.4 del repo — un comentario falso se
+-- corrige EN EL MISMO LUGAR diciendo que era falso.
 
 alter table public.periods
   add column if not exists closed_at        timestamptz,

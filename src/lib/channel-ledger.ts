@@ -75,12 +75,30 @@ export const NON_LEDGER_CHANNELS = new Set(['liquidez', 'inversiones']);
  *     movimientos de la cuenta bancaria. No liquidan 1:1: en agosto 2026 el
  *     portal registró depósitos casi todos los días y el banking se movió DOS
  *     veces (0 → 6.747,05 el 18/08 → 7.163,47 el 25/08).
- * Y encima esas filas del portal **suman monedas locales como si fueran USD**
- * (COP, CLP, CRC, MXN, BRL conviven en `amount`; el 2026-08-12 hay $145.714,40
- * de tres monedas distintas sumados como dólares). Eso es un hallazgo grave
- * aparte, pendiente de decisión de Kevin, y NO se arregla acá — pero es la
- * segunda razón por la que asentarlas como «Depósitos del día» del canal
- * habría sido plata inventada.
+ * ⚠ CORRECCIÓN (2026-08-31, auditoría de finanzas). Este párrafo decía que las
+ * filas del portal **suman monedas locales como si fueran USD** («COP, CLP,
+ * CRC, MXN, BRL conviven en `amount`; el 2026-08-12 hay $145.714,40 de tres
+ * monedas distintas sumados como dólares»). ERA FALSO, y se deja escrito
+ * porque costó medio día averiguarlo dos veces:
+ *
+ *   · `currency` es el RAIL, no la moneda del importe. Una fila puede decir
+ *     `currency: 'COP'` y su `amount` estar en DÓLARES: el importe se guarda
+ *     desde `amount_usd` (`billed ← amount_usd` en fairpay/transactions.ts).
+ *   · La medición que lo cierra: la mediana de las 204 filas Completed en COP
+ *     es $94,80 contra $52 de las filas en USD. Si fueran pesos colombianos el
+ *     ratio sería ~4.000, no ~1,8. Y 1.142 de 1.225 filas cruzan contra
+ *     `crm_deposits`: en 694 el importe guardado es exactamente
+ *     `deposit_value × 1,04`, y dividir por 1,04 da importes REDONDOS en
+ *     dólares en las seis monedas. Nadie paga números redondos en dólares por
+ *     accidente en seis monedas distintas.
+ *   · Lo que SÍ está mal es otra cosa: ese 4% es un recargo que el cliente paga
+ *     y que nunca se le acredita —$2.994,83 sobre toda la serie—. Ver
+ *     `supabase/script-fairpay-usd-conciliacion.sql`.
+ *
+ * La conclusión operativa de este archivo NO cambia: las filas del portal
+ * siguen sin ser movimientos de la cuenta bancaria, y asentarlas como
+ * «Depósitos del día» del canal seguiría siendo plata inventada. Lo que cambia
+ * es el motivo: es que son OTRO SISTEMA, no que las monedas estén mezcladas.
  *
  * ── DERIVADO, NO ESCRITO A MANO (2026-08-31, auditoría de finanzas) ─────────
  * Hasta hoy esta lista era un `new Set([...])` literal y `paypros` NUNCA estuvo
