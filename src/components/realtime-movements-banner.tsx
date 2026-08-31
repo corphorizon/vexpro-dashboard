@@ -560,9 +560,14 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       )}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-        {datasets.map((ds) => {
+        {datasets.flatMap((ds) => {
           const totals = computeProviderTotals(ds);
-          return (
+          // Kevin (2026-08-31): «pon aquí también una tarjeta con la info de
+          // los retiros de paypros». Pay-Pros es UN provider con dos sentidos
+          // separados por status; la tarjeta de retiros sale del mismo dataset
+          // vía countPayprosPayouts (los payout_paid que computeProviderTotals
+          // excluye a propósito del lado de depósitos).
+          const cards = [(
             <Link
               key={ds.slug}
               href={`/movimientos/desglose/${ds.slug}${linkQs ? `?${linkQs}` : ''}`}
@@ -607,7 +612,36 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                 </p>
               )}
             </Link>
-          );
+          )];
+          if (ds.slug === 'paypros') {
+            const payouts = countPayprosPayouts(ds);
+            cards.push(
+              <Link
+                key="paypros-payouts"
+                href={`/movimientos/desglose/paypros${linkQs ? `?${linkQs}` : ''}`}
+                className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold truncate">Pay-Pros · Retiros</span>
+                  {ds.status === 'fresh' ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                  )}
+                </div>
+                <p className="text-base font-bold text-negative">
+                  {formatCurrency(payouts.total)}
+                </p>
+                <div className="flex items-center justify-between mt-0.5">
+                  <p className="text-[10px] text-muted-foreground">
+                    {payouts.count} tx · payout_paid
+                  </p>
+                  <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </Link>,
+            );
+          }
+          return cards;
         })}
         {datasets.length === 0 && !errorMsg && (
           <p className="text-xs text-muted-foreground col-span-full">

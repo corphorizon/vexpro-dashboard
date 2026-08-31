@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { StatCard } from '@/components/ui/stat-card';
@@ -123,6 +123,47 @@ export default function MovimientosPage() {
   // $932.444,83 en vez de $469.650,98 y Net Deposit −$231.127, que es el
   // número que después consume la cadena de distribución.
   const coexist = useApiCoexistence(activePeriods, '', apiRefreshKey);
+
+  // ── Prop Firm automático (Kevin, 2026-08-31: «debería aparecer lo de prop
+  // firm con el dato en automático») ─────────────────────────────────────────
+  // La serie vive en crm_monthly_totals (metrics propfirm_sales /
+  // propfirm_withdrawals, calculadas del espejo del CRM). Regla: en períodos
+  // DERIVADOS (abr-2026+) el automático es el valor efectivo y el manual, si
+  // existe (>0), actúa como OVERRIDE explícito y se muestra rotulado. En
+  // históricos manda el manual, como todo lo demás. null = serie sin datos
+  // para ese mes («sin datos», no $0) — la auditoría midió agosto en $0 manual
+  // contra $11.981,70 reales.
+  const [pfAuto, setPfAuto] = useState<{ sales: number | null; withdrawals: number | null }>({
+    sales: null,
+    withdrawals: null,
+  });
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/admin/crm-monthly-totals');
+        if (!res.ok || cancel) return;
+        const json = await res.json();
+        const rows: Array<{ year: number; month: number; metric: string; auto: number | null }> =
+          json.rows ?? [];
+        const meses = new Set(
+          activePeriods.map((per) => `${per.year}-${per.month}`),
+        );
+        let sales: number | null = null;
+        let wdr: number | null = null;
+        for (const r of rows) {
+          if (!meses.has(`${r.year}-${r.month}`)) continue;
+          if (r.auto === null) continue; // sin dato ≠ 0
+          if (r.metric === 'propfirm_sales') sales = (sales ?? 0) + r.auto;
+          if (r.metric === 'propfirm_withdrawals') wdr = (wdr ?? 0) + r.auto;
+        }
+        if (!cancel) setPfAuto({ sales, withdrawals: wdr });
+      } catch {
+        // La tarjeta cae al manual con su rótulo; no se inventa un $0.
+      }
+    })();
+    return () => { cancel = true; };
+  }, [activePeriods, apiRefreshKey]);
   const { useDerivedBroker, apiFrom, apiTo } = coexist;
   // Broker CRM — prop firm sales + P2P transfers. Stub for now (returns 0
   // until the CRM endpoint exists), but wired so the display already sums
@@ -253,10 +294,22 @@ export default function MovimientosPage() {
   // día respondía habría duplicado contra `crm_monthly_totals` (migración
   // 100), que hoy es la serie automática real y vive en /finanzas/crm.
   // Aquí queda únicamente lo cargado a mano, como el resto de Broker.
-  const propFirmSalesDisplay = summary.propFirmSales;
+  const manualPropFirmSales = summary.propFirmSales;
+  // Efectivo: en derivados, manual>0 = override explícito; si no, el automático
+  // del CRM; sin serie → manual (aunque sea 0, rotulado). Históricos: manual.
+  const propFirmSalesDisplay = useDerivedBroker
+    ? (manualPropFirmSales > 0 ? manualPropFirmSales : (pfAuto.sales ?? manualPropFirmSales))
+    : manualPropFirmSales;
+  const pfSalesSource: 'manual' | 'api' =
+    useDerivedBroker && !(manualPropFirmSales > 0) && pfAuto.sales !== null ? 'api' : 'manual';
+  const propFirmWithdrawalDisplay = useDerivedBroker
+    ? (propFirmWithdrawal > 0 ? propFirmWithdrawal : (pfAuto.withdrawals ?? propFirmWithdrawal))
+    : propFirmWithdrawal;
+  const pfWdrSource: 'manual' | 'api' =
+    useDerivedBroker && !(propFirmWithdrawal > 0) && pfAuto.withdrawals !== null ? 'api' : 'manual';
   const p2pTransferDisplay = summary.p2pTransfer;
 
-  const propFirmNetIncomeDisplay = propFirmSalesDisplay - propFirmWithdrawal;
+  const propFirmNetIncomeDisplay = propFirmSalesDisplay - propFirmWithdrawalDisplay;
 
   // ─── Depósitos Broker ───
   // Business rule (Abr-2026+): the "broker" deposits line is derived, not
@@ -585,8 +638,8 @@ export default function MovimientosPage() {
               <tr className="border-b border-border/50">
                 <td className="py-2.5">
                   {t('movements.propFirmSales')}
-                  <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                    manual
+                  <span className={`ml-2 text-[10px] uppercase tracking-wide ${pfSalesSource === 'api' ? 'text-positive' : 'text-muted-foreground'}`}>
+                    {pfSalesSource === 'api' ? 'api' : 'manual'}
                   </span>
                 </td>
                 <td className="py-2.5 text-right font-medium">
@@ -594,9 +647,14 @@ export default function MovimientosPage() {
                 </td>
               </tr>
               <tr className="border-b border-border/50">
-                <td className="py-2.5">{t('movements.propFirmWithdrawals')}</td>
+                <td className="py-2.5">
+                  {t('movements.propFirmWithdrawals')}
+                  <span className={`ml-2 text-[10px] uppercase tracking-wide ${pfWdrSource === 'api' ? 'text-positive' : 'text-muted-foreground'}`}>
+                    {pfWdrSource === 'api' ? 'api' : 'manual'}
+                  </span>
+                </td>
                 <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(propFirmWithdrawal)}
+                  {formatCurrency(propFirmWithdrawalDisplay)}
                 </td>
               </tr>
               <tr className="font-bold">
