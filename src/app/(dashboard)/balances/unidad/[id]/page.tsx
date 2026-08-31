@@ -90,6 +90,8 @@ export default function BusinessUnitLedgerPage() {
   /** Parte de cada ubicación que le corresponde a esta unidad (1 = exclusiva). */
   const [shares, setShares] = useState<Record<string, number>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
+  /** Ubicaciones con direcciones on-chain: su libro también lo escribe el cron. */
+  const [onchainKeys, setOnchainKeys] = useState<ReadonlySet<string>>(new Set());
   const [unit, setUnit] = useState<BusinessUnit | null>(null);
   const [unitMissing, setUnitMissing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -126,6 +128,17 @@ export default function BusinessUnitLedgerPage() {
         const map: Record<string, string> = {};
         for (const ch of resolveChannels(json.rows ?? [])) map[ch.key] = ch.label;
         setLabels(map);
+        // Una ubicación con direcciones cargadas lleva libro automático aunque
+        // su clave sea `wallet_externa` o `custom_<uuid>`: el cron la asienta
+        // contra el saldo de la cadena. Ofrecerla para un asiento a mano era
+        // ofrecer algo que el endpoint rechaza.
+        setOnchainKeys(
+          new Set(
+            (json.rows ?? [])
+              .filter((r) => (r.onchain_wallets?.length ?? 0) > 0)
+              .map((r) => r.channel_key),
+          ),
+        );
       })
       .catch(() => {
         /* el channel_key crudo alcanza como fallback */
@@ -234,9 +247,9 @@ export default function BusinessUnitLedgerPage() {
   const manualLocations = useMemo(
     () =>
       perLocation
-        .filter((l) => hasLedger(l.key) && !isAutoLedger(l.key))
+        .filter((l) => hasLedger(l.key) && !isAutoLedger(l.key, { onchain: onchainKeys.has(l.key) }))
         .map((l) => ({ key: l.key, label: l.label, balance: l.balance })),
-    [perLocation],
+    [perLocation, onchainKeys],
   );
 
   const handleAddEntry = () => {

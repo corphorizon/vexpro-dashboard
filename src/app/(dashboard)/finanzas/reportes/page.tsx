@@ -118,22 +118,28 @@ interface ReportResponse {
     connected: boolean;
     isMock: boolean;
   };
+  // `number | null` = «no lo sabemos», nunca 0 (auditoría 2026-08-31). El
+  // broker P&L viene del cierre diario del CRM, que puede no tener ningún día
+  // guardado; el prop trading viene de `crm_monthly_totals`, que es MENSUAL y
+  // no puede responder por un rango que no sean meses enteros. Ver
+  // src/lib/reports/crm-mirror.ts y la cabecera de ReportData.
   broker_pnl: {
-    pnl_range: number;
-    pnl_month: number;
-    pnl_prev_month: number;
+    pnl_range: number | null;
+    pnl_month: number | null;
+    pnl_prev_month: number | null;
     connected: boolean;
     isMock: boolean;
   };
   prop_trading: {
-    products: Array<{ name: string; quantity: number; amount: number }>;
-    total_sales_range: number;
-    total_sales_month: number;
-    prop_withdrawals_range: number;
-    prop_withdrawals_count_range: number;
-    pnl_range: number;
-    pnl_month: number;
-    pnl_prev_month: number;
+    /** `null` = el CRM guarda el total del mes, no qué se vendió. */
+    products: Array<{ name: string; quantity: number; amount: number }> | null;
+    total_sales_range: number | null;
+    total_sales_month: number | null;
+    prop_withdrawals_range: number | null;
+    prop_withdrawals_count_range: number | null;
+    pnl_range: number | null;
+    pnl_month: number | null;
+    pnl_prev_month: number | null;
     connected: boolean;
     isMock: boolean;
   };
@@ -153,16 +159,21 @@ interface ReportResponse {
 
 // ─── Human-friendly labels ─────────────────────────────────────────────
 
+// Pay-Pros faltaba en las dos (auditoría 2026-08-31). El canal existe desde el
+// 2026-07-22 y el informe ya traía sus depósitos: sin entrada acá, la fila se
+// dibujaba con el slug crudo, «paypros», al lado de «Coinsbuy» y «FairPay».
 const CHANNEL_LABEL: Record<string, string> = {
   coinsbuy: 'Coinsbuy',
   fairpay: 'FairPay',
   unipayment: 'UniPayment',
+  paypros: 'Pay-Pros',
 };
 const CATEGORY_LABEL: Record<string, string> = {
   broker: 'Broker',
   prop_firm: 'Prop Firm',
   p2p: 'P2P Transfer',
   coinsbuy_api: 'Coinsbuy (API)',
+  paypros_api: 'Pay-Pros (API)',
 };
 const CHANNEL_LABEL_KEY: Record<string, string> = {
   other: 'reports.labelOther',
@@ -185,9 +196,32 @@ function resolveLabel(
 
 // ─── Utility: % variation with safe zero division ──────────────────────
 
-function pctVariation(current: number, previous: number): number | null {
-  if (!previous) return null;
+/**
+ * `null` de cualquier lado = sin comparación posible. Antes los parámetros eran
+ * `number` porque el builder colapsaba los nulos a 0 con un `?? 0`: comparar
+ * contra un cero inventado daba «−100%» con toda la cara de un dato real.
+ */
+function pctVariation(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null || !previous) return null;
   return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+/** Importe que puede faltar: `null` se dice, no se dibuja como $0,00. */
+function money(value: number | null, t: (k: string) => string): string {
+  return value === null || !Number.isFinite(value)
+    ? t('reports.noData')
+    : formatCurrency(value);
+}
+
+/** Tono de un importe que puede faltar: lo desconocido no es ni bueno ni malo. */
+function moneyTone(value: number | null): 'positive' | 'negative' | 'neutral' {
+  if (value === null || !Number.isFinite(value)) return 'neutral';
+  return value >= 0 ? 'positive' : 'negative';
+}
+
+/** Para el CSV: la celda vacía dice «no lo sabemos»; un 0 diría otra cosa. */
+function csvNumber(value: number | null): string | number {
+  return value === null || !Number.isFinite(value) ? '' : value;
 }
 
 function VariationBadge({ pct }: { pct: number | null }) {
@@ -294,8 +328,9 @@ export default function ReportesPage() {
     return pctVariation(data.broker_pnl.pnl_month, data.broker_pnl.pnl_prev_month);
   }, [data]);
   const brokerPnlRangePctOfMonth = useMemo(() => {
-    if (!data || !data.broker_pnl.pnl_month) return null;
-    return (data.broker_pnl.pnl_range / Math.abs(data.broker_pnl.pnl_month)) * 100;
+    const p = data?.broker_pnl;
+    if (!p || !p.pnl_month || p.pnl_range === null) return null;
+    return (p.pnl_range / Math.abs(p.pnl_month)) * 100;
   }, [data]);
 
   const propPnlMonthVsPrev = useMemo(() => {
@@ -303,8 +338,9 @@ export default function ReportesPage() {
     return pctVariation(data.prop_trading.pnl_month, data.prop_trading.pnl_prev_month);
   }, [data]);
   const propPnlRangePctOfMonth = useMemo(() => {
-    if (!data || !data.prop_trading.pnl_month) return null;
-    return (data.prop_trading.pnl_range / Math.abs(data.prop_trading.pnl_month)) * 100;
+    const p = data?.prop_trading;
+    if (!p || !p.pnl_month || p.pnl_range === null) return null;
+    return (p.pnl_range / Math.abs(p.pnl_month)) * 100;
   }, [data]);
 
   // ── Export handlers ────────────────────────────────────────────────
@@ -327,17 +363,21 @@ export default function ReportesPage() {
       ['CRM Users', 'Nuevos usuarios del rango', data.crm_users.new_users_in_range],
       ['CRM Users', 'Nuevos usuarios del mes', data.crm_users.new_users_this_month],
       ['CRM Users', 'Total usuarios', data.crm_users.total_users],
-      ['Broker P&L', 'P&L del rango', data.broker_pnl.pnl_range],
-      ['Broker P&L', 'P&L del mes', data.broker_pnl.pnl_month],
-      ['Broker P&L', 'P&L mes anterior', data.broker_pnl.pnl_prev_month],
-      ['Prop Trading', 'Ventas del rango', data.prop_trading.total_sales_range],
-      ['Prop Trading', 'Retiros del rango', data.prop_trading.prop_withdrawals_range],
-      ['Prop Trading', 'P&L del rango', data.prop_trading.pnl_range],
-      ...data.prop_trading.products.map((p) => [
-        'Prop Trading · Productos',
-        `${p.name} (x${p.quantity})`,
-        p.amount,
-      ]),
+      // Celda VACÍA cuando no lo sabemos: un 0 en un CSV que después alguien
+      // suma en una planilla es exactamente el fallo que no da error.
+      ['Broker P&L', 'P&L del rango', csvNumber(data.broker_pnl.pnl_range)],
+      ['Broker P&L', 'P&L del mes', csvNumber(data.broker_pnl.pnl_month)],
+      ['Broker P&L', 'P&L mes anterior', csvNumber(data.broker_pnl.pnl_prev_month)],
+      ['Prop Trading', 'Ventas del rango', csvNumber(data.prop_trading.total_sales_range)],
+      ['Prop Trading', 'Retiros del rango', csvNumber(data.prop_trading.prop_withdrawals_range)],
+      ['Prop Trading', 'P&L del rango', csvNumber(data.prop_trading.pnl_range)],
+      ...(data.prop_trading.products === null
+        ? [['Prop Trading · Productos', 'Sin desglose disponible', '']]
+        : data.prop_trading.products.map((p) => [
+            'Prop Trading · Productos',
+            `${p.name} (x${p.quantity})`,
+            p.amount,
+          ])),
     ];
     downloadCSV(`reporte_${from}_${to}.csv`, headers, rows);
   });
@@ -698,8 +738,8 @@ export default function ReportesPage() {
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <StatCard
                   label={t('reports.pnlRange')}
-                  value={formatCurrency(data.broker_pnl.pnl_range)}
-                  tone={data.broker_pnl.pnl_range >= 0 ? 'positive' : 'negative'}
+                  value={money(data.broker_pnl.pnl_range, t)}
+                  tone={moneyTone(data.broker_pnl.pnl_range)}
                   hint={
                     brokerPnlRangePctOfMonth === null
                       ? t('reports.noMonthlyReference')
@@ -710,13 +750,13 @@ export default function ReportesPage() {
                 />
                 <StatCard
                   label={t('reports.pnlMonth')}
-                  value={formatCurrency(data.broker_pnl.pnl_month)}
-                  tone={data.broker_pnl.pnl_month >= 0 ? 'positive' : 'negative'}
+                  value={money(data.broker_pnl.pnl_month, t)}
+                  tone={moneyTone(data.broker_pnl.pnl_month)}
                   hint={<VariationBadge pct={brokerPnlMonthVsPrev} />}
                 />
                 <StatCard
                   label={t('reports.pnlPrevMonth')}
-                  value={formatCurrency(data.broker_pnl.pnl_prev_month)}
+                  value={money(data.broker_pnl.pnl_prev_month, t)}
                   tone="neutral"
                 />
               </div>
@@ -740,7 +780,14 @@ export default function ReportesPage() {
             {/* Products table */}
             <div className="mb-4">
               <h3 className="text-sm font-medium mb-2">{t('reports.productsSoldInRange')}</h3>
-              {data.prop_trading.products.length === 0 ? (
+              {data.prop_trading.products === null ? (
+                /* `null` no es una lista vacía: el CRM guarda el total del mes,
+                   no qué se vendió. Decir «no hubo ventas» acá sería afirmar
+                   algo que no sabemos (auditoría 2026-08-31). */
+                <p className="text-sm text-muted-foreground py-3">
+                  {t('reports.productsNoBreakdown')}
+                </p>
+              ) : data.prop_trading.products.length === 0 ? (
                 <p className="text-sm text-muted-foreground py-3">
                   {t('reports.noSalesInPeriod')}
                 </p>
@@ -768,7 +815,7 @@ export default function ReportesPage() {
                         <td className="px-3 py-2">{t('common.total')}</td>
                         <td></td>
                         <td className="px-3 py-2 text-right">
-                          {formatCurrency(data.prop_trading.total_sales_range)}
+                          {money(data.prop_trading.total_sales_range, t)}
                         </td>
                       </tr>
                     </tfoot>
@@ -781,24 +828,28 @@ export default function ReportesPage() {
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <StatCard
                 label={t('reports.salesRange')}
-                value={formatCurrency(data.prop_trading.total_sales_range)}
+                value={money(data.prop_trading.total_sales_range, t)}
                 tone="info"
                 hint={t('reports.monthHint', {
-                  amount: formatCurrency(data.prop_trading.total_sales_month),
+                  amount: money(data.prop_trading.total_sales_month, t),
                 })}
               />
               <StatCard
                 label={t('reports.propFirmWithdrawals')}
-                value={formatCurrency(data.prop_trading.prop_withdrawals_range)}
+                value={money(data.prop_trading.prop_withdrawals_range, t)}
                 tone="warning"
-                hint={t('reports.withdrawalsCount', {
-                  count: String(data.prop_trading.prop_withdrawals_count_range),
-                })}
+                hint={
+                  data.prop_trading.prop_withdrawals_count_range === null
+                    ? t('reports.noData')
+                    : t('reports.withdrawalsCount', {
+                        count: String(data.prop_trading.prop_withdrawals_count_range),
+                      })
+                }
               />
               <StatCard
                 label={t('reports.pnlRange')}
-                value={formatCurrency(data.prop_trading.pnl_range)}
-                tone={data.prop_trading.pnl_range >= 0 ? 'positive' : 'negative'}
+                value={money(data.prop_trading.pnl_range, t)}
+                tone={moneyTone(data.prop_trading.pnl_range)}
                 hint={
                   propPnlRangePctOfMonth === null
                     ? t('reports.noMonthlyReference')
@@ -813,13 +864,13 @@ export default function ReportesPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
               <StatCard
                 label={t('reports.propPnlMonth')}
-                value={formatCurrency(data.prop_trading.pnl_month)}
-                tone={data.prop_trading.pnl_month >= 0 ? 'positive' : 'negative'}
+                value={money(data.prop_trading.pnl_month, t)}
+                tone={moneyTone(data.prop_trading.pnl_month)}
                 hint={<VariationBadge pct={propPnlMonthVsPrev} />}
               />
               <StatCard
                 label={t('reports.propPnlPrevMonth')}
-                value={formatCurrency(data.prop_trading.pnl_prev_month)}
+                value={money(data.prop_trading.pnl_prev_month, t)}
                 tone="neutral"
               />
             </div>

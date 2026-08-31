@@ -26,9 +26,18 @@ import { formatCurrency } from '@/lib/utils';
 //   · Historical period (pre Apr 2026) → manual only
 //   · Derived-broker period            → add API totals from api_transactions
 //     · Deposits     = summary.totalDeposits + apiMonth.deposits
-//     · Withdrawals  = derivedBrokerFromApi(apiW, ib, pf, other) + storedBroker
-//                        + ib + propFirm + other
+//     · Withdrawals  = apiMonth.withdrawals + storedBroker
 //     · Egresos      = summary.totalExpenses (manual — no API equivalent)
+//
+// ⚠ CORRECCIÓN 2026-08-31 (auditoría de finanzas). La línea de Withdrawals
+// decía `derivedBrokerFromApi(apiW, ib, pf, other) + storedBroker + ib +
+// propFirm + other`. Esa es la fórmula VIEJA, descartada como bug el
+// 2026-06-07: apenas `prop_firm > 0` la barra dejaba de coincidir con
+// /movimientos y /balances (auditoría 2026-08-06, C6). El código de abajo ya
+// no la usa desde entonces —usa `api.withdrawals + storedBroker`, la canónica
+// de broker-logic.ts— y este encabezado se quedó describiendo lo que el
+// archivo hacía antes. Un comentario que describe una fórmula de dinero
+// distinta de la que corre es peor que no tener comentario.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface MonthTotals {

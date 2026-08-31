@@ -6,11 +6,17 @@
 //      una unidad de negocio (libro consolidado).
 // POST { action: 'create' | 'update' | 'delete', ... }
 //
-// Los canales por API (coinsbuy / unipayment) son SOLO LECTURA acá: su libro
-// lo escribe el cron de las 00:00 UTC contra el saldo real del proveedor, y
-// un asiento a mano solo podría descuadrarlo. La regla vive en
-// channel-ledger.ts (validateEntry) para que la UI y el endpoint no puedan
-// discrepar, y se revalida server-side en cada escritura.
+// Los canales de libro AUTOMÁTICO son SOLO LECTURA acá: su libro lo escribe el
+// cron de las 00:00 UTC contra el saldo real del proveedor, y un asiento a mano
+// solo podría descuadrarlo. La regla vive en channel-ledger.ts (validateEntry)
+// para que la UI y el endpoint no puedan discrepar, y se revalida server-side
+// en cada escritura.
+//
+// La enumeración «(coinsbuy / unipayment)» que estaba acá quedó vieja dos veces
+// —entró `fairpay` el 2026-08-31 y `paypros` el mismo día, más las ubicaciones
+// on-chain, que ni siquiera tienen clave fija— así que se saca: la lista se
+// deriva de BUILTIN_CHANNELS y quien quiera saber cuáles son mira
+// `API_LEDGER_CHANNELS`, no este comentario.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -30,6 +36,34 @@ const SELECT_COLS =
 
 /** Un id mal formado revienta en Postgres (22P02); se corta antes con un 400. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * ¿La ubicación tiene direcciones on-chain cargadas? (migración 085)
+ *
+ * No se puede deducir de la clave: el canal de una wallet on-chain es
+ * `wallet_externa` o un `custom_<uuid>` distinto en cada empresa. Pero SÍ lleva
+ * libro automático —el cron lo asienta contra el saldo de la cadena cada
+ * noche—, así que un asiento a mano encima lo descuadraría igual que en
+ * Coinsbuy. Ver `isAutoLedger` en channel-ledger.ts.
+ *
+ * Ante un error de lectura devuelve `true`: si no sabemos si el libro es
+ * automático, no se escribe. Es la misma doctrina de las tres puertas de
+ * api-auth.ts:163-171 — ante la duda, lo estricto.
+ */
+async function channelIsOnchain(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  channelKey: string,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('channel_configs')
+    .select('onchain_wallets')
+    .eq('company_id', companyId)
+    .eq('channel_key', channelKey)
+    .maybeSingle<{ onchain_wallets: unknown }>();
+  if (error) return true;
+  return Array.isArray(data?.onchain_wallets) && data.onchain_wallets.length > 0;
+}
 
 /**
  * Escrituras: mismo criterio que `canAdd` en el cliente (admin o auditor).
@@ -175,7 +209,10 @@ export async function POST(request: NextRequest) {
   // ── Alta ───────────────────────────────────────────────────────────────
   if (action === 'create') {
     const input = body as Partial<LedgerEntryInput>;
-    const invalid = validateEntry(input);
+    const onchain = input.channel_key
+      ? await channelIsOnchain(admin, auth.companyId, input.channel_key)
+      : false;
+    const invalid = validateEntry(input, { onchain });
     if (invalid) {
       return NextResponse.json({ success: false, error: invalid }, { status: 400 });
     }
@@ -246,7 +283,8 @@ export async function POST(request: NextRequest) {
     if (!existing || existing.company_id !== auth.companyId) {
       return NextResponse.json({ success: false, error: 'Asiento no encontrado' }, { status: 404 });
     }
-    if (existing.source === 'api' || isAutoLedger(existing.channel_key)) {
+    const existingOnchain = await channelIsOnchain(admin, auth.companyId, existing.channel_key);
+    if (existing.source === 'api' || isAutoLedger(existing.channel_key, { onchain: existingOnchain })) {
       return NextResponse.json(
         {
           success: false,
@@ -280,7 +318,10 @@ export async function POST(request: NextRequest) {
     // El saldo inicial conserva su `kind`: cambiarlo a 'out' lo volvería un
     // egreso y dejaría al canal sin punto de partida.
     const kind = existing.kind === 'opening' ? 'opening' : input.kind;
-    const invalid = validateEntry({ ...input, kind, channel_key: existing.channel_key });
+    const invalid = validateEntry(
+      { ...input, kind, channel_key: existing.channel_key },
+      { onchain: existingOnchain },
+    );
     if (invalid) {
       return NextResponse.json({ success: false, error: invalid }, { status: 400 });
     }

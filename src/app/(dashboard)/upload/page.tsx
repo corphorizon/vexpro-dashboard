@@ -10,6 +10,7 @@ import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
+import { ALL_DEPOSIT_CHANNELS } from '@/lib/deposit-channels';
 import type { LiquidityMovement, Investment } from '@/lib/types';
 import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical, Lock as LockIcon, Upload } from 'lucide-react';
 import {
@@ -189,12 +190,26 @@ function SortableExpenseRow({
 }
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
 
-const INITIAL_DEPOSITS: DepositRow[] = [
-  { id: 'd1', channel: 'coinsbuy', amount: 0 },
-  { id: 'd2', channel: 'fairpay', amount: 0 },
-  { id: 'd3', channel: 'unipayment', amount: 0 },
-  { id: 'd4', channel: 'other', amount: 0 },
-];
+/**
+ * Filas de la tabla de Depósitos, DERIVADAS del registro único
+ * (`ALL_DEPOSIT_CHANNELS` en src/lib/deposit-channels.ts).
+ *
+ * ── POR QUÉ NO ES UNA LISTA A MANO (2026-08-31, auditoría de finanzas) ──────
+ * Era una cuarta copia del par canal↔pantalla, y ya había divergido: le
+ * faltaba `paypros`, habilitado en `deposits.channel` por la migración 105 y
+ * presente en el registro desde entonces. La consecuencia no era solo cosmética.
+ * Este estado es lo que se hidrata al abrir el período Y lo que se manda al
+ * guardar, así que una fila `paypros` cargada por otra vía era INVISIBLE en la
+ * pantalla y se BORRABA en el próximo guardado —la RPC reemplaza el período
+ * entero desde el payload del cliente (§2.4 de docs/reglas-del-proyecto.md:
+ * «cualquier columna nueva que no viaje en el payload se pierde en silencio»)—.
+ * Derivándola, un canal nuevo aparece solo y deja de poder perderse.
+ */
+const INITIAL_DEPOSITS: DepositRow[] = ALL_DEPOSIT_CHANNELS.map((channel, i) => ({
+  id: `d${i + 1}`,
+  channel,
+  amount: 0,
+}));
 
 const INITIAL_WITHDRAWALS: WithdrawalRow[] = [
   { id: 'w1', category: 'ib_commissions', amount: 0 },
@@ -1816,6 +1831,15 @@ export default function UploadPage() {
   //      manual extras the user already added.
   const saveIncome = () => {
     if (!userCanAdd || !company) return;
+    // Mes cerrado: mismo criterio que los otros NUEVE handlers de esta pantalla
+    // (autosave, egresos, liquidez, inversiones…). Era el ÚNICO sin guard
+    // (auditoría 2026-08-31): el trigger de la migración 061 rechazaba la
+    // escritura igual, pero el rechazo llegaba como una excepción de Postgres
+    // que este handler mostraba CRUDA al usuario — ver el catch de abajo.
+    if (selectedPeriodIsClosed) {
+      showError(t('upload.periodClosedNoChanges', { period: periodLabel }));
+      return;
+    }
     (async () => {
       Sentry.addBreadcrumb({
         category: 'upload.save',
@@ -1882,11 +1906,18 @@ export default function UploadPage() {
           tags: { area: 'upload.saveIncome' },
           extra: { periodId: selectedPeriodRef.current, companyId: company.id },
         });
-        showError(`Error: ${message}`);
+        // `Error: ${message}` filtraba el texto CRUDO de Postgres a la pantalla
+        // —nombres de tabla, de trigger, de constraint— que es justo lo que
+        // §5.4 de docs/reglas-del-proyecto.md prohíbe («nunca error.message al
+        // cliente»). El detalle va a Sentry, que ya lo capturó arriba; el
+        // usuario recibe el mensaje estándar del repo, el mismo que usan las
+        // otras diez rutas de guardado de esta pantalla.
+        showError(t('upload.saveError', { error: t('upload.saveErrorGeneric') }));
         // dirty is intentionally NOT cleared on error — the user's
         // unsaved edits stay protected from the sync effect overwriting
         // them, so they can fix the network / validation issue and retry
         // without re-entering everything.
+        void message; // el detalle vive en Sentry, no en la UI
       }
     })();
   };
@@ -2254,8 +2285,9 @@ export default function UploadPage() {
                     type="number"
                     step="0.01"
                     value={propFirmAmount || ''}
+                    disabled={selectedPeriodIsClosed}
                     onChange={(e) => setPropFirmAmount(parseFloat(e.target.value) || 0)}
-                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="0.00"
                   />
                 ) : (
@@ -2388,8 +2420,9 @@ export default function UploadPage() {
                     type="number"
                     step="0.01"
                     value={p2pAmount || ''}
+                    disabled={selectedPeriodIsClosed}
                     onChange={(e) => setP2PAmount(parseFloat(e.target.value) || 0)}
-                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="0.00"
                   />
                 ) : (
@@ -2911,6 +2944,7 @@ export default function UploadPage() {
                   <input
                     type="number" step="0.01"
                     value={income.other || ''}
+                    disabled={selectedPeriodIsClosed}
                     onChange={e => setIncome(p => ({ ...p, other: parseFloat(e.target.value) || 0 }))}
                     className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                     placeholder="0.00"
@@ -2951,11 +2985,12 @@ export default function UploadPage() {
                     <input
                       type="number" step="0.01"
                       value={propFirmAmount || ''}
+                      disabled={selectedPeriodIsClosed}
                       onChange={e => {
                         setPropFirmAmount(parseFloat(e.target.value) || 0);
                         markDirty('ingresos');
                       }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                       placeholder="0.00"
                     />
                   ) : (
@@ -2968,6 +3003,7 @@ export default function UploadPage() {
                     <input
                       type="number" step="0.01"
                       value={propFirmWithdrawal || ''}
+                      disabled={selectedPeriodIsClosed}
                       onChange={e => {
                         const v = parseFloat(e.target.value) || 0;
                         // setWithdrawals also marks 'retiros' dirty internally;
@@ -2978,7 +3014,7 @@ export default function UploadPage() {
                         ));
                         markDirty('ingresos');
                       }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                       placeholder="0.00"
                     />
                   ) : (
@@ -3006,7 +3042,8 @@ export default function UploadPage() {
               {userCanAdd && (
                 <button
                   onClick={saveIncome}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+                  disabled={selectedPeriodIsClosed}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Save className="w-4 h-4" />
                   {t('upload.saveIncomeBtn')}

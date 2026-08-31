@@ -77,6 +77,7 @@ const CATEGORY_LABEL: Record<EmailLocale, Record<string, string>> = {
     other: 'Otros',
     p2p: 'P2P Transfer',
     coinsbuy_api: 'Coinsbuy (API)',
+    paypros_api: 'Pay-Pros (API)',
   },
   en: {
     ib_commissions: 'IB Commissions',
@@ -85,6 +86,7 @@ const CATEGORY_LABEL: Record<EmailLocale, Record<string, string>> = {
     other: 'Other',
     p2p: 'P2P Transfer',
     coinsbuy_api: 'Coinsbuy (API)',
+    paypros_api: 'Pay-Pros (API)',
   },
 };
 
@@ -101,6 +103,9 @@ const L: Record<EmailLocale, Record<string, string>> = {
     titleWeekly: 'Reporte Financiero Semanal',
     titleMonthly: 'Reporte Financiero Mensual',
     noDataInPeriod: 'Sin datos en el período',
+    sectionNotConnected: 'Sin datos: esta sección no tiene fuente conectada.',
+    productsNoBreakdown:
+      'Sin desglose disponible: el CRM guarda el total del mes, no qué producto se vendió.',
     balancesTitle: 'Balances por Canal',
     asOf: 'Al {date}',
     typeApi: 'API',
@@ -214,6 +219,9 @@ const L: Record<EmailLocale, Record<string, string>> = {
     titleWeekly: 'Weekly Financial Report',
     titleMonthly: 'Monthly Financial Report',
     noDataInPeriod: 'No data in this period',
+    sectionNotConnected: 'No data: this section has no connected source.',
+    productsNoBreakdown:
+      'No breakdown available: the CRM stores the monthly total, not which product was sold.',
     balancesTitle: 'Balances by Channel',
     asOf: 'As of {date}',
     typeApi: 'API',
@@ -361,8 +369,13 @@ function formatDate(iso: string, locale: EmailLocale): string {
   return `${d} ${MONTHS.es[m - 1]} ${y}`;
 }
 
-function pctVariation(current: number, previous: number): number | null {
-  if (!previous) return null;
+/**
+ * `null` en cualquiera de los dos lados = NO HAY COMPARACIÓN posible. Antes los
+ * parámetros eran `number` y el llamador venía de un `?? 0`: comparar contra un
+ * cero inventado daba «−100%» con cara de dato (§1.3).
+ */
+function pctVariation(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null || !previous) return null;
   return ((current - previous) / Math.abs(previous)) * 100;
 }
 
@@ -694,10 +707,67 @@ function renderDepositsWithdrawalsSection(
   `;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TRES CORRECCIONES DE HONESTIDAD (2026-08-31, auditoría de finanzas)
+//
+// 1. `connected` NO SE LEÍA EN NINGÚN LADO. El campo existe en las tres
+//    secciones de CRM desde que se escribieron, y ninguna plantilla lo miraba:
+//    una sección sin fuente salía con $0,00 y 0 usuarios, indistinguible de una
+//    empresa que de verdad no vendió nada ese día. Ahora una sección no
+//    conectada dice que no lo está y no dibuja ningún número.
+//
+// 2. EL BADGE «mock» ESTABA ROTO. Las tres líneas de título metían
+//    `${BRAND_HEX.warning}` dentro de un string entre COMILLAS SIMPLES, así que
+//    el correo mostraba el texto literal `${BRAND_HEX.warning}` como valor de
+//    `color:` — el badge que avisa que los datos son falsos salía él mismo
+//    roto. Estaba en :699, :742 y :798.
+//
+// 3. NINGÚN NÚMERO NULO SE DIBUJA COMO CERO. Ver `kpiNumber`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Importe para el cuerpo en TEXTO PLANO. `null` = «sin dato», jamás $0,00. */
+export function moneyOrNoData(value: number | null, locale: EmailLocale): string {
+  return value === null || !Number.isFinite(value)
+    ? lt(locale, 'crmPnlNoData')
+    : formatCurrency(value);
+}
+
+/** Badge «mock», con el color interpolado de verdad (ver punto 2 de arriba). */
+function mockBadge(isMock: boolean): string {
+  return isMock
+    ? ` <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>`
+    : '';
+}
+
+/**
+ * Importe para un KPI: `null` es «sin dato», nunca $0,00 en verde.
+ * Devuelve también el tono, porque un valor desconocido no es ni bueno ni malo.
+ */
+function kpiMoney(
+  value: number | null,
+  locale: EmailLocale,
+): { text: string; tone: 'positive' | 'negative' | 'neutral' } {
+  if (value === null || !Number.isFinite(value)) {
+    return { text: lt(locale, 'crmPnlNoData'), tone: 'neutral' };
+  }
+  return { text: formatCurrency(value), tone: value >= 0 ? 'positive' : 'negative' };
+}
+
+/** Aviso de sección sin fuente configurada. Reemplaza a los ceros. */
+function notConnectedNote(locale: EmailLocale): string {
+  return `<p style="font-size:12px;color:${BRAND_HEX.muted};margin:0 10px 8px 10px;font-style:italic;">${lt(locale, 'sectionNotConnected')}</p>`;
+}
+
 function renderCrmUsersSection(data: ReportData, primary: string, locale: EmailLocale): string {
   const u = data.crm_users;
-  const title = `${lt(locale, 'crmUsersTitle')}${u.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
+  const title = `${lt(locale, 'crmUsersTitle')}${mockBadge(u.isMock)}`;
   const numLocale = locale === 'es' ? 'es' : 'en';
+
+  // Sin espejo de usuarios no hay tres ceros: hay tres «no lo sabemos».
+  if (!u.connected && !u.isMock) {
+    return `${sectionHeader(primary, '👥', title)}${notConnectedNote(locale)}`;
+  }
+
   return `
     ${sectionHeader(primary, '👥', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">
@@ -718,28 +788,36 @@ function renderBrokerPnlSection(
 ): string {
   const p = data.broker_pnl;
   const monthVsPrev = pctVariation(p.pnl_month, p.pnl_prev_month);
-  const rangePctOfMonth = p.pnl_month
-    ? (p.pnl_range / Math.abs(p.pnl_month)) * 100
-    : null;
+  // Sin PNL del mes no hay porcentaje del mes. Antes `p.pnl_month` venía
+  // colapsado a 0 con un `?? 0` en data.ts y esto daba null igual — por
+  // casualidad, no por diseño.
+  const rangePctOfMonth =
+    p.pnl_month !== null && p.pnl_month !== 0 && p.pnl_range !== null
+      ? (p.pnl_range / Math.abs(p.pnl_month)) * 100
+      : null;
+
+  const kMonth = kpiMoney(p.pnl_month, locale);
+  const kPrev = kpiMoney(p.pnl_prev_month, locale);
+  const kRange = kpiMoney(p.pnl_range, locale);
 
   const kpiRow =
     cadence === 'monthly'
       ? `
     <tr>
-      ${renderKpi(lt(locale, 'pnlMonth'), formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
-      ${renderKpi(lt(locale, 'pnlPrevMonth'), formatCurrency(p.pnl_prev_month), 'neutral')}
+      ${renderKpi(lt(locale, 'pnlMonth'), kMonth.text, kMonth.tone, variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'pnlPrevMonth'), kPrev.text, 'neutral')}
       ${renderKpi(lt(locale, 'variationVsPrev'), variationText(monthVsPrev, locale), monthVsPrev === null ? 'neutral' : monthVsPrev >= 0 ? 'positive' : 'negative')}
     </tr>
   `
       : `
     <tr>
-      ${renderKpi(lt(locale, 'pnlRange'), formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative', rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}${lt(locale, 'pctOfMonth')}` : undefined)}
-      ${renderKpi(lt(locale, 'pnlMonth'), formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
-      ${renderKpi(lt(locale, 'pnlPrevMonth'), formatCurrency(p.pnl_prev_month), 'neutral')}
+      ${renderKpi(lt(locale, 'pnlRange'), kRange.text, kRange.tone, rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}${lt(locale, 'pctOfMonth')}` : undefined)}
+      ${renderKpi(lt(locale, 'pnlMonth'), kMonth.text, kMonth.tone, variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'pnlPrevMonth'), kPrev.text, 'neutral')}
     </tr>
   `;
 
-  const title = `Broker P&amp;L${p.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
+  const title = `Broker P&amp;L${mockBadge(p.isMock)}`;
 
   // ── El cierre que da el CRM ──────────────────────────────────────────────
   // El diario lleva EL DÍA (que es lo que se pregunta a la mañana); el
@@ -780,6 +858,10 @@ function renderBrokerPnlSection(
     </p>
   `;
 
+  if (!p.connected && !p.isMock && !p.crm) {
+    return `${sectionHeader(primary, '📈', title)}${notConnectedNote(locale)}`;
+  }
+
   return `
     ${sectionHeader(primary, '📈', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">${kpiRow}</table>
@@ -789,26 +871,43 @@ function renderBrokerPnlSection(
 
 function renderPropTradingSection(data: ReportData, primary: string, locale: EmailLocale): string {
   const p = data.prop_trading;
-  const productRows = p.products.map((prod) => [
-    prod.name,
-    String(prod.quantity),
-    formatCurrency(prod.amount),
-  ]);
+  const title = `${lt(locale, 'propTradingTitle')}${mockBadge(p.isMock)}`;
 
-  const title = `${lt(locale, 'propTradingTitle')}${p.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
+  if (!p.connected && !p.isMock) {
+    return `${sectionHeader(primary, '🎯', title)}${notConnectedNote(locale)}`;
+  }
+
+  const kSales = kpiMoney(p.total_sales_range, locale);
+  const kWdr = kpiMoney(p.prop_withdrawals_range, locale);
+  const kPnl = kpiMoney(p.pnl_range, locale);
+  const kMonth = kpiMoney(p.total_sales_month, locale);
+
+  // «Productos vendidos» sin desglose: `crm_monthly_totals` guarda el total del
+  // mes, no qué se vendió. Antes esto era una tabla vacía, que se lee como «no
+  // se vendió nada». Se dice que el desglose no está, y se muestra el total.
+  const productsBlock =
+    p.products === null
+      ? `<p style="font-size:12px;color:${BRAND_HEX.muted};margin:0 10px 8px 10px;font-style:italic;">${lt(locale, 'productsNoBreakdown')}</p>`
+      : renderTable(
+          [lt(locale, 'product'), lt(locale, 'quantity'), lt(locale, 'amount')],
+          p.products.map((prod) => [prod.name, String(prod.quantity), formatCurrency(prod.amount)]),
+          locale,
+          [lt(locale, 'totalOfRange'), '', kSales.text],
+        );
+
   return `
     ${sectionHeader(primary, '🎯', title)}
 
     <div style="margin-bottom:16px;">
       <h3 style="font-size:14px;color:${BRAND_HEX.inkSoft};margin:0 0 8px 0;">${lt(locale, 'productsSold')}</h3>
-      ${renderTable([lt(locale, 'product'), lt(locale, 'quantity'), lt(locale, 'amount')], productRows, locale, [lt(locale, 'totalOfRange'), '', formatCurrency(p.total_sales_range)])}
+      ${productsBlock}
     </div>
 
     <table cellspacing="0" cellpadding="0" style="width:100%;">
       <tr>
-        ${renderKpi(lt(locale, 'salesOfRange'), formatCurrency(p.total_sales_range), 'info', lt(locale, 'monthPrefix', { value: formatCurrency(p.total_sales_month) }))}
-        ${renderKpi(lt(locale, 'propWithdrawals'), formatCurrency(p.prop_withdrawals_range), 'neutral', lt(locale, 'withdrawalsCount', { count: p.prop_withdrawals_count_range }))}
-        ${renderKpi(lt(locale, 'pnlRange'), formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative')}
+        ${renderKpi(lt(locale, 'salesOfRange'), kSales.text, 'info', lt(locale, 'monthPrefix', { value: kMonth.text }))}
+        ${renderKpi(lt(locale, 'propWithdrawals'), kWdr.text, 'neutral', p.prop_withdrawals_count_range === null ? undefined : lt(locale, 'withdrawalsCount', { count: p.prop_withdrawals_count_range }))}
+        ${renderKpi(lt(locale, 'pnlRange'), kPnl.text, kPnl.tone)}
       </tr>
     </table>
   `;
@@ -1040,9 +1139,9 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
   if (sections.broker_pnl) {
     lines.push(
       lt(locale, 'textBrokerPnl'),
-      `  ${lt(locale, 'textRange')}: ${formatCurrency(data.broker_pnl.pnl_range)}`,
-      `  ${lt(locale, 'textMonth')}: ${formatCurrency(data.broker_pnl.pnl_month)}`,
-      `  ${lt(locale, 'textPrevMonth')}: ${formatCurrency(data.broker_pnl.pnl_prev_month)}`,
+      `  ${lt(locale, 'textRange')}: ${moneyOrNoData(data.broker_pnl.pnl_range, locale)}`,
+      `  ${lt(locale, 'textMonth')}: ${moneyOrNoData(data.broker_pnl.pnl_month, locale)}`,
+      `  ${lt(locale, 'textPrevMonth')}: ${moneyOrNoData(data.broker_pnl.pnl_prev_month, locale)}`,
     );
     const c = data.broker_pnl.crm;
     if (c) {
@@ -1065,9 +1164,9 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
   if (sections.prop_trading) {
     lines.push(
       lt(locale, 'textPropTrading'),
-      `  ${lt(locale, 'textSalesRange')}: ${formatCurrency(data.prop_trading.total_sales_range)}`,
-      `  ${lt(locale, 'textWithdrawalsRange')}: ${formatCurrency(data.prop_trading.prop_withdrawals_range)}`,
-      `  ${lt(locale, 'textPnlRange')}: ${formatCurrency(data.prop_trading.pnl_range)}`,
+      `  ${lt(locale, 'textSalesRange')}: ${moneyOrNoData(data.prop_trading.total_sales_range, locale)}`,
+      `  ${lt(locale, 'textWithdrawalsRange')}: ${moneyOrNoData(data.prop_trading.prop_withdrawals_range, locale)}`,
+      `  ${lt(locale, 'textPnlRange')}: ${moneyOrNoData(data.prop_trading.pnl_range, locale)}`,
       ``,
     );
   }

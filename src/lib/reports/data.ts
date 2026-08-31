@@ -9,11 +9,19 @@
 
 import { createAdminClient } from '@/lib/supabase/admin';
 import { getOperatingWalletIds } from '@/lib/pinned-wallets';
-import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
+// `orion-crm/users` y `orion-crm/prop-trading` YA NO SE IMPORTAN: sus endpoints
+// REST no existen para ningún inquilino y caían a datos falsos. Las dos
+// secciones salen del espejo (./crm-mirror.ts). Sólo `broker-pnl` sobrevive
+// como fallback para el inquilino sin ningún día en `crm_daily_pnl`.
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
-import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
 import { ACCEPTED_STATUS as PROVIDER_ACCEPTED_STATUS } from '@/lib/api-integrations/totals';
+import {
+  withWithdrawalStatuses,
+  withdrawalChannelOfRow,
+  type WithdrawalChannel,
+} from '@/lib/withdrawal-channels';
 import { buildBalancesByChannel, type ReportBalancesByChannel } from './balances-by-channel';
+import { loadCrmUsersFromMirror, loadPropTradingFromMirror } from './crm-mirror';
 import { loadCrmDailyPnl, type CrmDailyPnlSeries } from '@/lib/crm-sync/daily-pnl-query';
 import { features } from '@/lib/business-model';
 import {
@@ -52,8 +60,27 @@ type ApiTx = {
 // /movimientos, otra copia. Un proveedor que no esté en el mapa se descarta
 // entero (el `if (!accepted) continue` de abajo), que es justo el descarte
 // silencioso que el repo prohíbe.
-const ACCEPTED_STATUS: Record<string, string[]> = Object.fromEntries(
-  Object.entries(PROVIDER_ACCEPTED_STATUS).map(([slug, status]) => [slug, [status]]),
+//
+// ── EL MISMO BUG, OTRA ÉPOCA (CORRECCIÓN 2026-08-31) ───────────────────────
+// El párrafo de arriba narra el bug de los depósitos y da a entender que quedó
+// cerrado. No quedó: el LADO DE LOS RETIROS tenía exactamente la misma forma.
+// `PROVIDER_ACCEPTED_STATUS` solo conoce el status de ENTRADA de cada
+// proveedor ('paid' en Pay-Pros), así que las filas 'payout_paid' —retiros—
+// caían en el `if (r.status && !accepted.includes(r.status)) continue`, y más
+// abajo el único proveedor tratado como salida era 'coinsbuy-withdrawals'.
+// Resultado medido al 2026-08-31: los 6 retiros de Pay-Pros por US$ 2.617,62
+// que el espejo del CRM proyecta (paypros/withdrawals-from-crm.ts) NO
+// aparecían como retiro en pantalla, ni en el PDF, ni en el mail — y por lo
+// tanto inflaban el Net Deposit del informe, en silencio.
+//
+// La lista de canales de retiro NO se escribe acá: sale de
+// `withdrawal-channels.ts`, el registro único creado el 2026-08-31 justamente
+// para que las dos puntas (pantalla de movimientos y persistencia) dejaran de
+// discrepar. Éste es el tercer consumidor y hereda el dato en vez de copiarlo.
+const ACCEPTED_STATUS: Record<string, string[]> = withWithdrawalStatuses(
+  Object.fromEntries(
+    Object.entries(PROVIDER_ACCEPTED_STATUS).map(([slug, status]) => [slug, [status]]),
+  ),
 );
 
 export interface ReportDepositRow {
@@ -117,9 +144,17 @@ export interface ReportData {
     isMock: boolean;
   };
   broker_pnl: {
-    pnl_range: number;
-    pnl_month: number;
-    pnl_prev_month: number;
+    /**
+     * `null` = NO LO SABEMOS. Hasta el 2026-08-31 esto colapsaba a 0 con un
+     * `?? 0`, y el correo mostraba «Broker P&L $0,00» en verde mientras el
+     * bloque de abajo, honesto, decía «29 días sin dato». Dos afirmaciones
+     * contradictorias en la misma pantalla, y la que se lee primero era la
+     * falsa. AP Markets tiene 29 días faltantes: ese cero era una mentira
+     * bien formateada (§1.3).
+     */
+    pnl_range: number | null;
+    pnl_month: number | null;
+    pnl_prev_month: number | null;
     connected: boolean;
     isMock: boolean;
     /**
@@ -132,15 +167,24 @@ export interface ReportData {
      */
     crm: ReportCrmPnl | null;
   };
+  /**
+   * Prop Trading, desde `crm_monthly_totals` (ver reports/crm-mirror.ts).
+   *
+   * TODO numérico es `number | null` porque el espejo es MENSUAL: para un
+   * informe diario, «las ventas del 15 de agosto» no existen en esa tabla y
+   * repartir el mes entre sus días sería fabricar un número. `products` es
+   * `null` y no `[]` por la misma razón: el espejo guarda el total del mes,
+   * no qué se vendió, y una lista vacía se lee como «no se vendió nada».
+   */
   prop_trading: {
-    products: Array<{ name: string; quantity: number; amount: number }>;
-    total_sales_range: number;
-    total_sales_month: number;
-    prop_withdrawals_range: number;
-    prop_withdrawals_count_range: number;
-    pnl_range: number;
-    pnl_month: number;
-    pnl_prev_month: number;
+    products: Array<{ name: string; quantity: number; amount: number }> | null;
+    total_sales_range: number | null;
+    total_sales_month: number | null;
+    prop_withdrawals_range: number | null;
+    prop_withdrawals_count_range: number | null;
+    pnl_range: number | null;
+    pnl_month: number | null;
+    pnl_prev_month: number | null;
     connected: boolean;
     isMock: boolean;
   };
@@ -234,7 +278,7 @@ function groupApiTx(
   pinnedCoinsbuyIds: Set<string> | null = null,
 ) {
   const depositsByChannel = new Map<string, { count: number; amount: number }>();
-  const withdrawals = { count: 0, amount: 0 };
+  const withdrawalsByChannel = new Map<WithdrawalChannel, { count: number; amount: number }>();
   for (const r of rows) {
     const accepted = ACCEPTED_STATUS[r.provider];
     if (!accepted) continue;
@@ -258,9 +302,10 @@ function groupApiTx(
     if (r.provider === 'coinsbuy-withdrawals' && r.internal === true) continue;
 
     const amt = Number(r.amount) || 0;
-    if (r.provider === 'coinsbuy-withdrawals') {
-      withdrawals.count += 1;
-      withdrawals.amount += amt;
+    const wdrChannel = withdrawalChannelOfRow(r);
+    if (wdrChannel) {
+      const prev = withdrawalsByChannel.get(wdrChannel) ?? { count: 0, amount: 0 };
+      withdrawalsByChannel.set(wdrChannel, { count: prev.count + 1, amount: prev.amount + amt });
     } else {
       const channel = r.provider.replace('-deposits', '');
       const prev = depositsByChannel.get(channel) ?? { count: 0, amount: 0 };
@@ -275,8 +320,21 @@ function groupApiTx(
       key: channel,
       ...v,
     })),
-    withdrawals,
+    // Una fila por canal de retiro. Antes era un único acumulador llamado
+    // `withdrawals` que solo podía contener Coinsbuy; con dos canales, sumarlos
+    // en una sola línea rotulada «Coinsbuy (API)» habría sido el mismo tipo de
+    // mentira que la línea de regularización del libro.
+    withdrawalsByChannel: Array.from(withdrawalsByChannel, ([key, v]) => ({ key, ...v })),
   };
+}
+
+/** Filas de retiro por API, con la categoría que la UI/PDF/mail ya rotulan. */
+function apiWithdrawalRows(
+  byChannel: Array<{ key: WithdrawalChannel; count: number; amount: number }>,
+): ReportWithdrawalRow[] {
+  return byChannel
+    .filter((w) => w.amount > 0)
+    .map((w) => ({ category: `${w.key}_api`, count: w.count, amount: w.amount }));
 }
 
 function mergeDeposits(
@@ -363,11 +421,44 @@ async function buildCompanyResultFor(
 }
 
 /**
+ * El día contra el que se resuelven «este mes» y «el mes anterior» para un
+ * informe que cubre hasta `to`.
+ *
+ * ── POR QUÉ EXISTE (2026-08-31, auditoría de finanzas) ──────────────────────
+ * `buildReportData` acepta `referenceDate` justamente para esto, y los TRES
+ * llamadores lo omitían, quedándose con el default `new Date()` = HOY. El
+ * síntoma aparece los días 1:
+ *
+ *   · El cron DIARIO corre el 1 de septiembre a las 00:05 UTC e informa el 31
+ *     de agosto. Con `referenceDate = hoy`, «este mes» resolvía a SEPTIEMBRE,
+ *     que tiene cinco minutos de vida: los KPI del mes salían en casi cero y
+ *     la comparación «% del mes» quedaba sin sentido, justo en el correo del
+ *     cierre de mes.
+ *   · El cron MENSUAL corre el 1 e informa el mes anterior entero: mismo
+ *     problema, y ahí el mes ES el informe.
+ *   · La pantalla, con un rango de meses pasados, mostraba el contexto del mes
+ *     de HOY al lado de datos de otro mes.
+ *
+ * La referencia correcta es el ÚLTIMO DÍA QUE EL INFORME CUBRE: el mes del
+ * informe es el mes del que habla, no el del reloj del servidor. Un informe
+ * del 31/08 tiene «este mes» = agosto, lo mande el cron del 1 de septiembre o
+ * lo pida alguien en octubre.
+ *
+ * Mediodía UTC y no medianoche: el `Date` resultante se lee siempre con
+ * getUTC*, así que da igual para el cálculo, pero deja el valor lejos de los
+ * bordes si alguien lo imprime con la zona local.
+ */
+export function referenceDateFor(to: string): Date {
+  const d = new Date(`${to}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+
+/**
  * Builds the full report payload for a company + date range. Pure data —
- * no HTML rendering or email sending. `referenceDate` lets callers pin
- * "this month" / "previous month" to a specific day (used by the cron
- * when it processes yesterday's data at 00:05 UTC and needs the month
- * context relative to yesterday, not today).
+ * no HTML rendering or email sending. `referenceDate` pins
+ * "this month" / "previous month" to a specific day. Los llamadores lo sacan
+ * de `referenceDateFor(to)`: el mes del informe es el del último día que
+ * cubre, NUNCA el de hoy (ver arriba).
  */
 export async function buildReportData(
   companyId: string,
@@ -489,9 +580,20 @@ export async function buildReportData(
       .gte('transaction_date', `${prevMonth.from}T00:00:00.000Z`)
       .lte('transaction_date', `${prevMonth.to}T23:59:59.999Z`)
       .limit(10000),
-    fetchOrionCrmUsers(companyId, from, to),
+    // Usuarios y Prop Trading salen del ESPEJO, no del REST (auditoría
+    // 2026-08-31): `api_credentials` no tiene ninguna fila `orion_crm` en
+    // producción, así que los fetchers REST caían a mock/ceros y el informe
+    // salía con números inventados bajo un título real. Ver reports/crm-mirror.ts.
+    loadCrmUsersFromMirror(admin, companyId, from, to, thisMonth.from, thisMonth.to),
     fetchOrionCrmBrokerPnl(companyId, from, to),
-    fetchOrionCrmPropTrading(companyId, from, to),
+    loadPropTradingFromMirror(
+      admin,
+      companyId,
+      from,
+      to,
+      { year: referenceDate.getUTCFullYear(), month: referenceDate.getUTCMonth() + 1 },
+      { year: prevMonthDate.getUTCFullYear(), month: prevMonthDate.getUTCMonth() + 1 },
+    ),
     buildBalancesByChannel(companyId, to),
     buildCompanyResultFor(companyId, from, to),
     // El PNL que el CRM da como cerrado (migración 106). Tres rangos porque el
@@ -517,9 +619,9 @@ export async function buildReportData(
   if (manualDepositsRange.status !== 'fulfilled') failures.push('deposits');
   if (manualWithdrawalsRange.status !== 'fulfilled') failures.push('withdrawals');
   if (apiTransactionsRange.status !== 'fulfilled') failures.push('api_transactions');
-  if (crmUsers.status !== 'fulfilled') failures.push('orion_crm_users');
+  if (crmUsers.status !== 'fulfilled') failures.push('crm_user_snapshots');
   if (crmBrokerPnl.status !== 'fulfilled') failures.push('orion_crm_broker_pnl');
-  if (crmPropTrading.status !== 'fulfilled') failures.push('orion_crm_prop_trading');
+  if (crmPropTrading.status !== 'fulfilled') failures.push('crm_monthly_totals');
   if (balancesByChannel.status !== 'fulfilled') failures.push('balances_by_channel');
   if (companyResult.status !== 'fulfilled') failures.push('company_result');
 
@@ -593,21 +695,15 @@ export async function buildReportData(
 
   const withdrawalsRange: ReportWithdrawalRow[] = [
     ...manualWdrRange.map((w) => ({ category: w.key, count: w.count, amount: w.amount })),
-    ...(apiRange.withdrawals.amount > 0
-      ? [{ category: 'coinsbuy_api', count: apiRange.withdrawals.count, amount: apiRange.withdrawals.amount }]
-      : []),
+    ...apiWithdrawalRows(apiRange.withdrawalsByChannel),
   ];
   const withdrawalsMonth: ReportWithdrawalRow[] = [
     ...manualWdrMonth.map((w) => ({ category: w.key, count: w.count, amount: w.amount })),
-    ...(apiMonth.withdrawals.amount > 0
-      ? [{ category: 'coinsbuy_api', count: apiMonth.withdrawals.count, amount: apiMonth.withdrawals.amount }]
-      : []),
+    ...apiWithdrawalRows(apiMonth.withdrawalsByChannel),
   ];
   const withdrawalsPrev: ReportWithdrawalRow[] = [
     ...manualWdrPrev.map((w) => ({ category: w.key, count: w.count, amount: w.amount })),
-    ...(apiPrev.withdrawals.amount > 0
-      ? [{ category: 'coinsbuy_api', count: apiPrev.withdrawals.count, amount: apiPrev.withdrawals.amount }]
-      : []),
+    ...apiWithdrawalRows(apiPrev.withdrawalsByChannel),
   ];
 
   const totalDepositsRange = sumRows(depositsRange);
@@ -623,7 +719,6 @@ export async function buildReportData(
     total_users: 0,
     connected: false,
     isMock: false,
-    errorMessage: null,
   });
   const brokerPnlResult = unwrap(crmBrokerPnl, {
     pnl_range: 0,
@@ -634,17 +729,19 @@ export async function buildReportData(
     errorMessage: null,
   });
   const propTradingResult = unwrap(crmPropTrading, {
-    products: [],
-    total_sales_range: 0,
-    total_sales_month: 0,
-    prop_withdrawals_range: 0,
-    prop_withdrawals_count_range: 0,
-    pnl_range: 0,
-    pnl_month: 0,
-    pnl_prev_month: 0,
+    // El fallback de una LECTURA FALLIDA es «no lo sabemos», no cero: si la
+    // consulta al espejo se cayó, escribir $0,00 en «Ventas Prop Firm» es
+    // afirmar que no se vendió nada (§1.3).
+    products: null,
+    total_sales_range: null,
+    total_sales_month: null,
+    prop_withdrawals_range: null,
+    prop_withdrawals_count_range: null,
+    pnl_range: null,
+    pnl_month: null,
+    pnl_prev_month: null,
     connected: false,
     isMock: false,
-    errorMessage: null,
   });
   const balancesByChannelResult = unwrap(balancesByChannel, {
     channels: [],
@@ -704,11 +801,15 @@ export async function buildReportData(
       }
     : null;
 
+  // `?? 0` NO: el total del CRM ya distingue «no hay ningún día con dato»
+  // (null) de «los días dan cero». Colapsarlo acá era lo que hacía que el
+  // correo dijera «Broker P&L $0,00» en verde arriba y «29 días sin dato»
+  // abajo, en la misma pantalla (AP Markets, 2026-08).
   const brokerPnlFinal = crmPnl
     ? {
-        pnl_range: crmRango.totals.brokerPnl ?? 0,
-        pnl_month: crmMes.totals.brokerPnl ?? 0,
-        pnl_prev_month: crmMesPrevio.totals.brokerPnl ?? 0,
+        pnl_range: crmRango.totals.brokerPnl,
+        pnl_month: crmMes.totals.brokerPnl,
+        pnl_prev_month: crmMesPrevio.totals.brokerPnl,
         connected: true,
         isMock: false,
         crm: crmPnl,

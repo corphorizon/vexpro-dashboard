@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
-import { buildReportData } from '@/lib/reports/data';
+import { buildReportData, referenceDateFor } from '@/lib/reports/data';
 
 // ---------------------------------------------------------------------------
 // GET /api/reports/consolidated?from=YYYY-MM-DD&to=YYYY-MM-DD
@@ -30,7 +30,9 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const data = await buildReportData(auth.companyId, from, to);
+    // Mismo criterio que los crons: «este mes» es el mes del último día del
+    // rango elegido, no el del reloj del servidor. Ver `referenceDateFor`.
+    const data = await buildReportData(auth.companyId, from, to, referenceDateFor(to));
     return NextResponse.json({ success: true, ...data });
   } catch (err) {
     console.error('[reports/consolidated] unhandled:', err);

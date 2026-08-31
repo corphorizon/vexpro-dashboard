@@ -63,6 +63,7 @@ const CATEGORY_LABEL: Record<string, string> = {
   other: 'Otros',
   p2p: 'P2P Transfer',
   coinsbuy_api: 'Coinsbuy (API)',
+  paypros_api: 'Pay-Pros (API)',
 };
 const MONTHS_ES = [
   'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -92,9 +93,29 @@ function titleForCadence(cadence: ReportCadence): string {
   return 'Reporte Financiero Mensual';
 }
 
-function pctVariation(current: number, previous: number): number | null {
-  if (!previous) return null;
+/**
+ * `null` de cualquier lado = sin comparación. Ver la misma corrección en
+ * email-template.ts: comparar contra un cero inventado da «−100%» con cara de
+ * dato.
+ */
+function pctVariation(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null || !previous) return null;
   return ((current - previous) / Math.abs(previous)) * 100;
+}
+
+/**
+ * Importe que puede no existir. `null` = «sin dato», nunca $0,00 — el papel es
+ * lo que se imprime y se firma, así que un cero inventado ahí es peor que en
+ * ningún otro lado.
+ */
+function fmtCurrencyOrDash(n: number | null): string {
+  return n === null || !Number.isFinite(n) ? 'sin dato' : fmtCurrency(n);
+}
+
+/** Tono de un importe que puede faltar: lo desconocido no es bueno ni malo. */
+function toneOf(n: number | null): 'ok' | 'bad' | 'neutral' {
+  if (n === null || !Number.isFinite(n)) return 'neutral';
+  return n >= 0 ? 'ok' : 'bad';
 }
 
 function fmtPct(pct: number | null): string {
@@ -244,6 +265,19 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     cursorY += 14;
   };
 
+  /** Línea en gris para decir lo que NO se sabe, donde iría una tabla. */
+  const addNote = (text: string) => {
+    doc.setTextColor(...BRAND_RGB.muted);
+    doc.setFontSize(9);
+    doc.setFont('helvetica', 'italic');
+    for (const line of doc.splitTextToSize(text, pageWidth - MARGIN_X * 2) as string[]) {
+      doc.text(line, MARGIN_X, cursorY);
+      cursorY += 12;
+    }
+    doc.setFont('helvetica', 'normal');
+    cursorY += 6;
+  };
+
   const addKpiRow = (kpis: Array<{ label: string; value: string; tone?: 'ok' | 'bad' | 'neutral' }>) => {
     const boxW = (pageWidth - MARGIN_X * 2 - 12 * (kpis.length - 1)) / kpis.length;
     const boxH = 54;
@@ -372,8 +406,8 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     const p = data.broker_pnl;
     const monthVsPrev = pctVariation(p.pnl_month, p.pnl_prev_month);
     addKpiRow([
-      { label: 'P&L del rango', value: fmtCurrency(p.pnl_range), tone: p.pnl_range >= 0 ? 'ok' : 'bad' },
-      { label: 'P&L del mes', value: fmtCurrency(p.pnl_month), tone: p.pnl_month >= 0 ? 'ok' : 'bad' },
+      { label: 'P&L del rango', value: fmtCurrencyOrDash(p.pnl_range), tone: toneOf(p.pnl_range) },
+      { label: 'P&L del mes', value: fmtCurrencyOrDash(p.pnl_month), tone: toneOf(p.pnl_month) },
       {
         label: 'Variación vs mes ant.',
         value: fmtPct(monthVsPrev),
@@ -387,17 +421,23 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
     addSectionHeader('Prop Trading Firm');
     const p = data.prop_trading;
     addKpiRow([
-      { label: 'Ventas del rango', value: fmtCurrency(p.total_sales_range) },
-      { label: 'Retiros Prop Firm', value: fmtCurrency(p.prop_withdrawals_range) },
-      { label: 'P&L del rango', value: fmtCurrency(p.pnl_range), tone: p.pnl_range >= 0 ? 'ok' : 'bad' },
+      { label: 'Ventas del rango', value: fmtCurrencyOrDash(p.total_sales_range) },
+      { label: 'Retiros Prop Firm', value: fmtCurrencyOrDash(p.prop_withdrawals_range) },
+      { label: 'P&L del rango', value: fmtCurrencyOrDash(p.pnl_range), tone: toneOf(p.pnl_range) },
     ]);
 
-    if (p.products.length > 0) {
+    // `products === null` = el CRM guarda el total del mes, no qué se vendió.
+    // Antes, sin desglose, la tabla simplemente no se dibujaba y el lector no
+    // tenía forma de distinguir «no se vendió nada» de «no lo guardamos».
+    if (p.products === null) {
+      addSubHeader('Productos vendidos');
+      addNote('Sin desglose disponible: el CRM guarda el total del mes, no qué producto se vendió.');
+    } else if (p.products.length > 0) {
       addSubHeader('Productos vendidos');
       renderAutoTable(
         [['Producto', 'Cantidad', 'Monto']],
         p.products.map((prod) => [prod.name, String(prod.quantity), fmtCurrency(prod.amount)]),
-        [['Total', '', fmtCurrency(p.total_sales_range)]],
+        [['Total', '', fmtCurrencyOrDash(p.total_sales_range)]],
       );
     }
   }

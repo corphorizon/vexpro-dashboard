@@ -6,6 +6,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { PageHeader } from '@/components/ui/page-header';
 import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
+import { WITHDRAWAL_LABELS } from '@/lib/types';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
@@ -396,9 +397,15 @@ export default function SociosPage() {
                   : [];
                 const depositsTotal = depositsByChannel.reduce((s, c) => s + c.amount, 0);
 
-                const CAT_LABEL: Record<string, string> = {
-                  broker: 'Broker', prop_firm: 'Prop Firm', ib: 'Comisiones IB', other: 'Otros', p2p: 'P2P',
-                };
+                // WITHDRAWAL_LABELS, no un mapa propio (2026-08-31, auditoría de
+                // finanzas). Éste tenía 'ib' y 'p2p' —que NO son categorías
+                // válidas: el CHECK de schema.sql:87 admite ib_commissions,
+                // broker, prop_firm y other— y justo le faltaba
+                // `ib_commissions`, la más grande del período. Con el fallback
+                // `?? k`, el PDF que se manda a los socios imprimía el string
+                // crudo «ib_commissions». Un fallback que no rompe es cómo una
+                // lista desincronizada llega hasta el papel.
+                const CAT_LABEL = WITHDRAWAL_LABELS;
                 const wdMap = new Map<string, number>();
                 for (const w of sum.withdrawals) wdMap.set(w.category, (wdMap.get(w.category) ?? 0) + w.amount);
                 const withdrawalsByCategory = model.withdrawals

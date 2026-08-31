@@ -62,7 +62,13 @@ export default function ChannelLedgerPage() {
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
 
-  const isAuto = isAutoLedger(channelKey);
+  // Una ubicación on-chain también lleva libro automático, pero eso NO se
+  // deduce de la clave (`wallet_externa` / `custom_<uuid>`): sale de tener
+  // direcciones cargadas. Arranca en `true` para que el botón de «Nuevo
+  // asiento» no aparezca durante el primer render y desaparezca después.
+  const [onchain, setOnchain] = useState(true);
+
+  const isAuto = isAutoLedger(channelKey, { onchain });
   // Los canales por API son de solo lectura aunque el usuario tenga permiso
   // de escritura: el saldo lo manda el proveedor.
   const canWrite = canAdd(user) && !isAuto && hasLedger(channelKey);
@@ -83,10 +89,13 @@ export default function ChannelLedgerPage() {
       .then((r) => r.json())
       .then((json: { success?: boolean; rows?: ChannelConfigRow[] }) => {
         if (cancelled || !json.success) return;
-        const found = resolveChannels(json.rows ?? []).find((c) => c.key === channelKey);
+        const rows = json.rows ?? [];
+        const found = resolveChannels(rows).find((c) => c.key === channelKey);
         if (found) setChannelLabel(found.label);
+        const row = rows.find((r) => r.channel_key === channelKey);
+        setOnchain((row?.onchain_wallets?.length ?? 0) > 0);
       })
-      .catch(() => { /* el key crudo alcanza como fallback */ });
+      .catch(() => { /* el key crudo alcanza como fallback; el libro queda de solo lectura */ });
     return () => { cancelled = true; };
   }, [channelKey]);
 

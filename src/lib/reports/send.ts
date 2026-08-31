@@ -19,7 +19,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { sendEmail } from '@/services/emailService';
 import { isEmailLocale, type EmailLocale } from '@/lib/email-i18n';
 import { serverAuditLog } from '@/lib/server-audit';
-import { buildReportData } from './data';
+import { buildReportData, referenceDateFor } from './data';
 import { loadReportConfig } from './config';
 import {
   renderReportEmail,
@@ -248,7 +248,15 @@ export async function sendReportsForCadence(
       // Build data once per tenant, then render once per locale group —
       // recipients get the email in their preferred_language ('en' when
       // absent) without re-rendering per recipient.
-      const data = await buildReportData(company.id, range.from, range.to);
+      // `referenceDateFor(range.to)` y NO el default (= hoy): el cron diario
+      // del día 1 informa el último día del mes anterior, y con la fecha de
+      // hoy «este mes» resolvía al mes recién nacido — KPI del mes en casi
+      // cero en el correo del cierre. Para el diario «ayer» es `range.to`;
+      // para el semanal, el domingo que cierra la semana; para el mensual,
+      // el último día del mes informado. En los tres, `range.to`.
+      const data = await buildReportData(
+        company.id, range.from, range.to, referenceDateFor(range.to),
+      );
 
       const byLocale = new Map<EmailLocale, UserRow[]>();
       for (const r of recipients) {

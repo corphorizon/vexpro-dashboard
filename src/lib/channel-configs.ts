@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Channel configuration resolver for "Balances por Canal".
 //
-// Built-in channels are hardcoded here (7 of them). They can be toggled
+// Built-in channels are hardcoded here (8 of them — eran 7 hasta que entró
+// `paypros`; el número quedó viejo y se corrige acá, 2026-08-31). They can be toggled
 // (hidden from the Balances card + Reports) and, for manual ones, renamed.
 // Custom channels (is_custom=true, channel_key prefixed `custom_`) are
 // created by admins from the modal and can be fully edited + deleted.

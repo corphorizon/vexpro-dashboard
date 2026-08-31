@@ -13,6 +13,7 @@ import {
   type LedgerEntry,
   resolveInternalTransfers,
 } from './channel-ledger';
+import { BUILTIN_CHANNELS } from './channel-configs';
 
 // Fábrica mínima: los tests solo miran fecha, tipo, categoría y monto.
 let seq = 0;
@@ -154,7 +155,44 @@ describe('qué canales llevan libro', () => {
     // apertura manual de $0,00 del 05/08 y nada más), y como el libro le gana
     // al snapshot, la pantalla mostraba $0,00 con $7.163,47 en la cuenta.
     expect(isAutoLedger('fairpay')).toBe(true);
+    // Pay-Pros faltaba (auditoría 2026-08-31). El cron le escribía el libro
+    // desde el 24/08 —15 asientos source='api' en producción— y a la vez la UI
+    // ofrecía «Nuevo asiento» encima, sobre un libro que
+    // `replace_channel_ledger_day` reescribe cada noche.
+    expect(isAutoLedger('paypros')).toBe(true);
     expect(isAutoLedger('wallet_externa')).toBe(false);
+  });
+
+  it('la lista se DERIVA de BUILTIN_CHANNELS: no hay dos listas que separar', () => {
+    // Es exactamente cómo se coló el bug de Pay-Pros: `type: 'auto'` en
+    // channel-configs.ts y ausente del Set literal de acá.
+    const autoBuiltins = BUILTIN_CHANNELS.filter((c) => c.type === 'auto').map((c) => c.key);
+    for (const key of autoBuiltins) {
+      expect(isAutoLedger(key)).toBe(hasLedger(key));
+    }
+    expect([...API_LEDGER_CHANNELS].sort()).toEqual(
+      ['coinsbuy', 'fairpay', 'paypros', 'unipayment'].sort(),
+    );
+  });
+
+  it('una ubicación on-chain es automática por su naturaleza, no por su clave', () => {
+    // `wallet_externa` y `custom_<uuid>` no pueden estar en el Set: la clave es
+    // distinta en cada empresa. Lo que las vuelve automáticas es tener
+    // direcciones cargadas, y eso lo sabe el caller.
+    expect(isAutoLedger('wallet_externa', { onchain: true })).toBe(true);
+    expect(isAutoLedger('custom_abc', { onchain: true })).toBe(true);
+    expect(isAutoLedger('custom_abc', { onchain: false })).toBe(false);
+  });
+
+  it('un canal automático NO admite asientos manuales, ni siquiera on-chain', () => {
+    const base = {
+      entry_date: '2026-08-31', kind: 'in' as const, concept: 'x', amount: 10,
+    };
+    expect(validateEntry({ ...base, channel_key: 'paypros' })).toMatch(/automática/);
+    expect(validateEntry({ ...base, channel_key: 'wallet_externa' })).toBeNull();
+    expect(
+      validateEntry({ ...base, channel_key: 'wallet_externa' }, { onchain: true }),
+    ).toMatch(/automática/);
   });
 
   it('todo canal automático lleva libro — si no, nadie lo escribiría', () => {

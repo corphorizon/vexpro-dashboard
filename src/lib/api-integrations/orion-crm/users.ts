@@ -1,4 +1,22 @@
 // ─────────────────────────────────────────────────────────────────────────────
+// ⚠ DEPRECADO (2026-08-31, auditoría de finanzas) — CAMINO MUERTO
+//
+// Este endpoint REST de Orion NO EXISTE para ningún inquilino: `api_credentials`
+// no tiene una sola fila `provider='orion_crm'`. Sin credencial, la función cae
+// a su generador de datos falsos (o a ceros), y durante meses eso alimentó la
+// sección «Usuarios CRM» del informe con números inventados bajo un título real.
+//
+// El informe ya NO lo usa: los conteos salen de `crm_user_snapshots`
+// (src/lib/reports/crm-mirror.ts). Medido el 2026-08-31 en Vex Pro: día 180 ·
+// semana 812 · mes 2.519 · total 21.680, contra los ceros de este camino.
+//
+// Queda en el repo porque `integrations-sync.ts` todavía lo llama, y ahí está
+// guardado detrás de `isOrionCrmConfigured()`, así que hoy nunca se ejecuta. Se
+// borra el día que se confirme que ningún inquilino va a configurar el REST.
+// NO agregar consumidores nuevos: la fuente correcta es el espejo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Orion CRM — Users registered in the broker platform.
 //
 // Feeds the "Usuarios CRM" section of /finanzas/reportes. Returns three

@@ -12,6 +12,12 @@
 //   · Transferencias internas  (egreso)  — mueven saldo, no son retiro del negocio
 //   · Ajuste de conciliación   (el resto) — fuerza el cierre contra el saldo real
 //
+// Y una quinta, excepcional:
+//   · Regularización de N días — cuando el cron no pudo asentar durante varios
+//     días y el residuo acumulado ya no es «el ajuste de hoy». Ver
+//     RECOVERY_AFTER_DAYS más abajo: el guard NO puede convertir un día
+//     anómalo en un congelamiento permanente (Coinsbuy, 10 días, $91.756,14).
+//
 // La última línea es la que hace que el libro NUNCA discrepe de la wallet.
 // En Coinsbuy absorbe las comisiones de red (~$1-4/día); en UniPayment, las
 // liquidaciones de salida que su API no expone. Verificado contra 6 días de
@@ -53,17 +59,39 @@ const CENT = 0.01;
 
 /**
  * Ajuste máximo tolerado por canal antes de ABORTAR el asiento del día.
- * Coinsbuy: comisiones de red, $1-4/día — 500 da margen de sobra.
- * UniPayment: absorbe las liquidaciones de salida que su API no expone
- * ($2K-8K/día observados) — 25.000 cubre picos sin tragarse un desastre.
+ *
  * Un ajuste fuera de rango casi siempre es una wallet que faltó en la
  * respuesta de la API o un snapshot pisado: mejor no escribir nada, avisar,
  * y reprocesar el día cuando se entienda la causa.
+ *
+ * ── COINSBUY: 500 → 150.000 (2026-08-31, auditoría de finanzas) ────────────
+ * El 500 se escribió cuando el ajuste de Coinsbuy era la comisión de red de UNA
+ * wallet: $1-4/día. Desde entonces el canal agrega CUATRO wallets fijadas
+ * (migración 084: el snapshot es el saldo de la empresa, operativas e internas)
+ * y entre ellas se mueven internas de $5.000 a $50.000 por día. El comentario
+ * viejo —«comisiones de red, $1-4/día, 500 da margen de sobra»— dejó de ser
+ * cierto sin que nadie lo tocara, que es el modo de falla que §5.2.4 pide
+ * confesar en el mismo lugar en vez de borrar. Era falso; acá está el dato.
+ *
+ * MEDICIÓN (21/08 → 31/08, ajustes reales que el guard rechazó):
+ *   · rango de residuos:      ±6.700 … ±103.962
+ *   · primer rechazo (21/08): −8.478,29  contra un tope de 500
+ *   · consecuencia:           11 avisos `ledger.not_posted`, CERO recuperación
+ *   · libro congelado en 244.079,51 contra 335.835,65 reales ⇒ brecha 91.756,14
+ *     que se arrastró 10 días a la vista de todo el dashboard.
+ * 150.000 deja pasar el peor residuo medido con ~45% de margen y sigue siendo
+ * menos de la mitad del saldo del canal: un día que mueva más de $150.000 sobre
+ * $335.835 no es una comisión de red, es un dato roto y lo mira una persona.
+ *
+ * UniPayment: absorbe las liquidaciones de salida que su API no expone
+ * ($2K-8K/día observados) — 25.000 cubre picos sin tragarse un desastre.
+ *
  * Pay-Pros: los movimientos llegan por webhook y el balance por getBalance,
  * pero el webhook NO informa la comisión de Pay-Pros ni retenciones/liquidaciones
  * que ellos hagan de su lado — todo eso cae en el ajuste. Arranca en 5.000
  * como umbral conservador hasta ver los primeros días reales; si el ajuste
- * típico resulta mayor, subirlo con dato en la mano, no a ciegas.
+ * típico resulta mayor, subirlo con dato en la mano, no a ciegas. (Al
+ * 2026-08-31 hay 15 asientos 'api' de Pay-Pros y ninguno abortó por tope.)
  *
  * FairPay: caso EXTREMO y por eso el tope más alto. Su libro NO tiene fuente de
  * movimientos —el banking no expone extracto y las filas del portal de cobros
@@ -72,9 +100,13 @@ const CENT = 0.01;
  * único que sabemos de él. Observado en agosto 2026: dos saltos, +6.747,05
  * (18/08) y +416,42 (25/08). 25.000 deja pasar una liquidación grande y sigue
  * frenando un desastre.
+ *
+ * ⚠ EL NÚMERO NO ES EL ARREGLO. Subir el tope evita ESTE congelamiento, no el
+ * próximo. Lo que lo evita es que el guard deje de ser una puerta de una sola
+ * dirección: ver `RECOVERY_AFTER_DAYS` más abajo.
  */
 export const MAX_ADJUSTMENT: Record<string, number> = {
-  coinsbuy: 500,
+  coinsbuy: 150_000,
   unipayment: 25_000,
   paypros: 5_000,
   fairpay: 25_000,
@@ -122,6 +154,48 @@ export function maxAdjustmentFor(
   return opts.onchain ? ONCHAIN_MAX_ADJUSTMENT : DEFAULT_MAX_ADJUSTMENT;
 }
 
+/**
+ * ─── EL GUARD NO PUEDE SER UNA PUERTA DE UNA SOLA DIRECCIÓN ──────────────────
+ * (2026-08-31, auditoría de finanzas)
+ *
+ * El guard de arriba abortaba el día y no dejaba NINGÚN estado. Como el asiento
+ * no se escribía, la noche siguiente el saldo previo seguía siendo el del
+ * último día asentado, así que el ajuste calculado incluía todo lo acumulado y
+ * volvía a superar el tope. Un día anómalo se convertía en un congelamiento
+ * PERMANENTE: Coinsbuy abortó el 21/08 por −8.478,29 y a partir de ahí comparó
+ * cada noche contra el saldo del 20/08. Diez días, once avisos, cero
+ * recuperación, y $91.756,14 de brecha a la vista en /balances.
+ *
+ * Dos piezas arreglan el mecanismo:
+ *
+ * 1) EL TOPE SE ESCALA CON LOS DÍAS QUE CUBRE. Comparar un residuo de seis días
+ *    contra una tolerancia de UN día es comparar cosas distintas, y es lo que
+ *    hacía que la brecha nunca pudiera cerrarse sola. `effectiveMax =
+ *    maxAdj × díasCubiertos`.
+ *
+ * 2) DESPUÉS DE `RECOVERY_AFTER_DAYS` DÍAS SIN ASENTAR, SE ASIENTA IGUAL, pero
+ *    con categoría propia (`regularization`), concepto que dice cuántos días
+ *    cubre, nota con las fechas exactas, y aviso CRÍTICO. Un libro congelado
+ *    miente todos los días y no avisa a nadie más que a Sentry; una línea de
+ *    regularización bien rotulada dice la verdad y pide revisión. Entre las dos
+ *    formas de estar mal, se elige la que se ve.
+ *
+ * Se descartaron dos alternativas:
+ *   · «Reabrir sin tope si el ajuste es igual al de ayer»: frágil y sin
+ *     significado contable.
+ *   · «Asentar una línea por cada día perdido desde el cron»: es lo CORRECTO,
+ *     pero el cron solo conoce el saldo real de un día. Reconstruir día por día
+ *     exige leer los snapshots de cada fecha, que es exactamente lo que hace
+ *     `scripts/backfill-channel-ledger.ts` — la remediación preferida, a mano y
+ *     con alguien mirando. La regularización automática es la red de seguridad
+ *     para que el libro no se quede congelado mientras tanto, no su reemplazo.
+ *
+ * 3 días: dos noches de margen para que una persona mire un día anómalo antes
+ * de que el sistema se destrabe solo. Con 1 no habría guard; con 7 la brecha
+ * vive una semana en pantalla, que es lo que acaba de pasar.
+ */
+export const RECOVERY_AFTER_DAYS = 3;
+
 export interface LedgerSyncResult {
   channel_key: string;
   entry_date: string;
@@ -129,7 +203,28 @@ export interface LedgerSyncResult {
   closing: number;
   bootstrapped?: boolean;
   adjustment?: number;
+  /**
+   * Cuántos días REALES cubre el asiento. 1 = normal. >1 = el libro venía
+   * congelado y esta línea regulariza el tramo; nunca se presenta como el
+   * movimiento de un solo día.
+   */
+  daysCovered?: number;
+  /** Se asentó por encima del tope para destrabar el libro. Pide revisión. */
+  forced?: boolean;
   error?: string;
+}
+
+/** Días calendario entre dos fechas ISO (b − a). Sin zona horaria local. */
+function daysBetween(a: string, b: string): number {
+  const ms = Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`);
+  return Math.round(ms / 86_400_000);
+}
+
+/** YYYY-MM-DD del día siguiente. Espejo de `previousDay`. */
+function nextDay(iso: string): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + 1);
+  return d.toISOString().slice(0, 10);
 }
 
 /**
@@ -184,6 +279,33 @@ export async function syncChannelLedgerDay(
   }
 
   const priorBalance = Number(priorRow.balance) || 0;
+
+  // ── ¿Veníamos al día, o el libro está congelado? ───────────────────────
+  // El último asiento 'api' anterior a hoy dice hasta dónde llegó el cron. Si
+  // no es ayer, hay un hueco y el residuo de hoy NO es el movimiento de hoy:
+  // son todos los días que no se asentaron. Sin esta pregunta, el asiento sale
+  // fechado hoy con el importe de N días — el caso UniPayment del 2026-08:
+  // −21.740,51 que eran seis días, asentados como si fueran uno.
+  const { data: lastRows, error: lastErr } = await admin
+    .from('channel_ledger_entries')
+    .select('entry_date')
+    .eq('company_id', companyId)
+    .eq('channel_key', channelKey)
+    .eq('source', 'api')
+    .lt('entry_date', entryDate)
+    .order('entry_date', { ascending: false })
+    .limit(1);
+  if (lastErr) {
+    return { channel_key: channelKey, entry_date: entryDate, closing: actualClose, error: lastErr.message };
+  }
+  const lastPosted = (lastRows ?? [])[0]?.entry_date as string | undefined;
+
+  // Días que cubre el asiento de hoy: 1 si el cron venía al día. Sin asiento
+  // 'api' previo (libro solo con líneas manuales) no se puede medir el hueco:
+  // se asume 1 antes que inventar una regularización de largo desconocido.
+  const daysCovered = lastPosted ? Math.max(1, daysBetween(lastPosted, entryDate)) : 1;
+  const isCatchUp = daysCovered > 1;
+  const firstMissingDay = isCatchUp && lastPosted ? nextDay(lastPosted) : entryDate;
 
   // ── Movimientos del día ────────────────────────────────────────────────
   const { data: movRows, error: movError } = await admin.rpc('get_channel_day_movements', {
@@ -249,33 +371,64 @@ export async function syncChannelLedgerDay(
     });
   }
   if (Math.abs(adjustment) > CENT) {
+    // Un residuo que cubre varios días NO se etiqueta como el ajuste de hoy.
+    // Es el bug de UniPayment: −21.740,51 de seis días asentados como uno,
+    // con el nombre de una comisión. El libro cuadraba y contaba una mentira.
+    const baseNote = opts.noMovementFeed
+      ? 'Variación del saldo real informado por la API. Este canal no tiene extracto: el proveedor no expone los movimientos, así que se conoce cuánto se movió pero no su desglose en depósitos y retiros.'
+      : opts.onchain
+        ? 'Diferencia contra el saldo real de la cadena: fees de gas consumidos, variación del precio del gas y transferencias de redes sin historial disponible (BEP20/ERC20 sin API key de explorador).'
+        : 'Diferencia contra el saldo real de la API (comisiones de red y movimientos no detallados por el proveedor).';
+
     lines.push({
       entry_date: entryDate,
       kind: adjustment >= 0 ? 'in' : 'out',
-      concept: opts.noMovementFeed ? 'Variación del saldo' : 'Ajuste de conciliación',
-      category: opts.noMovementFeed
-        ? AUTO_CATEGORIES.balanceDelta
-        : AUTO_CATEGORIES.adjustment,
+      concept: isCatchUp
+        ? `Regularización de ${daysCovered} días (${firstMissingDay} → ${entryDate})`
+        : opts.noMovementFeed
+          ? 'Variación del saldo'
+          : 'Ajuste de conciliación',
+      category: isCatchUp
+        ? AUTO_CATEGORIES.regularization
+        : opts.noMovementFeed
+          ? AUTO_CATEGORIES.balanceDelta
+          : AUTO_CATEGORIES.adjustment,
       amount: Math.abs(adjustment),
-      notes: opts.noMovementFeed
-        ? 'Variación del saldo real informado por la API. Este canal no tiene extracto: el proveedor no expone los movimientos, así que se conoce cuánto se movió pero no su desglose en depósitos y retiros.'
-        : opts.onchain
-          ? 'Diferencia contra el saldo real de la cadena: fees de gas consumidos, variación del precio del gas y transferencias de redes sin historial disponible (BEP20/ERC20 sin API key de explorador).'
-          : 'Diferencia contra el saldo real de la API (comisiones de red y movimientos no detallados por el proveedor).',
+      notes: isCatchUp
+        ? `El libro no se asentó entre el ${firstMissingDay} y el ${previousDay(entryDate)}: ` +
+          `este importe acumula ${daysCovered} días (${firstMissingDay} → ${entryDate}) y NO es el ` +
+          `movimiento del ${entryDate}. Los depósitos y retiros de los días perdidos también están ` +
+          `acá dentro, sin desglosar. Para reconstruirlo día por día: ` +
+          `scripts/backfill-channel-ledger.ts ${channelKey} --from ${firstMissingDay}. ${baseNote}`
+        : baseNote,
     });
   }
 
-  // Cota de sanidad ANTES de escribir: un ajuste enorme no es una comisión de
-  // red, es un dato de entrada roto (wallet ausente en la respuesta, snapshot
-  // pisado, wallet recién fijada). Escribirlo contaminaría el libro con un
-  // movimiento que no existió; mejor fallar ruidoso y reprocesar el día.
+  // ── Cota de sanidad ANTES de escribir ──────────────────────────────────
+  // Un ajuste enorme no es una comisión de red, es un dato de entrada roto
+  // (wallet ausente en la respuesta, snapshot pisado, wallet recién fijada).
+  // Escribirlo contaminaría el libro con un movimiento que no existió.
+  //
+  // Pero abortar y ya es lo que congeló Coinsbuy diez días: ver
+  // RECOVERY_AFTER_DAYS. El tope se compara contra los días que el asiento
+  // cubre de verdad, y pasados N días sin asentar se escribe igual, rotulado y
+  // con aviso, porque un libro congelado también miente — y encima en silencio.
   const maxAdj = maxAdjustmentFor(channelKey, opts);
-  if (Math.abs(adjustment) > maxAdj) {
+  const effectiveMax = maxAdj * daysCovered;
+  const forced = Math.abs(adjustment) > effectiveMax && daysCovered >= RECOVERY_AFTER_DAYS;
+
+  if (Math.abs(adjustment) > effectiveMax && !forced) {
     return {
       channel_key: channelKey,
       entry_date: entryDate,
       closing: actualClose,
-      error: `Ajuste fuera de rango (${adjustment.toFixed(2)} > ±${maxAdj}): no se asentó el día. Revisar snapshot y wallets antes de reprocesar.`,
+      daysCovered,
+      error:
+        `Ajuste fuera de rango (${adjustment.toFixed(2)} > ±${effectiveMax}` +
+        (daysCovered > 1 ? ` = ${maxAdj} × ${daysCovered} días` : '') +
+        `): no se asentó el día. Revisar snapshot y wallets. ` +
+        `Si no se resuelve, en ${RECOVERY_AFTER_DAYS - daysCovered} noche(s) más el libro se destraba ` +
+        `solo con una línea de regularización rotulada.`,
     };
   }
 
@@ -294,5 +447,12 @@ export async function syncChannelLedgerDay(
     return { channel_key: channelKey, entry_date: entryDate, closing: actualClose, error: error.message };
   }
 
-  return { channel_key: channelKey, entry_date: entryDate, closing: actualClose, adjustment };
+  return {
+    channel_key: channelKey,
+    entry_date: entryDate,
+    closing: actualClose,
+    adjustment,
+    daysCovered,
+    ...(forced ? { forced: true } : {}),
+  };
 }
