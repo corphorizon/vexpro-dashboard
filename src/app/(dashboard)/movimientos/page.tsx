@@ -22,7 +22,10 @@ import { usePeriod } from '@/lib/period-context';
 import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
-import { WITHDRAWAL_LABELS } from '@/lib/types';
+import {
+  ALL_WITHDRAWAL_CATEGORIES,
+  withdrawalCategoryLabel,
+} from '@/lib/withdrawal-categories';
 import {
   ALL_DEPOSIT_CHANNELS,
   apiSlugForChannel,
@@ -46,12 +49,10 @@ import { Download } from 'lucide-react';
 // hook, y cuando entró Pay-Pros ninguna de las dos se enteró: la pantalla
 // mostraba $44.653,95 menos que el backend. Ver la cabecera del registro.
 const ALL_CHANNELS = ALL_DEPOSIT_CHANNELS;
-const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'> = [
-  'ib_commissions',
-  'broker',
-  'prop_firm',
-  'other',
-];
+// Las categorías de retiro salen del registro único
+// (src/lib/withdrawal-categories.ts), igual que los canales de depósito. El
+// orden es parte del registro: acá y el selector de /upload lo comparten.
+const ALL_CATEGORIES = ALL_WITHDRAWAL_CATEGORIES;
 
 /**
  * Series del espejo del CRM que esta pantalla consume. Las claves son las de
@@ -174,7 +175,7 @@ export default function MovimientosPage() {
       ),
       ...summary.withdrawals.map(
         (w) =>
-          [t('movements.withdrawal'), WITHDRAWAL_LABELS[w.category], w.amount] as (
+          [t('movements.withdrawal'), withdrawalCategoryLabel(w.category, t), w.amount] as (
             | string
             | number
           )[]
@@ -597,7 +598,7 @@ export default function MovimientosPage() {
                   const src = withdrawalRowSource(w.category);
                   return (
                     <>
-                      {WITHDRAWAL_LABELS[w.category]}
+                      {withdrawalCategoryLabel(w.category, t)}
                       <span
                         className={`ml-2 text-[10px] uppercase tracking-wide ${
                           src === 'api' ? 'text-positive' : 'text-muted-foreground'

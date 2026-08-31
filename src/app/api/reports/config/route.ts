@@ -10,6 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
+import { REPORT_SECTION_KEYS } from '@/lib/reports/sections';
 import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import {
   loadReportConfig,
@@ -72,13 +73,9 @@ export async function PUT(request: NextRequest) {
     cadences?: unknown;
     cadenceDisabledUsers?: unknown;
   };
-  const sectionKeys: (keyof ReportSections)[] = [
-    'deposits_withdrawals',
-    'balances_by_channel',
-    'crm_users',
-    'broker_pnl',
-    'prop_trading',
-  ];
+  // Del registro único: era la sexta copia de las mismas cinco claves, y la
+  // que decidía qué se rechaza con un 400 (2026-08-31, ítem 15).
+  const sectionKeys = REPORT_SECTION_KEYS as (keyof ReportSections)[];
   const cadenceKeys: (keyof ReportCadences)[] = ['daily', 'weekly', 'monthly'];
   if (!isBoolRecord<ReportSections>(sections, sectionKeys)) {
     return NextResponse.json({ success: false, error: 'sections inválido' }, { status: 400 });

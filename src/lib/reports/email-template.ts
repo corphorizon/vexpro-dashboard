@@ -27,6 +27,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BRAND_HEX } from '@/lib/brand';
+import { allSectionsOn, type ReportSections } from './sections';
 import type { ReportData } from './data';
 import { formatCurrency } from '@/lib/utils';
 import type { EmailLocale } from '@/lib/email-i18n';
@@ -915,21 +916,13 @@ function renderPropTradingSection(data: ReportData, primary: string, locale: Ema
 
 // ─── Main render ──────────────────────────────────────────────────────
 
-export interface ReportSectionToggles {
-  deposits_withdrawals: boolean;
-  balances_by_channel: boolean;
-  crm_users: boolean;
-  broker_pnl: boolean;
-  prop_trading: boolean;
-}
+// Las secciones salen del registro único (./sections). Este archivo tenía su
+// propia interfaz idéntica y su propio default: una sección nueva que el panel
+// ofrecía y la config guardaba llegaba acá como `undefined` —falsy— y NO se
+// mandaba en el mail, sin ningún error (2026-08-31, ítem 15).
+export type ReportSectionToggles = ReportSections;
 
-const ALL_SECTIONS_ON: ReportSectionToggles = {
-  deposits_withdrawals: true,
-  balances_by_channel: true,
-  crm_users: true,
-  broker_pnl: true,
-  prop_trading: true,
-};
+const ALL_SECTIONS_ON: ReportSectionToggles = allSectionsOn();
 
 export interface RenderReportEmailParams {
   data: ReportData;

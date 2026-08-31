@@ -10,6 +10,10 @@ import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
+import {
+  ALL_WITHDRAWAL_CATEGORIES,
+  withdrawalCategoryLabel,
+} from '@/lib/withdrawal-categories';
 import { ALL_DEPOSIT_CHANNELS } from '@/lib/deposit-channels';
 import type { LiquidityMovement, Investment } from '@/lib/types';
 import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical, Lock as LockIcon, Upload } from 'lucide-react';
@@ -2375,7 +2379,7 @@ export default function UploadPage() {
                 return (
                   <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     <td className="py-2.5 px-3 font-medium">
-                      {WITHDRAWAL_LABELS[w.category]}
+                      {withdrawalCategoryLabel(w.category, t)}
                       {(isBrokerAutoRow || isIbAutoRow) && (
                         <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
                           auto
@@ -2535,10 +2539,13 @@ export default function UploadPage() {
                   onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, category: e.target.value as typeof p.category }))}
                   className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 >
-                  <option value="ib_commissions">{WITHDRAWAL_LABELS['ib_commissions']}</option>
-                  <option value="broker">{WITHDRAWAL_LABELS['broker']}</option>
-                  <option value="prop_firm">{WITHDRAWAL_LABELS['prop_firm']}</option>
-                  <option value="other">{WITHDRAWAL_LABELS['other']}</option>
+                  {/* Del registro único: eran cuatro <option> escritas a mano,
+                      con el mismo orden que /movimientos tenía en otra lista. */}
+                  {ALL_WITHDRAWAL_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {withdrawalCategoryLabel(cat, t)}
+                    </option>
+                  ))}
                 </select>
                 <input
                   type="text"
@@ -2597,7 +2604,7 @@ export default function UploadPage() {
                       <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                         <td className="py-2.5 px-3">
                           <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                            {WITHDRAWAL_LABELS[w.category]}
+                            {withdrawalCategoryLabel(w.category, t)}
                           </span>
                         </td>
                         <td className="py-2.5 px-3">{w.description}</td>

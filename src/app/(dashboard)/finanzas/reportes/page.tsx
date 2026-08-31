@@ -1,5 +1,6 @@
 'use client';
 
+import type { ReportData } from '@/lib/reports/data';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import {
@@ -93,69 +94,15 @@ function computeQuickRange(kind: QuickRange): { from: string; to: string } {
 
 // ─── Server response types ─────────────────────────────────────────────
 
-interface ReportBucket {
-  deposits: Array<{ channel: string; count: number; amount: number }>;
-  withdrawals: Array<{ category: string; count: number; amount: number }>;
-  total_deposits: number;
-  total_withdrawals: number;
-  net_deposit: number;
-}
-
-interface ReportResponse {
-  success: boolean;
-  range: { from: string; to: string };
-  this_month: { from: string; to: string };
-  prev_month: { from: string; to: string };
-  deposits_withdrawals: {
-    range: ReportBucket;
-    month: ReportBucket;
-    prev_month: { total_deposits: number; total_withdrawals: number; net_deposit: number };
-  };
-  crm_users: {
-    new_users_in_range: number;
-    new_users_this_month: number;
-    total_users: number;
-    connected: boolean;
-    isMock: boolean;
-  };
-  // `number | null` = «no lo sabemos», nunca 0 (auditoría 2026-08-31). El
-  // broker P&L viene del cierre diario del CRM, que puede no tener ningún día
-  // guardado; el prop trading viene de `crm_monthly_totals`, que es MENSUAL y
-  // no puede responder por un rango que no sean meses enteros. Ver
-  // src/lib/reports/crm-mirror.ts y la cabecera de ReportData.
-  broker_pnl: {
-    pnl_range: number | null;
-    pnl_month: number | null;
-    pnl_prev_month: number | null;
-    connected: boolean;
-    isMock: boolean;
-  };
-  prop_trading: {
-    /** `null` = el CRM guarda el total del mes, no qué se vendió. */
-    products: Array<{ name: string; quantity: number; amount: number }> | null;
-    total_sales_range: number | null;
-    total_sales_month: number | null;
-    prop_withdrawals_range: number | null;
-    prop_withdrawals_count_range: number | null;
-    pnl_range: number | null;
-    pnl_month: number | null;
-    pnl_prev_month: number | null;
-    connected: boolean;
-    isMock: boolean;
-  };
-  balances_by_channel: {
-    channels: Array<{
-      key: string;
-      label: string;
-      type: 'api' | 'manual' | 'auto';
-      amount: number;
-      source: 'live' | 'snapshot' | 'computed';
-      isCustom: boolean;
-    }>;
-    total: number;
-    asOf: string;
-  };
-}
+// ─── El tipo de la respuesta sale del BUILDER, no de una copia ───────────────
+// Hasta el 2026-08-31 esta pantalla redeclaraba `ReportBucket` y todo el shape
+// de `ReportData` a mano, y ya había divergido: `balances_by_channel.type`
+// decía `'api' | 'manual' | 'auto'` con un `'api'` que no existe en ninguna
+// fila, y los `number | null` de broker_pnl / prop_trading tuvieron que
+// re-anotarse acá cuando cambiaron allá. Una copia del tipo de una respuesta es
+// una copia que compila aunque el servidor ya devuelva otra cosa: el
+// desacuerdo aparece en pantalla, no en tsc (auditoría de finanzas, ítem 15).
+type ReportResponse = ReportData & { success: boolean };
 
 // ─── Human-friendly labels ─────────────────────────────────────────────
 

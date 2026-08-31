@@ -1641,6 +1641,13 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.channelLabel.unipayment': 'Unipayment (Card)',
     'movements.channelLabel.paypros': 'Pay-Pros (Local payment)',
     'movements.channelLabel.other': 'Other deposits',
+    // Categorías de RETIRO. Faltaban: `WITHDRAWAL_LABELS` era castellano fijo,
+    // así que la tarjeta de Retiros (y el CSV) salían en español al lado de una
+    // tarjeta de Depósitos traducida (2026-08-31, ítem 15).
+    'movements.categoryLabel.ib_commissions': 'IB commissions',
+    'movements.categoryLabel.broker': 'Broker',
+    'movements.categoryLabel.prop_firm': 'Prop Firm',
+    'movements.categoryLabel.other': 'Other',
     // «Sin datos» ≠ «$0,00»: the first means we could not read the channel.
     'movements.noData': 'no data',
     // Rótulo de una fila que se muestra pero NO entra en el total de arriba.
@@ -3988,6 +3995,10 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.channelLabel.unipayment': 'Unipayment (Tarjeta)',
     'movements.channelLabel.paypros': 'Pay-Pros (Medio Local)',
     'movements.channelLabel.other': 'Otros Depósitos',
+    'movements.categoryLabel.ib_commissions': 'Comisiones IB',
+    'movements.categoryLabel.broker': 'Broker',
+    'movements.categoryLabel.prop_firm': 'Prop Firm',
+    'movements.categoryLabel.other': 'Otros',
     // «Sin datos» ≠ «$0,00»: el primero es que no se pudo leer el canal.
     'movements.noData': 'sin datos',
     // Rótulo de una fila que se muestra pero NO entra en el total de arriba.

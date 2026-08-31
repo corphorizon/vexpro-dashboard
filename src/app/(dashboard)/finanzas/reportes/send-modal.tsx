@@ -18,17 +18,20 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useData } from '@/lib/data-context';
 import { blockedReportSections } from '@/lib/business-model';
+import {
+  allSectionsOn,
+  reportSectionLabels,
+  type ReportSections,
+} from '@/lib/reports/sections';
 import { Send, X } from 'lucide-react';
 
 export type Cadence = 'current' | 'daily' | 'weekly' | 'monthly';
 
-interface Sections {
-  deposits_withdrawals: boolean;
-  balances_by_channel: boolean;
-  crm_users: boolean;
-  broker_pnl: boolean;
-  prop_trading: boolean;
-}
+// Del registro único (src/lib/reports/sections.ts): esta era la séptima copia
+// de las mismas cinco claves — y la que ofrece los checkboxes, o sea la que le
+// promete al usuario una lista que las otras seis tenían que respetar
+// (2026-08-31, ítem 15).
+type Sections = ReportSections;
 
 interface Recipient {
   id: string;
@@ -43,13 +46,7 @@ interface Props {
   currentRange: { from: string; to: string };
 }
 
-const SECTION_LABELS: Record<keyof Sections, string> = {
-  deposits_withdrawals: 'Depósitos y Retiros',
-  balances_by_channel: 'Balances por Canal',
-  crm_users: 'Usuarios CRM',
-  broker_pnl: 'Broker P&L',
-  prop_trading: 'Prop Trading Firm',
-};
+const SECTION_LABELS = reportSectionLabels('es');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -92,13 +89,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
   const [externalEmail, setExternalEmail] = useState('');
   const [externalEmails, setExternalEmails] = useState<string[]>([]);
   const [cadence, setCadence] = useState<Cadence>('current');
-  const [sections, setSections] = useState<Sections>({
-    deposits_withdrawals: true,
-    balances_by_channel: true,
-    crm_users: true,
-    broker_pnl: true,
-    prop_trading: true,
-  });
+  const [sections, setSections] = useState<Sections>(allSectionsOn);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null);
