@@ -409,15 +409,28 @@ export default function ComisionesPage() {
   const [ndInputs, setNdInputs] = useState<Map<string, number>>(new Map());
   // Store raw string for display (allows empty field + typing negatives)
   const [ndRawInputs, setNdRawInputs] = useState<Map<string, string>>(new Map());
+  // Espejo en un ref de lo que se está tecleando, para que el efecto de seeding
+  // sepa qué NO pisar sin tener que re-correr en cada tecla.
+  const ndRawRef = useRef(ndRawInputs);
+  useEffect(() => { ndRawRef.current = ndRawInputs; }, [ndRawInputs]);
   // Seed ND inputs from the resolved input (CRM / manual / congelado)
   useEffect(() => {
     if (!selectedPeriod) return;
-    const m = new Map<string, number>();
     // SIN DATOS entra al motor como 0 —y eso es correcto: con ND=0 no se paga
     // nada pero el acumulado se CONSERVA (commission-calculator.ts:46-64)—, pero
     // la pantalla lo muestra vacío con el rótulo «sin datos», nunca $0.
-    for (const [id, r] of ndResolved) m.set(id, netParaElMotor(r));
-    setNdInputs(m);
+    //
+    // Lo que el usuario esté tecleando NO se pisa: este efecto ahora corre
+    // también cuando llega la respuesta del CRM, que puede tardar ~2 s. Sin esta
+    // guarda, quien empezó a escribir un ND mientras cargaba veía cómo el número
+    // se le cambiaba solo debajo del cursor.
+    setNdInputs((prev) => {
+      const m = new Map<string, number>();
+      for (const [id, r] of ndResolved) {
+        m.set(id, ndRawRef.current.has(id) ? prev.get(id) ?? 0 : netParaElMotor(r));
+      }
+      return m;
+    });
 
     // Seedear lotInputs desde pnl_current (donde se guarda el lotComm)
     if (tab === 'individual') {
