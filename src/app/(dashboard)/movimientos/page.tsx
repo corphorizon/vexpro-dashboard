@@ -436,10 +436,23 @@ export default function MovimientosPage() {
             ]}
             footerRow={
               <>
+                {/* Kevin (2026-08-31): «sigue sin sumar esto bien» — el total en
+                    negrita tiene que ser la suma de TODAS las filas visibles,
+                    incluida la manual «Otros Depósitos». El total solo-API sigue
+                    disponible como desglose debajo, porque «Restante (Broker)»
+                    se deriva de él (regla Abr-2026) y no debe moverse. */}
                 <tr className="font-bold">
-                  <td className="px-4 py-3">{t('movements.totalDepositsApi')}</td>
+                  <td className="px-4 py-3">{t('movements.totalDepositsAll')}</td>
                   <td className="px-4 py-3 text-right text-blue-600">
-                    {formatCurrency(apiDepositsTotal)}
+                    {formatCurrency(displayTotalDeposits)}
+                    {otherDeposits > 0 && (
+                      <span className="block text-[10px] font-normal text-muted-foreground">
+                        {t('movements.totalDepositsBreakdown', {
+                          api: formatCurrency(apiDepositsTotal),
+                          manual: formatCurrency(otherDeposits),
+                        })}
+                      </span>
+                    )}
                   </td>
                 </tr>
                 <tr className="text-muted-foreground">

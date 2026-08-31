@@ -1656,6 +1656,8 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.selectedPeriodHint': 'Selected period',
     'movements.netDepositHint': 'Deposits − Withdrawals',
     'movements.totalDepositsApi': 'Total Deposits (API)',
+    'movements.totalDepositsAll': 'Total Deposits',
+    'movements.totalDepositsBreakdown': '{api} API + {manual} manual',
     'movements.brokerPnlBookB': 'Broker P&L (Book B)',
 
     // Upload form extras
@@ -3982,6 +3984,8 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.selectedPeriodHint': 'Período seleccionado',
     'movements.netDepositHint': 'Depósitos − Retiros',
     'movements.totalDepositsApi': 'Depósitos Totales (API)',
+    'movements.totalDepositsAll': 'Depósitos Totales',
+    'movements.totalDepositsBreakdown': '{api} API + {manual} manual',
     'movements.brokerPnlBookB': 'Broker P&L (Libro B)',
 
     // Upload form extras
