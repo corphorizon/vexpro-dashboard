@@ -51,6 +51,8 @@ import {
   loadTradesByLogin,
   evaluateAccount,
   MAX_POSICIONES,
+  RIESGO_ALTO,
+  RIESGO_MEDIO,
   type AccountReview,
 } from '@/lib/risk/account-review';
 import type { Trade } from '@/lib/risk/types';
@@ -415,6 +417,38 @@ async function evaluarYGuardar(
   const warnings: string[] = [];
   const ahora = new Date().toISOString();
 
+  // ── NO BORRAR EL VEREDICTO DE COPIA QUE YA EXISTE ─────────────────────
+  //
+  // La señal `copy_trading` NO se calcula acá: necesita las aperturas de TODAS
+  // las cuentas del período, y eso lo hace `syncAccountCopyDetection` en una
+  // segunda pasada. Esta función la deja en «no comprobado».
+  //
+  // Guardar eso encima destruiría un veredicto real. Medido el 2026-08-31: 785
+  // cuentas tienen veredicto y 34 están marcadas como sincronizadas —una con
+  // 0,5 s de retraso contra otra cuenta, que no lo hace una persona—. Con el
+  // botón de «analizar ahora», que recalcula una cuenta suelta, ese dato se
+  // habría perdido en cada clic sin que nada avisara.
+  //
+  // Así que se lee lo guardado y, si el cálculo nuevo no puede comprobar la
+  // copia, se conserva el veredicto anterior. No es cachear por rendimiento:
+  // es no tirar información que este camino no sabe reproducir.
+  const copiaPrevia = new Map<number, unknown>();
+  {
+    const { data } = await admin
+      .from('mt5_account_review')
+      .select('login, checks')
+      .eq('company_id', companyId)
+      .in('login', lote);
+    for (const f of data ?? []) {
+      const s = (Array.isArray(f.checks) ? f.checks : []).find(
+        (x: { id?: string }) => x?.id === 'copy_trading',
+      );
+      // Sólo se conserva un veredicto DE VERDAD. Un «unverifiable» guardado no
+      // aporta nada sobre el «skipped» nuevo.
+      if (s && s.status !== 'unverifiable') copiaPrevia.set(Number(f.login), s);
+    }
+  }
+
   let porCuenta: Map<number, Trade[]>;
   try {
     porCuenta = await loadTradesByLogin(companyId, lote);
@@ -471,6 +505,19 @@ async function evaluarYGuardar(
         sincronizadas: null,
         truncated,
       });
+
+      // El veredicto de copia anterior pisa al «no comprobado» nuevo, y
+      // `flagged` y `risk` se RECALCULAN sobre el resultado. Restaurar la señal
+      // sin rehacer los conteos dejaría una cuenta que dice «sincronizada» con
+      // el contador en cero — el número plausible y equivocado de siempre.
+      const senales = rev.signals.map((s) =>
+        s.id === 'copy_trading' && s.status === 'unverifiable' && copiaPrevia.has(login)
+          ? (copiaPrevia.get(login) as typeof s)
+          : s,
+      );
+      const flagged = senales.filter((s) => s.status === 'fail' && s.countsForRisk).length;
+      const risk = flagged >= RIESGO_ALTO ? 'alto' : flagged >= RIESGO_MEDIO ? 'medio' : 'ok';
+
       return {
         company_id: companyId,
         login,
@@ -491,10 +538,10 @@ async function evaluarYGuardar(
         max_drawdown: rev.facts.maxDrawdown,
         top_symbols: rev.facts.topSymbols,
         durations: rev.facts.durations,
-        checks: rev.signals,
-        violations: rev.flagged,
+        checks: senales,
+        violations: flagged,
         unverifiable: rev.unverifiable,
-        risk: rev.risk,
+        risk,
         computed_at: ahora,
         truncated: rev.truncated,
         warnings: rev.warnings,
