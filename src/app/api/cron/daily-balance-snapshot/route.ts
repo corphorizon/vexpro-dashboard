@@ -271,6 +271,25 @@ export async function GET(request: NextRequest) {
         );
         await adminUpsertChannelBalance(admin, company.id, today, 'fairpay', total, 'api');
         entry.fairpay = total;
+
+        // Libro del canal (2026-08-31). Hasta hoy FairPay escribía el snapshot
+        // y NO el libro, y como el libro le gana al snapshot en /balances y en
+        // el reporte, un asiento de apertura manual de $0,00 del 2026-08-05
+        // tapaba el saldo real: la pantalla decía $0,00 con $7.163,47 en la
+        // cuenta. Ver src/lib/channel-ledger.ts.
+        //
+        // `noMovementFeed`: FairPay es el único canal automático sin extracto.
+        // El día se asienta con UNA línea, «Variación del saldo», porque las
+        // filas de `api_transactions.provider='fairpay'` son cobros del portal
+        // —otro sistema, y con monedas locales sumadas como USD— y asentarlas
+        // acá sería inventar depósitos que esta cuenta nunca recibió. La
+        // migración 108 saca la rama 'fairpay' de get_channel_day_movements
+        // para que ni siquiera lleguen hasta acá.
+        ledger.push(
+          await syncChannelLedgerDay(admin, company.id, 'fairpay', ledgerDate, total, {
+            noMovementFeed: true,
+          }),
+        );
       }
     } catch (err) {
       const reason = err instanceof Error ? err.message : 'Unknown error';

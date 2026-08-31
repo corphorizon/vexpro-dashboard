@@ -6,6 +6,8 @@ import {
   validateEntry,
   isAutoLedger,
   hasLedger,
+  isBalanceReconciliation,
+  API_LEDGER_CHANNELS,
   previousDay,
   signedAmount,
   type LedgerEntry,
@@ -148,8 +150,55 @@ describe('qué canales llevan libro', () => {
   it('marca como automáticos solo a los canales por API', () => {
     expect(isAutoLedger('coinsbuy')).toBe(true);
     expect(isAutoLedger('unipayment')).toBe(true);
-    expect(isAutoLedger('fairpay')).toBe(false);
+    // FairPay entró el 2026-08-31: tenía saldo por API y libro huérfano (una
+    // apertura manual de $0,00 del 05/08 y nada más), y como el libro le gana
+    // al snapshot, la pantalla mostraba $0,00 con $7.163,47 en la cuenta.
+    expect(isAutoLedger('fairpay')).toBe(true);
     expect(isAutoLedger('wallet_externa')).toBe(false);
+  });
+
+  it('todo canal automático lleva libro — si no, nadie lo escribiría', () => {
+    // Itera el registro en vez de enumerar: agregar un canal automático que
+    // esté en NON_LEDGER_CHANNELS rompe acá, en vez de mostrar un cero mudo.
+    for (const key of API_LEDGER_CHANNELS) {
+      expect(hasLedger(key)).toBe(true);
+    }
+  });
+});
+
+describe('categorías de conciliación', () => {
+  it('trata «variación del saldo» y «ajuste» como la misma aritmética', () => {
+    expect(isBalanceReconciliation('adjustment')).toBe(true);
+    expect(isBalanceReconciliation('balance_delta')).toBe(true);
+    expect(isBalanceReconciliation('deposits')).toBe(false);
+    expect(isBalanceReconciliation('withdrawals')).toBe(false);
+    expect(isBalanceReconciliation('internal')).toBe(false);
+    expect(isBalanceReconciliation(null)).toBe(false);
+  });
+
+  it('la variación del saldo NO cuenta como retiro del negocio', () => {
+    // Es el caso de FairPay: el saldo bajó y no sabemos si fue un retiro, una
+    // liquidación o una comisión. Contarlo como retiro inventaría un retiro.
+    const book = [
+      entry({ entry_date: '2026-08-17', kind: 'opening', amount: 0, category: 'opening' }),
+      entry({ entry_date: '2026-08-17', kind: 'in', amount: 6_747.05, category: 'balance_delta' }),
+      entry({ entry_date: '2026-08-24', kind: 'in', amount: 416.42, category: 'balance_delta' }),
+    ];
+    const totals = computeTotals(book, '2026-08-17', '2026-08-31');
+    expect(totals.outflows).toBe(0);
+    expect(totals.inflows).toBe(0);
+    expect(totals.adjustments).toBeCloseTo(7_163.47, 2);
+    expect(totals.closing).toBeCloseTo(7_163.47, 2);
+    // Y el saldo que mostraría /balances hoy es el de la cuenta real.
+    expect(balanceAsOf(book, '2026-08-31')).toBeCloseTo(7_163.47, 2);
+  });
+
+  it('ordena la variación del saldo al final del día, como el ajuste', () => {
+    const rows = withRunningBalance([
+      entry({ entry_date: '2026-08-02', kind: 'in', amount: 5, category: 'balance_delta' }),
+      entry({ entry_date: '2026-08-02', kind: 'in', amount: 100, category: 'deposits' }),
+    ]);
+    expect(rows.map((r) => r.category)).toEqual(['deposits', 'balance_delta']);
   });
 });
 

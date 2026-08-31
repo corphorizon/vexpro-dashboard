@@ -44,8 +44,43 @@ export const NON_LEDGER_CHANNELS = new Set(['liquidez', 'inversiones']);
 /**
  * Canales cuyo libro escribe el cron y NADIE edita a mano. El saldo sale de
  * la API del proveedor, así que un asiento manual solo podría descuadrarlo.
+ *
+ * ── POR QUÉ ENTRÓ `fairpay` (2026-08-31, Kevin: «fairpay sigue sin sumar en
+ *    balances por canal») ────────────────────────────────────────────────────
+ * El canal estaba en el peor de los mundos posibles: `hasLedger('fairpay')`
+ * daba true (no está en NON_LEDGER_CHANNELS) pero NADIE escribía su libro. El
+ * único asiento que existía en producción era una apertura MANUAL de $0,00
+ * fechada el 2026-08-05, y como el libro le gana al snapshot en las dos
+ * pantallas que muestran el saldo —`getChannelValue` en /balances y
+ * `pickChannelAmount` en reports/balances-by-channel.ts (auditoría A1)— ese
+ * cero de tres semanas atrás tapaba el snapshot diario real. Medido el
+ * 2026-08-31: el libro decía $0,00 y la API del banking $7.163,47. El total
+ * consolidado venía corto por esos $7.163,47 desde el 2026-08-05.
+ *
+ * La raíz no era la prioridad libro > snapshot (que es correcta: el libro
+ * cierra exacto contra el saldo real del día). La raíz es la de la migración
+ * 059: **un canal de API tiene libro AUTOMÁTICO**. FairPay tenía saldo por API
+ * y libro huérfano. Acá se cierra esa contradicción.
+ *
+ * ⚠ FairPay tiene una particularidad que NINGÚN otro canal automático tiene, y
+ * está resuelta en la migración 108 — no la deshagas sin leerla:
+ * **el libro de FairPay no tiene fuente de movimientos**. Son DOS sistemas
+ * distintos (ver src/lib/api-integrations/fairpay/balances.ts):
+ *   · `banking.fairpay.online` → de acá sale el SALDO, y no expone extracto
+ *     (barrido de ~150 rutas con credencial real: todas 404).
+ *   · `portal.fairpay.online`  → de acá salen las filas
+ *     `api_transactions.provider='fairpay'`, que son cobros del portal, NO
+ *     movimientos de la cuenta bancaria. No liquidan 1:1: en agosto 2026 el
+ *     portal registró depósitos casi todos los días y el banking se movió DOS
+ *     veces (0 → 6.747,05 el 18/08 → 7.163,47 el 25/08).
+ * Y encima esas filas del portal **suman monedas locales como si fueran USD**
+ * (COP, CLP, CRC, MXN, BRL conviven en `amount`; el 2026-08-12 hay $145.714,40
+ * de tres monedas distintas sumados como dólares). Eso es un hallazgo grave
+ * aparte, pendiente de decisión de Kevin, y NO se arregla acá — pero es la
+ * segunda razón por la que asentarlas como «Depósitos del día» del canal
+ * habría sido plata inventada.
  */
-export const API_LEDGER_CHANNELS = new Set(['coinsbuy', 'unipayment']);
+export const API_LEDGER_CHANNELS = new Set(['coinsbuy', 'unipayment', 'fairpay']);
 
 export function hasLedger(channelKey: string): boolean {
   return !NON_LEDGER_CHANNELS.has(channelKey);
@@ -63,6 +98,14 @@ export function isAutoLedger(channelKey: string): boolean {
 // del proveedor. En Coinsbuy son las comisiones de red (~$1-4/día); en
 // UniPayment son las liquidaciones de salida, que su API no expone. Dejar la
 // diferencia a la vista es preferible a un libro que no cuadra con la wallet.
+//
+// `balance_delta` es la MISMA aritmética que `adjustment` con otro nombre, y el
+// nombre es justamente el punto (2026-08-31, FairPay). Un canal sin extracto
+// —el proveedor informa el saldo pero no los movimientos— cierra su día con una
+// única línea que ES el movimiento del día, no la corrección de un desvío.
+// Etiquetarla «Ajuste de conciliación» habría hecho que el libro de FairPay
+// mostrara «Ajuste +6.747,05» el 18/08: un número correcto con el nombre de un
+// error, que es la forma más rápida de que alguien lo "arregle".
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const AUTO_CATEGORIES = {
@@ -71,6 +114,7 @@ export const AUTO_CATEGORIES = {
   withdrawals: 'withdrawals',
   internal: 'internal',
   adjustment: 'adjustment',
+  balanceDelta: 'balance_delta',
 } as const;
 
 export type AutoCategory = (typeof AUTO_CATEGORIES)[keyof typeof AUTO_CATEGORIES];
@@ -81,7 +125,22 @@ const AUTO_LABELS: Record<string, { es: string; en: string }> = {
   withdrawals: { es: 'Retiros del día',          en: 'Withdrawals for the day' },
   internal:    { es: 'Transferencias internas',  en: 'Internal transfers' },
   adjustment:  { es: 'Ajuste de conciliación',   en: 'Reconciliation adjustment' },
+  balance_delta: { es: 'Variación del saldo',    en: 'Balance change' },
 };
+
+/**
+ * `true` para las categorías que NO son un movimiento medido sino la diferencia
+ * contra el saldo real del proveedor. Las dos se tratan igual en la aritmética
+ * (`computeTotals` las suma como `adjustments`); lo que cambia es el nombre que
+ * ve el usuario. Existe como función para que agregar una tercera no obligue a
+ * buscar los `=== 'adjustment'` desperdigados.
+ */
+export function isBalanceReconciliation(category: string | null): boolean {
+  return (
+    category === AUTO_CATEGORIES.adjustment ||
+    category === AUTO_CATEGORIES.balanceDelta
+  );
+}
 
 export function autoCategoryLabel(category: string | null, locale: 'es' | 'en' = 'es'): string | null {
   if (!category) return null;
@@ -114,6 +173,7 @@ export function signedAmount(entry: Pick<LedgerEntry, 'kind' | 'amount'>): numbe
  */
 const CATEGORY_RANK: Record<string, number> = {
   opening: 0, deposits: 1, withdrawals: 2, internal: 3, adjustment: 4,
+  balance_delta: 4,
 };
 
 export function sortEntries(entries: LedgerEntry[]): LedgerEntry[] {
@@ -175,7 +235,7 @@ export function computeTotals(
   let inflows = 0, outflows = 0, internalTransfers = 0, adjustments = 0;
   for (const e of inRange) {
     if (e.kind === 'opening') { inflows += e.amount; continue; }
-    if (e.category === AUTO_CATEGORIES.adjustment) { adjustments += signedAmount(e); continue; }
+    if (isBalanceReconciliation(e.category)) { adjustments += signedAmount(e); continue; }
     if (isInternalTransfer(e)) { internalTransfers += e.amount; continue; }
     if (e.kind === 'in') inflows += e.amount;
     else outflows += e.amount;
