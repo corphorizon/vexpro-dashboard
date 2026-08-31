@@ -421,11 +421,44 @@ async function buildCompanyResultFor(
 }
 
 /**
+ * El día contra el que se resuelven «este mes» y «el mes anterior» para un
+ * informe que cubre hasta `to`.
+ *
+ * ── POR QUÉ EXISTE (2026-08-31, auditoría de finanzas) ──────────────────────
+ * `buildReportData` acepta `referenceDate` justamente para esto, y los TRES
+ * llamadores lo omitían, quedándose con el default `new Date()` = HOY. El
+ * síntoma aparece los días 1:
+ *
+ *   · El cron DIARIO corre el 1 de septiembre a las 00:05 UTC e informa el 31
+ *     de agosto. Con `referenceDate = hoy`, «este mes» resolvía a SEPTIEMBRE,
+ *     que tiene cinco minutos de vida: los KPI del mes salían en casi cero y
+ *     la comparación «% del mes» quedaba sin sentido, justo en el correo del
+ *     cierre de mes.
+ *   · El cron MENSUAL corre el 1 e informa el mes anterior entero: mismo
+ *     problema, y ahí el mes ES el informe.
+ *   · La pantalla, con un rango de meses pasados, mostraba el contexto del mes
+ *     de HOY al lado de datos de otro mes.
+ *
+ * La referencia correcta es el ÚLTIMO DÍA QUE EL INFORME CUBRE: el mes del
+ * informe es el mes del que habla, no el del reloj del servidor. Un informe
+ * del 31/08 tiene «este mes» = agosto, lo mande el cron del 1 de septiembre o
+ * lo pida alguien en octubre.
+ *
+ * Mediodía UTC y no medianoche: el `Date` resultante se lee siempre con
+ * getUTC*, así que da igual para el cálculo, pero deja el valor lejos de los
+ * bordes si alguien lo imprime con la zona local.
+ */
+export function referenceDateFor(to: string): Date {
+  const d = new Date(`${to}T12:00:00Z`);
+  return Number.isNaN(d.getTime()) ? new Date() : d;
+}
+
+/**
  * Builds the full report payload for a company + date range. Pure data —
- * no HTML rendering or email sending. `referenceDate` lets callers pin
- * "this month" / "previous month" to a specific day (used by the cron
- * when it processes yesterday's data at 00:05 UTC and needs the month
- * context relative to yesterday, not today).
+ * no HTML rendering or email sending. `referenceDate` pins
+ * "this month" / "previous month" to a specific day. Los llamadores lo sacan
+ * de `referenceDateFor(to)`: el mes del informe es el del último día que
+ * cubre, NUNCA el de hoy (ver arriba).
  */
 export async function buildReportData(
   companyId: string,

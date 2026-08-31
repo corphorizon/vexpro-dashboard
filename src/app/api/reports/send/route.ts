@@ -25,7 +25,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { buildReportData } from '@/lib/reports/data';
+import { buildReportData, referenceDateFor } from '@/lib/reports/data';
 import {
   renderReportEmail,
   renderReportEmailText,
@@ -208,7 +208,9 @@ export async function POST(request: NextRequest) {
   // Build data once, then render lazily per recipient locale ('en' when the
   // recipient has no configured preference) — one render per language, not
   // per recipient.
-  const data = await buildReportData(companyId, from, to);
+  // El mes de contexto es el del último día informado, no el de hoy: un envío
+  // manual de «el mes pasado» hecho hoy tiene que comparar contra ese mes.
+  const data = await buildReportData(companyId, from, to, referenceDateFor(to));
   const rendered = new Map<EmailLocale, { html: string; text: string; subject: string }>();
   const renderFor = (locale: EmailLocale) => {
     const cached = rendered.get(locale);
