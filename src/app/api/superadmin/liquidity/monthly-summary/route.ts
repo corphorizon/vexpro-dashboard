@@ -50,6 +50,8 @@ interface FilaPnl {
   month: number;
   pnl: number | string | null;
   operations_count: number | string | null;
+  /** NULL = calculado antes de la migracion 116. No es cero lotes. */
+  lots: number | string | null;
   is_partial: boolean | null;
 }
 
@@ -113,7 +115,7 @@ export async function GET(request: NextRequest) {
     const pnl = await fetchAllRows<FilaPnl>((from, to) => {
       let q = admin
         .from('platform_liquidity_monthly_pnl')
-        .select('account_id, year, month, pnl, operations_count, is_partial')
+        .select('account_id, year, month, pnl, operations_count, lots, is_partial')
         .in('account_id', ids);
       if (detalle) q = q.eq('year', year).eq('month', month);
       // `account_id` sola no es única acá (hay una fila por mes): el orden
@@ -138,6 +140,8 @@ export async function GET(request: NextRequest) {
             status: c.status,
             pnl: num(p.pnl),
             operations_count: num(p.operations_count),
+            // `null` viaja como `null`: un guion en pantalla, no un cero.
+            lots: p.lots === null || p.lots === undefined ? null : num(p.lots),
             is_partial: Boolean(p.is_partial),
           };
         })
@@ -150,12 +154,15 @@ export async function GET(request: NextRequest) {
         rows,
         total: redondear(rows.reduce((s, r) => s + r.pnl, 0)),
         operations: rows.reduce((s, r) => s + r.operations_count, 0),
+        // Se suma lo que SE PUDO calcular. Las filas viejas quedan en `null` y no
+        // suman cero: sumarlas mentiria sobre el total del mes.
+        lots: redondear(rows.reduce((s, r) => s + (r.lots ?? 0), 0)),
       });
     }
 
     // ── Modo meses: una fila por mes ─────────────────────────────────────
     const porMes = new Map<string, {
-      year: number; month: number; total: number; operations: number;
+      year: number; month: number; total: number; operations: number; lots: number;
       accounts: number; accounts_with_activity: number; is_partial: boolean;
     }>();
 
@@ -166,12 +173,13 @@ export async function GET(request: NextRequest) {
       if (!y || !m) continue;
       const k = `${y}-${m}`;
       const acc = porMes.get(k) ?? {
-        year: y, month: m, total: 0, operations: 0,
+        year: y, month: m, total: 0, operations: 0, lots: 0,
         accounts: 0, accounts_with_activity: 0, is_partial: false,
       };
       const ops = num(p.operations_count);
       acc.total += num(p.pnl);
       acc.operations += ops;
+      acc.lots += p.lots === null || p.lots === undefined ? 0 : num(p.lots);
       // `accounts` es cuántas ESTABAN en el pool; `accounts_with_activity`,
       // cuántas operaron. Mostrar sólo la segunda haría parecer que el pool
       // se vació en los meses tranquilos.
@@ -182,7 +190,7 @@ export async function GET(request: NextRequest) {
     }
 
     const months = [...porMes.values()]
-      .map((m) => ({ ...m, total: redondear(m.total) }))
+      .map((m) => ({ ...m, total: redondear(m.total), lots: redondear(m.lots) }))
       .sort((a, b) => (b.year - a.year) || (b.month - a.month)); // más reciente arriba
 
     return NextResponse.json({

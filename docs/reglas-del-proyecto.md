@@ -21,6 +21,20 @@
    changes — leer `node_modules/next/dist/docs/` antes de escribir código de
    framework.
 
+### El número de una migración se elige AL MERGEAR, no al empezar
+
+Ya chocó **tres veces**: dos ramas trabajando en paralelo eligen el mismo número
+y quedan dos archivos distintos con el mismo prefijo. La última vez terminó con
+`105` y `106` duplicados —Liquidez contra PayPros y CRM— y ambos aplicados.
+
+No rompe datos, porque cada archivo se corre a mano. Rompe otra cosa: el número
+deja de decir qué corrió primero, que es para lo único que sirve.
+
+- Antes de mergear: `git fetch` y `ls supabase/migration-*.sql | tail -3`.
+- Si el número ya está tomado, **renumerar y avisarlo en el commit**.
+- Las migraciones renumeradas llevan en su primera línea la fecha REAL de
+  aplicación, porque el número ya no la cuenta.
+
 ---
 
 ## 1. La doctrina

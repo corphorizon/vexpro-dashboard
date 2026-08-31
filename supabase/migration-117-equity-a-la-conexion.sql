@@ -1,5 +1,9 @@
+-- APLICADA EL 2026-08-31. El número NO indica el orden real: nació con otro
+-- (105/106/107/108) y se renumeró al chocar con las del equipo, que iban por la
+-- 115. Ver la nota de numeración en docs/reglas-del-proyecto.md §0.
+
 -- ─────────────────────────────────────────────────────────────────────────────
--- migration-105 — El equity que tenía una cuenta EN SU FECHA DE CONEXIÓN.
+-- migration-117 — El equity que tenía una cuenta EN SU FECHA DE CONEXIÓN.
 --
 -- ── QUÉ RESUELVE ────────────────────────────────────────────────────────────
 -- `equity_at_connection` ya existía, pero al dar de alta una cuenta retroactiva
