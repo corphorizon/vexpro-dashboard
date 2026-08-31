@@ -13,14 +13,35 @@
 
 import { blockedReportSections } from '@/lib/business-model';
 import { createAdminClient } from '@/lib/supabase/admin';
+import {
+  REPORT_SECTIONS,
+  REPORT_SECTION_COLUMNS,
+  allSectionsOn,
+  isReportSectionKey,
+  type ReportSections,
+} from './sections';
 
-export interface ReportSections {
-  deposits_withdrawals: boolean;
-  balances_by_channel: boolean;
-  crm_users: boolean;
-  broker_pnl: boolean;
-  prop_trading: boolean;
-}
+/**
+ * Columnas que se piden y se escriben en `report_configs`. Las de las secciones
+ * salen del registro; las de cadencia son fijas. Antes era el MISMO string de 11
+ * columnas copiado en el loader y en el upsert.
+ */
+const CONFIG_COLUMNS = [
+  ...REPORT_SECTION_COLUMNS,
+  'cadence_daily_enabled',
+  'cadence_weekly_enabled',
+  'cadence_monthly_enabled',
+  'cadence_disabled_users',
+  'updated_at',
+  'updated_by',
+].join(', ');
+
+// `ReportSections` y sus defaults salen del registro único
+// (src/lib/reports/sections.ts). Estaban escritos acá, en email-template.ts, en
+// pdf.ts (dos veces), en el panel, en el modal de envío y en dos rutas: siete
+// copias de las mismas cinco claves. Se re-exporta el tipo para no romper a los
+// que ya lo importaban de este módulo.
+export type { ReportSections, ReportSectionKey } from './sections';
 
 export interface ReportCadences {
   daily: boolean;
@@ -54,13 +75,7 @@ export interface ReportConfig {
 }
 
 export const DEFAULT_REPORT_CONFIG: ReportConfig = {
-  sections: {
-    deposits_withdrawals: true,
-    balances_by_channel: true,
-    crm_users: true,
-    broker_pnl: true,
-    prop_trading: true,
-  },
+  sections: allSectionsOn(),
   cadences: {
     daily: true,
     weekly: true,
@@ -71,12 +86,7 @@ export const DEFAULT_REPORT_CONFIG: ReportConfig = {
   updatedBy: null,
 };
 
-type Row = {
-  include_deposits_withdrawals: boolean;
-  include_balances_by_channel: boolean;
-  include_crm_users: boolean;
-  include_broker_pnl: boolean;
-  include_prop_trading: boolean;
+type Row = Record<string, unknown> & {
   cadence_daily_enabled: boolean;
   cadence_weekly_enabled: boolean;
   cadence_monthly_enabled: boolean;
@@ -99,14 +109,14 @@ function normalizeDisabled(raw: unknown): CadenceDisabledUsers {
 }
 
 function rowToConfig(row: Row): ReportConfig {
+  // La columna de cada sección sale del registro: `include_<clave>` ya no se
+  // escribe cinco veces y una columna nueva no exige tocar este mapeo.
+  const sections = {} as ReportSections;
+  for (const def of REPORT_SECTIONS) {
+    sections[def.key] = row[def.column] !== false;
+  }
   return {
-    sections: {
-      deposits_withdrawals: row.include_deposits_withdrawals,
-      balances_by_channel: row.include_balances_by_channel,
-      crm_users: row.include_crm_users,
-      broker_pnl: row.include_broker_pnl,
-      prop_trading: row.include_prop_trading,
-    },
+    sections,
     cadences: {
       daily: row.cadence_daily_enabled,
       weekly: row.cadence_weekly_enabled,
@@ -128,9 +138,7 @@ export async function loadReportConfig(companyId: string): Promise<ReportConfig>
   const [configRes, companyRes] = await Promise.all([
     admin
       .from('report_configs')
-      .select(
-        'include_deposits_withdrawals, include_balances_by_channel, include_crm_users, include_broker_pnl, include_prop_trading, cadence_daily_enabled, cadence_weekly_enabled, cadence_monthly_enabled, cadence_disabled_users, updated_at, updated_by',
-      )
+      .select(CONFIG_COLUMNS)
       .eq('company_id', companyId)
       .maybeSingle(),
     admin.from('companies').select('business_model').eq('id', companyId).maybeSingle(),
@@ -138,7 +146,7 @@ export async function loadReportConfig(companyId: string): Promise<ReportConfig>
 
   const config = configRes.error || !configRes.data
     ? DEFAULT_REPORT_CONFIG
-    : rowToConfig(configRes.data as Row);
+    : rowToConfig(configRes.data as unknown as Row);
 
   // El modelo de negocio manda sobre la configuración: mandarle a una
   // consultora "Depósitos y retiros: $0" todos los días es peor que no
@@ -148,7 +156,7 @@ export async function loadReportConfig(companyId: string): Promise<ReportConfig>
 
   const sections = { ...config.sections };
   for (const key of blocked) {
-    if (key in sections) sections[key as keyof ReportSections] = false;
+    if (isReportSectionKey(key)) sections[key] = false;
   }
   return { ...config, sections };
 }
@@ -168,11 +176,9 @@ export async function saveReportConfig(input: SaveReportConfigInput): Promise<Re
     .upsert(
       {
         company_id: input.companyId,
-        include_deposits_withdrawals: input.sections.deposits_withdrawals,
-        include_balances_by_channel: input.sections.balances_by_channel,
-        include_crm_users: input.sections.crm_users,
-        include_broker_pnl: input.sections.broker_pnl,
-        include_prop_trading: input.sections.prop_trading,
+        ...Object.fromEntries(
+          REPORT_SECTIONS.map((def) => [def.column, input.sections[def.key]]),
+        ),
         cadence_daily_enabled: input.cadences.daily,
         cadence_weekly_enabled: input.cadences.weekly,
         cadence_monthly_enabled: input.cadences.monthly,
@@ -182,12 +188,10 @@ export async function saveReportConfig(input: SaveReportConfigInput): Promise<Re
       },
       { onConflict: 'company_id' },
     )
-    .select(
-      'include_deposits_withdrawals, include_balances_by_channel, include_crm_users, include_broker_pnl, include_prop_trading, cadence_daily_enabled, cadence_weekly_enabled, cadence_monthly_enabled, cadence_disabled_users, updated_at, updated_by',
-    )
+    .select(CONFIG_COLUMNS)
     .single();
   if (error || !data) {
     throw new Error(error?.message ?? 'No se pudo guardar la configuración de reportes');
   }
-  return rowToConfig(data as Row);
+  return rowToConfig(data as unknown as Row);
 }

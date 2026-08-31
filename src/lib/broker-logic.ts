@@ -76,12 +76,23 @@ export function computeDerivedBroker(input: {
 // /balances inflaba retiros sumando ib/prop/other; /movimientos no). Tenerla
 // acá + tests hace IMPOSIBLE que vuelvan a desincronizarse.
 //
-// Decisión final de Kevin (2026-06-06):
-//   · Depósitos totales = API (cb+fp+up, scoped a wallets pinneadas)
-//                       + TODO el manual cargado en /upload (cb+fp+up+otros)
-//   · Retiros totales   = API withdrawals (Coinsbuy payouts, pinned-scoped)
+// Decisión final de Kevin (2026-06-06), con las PUNTAS ACTUALIZADAS
+// (corrección 2026-08-31, auditoría de finanzas — el texto viejo enumeraba
+// «cb+fp+up» en las dos y se había quedado sin Pay-Pros, que entró el
+// 2026-07-22 del lado de los depósitos y el 2026-08-31 del de los retiros;
+// leído literal, hacía creer que faltaba sumarlo cuando ya se suma):
+//   · Depósitos totales = API (Coinsbuy + FairPay + UniPayment + Pay-Pros,
+//                         scoped a wallets pinneadas) + TODO el manual
+//                         cargado en /upload (los mismos canales + otros)
+//   · Retiros totales   = API withdrawals (Coinsbuy payouts pinned-scoped +
+//                         payouts de Pay-Pros, status 'payout_paid')
 //                       + manual Broker (suplemento Coinsbuy que la API no
 //                         alcanzó a reportar)
+//
+// ⚠ NINGUNA de las dos listas se escribe acá ni en ninguna otra parte a mano:
+// los canales salen de `deposit-channels.ts` y `withdrawal-channels.ts`, que
+// son los registros únicos. Este comentario es la única enumeración literal
+// que queda, y precisamente por eso se desincronizó.
 //   · Comisiones IB / Prop Firm / Otros manuales son INFORMATIVAS — el
 //     usuario las carga pero NO se suman al total de retiros.
 //   · Net Deposit = depósitos − retiros

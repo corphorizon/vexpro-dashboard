@@ -6,11 +6,14 @@ import {
   validateEntry,
   isAutoLedger,
   hasLedger,
+  isBalanceReconciliation,
+  API_LEDGER_CHANNELS,
   previousDay,
   signedAmount,
   type LedgerEntry,
   resolveInternalTransfers,
 } from './channel-ledger';
+import { BUILTIN_CHANNELS } from './channel-configs';
 
 // Fábrica mínima: los tests solo miran fecha, tipo, categoría y monto.
 let seq = 0;
@@ -148,8 +151,92 @@ describe('qué canales llevan libro', () => {
   it('marca como automáticos solo a los canales por API', () => {
     expect(isAutoLedger('coinsbuy')).toBe(true);
     expect(isAutoLedger('unipayment')).toBe(true);
-    expect(isAutoLedger('fairpay')).toBe(false);
+    // FairPay entró el 2026-08-31: tenía saldo por API y libro huérfano (una
+    // apertura manual de $0,00 del 05/08 y nada más), y como el libro le gana
+    // al snapshot, la pantalla mostraba $0,00 con $7.163,47 en la cuenta.
+    expect(isAutoLedger('fairpay')).toBe(true);
+    // Pay-Pros faltaba (auditoría 2026-08-31). El cron le escribía el libro
+    // desde el 24/08 —15 asientos source='api' en producción— y a la vez la UI
+    // ofrecía «Nuevo asiento» encima, sobre un libro que
+    // `replace_channel_ledger_day` reescribe cada noche.
+    expect(isAutoLedger('paypros')).toBe(true);
     expect(isAutoLedger('wallet_externa')).toBe(false);
+  });
+
+  it('la lista se DERIVA de BUILTIN_CHANNELS: no hay dos listas que separar', () => {
+    // Es exactamente cómo se coló el bug de Pay-Pros: `type: 'auto'` en
+    // channel-configs.ts y ausente del Set literal de acá.
+    const autoBuiltins = BUILTIN_CHANNELS.filter((c) => c.type === 'auto').map((c) => c.key);
+    for (const key of autoBuiltins) {
+      expect(isAutoLedger(key)).toBe(hasLedger(key));
+    }
+    expect([...API_LEDGER_CHANNELS].sort()).toEqual(
+      ['coinsbuy', 'fairpay', 'paypros', 'unipayment'].sort(),
+    );
+  });
+
+  it('una ubicación on-chain es automática por su naturaleza, no por su clave', () => {
+    // `wallet_externa` y `custom_<uuid>` no pueden estar en el Set: la clave es
+    // distinta en cada empresa. Lo que las vuelve automáticas es tener
+    // direcciones cargadas, y eso lo sabe el caller.
+    expect(isAutoLedger('wallet_externa', { onchain: true })).toBe(true);
+    expect(isAutoLedger('custom_abc', { onchain: true })).toBe(true);
+    expect(isAutoLedger('custom_abc', { onchain: false })).toBe(false);
+  });
+
+  it('un canal automático NO admite asientos manuales, ni siquiera on-chain', () => {
+    const base = {
+      entry_date: '2026-08-31', kind: 'in' as const, concept: 'x', amount: 10,
+    };
+    expect(validateEntry({ ...base, channel_key: 'paypros' })).toMatch(/automática/);
+    expect(validateEntry({ ...base, channel_key: 'wallet_externa' })).toBeNull();
+    expect(
+      validateEntry({ ...base, channel_key: 'wallet_externa' }, { onchain: true }),
+    ).toMatch(/automática/);
+  });
+
+  it('todo canal automático lleva libro — si no, nadie lo escribiría', () => {
+    // Itera el registro en vez de enumerar: agregar un canal automático que
+    // esté en NON_LEDGER_CHANNELS rompe acá, en vez de mostrar un cero mudo.
+    for (const key of API_LEDGER_CHANNELS) {
+      expect(hasLedger(key)).toBe(true);
+    }
+  });
+});
+
+describe('categorías de conciliación', () => {
+  it('trata «variación del saldo» y «ajuste» como la misma aritmética', () => {
+    expect(isBalanceReconciliation('adjustment')).toBe(true);
+    expect(isBalanceReconciliation('balance_delta')).toBe(true);
+    expect(isBalanceReconciliation('deposits')).toBe(false);
+    expect(isBalanceReconciliation('withdrawals')).toBe(false);
+    expect(isBalanceReconciliation('internal')).toBe(false);
+    expect(isBalanceReconciliation(null)).toBe(false);
+  });
+
+  it('la variación del saldo NO cuenta como retiro del negocio', () => {
+    // Es el caso de FairPay: el saldo bajó y no sabemos si fue un retiro, una
+    // liquidación o una comisión. Contarlo como retiro inventaría un retiro.
+    const book = [
+      entry({ entry_date: '2026-08-17', kind: 'opening', amount: 0, category: 'opening' }),
+      entry({ entry_date: '2026-08-17', kind: 'in', amount: 6_747.05, category: 'balance_delta' }),
+      entry({ entry_date: '2026-08-24', kind: 'in', amount: 416.42, category: 'balance_delta' }),
+    ];
+    const totals = computeTotals(book, '2026-08-17', '2026-08-31');
+    expect(totals.outflows).toBe(0);
+    expect(totals.inflows).toBe(0);
+    expect(totals.adjustments).toBeCloseTo(7_163.47, 2);
+    expect(totals.closing).toBeCloseTo(7_163.47, 2);
+    // Y el saldo que mostraría /balances hoy es el de la cuenta real.
+    expect(balanceAsOf(book, '2026-08-31')).toBeCloseTo(7_163.47, 2);
+  });
+
+  it('ordena la variación del saldo al final del día, como el ajuste', () => {
+    const rows = withRunningBalance([
+      entry({ entry_date: '2026-08-02', kind: 'in', amount: 5, category: 'balance_delta' }),
+      entry({ entry_date: '2026-08-02', kind: 'in', amount: 100, category: 'deposits' }),
+    ]);
+    expect(rows.map((r) => r.category)).toEqual(['deposits', 'balance_delta']);
   });
 });
 

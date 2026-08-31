@@ -44,6 +44,22 @@
 //
 // When credentials are missing, falls back to mock data with the full field
 // set so the UI can still be exercised.
+//
+// ── `currency` ES EL RAIL, NO LA MONEDA DEL IMPORTE (medido 2026-08-31) ─────
+// Esto ya hizo perder medio día, así que queda escrito: una fila puede decir
+// `currency: 'COP'` y su `amount` está en DÓLARES. El importe sale de
+// `amount_usd`; `currency` es sólo el medio de pago local con el que el cliente
+// pagó (COP, MXN, CLP, CRC, PEN, BRL). Leído al revés, las 204 filas Completed
+// en COP —$41.216,60, mediana $94,80— parecen pesos colombianos y la fila
+// entera parece inflada ~$60.450 sobre los $70.250,60 del total.
+//
+// El control que lo cierra: 1.142 de las 1.225 filas cruzan contra
+// `crm_deposits` por `raw->>'depositId'`, y en 694 el importe guardado es
+// exactamente `deposit_value × 1,04`. Si fuera moneda local, el ratio sería
+// ~4.000. Ver `supabase/script-fairpay-usd-conciliacion.sql` para el informe
+// completo y para lo que sí está mal: ese 4% es un recargo que el cliente paga
+// y que NUNCA se le acredita (lo acreditado es `crm_deposits.amount_paid`), y
+// son $2.994,83 de más sobre toda la serie.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getFairpayToken, getFairpayBaseUrl, getFairpayFeePct, isFairpayEnabled } from './auth';

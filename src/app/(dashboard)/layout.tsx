@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Sidebar } from '@/components/sidebar';
 import { CompanyLogo } from '@/components/company-logo';
+import { TruncatedDataBanner } from '@/components/truncated-data-banner';
 import { ViewingAsBanner } from '@/components/viewing-as-banner';
 import { ModuleRouteGuard } from '@/components/module-route-guard';
 import { NotificationBell } from '@/components/notifications/notification-bell';
@@ -124,6 +125,10 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           cientos de píxeles en blanco bajo la barra lateral. */}
       <main className="relative flex-1 min-w-0 overflow-auto pt-14 lg:pt-0 transition-[width,padding] duration-200">
         <ViewingAsBanner />
+        {/* Un total corto y creíble es peor que un error: si /api/bootstrap
+            recortó algún slice por su techo de filas, hay que decirlo donde
+            sea que se mire el número (§1.2). */}
+        <TruncatedDataBanner />
         <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
           <ErrorBoundary>
             <ModuleRouteGuard>{children}</ModuleRouteGuard>

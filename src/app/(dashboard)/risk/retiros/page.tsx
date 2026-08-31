@@ -675,6 +675,24 @@ export default function RevisionRetirosPage() {
                   ),
                 },
                 {
+                  header: t('wdReview.colScore'),
+                  align: 'right',
+                  accessor: (r) =>
+                    r.score !== null && r.scoreBand !== null ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="tabular-nums font-semibold">{r.score}</span>
+                        <Badge variant={BAND_VARIANT[r.scoreBand]}>
+                          {t(`wdReview.band.${r.scoreBand}`)}
+                        </Badge>
+                      </span>
+                    ) : (
+                      /* null = nunca pasó por revisión acá; no es un score 0. */
+                      <span className="text-xs text-muted-foreground">
+                        {t('wdReview.noScore')}
+                      </span>
+                    ),
+                },
+                {
                   header: t('wdReview.colFinalStatus'),
                   accessor: (r) => (
                     <div className="flex items-center gap-2">

@@ -1,4 +1,23 @@
 // ─────────────────────────────────────────────────────────────────────────────
+// ⚠ DEPRECADO (2026-08-31, auditoría de finanzas) — CAMINO MUERTO
+//
+// Este endpoint REST de Orion NO EXISTE para ningún inquilino: `api_credentials`
+// no tiene una sola fila `provider='orion_crm'`. Sin credencial, la función cae
+// a su generador de datos falsos, y eso alimentaba la sección «Prop Trading
+// Firm» del informe —incluida la tabla «Productos vendidos»— con datos
+// inventados bajo un título real.
+//
+// El informe ya NO lo usa: sale de `crm_monthly_totals`, métricas
+// `propfirm_sales` y `propfirm_withdrawals` (src/lib/reports/crm-mirror.ts).
+// Agosto 2026: ventas $11.981,70 · retiros $2.819,04.
+//
+// Queda en el repo porque `integrations-sync.ts` todavía lo llama, y ahí está
+// guardado detrás de `isOrionCrmConfigured()`, así que hoy nunca se ejecuta. Se
+// borra el día que se confirme que ningún inquilino va a configurar el REST.
+// NO agregar consumidores nuevos: la fuente correcta es el espejo.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Orion CRM — Prop Trading Firm metrics for a range + month context.
 //
 // Feeds the "Prop Trading Firm" section of /finanzas/reportes with:

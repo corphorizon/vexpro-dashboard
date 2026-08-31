@@ -21,7 +21,20 @@ import type { UnipaymentDepositTx, ProviderDataset } from '../types';
 
 const PROVIDER = 'unipayment' as const;
 const PAGE_SIZE = 100;
-const MAX_PAGES = 50; // 4740 invoices ÷ 100 = 48 pages
+// ── POR QUÉ el corte por fecha y el 429 parcial (2026-08-31) ────────────────
+// El espejo quedó CONGELADO desde el 2026-08-08 sin un solo error visible:
+// UniPayment limita a 30 llamadas/min y este loop paginaba TODO el histórico
+// (3.641 Complete = 37 páginas) en cada corrida. Al crecer las facturas y
+// cruzar ~30 páginas, cada corrida moría en 429 a mitad de camino y el throw
+// descartaba TODO lo acumulado — el CRM registró $140.963 de agosto que acá
+// no existían ($32.510). Tres defensas:
+//   1. La API devuelve newest-first: cuando la página ya quedó entera por
+//      debajo de `from`, no hay nada más que buscar → corte.
+//   2. Un 429 a mitad de corrida devuelve lo YA recolectado (las páginas más
+//      nuevas, que son las que el sync necesita) con status 'stale' y el
+//      mensaje — parcial honesto en vez de nada silencioso.
+//   3. 300ms entre páginas: ≤30 páginas quedan bajo la cuota del minuto.
+const MAX_PAGES = 50; // backstop absoluto; el corte por fecha manda
 
 // ── API response shapes ─────────────────────────────────────────────────────
 
@@ -141,7 +154,9 @@ export async function fetchUnipaymentDepositsV2(
 
       const url = `${baseUrl}/v1.0/invoices?${params.toString()}`;
 
-      const response: InvoicesResponse = await withRetry(async () => {
+      let response: InvoicesResponse;
+      try {
+        response = await withRetry(async () => {
         const res = await proxiedFetch(url, {
           headers: {
             Authorization: `Bearer ${token}`,
@@ -159,10 +174,37 @@ export async function fetchUnipaymentDepositsV2(
           );
         }
 
-        return res.json() as Promise<InvoicesResponse>;
-      }, { maxAttempts: 2 });
+          return res.json() as Promise<InvoicesResponse>;
+        }, { maxAttempts: 2 });
+      } catch (pageErr) {
+        // Parcial honesto: las páginas ya leídas son las MÁS NUEVAS (la API
+        // ordena newest-first), que son exactamente las que el sync necesita.
+        // Descartarlas porque la página vieja N falló es cómo el espejo quedó
+        // 23 días congelado. Se devuelve lo recolectado con status 'stale' y
+        // el motivo — el consumidor decide, pero con dato.
+        if (allTransactions.length > 0) {
+          const msg = pageErr instanceof Error ? pageErr.message : String(pageErr);
+          return {
+            slug: 'unipayment',
+            provider: PROVIDER,
+            kind: 'deposits',
+            transactions: allTransactions,
+            fetchedAt: now,
+            status: 'stale',
+            isMock: false,
+            errorMessage: `parcial: página ${pageNo}/${totalPages} falló (${msg.slice(0, 140)})`,
+          };
+        }
+        throw pageErr;
+      }
 
       const models = response.data?.models ?? [];
+
+      // Corte por ventana: newest-first ⇒ si TODA la página es anterior a
+      // `from`, las siguientes lo serán también.
+      let paginaEnteraViejísima = options.from
+        ? models.length > 0 && models.every((m) => (m.create_time ?? '') < `${options.from}T00:00:00`)
+        : false;
 
       for (const inv of models) {
         const grossAmount = Number(inv.price_amount ?? 0);
@@ -227,6 +269,10 @@ export async function fetchUnipaymentDepositsV2(
 
       totalPages = response.data?.page_count ?? 1;
       pageNo++;
+      if (paginaEnteraViejísima) break;
+      if (pageNo <= totalPages && pageNo <= MAX_PAGES) {
+        await new Promise((r) => setTimeout(r, 300));
+      }
     } while (pageNo <= totalPages && pageNo <= MAX_PAGES);
 
     return {

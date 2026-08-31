@@ -25,7 +25,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { verifyAdminAuth, verifySuperadminAuth } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { buildReportData } from '@/lib/reports/data';
+import { buildReportData, referenceDateFor } from '@/lib/reports/data';
 import {
   renderReportEmail,
   renderReportEmailText,
@@ -33,6 +33,7 @@ import {
   type ReportCadence,
 } from '@/lib/reports/email-template';
 import { sendEmail } from '@/services/emailService';
+import { parseReportSections } from '@/lib/reports/sections';
 import { loadReportConfig } from '@/lib/reports/config';
 import { blockedReportSections } from '@/lib/business-model';
 import { resolveUserLocale, type EmailLocale } from '@/lib/email-i18n';
@@ -154,37 +155,12 @@ export async function POST(request: NextRequest) {
 
   // Sections: use explicit override from body, else fall back to stored config.
   const storedCfg = await loadReportConfig(companyId);
-  const sectionsBody = body.sections as
-    | {
-        deposits_withdrawals?: unknown;
-        balances_by_channel?: unknown;
-        crm_users?: unknown;
-        broker_pnl?: unknown;
-        prop_trading?: unknown;
-      }
-    | undefined;
-  const sections = {
-    deposits_withdrawals:
-      typeof sectionsBody?.deposits_withdrawals === 'boolean'
-        ? sectionsBody.deposits_withdrawals
-        : storedCfg.sections.deposits_withdrawals,
-    balances_by_channel:
-      typeof sectionsBody?.balances_by_channel === 'boolean'
-        ? sectionsBody.balances_by_channel
-        : storedCfg.sections.balances_by_channel,
-    crm_users:
-      typeof sectionsBody?.crm_users === 'boolean'
-        ? sectionsBody.crm_users
-        : storedCfg.sections.crm_users,
-    broker_pnl:
-      typeof sectionsBody?.broker_pnl === 'boolean'
-        ? sectionsBody.broker_pnl
-        : storedCfg.sections.broker_pnl,
-    prop_trading:
-      typeof sectionsBody?.prop_trading === 'boolean'
-        ? sectionsBody.prop_trading
-        : storedCfg.sections.prop_trading,
-  };
+  // Cada clave se toma sólo si vino como booleano; si no, manda lo guardado.
+  // Eran CINCO bloques ternarios copiados, y una sección nueva se olvidaba en
+  // silencio: salía siempre con el valor guardado aunque el usuario la hubiera
+  // destildado en el modal. Ahora la lista sale del registro
+  // (src/lib/reports/sections.ts) — 2026-08-31, ítem 15.
+  const sections = parseReportSections(body.sections, storedCfg.sections);
 
   // Look up company name / logo / modelo de negocio for the email header.
   const { data: company } = await admin
@@ -208,7 +184,9 @@ export async function POST(request: NextRequest) {
   // Build data once, then render lazily per recipient locale ('en' when the
   // recipient has no configured preference) — one render per language, not
   // per recipient.
-  const data = await buildReportData(companyId, from, to);
+  // El mes de contexto es el del último día informado, no el de hoy: un envío
+  // manual de «el mes pasado» hecho hoy tiene que comparar contra ese mes.
+  const data = await buildReportData(companyId, from, to, referenceDateFor(to));
   const rendered = new Map<EmailLocale, { html: string; text: string; subject: string }>();
   const renderFor = (locale: EmailLocale) => {
     const cached = rendered.get(locale);

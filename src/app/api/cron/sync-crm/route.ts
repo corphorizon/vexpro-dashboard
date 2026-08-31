@@ -14,6 +14,8 @@
 // Disparo manual (siempre con el secreto):
 //   ?company_id=<uuid>  → una sola empresa
 //   ?full=1             → ignora el cursor y recorre el histórico entero
+//   ?pnl_from=&pnl_to=  → backfill del cierre diario de PNL para ese rango
+//                         (`YYYY-MM-DD`, UTC, inclusive)
 //
 // Horario: 00:20 UTC (vercel.json). Elegido para no pisar a nadie —
 // 23:55/05:55/11:55/17:55 sync-external-apis, 00:00 balances, 00:05 reportes,
@@ -28,11 +30,22 @@ import {
   syncPayprosDepositsFromCrm,
   type PayprosFromCrmResult,
 } from '@/lib/api-integrations/paypros/deposits-from-crm';
+import {
+  syncPayprosWithdrawalsFromCrm,
+  type PayprosWithdrawalsFromCrmResult,
+} from '@/lib/api-integrations/paypros/withdrawals-from-crm';
 import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
 import { syncExposure, type ExposureResult } from '@/lib/mt5-sync/exposure';
 import { syncWalletSources, type WalletSourcesResult } from '@/lib/crm-sync/wallet-sources';
 import { syncIbProduction, type IbProductionResult } from '@/lib/crm-sync/ib-production';
 import { syncCrmMonthlyTotals, type CrmMonthlyTotalsResult } from '@/lib/crm-sync/monthly-totals';
+import {
+  syncCrmDailyPnl,
+  defaultWindow,
+  CRM_PNL_WINDOW_FAST_DAYS,
+  CRM_PNL_WINDOW_FULL_DAYS,
+  type CrmDailyPnlSyncResult,
+} from '@/lib/crm-sync/daily-pnl-sync';
 import { syncTradingAccounts, type TradingAccountsResult } from '@/lib/crm-sync/trading-accounts';
 import { syncTradingBehavior, type BehaviorResult } from '@/lib/mt5-sync/behavior';
 import { syncAllOrionUsers, type AllUsersResult } from '@/lib/crm-sync/all-users';
@@ -270,6 +283,17 @@ export async function GET(request: NextRequest) {
   const onlyCompanyId = url.searchParams.get('company_id');
   const full = url.searchParams.get('full') === '1';
 
+  // Rango manual para el backfill del cierre diario de PNL. Sólo se acepta
+  // `YYYY-MM-DD` exacto: una fecha a medias iría a Mongo como texto y ahí un
+  // filtro que no matchea devuelve CERO documentos sin dar error, que es
+  // indistinguible de "ese mes no operó nadie".
+  const fecha = (k: string) => {
+    const v = url.searchParams.get(k);
+    return v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  };
+  const pnlFrom = fecha('pnl_from');
+  const pnlTo = fecha('pnl_to');
+
   // ── DOS MODOS ────────────────────────────────────────────────────────────
   // RÁPIDO (cada 15 min, el default): espeja los movimientos del CRM y
   // recalcula los agregados SÓLO de quien movió dinero. Es lo que necesita el
@@ -300,11 +324,13 @@ export async function GET(request: NextRequest) {
     const results: (CrmSyncResult & {
       companyName: string | null;
       paypros?: PayprosFromCrmResult | null;
+      payprosWithdrawals?: PayprosWithdrawalsFromCrmResult | null;
       mt5?: Mt5SyncResult | null;
       exposure?: ExposureResult | null;
       walletSources?: WalletSourcesResult | null;
       ibProduction?: IbProductionResult | null;
       tradingAccounts?: TradingAccountsResult | null;
+      dailyPnl?: CrmDailyPnlSyncResult | null;
       behavior?: BehaviorResult | null;
       allUsers?: AllUsersResult | null;
       aggregates?: AggregatesResult | null;
@@ -330,6 +356,29 @@ export async function GET(request: NextRequest) {
           }
         } catch (err) {
           payprosErrors.push(`paypros: ${err instanceof Error ? err.message : 'unknown'}`);
+        }
+
+        // Los RETIROS de Pay-Pros (Kevin, 2026-08-31). Misma fuente y mismo
+        // motivo que los depósitos de arriba: el webhook nunca recibió un
+        // evento, y el espejo del CRM sí los tiene (al 2026-08-31: 6 aprobados
+        // por US$ 2.617,62, processor 'PAYPROS_SPEI').
+        //
+        // En su PROPIO try/catch, y no dentro del de arriba, a propósito: si
+        // los depósitos fallan, los retiros igual se asientan. Juntarlos haría
+        // que un error en una punta dejara la otra sin actualizar y el canal
+        // quedaría con entradas y sin salidas — un Net Deposit inflado, que es
+        // peor que no tener ninguno de los dos.
+        let payprosWithdrawals: PayprosWithdrawalsFromCrmResult | null = null;
+        try {
+          payprosWithdrawals = await syncPayprosWithdrawalsFromCrm(admin, company.id);
+          if (payprosWithdrawals.warnings.length > 0) {
+            console.warn(
+              `[cron/sync-crm] paypros-retiros ${company.id}:`,
+              payprosWithdrawals.warnings.join(' | '),
+            );
+          }
+        } catch (err) {
+          payprosErrors.push(`paypros-retiros: ${err instanceof Error ? err.message : 'unknown'}`);
         }
 
         // ── Actividad de trading (MT5) ────────────────────────────────────
@@ -409,6 +458,47 @@ export async function GET(request: NextRequest) {
           if (!/no configurad|not configured|sin credencial/i.test(msg)) {
             expErrors.push(`exposicion: ${msg}`);
           }
+        }
+
+        // ── El cierre diario de PNL, tal como lo da el CRM ────────────────
+        // Va en TODAS las corridas, incluida la rápida, y con una VENTANA de
+        // días en vez de un día. Las dos decisiones tienen la misma causa: el
+        // job de Orion que llena `pnl_daily` va media hora detrás del reloj
+        // (medido el 2026-08-31: lastRunAt 07:00:04, lastWindowTo 06:30:03),
+        // así que el cierre de un día termina de asentarse DESPUÉS de la
+        // medianoche. Reescribir hoy y ayer cada 15 minutos deja el día en
+        // curso en vivo y cierra el anterior solo; la corrida completa mira
+        // siete días y así tapa el hueco de una corrida que falló y recoge lo
+        // que Orion cambió hacia atrás (purga documentos de cuentas
+        // bloqueadas a `pnl_daily_purged`).
+        //
+        // Cuesta poco y por eso puede ir en la corrida rápida: medido contra
+        // producción el 2026-08-31, la ventana de 2 días son 1.933 documentos
+        // y 1.210 cuentas en 2.176 ms; la de 7 días queda por debajo de 2,7 s.
+        // Al lado de los ~8 s que ya paga la exposición en la misma corrida,
+        // no mueve la aguja.
+        //
+        // Se puede pedir un rango a mano para el backfill histórico:
+        //   ?pnl_from=2025-10-01&pnl_to=2026-08-31
+        // La serie empieza el 2025-10-02 y el histórico ENTERO (212.929
+        // documentos, 331 días) tarda 6.897 ms: entra en una sola llamada
+        // dentro de los 300 s de esta ruta, sin paginar.
+        //
+        // Aislado como los demás: si Orion no responde, el espejo del CRM ya
+        // quedó bien y la revisión de retiros sigue funcionando.
+        let dailyPnl: CrmDailyPnlSyncResult | null = null;
+        const pnlErrors: string[] = [];
+        try {
+          const ventana =
+            pnlFrom && pnlTo
+              ? { from: pnlFrom, to: pnlTo }
+              : defaultWindow(modoCompleto ? CRM_PNL_WINDOW_FULL_DAYS : CRM_PNL_WINDOW_FAST_DAYS);
+          dailyPnl = await syncCrmDailyPnl(admin, company.id, ventana);
+          for (const w of dailyPnl.warnings) {
+            console.warn(`[cron/sync-crm] pnl diario ${company.id}: ${w}`);
+          }
+        } catch (err) {
+          pnlErrors.push(`pnl diario: ${err instanceof Error ? err.message : 'unknown'}`);
         }
 
         // ── Origen del dinero y comportamiento de trading ─────────────────
@@ -504,6 +594,7 @@ export async function GET(request: NextRequest) {
           ...res,
           companyName: company.name,
           paypros,
+          payprosWithdrawals,
           mt5,
           exposure,
           walletSources,
@@ -511,11 +602,12 @@ export async function GET(request: NextRequest) {
           ibProduction,
           behavior,
           tradingAccounts,
+          dailyPnl,
           allUsers,
           aggregates,
           errors: [
             ...res.errors, ...payprosErrors, ...mt5Errors,
-            ...orionErrors, ...expErrors, ...extraErrors,
+            ...orionErrors, ...expErrors, ...pnlErrors, ...extraErrors,
           ],
         });
       } catch (err) {

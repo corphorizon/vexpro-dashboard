@@ -96,10 +96,31 @@ export default function PeríodosPage() {
 
   const [closeTarget, setCloseTarget] = useState<{ id: string; label: string; statusLabel: string } | null>(null);
   const [checklist, setChecklist] = useState<{
-    items: Array<{ key: string; label: string; count: number; detail: string | null }>;
+    items: Array<{
+      key: string;
+      /** Clave i18n (registro único en src/lib/period-close-checklist.ts). */
+      labelKey?: string;
+      /** Respaldo en castellano para un cliente/servidor viejo. */
+      label?: string;
+      count: number;
+      detail: string | null;
+      severity?: 'warning' | 'blocking';
+    }>;
     clean: boolean;
+    /** true → la RPC va a rechazar el cierre (orden cronológico). */
+    blocked?: boolean;
     failed?: boolean;
   } | null>(null);
+
+  /** Etiqueta traducida del ítem, con el respaldo del servidor si la clave
+   *  todavía no está en i18n. Nunca se muestra la clave cruda. */
+  const itemLabel = (i: { labelKey?: string; label?: string; key: string }) => {
+    if (i.labelKey) {
+      const translated = t(i.labelKey);
+      if (translated !== i.labelKey) return translated;
+    }
+    return i.label ?? i.key;
+  };
   const [closing, setClosing] = useState(false);
 
   const confirmClose = async () => {
@@ -166,8 +187,13 @@ export default function PeríodosPage() {
     void apiFetch(`/api/admin/period-close-checklist?period_id=${id}`)
       .then((r) => r.json())
       .then((json) => {
-        if (json.success) setChecklist({ items: json.items ?? [], clean: !!json.clean });
-        else setChecklist({ items: [], clean: true, failed: true });
+        if (json.success) {
+          setChecklist({
+            items: json.items ?? [],
+            clean: !!json.clean,
+            blocked: !!json.blocked,
+          });
+        } else setChecklist({ items: [], clean: true, failed: true });
       })
       // Si el checklist falla, se puede cerrar igual: es un asistente, no
       // una barrera nueva.
@@ -352,16 +378,35 @@ export default function PeríodosPage() {
                 </p>
               ) : (
                 <ul className="space-y-2">
-                  {checklist.items.filter((i) => i.count > 0).map((i) => (
-                    <li key={i.key} className="rounded-lg border border-warning/30 bg-warning/10 p-3 text-sm">
-                      <p className="font-medium">
-                        {i.count} · {i.label}
-                      </p>
-                      {i.detail && (
-                        <p className="text-xs text-muted-foreground mt-1 break-words">{i.detail}</p>
-                      )}
-                    </li>
-                  ))}
+                  {checklist.items.filter((i) => i.count > 0).map((i) => {
+                    // Un bloqueante no es una advertencia más: la cadena de
+                    // distribución es secuencial y la RPC va a rechazar el
+                    // cierre igual (migración 111). Se pinta distinto para que
+                    // no se lea como "otro pendiente que puedo ignorar".
+                    const blocking = i.severity === 'blocking';
+                    return (
+                      <li
+                        key={i.key}
+                        className={`rounded-lg border p-3 text-sm ${
+                          blocking
+                            ? 'border-negative/40 bg-negative/10'
+                            : 'border-warning/30 bg-warning/10'
+                        }`}
+                      >
+                        <p className="font-medium">
+                          {i.count} · {itemLabel(i)}
+                          {blocking && (
+                            <span className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-negative/15 text-negative border border-negative/30">
+                              {t('periods.blocking')}
+                            </span>
+                          )}
+                        </p>
+                        {i.detail && (
+                          <p className="text-xs text-muted-foreground mt-1 break-words">{i.detail}</p>
+                        )}
+                      </li>
+                    );
+                  })}
                 </ul>
               )
             )}
@@ -375,14 +420,19 @@ export default function PeríodosPage() {
               </button>
               <button
                 onClick={confirmClose}
-                disabled={closing || !checklist}
+                // Con un bloqueante, el botón se apaga: la RPC lo rechazaría
+                // igual y "Cerrar de todos modos" prometería algo que no pasa.
+                disabled={closing || !checklist || !!checklist.blocked}
+                title={checklist?.blocked ? t('periods.blockedHint') : undefined}
                 className="px-4 py-2 rounded-lg bg-negative text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
                 {closing
                   ? 'Cerrando…'
-                  : checklist && !checklist.clean
-                    ? 'Cerrar de todos modos'
-                    : 'Cerrar período'}
+                  : checklist?.blocked
+                    ? t('periods.cannotClose')
+                    : checklist && !checklist.clean
+                      ? 'Cerrar de todos modos'
+                      : 'Cerrar período'}
               </button>
             </div>
           </div>

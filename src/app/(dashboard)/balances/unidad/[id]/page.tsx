@@ -90,6 +90,8 @@ export default function BusinessUnitLedgerPage() {
   /** Parte de cada ubicación que le corresponde a esta unidad (1 = exclusiva). */
   const [shares, setShares] = useState<Record<string, number>>({});
   const [labels, setLabels] = useState<Record<string, string>>({});
+  /** Ubicaciones con direcciones on-chain: su libro también lo escribe el cron. */
+  const [onchainKeys, setOnchainKeys] = useState<ReadonlySet<string>>(new Set());
   const [unit, setUnit] = useState<BusinessUnit | null>(null);
   const [unitMissing, setUnitMissing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -126,6 +128,17 @@ export default function BusinessUnitLedgerPage() {
         const map: Record<string, string> = {};
         for (const ch of resolveChannels(json.rows ?? [])) map[ch.key] = ch.label;
         setLabels(map);
+        // Una ubicación con direcciones cargadas lleva libro automático aunque
+        // su clave sea `wallet_externa` o `custom_<uuid>`: el cron la asienta
+        // contra el saldo de la cadena. Ofrecerla para un asiento a mano era
+        // ofrecer algo que el endpoint rechaza.
+        setOnchainKeys(
+          new Set(
+            (json.rows ?? [])
+              .filter((r) => (r.onchain_wallets?.length ?? 0) > 0)
+              .map((r) => r.channel_key),
+          ),
+        );
       })
       .catch(() => {
         /* el channel_key crudo alcanza como fallback */
@@ -234,9 +247,9 @@ export default function BusinessUnitLedgerPage() {
   const manualLocations = useMemo(
     () =>
       perLocation
-        .filter((l) => hasLedger(l.key) && !isAutoLedger(l.key))
+        .filter((l) => hasLedger(l.key) && !isAutoLedger(l.key, { onchain: onchainKeys.has(l.key) }))
         .map((l) => ({ key: l.key, label: l.label, balance: l.balance })),
-    [perLocation],
+    [perLocation, onchainKeys],
   );
 
   const handleAddEntry = () => {
@@ -468,6 +481,12 @@ export default function BusinessUnitLedgerPage() {
                   const autoLabel = autoCategoryLabel(row.category, lang);
                   const isAdjustment = row.category === AUTO_CATEGORIES.adjustment;
                   const isInternal = row.category === AUTO_CATEGORIES.internal;
+                  // Ver la nota gemela en balances/libro/[channel]: la
+                  // variación del saldo comparte aritmética con el ajuste pero
+                  // no su explicación. Hoy esta pantalla solo lista canales sin
+                  // libro automático, así que no debería aparecer — está por si
+                  // esa condición cambia, no para tapar un caso conocido.
+                  const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                   return (
                     <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
@@ -491,11 +510,13 @@ export default function BusinessUnitLedgerPage() {
                       </td>
                       <td className="px-4 py-3">
                         <div className="font-medium">{autoLabel ?? row.concept}</div>
-                        {(isAdjustment || isInternal) && (
+                        {(isAdjustment || isInternal || isBalanceDelta) && (
                           <div className="text-xs text-muted-foreground mt-0.5 max-w-md">
-                            {isAdjustment
-                              ? t('unitLedger.adjustmentHint')
-                              : t('unitLedger.internalHint')}
+                            {isBalanceDelta
+                              ? t('ledger.balanceDeltaHint')
+                              : isAdjustment
+                                ? t('unitLedger.adjustmentHint')
+                                : t('unitLedger.internalHint')}
                           </div>
                         )}
                       </td>

@@ -27,51 +27,32 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchPinnedWallets } from '@/lib/pinned-wallets';
 import { resolveChannels, type ChannelConfigRow, type ResolvedChannel } from '@/lib/channel-configs';
-import { hasLedger } from '@/lib/channel-ledger';
 import { fetchCoinsbuyWallets } from '@/lib/api-integrations/coinsbuy/wallets';
 import { fetchUnipaymentBalances } from '@/lib/api-integrations/unipayment/balances';
 
-/**
- * De dónde salió el número de la fila.
- *   · `ledger`   — saldo corrido del libro por canal (la fuente preferida).
- *   · `live`     — snapshot que acaba de escribir la API del proveedor.
- *   · `snapshot` — último snapshot diario dentro de la ventana de 30 días.
- *   · `computed` — reconstruido desde su propio módulo (liquidez/inversiones).
- *   · `missing`  — NO hay dato. El amount es 0 pero no significa "cuenta vacía".
- */
-export type ReportChannelSource = 'live' | 'snapshot' | 'computed' | 'ledger' | 'missing';
+// La regla de «de dónde sale el saldo de un canal» vive en un módulo PURO
+// (src/lib/channel-balance-source.ts) para que la pantalla /balances pueda
+// usar exactamente la misma sin arrastrarse el cliente service-role al bundle.
+// Se RE-EXPORTA desde acá porque este archivo era su casa histórica y varios
+// módulos la importan por este camino.
+export {
+  COINSBUY_RECONCILE_KEY,
+  expandCoinsbuyRows,
+  pickChannelAmount,
+  isStaleBalance,
+  balanceAgeInDays,
+  STALE_BALANCE_DAYS,
+} from '@/lib/channel-balance-source';
+export type {
+  ReportChannelSource,
+  ReportChannelBalanceRow,
+} from '@/lib/channel-balance-source';
 
-export interface ReportChannelBalanceRow {
-  key: string;
-  label: string;
-  type: 'api' | 'manual' | 'auto';
-  amount: number;
-  source: ReportChannelSource;
-  isCustom: boolean;
-}
-
-/**
- * Elige el saldo de un canal entre las dos fuentes, con la MISMA prioridad que
- * `getChannelValue` en /balances. Pura a propósito: es la regla que la
- * auditoría encontró divergente, así que tiene que poder testearse sin
- * Supabase de por medio.
- */
-export function pickChannelAmount(params: {
-  channelKey: string;
-  /** Saldo del libro al cierre de `asOf`, o undefined si el canal no tiene. */
-  ledgerBalance?: number;
-  /** Último snapshot dentro de la ventana, o undefined si no hay. */
-  snapshot?: { amount: number; source: string };
-}): { amount: number; source: ReportChannelSource } {
-  const { channelKey, ledgerBalance, snapshot } = params;
-  if (hasLedger(channelKey) && ledgerBalance !== undefined && Number.isFinite(ledgerBalance)) {
-    return { amount: ledgerBalance, source: 'ledger' };
-  }
-  if (snapshot) {
-    return { amount: snapshot.amount, source: snapshot.source === 'api' ? 'live' : 'snapshot' };
-  }
-  return { amount: 0, source: 'missing' };
-}
+import {
+  expandCoinsbuyRows,
+  pickChannelAmount,
+  type ReportChannelBalanceRow,
+} from '@/lib/channel-balance-source';
 
 export interface ReportBalancesByChannel {
   channels: ReportChannelBalanceRow[];
@@ -281,25 +262,20 @@ export async function buildBalancesByChannel(
         continue;
       }
       if (ch.key === 'coinsbuy' && pinnedWallets.length > 0) {
-        // Expand into one row per pinned wallet.
-        for (const pw of pinnedWallets) {
-          const key = `coinsbuy:${pw.wallet_id}`;
-          const picked = pickChannelAmount({
-            channelKey: key,
-            ledgerBalance: ledgerByKey.get(key),
-            snapshot: latestSnap.get(key),
-          });
-          channels.push({
-            key,
-            // Brand the rows so a reader can tell they're Coinsbuy wallets
-            // without needing additional context.
-            label: `Coinsbuy · ${pw.wallet_label}`,
-            type: 'api',
-            amount: picked.amount,
-            source: picked.source,
-            isCustom: false,
-          });
-        }
+        // El total del canal sale de la clave AGREGADA (la única que el libro
+        // conoce); las wallets son el desglose. Ver `expandCoinsbuyRows`.
+        const aggregate = pickChannelAmount({
+          channelKey: 'coinsbuy',
+          ledgerBalance: ledgerByKey.get('coinsbuy'),
+          snapshot: latestSnap.get('coinsbuy'),
+        });
+        channels.push(
+          ...expandCoinsbuyRows({
+            aggregate,
+            pinnedWallets,
+            snapshotByKey: latestSnap,
+          }),
+        );
         continue;
       }
       const picked = pickChannelAmount({

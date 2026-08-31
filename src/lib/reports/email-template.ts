@@ -27,6 +27,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { BRAND_HEX } from '@/lib/brand';
+import { allSectionsOn, type ReportSections } from './sections';
 import type { ReportData } from './data';
 import { formatCurrency } from '@/lib/utils';
 import type { EmailLocale } from '@/lib/email-i18n';
@@ -58,12 +59,14 @@ const CHANNEL_LABEL: Record<EmailLocale, Record<string, string>> = {
     coinsbuy: 'Coinsbuy',
     fairpay: 'FairPay',
     unipayment: 'UniPayment',
+    paypros: 'Pay-Pros',
     other: 'Otros',
   },
   en: {
     coinsbuy: 'Coinsbuy',
     fairpay: 'FairPay',
     unipayment: 'UniPayment',
+    paypros: 'Pay-Pros',
     other: 'Other',
   },
 };
@@ -75,6 +78,7 @@ const CATEGORY_LABEL: Record<EmailLocale, Record<string, string>> = {
     other: 'Otros',
     p2p: 'P2P Transfer',
     coinsbuy_api: 'Coinsbuy (API)',
+    paypros_api: 'Pay-Pros (API)',
   },
   en: {
     ib_commissions: 'IB Commissions',
@@ -83,6 +87,7 @@ const CATEGORY_LABEL: Record<EmailLocale, Record<string, string>> = {
     other: 'Other',
     p2p: 'P2P Transfer',
     coinsbuy_api: 'Coinsbuy (API)',
+    paypros_api: 'Pay-Pros (API)',
   },
 };
 
@@ -99,6 +104,9 @@ const L: Record<EmailLocale, Record<string, string>> = {
     titleWeekly: 'Reporte Financiero Semanal',
     titleMonthly: 'Reporte Financiero Mensual',
     noDataInPeriod: 'Sin datos en el período',
+    sectionNotConnected: 'Sin datos: esta sección no tiene fuente conectada.',
+    productsNoBreakdown:
+      'Sin desglose disponible: el CRM guarda el total del mes, no qué producto se vendió.',
     balancesTitle: 'Balances por Canal',
     asOf: 'Al {date}',
     typeApi: 'API',
@@ -129,6 +137,16 @@ const L: Record<EmailLocale, Record<string, string>> = {
     pnlPrevMonth: 'P&L mes anterior',
     pnlRange: 'P&L del rango',
     variationVsPrev: 'Variación vs mes anterior',
+    crmPnlDay: 'P&L del día (CRM)',
+    crmPnlPeriod: 'P&L del período (CRM)',
+    crmPnlVolume: 'Volumen (lotes)',
+    crmPnlDeals: 'Operaciones',
+    crmPnlDays: 'sobre {days} día(s) con dato',
+    crmPnlNoData: 'sin dato',
+    crmPnlSource: 'Cierre diario tomado del CRM. Las cuentas Cent ya están convertidas a dólares.',
+    crmPnlMissing: 'faltan {n} día(s) en el período: {days}',
+    textCrmPnlDay: 'P&L del día (CRM)',
+    textCrmPnlPeriod: 'P&L del período (CRM)',
     propTradingTitle: 'Prop Trading Firm',
     productsSold: 'Productos vendidos',
     product: 'Producto',
@@ -140,6 +158,8 @@ const L: Record<EmailLocale, Record<string, string>> = {
     withdrawalsCount: '{count} retiros',
     failureNote:
       '⚠️ Algunas fuentes no respondieron y se omitieron del reporte: {failures}. El resto de los datos son correctos.',
+    truncatedNote:
+      '⚠️ CIFRAS INCOMPLETAS. Estas fuentes alcanzaron el máximo de filas que se pueden leer de una vez: {sources}. Los importes que salen de ellas están CORTOS — son MENORES que los reales, no mayores. Pedí un rango más chico antes de usar estos números.',
     mockNote:
       'Los datos de Orion CRM provienen del entorno mock. Configure las credenciales en Superadmin → APIs externas para recibir datos reales.',
     generatedBy: 'Reporte generado automáticamente por',
@@ -202,6 +222,9 @@ const L: Record<EmailLocale, Record<string, string>> = {
     titleWeekly: 'Weekly Financial Report',
     titleMonthly: 'Monthly Financial Report',
     noDataInPeriod: 'No data in this period',
+    sectionNotConnected: 'No data: this section has no connected source.',
+    productsNoBreakdown:
+      'No breakdown available: the CRM stores the monthly total, not which product was sold.',
     balancesTitle: 'Balances by Channel',
     asOf: 'As of {date}',
     typeApi: 'API',
@@ -232,6 +255,16 @@ const L: Record<EmailLocale, Record<string, string>> = {
     pnlPrevMonth: 'P&L (prev. month)',
     pnlRange: 'P&L (range)',
     variationVsPrev: 'Change vs previous month',
+    crmPnlDay: 'P&L for the day (CRM)',
+    crmPnlPeriod: 'P&L for the period (CRM)',
+    crmPnlVolume: 'Volume (lots)',
+    crmPnlDeals: 'Trades',
+    crmPnlDays: 'over {days} day(s) with data',
+    crmPnlNoData: 'no data',
+    crmPnlSource: 'Daily close taken from the CRM. Cent accounts are already converted to dollars.',
+    crmPnlMissing: '{n} day(s) missing in the period: {days}',
+    textCrmPnlDay: 'P&L for the day (CRM)',
+    textCrmPnlPeriod: 'P&L for the period (CRM)',
     propTradingTitle: 'Prop Trading Firm',
     productsSold: 'Products sold',
     product: 'Product',
@@ -243,6 +276,8 @@ const L: Record<EmailLocale, Record<string, string>> = {
     withdrawalsCount: '{count} withdrawals',
     failureNote:
       '⚠️ Some data sources did not respond and were omitted from this report: {failures}. The remaining figures are accurate.',
+    truncatedNote:
+      '⚠️ INCOMPLETE FIGURES. These sources hit the maximum number of rows that can be read at once: {sources}. Any amount derived from them is SHORT — lower than the real one, never higher. Ask for a narrower range before relying on these numbers.',
     mockNote:
       'Orion CRM data comes from the mock environment. Configure credentials in Superadmin → External APIs to receive real data.',
     generatedBy: 'Report generated automatically by',
@@ -339,8 +374,13 @@ function formatDate(iso: string, locale: EmailLocale): string {
   return `${d} ${MONTHS.es[m - 1]} ${y}`;
 }
 
-function pctVariation(current: number, previous: number): number | null {
-  if (!previous) return null;
+/**
+ * `null` en cualquiera de los dos lados = NO HAY COMPARACIÓN posible. Antes los
+ * parámetros eran `number` y el llamador venía de un `?? 0`: comparar contra un
+ * cero inventado daba «−100%» con cara de dato (§1.3).
+ */
+function pctVariation(current: number | null, previous: number | null): number | null {
+  if (current === null || previous === null || !previous) return null;
   return ((current - previous) / Math.abs(previous)) * 100;
 }
 
@@ -672,10 +712,67 @@ function renderDepositsWithdrawalsSection(
   `;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TRES CORRECCIONES DE HONESTIDAD (2026-08-31, auditoría de finanzas)
+//
+// 1. `connected` NO SE LEÍA EN NINGÚN LADO. El campo existe en las tres
+//    secciones de CRM desde que se escribieron, y ninguna plantilla lo miraba:
+//    una sección sin fuente salía con $0,00 y 0 usuarios, indistinguible de una
+//    empresa que de verdad no vendió nada ese día. Ahora una sección no
+//    conectada dice que no lo está y no dibuja ningún número.
+//
+// 2. EL BADGE «mock» ESTABA ROTO. Las tres líneas de título metían
+//    `${BRAND_HEX.warning}` dentro de un string entre COMILLAS SIMPLES, así que
+//    el correo mostraba el texto literal `${BRAND_HEX.warning}` como valor de
+//    `color:` — el badge que avisa que los datos son falsos salía él mismo
+//    roto. Estaba en :699, :742 y :798.
+//
+// 3. NINGÚN NÚMERO NULO SE DIBUJA COMO CERO. Ver `kpiNumber`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Importe para el cuerpo en TEXTO PLANO. `null` = «sin dato», jamás $0,00. */
+export function moneyOrNoData(value: number | null, locale: EmailLocale): string {
+  return value === null || !Number.isFinite(value)
+    ? lt(locale, 'crmPnlNoData')
+    : formatCurrency(value);
+}
+
+/** Badge «mock», con el color interpolado de verdad (ver punto 2 de arriba). */
+function mockBadge(isMock: boolean): string {
+  return isMock
+    ? ` <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>`
+    : '';
+}
+
+/**
+ * Importe para un KPI: `null` es «sin dato», nunca $0,00 en verde.
+ * Devuelve también el tono, porque un valor desconocido no es ni bueno ni malo.
+ */
+function kpiMoney(
+  value: number | null,
+  locale: EmailLocale,
+): { text: string; tone: 'positive' | 'negative' | 'neutral' } {
+  if (value === null || !Number.isFinite(value)) {
+    return { text: lt(locale, 'crmPnlNoData'), tone: 'neutral' };
+  }
+  return { text: formatCurrency(value), tone: value >= 0 ? 'positive' : 'negative' };
+}
+
+/** Aviso de sección sin fuente configurada. Reemplaza a los ceros. */
+function notConnectedNote(locale: EmailLocale): string {
+  return `<p style="font-size:12px;color:${BRAND_HEX.muted};margin:0 10px 8px 10px;font-style:italic;">${lt(locale, 'sectionNotConnected')}</p>`;
+}
+
 function renderCrmUsersSection(data: ReportData, primary: string, locale: EmailLocale): string {
   const u = data.crm_users;
-  const title = `${lt(locale, 'crmUsersTitle')}${u.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
+  const title = `${lt(locale, 'crmUsersTitle')}${mockBadge(u.isMock)}`;
   const numLocale = locale === 'es' ? 'es' : 'en';
+
+  // Sin espejo de usuarios no hay tres ceros: hay tres «no lo sabemos».
+  if (!u.connected && !u.isMock) {
+    return `${sectionHeader(primary, '👥', title)}${notConnectedNote(locale)}`;
+  }
+
   return `
     ${sectionHeader(primary, '👥', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">
@@ -696,56 +793,126 @@ function renderBrokerPnlSection(
 ): string {
   const p = data.broker_pnl;
   const monthVsPrev = pctVariation(p.pnl_month, p.pnl_prev_month);
-  const rangePctOfMonth = p.pnl_month
-    ? (p.pnl_range / Math.abs(p.pnl_month)) * 100
-    : null;
+  // Sin PNL del mes no hay porcentaje del mes. Antes `p.pnl_month` venía
+  // colapsado a 0 con un `?? 0` en data.ts y esto daba null igual — por
+  // casualidad, no por diseño.
+  const rangePctOfMonth =
+    p.pnl_month !== null && p.pnl_month !== 0 && p.pnl_range !== null
+      ? (p.pnl_range / Math.abs(p.pnl_month)) * 100
+      : null;
+
+  const kMonth = kpiMoney(p.pnl_month, locale);
+  const kPrev = kpiMoney(p.pnl_prev_month, locale);
+  const kRange = kpiMoney(p.pnl_range, locale);
 
   const kpiRow =
     cadence === 'monthly'
       ? `
     <tr>
-      ${renderKpi(lt(locale, 'pnlMonth'), formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
-      ${renderKpi(lt(locale, 'pnlPrevMonth'), formatCurrency(p.pnl_prev_month), 'neutral')}
+      ${renderKpi(lt(locale, 'pnlMonth'), kMonth.text, kMonth.tone, variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'pnlPrevMonth'), kPrev.text, 'neutral')}
       ${renderKpi(lt(locale, 'variationVsPrev'), variationText(monthVsPrev, locale), monthVsPrev === null ? 'neutral' : monthVsPrev >= 0 ? 'positive' : 'negative')}
     </tr>
   `
       : `
     <tr>
-      ${renderKpi(lt(locale, 'pnlRange'), formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative', rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}${lt(locale, 'pctOfMonth')}` : undefined)}
-      ${renderKpi(lt(locale, 'pnlMonth'), formatCurrency(p.pnl_month), p.pnl_month >= 0 ? 'positive' : 'negative', variationTag(monthVsPrev, locale))}
-      ${renderKpi(lt(locale, 'pnlPrevMonth'), formatCurrency(p.pnl_prev_month), 'neutral')}
+      ${renderKpi(lt(locale, 'pnlRange'), kRange.text, kRange.tone, rangePctOfMonth !== null ? `${Math.round(rangePctOfMonth * 10) / 10}${lt(locale, 'pctOfMonth')}` : undefined)}
+      ${renderKpi(lt(locale, 'pnlMonth'), kMonth.text, kMonth.tone, variationTag(monthVsPrev, locale))}
+      ${renderKpi(lt(locale, 'pnlPrevMonth'), kPrev.text, 'neutral')}
     </tr>
   `;
 
-  const title = `Broker P&amp;L${p.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
+  const title = `Broker P&amp;L${mockBadge(p.isMock)}`;
+
+  // ── El cierre que da el CRM ──────────────────────────────────────────────
+  // El diario lleva EL DÍA (que es lo que se pregunta a la mañana); el
+  // semanal y el mensual llevan el acumulado del período. Y los dos llevan
+  // sobre cuántos días se calculó: un acumulado al que le faltan días es un
+  // número más chico y perfectamente creíble si nadie lo dice.
+  const c = p.crm;
+  const crmBlock = !c
+    ? ''
+    : `
+    <table cellspacing="0" cellpadding="0" style="width:100%;">
+      <tr>
+        ${
+          cadence === 'daily'
+            ? renderKpi(
+                lt(locale, 'crmPnlDay'),
+                c.last_broker_pnl === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.last_broker_pnl),
+                c.last_broker_pnl === null ? 'neutral' : c.last_broker_pnl >= 0 ? 'positive' : 'negative',
+                c.last_day ?? undefined,
+              )
+            : renderKpi(
+                lt(locale, 'crmPnlPeriod'),
+                c.broker_pnl_range === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.broker_pnl_range),
+                c.broker_pnl_range === null ? 'neutral' : c.broker_pnl_range >= 0 ? 'positive' : 'negative',
+                lt(locale, 'crmPnlDays', { days: String(c.days_with_data) }),
+              )
+        }
+        ${renderKpi(lt(locale, 'crmPnlVolume'), c.volume_lots_range.toLocaleString(locale === 'es' ? 'es-ES' : 'en-US'), 'neutral')}
+        ${renderKpi(lt(locale, 'crmPnlDeals'), c.deals_range.toLocaleString(locale === 'es' ? 'es-ES' : 'en-US'), 'neutral')}
+      </tr>
+    </table>
+    <p style="font-size:11px;color:${BRAND_HEX.muted};margin:4px 10px 0 10px;">
+      ${lt(locale, 'crmPnlSource')}${
+        c.days_missing.length > 0
+          ? ` · ${escapeHtml(lt(locale, 'crmPnlMissing', { n: String(c.days_missing.length), days: c.days_missing.slice(0, 5).join(', ') }))}`
+          : ''
+      }
+    </p>
+  `;
+
+  if (!p.connected && !p.isMock && !p.crm) {
+    return `${sectionHeader(primary, '📈', title)}${notConnectedNote(locale)}`;
+  }
+
   return `
     ${sectionHeader(primary, '📈', title)}
     <table cellspacing="0" cellpadding="0" style="width:100%;">${kpiRow}</table>
+    ${crmBlock}
   `;
 }
 
 function renderPropTradingSection(data: ReportData, primary: string, locale: EmailLocale): string {
   const p = data.prop_trading;
-  const productRows = p.products.map((prod) => [
-    prod.name,
-    String(prod.quantity),
-    formatCurrency(prod.amount),
-  ]);
+  const title = `${lt(locale, 'propTradingTitle')}${mockBadge(p.isMock)}`;
 
-  const title = `${lt(locale, 'propTradingTitle')}${p.isMock ? ' <span style="font-size:11px;color:${BRAND_HEX.warning};font-weight:normal;">· mock</span>' : ''}`;
+  if (!p.connected && !p.isMock) {
+    return `${sectionHeader(primary, '🎯', title)}${notConnectedNote(locale)}`;
+  }
+
+  const kSales = kpiMoney(p.total_sales_range, locale);
+  const kWdr = kpiMoney(p.prop_withdrawals_range, locale);
+  const kPnl = kpiMoney(p.pnl_range, locale);
+  const kMonth = kpiMoney(p.total_sales_month, locale);
+
+  // «Productos vendidos» sin desglose: `crm_monthly_totals` guarda el total del
+  // mes, no qué se vendió. Antes esto era una tabla vacía, que se lee como «no
+  // se vendió nada». Se dice que el desglose no está, y se muestra el total.
+  const productsBlock =
+    p.products === null
+      ? `<p style="font-size:12px;color:${BRAND_HEX.muted};margin:0 10px 8px 10px;font-style:italic;">${lt(locale, 'productsNoBreakdown')}</p>`
+      : renderTable(
+          [lt(locale, 'product'), lt(locale, 'quantity'), lt(locale, 'amount')],
+          p.products.map((prod) => [prod.name, String(prod.quantity), formatCurrency(prod.amount)]),
+          locale,
+          [lt(locale, 'totalOfRange'), '', kSales.text],
+        );
+
   return `
     ${sectionHeader(primary, '🎯', title)}
 
     <div style="margin-bottom:16px;">
       <h3 style="font-size:14px;color:${BRAND_HEX.inkSoft};margin:0 0 8px 0;">${lt(locale, 'productsSold')}</h3>
-      ${renderTable([lt(locale, 'product'), lt(locale, 'quantity'), lt(locale, 'amount')], productRows, locale, [lt(locale, 'totalOfRange'), '', formatCurrency(p.total_sales_range)])}
+      ${productsBlock}
     </div>
 
     <table cellspacing="0" cellpadding="0" style="width:100%;">
       <tr>
-        ${renderKpi(lt(locale, 'salesOfRange'), formatCurrency(p.total_sales_range), 'info', lt(locale, 'monthPrefix', { value: formatCurrency(p.total_sales_month) }))}
-        ${renderKpi(lt(locale, 'propWithdrawals'), formatCurrency(p.prop_withdrawals_range), 'neutral', lt(locale, 'withdrawalsCount', { count: p.prop_withdrawals_count_range }))}
-        ${renderKpi(lt(locale, 'pnlRange'), formatCurrency(p.pnl_range), p.pnl_range >= 0 ? 'positive' : 'negative')}
+        ${renderKpi(lt(locale, 'salesOfRange'), kSales.text, 'info', lt(locale, 'monthPrefix', { value: kMonth.text }))}
+        ${renderKpi(lt(locale, 'propWithdrawals'), kWdr.text, 'neutral', p.prop_withdrawals_count_range === null ? undefined : lt(locale, 'withdrawalsCount', { count: p.prop_withdrawals_count_range }))}
+        ${renderKpi(lt(locale, 'pnlRange'), kPnl.text, kPnl.tone)}
       </tr>
     </table>
   `;
@@ -753,21 +920,13 @@ function renderPropTradingSection(data: ReportData, primary: string, locale: Ema
 
 // ─── Main render ──────────────────────────────────────────────────────
 
-export interface ReportSectionToggles {
-  deposits_withdrawals: boolean;
-  balances_by_channel: boolean;
-  crm_users: boolean;
-  broker_pnl: boolean;
-  prop_trading: boolean;
-}
+// Las secciones salen del registro único (./sections). Este archivo tenía su
+// propia interfaz idéntica y su propio default: una sección nueva que el panel
+// ofrecía y la config guardaba llegaba acá como `undefined` —falsy— y NO se
+// mandaba en el mail, sin ningún error (2026-08-31, ítem 15).
+export type ReportSectionToggles = ReportSections;
 
-const ALL_SECTIONS_ON: ReportSectionToggles = {
-  deposits_withdrawals: true,
-  balances_by_channel: true,
-  crm_users: true,
-  broker_pnl: true,
-  prop_trading: true,
-};
+const ALL_SECTIONS_ON: ReportSectionToggles = allSectionsOn();
 
 export interface RenderReportEmailParams {
   data: ReportData;
@@ -824,6 +983,18 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
   `
       : '';
 
+  // Distinto de `failureNote`: ahí la fuente no respondió y se ve un hueco;
+  // acá respondió un número plausible y MENOR que el real. Es más peligroso, y
+  // por eso tiene su propia nota (2026-08-31, auditoría de finanzas, ítem 19).
+  const truncatedNote =
+    (data.truncated?.length ?? 0) > 0
+      ? `
+    <div style="margin:16px 0;padding:12px;background:#FEF3C7;border:1px solid ${BRAND_HEX.warning};border-radius:8px;color:#92400E;font-size:12px;">
+      ${lt(locale, 'truncatedNote', { sources: data.truncated.join(', ') })}
+    </div>
+  `
+      : '';
+
   const mockNote = data.anyMock
     ? `
     <div style="margin:16px 0;padding:10px;background:#FEF9C3;border:1px solid #FACC15;border-radius:8px;color:#854D0E;font-size:11px;">
@@ -871,6 +1042,7 @@ export function renderReportEmail(params: RenderReportEmailParams): string {
           <tr>
             <td style="padding:8px 32px 32px 32px;">
               ${failureNote}
+              ${truncatedNote}
               ${mockNote}
               ${data.company_result ? renderCompanyResultSection(data.company_result, primary, locale) : ''}
               ${sections.deposits_withdrawals ? renderDepositsWithdrawalsSection(data, cadence, primary, locale) : ''}
@@ -936,6 +1108,10 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
     );
   }
 
+  if ((data.truncated?.length ?? 0) > 0) {
+    lines.push(lt(locale, 'truncatedNote', { sources: data.truncated.join(', ') }), ``);
+  }
+
   if (sections.deposits_withdrawals) {
     lines.push(
       lt(locale, 'textDepositsWithdrawals'),
@@ -977,19 +1153,34 @@ export function renderReportEmailText(params: RenderReportEmailParams): string {
   if (sections.broker_pnl) {
     lines.push(
       lt(locale, 'textBrokerPnl'),
-      `  ${lt(locale, 'textRange')}: ${formatCurrency(data.broker_pnl.pnl_range)}`,
-      `  ${lt(locale, 'textMonth')}: ${formatCurrency(data.broker_pnl.pnl_month)}`,
-      `  ${lt(locale, 'textPrevMonth')}: ${formatCurrency(data.broker_pnl.pnl_prev_month)}`,
-      ``,
+      `  ${lt(locale, 'textRange')}: ${moneyOrNoData(data.broker_pnl.pnl_range, locale)}`,
+      `  ${lt(locale, 'textMonth')}: ${moneyOrNoData(data.broker_pnl.pnl_month, locale)}`,
+      `  ${lt(locale, 'textPrevMonth')}: ${moneyOrNoData(data.broker_pnl.pnl_prev_month, locale)}`,
     );
+    const c = data.broker_pnl.crm;
+    if (c) {
+      // Mismo criterio que el HTML: el diario lleva el día, el resto el
+      // acumulado, y los dos dicen sobre cuántos días se calcularon.
+      lines.push(
+        cadence === 'daily'
+          ? `  ${lt(locale, 'textCrmPnlDay')}${c.last_day ? ` (${c.last_day})` : ''}: ${c.last_broker_pnl === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.last_broker_pnl)}`
+          : `  ${lt(locale, 'textCrmPnlPeriod')}: ${c.broker_pnl_range === null ? lt(locale, 'crmPnlNoData') : formatCurrency(c.broker_pnl_range)} (${lt(locale, 'crmPnlDays', { days: String(c.days_with_data) })})`,
+      );
+      if (c.days_missing.length > 0) {
+        lines.push(
+          `  ${lt(locale, 'crmPnlMissing', { n: String(c.days_missing.length), days: c.days_missing.slice(0, 5).join(', ') })}`,
+        );
+      }
+    }
+    lines.push(``);
   }
 
   if (sections.prop_trading) {
     lines.push(
       lt(locale, 'textPropTrading'),
-      `  ${lt(locale, 'textSalesRange')}: ${formatCurrency(data.prop_trading.total_sales_range)}`,
-      `  ${lt(locale, 'textWithdrawalsRange')}: ${formatCurrency(data.prop_trading.prop_withdrawals_range)}`,
-      `  ${lt(locale, 'textPnlRange')}: ${formatCurrency(data.prop_trading.pnl_range)}`,
+      `  ${lt(locale, 'textSalesRange')}: ${moneyOrNoData(data.prop_trading.total_sales_range, locale)}`,
+      `  ${lt(locale, 'textWithdrawalsRange')}: ${moneyOrNoData(data.prop_trading.prop_withdrawals_range, locale)}`,
+      `  ${lt(locale, 'textPnlRange')}: ${moneyOrNoData(data.prop_trading.pnl_range, locale)}`,
       ``,
     );
   }

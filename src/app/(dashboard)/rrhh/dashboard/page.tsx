@@ -13,6 +13,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { features } from '@/lib/business-model';
 import { formatCurrency, cn } from '@/lib/utils';
+import { hrRoleLabel } from '@/lib/hr/domain';
 import {
   Users,
   UserCheck,
@@ -48,7 +49,9 @@ const ROLE_BADGE: Record<string, string> = {
   head: 'bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
   bdm: 'bg-blue-100 dark:bg-blue-950/50 text-info',
 };
-const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', head: 'HEAD', bdm: 'BDM' };
+// Las etiquetas salen del registro único (src/lib/hr/domain.ts): acá había una
+// cuarta copia, que además no conocía `bdm_global` y lo mostraba en crudo.
+// Los colores del badge de ESTA pantalla se quedan: son otros que los de /rrhh.
 
 export default function DashboardPage() {
   const { t } = useI18n();
@@ -360,7 +363,7 @@ export default function DashboardPage() {
                     <div>
                       <p className="text-sm font-medium">{p.name}</p>
                       <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', ROLE_BADGE[p.role] || ROLE_BADGE.bdm)}>
-                        {ROLE_LABEL[p.role] || p.role}
+                        {hrRoleLabel(p.role)}
                       </span>
                     </div>
                   </div>
@@ -391,7 +394,7 @@ export default function DashboardPage() {
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{team.name}</span>
                     <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', ROLE_BADGE[team.role] || ROLE_BADGE.head)}>
-                      {ROLE_LABEL[team.role] || team.role}
+                      {hrRoleLabel(team.role)}
                     </span>
                   </div>
                 ),

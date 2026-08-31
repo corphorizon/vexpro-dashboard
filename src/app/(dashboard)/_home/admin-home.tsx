@@ -6,6 +6,7 @@ import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { features } from '@/lib/business-model';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { manualDepositsByChannel } from '@/lib/deposit-channels';
 import { formatCurrency } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-fetch';
 import { QuickAccess } from './quick-access';
@@ -81,12 +82,11 @@ export function AdminHome() {
     if (!summary) return { deposits: 0, withdrawals: 0, netDeposit: 0 };
     const useDerivedBroker = coexist.useDerivedBroker;
 
-    const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount ?? 0;
-    const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount ?? 0;
-    const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount ?? 0;
-    const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount ?? 0;
+    // Manual por canal desde el registro único (src/lib/deposit-channels.ts).
+    const manualByChannel = manualDepositsByChannel(summary.deposits);
+    const storedOther = manualByChannel.other;
     const deposits = useDerivedBroker
-      ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
+      ? coexist.apiDepositsTotal(manualByChannel) + storedOther
       : summary.totalDeposits;
 
     const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;
@@ -141,6 +141,31 @@ export function AdminHome() {
   // incluso antes de que el cron diario capture el snapshot de hoy.
   // Auto-refresh every 5 min while the tab is visible.
   const [totalConsolidado, setTotalConsolidado] = useState<number | null>(null);
+  // ── PNL del mes (Kevin, 2026-08-31: «en vez de socios pon el dato del PNL
+  // del mes») — la serie diaria del CRM (crm_daily_pnl). El signo se invierte
+  // UNA sola vez en daily-pnl-query.ts (totals.brokerPnl); esta tarjeta lo
+  // consume tal cual. null = sin datos, nunca $0.
+  const [pnlMes, setPnlMes] = useState<{ value: number | null; dias: number }>({ value: null, dias: 0 });
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const hoy = new Date();
+        const y = hoy.getUTCFullYear();
+        const m = String(hoy.getUTCMonth() + 1).padStart(2, '0');
+        const res = await apiFetch(`/api/admin/crm-daily-pnl?from=${y}-${m}-01&to=${y}-${m}-31`);
+        if (!res.ok || cancel) return;
+        const json = await res.json();
+        // `totals.brokerPnl` YA viene con el signo del bróker invertido una
+        // sola vez en daily-pnl-query.ts — no se re-invierte acá (registro
+        // único del signo, la trampa que el repo persigue).
+        const t = json.totals as { brokerPnl: number | null; daysWithData: number } | undefined;
+        if (!cancel && t) setPnlMes({ value: t.brokerPnl, dias: t.daysWithData });
+      } catch { /* sin datos: la tarjeta muestra — */ }
+    })();
+    return () => { cancel = true; };
+  }, []);
 
   useEffect(() => {
     if (!company?.id) return;
@@ -297,10 +322,11 @@ export function AdminHome() {
         )}
         {has('partners') && (
           <StatCard
-            label="Socios"
-            value={partners.length.toString()}
+            label="PNL del mes (CRM)"
+            value={pnlMes.value === null ? '—' : formatCurrency(pnlMes.value)}
             icon={Briefcase}
-            tone="primary"
+            tone={(pnlMes.value ?? 0) >= 0 ? 'positive' : 'negative'}
+            hint={pnlMes.value === null ? 'sin datos' : `${pnlMes.dias} días con dato · bróker`}
           />
         )}
       </section>

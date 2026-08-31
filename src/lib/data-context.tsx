@@ -78,6 +78,13 @@ import {
 } from '@/lib/config';
 import { computeDistributionChain, type PeriodDistInput } from '@/lib/distribution';
 import { buildDistributionInputs } from '@/lib/distribution-inputs';
+import {
+  brokerPnlForChain,
+  indexBrokerPnlMonths,
+  resolveBrokerPnl,
+  type BrokerPnlMonth,
+  type ResolvedBrokerPnl,
+} from '@/lib/broker-pnl';
 
 // Magic numbers centralized in src/lib/config.ts (Sprint 3 quick win
 // 2026-06-06). Tuning them no longer means grepping the codebase.
@@ -91,6 +98,8 @@ const MAX_RETRIES = LOAD_MAX_RETRIES;
 // campos canónicos (reserva-ahorro + deuda arrastrada + montoDistribuir).
 export interface SaldoInfo {
   ingresosNetos: number;
+  /** De dónde sale ingresosNetos — ver PeriodDistResult.desglose. */
+  desglose: import('./distribution').PeriodDistResult['desglose'];
   egresosNetos: number;
   saldoAFavor: number;
   deudaArrastradaEntrada: number;
@@ -107,6 +116,17 @@ export interface SaldoInfo {
 export interface DataContextValue {
   loading: boolean;
   error: string | null;
+  /**
+   * Slices que /api/bootstrap devolvió RECORTADOS por su techo de filas
+   * (`ROW_CAP` = 10.000). No es un fallo: el slice respondió, con menos filas
+   * de las que hay, así que todo lo que se sume a partir de él está CORTO —
+   * menor que lo real, nunca mayor. Vacío = todo completo.
+   *
+   * Existe porque un recorte silencioso es indistinguible de «no hay más»
+   * (docs/reglas-del-proyecto.md §1.2) y los `.limit(ROW_CAP)` no tenían flag
+   * (2026-08-31, auditoría de finanzas, ítem 19).
+   */
+  truncatedSlices: string[];
   company: Company | null;
   periods: Period[];
 
@@ -136,6 +156,15 @@ export interface DataContextValue {
   allFinancialStatus: FinancialStatus[];
   allPropFirmSales: PropFirmSale[];
   allP2PTransfers: P2PTransfer[];
+  /**
+   * Broker P&L de un período CON SU PROCEDENCIA (decisión de Kevin,
+   * 2026-08-31: "dejalo automatizado, eliminemos lo manual").
+   *
+   * Devuelve `value: null` cuando no hay dato — la pantalla muestra
+   * "sin datos", nunca $0. Las tres reglas están en `src/lib/broker-pnl.ts`.
+   * `null` como retorno = ese período no existe.
+   */
+  getBrokerPnl: (periodId: string) => ResolvedBrokerPnl | null;
 
   // HR data
   employees: Employee[];
@@ -194,6 +223,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     ? activeCompanyId
     : authUser?.company_id ?? null;
   const [loading, setLoading] = useState(true);
+  const [truncatedSlices, setTruncatedSlices] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Core data
@@ -206,6 +236,34 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const [expenseTemplateHidden, setExpenseTemplateHidden] = useState<ExpenseTemplateHidden[]>([]);
   const [preoperativeExpenses, setPreoperativeExpenses] = useState<PreoperativeExpense[]>([]);
   const [operatingIncome, setOperatingIncome] = useState<OperatingIncome[]>([]);
+  // Serie mensual automática del Broker P&L (`crm_daily_pnl`). Va por su
+  // propio efecto y NO por el bootstrap: no es una tabla del tenant sino un
+  // derivado del espejo del CRM, y si su endpoint falla el resto de la app
+  // tiene que seguir cargando igual (cae a `[]` ⇒ "sin datos").
+  const [brokerPnlMonths, setBrokerPnlMonths] = useState<BrokerPnlMonth[]>([]);
+
+  // `apiFetch` y no `fetch` pelado: el fetch directo rompe el "ver como" del
+  // superadmin. Ante cualquier fallo la serie queda vacía y el resolver dice
+  // "sin datos" —que es la verdad— en vez de inventar un cero.
+  useEffect(() => {
+    if (!effectiveCompanyId) {
+      setBrokerPnlMonths([]);
+      return;
+    }
+    let alive = true;
+    apiFetch('/api/admin/broker-pnl-monthly')
+      .then((r) => r.json())
+      .then((json: { success?: boolean; months?: BrokerPnlMonth[] }) => {
+        if (!alive) return;
+        setBrokerPnlMonths(json?.success ? (json.months ?? []) : []);
+      })
+      .catch(() => {
+        if (alive) setBrokerPnlMonths([]);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [effectiveCompanyId]);
   const [brokerBalance, setBrokerBalance] = useState<BrokerBalance[]>([]);
   const [financialStatus, setFinancialStatus] = useState<FinancialStatus[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -556,6 +614,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         companyId?: string;
         partial?: string[];
         gated?: string[];
+        truncated?: string[];
         data?: Record<string, unknown>;
       };
       if (!payload?.success || !payload.data) throw new Error('bootstrap: respuesta inválida');
@@ -583,6 +642,19 @@ export function DataProvider({ children }: { children: ReactNode }) {
           category: 'data-context.load',
           message: 'bootstrap:partial',
           data: { generation, partial: partial.join(',') },
+        });
+      }
+      // El recorte no es un fallo: el slice respondió, con menos filas. Viaja
+      // al contexto para que la pantalla pueda decirlo — un total corto y
+      // creíble es peor que un error.
+      const truncated = payload.truncated ?? [];
+      setTruncatedSlices(truncated);
+      if (truncated.length > 0) {
+        console.warn('[data-context] /api/bootstrap devolvió slices recortados:', truncated);
+        Sentry.addBreadcrumb({
+          category: 'data-context.load',
+          message: 'bootstrap:truncated',
+          data: { generation, truncated: truncated.join(',') },
         });
       }
       if ((payload.gated ?? []).length > 0) {
@@ -837,17 +909,59 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // Fuentes de la cadena, en un solo lugar: las tres derivadas de abajo
   // (cadena, insumos del forecast, deriva de snapshot) construyen sus insumos
   // con el MISMO constructor. Ver src/lib/distribution-inputs.ts.
-  const distSources = useMemo(
-    () => ({
+  // ─── Broker P&L automático ───────────────────────────────────────────────
+  // Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo manual". La serie
+  // sale de `crm_daily_pnl` vía /api/admin/broker-pnl-monthly y sólo pisa a lo
+  // tecleado en los períodos ABIERTOS. Las tres reglas (cerrado = congelado,
+  // abierto = CRM, sin datos ≠ cero) viven en src/lib/broker-pnl.ts.
+  const brokerPnlIndex = useMemo(() => indexBrokerPnlMonths(brokerPnlMonths), [brokerPnlMonths]);
+
+  const brokerPnlResolved = useMemo(() => {
+    const oiByPeriod = new Map(operatingIncome.map((o) => [o.period_id, o.broker_pnl]));
+    const out = new Map<string, ResolvedBrokerPnl>();
+    for (const p of periods) {
+      out.set(p.id, resolveBrokerPnl(p, brokerPnlIndex, oiByPeriod.get(p.id) ?? null));
+    }
+    return out;
+  }, [periods, brokerPnlIndex, operatingIncome]);
+
+  const getBrokerPnl = useCallback(
+    (periodId: string) => brokerPnlResolved.get(periodId) ?? null,
+    [brokerPnlResolved],
+  );
+
+  const distSources = useMemo(() => {
+    // La cadena no admite `null`: un período abierto sin serie del CRM cae al
+    // manual heredado, NUNCA a 0 (ver `brokerPnlForChain`). Los cerrados no
+    // entran a este mapa, así que siguen leyendo `operating_income.broker_pnl`
+    // —el mismo número que quedó congelado— y no aparece deriva falsa.
+    const brokerPnlByPeriod = new Map<string, number>();
+    const oiByPeriod = new Map(operatingIncome.map((o) => [o.period_id, o.broker_pnl]));
+    for (const p of periods) {
+      if (p.is_closed) continue;
+      const r = brokerPnlResolved.get(p.id);
+      if (!r || r.source !== 'crm') continue;
+      brokerPnlByPeriod.set(p.id, brokerPnlForChain(r, oiByPeriod.get(p.id) ?? null));
+    }
+    return {
       operatingIncome,
       propFirmSales,
       withdrawals,
       expenses,
       investments,
       businessModel: company?.business_model,
-    }),
-    [operatingIncome, propFirmSales, withdrawals, expenses, investments, company?.business_model],
-  );
+      brokerPnlByPeriod,
+    };
+  }, [
+    operatingIncome,
+    propFirmSales,
+    withdrawals,
+    expenses,
+    investments,
+    company?.business_model,
+    periods,
+    brokerPnlResolved,
+  ]);
 
   const computeSaldoChain = useCallback((): Map<string, SaldoInfo> => {
     // Inputs canónicos EN ORDEN sobre TODOS los períodos, delegando en la
@@ -901,6 +1015,11 @@ export function DataProvider({ children }: { children: ReactNode }) {
       const propFirmSale = propFirmSales.find(p => p.period_id === periodId);
       const p2pTransfer = p2pTransfers.find(p => p.period_id === periodId);
       const oi = operatingIncome.find(o => o.period_id === periodId) || null;
+      // Broker P&L automático: cerrado ⇒ congelado, abierto ⇒ CRM, sin dato ⇒
+      // el manual heredado (nunca 0). Ver src/lib/broker-pnl.ts.
+      const resolvedPnl =
+        brokerPnlResolved.get(periodId) ??
+        ({ value: null, source: 'none', daysWithData: 0, daysInMonth: null, computedAt: null } as ResolvedBrokerPnl);
       const bb = brokerBalance.find(b => b.period_id === periodId) || null;
       const fs = financialStatus.find(f => f.period_id === periodId) || null;
 
@@ -945,7 +1064,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         totalExpenses: periodExpenses.reduce((sum, e) => sum + e.amount, 0),
         totalExpensesPaid: periodExpenses.reduce((sum, e) => sum + e.paid, 0),
         totalExpensesPending: periodExpenses.reduce((sum, e) => sum + e.pending, 0),
-        operatingIncome: oi,
+        // El `broker_pnl` que sale de acá es el MISMO que consume la cadena de
+        // distribución (`brokerPnlForChain`), no el tecleado. Lo leen
+        // /movimientos, /finanzas/consolidado y /socios: si acá quedara el
+        // manual, esas tres pantallas mostrarían $671.000 mientras /socios
+        // reparte sobre $386.665,54. Un mismo número tiene que salir del mismo
+        // camino — es el invariante que dejó la auditoría A3.
+        // /resumen-general además dice de DÓNDE salió (getBrokerPnl).
+        operatingIncome: oi
+          ? { ...oi, broker_pnl: brokerPnlForChain(resolvedPnl, oi.broker_pnl) }
+          : oi,
         brokerBalance: bb,
         financialStatus: fs,
         deposits: periodDeposits,
@@ -953,7 +1081,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         expenses: periodExpenses,
       };
     },
-    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus, investments]
+    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus, investments, brokerPnlResolved]
   );
 
   // ─── Consolidated summary ───
@@ -1026,7 +1154,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
         period_id: 'consolidated',
         company_id: firstPeriod.company_id,
         prop_firm: incomes.reduce((s, i) => s + i.prop_firm, 0),
-        broker_pnl: incomes.reduce((s, i) => s + i.broker_pnl, 0),
+        // Igual que en getPeriodSummary: el P&L consolidado se suma sobre el
+        // número AUTOMÁTICO de cada período, no sobre lo tecleado. Se recorren
+        // los períodos (no las filas de income) porque un período sin fila de
+        // operating_income igual puede tener serie del CRM.
+        broker_pnl: periodIds.reduce((s, pid) => {
+          const r = brokerPnlResolved.get(pid);
+          const manual = incomes.find((i) => i.period_id === pid)?.broker_pnl ?? null;
+          if (!r) return s + (manual ?? 0);
+          return s + brokerPnlForChain(r, manual);
+        }, 0),
         other: incomes.reduce((s, i) => s + i.other, 0),
       };
 
@@ -1098,7 +1235,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
         expenses: allExps,
       };
     },
-    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus, getPeriodSummary, investments]
+    [periods, deposits, withdrawals, expenses, propFirmSales, p2pTransfers, operatingIncome, brokerBalance, financialStatus, getPeriodSummary, investments, brokerPnlResolved]
   );
 
   // ─── Liquidity and investments getters ───
@@ -1170,6 +1307,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     () => ({
       loading,
       error,
+      truncatedSlices,
       company,
       periods,
 
@@ -1195,6 +1333,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       allFinancialStatus: financialStatus,
       allPropFirmSales: propFirmSales,
       allP2PTransfers: p2pTransfers,
+      getBrokerPnl,
 
       employees,
       commercialProfiles,
@@ -1305,6 +1444,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     [
       loading,
       error,
+      truncatedSlices,
       company,
       periods,
       getPeriodSummary,
@@ -1328,6 +1468,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       financialStatus,
       propFirmSales,
       p2pTransfers,
+      getBrokerPnl,
       employees,
       commercialProfiles,
       monthlyResults,

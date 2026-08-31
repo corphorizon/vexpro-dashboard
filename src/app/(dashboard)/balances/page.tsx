@@ -41,6 +41,12 @@ import {
   PinOff,
 } from 'lucide-react';
 import { isAutoLedger } from '@/lib/channel-ledger';
+import {
+  isStaleBalance,
+  pickChannelAmount,
+  pickLiveOrStored,
+  type ReportChannelSource,
+} from '@/lib/channel-balance-source';
 import { generateChannelBalancesPDF } from '@/lib/pdf-export';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,6 +123,9 @@ export default function BalancesPage() {
   // 059). Es la fuente de verdad para el histórico; el saldo en vivo de los
   // canales por API sigue saliendo de la API en el momento.
   const [ledgerBalances, setLedgerBalances] = useState<Record<string, number>>({});
+  // Fecha del último asiento de cada canal (migración 112) — de acá sale el
+  // "de cuándo es este saldo" de las ubicaciones manuales (ítem 23).
+  const [ledgerLastEntry, setLedgerLastEntry] = useState<Record<string, string>>({});
   const [channelConfigRows, setChannelConfigRows] = useState<ChannelConfigRow[]>([]);
   // OJO: NO comparar `user.role === 'admin'` a mano. El superadmin en modo
   // "viendo como" no tiene fila en company_users y llega con role
@@ -140,6 +149,18 @@ export default function BalancesPage() {
 
   const [apiMonthly, setApiMonthly] = useState<Record<string, { deposits: number; withdrawals: number }>>({});
   const [apiTotalsLoading, setApiTotalsLoading] = useState(false);
+  // ¿Falló la lectura de los totales de la API?
+  //
+  // ── EL BUG (auditoría de finanzas, ítem 13) ──────────────────────────────
+  // Acá había un `catch {}` vacío con el comentario «Non-fatal — card will
+  // fall back to 0 API contribution». No es no-fatal: sin `apiMonthly`, TODOS
+  // los meses derivados (Abr 2026+) caen al Net Deposit manual y la tarjeta
+  // muestra otro número sin avisar. Medido el 2026-08-31 sobre Vex Pro: agosto
+  // pasaría de $551.405,97 a $169.853,00 — y ese número alimenta el Monto a
+  // Distribuir a socios. Un fallo silencioso que reparte plata que no entró.
+  //
+  // El estado degradado se muestra; el número sigue siendo el mejor disponible.
+  const [apiTotalsFailed, setApiTotalsFailed] = useState(false);
 
   const loadApiMonthly = useCallback(async () => {
     setApiTotalsLoading(true);
@@ -153,9 +174,20 @@ export default function BalancesPage() {
       const to = `${end.getFullYear()}-${pad(end.getMonth() + 1)}-${pad(new Date(end.getFullYear(), end.getMonth() + 1, 0).getDate())}`;
       const res = await apiFetch(`/api/integrations/period-totals?from=${from}&to=${to}`);
       const json = await res.json();
-      if (json.success) setApiMonthly(json.months ?? {});
-    } catch {
-      // Non-fatal — card will fall back to 0 API contribution.
+      if (json.success) {
+        setApiMonthly(json.months ?? {});
+        setApiTotalsFailed(false);
+      } else {
+        // `success: false` es un fallo igual que una excepción: el endpoint
+        // devuelve 200 con `months: {}` cuando la RPC revienta.
+        setApiTotalsFailed(true);
+      }
+    } catch (err) {
+      console.error('[balances] period-totals:', err);
+      // Se CONSERVA el `apiMonthly` anterior si ya se había cargado: un dato
+      // de hace un minuto es mejor que ninguno. Lo que no se hace es fingir
+      // que el mes no tuvo movimientos por la API.
+      setApiTotalsFailed(true);
     } finally {
       setApiTotalsLoading(false);
     }
@@ -178,6 +210,8 @@ export default function BalancesPage() {
       balanceMes: number;
       saldoInicial: number;
       saldoFinal: number;
+      /** El mes es derivado (Abr 26+) pero NO tenemos sus totales de API. */
+      apiMissing: boolean;
     }> = [];
 
     for (const p of periods) {
@@ -226,9 +260,13 @@ export default function BalancesPage() {
       // un Net Deposit menor en Balances que en Movimientos. Para VexPro
       // (ib=prop=other=0) ambas daban igual, pero era un bug latente que
       // afectaba el Monto a Distribuir apenas alguien cargara esas categorías.
+      let apiMissing = false;
       if (showFlows && isDerivedBrokerPeriod({ year: p.year, month: p.month })) {
         const ymKey = `${p.year}-${String(p.month).padStart(2, '0')}`;
         const api = apiMonthly[ymKey];
+        // Sin datos de API el mes derivado se muestra con lo manual, pero
+        // MARCADO: es el número equivocado con cara de número bueno.
+        apiMissing = !api;
         if (api) {
           const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
           // Fórmula canónica compartida — misma que usa /movimientos.
@@ -256,6 +294,7 @@ export default function BalancesPage() {
         balanceMes,
         saldoInicial,
         saldoFinal: acumulado,
+        apiMissing,
       });
     }
     return rows;
@@ -319,7 +358,6 @@ export default function BalancesPage() {
   const [walletsError, setWalletsError] = useState<string | null>(null);
   const [walletsFetchedAt, setWalletsFetchedAt] = useState<string | null>(null);
   const [walletsIsMock, setWalletsIsMock] = useState(false);
-  const [walletToggles, setWalletToggles] = useState<Record<string, boolean>>({});
 
   const fetchWallets = useCallback(async () => {
     setWalletsLoading(true);
@@ -331,14 +369,6 @@ export default function BalancesPage() {
       setWallets(json.wallets ?? []);
       setWalletsFetchedAt(json.fetchedAt ?? new Date().toISOString());
       setWalletsIsMock(json.isMock ?? false);
-      // Initialize toggles for new wallets (default: on)
-      setWalletToggles(prev => {
-        const next = { ...prev };
-        for (const w of json.wallets ?? []) {
-          if (next[w.id] === undefined) next[w.id] = true;
-        }
-        return next;
-      });
     } catch (err) {
       setWalletsError(err instanceof Error ? err.message : 'Error');
     } finally {
@@ -375,13 +405,16 @@ export default function BalancesPage() {
     };
   }, [fetchWallets]);
 
-  const toggleWallet = (id: string) => {
-    setWalletToggles(prev => ({ ...prev, [id]: !prev[id] }));
-  };
-
-  const walletTotal = wallets
-    .filter(w => walletToggles[w.id] !== false)
-    .reduce((sum, w) => sum + w.balanceConfirmed, 0);
+  // ── El toggle que prometía excluir y no excluía (borrado 2026-08-31) ──────
+  // Cada wallet de Coinsbuy tenía un interruptor rotulado «Excluir del total» /
+  // «Incluir en el total». Lo único que hacía era filtrar `walletTotal`, una
+  // constante que NO se renderizaba en ninguna parte: el total consolidado sale
+  // de las wallets FIJADAS (`pinned_coinsbuy_wallets`, migración 084) y de ahí
+  // no lo sacaba nadie. O sea: el usuario apagaba una wallet, la fila se ponía
+  // gris, y el total seguía igual. Un control que miente sobre el dinero es
+  // peor que no tener control — quien quiera sacar una wallet del total la
+  // despinnea, que es el mecanismo real y el que ya está a dos centímetros.
+  // Ver la auditoría de finanzas, ítem 20.
 
   // Load pinned wallets from Supabase
   const loadPinnedWallets = useCallback(async () => {
@@ -457,7 +490,18 @@ export default function BalancesPage() {
   }, [pinnedWallets, wallets]);
 
   // ─── UniPayment Balance (API en tiempo real) ───
-  const [unipaymentBalance, setUnipaymentBalance] = useState(0);
+  //
+  // `null` = NO LO SABEMOS (todavía no respondió, o falló). No es 0.
+  //
+  // ── EL BUG (auditoría de finanzas, ítem 13) ──────────────────────────────
+  // El estado arrancaba en `0` y el catch decía, literal, «Silent — channel
+  // shows $0 on error». Un $0 nunca puede ser el estado de error: se lee como
+  // "esta cuenta está vacía", que es una afirmación sobre la plata. Con `null`
+  // el canal cae a su libro/snapshot —el mismo fallback que ya hacía
+  // /api/balances/total-consolidado:179— y la pantalla lo marca como dato
+  // degradado.
+  const [unipaymentLive, setUnipaymentLive] = useState<number | null>(null);
+  const [unipaymentFailed, setUnipaymentFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -465,16 +509,25 @@ export default function BalancesPage() {
       try {
         const res = await apiFetch('/api/integrations/unipayment/balances');
         const json = await res.json();
-        if (!cancelled && json.success && Array.isArray(json.balances) && json.balances.length > 0) {
+        if (cancelled) return;
+        if (json.success && Array.isArray(json.balances) && json.balances.length > 0) {
           // Sum all available balances (primary wallet)
           const total = json.balances.reduce(
             (sum: number, b: { availableBalance: number }) => sum + (b.availableBalance ?? 0),
             0,
           );
-          setUnipaymentBalance(total);
+          // `> 0` para que un 0 en vivo caiga al libro, MISMO criterio que
+          // /api/balances/total-consolidado:179 — si los dos no coinciden, la
+          // home y esta pantalla muestran totales distintos.
+          setUnipaymentLive(total > 0 ? total : null);
+          setUnipaymentFailed(false);
+        } else if (!json.success) {
+          setUnipaymentFailed(true);
         }
-      } catch {
-        // Silent — channel shows $0 on error
+      } catch (err) {
+        if (cancelled) return;
+        console.error('[balances] unipayment:', err);
+        setUnipaymentFailed(true);
       }
     };
     fetchUniBalance();
@@ -565,44 +618,121 @@ export default function BalancesPage() {
     let cancelled = false;
     apiFetch(`/api/admin/channel-ledger/balances?asof=${selectedDate}`)
       .then((r) => r.json())
-      .then((json: { success?: boolean; balances?: Record<string, number> }) => {
-        if (!cancelled && json.success) setLedgerBalances(json.balances ?? {});
-      })
+      .then(
+        (json: {
+          success?: boolean;
+          balances?: Record<string, number>;
+          lastEntry?: Record<string, string>;
+        }) => {
+          if (cancelled || !json.success) return;
+          setLedgerBalances(json.balances ?? {});
+          setLedgerLastEntry(json.lastEntry ?? {});
+        },
+      )
       .catch(() => {
         // Sin libro cargado, cada canal cae a su snapshot histórico.
-        if (!cancelled) setLedgerBalances({});
+        if (!cancelled) {
+          setLedgerBalances({});
+          setLedgerLastEntry({});
+        }
       });
     return () => { cancelled = true; };
   }, [company?.id, selectedDate]);
 
-  const getChannelValue = (key: string): number => {
-    if (key === 'liquidez') return liquidityBalance;
-    if (key === 'inversiones') return investmentsBalance;
+  /**
+   * ¿Se pudo leer el saldo EN VIVO de Coinsbuy?
+   *
+   * `walletsFetchedAt === null` es "todavía no contestó", no "no hay plata":
+   * durante la primera carga la pantalla muestra el libro en vez de un $0 que
+   * dura medio segundo y asusta.
+   */
+  const coinsbuyLiveKnown = walletsError === null && walletsFetchedAt !== null;
+
+  /**
+   * De dónde sale el saldo de un canal, cuánto es, y de cuándo.
+   *
+   * La elección libro-vs-snapshot NO se reimplementa acá: es `pickChannelAmount`
+   * del módulo puro compartido, la misma que usan el reporte y
+   * /api/balances/total-consolidado. Lo propio de esta pantalla es la rama
+   * EN VIVO — y su fallback, que es el ítem 13 de la auditoría:
+   *
+   *   `if (isToday) return pinnedWalletsTotal;` no tenía respaldo. Con la API
+   *   de Coinsbuy caída, `wallets` queda vacío, `pinnedWalletsTotal` da 0 y el
+   *   canal mostraba **$0,00** en vez de los $244.079,51 que el libro sabe.
+   *   El patrón correcto ya existía en /api/balances/total-consolidado:163,179
+   *   (si la API falla, cae al libro); acá faltaba.
+   */
+  const resolveChannel = (
+    key: string,
+  ): { amount: number; source: ReportChannelSource; asOf: string | null; degraded: boolean } => {
+    if (key === 'liquidez') {
+      return { amount: liquidityBalance, source: 'computed', asOf: null, degraded: false };
+    }
+    if (key === 'inversiones') {
+      return { amount: investmentsBalance, source: 'computed', asOf: null, degraded: false };
+    }
 
     const snap = snapshots.find((s) => s.channel_key === key);
-    const ledger = ledgerBalances[key];
+    const stored = pickChannelAmount({
+      channelKey: key,
+      ledgerBalance: ledgerBalances[key],
+      snapshot: snap ? { amount: snap.amount, source: snap.source ?? 'manual' } : undefined,
+    });
+    const storedAsOf =
+      stored.source === 'ledger'
+        ? (ledgerLastEntry[key] ?? null)
+        : stored.source === 'missing'
+          ? null
+          : (snap?.snapshot_date ?? null);
+    const storedRow = { ...stored, asOf: storedAsOf, degraded: false };
 
     // Canales por API: el saldo EN VIVO es lo que devuelve la API en este
     // momento (decisión de Kevin). El libro manda para cualquier fecha
-    // pasada, porque cierra exacto contra el saldo real de ese día.
-    if (key === 'coinsbuy') {
-      if (isToday) return pinnedWalletsTotal;
-      if (ledger !== undefined) return ledger;
-      if (snap && snap.source) return snap.amount;
-      return 0;
+    // pasada, porque cierra exacto contra el saldo real de ese día. La
+    // decisión vivo-vs-respaldo es `pickLiveOrStored`, compartida y testeada.
+    if (key === 'coinsbuy' && isToday) {
+      return pickLiveOrStored({
+        live: coinsbuyLiveKnown ? pinnedWalletsTotal : null,
+        liveFailed: walletsError !== null,
+        liveAsOf: walletsFetchedAt,
+        stored,
+        storedAsOf,
+      });
     }
-    if (key === 'unipayment') {
-      if (isToday) return unipaymentBalance;
-      if (ledger !== undefined) return ledger;
-      if (snap && snap.source === 'api') return snap.amount;
-      return 0;
+    if (key === 'unipayment' && isToday) {
+      return pickLiveOrStored({
+        live: unipaymentLive,
+        liveFailed: unipaymentFailed,
+        liveAsOf: new Date().toISOString(),
+        stored,
+        storedAsOf,
+      });
     }
 
-    // Canales manuales: el libro es la única fuente de verdad. El snapshot
-    // queda solo como respaldo para canales que todavía no abrieron libro.
-    if (ledger !== undefined) return ledger;
-    return snap?.amount ?? 0;
+    return storedRow;
   };
+
+  const getChannelValue = (key: string): number => resolveChannel(key).amount;
+
+  /**
+   * Lo que la tarjeta necesita para pintar la fila: de cuándo es el saldo, si
+   * está viejo y si es un dato degradado (la API no contestó). Se calcula acá
+   * porque acá viven las fuentes; la tarjeta sólo lo muestra.
+   */
+  const getChannelMeta = (key: string) => {
+    const row = resolveChannel(key);
+    return {
+      source: row.source,
+      asOf: row.asOf,
+      degraded: row.degraded,
+      stale: isStaleBalance({ source: row.source, updatedAt: row.asOf, asOf: selectedDate }),
+    };
+  };
+
+  /** Canales cuyo saldo se está mostrando degradado (API caída). */
+  const degradedChannels = visibleChannels
+    .filter((ch) => resolveChannel(ch.key).degraded)
+    .map((ch) => ch.label);
 
   /**
    * Desglose que el cron dejó guardado con el snapshot (migración 085).
@@ -617,61 +747,6 @@ export default function BalancesPage() {
     if (!meta || typeof meta !== 'object') return null;
     const candidate = meta as OnchainSnapshotMeta;
     return candidate.kind === 'onchain' && Array.isArray(candidate.networks) ? candidate : null;
-  };
-
-  // Carga manual del saldo de un canal sin libro. La tarjeta unificada es la
-  // dueña del formulario; acá vive la escritura porque también recarga los
-  // snapshots de la fecha elegida.
-  const saveChannelBalance = async (key: string, value: number) => {
-    if (!company) return;
-    // Reject NaN / Infinity explicitly — `|| 0` would silently turn a bad
-    // input into a real save of "0", which is data corruption.
-    if (!Number.isFinite(value)) {
-      throw new Error(t('balances.invalidNumber'));
-    }
-    setErrMsg(null);
-    try {
-      // Server-side write via the admin endpoint (service-role + audit log).
-      // 10s timeout on each leg so a stalled Supabase / network hang surfaces
-      // as a TimeoutError instead of leaving the spinner up forever.
-      const res = await withTimeout(
-        apiFetch('/api/admin/channel-balances', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            channel_key: key,
-            snapshot_date: selectedDate,
-            amount: value,
-            source: 'manual',
-          }),
-        }),
-        10_000,
-        t('balances.opSaveBalance'),
-      );
-      const json = (await res.json()) as { success: boolean; error?: string };
-      if (!res.ok || !json.success) {
-        throw new Error(json.error ?? t('balances.saveErrorHttp', { status: String(res.status) }));
-      }
-      // Refresh BEFORE collapsing the editor so the displayed value reflects
-      // what's actually persisted. If the refresh itself stalls we still show
-      // success — the write was confirmed by the 200 above.
-      try {
-        await withTimeout(loadSnapshots(), 10_000, t('balances.opReloadBalances'));
-      } catch (refreshErr) {
-        console.warn('[balances] refresh after save failed:', refreshErr);
-      }
-      setOkMsg(t('balances.savedOk'));
-      setTimeout(() => setOkMsg(null), 4000);
-    } catch (err) {
-      const msg =
-        err instanceof TimeoutError
-          ? `${err.message}. ${t('balances.timeoutRetry')}`
-          : err instanceof Error
-            ? err.message
-            : t('balances.saveErrorGeneric');
-      setErrMsg(msg);
-      throw new Error(msg);
-    }
   };
 
   const exportChannelsPdf = () => {
@@ -724,6 +799,29 @@ export default function BalancesPage() {
         </div>
       )}
 
+      {/* Dato degradado — ítem 13 de la auditoría de finanzas.
+          Un $0 no puede ser el estado de error: cuando una API no contesta se
+          muestra el mejor dato disponible (el libro) Y se dice que pasó. Sin
+          este aviso, el saldo de Coinsbuy caía a $0,00 y el Net Deposit de un
+          mes derivado se desplomaba, las dos cosas en silencio. */}
+      {(degradedChannels.length > 0 || apiTotalsFailed) && (
+        <div
+          role="status"
+          className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm"
+        >
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div className="space-y-1">
+            <p className="font-medium">{t('balances.degradedTitle')}</p>
+            {degradedChannels.length > 0 && (
+              <p>
+                {t('balances.degradedChannels', { channels: degradedChannels.join(', ') })}
+              </p>
+            )}
+            {apiTotalsFailed && <p>{t('balances.degradedPeriodTotals')}</p>}
+          </div>
+        </div>
+      )}
+
       {/* ═══════════ BALANCES POR CANAL ═══════════
           Va primero porque es la pregunta que el módulo responde antes que
           ninguna otra: cuánto se puede usar hoy y cuánto está afuera. */}
@@ -733,15 +831,14 @@ export default function BalancesPage() {
         getValue={getChannelValue}
         onChanged={loadChannelConfigs}
         canManage={isAdmin}
-        canEditBalance={userCanAdd}
         selectedDate={selectedDate}
         onSelectedDate={setSelectedDate}
         reloading={loadingSnap}
         onReload={loadSnapshots}
         onExportPdf={exportChannelsPdf}
         onConfigure={() => setShowChannelConfig(true)}
-        onSaveBalance={saveChannelBalance}
         getSnapshotMeta={getSnapshotMeta}
+        getBalanceMeta={getChannelMeta}
         extraActions={(key) =>
           key === 'coinsbuy' && isAdmin ? (
             <button
@@ -869,7 +966,14 @@ export default function BalancesPage() {
                 <p className="text-lg font-semibold text-positive">
                   +{formatCurrency(currentBalanceRow.netDeposit)}
                 </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{inflowHint}</p>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  {inflowHint}
+                  {currentBalanceRow.apiMissing && (
+                    <span className="ml-1 px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning border border-warning/30">
+                      {t('balances.apiMissingBadge')}
+                    </span>
+                  )}
+                </p>
               </div>
               <div className="p-3 rounded-lg border border-border">
                 <p className="text-xs text-muted-foreground">{t('balances.operatingExpenses')}</p>
@@ -1017,25 +1121,12 @@ export default function BalancesPage() {
               {wallets.length > 0 ? (
                 <div className="space-y-2">
                   {wallets.map((w) => {
-                    const isOn = walletToggles[w.id] !== false;
                     return (
                       <div
                         key={w.id}
-                        className={`flex items-center justify-between gap-3 p-3 rounded-lg border transition-colors ${
-                          isOn ? 'border-border hover:bg-muted/30' : 'border-border/50 bg-muted/20 opacity-60'
-                        }`}
+                        className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
                       >
                         <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <button
-                            onClick={() => toggleWallet(w.id)}
-                            className="shrink-0 text-muted-foreground hover:text-foreground transition-colors"
-                            title={isOn ? t('balances.excludeFromTotal') : t('balances.includeInTotal')}
-                          >
-                            {isOn
-                              ? <ToggleRight className="w-6 h-6 text-emerald-500" />
-                              : <ToggleLeft className="w-6 h-6" />
-                            }
-                          </button>
                           <div className="min-w-0">
                             <p className="font-medium truncate">{w.label}</p>
                             <p className="text-xs text-muted-foreground">
@@ -1049,7 +1140,7 @@ export default function BalancesPage() {
                           </div>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className={`font-semibold text-sm tabular-nums ${isOn ? '' : 'text-muted-foreground'}`}>
+                          <span className="font-semibold text-sm tabular-nums">
                             {w.balanceConfirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} {w.currencyCode}
                           </span>
                           {isPinned(w.id) ? (

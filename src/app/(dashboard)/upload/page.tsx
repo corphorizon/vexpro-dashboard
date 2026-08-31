@@ -10,6 +10,11 @@ import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
+import {
+  ALL_WITHDRAWAL_CATEGORIES,
+  withdrawalCategoryLabel,
+} from '@/lib/withdrawal-categories';
+import { ALL_DEPOSIT_CHANNELS } from '@/lib/deposit-channels';
 import type { LiquidityMovement, Investment } from '@/lib/types';
 import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical, Lock as LockIcon, Upload } from 'lucide-react';
 import {
@@ -86,6 +91,15 @@ import {
   isDerivedBrokerPeriod,
   computeDerivedBroker,
 } from '@/lib/broker-logic';
+import { useCrmMonthlyAuto } from '@/lib/use-crm-monthly-auto';
+import { resolveAutoOrManual } from '@/lib/crm-auto-values';
+
+/**
+ * La única serie del espejo que este formulario consume: las comisiones IB.
+ * Alimenta el SPLIT del broker derivado, no ningún total — ver el bloque de
+ * `ibEffective` más abajo.
+ */
+const UPLOAD_CRM_AUTO_METRICS = ['ib_commissions'] as const;
 import {
   parseAmount,
   findInvalidAmount,
@@ -189,12 +203,26 @@ function SortableExpenseRow({
 }
 interface IncomeRow { prop_firm: number; broker_pnl: number; other: number; }
 
-const INITIAL_DEPOSITS: DepositRow[] = [
-  { id: 'd1', channel: 'coinsbuy', amount: 0 },
-  { id: 'd2', channel: 'fairpay', amount: 0 },
-  { id: 'd3', channel: 'unipayment', amount: 0 },
-  { id: 'd4', channel: 'other', amount: 0 },
-];
+/**
+ * Filas de la tabla de Depósitos, DERIVADAS del registro único
+ * (`ALL_DEPOSIT_CHANNELS` en src/lib/deposit-channels.ts).
+ *
+ * ── POR QUÉ NO ES UNA LISTA A MANO (2026-08-31, auditoría de finanzas) ──────
+ * Era una cuarta copia del par canal↔pantalla, y ya había divergido: le
+ * faltaba `paypros`, habilitado en `deposits.channel` por la migración 105 y
+ * presente en el registro desde entonces. La consecuencia no era solo cosmética.
+ * Este estado es lo que se hidrata al abrir el período Y lo que se manda al
+ * guardar, así que una fila `paypros` cargada por otra vía era INVISIBLE en la
+ * pantalla y se BORRABA en el próximo guardado —la RPC reemplaza el período
+ * entero desde el payload del cliente (§2.4 de docs/reglas-del-proyecto.md:
+ * «cualquier columna nueva que no viaje en el payload se pierde en silencio»)—.
+ * Derivándola, un canal nuevo aparece solo y deja de poder perderse.
+ */
+const INITIAL_DEPOSITS: DepositRow[] = ALL_DEPOSIT_CHANNELS.map((channel, i) => ({
+  id: `d${i + 1}`,
+  channel,
+  amount: 0,
+}));
 
 const INITIAL_WITHDRAWALS: WithdrawalRow[] = [
   { id: 'w1', category: 'ib_commissions', amount: 0 },
@@ -669,20 +697,56 @@ export default function UploadPage() {
     company?.default_wallet_id ?? '',
   );
 
+  // ── Comisiones IB: el automático del espejo alimenta el SPLIT ──────────────
+  // (2026-08-31, auditoría de finanzas, ítem 18)
+  //
+  // `computeDerivedBroker` reparte el retiro que reportó la API entre Broker, IB,
+  // Prop Firm y Otros: Broker = API − IB − PropFirm − Otros. La categoría IB
+  // está VACÍA desde abril, así que el resto —$125.000 a $180.000 por mes que la
+  // API sí reporta como salida— se atribuía entero a «Broker». El total nunca
+  // estuvo mal; la ETIQUETA sí, todos los meses, y es la que después se lee para
+  // entender a dónde se fue la plata.
+  //
+  // Alimentarlo con el automático corrige el split SIN mover ningún total:
+  //   · «Retiros Totales» de /movimientos = API + manual Broker. No toca esto.
+  //   · El total del pie de ESTE formulario = Σ categorías + broker derivado.
+  //     Como la fila de IB de abajo muestra el MISMO valor efectivo que se le
+  //     resta acá, los dos movimientos se cancelan y el total queda idéntico.
+  //     Si sólo se cambiara una de las dos puntas, el pie bajaría $180.000 sin
+  //     que hubiera pasado nada — por eso van juntas.
+  //
+  // SÓLO EN PERÍODOS ABIERTOS. Un período cerrado congeló sus insumos y su
+  // distribución ya se calculó con el split viejo; cambiarle la cara hoy haría
+  // que el papel firmado y la pantalla no coincidan. En cerrados se sigue
+  // usando el manual, tal cual estaba.
+  const crmAuto = useCrmMonthlyAuto(
+    currentPeriodObj ? [currentPeriodObj] : [],
+    UPLOAD_CRM_AUTO_METRICS,
+  );
+  const ibEffective = useMemo(() => {
+    const manual = withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
+    if (!brokerIsDerived || selectedPeriodIsClosed) {
+      return { value: manual, source: 'manual' as const };
+    }
+    return resolveAutoOrManual({
+      derived: true,
+      manual,
+      auto: crmAuto.auto.ib_commissions ?? null,
+    });
+  }, [brokerIsDerived, selectedPeriodIsClosed, withdrawals, crmAuto.auto.ib_commissions]);
+
   // Live-computed broker. Re-runs as the user edits IB / Prop Firm / Otros.
   const derivedBrokerAmount = useMemo(() => {
     if (!brokerIsDerived) return 0;
-    const ib =
-      withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
     const pf = withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
     const other = withdrawals.find((w) => w.category === 'other')?.amount || 0;
     return computeDerivedBroker({
       apiWithdrawalsTotal: brokerApiTotals.withdrawalsTotal,
-      ibCommissions: ib,
+      ibCommissions: ibEffective.value,
       propFirm: pf,
       other,
     });
-  }, [brokerIsDerived, withdrawals, brokerApiTotals.withdrawalsTotal]);
+  }, [brokerIsDerived, withdrawals, brokerApiTotals.withdrawalsTotal, ibEffective.value]);
 
   // Liquidez state (from Supabase)
   const [liquidityRows, setLiquidityRowsRaw] = useState<LiquidityMovement[]>(() => [...getLiquidityData()]);
@@ -1816,6 +1880,15 @@ export default function UploadPage() {
   //      manual extras the user already added.
   const saveIncome = () => {
     if (!userCanAdd || !company) return;
+    // Mes cerrado: mismo criterio que los otros NUEVE handlers de esta pantalla
+    // (autosave, egresos, liquidez, inversiones…). Era el ÚNICO sin guard
+    // (auditoría 2026-08-31): el trigger de la migración 061 rechazaba la
+    // escritura igual, pero el rechazo llegaba como una excepción de Postgres
+    // que este handler mostraba CRUDA al usuario — ver el catch de abajo.
+    if (selectedPeriodIsClosed) {
+      showError(t('upload.periodClosedNoChanges', { period: periodLabel }));
+      return;
+    }
     (async () => {
       Sentry.addBreadcrumb({
         category: 'upload.save',
@@ -1882,11 +1955,18 @@ export default function UploadPage() {
           tags: { area: 'upload.saveIncome' },
           extra: { periodId: selectedPeriodRef.current, companyId: company.id },
         });
-        showError(`Error: ${message}`);
+        // `Error: ${message}` filtraba el texto CRUDO de Postgres a la pantalla
+        // —nombres de tabla, de trigger, de constraint— que es justo lo que
+        // §5.4 de docs/reglas-del-proyecto.md prohíbe («nunca error.message al
+        // cliente»). El detalle va a Sentry, que ya lo capturó arriba; el
+        // usuario recibe el mensaje estándar del repo, el mismo que usan las
+        // otras diez rutas de guardado de esta pantalla.
+        showError(t('upload.saveError', { error: t('upload.saveErrorGeneric') }));
         // dirty is intentionally NOT cleared on error — the user's
         // unsaved edits stay protected from the sync effect overwriting
         // them, so they can fix the network / validation issue and retry
         // without re-entering everything.
+        void message; // el detalle vive en Sentry, no en la UI
       }
     })();
   };
@@ -2254,8 +2334,9 @@ export default function UploadPage() {
                     type="number"
                     step="0.01"
                     value={propFirmAmount || ''}
+                    disabled={selectedPeriodIsClosed}
                     onChange={(e) => setPropFirmAmount(parseFloat(e.target.value) || 0)}
-                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="0.00"
                   />
                 ) : (
@@ -2284,14 +2365,22 @@ export default function UploadPage() {
               {withdrawals.map(w => {
                 const isBrokerAutoRow =
                   w.category === 'broker' && brokerIsDerived;
+                // La fila de IB muestra el valor EFECTIVO (el automático del
+                // espejo cuando no hay carga manual), que es EXACTAMENTE el que
+                // se le resta al broker derivado. Las dos puntas van juntas o el
+                // total del pie se desfasa por el mismo importe.
+                const isIbAutoRow =
+                  w.category === 'ib_commissions' && ibEffective.source === 'api';
                 const displayAmount = isBrokerAutoRow
                   ? derivedBrokerAmount
-                  : w.amount;
+                  : isIbAutoRow
+                    ? ibEffective.value
+                    : w.amount;
                 return (
                   <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     <td className="py-2.5 px-3 font-medium">
-                      {WITHDRAWAL_LABELS[w.category]}
-                      {isBrokerAutoRow && (
+                      {withdrawalCategoryLabel(w.category, t)}
+                      {(isBrokerAutoRow || isIbAutoRow) && (
                         <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
                           auto
                         </span>
@@ -2316,6 +2405,13 @@ export default function UploadPage() {
                           {isBrokerAutoRow && (
                             <span className="text-[10px] text-muted-foreground">
                               + API {formatCurrency(derivedBrokerAmount)} (auto)
+                            </span>
+                          )}
+                          {isIbAutoRow && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {t('upload.ibFromCrm', {
+                                amount: formatCurrency(ibEffective.value),
+                              })}
                             </span>
                           )}
                         </div>
@@ -2350,8 +2446,16 @@ export default function UploadPage() {
                     // added here because it's an auto-calculation shown for
                     // reference — the Movimientos page adds it at render
                     // time so both sources remain visible separately.
-                    withdrawals.reduce((s, w) => s + w.amount, 0) +
-                    (brokerIsDerived ? derivedBrokerAmount : 0)
+                    // El IB entra por su valor EFECTIVO, el mismo que se le
+                    // restó al broker derivado. Con las dos puntas alineadas el
+                    // total es idéntico al de antes de cablear el automático:
+                    // lo que cambió es el REPARTO entre Broker e IB, no la suma.
+                    withdrawals.reduce(
+                      (s, w) =>
+                        s +
+                        (w.category === 'ib_commissions' ? ibEffective.value : w.amount),
+                      0,
+                    ) + (brokerIsDerived ? derivedBrokerAmount : 0)
                   )}
                 </td>
                 {userCanAdd && <td></td>}
@@ -2363,6 +2467,19 @@ export default function UploadPage() {
                     className="py-2 px-3 text-[11px] text-muted-foreground italic"
                   >
                     {t('upload.brokerCoexistNote')}
+                  </td>
+                </tr>
+              )}
+              {/* La cabecera que explica de dónde salió el IB. Un número que
+                  aparece solo, sin que nadie lo haya tecleado, necesita decir de
+                  dónde vino y qué NO cambia por su culpa. */}
+              {ibEffective.source === 'api' && (
+                <tr>
+                  <td
+                    colSpan={userCanAdd ? 3 : 2}
+                    className="py-2 px-3 text-[11px] text-muted-foreground italic"
+                  >
+                    {t('upload.ibSplitNote')}
                   </td>
                 </tr>
               )}
@@ -2388,8 +2505,9 @@ export default function UploadPage() {
                     type="number"
                     step="0.01"
                     value={p2pAmount || ''}
+                    disabled={selectedPeriodIsClosed}
                     onChange={(e) => setP2PAmount(parseFloat(e.target.value) || 0)}
-                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent"
+                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder="0.00"
                   />
                 ) : (
@@ -2421,10 +2539,13 @@ export default function UploadPage() {
                   onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, category: e.target.value as typeof p.category }))}
                   className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                 >
-                  <option value="ib_commissions">{WITHDRAWAL_LABELS['ib_commissions']}</option>
-                  <option value="broker">{WITHDRAWAL_LABELS['broker']}</option>
-                  <option value="prop_firm">{WITHDRAWAL_LABELS['prop_firm']}</option>
-                  <option value="other">{WITHDRAWAL_LABELS['other']}</option>
+                  {/* Del registro único: eran cuatro <option> escritas a mano,
+                      con el mismo orden que /movimientos tenía en otra lista. */}
+                  {ALL_WITHDRAWAL_CATEGORIES.map((cat) => (
+                    <option key={cat} value={cat}>
+                      {withdrawalCategoryLabel(cat, t)}
+                    </option>
+                  ))}
                 </select>
                 <input
                   type="text"
@@ -2483,7 +2604,7 @@ export default function UploadPage() {
                       <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                         <td className="py-2.5 px-3">
                           <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                            {WITHDRAWAL_LABELS[w.category]}
+                            {withdrawalCategoryLabel(w.category, t)}
                           </span>
                         </td>
                         <td className="py-2.5 px-3">{w.description}</td>
@@ -2880,28 +3001,28 @@ export default function UploadPage() {
         const propFirmWithdrawal =
           withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
         const propFirmNet = propFirmAmount - propFirmWithdrawal;
-        const totalIngresos = income.broker_pnl + income.other + propFirmNet;
+        // El Broker P&L salió de esta suma junto con su input: acá abajo se
+        // muestra el total de lo que ESTA PANTALLA carga. El ingreso completo
+        // —con el P&L automático del CRM— es el de /resumen-general, que sale
+        // de la cadena canónica. Sumar acá un `broker_pnl` que ya nadie edita
+        // mostraría un total que no coincide con ninguna otra pantalla.
+        const totalIngresos = income.other + propFirmNet;
         return (
         <Card>
           <h2 className="text-lg font-semibold mb-4">{t('upload.operatingIncome')} — {periodLabel}</h2>
           <div className="space-y-4">
-            <div className={showBrokerPnl ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4'}>
-              {showBrokerPnl && (
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('movements.brokerPnlBookB')}</label>
-                  {userCanAdd ? (
-                    <input
-                      type="number" step="0.01"
-                      value={income.broker_pnl || ''}
-                      onChange={e => setIncome(p => ({ ...p, broker_pnl: parseFloat(e.target.value) || 0 }))}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                      placeholder="0.00"
-                    />
-                  ) : (
-                    <p className="text-lg font-bold">{formatCurrency(income.broker_pnl)}</p>
-                  )}
-                </div>
-              )}
+            {/* ── El Broker P&L YA NO SE TECLEA ────────────────────────────
+                Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo
+                manual". El campo estaba acá y agosto 2026 de Vex Pro tenía
+                $671.000 escritos contra los $386.665,54 que da el cierre
+                diario del CRM: $284.334,46 de diferencia sobre un número que
+                entra a la base distribuible de los socios.
+                Ahora sale de `crm_daily_pnl` (ver src/lib/broker-pnl.ts) y se
+                muestra en /resumen-general diciendo de dónde salió.
+                El VALOR VIEJO NO SE BORRA de `operating_income.broker_pnl`:
+                es el que conservan los nueve períodos ya cerrados, que son
+                inmutables. Sacar el input es sacar la forma de PISARLO. */}
+            <div className="grid grid-cols-1 gap-4">
               {/* "Otros ingresos" con detalle cargado es un campo DERIVADO: el
                   servidor lo sobreescribe con la suma de lo cobrado en cada
                   guardado del detalle, así que editarlo a mano se perdería. */}
@@ -2911,6 +3032,7 @@ export default function UploadPage() {
                   <input
                     type="number" step="0.01"
                     value={income.other || ''}
+                    disabled={selectedPeriodIsClosed}
                     onChange={e => setIncome(p => ({ ...p, other: parseFloat(e.target.value) || 0 }))}
                     className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
                     placeholder="0.00"
@@ -2951,11 +3073,12 @@ export default function UploadPage() {
                     <input
                       type="number" step="0.01"
                       value={propFirmAmount || ''}
+                      disabled={selectedPeriodIsClosed}
                       onChange={e => {
                         setPropFirmAmount(parseFloat(e.target.value) || 0);
                         markDirty('ingresos');
                       }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                       placeholder="0.00"
                     />
                   ) : (
@@ -2968,6 +3091,7 @@ export default function UploadPage() {
                     <input
                       type="number" step="0.01"
                       value={propFirmWithdrawal || ''}
+                      disabled={selectedPeriodIsClosed}
                       onChange={e => {
                         const v = parseFloat(e.target.value) || 0;
                         // setWithdrawals also marks 'retiros' dirty internally;
@@ -2978,7 +3102,7 @@ export default function UploadPage() {
                         ));
                         markDirty('ingresos');
                       }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
+                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                       placeholder="0.00"
                     />
                   ) : (
@@ -3006,7 +3130,8 @@ export default function UploadPage() {
               {userCanAdd && (
                 <button
                   onClick={saveIncome}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
+                  disabled={selectedPeriodIsClosed}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Save className="w-4 h-4" />
                   {t('upload.saveIncomeBtn')}

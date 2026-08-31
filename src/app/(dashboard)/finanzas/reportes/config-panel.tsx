@@ -13,16 +13,18 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
+import {
+  allSectionsOn,
+  reportSectionLabels,
+  type ReportSections,
+} from '@/lib/reports/sections';
 import { ChevronDown, Save, Settings2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 
-interface Sections {
-  deposits_withdrawals: boolean;
-  balances_by_channel: boolean;
-  crm_users: boolean;
-  broker_pnl: boolean;
-  prop_trading: boolean;
-}
+// Las secciones y sus etiquetas salen del registro único
+// (src/lib/reports/sections.ts): esta pantalla tenía interfaz, etiquetas y
+// default propios, igual que el modal de envío (2026-08-31, ítem 15).
+type Sections = ReportSections;
 interface Cadences {
   daily: boolean;
   weekly: boolean;
@@ -41,13 +43,7 @@ interface Recipient {
 }
 type CadenceKey = 'daily' | 'weekly' | 'monthly';
 
-const SECTION_LABELS: Record<keyof Sections, string> = {
-  deposits_withdrawals: 'Depósitos y Retiros',
-  balances_by_channel: 'Balances por Canal',
-  crm_users: 'Usuarios CRM',
-  broker_pnl: 'Broker P&L',
-  prop_trading: 'Prop Trading Firm',
-};
+const SECTION_LABELS = reportSectionLabels('es');
 
 const CADENCE_LABELS: Record<keyof Cadences, string> = {
   daily: 'Reporte diario',
@@ -60,13 +56,7 @@ export function ReportsConfigPanel() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null);
-  const [sections, setSections] = useState<Sections>({
-    deposits_withdrawals: true,
-    balances_by_channel: true,
-    crm_users: true,
-    broker_pnl: true,
-    prop_trading: true,
-  });
+  const [sections, setSections] = useState<Sections>(allSectionsOn);
   const [cadences, setCadences] = useState<Cadences>({
     daily: true,
     weekly: true,

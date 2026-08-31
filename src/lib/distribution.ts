@@ -42,6 +42,18 @@ export interface PeriodDistInput {
 
 export interface PeriodDistResult {
   ingresosNetos: number;
+  /**
+   * De dónde sale `ingresosNetos` (Kevin, 2026-08-31: «pon de donde proviene
+   * esa suma»). Los cuatro sumandos EXACTOS de la fórmula de abajo — expuestos
+   * acá para que las pantallas los muestren sin recomputarlos (recomputarlos
+   * es cómo nacen las segundas listas que divergen).
+   */
+  desglose: {
+    brokerPnl: number;
+    other: number;
+    propFirmNetIncome: number;
+    investmentProfits: number;
+  };
   egresosNetos: number;
   saldoAFavor: number; // ingresos − egresos (puede ser negativo)
   deudaArrastradaEntrada: number;
@@ -62,6 +74,12 @@ export function computeDistributionChain(
     const ingresos = round2(
       p.brokerPnl + p.other + p.propFirmNetIncome + p.investmentProfits,
     );
+    const desglose = {
+      brokerPnl: round2(p.brokerPnl),
+      other: round2(p.other),
+      propFirmNetIncome: round2(p.propFirmNetIncome),
+      investmentProfits: round2(p.investmentProfits),
+    };
     const egresos = round2(p.totalExpenses);
     const saldo = round2(ingresos - egresos);
     const reservePct = p.reservePct ?? 0.1;
@@ -72,6 +90,7 @@ export function computeDistributionChain(
       carryDebt = round2(debtIn + Math.abs(saldo));
       chain.set(p.periodId, {
         ingresosNetos: ingresos,
+        desglose,
         egresosNetos: egresos,
         saldoAFavor: saldo,
         deudaArrastradaEntrada: debtIn,
@@ -97,6 +116,7 @@ export function computeDistributionChain(
       const distributable = available > 0 ? round2(available - reserve) : 0;
       chain.set(p.periodId, {
         ingresosNetos: ingresos,
+        desglose,
         egresosNetos: egresos,
         saldoAFavor: saldo,
         deudaArrastradaEntrada: debtIn,

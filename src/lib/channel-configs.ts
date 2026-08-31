@@ -1,7 +1,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Channel configuration resolver for "Balances por Canal".
 //
-// Built-in channels are hardcoded here (7 of them). They can be toggled
+// Built-in channels are hardcoded here (8 of them — eran 7 hasta que entró
+// `paypros`; el número quedó viejo y se corrige acá, 2026-08-31). They can be toggled
 // (hidden from the Balances card + Reports) and, for manual ones, renamed.
 // Custom channels (is_custom=true, channel_key prefixed `custom_`) are
 // created by admins from the modal and can be fully edited + deleted.
@@ -14,7 +15,15 @@
 
 import type { OnchainWallet, UnitShare } from './cash-locations';
 
-export type ChannelType = 'api' | 'manual' | 'auto';
+/**
+ * `'api'` se borró el 2026-08-31 (auditoría de finanzas, ítem 20): CERO usos en
+ * el código y CERO filas en `channel_configs.channel_type` en producción. Era
+ * un tercer valor que sólo servía para que cada `switch` tuviera una rama
+ * imposible y para hacer dudar sobre la diferencia entre «api» y «auto», que no
+ * existía. Un canal de proveedor externo es `auto`, y quién es se pregunta con
+ * `isAutoLedger` / `API_LEDGER_CHANNELS`, no por este campo.
+ */
+export type ChannelType = 'manual' | 'auto';
 
 export interface BuiltinChannel {
   key: string;

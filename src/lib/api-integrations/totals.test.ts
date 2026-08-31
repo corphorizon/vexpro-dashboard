@@ -2,14 +2,17 @@ import { describe, it, expect } from 'vitest';
 import {
   computeProviderTotals,
   acceptedTransactions,
+  countPayprosPayouts,
   filterByDateRange,
   monthRange,
+  ACCEPTED_STATUS,
 } from './totals';
 import type {
   CoinsbuyDepositTx,
   CoinsbuyWithdrawalTx,
   FairpayDepositTx,
   UnipaymentDepositTx,
+  PayprosDepositTx,
   ProviderDataset,
 } from './types';
 
@@ -113,6 +116,55 @@ describe('computeProviderTotals — fairpay / unipayment', () => {
     expect(t.total).toBe(200);
     expect(t.feeTotal).toBe(4);
     expect(t.count).toBe(1);
+  });
+});
+
+describe('computeProviderTotals — Pay-Pros', () => {
+  // Datos reales de Vex Pro al 2026-08-31: 61 filas, todas status 'paid',
+  // todas USD, todas del espejo del CRM (external_id 'crm:<depositId>').
+  const pp = (o: Partial<PayprosDepositTx>): PayprosDepositTx =>
+    ({
+      id: 'crm:1', provider: 'paypros', kind: 'deposit',
+      createdAt: '2026-08-15T10:00:00Z', amount: 0, currency: 'USD',
+      status: 'paid', notifyReference: '',
+      ...o,
+    }) as PayprosDepositTx;
+
+  it("suma solo 'paid' — el depósito cobrado (código 4 del webhook)", () => {
+    const t = computeProviderTotals(ds('paypros', [
+      pp({ id: 'a', amount: 500 }),
+      pp({ id: 'b', amount: 15 }),
+      pp({ id: 'c', amount: 999, status: 'unpaid' }),
+      pp({ id: 'd', amount: 111, status: 'refund_approved' }),
+    ]));
+    expect(t.total).toBe(515);
+    expect(t.count).toBe(2);
+    expect(t.acceptedStatus).toBe('paid');
+  });
+
+  it('un payout NO se resta de los depósitos (escondería un retiro adentro)', () => {
+    const rows = [
+      pp({ id: 'a', amount: 500 }),
+      pp({ id: 'p', amount: 300, status: 'payout_paid', kind: 'withdrawal' }),
+    ];
+    expect(computeProviderTotals(ds('paypros', rows)).total).toBe(500);
+    // …pero su existencia NO es silenciosa: se puede contar y avisar.
+    expect(countPayprosPayouts(ds('paypros', rows))).toEqual({ count: 1, total: 300 });
+  });
+
+  it('sin payouts, countPayprosPayouts devuelve cero (no null)', () => {
+    expect(countPayprosPayouts(ds('paypros', [pp({ amount: 10 })]))).toEqual({
+      count: 0,
+      total: 0,
+    });
+  });
+
+  it('la comisión es 0: Pay-Pros no informa fee', () => {
+    expect(computeProviderTotals(ds('paypros', [pp({ amount: 10 })])).feeTotal).toBe(0);
+  });
+
+  it('el status aceptado coincide con el del RPC del libro (migración 082)', () => {
+    expect(ACCEPTED_STATUS.paypros).toBe('paid');
   });
 });
 

@@ -65,5 +65,22 @@ export async function fetchProviderBySlug(
       return fetchFairpayDeposits(options);
     case 'unipayment':
       return fetchUnipaymentDepositsV2(options);
+    case 'paypros':
+      // Pay-Pros NO tiene endpoint de listado (ni webhook ni CRM son "fetch"):
+      // sus filas llegan por push / por el espejo del CRM y se leen desde
+      // api_transactions. Devolvemos un dataset en error explícito en vez de
+      // un array vacío: vacío se lee como «no hubo movimientos» y esto es
+      // «no se pregunta por acá». La pantalla lee /persisted-movements.
+      return {
+        slug: 'paypros',
+        provider: 'paypros',
+        kind: 'deposits',
+        transactions: [],
+        fetchedAt: new Date().toISOString(),
+        status: 'error',
+        isMock: false,
+        errorMessage:
+          'Pay-Pros no expone endpoint de listado: los movimientos se leen del espejo (api_transactions), no de una llamada en vivo.',
+      };
   }
 }

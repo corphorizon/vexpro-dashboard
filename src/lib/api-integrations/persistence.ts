@@ -238,11 +238,28 @@ export async function persistBalanceSnapshot(
 
 // ─── Read helpers ────────────────────────────────────────────────────────
 
+/**
+ * Techo defensivo de filas. Un mes típico son <10K; esto protege contra un
+ * rango de varios años consumiendo memoria en silencio.
+ */
+const TX_ROW_CAP = 10_000;
+
 export interface PersistedTotals {
   by: Record<ProviderSlug, number>;
   depositsTotal: number;
   withdrawalsTotal: number;
   lastSyncedAt: string | null;
+  /**
+   * La consulta tocó el techo de filas: estos totales pueden estar CORTOS.
+   *
+   * El `.limit(10000)` estaba desde siempre y sin flag, así que un rango que lo
+   * superara devolvía un Depósitos/Retiros más chico que el real, sin ningún
+   * aviso — y de ahí sale el Net Deposit que consume la cadena de
+   * distribución. Un recorte silencioso es indistinguible de «no hay más»
+   * (docs/reglas-del-proyecto.md §1.2), y acá además es indistinguible de un
+   * mes flojo (2026-08-31, auditoría de finanzas, ítem 19).
+   */
+  truncated: boolean;
 }
 
 /**
@@ -280,9 +297,7 @@ export async function loadPersistedTotals(
     .eq('company_id', companyId)
     .gte('transaction_date', fromISO)
     .lte('transaction_date', toISO)
-    // Defensive cap — typical month is <10K rows; this protects against a
-    // pathological multi-year range silently consuming memory.
-    .limit(10000);
+    .limit(TX_ROW_CAP);
 
   if (walletId) {
     // Only apply filter for rows that have a wallet_id — others (fairpay/uni)
@@ -294,18 +309,30 @@ export async function loadPersistedTotals(
   if (error || !data) {
     console.error('[loadPersistedTotals] query failed:', error?.message);
     return {
-      by: { 'coinsbuy-deposits': 0, 'coinsbuy-withdrawals': 0, fairpay: 0, unipayment: 0 },
+      by: {
+        'coinsbuy-deposits': 0,
+        'coinsbuy-withdrawals': 0,
+        fairpay: 0,
+        unipayment: 0,
+        paypros: 0,
+      },
       depositsTotal: 0,
       withdrawalsTotal: 0,
       lastSyncedAt: null,
+      truncated: false,
     };
   }
+
+  // `>=` y no `===`: PostgREST puede devolver menos de lo pedido por su propio
+  // techo de servidor, y en ese caso también hay recorte.
+  const truncated = data.length >= TX_ROW_CAP;
 
   const by: Record<ProviderSlug, number> = {
     'coinsbuy-deposits': 0,
     'coinsbuy-withdrawals': 0,
     fairpay: 0,
     unipayment: 0,
+    paypros: 0,
   };
 
   const ACCEPTED: Record<ProviderSlug, string[]> = {
@@ -313,23 +340,22 @@ export async function loadPersistedTotals(
     'coinsbuy-withdrawals': ['Approved'],
     fairpay: ['Completed'],
     unipayment: ['Completed'],
+    // Solo el depósito cobrado. El payout se acumula aparte (abajo) porque
+    // `by.paypros` es la fila de DEPÓSITOS que muestra la pantalla.
+    paypros: ['paid'],
   };
 
-  // Pay-Pros entra por webhook (modelo push) y NO pasa por ProviderDataset ni
-  // tiene slug propio en `by` todavía: sus filas viven en api_transactions
-  // con provider='paypros' y un status que ya distingue depósito de retiro
-  // ('paid' = cash/bank cobrado, 'payout_paid' = payout ejecutado). Se suman
-  // aparte a los totales de depósitos/retiros para que Net Deposit las vea
-  // desde el primer aviso; el desglose por pantalla llega en la tanda de UI
-  // (ampliar ProviderSlug arrastra 7 Records exhaustivos).
-  let payprosDeposits = 0;
+  // Pay-Pros: un solo provider con los dos sentidos adentro ('paid' entra,
+  // 'payout_paid' sale). `by.paypros` guarda SOLO las entradas —es lo que
+  // muestra la tarjeta de Depósitos— y los payouts se suman a los retiros.
+  // Desde 2026-08-31 'paypros' es un ProviderSlug de pleno derecho y la
+  // pantalla lee el mismo `by` que esta función; antes la UI cableaba tres
+  // slugs a mano y se comía $44.653,95.
   let payprosPayouts = 0;
 
   for (const row of data) {
-    if (row.provider === 'paypros') {
-      const amt = Number(row.amount) || 0;
-      if (row.status === 'paid') payprosDeposits += amt;
-      else if (row.status === 'payout_paid') payprosPayouts += amt;
+    if (row.provider === 'paypros' && row.status === 'payout_paid') {
+      payprosPayouts += Number(row.amount) || 0;
       continue;
     }
     const slug = row.provider as ProviderSlug;
@@ -364,8 +390,9 @@ export async function loadPersistedTotals(
 
   return {
     by,
-    depositsTotal: by['coinsbuy-deposits'] + by.fairpay + by.unipayment + payprosDeposits,
+    depositsTotal: by['coinsbuy-deposits'] + by.fairpay + by.unipayment + by.paypros,
     withdrawalsTotal: by['coinsbuy-withdrawals'] + payprosPayouts,
     lastSyncedAt: syncRows?.[0]?.last_synced_at ?? null,
+    truncated,
   };
 }

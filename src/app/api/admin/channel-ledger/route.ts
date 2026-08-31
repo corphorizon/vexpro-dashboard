@@ -6,11 +6,17 @@
 //      una unidad de negocio (libro consolidado).
 // POST { action: 'create' | 'update' | 'delete', ... }
 //
-// Los canales por API (coinsbuy / unipayment) son SOLO LECTURA acá: su libro
-// lo escribe el cron de las 00:00 UTC contra el saldo real del proveedor, y
-// un asiento a mano solo podría descuadrarlo. La regla vive en
-// channel-ledger.ts (validateEntry) para que la UI y el endpoint no puedan
-// discrepar, y se revalida server-side en cada escritura.
+// Los canales de libro AUTOMÁTICO son SOLO LECTURA acá: su libro lo escribe el
+// cron de las 00:00 UTC contra el saldo real del proveedor, y un asiento a mano
+// solo podría descuadrarlo. La regla vive en channel-ledger.ts (validateEntry)
+// para que la UI y el endpoint no puedan discrepar, y se revalida server-side
+// en cada escritura.
+//
+// La enumeración «(coinsbuy / unipayment)» que estaba acá quedó vieja dos veces
+// —entró `fairpay` el 2026-08-31 y `paypros` el mismo día, más las ubicaciones
+// on-chain, que ni siquiera tienen clave fija— así que se saca: la lista se
+// deriva de BUILTIN_CHANNELS y quien quiera saber cuáles son mira
+// `API_LEDGER_CHANNELS`, no este comentario.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -25,11 +31,59 @@ import {
 } from '@/lib/channel-ledger';
 import { unitLocationShares } from '@/lib/cash-locations';
 
+/**
+ * Techos de filas del libro, y por qué son DOS distintos.
+ *
+ * (2026-08-31, auditoría de finanzas, ítem 19)
+ * `ENTRIES_CAP` ya existía como `.limit(5000)` pelado y sin flag. El
+ * `priorQuery` de abajo —los asientos ANTERIORES al rango, de donde sale el
+ * SALDO DE ARRANQUE— no tenía NINGÚN límite, así que quedaba a merced del
+ * `db_max_rows` de PostgREST (1.000 por defecto): pasadas mil filas previas, el
+ * front sumaba sólo mil y **todo el libro del rango se mostraba corrido**, con
+ * un saldo inicial equivocado y sin ningún error. Un canal con dos años de
+ * asiento diario (hasta 5 líneas por día) llega a esas mil filas en siete
+ * meses.
+ *
+ * `PRIOR_CAP` es más alto que `ENTRIES_CAP` a propósito: lo previo es TODA la
+ * historia del canal, mientras que las entries son sólo el rango pedido. Y las
+ * previas no se renderizan —se suman— así que traerlas es barato.
+ */
+const ENTRIES_CAP = 5_000;
+const PRIOR_CAP = 20_000;
+
 const SELECT_COLS =
   'id, company_id, channel_key, entry_date, kind, source, concept, category, reference, amount, notes, created_by, created_at, updated_at';
 
 /** Un id mal formado revienta en Postgres (22P02); se corta antes con un 400. */
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * ¿La ubicación tiene direcciones on-chain cargadas? (migración 085)
+ *
+ * No se puede deducir de la clave: el canal de una wallet on-chain es
+ * `wallet_externa` o un `custom_<uuid>` distinto en cada empresa. Pero SÍ lleva
+ * libro automático —el cron lo asienta contra el saldo de la cadena cada
+ * noche—, así que un asiento a mano encima lo descuadraría igual que en
+ * Coinsbuy. Ver `isAutoLedger` en channel-ledger.ts.
+ *
+ * Ante un error de lectura devuelve `true`: si no sabemos si el libro es
+ * automático, no se escribe. Es la misma doctrina de las tres puertas de
+ * api-auth.ts:163-171 — ante la duda, lo estricto.
+ */
+async function channelIsOnchain(
+  admin: ReturnType<typeof createAdminClient>,
+  companyId: string,
+  channelKey: string,
+): Promise<boolean> {
+  const { data, error } = await admin
+    .from('channel_configs')
+    .select('onchain_wallets')
+    .eq('company_id', companyId)
+    .eq('channel_key', channelKey)
+    .maybeSingle<{ onchain_wallets: unknown }>();
+  if (error) return true;
+  return Array.isArray(data?.onchain_wallets) && data.onchain_wallets.length > 0;
+}
 
 /**
  * Escrituras: mismo criterio que `canAdd` en el cliente (admin o auditor).
@@ -134,11 +188,14 @@ export async function GET(request: NextRequest) {
   const { data, error } = await query
     .order('entry_date', { ascending: true })
     .order('created_at', { ascending: true })
-    .limit(5000);
+    .limit(ENTRIES_CAP);
 
   if (error) return apiError('admin/channel-ledger', error, { status: 500 });
 
+  const entriesTruncated = (data ?? []).length >= ENTRIES_CAP;
+
   let opening: unknown[] = [];
+  let openingTruncated = false;
   if (from && (channelKey || unitChannelKeys)) {
     let priorQuery = admin
       .from('channel_ledger_entries')
@@ -148,8 +205,13 @@ export async function GET(request: NextRequest) {
     priorQuery = unitChannelKeys
       ? priorQuery.in('channel_key', unitChannelKeys)
       : priorQuery.eq('channel_key', channelKey!);
-    const { data: op } = await priorQuery;
+    // Límite ALTO y EXPLÍCITO. Sin él mandaba el db_max_rows de PostgREST y el
+    // saldo de arranque se corría en silencio (ver PRIOR_CAP arriba).
+    const { data: op } = await priorQuery
+      .order('entry_date', { ascending: true })
+      .limit(PRIOR_CAP);
     opening = op ?? [];
+    openingTruncated = opening.length >= PRIOR_CAP;
   }
 
   return NextResponse.json({
@@ -161,6 +223,15 @@ export async function GET(request: NextRequest) {
     // Ubicaciones de la unidad, incluidas las que no tienen ni un asiento:
     // el desglose por ubicación tiene que poder mostrarlas en cero.
     ...(unitChannelKeys ? { channelKeys: unitChannelKeys, shares: unitShares } : {}),
+    /**
+     * Se alcanzó el techo de filas. Los dos son graves y de formas distintas:
+     *   · `entries`  → faltan asientos del rango: el listado está corto.
+     *   · `opening`  → falta HISTORIA previa: el saldo de arranque está mal y
+     *                  con él TODO el saldo corrido de la pantalla.
+     * Viaja al cliente porque un libro corrido no se distingue de uno correcto
+     * mirándolo (§1.2).
+     */
+    truncated: { entries: entriesTruncated, opening: openingTruncated },
   });
 }
 
@@ -175,7 +246,10 @@ export async function POST(request: NextRequest) {
   // ── Alta ───────────────────────────────────────────────────────────────
   if (action === 'create') {
     const input = body as Partial<LedgerEntryInput>;
-    const invalid = validateEntry(input);
+    const onchain = input.channel_key
+      ? await channelIsOnchain(admin, auth.companyId, input.channel_key)
+      : false;
+    const invalid = validateEntry(input, { onchain });
     if (invalid) {
       return NextResponse.json({ success: false, error: invalid }, { status: 400 });
     }
@@ -246,7 +320,8 @@ export async function POST(request: NextRequest) {
     if (!existing || existing.company_id !== auth.companyId) {
       return NextResponse.json({ success: false, error: 'Asiento no encontrado' }, { status: 404 });
     }
-    if (existing.source === 'api' || isAutoLedger(existing.channel_key)) {
+    const existingOnchain = await channelIsOnchain(admin, auth.companyId, existing.channel_key);
+    if (existing.source === 'api' || isAutoLedger(existing.channel_key, { onchain: existingOnchain })) {
       return NextResponse.json(
         {
           success: false,
@@ -280,7 +355,10 @@ export async function POST(request: NextRequest) {
     // El saldo inicial conserva su `kind`: cambiarlo a 'out' lo volvería un
     // egreso y dejaría al canal sin punto de partida.
     const kind = existing.kind === 'opening' ? 'opening' : input.kind;
-    const invalid = validateEntry({ ...input, kind, channel_key: existing.channel_key });
+    const invalid = validateEntry(
+      { ...input, kind, channel_key: existing.channel_key },
+      { onchain: existingOnchain },
+    );
     if (invalid) {
       return NextResponse.json({ success: false, error: invalid }, { status: 400 });
     }

@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, BookOpen, Plus, Pencil, Trash2, FileDown, Lock } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, BookOpen, Plus, Pencil, Trash2, FileDown, Lock } from 'lucide-react';
 import { useAuth, canAdd } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
@@ -62,7 +62,13 @@ export default function ChannelLedgerPage() {
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
 
-  const isAuto = isAutoLedger(channelKey);
+  // Una ubicación on-chain también lleva libro automático, pero eso NO se
+  // deduce de la clave (`wallet_externa` / `custom_<uuid>`): sale de tener
+  // direcciones cargadas. Arranca en `true` para que el botón de «Nuevo
+  // asiento» no aparezca durante el primer render y desaparezca después.
+  const [onchain, setOnchain] = useState(true);
+
+  const isAuto = isAutoLedger(channelKey, { onchain });
   // Los canales por API son de solo lectura aunque el usuario tenga permiso
   // de escritura: el saldo lo manda el proveedor.
   const canWrite = canAdd(user) && !isAuto && hasLedger(channelKey);
@@ -70,6 +76,14 @@ export default function ChannelLedgerPage() {
   const [range, setRange] = useState(monthRange);
   const [entries, setEntries] = useState<LedgerEntry[]>([]);
   const [priorEntries, setPriorEntries] = useState<LedgerEntry[]>([]);
+  // El endpoint tocó su techo de filas. `opening` es el grave: sin toda la
+  // historia previa el saldo de arranque queda mal y con él TODO el saldo
+  // corrido de la pantalla — y un libro corrido no se distingue de uno correcto
+  // mirándolo (2026-08-31, auditoría de finanzas, ítem 19).
+  const [truncated, setTruncated] = useState<{ entries: boolean; opening: boolean }>({
+    entries: false,
+    opening: false,
+  });
   const [loading, setLoading] = useState(true);
   const [channelLabel, setChannelLabel] = useState(channelKey);
   const [dialogEntry, setDialogEntry] = useState<LedgerEntry | null>(null);
@@ -83,10 +97,13 @@ export default function ChannelLedgerPage() {
       .then((r) => r.json())
       .then((json: { success?: boolean; rows?: ChannelConfigRow[] }) => {
         if (cancelled || !json.success) return;
-        const found = resolveChannels(json.rows ?? []).find((c) => c.key === channelKey);
+        const rows = json.rows ?? [];
+        const found = resolveChannels(rows).find((c) => c.key === channelKey);
         if (found) setChannelLabel(found.label);
+        const row = rows.find((r) => r.channel_key === channelKey);
+        setOnchain((row?.onchain_wallets?.length ?? 0) > 0);
       })
-      .catch(() => { /* el key crudo alcanza como fallback */ });
+      .catch(() => { /* el key crudo alcanza como fallback; el libro queda de solo lectura */ });
     return () => { cancelled = true; };
   }, [channelKey]);
 
@@ -101,6 +118,7 @@ export default function ChannelLedgerPage() {
       if (json.success) {
         setEntries(json.entries ?? []);
         setPriorEntries(json.priorEntries ?? []);
+        setTruncated(json.truncated ?? { entries: false, opening: false });
       } else {
         toast.error(json.error ?? 'No se pudo cargar el libro');
       }
@@ -183,6 +201,31 @@ export default function ChannelLedgerPage() {
   return (
     <div className="space-y-6">
       {ToastHost}
+
+      {(truncated.entries || truncated.opening) && (
+        <div
+          role="alert"
+          className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200"
+        >
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>
+            {truncated.opening ? (
+              <>
+                <strong className="font-semibold">Saldo de arranque incompleto.</strong>{' '}
+                No se pudo leer toda la historia anterior al rango: el saldo inicial y
+                el saldo corrido de TODAS las filas de abajo están equivocados. Elegí
+                un rango que empiece más tarde o pedí ayuda al equipo técnico.
+              </>
+            ) : (
+              <>
+                <strong className="font-semibold">Asientos incompletos.</strong> Se
+                alcanzó el máximo de filas que se pueden leer de una vez: faltan
+                asientos del rango y los totales están cortos. Achicá el rango.
+              </>
+            )}
+          </span>
+        </div>
+      )}
 
       <PageHeader
         title={`${t('ledger.title')} · ${channelLabel}`}
@@ -295,6 +338,11 @@ export default function ChannelLedgerPage() {
                 const autoLabel = autoCategoryLabel(row.category, locale === 'en' ? 'en' : 'es');
                 const isAdjustment = row.category === AUTO_CATEGORIES.adjustment;
                 const isInternal = row.category === AUTO_CATEGORIES.internal;
+                // «Variación del saldo» NO es un ajuste: es el movimiento del
+                // día de un canal sin extracto (FairPay). Comparte aritmética
+                // con el ajuste pero no su explicación — decirle «diferencia
+                // que no cuadra» a un movimiento real invita a corregirlo.
+                const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                 return (
                   <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
                     <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
@@ -302,9 +350,13 @@ export default function ChannelLedgerPage() {
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium">{autoLabel ?? row.concept}</div>
-                      {(isAdjustment || isInternal) && (
+                      {(isAdjustment || isInternal || isBalanceDelta) && (
                         <div className="text-xs text-muted-foreground mt-0.5 max-w-md">
-                          {isAdjustment ? t('ledger.adjustmentHint') : t('ledger.internalHint')}
+                          {isBalanceDelta
+                            ? t('ledger.balanceDeltaHint')
+                            : isAdjustment
+                              ? t('ledger.adjustmentHint')
+                              : t('ledger.internalHint')}
                         </div>
                       )}
                       {!autoLabel && row.category && (

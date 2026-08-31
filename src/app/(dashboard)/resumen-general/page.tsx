@@ -22,6 +22,8 @@ import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { withdrawalChannelLabel } from '@/lib/withdrawal-channels';
+import { manualDepositsByChannel } from '@/lib/deposit-channels';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -56,7 +58,7 @@ export default function ResumenPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, computeSaldoChain, periods, company, loading } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, computeSaldoChain, getBrokerPnl, periods, company, loading } = useData();
   // Una consultora no mueve fondos de clientes: sin depósitos, "Net Deposit" y
   // el P&L del broker no significan nada y se van de la pantalla (y del export).
   const { netDeposit: showNetDeposit, brokerPnl: showBrokerPnl } = features(company?.business_model);
@@ -102,11 +104,40 @@ export default function ResumenPage() {
           ingresosNetos: acc.ingresosNetos + e.ingresosNetos,
           egresosNetos: acc.egresosNetos + e.egresosNetos,
           saldoAFavor: acc.saldoAFavor + e.saldoAFavor,
+          otherIncome: acc.otherIncome + e.desglose.other,
         };
       },
-      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0 },
+      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0, otherIncome: 0 },
     );
   }, [saldoChain, mode, selectedPeriodId, selectedPeriodIds]);
+
+  // ─── Broker P&L, con su procedencia ─────────────────────────────────────
+  // En consolidado se suman los períodos seleccionados. La procedencia del
+  // conjunto es la del PEOR caso, en este orden: si a alguno le falta el dato
+  // el conjunto es 'none' (un total al que le falta un mes es un número más
+  // chico y perfectamente creíble); si alguno viene congelado el conjunto es
+  // 'frozen'. Sólo cuando TODOS salen del CRM se puede decir "CRM".
+  const brokerPnl = useMemo(() => {
+    const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
+    const partes = ids.map((id) => getBrokerPnl(id)).filter((r) => r !== null);
+    if (partes.length === 0) return null;
+    if (partes.some((r) => r.value === null)) {
+      return { value: null, source: 'none' as const, daysWithData: null, daysInMonth: null };
+    }
+    const value = Math.round(partes.reduce((s, r) => s + (r.value ?? 0), 0) * 100) / 100;
+    if (partes.length === 1) {
+      return {
+        value,
+        source: partes[0].source,
+        daysWithData: partes[0].daysWithData,
+        daysInMonth: partes[0].daysInMonth,
+      };
+    }
+    const source = partes.every((r) => r.source === 'crm') ? ('crm' as const) : ('frozen' as const);
+    // Los días sólo se muestran en un período único: "27 de 31" no significa
+    // nada sobre cuatro meses sumados.
+    return { value, source, daysWithData: null, daysInMonth: null };
+  }, [mode, selectedPeriodId, selectedPeriodIds, getBrokerPnl]);
 
   // Skeleton while the data-context hasn't produced a summary yet. A blank
   // page mid-load (what used to show) felt like the app was broken.
@@ -137,13 +168,13 @@ export default function ResumenPage() {
   // so the number shown here always matches what Movimientos shows.
 
   // Deposits per channel: API amount (when derived-logic period) + manual.
-  const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0;
-  const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0;
-  const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0;
-  const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
+  // El manual sale del registro único de canales — antes se enumeraban tres a
+  // mano acá y Pay-Pros no entraba ni por la API ni por el manual.
+  const manualByChannel = manualDepositsByChannel(summary.deposits);
+  const storedOther = manualByChannel.other;
 
   const consolidatedDeposits = useDerivedBroker
-    ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
+    ? coexist.apiDepositsTotal(manualByChannel) + storedOther
     : summary.totalDeposits;
 
   // Withdrawals — Kevin (2026-06-06, decisión final): los retiros reales
@@ -160,9 +191,6 @@ export default function ResumenPage() {
 
   const consolidatedNetDeposit = consolidatedDeposits - consolidatedWithdrawals;
 
-  // `income` sigue siendo el desglose vivo que se muestra como detalle; los
-  // TOTALES vienen de la cadena (ver chainTotals arriba).
-  const income = summary.operatingIncome;
   const totalIncome = chainTotals.ingresosNetos;
   const totalExpenses = chainTotals.egresosNetos;
   const balanceDisponible = chainTotals.saldoAFavor;
@@ -196,8 +224,6 @@ export default function ResumenPage() {
       date: new Date().toLocaleDateString(),
     });
   });
-
-  const fs = summary.financialStatus;
 
   return (
     <div className="space-y-6">
@@ -248,9 +274,24 @@ export default function ResumenPage() {
               icon={ArrowDownCircle}
               tone="info"
             />
+            {/* Un canal de retiro que no se pudo leer NO está en este total, y
+                decirlo es obligatorio: un recorte silencioso es indistinguible
+                de «no hay más» (docs/reglas-del-proyecto.md §1.2). /movimientos
+                ya lo avisaba desde la tanda 1; acá el mismo número se mostraba
+                pelado, así que la MISMA exclusión era visible en una pantalla e
+                invisible en la otra (2026-08-31, auditoría de finanzas). */}
             <StatCard
               label={t('summary.withdrawals')}
               value={formatCurrency(consolidatedWithdrawals)}
+              hint={
+                useDerivedBroker && coexist.withdrawalChannelsWithoutData.length > 0
+                  ? t('movements.withdrawalsMissingChannels', {
+                      channels: coexist.withdrawalChannelsWithoutData
+                        .map((c) => withdrawalChannelLabel(c, t))
+                        .join(', '),
+                    })
+                  : undefined
+              }
               icon={ArrowUpCircle}
               tone="negative"
             />
@@ -311,10 +352,54 @@ export default function ResumenPage() {
                 <span>{formatCurrency(summary.investmentProfits)}</span>
               </div>
             )}
-            {showBrokerPnl && income && (
+            {/* «Otros ingresos» (income_lines cobradas → operating_income.other):
+                el sumando que faltaba para que las líneas EXPLIQUEN el total.
+                Sale del desglose de la cadena, no se recomputa acá. */}
+            {chainTotals.otherIncome !== 0 && (
               <div className="flex justify-between">
-                <span>{t('summary.brokerPnl')}</span>
-                <span>{formatCurrency(income.broker_pnl)}</span>
+                <span>{t('summary.otherIncome')}</span>
+                <span>{formatCurrency(chainTotals.otherIncome)}</span>
+              </div>
+            )}
+            {/* ── Broker P&L: automático desde el CRM ────────────────────
+                Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo
+                manual". Ya no se lee `income.broker_pnl`: el número sale de
+                `crm_daily_pnl` en los períodos abiertos y del congelado del
+                cierre en los cerrados. La línea DICE de dónde salió, porque
+                un número sin procedencia es exactamente lo que había antes.
+                Sin dato se muestra "sin datos" — nunca $0. */}
+            {showBrokerPnl && brokerPnl && (
+              <div className="flex justify-between gap-3">
+                <span className="flex items-baseline gap-1.5">
+                  {t('summary.brokerPnl')}
+                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80">
+                    {brokerPnl.source === 'crm'
+                      ? t('brokerPnl.sourceCrm')
+                      : brokerPnl.source === 'frozen'
+                        ? t('brokerPnl.sourceFrozen')
+                        : t('brokerPnl.sourceNone')}
+                  </span>
+                </span>
+                <span className="text-right">
+                  {brokerPnl.value === null ? (
+                    <span className="text-muted-foreground">{t('brokerPnl.noData')}</span>
+                  ) : (
+                    formatCurrency(brokerPnl.value)
+                  )}
+                  {/* Un mes incompleto tiene que VERSE: un acumulado de 31
+                      días construido con 27 es un número más chico y
+                      perfectamente creíble. */}
+                  {brokerPnl.source === 'crm' &&
+                    brokerPnl.daysWithData !== null &&
+                    brokerPnl.daysInMonth !== null &&
+                    brokerPnl.daysWithData < brokerPnl.daysInMonth && (
+                      <span className="block text-[10px] text-amber-600">
+                        {t('brokerPnl.partialDays')
+                          .replace('{days}', String(brokerPnl.daysWithData))
+                          .replace('{total}', String(brokerPnl.daysInMonth))}
+                      </span>
+                    )}
+                </span>
               </div>
             )}
           </div>

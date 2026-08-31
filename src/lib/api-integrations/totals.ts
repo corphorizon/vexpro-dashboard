@@ -12,6 +12,7 @@ import type {
   CoinsbuyWithdrawalTx,
   FairpayDepositTx,
   UnipaymentDepositTx,
+  PayprosDepositTx,
   ProviderDataset,
   ProviderTotals,
   ProviderTransaction,
@@ -19,13 +20,56 @@ import type {
 
 /**
  * The status string that counts toward totals for each provider slug.
+ *
+ * Pay-Pros: 'paid' (código 4 del webhook) es el ÚNICO estado que es plata
+ * cobrada. 'payout_paid' (6) es un retiro y tiene su propia constante abajo;
+ * refunds, vencidos y payouts rechazados no mueven caja. Mismo criterio que
+ * el RPC `get_channel_day_movements` (migración 082), que es quien arma el
+ * libro diario del canal: si los dos no coinciden, el libro y la tarjeta
+ * cuentan cosas distintas.
  */
 export const ACCEPTED_STATUS = {
   'coinsbuy-deposits': 'Confirmed',
   'coinsbuy-withdrawals': 'Approved',
   fairpay: 'Completed',
   unipayment: 'Completed',
+  paypros: 'paid',
 } as const;
+
+/**
+ * Estado de Pay-Pros que representa una SALIDA de plata (payout ejecutado).
+ *
+ * No entra en `computeProviderTotals`, que devuelve el total del slug tal
+ * como se muestra en la fila de Depósitos. Los payouts se cuentan en el libro
+ * del canal (RPC 082) y se exponen aparte en `countPayprosPayouts` para que
+ * su existencia NUNCA sea silenciosa.
+ *
+ * CORRECCIÓN 2026-08-31: este comentario decía «hoy Vex Pro tiene 0 filas
+ * 'payout_paid'». Era cierto y dejó de serlo el mismo día: el espejo del CRM
+ * ahora proyecta los retiros aprobados de Pay-Pros con este status
+ * (src/lib/api-integrations/paypros/withdrawals-from-crm.ts — al 2026-08-31,
+ * 6 retiros por US$ 2.617,62). El «si aparecen» ya pasó, y por eso
+ * `useApiTotals` los suma a Retiros Totales vía `API_WITHDRAWAL_CHANNELS`.
+ */
+export const PAYPROS_PAYOUT_STATUS = 'payout_paid';
+
+/**
+ * Cuántos payouts (salidas) trae el dataset de Pay-Pros y por cuánto.
+ * `computeProviderTotals('paypros')` los deja afuera a propósito; esto existe
+ * para poder AVISAR de la exclusión en vez de tragársela.
+ */
+export function countPayprosPayouts(
+  dataset: ProviderDataset,
+): { count: number; total: number } {
+  if (dataset.slug !== 'paypros') return { count: 0, total: 0 };
+  const rows = (dataset.transactions as PayprosDepositTx[]).filter(
+    (t) => t.status === PAYPROS_PAYOUT_STATUS,
+  );
+  return {
+    count: rows.length,
+    total: rows.reduce((s, t) => s + (t.amount ?? 0), 0),
+  };
+}
 
 /**
  * Filter a dataset's transactions down to only the ones whose status
@@ -98,6 +142,24 @@ export function computeProviderTotals(dataset: ProviderDataset): ProviderTotals 
         count: rows.length,
         feeTotal: rows.reduce((s, t) => s + t.fee, 0),
         acceptedStatus: 'Completed',
+      };
+    }
+    case 'paypros': {
+      // Solo 'paid'. Los 'payout_paid' son salidas y NO se restan acá:
+      // restarlos de los depósitos escondería un retiro dentro de un número de
+      // depósitos. Desde el 2026-08-31 se suman del lado de los RETIROS, por
+      // el registro `src/lib/withdrawal-channels.ts` — que es donde
+      // correspondía, y no acá. Ver countPayprosPayouts.
+      const rows = (dataset.transactions as PayprosDepositTx[]).filter(
+        (t) => t.status === 'paid'
+      );
+      return {
+        total: rows.reduce((s, t) => s + (t.amount ?? 0), 0),
+        count: rows.length,
+        // Pay-Pros no informa comisión: 0 es «no cobra / no lo dice», y así
+        // se persiste en api_transactions.fee desde el primer día.
+        feeTotal: 0,
+        acceptedStatus: 'paid',
       };
     }
   }

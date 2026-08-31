@@ -45,7 +45,15 @@ export interface Deposit {
   id: string;
   period_id: string;
   company_id: string;
-  channel: 'coinsbuy' | 'fairpay' | 'unipayment' | 'other';
+  /**
+   * Canal del depósito. 'paypros' se agregó el 2026-08-31 junto con la
+   * migración 105 (que amplía el CHECK de `deposits.channel`): hasta que esa
+   * migración esté aplicada, la carga MANUAL de ese canal la rechaza la base
+   * — por eso /upload todavía no lo ofrece. La lectura de la API no depende
+   * de la migración: sale de `api_transactions`. Registro de canales en
+   * `src/lib/deposit-channels.ts`.
+   */
+  channel: 'coinsbuy' | 'fairpay' | 'unipayment' | 'paypros' | 'other';
   amount: number;
   notes: string | null;
 }
@@ -302,7 +310,13 @@ export interface PeriodSummary {
 }
 
 // HR Types
-export type CommercialRole = 'sales_manager' | 'head' | 'bdm' | 'bdm_global' | (string & {});
+/**
+ * Los roles conocidos salen del registro único (src/lib/hr/domain.ts) — acá
+ * había una quinta copia del literal. El `(string & {})` se queda: el CHECK de
+ * `commercial_profiles.role` se eliminó en la migración 011 y pueden aparecer
+ * roles libres, que el registro sabe mostrar capitalizados.
+ */
+export type CommercialRole = import('./hr/domain').HrCommercialRole | (string & {});
 
 export interface Employee {
   id: string;
@@ -468,13 +482,25 @@ export interface SendEmailResponse {
   error?: string;
 }
 
+/**
+ * Etiquetas por defecto de los canales de depósito (castellano). Son el
+ * FALLBACK de `depositChannelLabel()` en `src/lib/deposit-channels.ts`, que
+ * prefiere la clave i18n `movements.channelLabel.<canal>`.
+ */
 export const CHANNEL_LABELS: Record<string, string> = {
   coinsbuy: 'Coinsbuy (Crypto)',
   fairpay: 'FairPay (Medio Local)',
   unipayment: 'Unipayment (Tarjeta)',
+  paypros: 'Pay-Pros (Medio Local)',
   other: 'Otros Depósitos',
 };
 
+/**
+ * Castellano fijo. NO se usa directo en pantalla: es el RESPALDO de
+ * `withdrawalCategoryLabel` (src/lib/withdrawal-categories.ts), que traduce.
+ * Hasta el 2026-08-31 esto se renderizaba tal cual y la tarjeta de Retiros
+ * salía en castellano al lado de una de Depósitos traducida.
+ */
 export const WITHDRAWAL_LABELS: Record<string, string> = {
   ib_commissions: 'Comisiones IB',
   broker: 'Broker',

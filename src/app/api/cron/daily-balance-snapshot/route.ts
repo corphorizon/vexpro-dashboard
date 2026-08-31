@@ -12,6 +12,85 @@ import { fetchOnchainTotal } from '@/lib/api-integrations/onchain/usdt-balance';
 import { syncOnchainTransfers } from '@/lib/api-integrations/onchain/transfers';
 import { fetchNativePrices, type NativePriceMap } from '@/lib/api-integrations/onchain/prices';
 import { parseOnchainWallets } from '@/lib/cash-locations';
+import { API_CHANNELS } from '@/lib/api-channels';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Canales automáticos "simples": uno leído, un total, un asiento.
+//
+// La lista sale del REGISTRO (`API_CHANNELS`, src/lib/api-channels.ts) menos
+// Coinsbuy, que tiene reglas propias (snapshots por wallet fijada + la guarda
+// de "la API no devolvió una wallet fijada") y se queda escrito a mano arriba.
+// Antes eran TRES bloques try/catch con la misma forma copiada; cada uno sabía
+// del canal cosas que el resto del código no, y de ahí salieron las cinco
+// listas divergentes del ítem 14 (2026-08-31, auditoría de finanzas).
+// ─────────────────────────────────────────────────────────────────────────────
+const SIMPLE_LEDGER_CHANNELS = API_CHANNELS.filter((c) => c.key !== 'coinsbuy');
+
+interface SimpleChannelRead {
+  /** `null` = el proveedor no devolvió ninguna cuenta: no se asienta nada. */
+  total: number | null;
+  error?: string;
+  /** Sin credenciales para este tenant: no es una falla que valga avisar. */
+  notConfigured?: boolean;
+  /** Legado de FairPay: el endpoint de saldo todavía no está cableado. */
+  endpointMissing?: boolean;
+}
+
+/**
+ * Lee el saldo del canal y lo normaliza a una sola forma. Cada proveedor
+ * devuelve una shape distinta (array de cuentas, número suelto), y esa
+ * traducción es lo ÚNICO específico del canal que queda en el cron.
+ */
+async function readSimpleChannelBalance(
+  key: string,
+  companyId: string,
+): Promise<SimpleChannelRead> {
+  if (key === 'fairpay') {
+    const fp = await fetchFairpayBalances(companyId);
+    if (fp.error) {
+      return {
+        total: null,
+        error: fp.error,
+        notConfigured: fp.notConfigured,
+        endpointMissing: fp.endpointMissing,
+      };
+    }
+    if (fp.balances.length === 0) return { total: null };
+    return { total: fp.balances.reduce((s, b) => s + (b.availableBalance ?? 0), 0) };
+  }
+
+  if (key === 'unipayment') {
+    const up = await fetchUnipaymentBalances(companyId);
+    if (up.error) return { total: null, error: up.error, notConfigured: up.notConfigured };
+    return {
+      total: (up.balances ?? []).reduce(
+        (s, b: { availableBalance?: number }) => s + (b.availableBalance ?? 0),
+        0,
+      ),
+    };
+  }
+
+  if (key === 'paypros') {
+    // Los depósitos/retiros entran por webhook (push), pero el SALDO sale de
+    // GET v2/getBalance. `fetchPayprosBalance` resuelve las credenciales del
+    // tenant: sin fila en api_credentials devuelve `notConfigured` y no llama
+    // a nada (mismo contrato que UniPayment).
+    const pp = await fetchPayprosBalance(companyId);
+    if (pp.error || pp.balance === null) {
+      return {
+        total: null,
+        error: pp.error ?? 'Pay-Pros no devolvió balance',
+        notConfigured: pp.notConfigured,
+      };
+    }
+    return { total: pp.balance };
+  }
+
+  // Un canal automático nuevo sin lector acá NO se asienta en silencio: se
+  // reporta como falla y el aviso lo dice con el nombre del canal. El test de
+  // `api-channels.test.ts` lo agarra antes, pero la red va igual.
+  return { total: null, error: `Canal automático sin lector de saldo en el cron: ${key}` };
+}
 
 // The channel_balances table has RLS enabled; writes from the cron can't
 // pass through the normal `supabase` client (no cookie → no user). This
@@ -240,97 +319,65 @@ export async function GET(request: NextRequest) {
       failures.push({ channel: 'coinsbuy', date: ledgerDate, reason });
     }
 
-    // ── FairPay ──
-    // Activado 2026-06-06. `fetchFairpayBalances` es defensivo: si FairPay
-    // no expone /api/v1/getBalance (404 / shape no reconocida) devuelve
-    // `error` sin throw → registramos el error en entry.fairpay_error y
-    // continuamos con el resto del snapshot.
-    try {
-      const fp = await fetchFairpayBalances(company.id);
-      if (fp.error) {
-        entry.fairpay_error = fp.error;
-        if (!fp.notConfigured) {
-          failures.push({ channel: 'fairpay', date: ledgerDate, reason: fp.error });
+    // ── FairPay / UniPayment / Pay-Pros ──────────────────────────────────
+    //
+    // Los tres canales automáticos "simples" (uno leído, un total, un asiento)
+    // se recorren desde el REGISTRO (`API_CHANNELS`, src/lib/api-channels.ts) y
+    // no como tres bloques copiados. Eran tres `try/catch` con la misma forma y
+    // la misma decisión escrita tres veces, y es donde se coló el desvío del
+    // ítem 14: cada uno sabía cosas del canal que el resto del código no.
+    //
+    // Coinsbuy queda ARRIBA y a mano a propósito: es el único con reglas
+    // propias que no caben en el bucle —snapshots por wallet fijada, la guarda
+    // de "la API no devolvió una wallet fijada"—, y meterlo a la fuerza acá
+    // habría exigido un registro lleno de excepciones. Un canal con reglas
+    // propias explícito es mejor que un bucle con banderas.
+    //
+    // Las ubicaciones on-chain también quedan aparte: no tienen clave fija.
+    for (const def of SIMPLE_LEDGER_CHANNELS) {
+      try {
+        const read = await readSimpleChannelBalance(def.key, company.id);
+        if (read.error !== undefined) {
+          entry[`${def.key}_error`] = read.error;
+          if (!read.notConfigured) {
+            failures.push({ channel: def.key, date: ledgerDate, reason: read.error });
+          }
+          if (read.endpointMissing) {
+            // Endpoint todavía desconocido — capturar a Sentry una sola vez
+            // por día por tenant para que el operador lo vea sin spamearse.
+            try {
+              const Sentry = await import('@sentry/nextjs');
+              Sentry.captureMessage('FairPay balance endpoint not yet wired', {
+                level: 'warning',
+                tags: { area: 'cron.daily-balance', provider: def.key },
+                extra: { companyId: company.id },
+              });
+            } catch { /* sentry optional */ }
+          }
+          continue;
         }
-        if (fp.endpointMissing) {
-          // Endpoint todavía desconocido — capturar a Sentry una sola vez
-          // por día por tenant para que el operador lo vea sin spamearse.
-          try {
-            const Sentry = await import('@sentry/nextjs');
-            Sentry.captureMessage('FairPay balance endpoint not yet wired', {
-              level: 'warning',
-              tags: { area: 'cron.daily-balance', provider: 'fairpay' },
-              extra: { companyId: company.id },
-            });
-          } catch { /* sentry optional */ }
-        }
-      } else if (fp.balances.length > 0) {
-        const total = fp.balances.reduce(
-          (s, b) => s + (b.availableBalance ?? 0),
-          0,
-        );
-        await adminUpsertChannelBalance(admin, company.id, today, 'fairpay', total, 'api');
-        entry.fairpay = total;
-      }
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : 'Unknown error';
-      entry.fairpay_error = reason;
-      failures.push({ channel: 'fairpay', date: ledgerDate, reason });
-    }
+        if (read.total === null) continue; // sin cuentas devueltas: no se asienta nada
 
-    // ── UniPayment ──
-    try {
-      const up = await fetchUnipaymentBalances(company.id);
-      if (up.error) {
-        entry.unipayment_error = up.error;
-        if (!up.notConfigured) {
-          failures.push({ channel: 'unipayment', date: ledgerDate, reason: up.error });
-        }
-      } else {
-        const total = (up.balances ?? []).reduce(
-          (s, b: { availableBalance?: number }) => s + (b.availableBalance ?? 0),
-          0,
-        );
-        await adminUpsertChannelBalance(admin, company.id, today, 'unipayment', total, 'api');
-        entry.unipayment = total;
+        await adminUpsertChannelBalance(admin, company.id, today, def.key, read.total, 'api');
+        entry[def.key] = read.total;
 
+        // `noMovementFeed` sale del registro: FairPay es el único canal
+        // automático sin extracto y su día se asienta con UNA línea,
+        // «Variación del saldo». Ver la cabecera de channel-ledger.ts y la
+        // migración 108, que saca la rama 'fairpay' de
+        // get_channel_day_movements para que ni siquiera llegue hasta acá.
         ledger.push(
-          await syncChannelLedgerDay(admin, company.id, 'unipayment', ledgerDate, total),
+          await syncChannelLedgerDay(admin, company.id, def.key, ledgerDate, read.total, {
+            noMovementFeed: def.noMovementFeed === true,
+          }),
         );
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : 'Unknown error';
+        entry[`${def.key}_error`] = reason;
+        failures.push({ channel: def.key, date: ledgerDate, reason });
       }
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : 'Unknown error';
-      entry.unipayment_error = reason;
-      failures.push({ channel: 'unipayment', date: ledgerDate, reason });
     }
 
-    // ── Pay-Pros ──
-    // Los depósitos/retiros entran por webhook (push), pero el SALDO sale de
-    // GET v2/getBalance. `fetchPayprosBalance` resuelve las credenciales del
-    // tenant: si la empresa no tiene fila en api_credentials devuelve
-    // `notConfigured` y no llama a nada, así que no hace falta un chequeo
-    // previo acá (mismo contrato que UniPayment).
-    try {
-      const pp = await fetchPayprosBalance(company.id);
-      if (pp.error || pp.balance === null) {
-        const reason = pp.error ?? 'Pay-Pros no devolvió balance';
-        entry.paypros_error = reason;
-        if (!pp.notConfigured) {
-          failures.push({ channel: 'paypros', date: ledgerDate, reason });
-        }
-      } else {
-        await adminUpsertChannelBalance(admin, company.id, today, 'paypros', pp.balance, 'api');
-        entry.paypros = pp.balance;
-
-        ledger.push(
-          await syncChannelLedgerDay(admin, company.id, 'paypros', ledgerDate, pp.balance),
-        );
-      }
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : 'Unknown error';
-      entry.paypros_error = reason;
-      failures.push({ channel: 'paypros', date: ledgerDate, reason });
-    }
 
     // ── Ubicaciones on-chain (migración 085) ──
     //
@@ -421,11 +468,41 @@ export async function GET(request: NextRequest) {
 
     if (ledger.length > 0) entry.ledger = ledger;
 
-    // El asiento abortado por MAX_ADJUSTMENT llega hasta acá como
-    // `l.error`: es el caso del 2026-08-07 (Coinsbuy, transferencia interna
-    // de $35.000) que solo dejaba rastro en Sentry.
+    // El asiento abortado por MAX_ADJUSTMENT llega hasta acá como `l.error`:
+    // es el caso del 2026-08-07 (Coinsbuy, transferencia interna de $35.000)
+    // que solo dejaba rastro en Sentry.
+    //
+    // ⚠ Y AVISAR NO ALCANZABA (corrección 2026-08-31, auditoría de finanzas).
+    // Este aviso funcionó exactamente como estaba escrito y NO sirvió: entre el
+    // 21 y el 31/08 Coinsbuy generó ONCE notificaciones `ledger.not_posted`
+    // idénticas, una por noche, mientras el libro seguía congelado con
+    // $91.756,14 de brecha. Un aviso que se repite once veces sin que nada
+    // cambie deja de ser un aviso y pasa a ser ruido. El arreglo no estaba acá
+    // sino en el guard, que ahora se destraba solo — ver RECOVERY_AFTER_DAYS en
+    // src/lib/channel-ledger-sync.ts y el aviso `ledger.regularized` de abajo.
     for (const l of ledger) {
       if (l.error) failures.push({ channel: l.channel_key, date: l.entry_date, reason: l.error });
+    }
+
+    // El libro se destrabó solo: el saldo del canal ya es correcto, pero el
+    // tramo quedó en UNA línea sin desglose. Es un aviso distinto del de "no
+    // se asentó" —éste dice que SÍ se asentó y qué le falta— y por eso tiene
+    // dedupe propio: si los dos compartieran clave, el que llegara segundo se
+    // descartaría y nadie se enteraría de la regularización.
+    for (const l of ledger) {
+      if (!l.forced) continue;
+      await notify(admin, {
+        companyId: company.id,
+        type: 'ledger.regularized',
+        params: {
+          channel: l.channel_key,
+          date: l.entry_date,
+          days: l.daysCovered ?? 1,
+          amount: (l.adjustment ?? 0).toFixed(2),
+        },
+        link: `/balances/libro/${encodeURIComponent(l.channel_key)}`,
+        dedupeKey: dailyKey(`ledger-regularized:${company.id}:${l.channel_key}`),
+      });
     }
 
     // Un aviso por canal y por día: el dedupe deja pasar el primer motivo y

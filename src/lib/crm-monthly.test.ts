@@ -1,12 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { isUnknownConcept } from './crm-wallet-concepts';
+import { HEDGE_FUND_CONCEPTS, isUnknownConcept } from './crm-wallet-concepts';
 import {
   CRM_MONTHLY_METRICS,
   CRM_MONTHLY_METRIC_KEYS,
   CRM_MONTHLY_COMPARED_METRICS,
   CRM_MONTHLY_INFO_METRICS,
+  WALLET_METRIC_CONCEPTS,
   WALLET_METRIC_SPECS,
   aggregateWalletMetricByMonth,
+  aggregateFairpayAdjustmentByMonth,
+  type FairpayPayment,
   type WalletConceptMonthRow,
   aggregateP2pByMonth,
   aggregatePropfirmSalesByMonth,
@@ -370,14 +373,261 @@ describe('registro de métricas', () => {
     expect(CRM_MONTHLY_INFO_METRICS.length).toBeGreaterThan(0);
   });
 
-  it('cada métrica informativa tiene su spec de conceptos, y al revés', () => {
-    expect(WALLET_METRIC_SPECS.map((s) => s.metric).sort())
-      .toEqual(CRM_MONTHLY_INFO_METRICS.map((m) => m.key).sort());
+  it('cada spec de conceptos es una métrica informativa del registro', () => {
+    // La igualdad al revés dejó de valer con el ajuste FairPay (2026-08-31):
+    // es informativa pero NO sale de `wallettransfers` —los dos lados de su
+    // cruce viven en Postgres—, así que no tiene spec de conceptos. Lo que sí
+    // sigue siendo cierto es que ninguna spec puede apuntar a una métrica que
+    // el registro no declara: eso escribiría filas que la pantalla no muestra.
+    const info = CRM_MONTHLY_INFO_METRICS.map((m) => m.key);
+    for (const s of WALLET_METRIC_SPECS) expect(info).toContain(s.metric);
+    // Y las que no vienen de la billetera se nombran acá, para que agregar una
+    // sea una decisión y no un olvido.
+    expect(info.filter((k) => !WALLET_METRIC_SPECS.some((s) => s.metric === k))).toEqual([
+      'fairpay_adjustment',
+    ]);
     for (const s of WALLET_METRIC_SPECS) {
       // Una spec sin conceptos calcularía siempre cero sin decir nada.
       expect(s.concepts.length).toBeGreaterThan(0);
       for (const c of s.concepts) expect(isUnknownConcept(c)).toBe(false);
       for (const c of s.contrastConcepts ?? []) expect(isUnknownConcept(c)).toBe(false);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HEDGE FUND — la cuarta serie informativa (Kevin, 2026-08-31).
+//
+// Los números de acá NO son inventados: salen del censo concepto × dirección
+// que se corrió contra los `wallettransfers` reales el 2026-08-31.
+//   AP Markets: INVEST OUT 22 mov. $23.928,88 · REWARD IN 23 mov. $927,10
+//               (gross $24.560) · REWARD OUT 3 mov. $926,00 · RETURN IN 3
+//               mov. $302,00.
+//   Vex Pro:    INVEST OUT 1 mov. $3.000,00 y nada más.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HEDGE_SPEC = WALLET_METRIC_SPECS.find((s) => s.metric === 'hedge_fund')!;
+
+describe('hedge_fund', () => {
+  it('el total de la serie es el CAPITAL INVERTIDO (la pata OUT)', () => {
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_INVEST', direction: 'OUT', net: 23928.88, count: 22 })],
+      HEDGE_SPEC,
+    );
+    const b = r.buckets.get('2026-07')!;
+    expect(b.amount).toBe(23928.88);
+    expect(b.count).toBe(22);
+  });
+
+  it('rendimientos, reversos de rendimiento y capital devuelto van CADA UNO a su columna', () => {
+    // Netearlos daría 23.928,88 − 927,10 − 302 = 22.699,78: un número
+    // plausible que no responde ni "cuánto hay colocado" ni "cuánto rindió".
+    const r = aggregateWalletMetricByMonth(
+      [
+        fila({ concept: 'HEDGE_FUND_INVEST', direction: 'OUT', net: 23928.88, count: 22 }),
+        fila({ concept: 'HEDGE_FUND_REWARD', direction: 'IN', net: 927.1, gross: 24560, count: 23 }),
+        fila({ concept: 'HEDGE_FUND_REWARD', direction: 'OUT', net: 926, count: 3 }),
+        fila({ concept: 'HEDGE_FUND_RETURN', direction: 'IN', net: 302, count: 3 }),
+      ],
+      HEDGE_SPEC,
+    );
+    const b = r.buckets.get('2026-07')!;
+    expect(b.amount).toBe(23928.88);
+    expect(b.cross.rewards).toBe(927.1);
+    expect(b.cross.rewardsCount).toBe(23);
+    expect(b.cross.rewardsReversed).toBe(926);
+    expect(b.cross.capitalReturned).toBe(302);
+    // El bruto del reward es el CAPITAL sobre el que se calculó, no dinero
+    // acreditado: no puede colarse a ninguna columna de importe.
+    expect(b.cross.gross).toBe(0);
+    expect(r.unclassified.size).toBe(0);
+  });
+
+  it('una empresa con sólo INVEST muestra las hermanas en CERO, no en "—"', () => {
+    // Vex Pro: se leyó la familia entera y no hubo un solo reward. Eso ES
+    // cero, no "no lo sabemos".
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_INVEST', direction: 'OUT', net: 3000, monthKey: '2026-06' })],
+      HEDGE_SPEC,
+    );
+    const b = r.buckets.get('2026-06')!;
+    expect(b.amount).toBe(3000);
+    expect(b.cross.rewards).toBe(0);
+    expect(b.cross.capitalReturned).toBe(0);
+  });
+
+  it('una dirección que ninguna entrada declara NO se traga: se cuenta y se avisa', () => {
+    // El día que aparezca un HEDGE_FUND_RETURN OUT (¿un rescate revertido?)
+    // tiene que verse, no desaparecer de la serie.
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_RETURN', direction: 'OUT', net: 77, count: 2 })],
+      HEDGE_SPEC,
+    );
+    expect(r.buckets.size).toBe(0);
+    expect(r.unclassified.get('HEDGE_FUND_RETURN')).toEqual({ count: 2, amount: 77 });
+  });
+
+  it('una hermana sin mes utilizable no se inventa un mes', () => {
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_REWARD', direction: 'IN', monthKey: null, net: 12, count: 1 })],
+      HEDGE_SPEC,
+    );
+    expect(r.buckets.size).toBe(0);
+    expect(r.noMonth).toEqual({ count: 1, amount: 12 });
+  });
+
+  it('está en las informativas y NO en las comparadas contra lo manual', () => {
+    expect(CRM_MONTHLY_INFO_METRICS.map((m) => m.key)).toContain('hedge_fund');
+    expect(CRM_MONTHLY_COMPARED_METRICS.map((m) => m.key)).not.toContain('hedge_fund');
+  });
+
+  it('sus tres conceptos entran en la proyección que se le pide a Mongo', () => {
+    // Si uno faltara acá, el $match no lo traería y la columna daría 0 sin
+    // que nada avise: el fallo silencioso de siempre.
+    for (const c of Object.values(HEDGE_FUND_CONCEPTS)) {
+      expect(WALLET_METRIC_CONCEPTS).toContain(c);
+      expect(isUnknownConcept(c)).toBe(false);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AJUSTE FAIRPAY — el recargo cobrado y no acreditado.
+//
+// Los números son los REALES de producción (medidos el 2026-08-31), así que si
+// alguien cambia la llave del cruce o el trato de lo que no cruza, el test dice
+// exactamente qué plata se mueve.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('ajuste FairPay', () => {
+  const pago = (p: Partial<FairpayPayment>): FairpayPayment => ({
+    paidAt: '2026-07-15T10:00:00.000Z',
+    gross: 104,
+    crossed: true,
+    credited: 100,
+    creditedInCrm: true,
+    ...p,
+  });
+
+  it('el ajuste es bruto menos acreditado, pago por pago', () => {
+    const { buckets } = aggregateFairpayAdjustmentByMonth([
+      pago({ gross: 104, credited: 100 }),
+      pago({ gross: 52, credited: 50 }),
+    ]);
+    const b = buckets.get('2026-07')!;
+    expect(b.amount).toBe(6);
+    expect(b.count).toBe(2);
+    expect(b.cross.gross).toBe(156);
+    expect(b.cross.credited).toBe(150);
+  });
+
+  it('un pago SIN contraparte en el CRM no entra al ajuste: se excluye y se cuenta', () => {
+    // Las 24 filas de junio 2026 por $4.383,00. Contarlas enteras como recargo
+    // sería inventar $4.383 de costo; tirarlas sin avisar sería peor.
+    const { buckets } = aggregateFairpayAdjustmentByMonth([
+      pago({ paidAt: '2026-06-10T00:00:00.000Z', gross: 104, credited: 100 }),
+      pago({ paidAt: '2026-06-11T00:00:00.000Z', gross: 4383, crossed: false, credited: null }),
+    ]);
+    const b = buckets.get('2026-06')!;
+    expect(b.amount).toBe(4);
+    expect(b.count).toBe(1);
+    expect(b.excludedCount).toBe(1);
+    expect(b.excludedAmount).toBe(4383);
+  });
+
+  it('un cruce sin importe acreditado tampoco entra: null no es 0', () => {
+    const { buckets } = aggregateFairpayAdjustmentByMonth([
+      pago({ gross: 104, crossed: true, credited: null }),
+    ]);
+    const b = buckets.get('2026-07')!;
+    expect(b.amount).toBe(0);
+    expect(b.count).toBe(0);
+    expect(b.excludedCount).toBe(1);
+    expect(b.excludedAmount).toBe(104);
+  });
+
+  it('el pago cancelado en el CRM suma al ajuste pero queda VISIBLE aparte', () => {
+    // 0d039080… del 2026-08-07: bruto 93,60 y amount_paid 0. No es recargo, es
+    // un depósito cancelado entero. Entra al total (así cierra contra los
+    // $2.994,83 ya cargados) y se informa en `notCredited`.
+    const { buckets } = aggregateFairpayAdjustmentByMonth([
+      pago({ paidAt: '2026-08-07T03:26:45.000Z', gross: 93.6, credited: 0, creditedInCrm: false }),
+      pago({ paidAt: '2026-08-08T00:00:00.000Z', gross: 104, credited: 100 }),
+    ]);
+    const b = buckets.get('2026-08')!;
+    expect(b.amount).toBe(97.6);
+    expect(b.cross.notCredited).toBe(93.6);
+    expect(b.cross.notCreditedCount).toBe(1);
+  });
+
+  it('un mes sin recargo da 0, que es un cero MEDIDO (y sí escribe fila)', () => {
+    const { buckets } = aggregateFairpayAdjustmentByMonth([pago({ gross: 100, credited: 100 })]);
+    expect(buckets.get('2026-07')!.amount).toBe(0);
+    expect(buckets.size).toBe(1);
+  });
+
+  it('un mes sin pagos NO existe: "sin datos" no es "$0"', () => {
+    expect(aggregateFairpayAdjustmentByMonth([]).buckets.size).toBe(0);
+  });
+
+  it('un ajuste negativo NO se recorta a 0: es un hallazgo, no un cero', () => {
+    const { buckets } = aggregateFairpayAdjustmentByMonth([pago({ gross: 100, credited: 110 })]);
+    expect(buckets.get('2026-07')!.amount).toBe(-10);
+  });
+
+  it('un pago sin fecha utilizable no se inventa un mes', () => {
+    const { buckets, noMonth } = aggregateFairpayAdjustmentByMonth([
+      pago({ paidAt: null, gross: 104 }),
+    ]);
+    expect(buckets.size).toBe(0);
+    expect(noMonth).toEqual({ count: 1, amount: 104 });
+  });
+
+  it('el mes sale en UTC, no en la zona del proceso (G4)', () => {
+    // 2026-08-01T00:30Z es agosto. En Buenos Aires sería el 31 de julio.
+    const { buckets } = aggregateFairpayAdjustmentByMonth([
+      pago({ paidAt: '2026-08-01T00:30:00.000Z' }),
+    ]);
+    expect([...buckets.keys()]).toEqual(['2026-08']);
+  });
+
+  it('la serie completa de Vex Pro reproduce los $2.994,83 ya cargados', () => {
+    // abr 168,31 · may 381,01 · jun 752,75 · jul 1.260,71 · ago 432,05.
+    const meses: Array<[string, number, number]> = [
+      ['2026-04', 4313.72, 4145.41],
+      ['2026-05', 9547.0, 9165.99],
+      ['2026-06', 16438.0, 15685.25],
+      ['2026-07', 29089.68, 27828.97],
+      ['2026-08', 6479.2, 6047.15],
+    ];
+    const { buckets } = aggregateFairpayAdjustmentByMonth(
+      meses.map(([mes, bruto, neto]) =>
+        pago({ paidAt: `${mes}-15T00:00:00.000Z`, gross: bruto, credited: neto }),
+      ),
+    );
+    expect(buckets.get('2026-04')!.amount).toBeCloseTo(168.31, 2);
+    expect(buckets.get('2026-05')!.amount).toBeCloseTo(381.01, 2);
+    expect(buckets.get('2026-06')!.amount).toBeCloseTo(752.75, 2);
+    expect(buckets.get('2026-07')!.amount).toBeCloseTo(1260.71, 2);
+    expect(buckets.get('2026-08')!.amount).toBeCloseTo(432.05, 2);
+    const total = [...buckets.values()].reduce((s, b) => s + b.amount, 0);
+    expect(total).toBeCloseTo(2994.83, 2);
+  });
+
+  it('está en las informativas y NO en las comparadas contra lo manual', () => {
+    expect(CRM_MONTHLY_INFO_METRICS.map((m) => m.key)).toContain('fairpay_adjustment');
+    expect(CRM_MONTHLY_COMPARED_METRICS.map((m) => m.key)).not.toContain('fairpay_adjustment');
+    expect(CRM_MONTHLY_METRIC_KEYS).toContain('fairpay_adjustment');
+  });
+
+  it('las columnas del detalle que declara la métrica son las que el cálculo llena', () => {
+    // Si alguien renombra una clave del `cross` sin tocar el registro, la
+    // pantalla mostraría "—" para siempre y nadie se enteraría.
+    const def = CRM_MONTHLY_METRICS.find((m) => m.key === 'fairpay_adjustment')!;
+    const { buckets } = aggregateFairpayAdjustmentByMonth([pago({})]);
+    const cross = buckets.get('2026-07')!.cross;
+    for (const c of def.detailColumns ?? []) {
+      expect(Object.keys(cross)).toContain(c.key);
     }
   });
 });

@@ -17,7 +17,13 @@ import {
 } from 'lucide-react';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
-import { computeProviderTotals } from '@/lib/api-integrations/totals';
+import { computeProviderTotals, countPayprosPayouts } from '@/lib/api-integrations/totals';
+import {
+  API_WITHDRAWAL_CHANNELS,
+  sumApiWithdrawals,
+  type WithdrawalsByChannel,
+} from '@/lib/withdrawal-channels';
+import { PROVIDER_META } from '@/lib/api-channels';
 import { apiFetch } from '@/lib/api-fetch';
 import {
   pinCoinsbuyWallet,
@@ -50,19 +56,10 @@ function timeAgo(iso: string): string {
   return `hace ${diffH} h`;
 }
 
-const SLUG_LABEL: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'Coinsbuy · Depósitos',
-  'coinsbuy-withdrawals': 'Coinsbuy · Retiros',
-  fairpay: 'FairPay · Depósitos',
-  unipayment: 'Unipayment · Depósitos',
-};
-
-const SLUG_ACCENT: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'text-info',
-  'coinsbuy-withdrawals': 'text-negative',
-  fairpay: 'text-positive',
-  unipayment: 'text-violet-600 dark:text-violet-400',
-};
+// Las etiquetas y el color de cada tarjeta salen del registro único
+// (src/lib/api-channels.ts, PROVIDER_META). Eran DOS `Record<ProviderSlug,…>`
+// escritos acá, en un archivo de UI, mientras `integrations-sync.ts` tenía un
+// tercero para los avisos al que le faltaba `paypros` (2026-08-31, ítem 14).
 
 // ── Current month helpers ──
 
@@ -160,6 +157,11 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
 
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  // Proveedores cuyo dataset vino RECORTADO por el techo de paginación del
+  // endpoint. Hasta el 2026-08-31 ese corte sólo dejaba un console.warn del
+  // lado del servidor y la tarjeta mostraba un total corto con cara de total
+  // completo (auditoría de finanzas, ítem 19).
+  const [truncatedSlugs, setTruncatedSlugs] = useState<ProviderSlug[]>([]);
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -174,6 +176,16 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   // se las llevó puestas: Retiros Totales $932.444,83 en vez de $469.650,98
   // (la Main 1079) y Net Deposit −$231.127 alimentando la distribución.
   const [pinned, setPinned] = useState<PinnedCoinsbuyWallet[]>([]);
+  // ── Retiros de Coinsbuy POR WALLET OPERATIVA (Kevin, 2026-08-31: «en
+  // retiros de coinsbuy deben sumar 2: la VexPro Main Wallet y la Vex
+  // Instant, creale otra tarjeta y sube esa data»). El selector de wallet
+  // filtra lo que viaja al navegador, así que con Main seleccionada los
+  // retiros de la Instant NI EXISTEN en el payload — hace falta una carga
+  // aparte con walletId=all. null = no cargó (se cae a la tarjeta agregada
+  // del dataset filtrado, nunca a un $0 inventado).
+  const [retirosPorWallet, setRetirosPorWallet] = useState<
+    Array<{ walletId: string; label: string; total: number; count: number }> | null
+  >(null);
   const pinnedIds = useMemo(() => pinned.map((p) => p.wallet_id), [pinned]);
   const operatingPins = useMemo(() => selectOperatingWallets(pinned), [pinned]);
   const [pinBusy, setPinBusy] = useState(false);
@@ -283,12 +295,55 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (!json.success) throw new Error(json.error || 'Error cargando datos persistidos');
       setDatasets(json.datasets ?? []);
       setFetchedAt(json.fetchedAt);
+      setTruncatedSlugs(json.truncatedSlugs ?? []);
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Error de red');
     } finally {
       setLoading(false);
     }
   }, [from, to, walletId]);
+
+  useEffect(() => {
+    let cancel = false;
+    (async () => {
+      try {
+        const qs = new URLSearchParams();
+        if (from) qs.set('from', from);
+        if (to) qs.set('to', to);
+        qs.set('walletId', 'all');
+        const res = await apiFetch(`/api/integrations/persisted-movements?${qs.toString()}`);
+        const json = await res.json();
+        if (!json.success || cancel) return;
+        const ds = (json.datasets ?? []).find(
+          (d: { slug: string }) => d.slug === 'coinsbuy-withdrawals',
+        );
+        if (!ds) { if (!cancel) setRetirosPorWallet(null); return; }
+        const porWallet = new Map<string, { label: string; total: number; count: number }>();
+        for (const t of ds.transactions ?? []) {
+          // Mismos criterios que el total del dataset: Approved, no excluida,
+          // no interna (una interna mueve wallets pero no es un retiro).
+          if (t.status !== 'Approved' || t.excluded === true || t.internal === true) continue;
+          const wid = String(t.walletId ?? '');
+          if (!wid) continue;
+          const prev = porWallet.get(wid) ?? { label: String(t.walletLabel ?? `#${wid}`), total: 0, count: 0 };
+          prev.total += Number(t.amount ?? t.netAmount ?? 0);
+          prev.count += 1;
+          porWallet.set(wid, prev);
+        }
+        const idsOperativas = operatingPins.length > 0
+          ? new Set(operatingPins.map((w) => w.wallet_id))
+          : null;
+        const filas = [...porWallet.entries()]
+          .filter(([wid]) => idsOperativas === null || idsOperativas.has(wid))
+          .map(([walletId, v]) => ({ walletId, label: v.label, total: v.total, count: v.count }))
+          .sort((a, b) => b.total - a.total);
+        if (!cancel) setRetirosPorWallet(filas.length > 0 ? filas : null);
+      } catch {
+        if (!cancel) setRetirosPorWallet(null);
+      }
+    })();
+    return () => { cancel = true; };
+  }, [from, to, fetchedAt, operatingPins]);
 
   const loadLive = useCallback(async () => {
     setLoading(true);
@@ -318,6 +373,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
         }),
       );
       setFetchedAt(json.fetchedAt);
+      setTruncatedSlugs(json.truncatedSlugs ?? []);
       // Wait briefly for the server-side fire-and-forget persist to complete,
       // THEN tell the parent page to re-read from Supabase. Without this
       // delay the tables below could fetch persisted-movements before the
@@ -552,10 +608,55 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
         </div>
       )}
 
+      {/* Un recorte silencioso es indistinguible de «no hay más». Si el
+          endpoint tocó su techo de páginas, la tarjeta de ese proveedor muestra
+          MENOS de lo que hay y hay que decirlo antes de que alguien lo sume. */}
+      {truncatedSlugs.length > 0 && (
+        <div className="p-2 mb-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs">
+          Datos incompletos en{' '}
+          {truncatedSlugs.map((s) => PROVIDER_META[s]?.provider ?? s).join(', ')}: se
+          alcanzó el máximo de filas que se pueden leer de una vez. Los importes de
+          esa(s) tarjeta(s) están CORTOS — achicá el rango de fechas.
+        </div>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-        {datasets.map((ds) => {
+        {datasets.flatMap((ds) => {
           const totals = computeProviderTotals(ds);
-          return (
+          // Retiros de Coinsbuy: una tarjeta POR WALLET OPERATIVA cuando la
+          // carga sin filtro respondió; si no, la agregada de siempre (que
+          // sigue el selector). Nunca un $0 inventado por fallo de red.
+          if (ds.slug === 'coinsbuy-withdrawals' && retirosPorWallet !== null) {
+            return retirosPorWallet.map((w) => (
+              <Link
+                key={`cbw-${w.walletId}`}
+                href={`/movimientos/desglose/coinsbuy-withdrawals${linkQs ? `?${linkQs}&` : '?'}walletId=${w.walletId}`}
+                className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold truncate" title={w.label}>
+                    Coinsbuy · Retiros · {w.label}
+                  </span>
+                  {ds.status === 'fresh' ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                  )}
+                </div>
+                <p className="text-base font-bold text-negative">{formatCurrency(w.total)}</p>
+                <div className="flex items-center justify-between mt-0.5">
+                  <p className="text-[10px] text-muted-foreground">{w.count} tx · Approved</p>
+                  <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </Link>
+            ));
+          }
+          // Kevin (2026-08-31): «pon aquí también una tarjeta con la info de
+          // los retiros de paypros». Pay-Pros es UN provider con dos sentidos
+          // separados por status; la tarjeta de retiros sale del mismo dataset
+          // vía countPayprosPayouts (los payout_paid que computeProviderTotals
+          // excluye a propósito del lado de depósitos).
+          const cards = [(
             <Link
               key={ds.slug}
               href={`/movimientos/desglose/${ds.slug}${linkQs ? `?${linkQs}` : ''}`}
@@ -563,7 +664,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
             >
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold truncate">
-                  {SLUG_LABEL[ds.slug]}
+                  {PROVIDER_META[ds.slug].cardLabel}
                 </span>
                 {ds.status === 'fresh' ? (
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
@@ -575,7 +676,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                   <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
                 )}
               </div>
-              <p className={`text-base font-bold ${SLUG_ACCENT[ds.slug]}`}>
+              <p className={`text-base font-bold ${PROVIDER_META[ds.slug].accent}`}>
                 {formatCurrency(totals.total)}
               </p>
               <div className="flex items-center justify-between mt-0.5">
@@ -600,7 +701,36 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                 </p>
               )}
             </Link>
-          );
+          )];
+          if (ds.slug === 'paypros') {
+            const payouts = countPayprosPayouts(ds);
+            cards.push(
+              <Link
+                key="paypros-payouts"
+                href={`/movimientos/desglose/paypros${linkQs ? `?${linkQs}` : ''}`}
+                className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold truncate">Pay-Pros · Retiros</span>
+                  {ds.status === 'fresh' ? (
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
+                  ) : (
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                  )}
+                </div>
+                <p className="text-base font-bold text-negative">
+                  {formatCurrency(payouts.total)}
+                </p>
+                <div className="flex items-center justify-between mt-0.5">
+                  <p className="text-[10px] text-muted-foreground">
+                    {payouts.count} tx · payout_paid
+                  </p>
+                  <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
+                </div>
+              </Link>,
+            );
+          }
+          return cards;
         })}
         {datasets.length === 0 && !errorMsg && (
           <p className="text-xs text-muted-foreground col-span-full">
@@ -671,12 +801,54 @@ export function useApiTotals(
       'coinsbuy-withdrawals': 0,
       fairpay: 0,
       unipayment: 0,
+      // Pay-Pros llega por /persisted-movements (espejo), no por la llamada en
+      // vivo: no tiene endpoint de listado. Ver aggregator.fetchProviderBySlug.
+      paypros: 0,
     };
     for (const ds of datasets) {
       by[ds.slug] = computeProviderTotals(ds).total;
     }
-    const depositsTotal = by['coinsbuy-deposits'] + by.fairpay + by.unipayment;
-    const withdrawalsTotal = by['coinsbuy-withdrawals'];
-    return { by, depositsTotal, withdrawalsTotal };
+    const depositsTotal =
+      by['coinsbuy-deposits'] + by.fairpay + by.unipayment + by.paypros;
+
+    // ── Retiros por canal, desde el registro único ────────────────────────
+    // Hasta el 2026-08-31 acá decía `by['coinsbuy-withdrawals']` a secas,
+    // mientras `loadPersistedTotals` (el MISMO número, del lado del servidor)
+    // ya sumaba los payouts de Pay-Pros. Dos verdades para Retiros Totales, y
+    // la que faltaba era la de la pantalla. No se veía porque no había ninguna
+    // fila 'payout_paid'; el día que entrara la primera, /movimientos habría
+    // mostrado un Net Deposit inflado sin que fallara nada. Ver
+    // src/lib/withdrawal-channels.ts.
+    //
+    // `null` cuando el dataset del proveedor todavía no llegó: es "no lo
+    // sabemos", no "no hubo retiros". `sumApiWithdrawals` lo excluye del total
+    // y lo devuelve en `channelsWithoutData` para que la exclusión se pueda
+    // mostrar en vez de tragarse.
+    const withdrawalsByChannel: WithdrawalsByChannel = {};
+    for (const { key, slug } of API_WITHDRAWAL_CHANNELS) {
+      const ds = datasets.find((d) => d.slug === slug);
+      if (!ds) {
+        withdrawalsByChannel[key] = null;
+        continue;
+      }
+      withdrawalsByChannel[key] =
+        slug === 'paypros'
+          ? countPayprosPayouts(ds).total
+          : // Coinsbuy: el slug ya es de retiros, así que el total del dataset
+            // ES el retiro (y `computeProviderTotals` ya descuenta las
+            // excluidas y las transferencias internas, que no son un retiro
+            // del negocio).
+            computeProviderTotals(ds).total;
+    }
+    const { total: withdrawalsTotal, channelsWithoutData: withdrawalChannelsWithoutData } =
+      sumApiWithdrawals(withdrawalsByChannel);
+
+    return {
+      by,
+      depositsTotal,
+      withdrawalsTotal,
+      withdrawalsByChannel,
+      withdrawalChannelsWithoutData,
+    };
   }, [datasets]);
 }

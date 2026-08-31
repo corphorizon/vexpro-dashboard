@@ -14,6 +14,8 @@
 // Import-safe desde cliente y servidor: no toca Supabase ni React.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { ReportSectionKey } from './reports/sections';
+
 export const BUSINESS_MODELS = ['broker', 'company'] as const;
 export type BusinessModel = (typeof BUSINESS_MODELS)[number];
 
@@ -184,9 +186,14 @@ export function defaultUploadSection(model: unknown): string {
  * omite aunque la configuración de la empresa las tenga encendidas: mandar
  * "Depósitos y retiros" en cero todos los días es peor que no mandarlo.
  */
-export function blockedReportSections(model: unknown): string[] {
+export function blockedReportSections(model: unknown): ReportSectionKey[] {
   const f = features(model);
-  const blocked: string[] = [];
+  // Tipado contra el registro único (src/lib/reports/sections.ts) desde el
+  // 2026-08-31: acá se empujaban CADENAS SUELTAS a una lista de secciones, y
+  // `loadReportConfig` las aplicaba con `if (key in sections)` — o sea, un
+  // typo acá («broker_pnl_» y no «broker_pnl») no apagaba nada y no fallaba en
+  // ningún lado. Ahora un nombre que no existe no compila.
+  const blocked: ReportSectionKey[] = [];
   if (!f.movements) blocked.push('deposits_withdrawals');
   // Las tres secciones del CRM del broker salen de la MISMA fuente (Orion
   // CRM): P&L, prop trading y los usuarios de la plataforma de trading.

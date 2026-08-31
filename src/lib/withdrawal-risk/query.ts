@@ -245,6 +245,15 @@ export interface ResolvedItem {
   /** Qué decidimos nosotros, si es que llegamos a decidir algo. */
   ourDecision: string | null;
   ourDecidedBy: string | null;
+  /**
+   * El score TAL COMO SE GUARDÓ al decidir (withdrawal_reviews.score, escala
+   * approvalScore 0-100). null = nunca se revisó acá; NO se recalcula
+   * retroactivamente — un score calculado hoy con los features de hoy no es
+   * el que se vio al decidir, y mostrarlo como si lo fuera mentiría.
+   * Para los aún-pendientes tocados (desdeCola) sí es el score vivo actual.
+   */
+  score: number | null;
+  scoreBand: RiskBand | null;
 }
 
 export interface QueueResult {
@@ -443,6 +452,8 @@ export async function loadQueue(
     wasInstant: false,
     ourDecision: i.review?.decision ?? null,
     ourDecidedBy: i.review?.decided_by_name ?? null,
+    score: i.score.approvalScore,
+    scoreBand: i.score.band,
   }));
 
   const resolved: ResolvedItem[] = resueltosRows.map((w) => {
@@ -459,6 +470,8 @@ export async function loadQueue(
       wasInstant: isInstant(w),
       ourDecision: nuestra?.decision ?? null,
       ourDecidedBy: nuestra?.decided_by_name ?? null,
+      score: nuestra?.score ?? null,
+      scoreBand: nuestra?.score_band ?? null,
     };
   });
 

@@ -1,13 +1,20 @@
 'use client';
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { ChevronDown, ChevronRight, Info } from 'lucide-react';
-import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
-import { ROLE_LABELS_HR } from '@/lib/hr-data';
+import { hrRoleLabel } from '@/lib/hr/domain';
 import type { RollupNode } from '@/lib/hr/net-deposit';
+import {
+  indexarNetDelCrm,
+  resolveNetDepositInput,
+  type NetDepositSource,
+  type ResolvedNetDeposit,
+} from '@/lib/hr/net-deposit-input';
+import { manualDeEstructura } from '@/lib/hr/overview';
 import { IbProductionView } from './ib-production-tab';
+import { useHrPeriod } from './hr-period-context';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña Net Deposit — lo que Daniela arma hoy a mano, ya armado.
@@ -29,23 +36,18 @@ import { IbProductionView } from './ib-production-tab';
 // LO "SIN ASIGNAR" TAMBIÉN SE MUESTRA. Hay clientes cuya cadena de sponsors no
 // llega a ningún comercial de la estructura: 18.314 de 556.917 en julio (3,3%).
 // Aparecen aparte en vez de repartirse, porque repartirlos sería inventar.
+//
+// ── Y desde la tanda 2 hay una tercera columna: cuál de las dos MANDA ───────
+// Sugerido y cargado siguen uno al lado del otro, pero ahora la pantalla dice
+// además qué número es el que va a entrar al motor de comisiones, con su
+// rótulo. Sale del mismo `resolveNetDepositInput` que usan /comisiones y la
+// pestaña Comercial: si esta tabla dijera una cosa y el cálculo usara otra,
+// nadie podría auditar el número mirando acá, que es para lo que existe.
 // ─────────────────────────────────────────────────────────────────────────────
 
-type RollupResponse = {
-  month: string;
-  hasPeriod: boolean;
-  tree: RollupNode[];
-  unassigned: number;
-  totalAssigned: number;
-  totalCrm: number;
-};
-
-function defaultMonth(): string {
-  const d = new Date();
-  d.setDate(1);
-  d.setMonth(d.getMonth() - 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
+// El mes ya NO se elige acá: viene del selector único del módulo
+// (rrhh/_components/hr-period-context.tsx). El <input type="month"> que vivía en
+// esta pestaña era uno de los tres relojes del módulo.
 
 /** Verde/rojo por el signo — un net deposit negativo es plata que se fue. */
 function moneyClass(v: number): string {
@@ -66,24 +68,15 @@ type Vista = 'net_deposit' | 'production';
 
 export function NetDepositTab() {
   const { t } = useI18n();
-  const [month, setMonth] = useState(defaultMonth);
+  const { month } = useHrPeriod();
   const [vista, setVista] = useState<Vista>('net_deposit');
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <label className="text-sm text-muted-foreground" htmlFor="nd-month">{t('hr.warningMonth')}</label>
-          <input
-            id="nd-month"
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="px-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm"
-          />
-        </div>
-        {/* El selector de mes es UNO SOLO y vive acá arriba: cambiar de vista no
-            puede hacerle perder a nadie el mes que estaba mirando. */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
+        {/* El mes lo pone el selector del módulo, arriba de las pestañas:
+            cambiar de vista (o de pestaña) no le hace perder a nadie el mes
+            que estaba mirando. */}
         <div className="inline-flex rounded-lg border border-border p-0.5" role="tablist">
           {([
             ['net_deposit', 'hr.prodViewNetDeposit'],
@@ -105,35 +98,24 @@ export function NetDepositTab() {
         </div>
       </div>
 
-      {vista === 'net_deposit' ? <NetDepositView month={month} /> : <IbProductionView month={month} />}
+      {vista === 'net_deposit' ? <NetDepositView /> : <IbProductionView month={month} />}
     </div>
   );
 }
 
-function NetDepositView({ month }: { month: string }) {
+function NetDepositView() {
   const { t } = useI18n();
-  const [data, setData] = useState<RollupResponse | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState(false);
+  // Los datos salen del overview del módulo, que ya los pidió una vez para el
+  // mes del selector. Esta pestaña NO llama más a /api/admin/hr-net-deposit-
+  // rollup (que sigue vivo para otros consumidores): volver a pedirlos cada vez
+  // que alguien entraba acá repetía la RPC del rollup entera.
+  const { overview, loading, error } = useHrPeriod();
+  // `net` es null cuando el slice falló: se muestra el mismo error que antes,
+  // nunca un árbol vacío que se leería como "este mes no produjo nadie".
+  const data = overview?.data.net ?? null;
+  const hasPeriod = overview?.hasPeriod ?? false;
+  const loadError = error || (!!overview && overview.partial.includes('net'));
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setLoadError(false);
-    try {
-      const res = await apiFetch(`/api/admin/hr-net-deposit-rollup?month=${month}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error || 'load failed');
-      setData(json as RollupResponse);
-    } catch {
-      setLoadError(true);
-      setData(null);
-    } finally {
-      setLoading(false);
-    }
-  }, [month]);
-
-  useEffect(() => { load(); }, [load]);
 
   const toggle = (id: string) => setCollapsed((prev) => {
     const next = new Set(prev);
@@ -148,6 +130,33 @@ function NetDepositView({ month }: { month: string }) {
     () => (data?.tree ?? []).filter((n) => n.total !== 0 || n.children.length > 0 || n.manual != null),
     [data],
   );
+
+  /**
+   * Qué número manda por perfil, con su procedencia — el MISMO resolver que el
+   * motor. Alcance `structure`: esta tabla mira la producción de la estructura
+   * (la columna «sugerido» es `total`), y la propia del líder ya tiene su
+   * columna aparte («ajuste»).
+   */
+  const insumo = useMemo((): Map<string, ResolvedNetDeposit> => {
+    const out = new Map<string, ResolvedNetDeposit>();
+    if (!data?.tree) return out;
+    const idx = indexarNetDelCrm(data.tree);
+    const rows = overview?.data.monthlyResults ?? null;
+    const manual = rows ? manualDeEstructura(rows) : null;
+    const [y, m] = (overview?.month ?? '').split('-');
+    const period = overview?.period ?? (y && m ? { year: Number(y), month: Number(m), is_closed: false } : null);
+    if (!period) return out;
+    for (const id of idx.keys()) {
+      out.set(id, resolveNetDepositInput({
+        profileId: id,
+        period,
+        scope: 'structure',
+        crm: idx,
+        manual: manual ? manual.get(id) ?? null : null,
+      }));
+    }
+    return out;
+  }, [data, overview]);
 
   return (
     <div className="space-y-6">
@@ -181,7 +190,7 @@ function NetDepositView({ month }: { month: string }) {
             </div>
           </div>
 
-          {!data.hasPeriod && (
+          {!hasPeriod && (
             <p className="text-xs text-muted-foreground">{t('hr.ndNoPeriod')}</p>
           )}
 
@@ -196,15 +205,16 @@ function NetDepositView({ month }: { month: string }) {
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndAdjustment')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndSuggested')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndManual')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndInput')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden md:table-cell">{t('hr.ndDiff')}</th>
                 </tr>
               </thead>
               <tbody>
                 {roots.map((n) => (
-                  <RollupRows key={n.profileId} node={n} depth={0} collapsed={collapsed} toggle={toggle} />
+                  <RollupRows key={n.profileId} node={n} depth={0} collapsed={collapsed} toggle={toggle} insumo={insumo} />
                 ))}
                 {roots.length === 0 && (
-                  <tr><td colSpan={7} className="text-center text-muted-foreground py-8">{t('hr.ndEmpty')}</td></tr>
+                  <tr><td colSpan={8} className="text-center text-muted-foreground py-8">{t('hr.ndEmpty')}</td></tr>
                 )}
               </tbody>
             </table>
@@ -220,16 +230,20 @@ function NetDepositView({ month }: { month: string }) {
  * filas (no como <table> anidada) para que las columnas de un BDM de tercer
  * nivel sigan alineadas con las del sales manager de arriba.
  */
-function RollupRows({ node, depth, collapsed, toggle }: {
+function RollupRows({ node, depth, collapsed, toggle, insumo }: {
   node: RollupNode;
   depth: number;
   collapsed: Set<string>;
   toggle: (id: string) => void;
+  insumo: Map<string, ResolvedNetDeposit>;
 }) {
   const { t } = useI18n();
   const isCollapsed = collapsed.has(node.profileId);
   const hasKids = node.children.length > 0;
   const diff = node.manual == null ? null : node.total - node.manual;
+  const r = insumo.get(node.profileId);
+  const srcLabel = (s: NetDepositSource) =>
+    t(s === 'crm' ? 'hr.srcCrm' : s === 'manual' ? 'hr.srcManual' : s === 'frozen' ? 'hr.srcFrozen' : 'hr.srcNone');
 
   return (
     <>
@@ -246,7 +260,7 @@ function RollupRows({ node, depth, collapsed, toggle }: {
             {node.name}
           </div>
         </td>
-        <td className="py-2 px-3 text-muted-foreground hidden sm:table-cell">{ROLE_LABELS_HR[node.role]}</td>
+        <td className="py-2 px-3 text-muted-foreground hidden sm:table-cell">{hrRoleLabel(node.role)}</td>
         <td className={cn('py-2 px-3 text-right', moneyClass(node.team))}>
           {hasKids ? formatCurrency(node.team) : '-'}
         </td>
@@ -257,12 +271,19 @@ function RollupRows({ node, depth, collapsed, toggle }: {
         <td className="py-2 px-3 text-right text-muted-foreground">
           {node.manual == null ? '-' : formatCurrency(node.manual)}
         </td>
+        {/* Cuál de las dos manda. `null` = sin datos → «—», nunca $0. */}
+        <td className={cn('py-2 px-3 text-right', r && r.value !== null ? moneyClass(r.value) : 'text-muted-foreground')}>
+          {r && r.value !== null ? formatCurrency(r.value) : '—'}
+          <span className={cn('ml-1 text-[10px] uppercase tracking-wide', r?.source === 'crm' ? 'text-positive/80' : 'text-muted-foreground')}>
+            {srcLabel(r?.source ?? 'none')}
+          </span>
+        </td>
         <td className={cn('py-2 px-3 text-right hidden md:table-cell text-xs', diff == null ? 'text-muted-foreground' : moneyClass(diff))}>
           {diff == null ? t('hr.ndNotLoaded') : formatCurrency(diff)}
         </td>
       </tr>
       {!isCollapsed && node.children.map((c) => (
-        <RollupRows key={c.profileId} node={c} depth={depth + 1} collapsed={collapsed} toggle={toggle} />
+        <RollupRows key={c.profileId} node={c} depth={depth + 1} collapsed={collapsed} toggle={toggle} insumo={insumo} />
       ))}
     </>
   );

@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, HR_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
-import { buildRollup, monthToFirstDay, type RollupProfile } from '@/lib/hr/net-deposit';
+import { buildRollup, monthToFirstDay } from '@/lib/hr/net-deposit';
+import { leerNetDelCrm, leerPerfilesComerciales } from '@/lib/hr/crm-net-server';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/admin/hr-net-deposit-rollup?month=YYYY-MM
@@ -43,33 +44,15 @@ export async function GET(request: NextRequest) {
     const admin = createAdminClient();
     const companyId = auth.companyId;
 
-    // ── Perfiles ──────────────────────────────────────────────────────────
-    // Se traen TODOS, incluidos los despedidos: un BDM que se fue el 20 del mes
-    // igual produjo hasta ese día y su plata tiene que aparecer bajo su head, o
-    // el total del equipo no cierra contra el CRM.
-    // `.range()` + `.order()`: PostgREST corta en 1.000 filas sin avisar y hoy
-    // hay 126 perfiles, pero el día que una empresa pase el límite el bug sería
-    // "al head le faltan BDM" y nadie lo relacionaría con esta línea.
-    const profiles: RollupProfile[] = [];
-    const PAGE = 1000;
-    for (let from = 0; ; from += PAGE) {
-      const { data, error } = await admin
-        .from('commercial_profiles')
-        .select('id, name, role, head_id, salary, hire_date, status, termination_date')
-        .eq('company_id', companyId)
-        .order('id', { ascending: true })
-        .range(from, from + PAGE - 1);
-      if (error) return apiError('admin/hr-net-deposit-rollup profiles', error, { status: 500, withSuccessFlag: false });
-      profiles.push(...((data ?? []) as RollupProfile[]));
-      if (!data || data.length < PAGE) break;
-    }
+    // ── Perfiles y lo calculado desde el CRM ──────────────────────────────
+    // Las dos lecturas viven en src/lib/hr/crm-net-server.ts (registro único):
+    // estaban copiadas acá, en hr-overview y —cuando se agregó el insumo del
+    // motor de comisiones— iban por la tercera copia.
+    const profiles = await leerPerfilesComerciales(admin, companyId);
+    if (!profiles) return apiError('admin/hr-net-deposit-rollup profiles', new Error('perfiles'), { status: 500, withSuccessFlag: false });
 
-    // ── Lo calculado desde el CRM ─────────────────────────────────────────
-    const { data: netRows, error: netError } = await admin.rpc('hr_net_deposit_by_profile', {
-      p_company_id: companyId,
-      p_month: month,
-    });
-    if (netError) return apiError('admin/hr-net-deposit-rollup rpc', netError, { status: 500, withSuccessFlag: false });
+    const netRows = await leerNetDelCrm(admin, companyId, month);
+    if (!netRows) return apiError('admin/hr-net-deposit-rollup rpc', new Error('rollup'), { status: 500, withSuccessFlag: false });
 
     const netByProfile = new Map<string, number>();
     // profile_id NULL = clientes cuya cadena de sponsors no llega a ningún
@@ -87,6 +70,8 @@ export async function GET(request: NextRequest) {
     // Puede no haber período contable para ese mes (los períodos se crean a
     // mano): en ese caso no hay manual y listo, el calculado se muestra solo.
     const manualByProfile = new Map<string, number>();
+    /** PostgREST corta en 1.000 filas sin avisar. */
+    const PAGE = 1000;
     const [year, mon] = month.split('-');
     const { data: period } = await admin
       .from('periods')
