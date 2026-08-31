@@ -37,6 +37,35 @@
 // ARRANQUE: por defecto empieza en el día siguiente al último asiento que ya
 // tenga el libro, para no pisar historia ni chocar con la apertura existente.
 // Con --from YYYY-MM-DD se fuerza otro arranque (reproceso de un tramo).
+//
+// ── REPROCESO PENDIENTE: COINSBUY 21/08 → 31/08 (2026-08-31) ────────────────
+// El guard de `MAX_ADJUSTMENT.coinsbuy` (500, escrito cuando el canal tenía UNA
+// wallet y comisiones de red de $1-4/día) abortó el asiento del 21/08 porque el
+// ajuste real era −8.478,29. Como abortar no deja estado, cada noche siguiente
+// comparó contra el saldo del 20/08 y volvió a superar el tope: el libro quedó
+// congelado en 244.079,51 contra 335.835,65 reales — $91.756,14 de brecha, 11
+// avisos `ledger.not_posted` y cero recuperación.
+//
+// El tope ya está recalibrado (150.000, con la medición en channel-ledger-sync.ts)
+// y el guard ya no congela para siempre, pero eso solo arregla de acá en
+// adelante: los diez días perdidos hay que asentarlos. Este script los
+// reconstruye UNO POR UNO contra el snapshot real de cada fecha, que es la
+// forma correcta — mejor que la línea automática de regularización, que
+// acumularía los diez días en un solo importe sin desglose.
+//
+//   npx tsx scripts/backfill-channel-ledger.ts coinsbuy --company "Vex Pro" --from 2026-08-21
+//   npx tsx scripts/backfill-channel-ledger.ts coinsbuy --company "Vex Pro" --from 2026-08-21 --apply
+//
+// Correr SIEMPRE primero sin --apply y leer la lista de días y cierres. Al
+// terminar, el saldo del libro tiene que dar 335.835,65 (o el cierre del último
+// snapshot disponible ese día). Es idempotente: si algo sale raro, se corrige
+// la causa y se vuelve a correr el mismo tramo.
+//
+// ⚠ NO borra ni toca el asiento MANUAL de +38.397,58 del 2026-08-06 (el alta de
+// la wallet 1705), que se coló antes de que existiera la validación de canal
+// automático. `syncChannelLedgerDay` lo SUMA como parte del saldo del día, así
+// que el reproceso cierra bien con él adentro. Sacarlo es una decisión aparte
+// y exigiría reprocesar desde el 06/08.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { readFileSync } from 'fs';

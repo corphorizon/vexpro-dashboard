@@ -447,6 +447,27 @@ export async function GET(request: NextRequest) {
       if (l.error) failures.push({ channel: l.channel_key, date: l.entry_date, reason: l.error });
     }
 
+    // El libro se destrabó solo: el saldo del canal ya es correcto, pero el
+    // tramo quedó en UNA línea sin desglose. Es un aviso distinto del de "no
+    // se asentó" —éste dice que SÍ se asentó y qué le falta— y por eso tiene
+    // dedupe propio: si los dos compartieran clave, el que llegara segundo se
+    // descartaría y nadie se enteraría de la regularización.
+    for (const l of ledger) {
+      if (!l.forced) continue;
+      await notify(admin, {
+        companyId: company.id,
+        type: 'ledger.regularized',
+        params: {
+          channel: l.channel_key,
+          date: l.entry_date,
+          days: l.daysCovered ?? 1,
+          amount: (l.adjustment ?? 0).toFixed(2),
+        },
+        link: `/balances/libro/${encodeURIComponent(l.channel_key)}`,
+        dedupeKey: dailyKey(`ledger-regularized:${company.id}:${l.channel_key}`),
+      });
+    }
+
     // Un aviso por canal y por día: el dedupe deja pasar el primer motivo y
     // descarta los siguientes del mismo canal.
     for (const f of failures) {

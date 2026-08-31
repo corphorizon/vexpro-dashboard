@@ -73,6 +73,18 @@ export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
     email: true, i18nKey: 'notif.ledgerNotPosted',
   },
   {
+    // El libro venía congelado y se destrabó SOLO, asentando una línea que
+    // cubre varios días (ver RECOVERY_AFTER_DAYS en channel-ledger-sync.ts).
+    // Va con correo y como crítica porque el saldo del canal vuelve a ser
+    // correcto —eso es lo que se buscaba— pero el DESGLOSE de esos días no
+    // existe: alguien tiene que decidir si reprocesarlos uno por uno con
+    // scripts/backfill-channel-ledger.ts. Sin este aviso, el canal se ve sano
+    // y nadie se entera de que hay un tramo sin abrir.
+    key: 'ledger.regularized',
+    severity: 'critical', audience: 'finance', module: 'balances',
+    email: true, i18nKey: 'notif.ledgerRegularized',
+  },
+  {
     key: 'period.not_created',
     severity: 'critical', audience: 'admins', module: null,
     email: true, i18nKey: 'notif.periodNotCreated',
