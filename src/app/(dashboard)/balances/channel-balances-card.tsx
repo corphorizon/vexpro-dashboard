@@ -41,6 +41,7 @@ import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 import { hasLedger, isAutoLedger } from '@/lib/channel-ledger';
+import { balanceAgeInDays, type ReportChannelSource } from '@/lib/channel-balance-source';
 import type { ChannelConfigRow, ResolvedChannel } from '@/lib/channel-configs';
 import {
   DEFAULT_LOCATION_TYPE,
@@ -96,6 +97,17 @@ interface Props {
    * sin volver a consultar la blockchain al abrir la pantalla.
    */
   getSnapshotMeta?: (channelKey: string) => OnchainSnapshotMeta | null;
+  /**
+   * De cuándo es el saldo de cada ubicación y si hay que desconfiar de él
+   * (auditoría de finanzas, ítems 13 y 23). Lo calcula la pantalla, que es
+   * quien tiene las fuentes; acá sólo se muestra.
+   */
+  getBalanceMeta?: (channelKey: string) => {
+    source: ReportChannelSource;
+    asOf: string | null;
+    degraded: boolean;
+    stale: boolean;
+  };
 }
 
 interface Draft {
@@ -127,6 +139,7 @@ export function ChannelBalancesCard({
   extraRows,
   extraActions,
   getSnapshotMeta,
+  getBalanceMeta,
 }: Props) {
   const { t, locale } = useI18n();
   const lang = locale === 'en' ? 'en' : 'es';
@@ -544,6 +557,11 @@ export function ChannelBalancesCard({
                 const canTypeBalance =
                   isPrimary && canEditBalance && !hasLedger(loc.channel_key) && !automatic;
                 const partial = loc.share < 0.9999;
+                // De cuándo es este saldo. `otros` ($14.493, último asiento del
+                // 05/08) se pintaba con el mismo peso visual que Coinsbuy en
+                // vivo: un saldo quieto de hace semanas leído como el de hoy.
+                const meta = getBalanceMeta?.(loc.channel_key);
+                const ageDays = meta ? balanceAgeInDays(meta.asOf, selectedDate) : null;
                 return (
                   <div key={`${group.unit?.id ?? 'none'}-${loc.channel_key}`} className="p-3">
                     <div className="flex items-center justify-between gap-3">
@@ -574,6 +592,40 @@ export function ChannelBalancesCard({
                                 })}`
                               : ''}
                           </p>
+                          {/* Antigüedad del saldo + aviso de dato degradado.
+                              Un canal en vivo no muestra nada: su saldo es de
+                              este segundo y agregarle un cartel sería ruido. */}
+                          {meta && (meta.stale || meta.degraded || meta.source === 'missing') && (
+                            <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px]">
+                              {meta.degraded && (
+                                <span className="px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning border border-warning/30">
+                                  {t('balances.degradedBadge')}
+                                </span>
+                              )}
+                              {meta.source === 'missing' ? (
+                                <span className="px-1.5 py-0.5 rounded-full font-medium bg-muted text-muted-foreground border border-border">
+                                  {t('balances.noDataBadge')}
+                                </span>
+                              ) : (
+                                meta.stale && (
+                                  <span
+                                    className="px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning border border-warning/30"
+                                    title={t('balances.staleHint')}
+                                  >
+                                    {t('balances.staleBadge')}
+                                  </span>
+                                )
+                              )}
+                              {ageDays !== null && (
+                                <span className="text-muted-foreground">
+                                  {ageDays === 0
+                                    ? t('balances.updatedToday')
+                                    : t('balances.updatedDaysAgo', { days: String(ageDays) })}
+                                  {meta.asOf ? ` · ${meta.asOf.slice(0, 10)}` : ''}
+                                </span>
+                              )}
+                            </p>
+                          )}
                         </div>
                       </div>
 
