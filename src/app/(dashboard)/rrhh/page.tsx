@@ -1529,7 +1529,10 @@ export default function RRHHPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit max-w-full overflow-x-auto">
+      {/* flex-wrap y no overflow-x: con 9 pestañas la fila única escondía las
+    últimas fuera de pantalla sin ningún indicador (Kevin, 2026-08-31: «no
+    lo veo» — Net Deposit es la última). En Mac el scrollbar ni se dibuja. */}
+      <div className="flex flex-wrap gap-1 bg-muted p-1 rounded-lg w-fit max-w-full">
         <button
           onClick={() => setTab('employees')}
           className={cn(
