@@ -605,6 +605,13 @@ export default function MovimientosPage() {
                     {t('movements.brokerPnlBookB')}
                     <InfoTip text={GLOSSARY.libroB} />
                   </span>
+                  {/* Desde 2026-08-31 este número YA NO se teclea: sale de
+                      `crm_daily_pnl` en los períodos abiertos y del congelado
+                      del cierre en los cerrados (src/lib/broker-pnl.ts). La
+                      PROCEDENCIA se muestra en /resumen-general, que es donde
+                      hay un solo período a la vista; acá una etiqueta fija
+                      diría "CRM" también sobre un mes cerrado, que es
+                      justamente el número que NO sale del CRM. */}
                 </td>
                 <td className="py-2.5 text-right font-medium">
                   {formatCurrency(summary.operatingIncome?.broker_pnl || 0)}

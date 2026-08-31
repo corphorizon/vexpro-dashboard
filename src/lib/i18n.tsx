@@ -838,6 +838,13 @@ const translations: Record<Locale, TranslationDict> = {
     'crmInfo.reversalsHint': 'Fees reversed that month. They are not a fee, so they are shown apart instead of being subtracted.',
     'crmInfo.footnote': 'Computed from the CRM wallet movements by the full sync. This screen never writes anything, and these series are not part of any financial figure.',
 
+    // Broker P&L — de dónde sale el número (ver src/lib/broker-pnl.ts)
+    'brokerPnl.sourceCrm': 'CRM',
+    'brokerPnl.sourceFrozen': 'closed period',
+    'brokerPnl.sourceNone': 'no source',
+    'brokerPnl.noData': 'no data',
+    'brokerPnl.partialDays': 'over {days} of {total} days',
+
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Channel ledger',
     'ledger.openBook': 'Open ledger',
@@ -1736,7 +1743,7 @@ const translations: Record<Locale, TranslationDict> = {
     'upload.manualPendingCrm': 'manual · pending Orion CRM',
     'upload.propFirmResult': 'Prop Firm Result',
     'upload.totalIncome': 'Total Income',
-    'upload.totalIncomeFormula': 'Broker P&L + Other + (Prop Firm Sales − Prop Firm Withdrawals)',
+    'upload.totalIncomeFormula': 'Other + (Prop Firm Sales − Prop Firm Withdrawals). Broker P&L is automatic (CRM) and is shown in the General Summary.',
     'upload.saveIncomeBtn': 'Save Income',
     'upload.totals': 'Totals',
     'upload.mtAccountAria': 'MT account',
@@ -3172,6 +3179,13 @@ const translations: Record<Locale, TranslationDict> = {
     'crmInfo.reversalsHint': 'Fees revertidos ese mes. No son un fee, así que se muestran aparte en vez de restarse.',
     'crmInfo.footnote': 'Se calcula desde los movimientos de billetera del CRM en el sync completo. Esta pantalla no escribe nada, y estas series no forman parte de ninguna cifra de finanzas.',
 
+    // Broker P&L — de dónde sale el número (ver src/lib/broker-pnl.ts)
+    'brokerPnl.sourceCrm': 'CRM',
+    'brokerPnl.sourceFrozen': 'período cerrado',
+    'brokerPnl.sourceNone': 'sin fuente',
+    'brokerPnl.noData': 'sin datos',
+    'brokerPnl.partialDays': 'sobre {days} de {total} días',
+
     // Libro de balances por canal (migración 059)
     'ledger.title': 'Libro del canal',
     'ledger.openBook': 'Ver libro',
@@ -4062,7 +4076,7 @@ const translations: Record<Locale, TranslationDict> = {
     'upload.manualPendingCrm': 'manual · pendiente Orion CRM',
     'upload.propFirmResult': 'Resultado Prop Firm',
     'upload.totalIncome': 'Total Ingresos',
-    'upload.totalIncomeFormula': 'Broker P&L + Otros + (Ventas Prop Firm − Retiros Prop Firm)',
+    'upload.totalIncomeFormula': 'Otros + (Ventas Prop Firm − Retiros Prop Firm). El Broker P&L es automático (CRM) y se ve en el Resumen General.',
     'upload.saveIncomeBtn': 'Guardar Ingresos',
     'upload.totals': 'Totales',
     'upload.mtAccountAria': 'Cuenta MT',

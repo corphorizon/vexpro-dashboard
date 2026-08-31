@@ -103,7 +103,7 @@
 // typecheck ni los tests, así que se descubre tarde y en Vercel.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { conceptsOf, type WalletConceptGroup } from './crm-wallet-concepts';
+import { HEDGE_FUND_CONCEPTS, conceptsOf, type WalletConceptGroup } from './crm-wallet-concepts';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Registro ÚNICO de métricas. Agregar una es agregar una fila acá; la tabla
@@ -130,6 +130,19 @@ export interface CrmMonthlyMetricDef {
   /** Explicación corta de por qué no cuenta. Sólo en las informativas. */
   whyNotFinanceEs?: string;
   whyNotFinanceEn?: string;
+  /**
+   * Columnas EXTRA que la tabla informativa muestra leyendo `detail[key]`.
+   *
+   * Existen porque el hedge fund no es un número: son tres hechos distintos
+   * (capital invertido, rendimiento acreditado, capital devuelto) y meterlos
+   * en una sola cifra neta daría un número plausible que no significa nada —
+   * el modo de falla de este repo. La lista vive acá, en el registro, y no en
+   * el JSX, para que agregar una serie sea agregar una fila y no tocar la
+   * pantalla.
+   *
+   * `undefined` en el `detail` se muestra "—" (no lo sabemos), nunca $0.
+   */
+  detailColumns?: readonly { key: string; labelEs: string; labelEn: string }[];
 }
 
 const METRIC_DEFS = [
@@ -199,6 +212,38 @@ const METRIC_DEFS = [
       'Descuenta de la billetera del cliente un fee que había quedado adeudado: cambia de bolsillo dentro del CRM, no entra a la caja.',
     whyNotFinanceEn:
       'Debits a previously owed fee from the customer’s wallet: it moves between pockets inside the CRM, it does not reach cash.',
+  },
+  // ── Hedge fund (decisión de Kevin, 2026-08-31) ──────────────────────────
+  // Cuarta serie informativa, mismo patrón que las tres de arriba.
+  //
+  // POR QUÉ NO ES UNA SERIE NETA: mirando los documentos reales del 2026-08-31,
+  // la familia tiene tres hechos que no se cancelan entre sí. El capital sale
+  // de la billetera (INVEST, OUT), el rendimiento entra (REWARD, IN) y el
+  // capital vuelve cuando el cliente rescata (RETURN, IN). Netearlos daría
+  // $23.928,88 − $927,10 − $302,00 = $22.699,78 para AP Markets, un número que
+  // no responde ninguna pregunta: ni cuánto hay colocado, ni cuánto rindió.
+  // La columna principal es el CAPITAL INVERTIDO y las otras dos van al lado,
+  // en `detailColumns`.
+  //
+  // POR QUÉ NO CUENTA EN EL RESULTADO: es el mismo argumento de las otras tres.
+  // El cliente mueve plata de su billetera a un fondo; la caja del bróker no
+  // se movió. El día que el fondo pague o devuelva, ese movimiento sale como
+  // retiro y YA se cuenta como egreso.
+  {
+    key: 'hedge_fund',
+    labelEs: 'Hedge fund',
+    labelEn: 'Hedge fund',
+    manualSource: null,
+    informational: true,
+    whyNotFinanceEs:
+      'El cliente mueve capital de su billetera a un fondo: no entra ni sale de la caja del bróker. Lo que sí toca la caja es el retiro, que ya se cuenta como egreso.',
+    whyNotFinanceEn:
+      'The customer moves capital from their wallet into a fund: it neither enters nor leaves the broker’s cash. What does touch cash is the withdrawal, already counted as an outflow.',
+    detailColumns: [
+      { key: 'rewards', labelEs: 'Rendimientos acreditados', labelEn: 'Rewards credited' },
+      { key: 'rewardsReversed', labelEs: 'Rendimientos revertidos', labelEn: 'Rewards reversed' },
+      { key: 'capitalReturned', labelEs: 'Capital devuelto', labelEn: 'Capital returned' },
+    ],
   },
 ] as const satisfies readonly CrmMonthlyMetricDef[];
 
@@ -570,6 +615,21 @@ export interface WalletMetricSpec {
   contrastConcepts?: readonly string[];
   /** Con qué nombre van al `detail`. */
   contrastKey?: string;
+  /**
+   * Series HERMANAS de la métrica: conceptos de la MISMA familia que no suman
+   * al total pero tampoco son un reverso del total — son otro hecho.
+   *
+   * Nació con el hedge fund: `HEDGE_FUND_REWARD` (IN) y `HEDGE_FUND_RETURN`
+   * (IN) conviven con `HEDGE_FUND_INVEST` (OUT) y no se pueden meter en
+   * `contrastConcepts`, que suma todo en UNA sola clave y mezclaría el
+   * rendimiento con el capital devuelto.
+   *
+   * Cada entrada va a `detail[key]` (importe) y `detail[key + 'Count']`
+   * (movimientos). Un concepto declarado acá que llegue con una dirección que
+   * ninguna entrada declara NO se traga en silencio: cae en `unclassified` y
+   * el sync avisa, igual que un concepto nuevo del bróker.
+   */
+  extraSeries?: readonly { key: string; concepts: readonly string[]; direction: 'IN' | 'OUT' }[];
 }
 
 export interface WalletMetricResult {
@@ -606,6 +666,18 @@ export const WALLET_METRIC_SPECS: WalletMetricSpec[] = [
     concepts: conceptsOf('feeDebt', 'credit'),
     direction: 'OUT',
   },
+  {
+    metric: 'hedge_fund',
+    group: 'hedgeFund',
+    // El total de la serie es el CAPITAL INVERTIDO: sale de la billetera (OUT).
+    concepts: conceptsOf('hedgeFund', 'credit'),
+    direction: 'OUT',
+    extraSeries: [
+      { key: 'rewards', concepts: [HEDGE_FUND_CONCEPTS.reward], direction: 'IN' },
+      { key: 'rewardsReversed', concepts: [HEDGE_FUND_CONCEPTS.reward], direction: 'OUT' },
+      { key: 'capitalReturned', concepts: [HEDGE_FUND_CONCEPTS.capitalReturn], direction: 'IN' },
+    ],
+  },
 ];
 
 /**
@@ -630,6 +702,16 @@ export function aggregateWalletMetricByMonth(
   const counted = new Set(spec.concepts);
   const contrast = new Set(spec.contrastConcepts ?? []);
   const contrastKey = spec.contrastKey ?? 'contrast';
+  const extras = spec.extraSeries ?? [];
+  // Un mismo concepto puede aparecer en varias entradas con direcciones
+  // distintas (HEDGE_FUND_REWARD va a `rewards` en IN y a `rewardsReversed`
+  // en OUT), así que el índice es concepto → lista.
+  const extraByConcept = new Map<string, typeof extras>();
+  for (const e of extras) {
+    for (const c of e.concepts) {
+      extraByConcept.set(c, [...(extraByConcept.get(c) ?? []), e]);
+    }
+  }
 
   const out = new Map<string, MonthlyBucket>();
   const unclassified = new Map<string, { count: number; amount: number }>();
@@ -645,6 +727,13 @@ export function aggregateWalletMetricByMonth(
         excludedAmount: 0,
         cross: { gross: 0, [contrastKey]: 0, contraCount: 0 },
       };
+      // Las series hermanas arrancan en 0 —no `undefined`— porque el mes
+      // existe justamente porque la familia tuvo movimiento: se leyó entera y
+      // esa serie no tuvo ninguno. Eso ES cero, no "no lo sabemos".
+      for (const e of extras) {
+        b.cross[e.key] = 0;
+        b.cross[`${e.key}Count`] = 0;
+      }
       out.set(key, b);
     }
     return b;
@@ -653,6 +742,30 @@ export function aggregateWalletMetricByMonth(
   for (const r of rows) {
     const esContado = counted.has(r.concept);
     const esContraste = contrast.has(r.concept);
+    const hermanas = extraByConcept.get(r.concept);
+    // Serie hermana: va a su propia clave del `detail`, no al total.
+    if (!esContado && !esContraste && hermanas) {
+      const destino = hermanas.find((e) => e.direction === r.direction);
+      const neto = numOrNull(r.net);
+      if (!destino || neto === null) {
+        // Dirección que ninguna entrada declara (o importe ausente): NO se
+        // traga en silencio. Ver el comentario de `extraSeries`.
+        const prev = unclassified.get(r.concept) ?? { count: 0, amount: 0 };
+        prev.count += r.count;
+        prev.amount = round2(prev.amount + (neto ?? 0));
+        unclassified.set(r.concept, prev);
+        continue;
+      }
+      if (!r.monthKey || !splitMonthKey(r.monthKey)) {
+        noMonth.count += r.count;
+        noMonth.amount = round2(noMonth.amount + neto);
+        continue;
+      }
+      const b = bucket(r.monthKey);
+      b.cross[destino.key] += neto;
+      b.cross[`${destino.key}Count`] += r.count;
+      continue;
+    }
     if (!esContado && !esContraste) {
       // Ni de la métrica ni de su contraste: se cuenta y se avisa.
       const prev = unclassified.get(r.concept) ?? { count: 0, amount: 0 };

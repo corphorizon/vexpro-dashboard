@@ -19,7 +19,7 @@ import { verifyAuth } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { CRM_MONTHLY_METRIC_KEYS } from '@/lib/crm-monthly';
 
-/** Techo defensivo: 6 métricas × 12 meses × 10 años no llega a esto. */
+/** Techo defensivo: 7 métricas × 12 meses × 10 años no llega a esto. */
 const MAX_ROWS = 5_000;
 
 export interface CrmMonthlyRow {
