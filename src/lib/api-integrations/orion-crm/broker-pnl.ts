@@ -1,4 +1,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
+// ⚠ CASI DEPRECADO (2026-08-31, auditoría de finanzas)
+//
+// Este endpoint REST de Orion NO EXISTE para ningún inquilino: `api_credentials`
+// no tiene una sola fila `provider='orion_crm'`, así que la función cae a su
+// generador de datos falsos.
+//
+// El informe lo usa SOLO como último recurso: desde el 2026-08-31 los tres
+// números salen de `crm_daily_pnl` (migración 106) y este camino queda para el
+// inquilino que no tenga ni un día guardado. A diferencia de `users.ts` y
+// `prop-trading.ts` —que ya no se llaman desde el informe— acá el fallback se
+// conservó a propósito: quitarlo dejaría sin sección a quien sí tenga el REST.
+// NO agregar consumidores nuevos.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Orion CRM — Broker P&L (profit and loss) for a range + month context.
 //
 // Feeds the "Broker P&L" section of /finanzas/reportes. Broker P&L can be

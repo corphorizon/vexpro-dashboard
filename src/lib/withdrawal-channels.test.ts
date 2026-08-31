@@ -3,6 +3,8 @@ import {
   API_WITHDRAWAL_CHANNELS,
   sumApiWithdrawals,
   withdrawalChannelLabel,
+  withdrawalChannelOfRow,
+  withWithdrawalStatuses,
   type WithdrawalsByChannel,
 } from './withdrawal-channels';
 import { ACCEPTED_STATUS, PAYPROS_PAYOUT_STATUS } from './api-integrations/totals';
@@ -80,5 +82,60 @@ describe('withdrawalChannelLabel', () => {
   it('sin traducción cae a la clave del canal, nunca a la clave cruda', () => {
     const t = (k: string) => k;
     expect(withdrawalChannelLabel('coinsbuy', t)).toBe('coinsbuy');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LOS PAYOUTS DE PAY-PROS TIENEN QUE LLEGAR AL INFORME
+//
+// reports/data.ts preguntaba `provider === 'coinsbuy-withdrawals'` y armaba su
+// whitelist solo con los status de ENTRADA. Las dos cosas juntas dejaban los 6
+// retiros de Pay-Pros por US$ 2.617,62 (2026-08-31) fuera de la pantalla, del
+// PDF y del mail — inflando el Net Deposit del informe sin que nada fallara.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('withdrawalChannelOfRow', () => {
+  it('un payout de Pay-Pros ES un retiro, aunque comparta slug con los depósitos', () => {
+    expect(withdrawalChannelOfRow({ provider: 'paypros', status: 'payout_paid' })).toBe('paypros');
+  });
+
+  it('un cobro de Pay-Pros NO es un retiro: mismo slug, otro status', () => {
+    expect(withdrawalChannelOfRow({ provider: 'paypros', status: 'paid' })).toBeNull();
+  });
+
+  it('Coinsbuy se resuelve por slug, con o sin status', () => {
+    expect(withdrawalChannelOfRow({ provider: 'coinsbuy-withdrawals', status: 'Approved' })).toBe('coinsbuy');
+    expect(withdrawalChannelOfRow({ provider: 'coinsbuy-withdrawals' })).toBe('coinsbuy');
+    expect(withdrawalChannelOfRow({ provider: 'coinsbuy-deposits', status: 'Confirmed' })).toBeNull();
+  });
+
+  it('un proveedor sin retiros nunca devuelve canal', () => {
+    expect(withdrawalChannelOfRow({ provider: 'unipayment', status: 'Completed' })).toBeNull();
+    expect(withdrawalChannelOfRow({ provider: 'fairpay', status: 'Completed' })).toBeNull();
+  });
+
+  it('itera el registro: un canal de retiro nuevo se clasifica solo', () => {
+    for (const c of API_WITHDRAWAL_CHANNELS) {
+      expect(withdrawalChannelOfRow({ provider: c.slug, status: c.status })).toBe(c.key);
+    }
+  });
+});
+
+describe('withWithdrawalStatuses', () => {
+  it('agrega el status de salida sin perder el de entrada', () => {
+    const merged = withWithdrawalStatuses({ paypros: ['paid'], unipayment: ['Completed'] });
+    expect(merged.paypros).toContain('paid');
+    expect(merged.paypros).toContain('payout_paid');
+    expect(merged.unipayment).toEqual(['Completed']);
+  });
+
+  it('no duplica cuando entrada y salida comparten status (Coinsbuy)', () => {
+    const merged = withWithdrawalStatuses({ 'coinsbuy-withdrawals': ['Approved'] });
+    expect(merged['coinsbuy-withdrawals']).toEqual(['Approved']);
+  });
+
+  it('no muta el registro que recibe', () => {
+    const original = { paypros: ['paid'] };
+    withWithdrawalStatuses(original);
+    expect(original.paypros).toEqual(['paid']);
   });
 });

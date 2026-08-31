@@ -64,6 +64,51 @@ export const API_WITHDRAWAL_CHANNELS: readonly ApiWithdrawalChannel[] = [
 ] as const;
 
 /**
+ * ¿Esta fila de `api_transactions` es una SALIDA de plata? Devuelve el canal, o
+ * `null` si es un depósito (o un proveedor sin retiros).
+ *
+ * POR QUÉ NO ALCANZA EL SLUG (2026-08-31, auditoría de finanzas)
+ * En Coinsbuy el slug ya lo dice ('coinsbuy-withdrawals'). En Pay-Pros el slug
+ * es UNO SOLO para los dos sentidos y el status es lo único que los separa.
+ * Preguntar `provider === 'coinsbuy-withdrawals'` —que es lo que hacía
+ * reports/data.ts— deja los payouts de Pay-Pros del lado de los depósitos o,
+ * peor, afuera de todo: al 2026-08-31 eran 6 retiros por US$ 2.617,62 que no
+ * salían en pantalla, ni en el PDF, ni en el mail, e inflaban el Net Deposit.
+ *
+ * Sin status explícito manda el slug: las filas históricas de Coinsbuy no
+ * siempre lo traen y descartarlas sería peor que asumir el sentido del slug.
+ */
+export function withdrawalChannelOfRow(row: {
+  provider: string;
+  status?: string | null;
+}): WithdrawalChannel | null {
+  for (const c of API_WITHDRAWAL_CHANNELS) {
+    if (c.slug !== row.provider) continue;
+    if (row.status === undefined || row.status === null || row.status === c.status) return c.key;
+  }
+  return null;
+}
+
+/**
+ * Agrega a una whitelist de status aceptados los status de SALIDA del registro.
+ *
+ * `ACCEPTED_STATUS` de totals.ts solo conoce el status de entrada de cada
+ * proveedor ('paid' en Pay-Pros), así que cualquier filtro construido solo con
+ * ella descarta los retiros antes de poder clasificarlos. Devuelve una copia:
+ * el registro de totals.ts es `as const` y compartido.
+ */
+export function withWithdrawalStatuses(
+  accepted: Record<string, string[]>,
+): Record<string, string[]> {
+  const out: Record<string, string[]> = { ...accepted };
+  for (const c of API_WITHDRAWAL_CHANNELS) {
+    const current = out[c.slug] ?? [];
+    if (!current.includes(c.status)) out[c.slug] = [...current, c.status];
+  }
+  return out;
+}
+
+/**
  * Importe de retiros por canal. `null` = NO LO SABEMOS (el dataset del
  * proveedor todavía no llegó); `0` = sabemos que no hubo retiros.
  *
