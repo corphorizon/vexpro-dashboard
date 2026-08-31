@@ -121,10 +121,17 @@ const CURRENCY_COPY = {
   },
 } as const;
 
+/**
+ * Hoy en UTC — no en la zona del navegador. Todo el sistema corta los días en
+ * UTC (períodos, cierres, series del CRM); con la zona local, una orden creada
+ * después de las 20:00 UTC (medianoche en Dubái) nacía fechada «mañana» y
+ * caía al mes siguiente. Pasó de verdad: OP-2026-0042, creada y pagada el
+ * 31/08 21:39 UTC, salió emitida el 01/09 y hubo que corregirla a mano.
+ */
 function todayISO(): string {
   const d = new Date();
   const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
 }
 
 const num = (v: string) => {
