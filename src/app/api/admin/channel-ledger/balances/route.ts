@@ -30,17 +30,42 @@ export async function GET(request: NextRequest) {
   }
 
   const admin = createAdminClient();
-  const { data, error } = await admin.rpc('get_channel_ledger_balances', {
-    p_company_id: auth.companyId,
-    p_asof: asof,
-  });
+  const [balRes, lastRes] = await Promise.all([
+    admin.rpc('get_channel_ledger_balances', {
+      p_company_id: auth.companyId,
+      p_asof: asof,
+    }),
+    // Fecha del último asiento de cada canal (migración 112). Es lo que
+    // permite decir en pantalla de CUÁNDO es el saldo de una ubicación manual
+    // — ver ítem 23 de la auditoría de finanzas.
+    admin.rpc('get_channel_ledger_last_entry', {
+      p_company_id: auth.companyId,
+      p_asof: asof,
+    }),
+  ]);
 
-  if (error) return apiError('admin/channel-ledger/balances', error, { status: 500 });
+  if (balRes.error) return apiError('admin/channel-ledger/balances', balRes.error, { status: 500 });
 
   const balances: Record<string, number> = {};
-  for (const row of (data ?? []) as Array<{ channel_key: string; balance: number | string }>) {
+  for (const row of (balRes.data ?? []) as Array<{ channel_key: string; balance: number | string }>) {
     balances[row.channel_key] = Number(row.balance) || 0;
   }
 
-  return NextResponse.json({ success: true, asof, balances });
+  // La antigüedad NO es fatal: si la RPC todavía no está aplicada o falla, la
+  // pantalla muestra los saldos sin el cartel de "viejo" — que es exactamente
+  // como estaba antes. Lo que no puede pasar es que un saldo desaparezca por
+  // no poder fecharlo.
+  const lastEntry: Record<string, string> = {};
+  if (lastRes.error) {
+    console.warn('[admin/channel-ledger/balances] último asiento:', lastRes.error.message);
+  } else {
+    for (const row of (lastRes.data ?? []) as Array<{
+      channel_key: string;
+      last_entry_date: string | null;
+    }>) {
+      if (row.last_entry_date) lastEntry[row.channel_key] = row.last_entry_date;
+    }
+  }
+
+  return NextResponse.json({ success: true, asof, balances, lastEntry });
 }

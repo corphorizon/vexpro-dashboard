@@ -35,7 +35,8 @@ import { hasModuleAccess } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
-import { withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
+import { computeDerivedNetDeposit, isDerivedBrokerPeriod } from '@/lib/broker-logic';
 import {
   Table,
   Download,
@@ -72,6 +73,51 @@ interface PeriodRowContext {
   // Antes la tabla solo leía manuales y Mayo/Junio aparecían como $0.
   apiDeposits: number;
   apiWithdrawals: number;
+  /**
+   * ¿El mes se rige por la regla «broker derivado de la API» (Abr 2026+)?
+   * Ver src/lib/broker-logic.ts. Un mes HISTÓRICO no suma la API: sus totales
+   * ya se cargaron a mano y sumarlos otra vez es contar dos veces.
+   */
+  isDerived: boolean;
+}
+
+/**
+ * Los tres números de depósitos/retiros/ND de una fila, por el ÚNICO camino
+ * canónico (`computeDerivedNetDeposit`), respetando si el período es derivado.
+ *
+ * ── EL BUG (auditoría de finanzas, ítem 16) ────────────────────────────────
+ * Esta tabla tenía la CUARTA reimplementación inline del Net Deposit
+ * (`apiDeposits + summary.totalDeposits` para TODOS los períodos) y no miraba
+ * `isDerivedBrokerPeriod`. Medido el 2026-08-31 sobre Vex Pro: marzo 2026
+ * —cerrado, con sus totales cargados a mano— mostraba $1.157.152,72 acá contra
+ * $1.046.382 en /balances, porque le sumaba encima las 381 filas de UniPayment
+ * de 2026-03 que la API tiene persistidas ($110.770,72). El mismo mes cerrado,
+ * dos números, en dos pantallas del mismo menú.
+ */
+function rowMoney(c: PeriodRowContext): {
+  totalDeposits: number;
+  totalWithdrawals: number;
+  netDeposit: number;
+} {
+  const manualBroker =
+    c.summary?.withdrawals?.find((w) => w.category === 'broker')?.amount ?? 0;
+
+  if (!c.isDerived) {
+    // Meses históricos (≤ Mar 2026): manda lo cargado a mano, igual que
+    // /balances (que usa `summary.netDeposit` para estos períodos).
+    return {
+      totalDeposits: c.summary?.totalDeposits ?? 0,
+      totalWithdrawals: c.summary?.totalWithdrawals ?? 0,
+      netDeposit: c.summary?.netDeposit ?? 0,
+    };
+  }
+
+  return computeDerivedNetDeposit({
+    apiDeposits: c.apiDeposits,
+    manualDepositsTotal: c.summary?.totalDeposits ?? 0,
+    apiWithdrawals: c.apiWithdrawals,
+    manualBroker,
+  });
 }
 
 interface ColumnDef {
@@ -193,16 +239,15 @@ export default function ConsolidadoPage() {
     const controller = new AbortController();
     (async () => {
       try {
-        // withActiveCompany: cuando un superadmin entra viewing-as un
-        // tenant, el endpoint verifyAuth() leería el cookie session
-        // (superadmin) y devolvería los datos de su company, NO los
-        // del tenant que está viewing. withActiveCompany inyecta el
-        // header X-Active-Company que el server respeta — mismo patrón
-        // que MonthlyChart en /resumen-general ya usaba.
-        const url = withActiveCompany(
+        // apiFetch, no `fetch` pelado (§4.2 del manual): además del scope de
+        // superadmin viewing-as —que el `withActiveCompany` suelto ya cubría—
+        // trae el timeout propio, así que un endpoint colgado no deja la tabla
+        // esperando para siempre. El `signal` explícito gana sobre el interno
+        // para que el cleanup del efecto siga cancelando al cambiar de empresa.
+        const res = await apiFetch(
           `/api/integrations/period-totals?from=${from}&to=${to}`,
+          { signal: controller.signal },
         );
-        const res = await fetch(url, { signal: controller.signal });
         const json = await res.json();
         if (json?.success && json.months) {
           setApiMonths(json.months);
@@ -240,6 +285,7 @@ export default function ConsolidadoPage() {
         saldoInfo,
         apiDeposits: api.deposits,
         apiWithdrawals: api.withdrawals,
+        isDerived: isDerivedBrokerPeriod({ year: p.year, month: p.month }),
       };
     });
   }, [periods, getPeriodSummary, saldoChain, apiMonths]);
@@ -250,37 +296,23 @@ export default function ConsolidadoPage() {
       {
         key: 'totalDeposits',
         labelKey: 'consolidated.colDeposits',
-        // API (Coinsbuy + FairPay + UniPayment) + manual. Antes solo
-        // se mostraba el manual (`summary.totalDeposits`) y los meses
-        // sin entrada manual aparecían como $0 aunque la API tuviera
-        // cientos de miles. Coincide con la fórmula de /movimientos.
-        compute: (c) => c.apiDeposits + (c.summary?.totalDeposits ?? 0),
+        // Fórmula ÚNICA (broker-logic.ts) vía `rowMoney`: API + manual en los
+        // meses derivados (Abr 2026+), sólo manual en los históricos.
+        compute: (c) => rowMoney(c).totalDeposits,
         total: 'sum',
         kind: 'pos',
       },
       {
         key: 'totalWithdrawals',
         labelKey: 'consolidated.colWithdrawals',
-        // API + manual (broker como Coinsbuy supplement). Misma lógica
-        // que el card "Retiros Totales" en /movimientos.
-        compute: (c) => {
-          const manualBroker =
-            c.summary?.withdrawals?.find((w) => w.category === 'broker')?.amount ?? 0;
-          return c.apiWithdrawals + manualBroker;
-        },
+        compute: (c) => rowMoney(c).totalWithdrawals,
         total: 'sum',
         kind: 'neg',
       },
       {
         key: 'netDeposit',
         labelKey: 'consolidated.colNetDeposit',
-        compute: (c) => {
-          const deposits = c.apiDeposits + (c.summary?.totalDeposits ?? 0);
-          const manualBroker =
-            c.summary?.withdrawals?.find((w) => w.category === 'broker')?.amount ?? 0;
-          const withdrawals = c.apiWithdrawals + manualBroker;
-          return deposits - withdrawals;
-        },
+        compute: (c) => rowMoney(c).netDeposit,
         total: 'sum',
         kind: 'neutral',
       },
