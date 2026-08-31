@@ -82,3 +82,26 @@ export function formatDateRelative(input: DateLike): string {
   if (!d) return '';
   return d.toLocaleDateString('es', { day: '2-digit', month: 'short', year: 'numeric' });
 }
+
+/**
+ * El día de HOY en UTC, como `YYYY-MM-DD` para un `<input type="date">`.
+ *
+ * ── POR QUÉ UTC Y NO EL DÍA LOCAL DEL NAVEGADOR ────────────────────────────
+ * Porque el día local depende de dónde esté sentada la persona. La OP-2026-0042
+ * nació fechada MAÑANA: quien la creó estaba en un huso adelantado y su «hoy»
+ * local ya era el día siguiente para la empresa. Con UTC, todos los usuarios
+ * generan la misma fecha sin importar desde dónde trabajen — el mismo criterio
+ * que ya usan las fechas de MT5 (`mt5DateUtc`) y la fecha de conexión del pool
+ * de liquidez.
+ *
+ * Réplica del arreglo de Kevin del 2026-08-31, cuyo commit quedó sólo en su
+ * máquina y en un deploy por CLI: se re-implementa acá para que el deploy desde
+ * GitHub no lo regresione. Cuando su commit llegue al repo, el conflicto se
+ * resuelve dejando cualquiera de los dos — dicen lo mismo.
+ *
+ * Antes vivía COPIADO en dos pantallas de Órdenes de Pago (`todayISO`), las dos
+ * con el día local. Acá queda la única versión.
+ */
+export function todayUtcISO(): string {
+  return new Date().toISOString().slice(0, 10);
+}

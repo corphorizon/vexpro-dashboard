@@ -38,6 +38,7 @@ import { useToasts } from '@/components/ui/toast';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
+import { todayUtcISO } from '@/lib/dates';
 import {
   CRYPTO_NETWORKS,
   computeLineAmount,
@@ -121,11 +122,9 @@ const CURRENCY_COPY = {
   },
 } as const;
 
-function todayISO(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
+// La fecha por defecto es el día UTC, no el local del navegador: la
+// OP-2026-0042 nació fechada mañana porque quien la creó estaba en un huso
+// adelantado. Ver `todayUtcISO` en lib/dates.ts.
 
 const num = (v: string) => {
   const n = Number(String(v).replace(',', '.'));
@@ -172,7 +171,7 @@ function initialState(order: PaymentOrder | undefined, fallbackCurrency: string)
     order?.crypto_network && (CRYPTO_NETWORKS as readonly string[]).includes(order.crypto_network);
   return {
     locale: order?.locale ?? 'es',
-    issue_date: order?.issue_date ?? todayISO(),
+    issue_date: order?.issue_date ?? todayUtcISO(),
     payment_date: order?.payment_date ?? '',
     beneficiary_id: order?.beneficiary_id ?? null,
     beneficiary_name: order?.beneficiary_name ?? '',

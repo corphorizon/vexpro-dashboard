@@ -47,7 +47,7 @@ import { useAuth } from '@/lib/auth-context';
 import { roleCanWriteFinance } from '@/lib/roles';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
-import { formatDate, formatDateTime } from '@/lib/dates';
+import { formatDate, formatDateTime, todayUtcISO } from '@/lib/dates';
 import {
   canTransition,
   isEditable,
@@ -98,11 +98,6 @@ function formatFileSize(bytes: number | null): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function todayISO(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
-}
 
 const INPUT =
   'w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm placeholder:text-muted-foreground';
@@ -873,7 +868,7 @@ export default function OrdenPagoDetallePage() {
       {dialog === 'pay' && (
         <PayDialog
           busy={busy}
-          defaultDate={order.payment_date || todayISO()}
+          defaultDate={order.payment_date || todayUtcISO()}
           onClose={() => setDialog(null)}
           onConfirm={(payload, proofFiles) => runTransition('paid', payload, proofFiles)}
         />
