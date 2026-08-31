@@ -33,6 +33,7 @@ import {
 import type { ResolvedChannel, ChannelConfigRow } from '@/lib/channel-configs';
 import { apiFetch } from '@/lib/api-fetch';
 import { resolveChannels } from '@/lib/channel-configs';
+import { canRenameChannel } from '@/lib/api-channels';
 import { formatCurrency } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import {
@@ -309,8 +310,16 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
               <section className="space-y-2">
                 <h3 className="text-sm font-medium">{t('balances.cfgChannels')}</h3>
                 {resolved.map((ch) => {
-                  const isApi = ch.type === 'auto' && (ch.key === 'coinsbuy' || ch.key === 'unipayment');
-                  const canRename = !isApi; // manual + custom + derived auto (liquidez/inversiones)
+                  // Quién se puede renombrar sale del registro único
+                  // (src/lib/api-channels.ts). Acá había una copia literal de
+                  // la del servidor con DOS canales, cuando ya había cuatro
+                  // automáticos: FairPay y Pay-Pros se ofrecían renombrables y
+                  // el servidor —que tenía la MISMA lista vieja— los aceptaba
+                  // (2026-08-31, auditoría de finanzas, ítem 14).
+                  // Sigue incluyendo manual + custom + los `auto` DERIVADOS
+                  // (liquidez / inversiones), cuyo nombre es nuestro.
+                  const canRename = canRenameChannel(ch.key, ch.isCustom);
+                  const isApi = !canRename;
                   const editing = editingLabelFor === ch.key;
                   const busy = saving === ch.key;
                   return (

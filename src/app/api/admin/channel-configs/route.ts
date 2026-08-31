@@ -31,6 +31,7 @@ import {
   type UnitShare,
 } from '@/lib/cash-locations';
 import { AUTO_CATEGORIES } from '@/lib/channel-ledger';
+import { canRenameChannel } from '@/lib/api-channels';
 import type { ChannelConfigRow } from '@/lib/channel-configs';
 
 const BUILTIN_KEYS = new Set(BUILTIN_CHANNELS.map((c) => c.key));
@@ -170,10 +171,17 @@ export async function POST(request: NextRequest) {
     }
     const isBuiltin = BUILTIN_KEYS.has(channel_key);
     // For built-ins we lock channel_type to the hardcoded value and don't
-    // allow renaming API-sourced channels (coinsbuy / unipayment) because
-    // their label comes from the provider itself.
+    // allow renaming API-sourced channels: their label comes from the
+    // provider itself.
+    //
+    // La lista era `['coinsbuy','unipayment']` acá Y otra igual en el modal
+    // (balances/channel-config-modal.tsx), las dos con DOS ítems cuando ya
+    // había cuatro canales automáticos: FairPay y Pay-Pros se dejaban
+    // renombrar en las dos puntas. Ahora sale de `canRenameChannel`
+    // (src/lib/api-channels.ts), derivado de API_LEDGER_CHANNELS
+    // (2026-08-31, auditoría de finanzas, ítem 14).
     const builtin = BUILTIN_CHANNELS.find((c) => c.key === channel_key);
-    const apiChannel = builtin && builtin.type === 'auto' && ['coinsbuy', 'unipayment'].includes(channel_key);
+    const apiChannel = !canRenameChannel(channel_key, !isBuiltin);
 
     const payload: Record<string, unknown> = {
       company_id: ctx.companyId,

@@ -23,6 +23,7 @@ import {
   sumApiWithdrawals,
   type WithdrawalsByChannel,
 } from '@/lib/withdrawal-channels';
+import { PROVIDER_META } from '@/lib/api-channels';
 import { apiFetch } from '@/lib/api-fetch';
 import {
   pinCoinsbuyWallet,
@@ -55,21 +56,10 @@ function timeAgo(iso: string): string {
   return `hace ${diffH} h`;
 }
 
-const SLUG_LABEL: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'Coinsbuy · Depósitos',
-  'coinsbuy-withdrawals': 'Coinsbuy · Retiros',
-  fairpay: 'FairPay · Depósitos',
-  unipayment: 'Unipayment · Depósitos',
-  paypros: 'Pay-Pros · Depósitos',
-};
-
-const SLUG_ACCENT: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'text-info',
-  'coinsbuy-withdrawals': 'text-negative',
-  fairpay: 'text-positive',
-  unipayment: 'text-violet-600 dark:text-violet-400',
-  paypros: 'text-amber-600 dark:text-amber-400',
-};
+// Las etiquetas y el color de cada tarjeta salen del registro único
+// (src/lib/api-channels.ts, PROVIDER_META). Eran DOS `Record<ProviderSlug,…>`
+// escritos acá, en un archivo de UI, mientras `integrations-sync.ts` tenía un
+// tercero para los avisos al que le faltaba `paypros` (2026-08-31, ítem 14).
 
 // ── Current month helpers ──
 
@@ -575,7 +565,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
             >
               <div className="flex items-center justify-between mb-1">
                 <span className="text-xs font-semibold truncate">
-                  {SLUG_LABEL[ds.slug]}
+                  {PROVIDER_META[ds.slug].cardLabel}
                 </span>
                 {ds.status === 'fresh' ? (
                   <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
@@ -587,7 +577,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                   <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
                 )}
               </div>
-              <p className={`text-base font-bold ${SLUG_ACCENT[ds.slug]}`}>
+              <p className={`text-base font-bold ${PROVIDER_META[ds.slug].accent}`}>
                 {formatCurrency(totals.total)}
               </p>
               <div className="flex items-center justify-between mt-0.5">
