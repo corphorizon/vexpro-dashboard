@@ -87,6 +87,15 @@ import {
   isDerivedBrokerPeriod,
   computeDerivedBroker,
 } from '@/lib/broker-logic';
+import { useCrmMonthlyAuto } from '@/lib/use-crm-monthly-auto';
+import { resolveAutoOrManual } from '@/lib/crm-auto-values';
+
+/**
+ * La única serie del espejo que este formulario consume: las comisiones IB.
+ * Alimenta el SPLIT del broker derivado, no ningún total — ver el bloque de
+ * `ibEffective` más abajo.
+ */
+const UPLOAD_CRM_AUTO_METRICS = ['ib_commissions'] as const;
 import {
   parseAmount,
   findInvalidAmount,
@@ -684,20 +693,56 @@ export default function UploadPage() {
     company?.default_wallet_id ?? '',
   );
 
+  // ── Comisiones IB: el automático del espejo alimenta el SPLIT ──────────────
+  // (2026-08-31, auditoría de finanzas, ítem 18)
+  //
+  // `computeDerivedBroker` reparte el retiro que reportó la API entre Broker, IB,
+  // Prop Firm y Otros: Broker = API − IB − PropFirm − Otros. La categoría IB
+  // está VACÍA desde abril, así que el resto —$125.000 a $180.000 por mes que la
+  // API sí reporta como salida— se atribuía entero a «Broker». El total nunca
+  // estuvo mal; la ETIQUETA sí, todos los meses, y es la que después se lee para
+  // entender a dónde se fue la plata.
+  //
+  // Alimentarlo con el automático corrige el split SIN mover ningún total:
+  //   · «Retiros Totales» de /movimientos = API + manual Broker. No toca esto.
+  //   · El total del pie de ESTE formulario = Σ categorías + broker derivado.
+  //     Como la fila de IB de abajo muestra el MISMO valor efectivo que se le
+  //     resta acá, los dos movimientos se cancelan y el total queda idéntico.
+  //     Si sólo se cambiara una de las dos puntas, el pie bajaría $180.000 sin
+  //     que hubiera pasado nada — por eso van juntas.
+  //
+  // SÓLO EN PERÍODOS ABIERTOS. Un período cerrado congeló sus insumos y su
+  // distribución ya se calculó con el split viejo; cambiarle la cara hoy haría
+  // que el papel firmado y la pantalla no coincidan. En cerrados se sigue
+  // usando el manual, tal cual estaba.
+  const crmAuto = useCrmMonthlyAuto(
+    currentPeriodObj ? [currentPeriodObj] : [],
+    UPLOAD_CRM_AUTO_METRICS,
+  );
+  const ibEffective = useMemo(() => {
+    const manual = withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
+    if (!brokerIsDerived || selectedPeriodIsClosed) {
+      return { value: manual, source: 'manual' as const };
+    }
+    return resolveAutoOrManual({
+      derived: true,
+      manual,
+      auto: crmAuto.auto.ib_commissions ?? null,
+    });
+  }, [brokerIsDerived, selectedPeriodIsClosed, withdrawals, crmAuto.auto.ib_commissions]);
+
   // Live-computed broker. Re-runs as the user edits IB / Prop Firm / Otros.
   const derivedBrokerAmount = useMemo(() => {
     if (!brokerIsDerived) return 0;
-    const ib =
-      withdrawals.find((w) => w.category === 'ib_commissions')?.amount || 0;
     const pf = withdrawals.find((w) => w.category === 'prop_firm')?.amount || 0;
     const other = withdrawals.find((w) => w.category === 'other')?.amount || 0;
     return computeDerivedBroker({
       apiWithdrawalsTotal: brokerApiTotals.withdrawalsTotal,
-      ibCommissions: ib,
+      ibCommissions: ibEffective.value,
       propFirm: pf,
       other,
     });
-  }, [brokerIsDerived, withdrawals, brokerApiTotals.withdrawalsTotal]);
+  }, [brokerIsDerived, withdrawals, brokerApiTotals.withdrawalsTotal, ibEffective.value]);
 
   // Liquidez state (from Supabase)
   const [liquidityRows, setLiquidityRowsRaw] = useState<LiquidityMovement[]>(() => [...getLiquidityData()]);
@@ -2316,14 +2361,22 @@ export default function UploadPage() {
               {withdrawals.map(w => {
                 const isBrokerAutoRow =
                   w.category === 'broker' && brokerIsDerived;
+                // La fila de IB muestra el valor EFECTIVO (el automático del
+                // espejo cuando no hay carga manual), que es EXACTAMENTE el que
+                // se le resta al broker derivado. Las dos puntas van juntas o el
+                // total del pie se desfasa por el mismo importe.
+                const isIbAutoRow =
+                  w.category === 'ib_commissions' && ibEffective.source === 'api';
                 const displayAmount = isBrokerAutoRow
                   ? derivedBrokerAmount
-                  : w.amount;
+                  : isIbAutoRow
+                    ? ibEffective.value
+                    : w.amount;
                 return (
                   <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
                     <td className="py-2.5 px-3 font-medium">
                       {WITHDRAWAL_LABELS[w.category]}
-                      {isBrokerAutoRow && (
+                      {(isBrokerAutoRow || isIbAutoRow) && (
                         <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
                           auto
                         </span>
@@ -2348,6 +2401,13 @@ export default function UploadPage() {
                           {isBrokerAutoRow && (
                             <span className="text-[10px] text-muted-foreground">
                               + API {formatCurrency(derivedBrokerAmount)} (auto)
+                            </span>
+                          )}
+                          {isIbAutoRow && (
+                            <span className="text-[10px] text-muted-foreground">
+                              {t('upload.ibFromCrm', {
+                                amount: formatCurrency(ibEffective.value),
+                              })}
                             </span>
                           )}
                         </div>
@@ -2382,8 +2442,16 @@ export default function UploadPage() {
                     // added here because it's an auto-calculation shown for
                     // reference — the Movimientos page adds it at render
                     // time so both sources remain visible separately.
-                    withdrawals.reduce((s, w) => s + w.amount, 0) +
-                    (brokerIsDerived ? derivedBrokerAmount : 0)
+                    // El IB entra por su valor EFECTIVO, el mismo que se le
+                    // restó al broker derivado. Con las dos puntas alineadas el
+                    // total es idéntico al de antes de cablear el automático:
+                    // lo que cambió es el REPARTO entre Broker e IB, no la suma.
+                    withdrawals.reduce(
+                      (s, w) =>
+                        s +
+                        (w.category === 'ib_commissions' ? ibEffective.value : w.amount),
+                      0,
+                    ) + (brokerIsDerived ? derivedBrokerAmount : 0)
                   )}
                 </td>
                 {userCanAdd && <td></td>}
@@ -2395,6 +2463,19 @@ export default function UploadPage() {
                     className="py-2 px-3 text-[11px] text-muted-foreground italic"
                   >
                     {t('upload.brokerCoexistNote')}
+                  </td>
+                </tr>
+              )}
+              {/* La cabecera que explica de dónde salió el IB. Un número que
+                  aparece solo, sin que nadie lo haya tecleado, necesita decir de
+                  dónde vino y qué NO cambia por su culpa. */}
+              {ibEffective.source === 'api' && (
+                <tr>
+                  <td
+                    colSpan={userCanAdd ? 3 : 2}
+                    className="py-2 px-3 text-[11px] text-muted-foreground italic"
+                  >
+                    {t('upload.ibSplitNote')}
                   </td>
                 </tr>
               )}
