@@ -1620,6 +1620,14 @@ const translations: Record<Locale, TranslationDict> = {
     'hr.deleteError': 'Error deleting',
 
     // Movements extras
+    // Etiquetas de canal de depósito. Las lee depositChannelLabel()
+    // (src/lib/deposit-channels.ts) armando la clave con el canal; el
+    // fallback es CHANNEL_LABELS en types.ts.
+    'movements.channelLabel.coinsbuy': 'Coinsbuy (Crypto)',
+    'movements.channelLabel.fairpay': 'FairPay (Local payment)',
+    'movements.channelLabel.unipayment': 'Unipayment (Card)',
+    'movements.channelLabel.paypros': 'Pay-Pros (Local payment)',
+    'movements.channelLabel.other': 'Other deposits',
     'movements.channel': 'Channel',
     'movements.amount': 'Amount',
     'movements.category': 'Category',
@@ -3912,6 +3920,11 @@ const translations: Record<Locale, TranslationDict> = {
     'hr.deleteError': 'Error al eliminar',
 
     // Movements extras
+    'movements.channelLabel.coinsbuy': 'Coinsbuy (Crypto)',
+    'movements.channelLabel.fairpay': 'FairPay (Medio Local)',
+    'movements.channelLabel.unipayment': 'Unipayment (Tarjeta)',
+    'movements.channelLabel.paypros': 'Pay-Pros (Medio Local)',
+    'movements.channelLabel.other': 'Otros Depósitos',
     'movements.channel': 'Canal',
     'movements.amount': 'Monto',
     'movements.category': 'Categoría',

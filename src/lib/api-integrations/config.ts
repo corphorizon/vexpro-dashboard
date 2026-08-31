@@ -32,6 +32,11 @@ export const PROVIDER_CONFIG: Record<ProviderId, ProviderConfig> = {
   coinsbuy:   readConfig('COINSBUY'),
   fairpay:    readConfig('FAIRPAY'),
   unipayment: readConfig('UNIPAYMENT'),
+  // Pay-Pros NO se llama desde acá: sus credenciales son por tenant
+  // (api_credentials, provider 'paypros') y se usan para el balance y para
+  // firmar el webhook. `enabled: false` es literal: no hay una llamada de
+  // listado que habilitar. Ver aggregator.fetchProviderBySlug.
+  paypros:    { enabled: false, credentials: {} },
 };
 
 // Refresh interval for the Movimientos page (5 minutes)

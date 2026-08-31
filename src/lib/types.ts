@@ -45,7 +45,15 @@ export interface Deposit {
   id: string;
   period_id: string;
   company_id: string;
-  channel: 'coinsbuy' | 'fairpay' | 'unipayment' | 'other';
+  /**
+   * Canal del depósito. 'paypros' se agregó el 2026-08-31 junto con la
+   * migración 105 (que amplía el CHECK de `deposits.channel`): hasta que esa
+   * migración esté aplicada, la carga MANUAL de ese canal la rechaza la base
+   * — por eso /upload todavía no lo ofrece. La lectura de la API no depende
+   * de la migración: sale de `api_transactions`. Registro de canales en
+   * `src/lib/deposit-channels.ts`.
+   */
+  channel: 'coinsbuy' | 'fairpay' | 'unipayment' | 'paypros' | 'other';
   amount: number;
   notes: string | null;
 }
@@ -468,10 +476,16 @@ export interface SendEmailResponse {
   error?: string;
 }
 
+/**
+ * Etiquetas por defecto de los canales de depósito (castellano). Son el
+ * FALLBACK de `depositChannelLabel()` en `src/lib/deposit-channels.ts`, que
+ * prefiere la clave i18n `movements.channelLabel.<canal>`.
+ */
 export const CHANNEL_LABELS: Record<string, string> = {
   coinsbuy: 'Coinsbuy (Crypto)',
   fairpay: 'FairPay (Medio Local)',
   unipayment: 'Unipayment (Tarjeta)',
+  paypros: 'Pay-Pros (Medio Local)',
   other: 'Otros Depósitos',
 };
 

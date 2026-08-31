@@ -20,7 +20,13 @@ import { usePeriod } from '@/lib/period-context';
 import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
 import { formatCurrency } from '@/lib/utils';
-import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
+import { WITHDRAWAL_LABELS } from '@/lib/types';
+import {
+  ALL_DEPOSIT_CHANNELS,
+  apiSlugForChannel,
+  depositChannelLabel,
+  manualDepositsByChannel,
+} from '@/lib/deposit-channels';
 import type { Deposit, Withdrawal } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { apiFetch } from '@/lib/api-fetch';
@@ -29,14 +35,11 @@ import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { Download } from 'lucide-react';
 
-// Channels shown in the "Depósitos del período" card. "Otros" is included
-// because it's a manual-entry field that still gets stored in Supabase.
-const ALL_CHANNELS: Array<'coinsbuy' | 'fairpay' | 'unipayment' | 'other'> = [
-  'coinsbuy',
-  'fairpay',
-  'unipayment',
-  'other',
-];
+// Los canales de la tarjeta «Depósitos del período» salen del registro único
+// (src/lib/deposit-channels.ts). Antes eran una lista dura acá y otra en el
+// hook, y cuando entró Pay-Pros ninguna de las dos se enteró: la pantalla
+// mostraba $44.653,95 menos que el backend. Ver la cabecera del registro.
+const ALL_CHANNELS = ALL_DEPOSIT_CHANNELS;
 const ALL_CATEGORIES: Array<'ib_commissions' | 'broker' | 'prop_firm' | 'other'> = [
   'ib_commissions',
   'broker',
@@ -129,7 +132,7 @@ export default function MovimientosPage() {
     const rows: (string | number)[][] = [
       ...summary.deposits.map(
         (d) =>
-          [t('movements.deposit'), CHANNEL_LABELS[d.channel], d.amount] as (string | number)[]
+          [t('movements.deposit'), depositChannelLabel(d.channel, t), d.amount] as (string | number)[]
       ),
       ...summary.withdrawals.map(
         (w) =>
@@ -194,22 +197,16 @@ export default function MovimientosPage() {
   // Supabase). The manual entry is never overwritten or hidden by the API.
 
   // Manual values per deposit channel (may be 0 if the user didn't enter any).
-  const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0;
-  const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0;
-  const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0;
-  const otherDeposits = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
+  const manualByChannel = manualDepositsByChannel(summary.deposits);
+  const otherDeposits = manualByChannel.other;
 
   // API amounts from the shared coexistence hook (0 for historical periods).
-  const { apiCoinsbuy, apiFairpay, apiUnipayment } = coexist;
+  const { apiByChannel } = coexist;
 
-  // Per-channel totals shown in the table rows.
-  const coinsbuyDisplay = apiCoinsbuy + manualCoinsbuy;
-  const fairpayDisplay = apiFairpay + manualFairpay;
-  const unipaymentDisplay = apiUnipayment + manualUnipayment;
-
-  // "Depósitos Totales (API)" — the sum of the three API-backed channels,
-  // including any manual entry the user added for those channels.
-  const apiDepositsTotal = coinsbuyDisplay + fairpayDisplay + unipaymentDisplay;
+  // "Depósitos Totales (API)" — la suma de los canales con API, incluyendo lo
+  // que el usuario haya cargado a mano en esos canales. Sale del registro
+  // único: no hay tres variables sueltas que se olviden de la cuarta.
+  const apiDepositsTotal = coexist.apiDepositsTotal(manualByChannel);
 
   // Stored manual amounts per withdrawal category.
   const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
@@ -274,8 +271,11 @@ export default function MovimientosPage() {
   // UN solo lugar.
   const _derived = useDerivedBroker
     ? computeDerivedNetDeposit({
-        apiDeposits: apiCoinsbuy + apiFairpay + apiUnipayment,
-        manualDepositsTotal: manualCoinsbuy + manualFairpay + manualUnipayment + otherDeposits,
+        apiDeposits: ALL_DEPOSIT_CHANNELS.reduce((s, ch) => s + (apiByChannel[ch] ?? 0), 0),
+        manualDepositsTotal: ALL_DEPOSIT_CHANNELS.reduce(
+          (s, ch) => s + (manualByChannel[ch] ?? 0),
+          0,
+        ),
         apiWithdrawals: apiWithdrawalsTotal,
         manualBroker: storedBroker,
       })
@@ -288,13 +288,8 @@ export default function MovimientosPage() {
   // Filas de la tabla de Depósitos — API + manual coexist: per-channel
   // display = API amount (when this period uses derived broker logic) +
   // manual entry from Supabase `deposits` table.
-  const API_SLUG_MAP: Record<string, 'coinsbuy-deposits' | 'fairpay' | 'unipayment'> = {
-    coinsbuy: 'coinsbuy-deposits',
-    fairpay: 'fairpay',
-    unipayment: 'unipayment',
-  };
   const depositRows = fullDeposits.map((d) => {
-    const apiSlug = API_SLUG_MAP[d.channel];
+    const apiSlug = apiSlugForChannel(d.channel);
     const apiAmount = useDerivedBroker && apiSlug
       ? coexist.apiTotalsBy[apiSlug] ?? 0
       : 0;
@@ -386,7 +381,7 @@ export default function MovimientosPage() {
                 header: t('movements.channel'),
                 accessor: (d) => (
                   <>
-                    {CHANNEL_LABELS[d.channel]}
+                    {depositChannelLabel(d.channel, t)}
                     {d.channel === 'other' && (
                       <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
                         manual

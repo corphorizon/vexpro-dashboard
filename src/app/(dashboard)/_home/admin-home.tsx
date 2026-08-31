@@ -6,6 +6,7 @@ import { useAuth, hasModuleAccess } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { features } from '@/lib/business-model';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { manualDepositsByChannel } from '@/lib/deposit-channels';
 import { formatCurrency } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-fetch';
 import { QuickAccess } from './quick-access';
@@ -81,12 +82,11 @@ export function AdminHome() {
     if (!summary) return { deposits: 0, withdrawals: 0, netDeposit: 0 };
     const useDerivedBroker = coexist.useDerivedBroker;
 
-    const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount ?? 0;
-    const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount ?? 0;
-    const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount ?? 0;
-    const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount ?? 0;
+    // Manual por canal desde el registro único (src/lib/deposit-channels.ts).
+    const manualByChannel = manualDepositsByChannel(summary.deposits);
+    const storedOther = manualByChannel.other;
     const deposits = useDerivedBroker
-      ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
+      ? coexist.apiDepositsTotal(manualByChannel) + storedOther
       : summary.totalDeposits;
 
     const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;

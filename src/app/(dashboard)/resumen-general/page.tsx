@@ -22,6 +22,7 @@ import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
+import { manualDepositsByChannel } from '@/lib/deposit-channels';
 import {
   ArrowDownCircle,
   ArrowUpCircle,
@@ -137,13 +138,13 @@ export default function ResumenPage() {
   // so the number shown here always matches what Movimientos shows.
 
   // Deposits per channel: API amount (when derived-logic period) + manual.
-  const manualCoinsbuy = summary.deposits.find((d) => d.channel === 'coinsbuy')?.amount || 0;
-  const manualFairpay = summary.deposits.find((d) => d.channel === 'fairpay')?.amount || 0;
-  const manualUnipayment = summary.deposits.find((d) => d.channel === 'unipayment')?.amount || 0;
-  const storedOther = summary.deposits.find((d) => d.channel === 'other')?.amount || 0;
+  // El manual sale del registro único de canales — antes se enumeraban tres a
+  // mano acá y Pay-Pros no entraba ni por la API ni por el manual.
+  const manualByChannel = manualDepositsByChannel(summary.deposits);
+  const storedOther = manualByChannel.other;
 
   const consolidatedDeposits = useDerivedBroker
-    ? coexist.apiDepositsTotal(manualCoinsbuy, manualFairpay, manualUnipayment) + storedOther
+    ? coexist.apiDepositsTotal(manualByChannel) + storedOther
     : summary.totalDeposits;
 
   // Withdrawals — Kevin (2026-06-06, decisión final): los retiros reales

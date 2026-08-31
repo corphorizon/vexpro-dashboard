@@ -58,12 +58,14 @@ const CHANNEL_LABEL: Record<EmailLocale, Record<string, string>> = {
     coinsbuy: 'Coinsbuy',
     fairpay: 'FairPay',
     unipayment: 'UniPayment',
+    paypros: 'Pay-Pros',
     other: 'Otros',
   },
   en: {
     coinsbuy: 'Coinsbuy',
     fairpay: 'FairPay',
     unipayment: 'UniPayment',
+    paypros: 'Pay-Pros',
     other: 'Other',
   },
 };

@@ -55,6 +55,7 @@ const SLUG_LABEL: Record<ProviderSlug, string> = {
   'coinsbuy-withdrawals': 'Coinsbuy · Retiros',
   fairpay: 'FairPay · Depósitos',
   unipayment: 'Unipayment · Depósitos',
+  paypros: 'Pay-Pros · Depósitos',
 };
 
 const SLUG_ACCENT: Record<ProviderSlug, string> = {
@@ -62,6 +63,7 @@ const SLUG_ACCENT: Record<ProviderSlug, string> = {
   'coinsbuy-withdrawals': 'text-negative',
   fairpay: 'text-positive',
   unipayment: 'text-violet-600 dark:text-violet-400',
+  paypros: 'text-amber-600 dark:text-amber-400',
 };
 
 // ── Current month helpers ──
@@ -671,11 +673,15 @@ export function useApiTotals(
       'coinsbuy-withdrawals': 0,
       fairpay: 0,
       unipayment: 0,
+      // Pay-Pros llega por /persisted-movements (espejo), no por la llamada en
+      // vivo: no tiene endpoint de listado. Ver aggregator.fetchProviderBySlug.
+      paypros: 0,
     };
     for (const ds of datasets) {
       by[ds.slug] = computeProviderTotals(ds).total;
     }
-    const depositsTotal = by['coinsbuy-deposits'] + by.fairpay + by.unipayment;
+    const depositsTotal =
+      by['coinsbuy-deposits'] + by.fairpay + by.unipayment + by.paypros;
     const withdrawalsTotal = by['coinsbuy-withdrawals'];
     return { by, depositsTotal, withdrawalsTotal };
   }, [datasets]);
