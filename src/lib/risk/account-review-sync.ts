@@ -55,6 +55,7 @@ import {
 } from '@/lib/risk/account-review';
 import type { Trade } from '@/lib/risk/types';
 import { esCuentaDemoCrm } from '@/lib/mt5-groups';
+import { evaluarToxicidad } from '@/lib/risk/broker-toxicity';
 
 /** Techo de logins por consulta a MT5. Ver también PRESUPUESTO_POSICIONES. */
 export const LOGIN_BATCH = 40;
@@ -427,6 +428,9 @@ async function evaluarYGuardar(
       const meta = porLogin.get(login)!;
       const trades = porCuenta.get(login) ?? [];
       const truncated = trades.length >= MAX_POSICIONES;
+      // Las mismas operaciones, dos lecturas distintas. Ninguna influye en la
+      // otra: mezclarlas daría un puntaje que no significa nada.
+      const tox = evaluarToxicidad(trades);
       const rev: AccountReview = evaluateAccount(login, trades, {
         noticias,
         // La detección de copia necesita las aperturas de TODAS las cuentas del
@@ -462,6 +466,15 @@ async function evaluarYGuardar(
         computed_at: ahora,
         truncated: rev.truncated,
         warnings: rev.warnings,
+        // ── Toxicidad hacia el bróker ─────────────────────────────────────
+        // Eje SEPARADO de `risk`: aquél dice cómo opera el cliente, éste dice
+        // cuánto le cuesta a la casa. Sale de las mismas operaciones ya
+        // cargadas, así que no cuesta una vuelta más a MT5.
+        origen: tox.origen,
+        ejecucion: tox.ejecucion,
+        toxic_signals: tox.senales,
+        toxic_level: tox.level,
+        toxic_flagged: tox.flagged,
       };
     });
 

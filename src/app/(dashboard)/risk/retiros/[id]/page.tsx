@@ -605,6 +605,93 @@ export default function RetiroDetallePage() {
                   </div>
                 )}
 
+                {/* ── Toxicidad hacia el BRÓKER ─────────────────────────
+                    Eje aparte del de arriba, y va al final a propósito: lo de
+                    arriba dice cómo opera el cliente, esto dice cuánto le
+                    cuesta la operativa a la casa. Son casi opuestos — una
+                    cuenta con martingala es pésima para el cliente y buen
+                    negocio para nosotros. Mezclarlos daría un número que no
+                    significa nada. */}
+                {(a.toxicLevel || a.origen || a.ejecucion) && (
+                  <div className="mt-4 border-t border-border pt-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Costo para el bróker
+                      </p>
+                      {a.toxicLevel && (
+                        <span
+                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                            a.toxicLevel === 'alto'
+                              ? 'bg-negative/10 text-negative'
+                              : a.toxicLevel === 'medio'
+                                ? 'bg-warning/10 text-warning'
+                                : 'bg-positive/10 text-positive'
+                          }`}
+                        >
+                          {a.toxicLevel === 'alto' ? 'TÓXICA' : a.toxicLevel === 'medio' ? 'REVISAR' : 'SIN INDICIOS'}
+                        </span>
+                      )}
+                    </div>
+
+                    {/* De dónde salieron las órdenes */}
+                    {a.origen && a.origen.aperturas.length > 0 && (
+                      <p className="mt-2 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Origen:</span>{' '}
+                        {a.origen.aperturas.map((m) => `${m.label} ${m.pct}%`).join(' · ')}
+                      </p>
+                    )}
+                    {a.origen && a.origen.cierres.length > 0 && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Cierres:</span>{' '}
+                        {a.origen.cierres.map((m) => `${m.label} ${m.pct}%`).join(' · ')}
+                      </p>
+                    )}
+
+                    {/* El bot vive en el comentario: ExpertID viene en 0. */}
+                    {a.origen && a.origen.bots.length > 0 && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Robots detectados:</span>{' '}
+                        {a.origen.bots.map((b) => `${b.name} (${b.count})`).join(' · ')}
+                        {a.origen.botDisfrazado && (
+                          <span className="ml-1 text-warning">
+                            — el motivo dice manual pero opera un robot
+                          </span>
+                        )}
+                      </p>
+                    )}
+
+                    {a.ejecucion && a.ejecucion.comparables > 0 && (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        <span className="font-medium text-foreground">Ejecución:</span>{' '}
+                        {a.ejecucion.enMercado} al precio de mercado ·{' '}
+                        <span className={a.ejecucion.aFavor > 0 ? 'text-warning' : ''}>
+                          {a.ejecucion.aFavor} a favor del cliente
+                        </span>{' '}
+                        · {a.ejecucion.enContra} en contra
+                        {a.ejecucion.spreadMedio !== null && ` · spread medio ${a.ejecucion.spreadMedio}`}
+                      </p>
+                    )}
+
+                    {a.toxicSignals.length > 0 && (
+                      <ul className="mt-2 space-y-1">
+                        {a.toxicSignals.map((s) => (
+                          <li key={s.key} className="flex gap-1.5 text-xs">
+                            {/* `null` es «no se pudo comprobar», que NO es
+                                «limpio». Se dibuja distinto a propósito. */}
+                            <span className={s.hit === true ? 'text-negative' : s.hit === null ? 'text-muted-foreground' : 'text-positive'}>
+                              {s.hit === true ? '▲' : s.hit === null ? '?' : '✓'}
+                            </span>
+                            <span className={s.hit === true ? 'text-foreground' : 'text-muted-foreground'}>
+                              {s.label}
+                              <span className="block text-[11px] text-muted-foreground">{s.detail}</span>
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
                 {/* Un recorte silencioso es indistinguible de "opera poco" */}
                 {a.truncated && (
                   <p className="mt-2 text-xs text-warning">

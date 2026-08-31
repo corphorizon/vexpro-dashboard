@@ -19,6 +19,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { tradedAfterRequest, type AccountRisk, type AccountSignal } from '@/lib/risk/account-review';
+import type { Origen, Ejecucion, SenalToxica, NivelToxico } from '@/lib/risk/broker-toxicity';
 
 export interface AccountReviewRow {
   login: number;
@@ -51,6 +52,17 @@ export interface AccountReviewRow {
    * «No lo sabemos» y «no operó» son cosas distintas.
    */
   tradedAfterRequest: boolean | null;
+
+  // ── Toxicidad hacia el bróker ─────────────────────────────────────────────
+  // Eje SEPARADO de `risk`. Aquél dice cómo opera el cliente —martingala, grid,
+  // duraciones—; éste dice cuánto le cuesta la operativa a la casa. Una cuenta
+  // puede ser riesgo alto para el cliente y cero tóxica para el bróker, y al
+  // revés. Todo `null` si el diagnóstico se calculó antes de la migración 107.
+  origen: Origen | null;
+  ejecucion: Ejecucion | null;
+  toxicSignals: SenalToxica[];
+  toxicLevel: NivelToxico | null;
+  toxicFlagged: number;
 }
 
 export interface AccountsOverview {
@@ -135,6 +147,14 @@ export async function loadAccountsOverview(
     warnings: Array.isArray(r.warnings) ? r.warnings : [],
     computedAt: r.computed_at ?? null,
     tradedAfterRequest: tradedAfterRequest(r.last_trade_at ?? null, requestedAt),
+    // Los diagnósticos anteriores a la migración 107 no traen nada de esto.
+    // Quedan en `null` —«no se calculó»— y la pantalla lo dice, en vez de
+    // mostrar ceros que se leerían como «no hay toxicidad».
+    origen: (r.origen ?? null) as Origen | null,
+    ejecucion: (r.ejecucion ?? null) as Ejecucion | null,
+    toxicSignals: Array.isArray(r.toxic_signals) ? r.toxic_signals : [],
+    toxicLevel: (r.toxic_level ?? null) as NivelToxico | null,
+    toxicFlagged: Number(r.toxic_flagged ?? 0),
   }));
 
   // El peor manda. Ver la cabecera.

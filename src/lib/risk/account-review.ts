@@ -171,7 +171,26 @@ function sqlPosiciones(cuantas: number): string {
     '       MAX(CASE WHEN Entry IN (1,3) THEN Price END)    AS precio_ci,',
     '       SUM(Profit)                                     AS profit,',
     '       SUM(Storage)                                    AS swap,',
-    '       SUM(Commission)                                 AS comision',
+    '       SUM(Commission)                                 AS comision,',
+    // ── Campos para el análisis de toxicidad (agregados 2026-08-31) ────────
+    // Todos salen de la MISMA consulta que ya se hacía: son columnas de más en
+    // el SELECT, no una vuelta más al broker.
+    //
+    // `motivo_ci` es el `Reason` del CIERRE: ahí es donde MT5 dice si cerró un
+    // stop, un take profit, un stop-out o un close-by. En la apertura ese campo
+    // sólo dice de dónde vino la orden.
+    '       MAX(CASE WHEN Entry = 0     THEN Reason END)    AS motivo_ap,',
+    '       MAX(CASE WHEN Entry IN (1,3) THEN Reason END)   AS motivo_ci,',
+    // El comentario lleva el nombre del EA («EMABOT R1 M1»). `ExpertID` viene
+    // en 0 en este broker, así que ESTA es la identidad real del bot.
+    "       MAX(NULLIF(Comment, ''))                        AS comentario,",
+    // Mercado en el instante de cada punta. Con esto se compara el precio
+    // ejecutado contra el que había: una ejecución sistemáticamente a favor del
+    // cliente es la firma del arbitraje de latencia.
+    '       MAX(CASE WHEN Entry = 0     THEN MarketBid END) AS bid_ap,',
+    '       MAX(CASE WHEN Entry = 0     THEN MarketAsk END) AS ask_ap,',
+    '       MAX(CASE WHEN Entry IN (1,3) THEN MarketBid END) AS bid_ci,',
+    '       MAX(CASE WHEN Entry IN (1,3) THEN MarketAsk END) AS ask_ci',
     '  FROM mt5_deals',
     ` WHERE Login IN (${ph}) AND PositionID > 0 AND Action IN (0,1)`,
     ' GROUP BY Login, PositionID',
@@ -236,6 +255,15 @@ export async function loadTradesByLogin(
       swap: num(r.swap),
       profit: num(r.profit),
       durationMinutes: (cierre.getTime() - apertura.getTime()) / 60_000,
+      // Contexto de ejecución para el análisis de toxicidad. Va todo junto
+      // porque sale de la misma fila; las reglas viejas lo ignoran.
+      openReason: r.motivo_ap === null || r.motivo_ap === undefined ? undefined : num(r.motivo_ap),
+      closeReason: r.motivo_ci === null || r.motivo_ci === undefined ? undefined : num(r.motivo_ci),
+      comment: r.comentario === null || r.comentario === undefined ? null : String(r.comentario),
+      openBid: num(r.bid_ap),
+      openAsk: num(r.ask_ap),
+      closeBid: num(r.bid_ci),
+      closeAsk: num(r.ask_ci),
     });
   }
   return out;
