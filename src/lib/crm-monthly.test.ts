@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { isUnknownConcept } from './crm-wallet-concepts';
+import { HEDGE_FUND_CONCEPTS, isUnknownConcept } from './crm-wallet-concepts';
 import {
   CRM_MONTHLY_METRICS,
   CRM_MONTHLY_METRIC_KEYS,
   CRM_MONTHLY_COMPARED_METRICS,
   CRM_MONTHLY_INFO_METRICS,
+  WALLET_METRIC_CONCEPTS,
   WALLET_METRIC_SPECS,
   aggregateWalletMetricByMonth,
   type WalletConceptMonthRow,
@@ -378,6 +379,102 @@ describe('registro de métricas', () => {
       expect(s.concepts.length).toBeGreaterThan(0);
       for (const c of s.concepts) expect(isUnknownConcept(c)).toBe(false);
       for (const c of s.contrastConcepts ?? []) expect(isUnknownConcept(c)).toBe(false);
+    }
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HEDGE FUND — la cuarta serie informativa (Kevin, 2026-08-31).
+//
+// Los números de acá NO son inventados: salen del censo concepto × dirección
+// que se corrió contra los `wallettransfers` reales el 2026-08-31.
+//   AP Markets: INVEST OUT 22 mov. $23.928,88 · REWARD IN 23 mov. $927,10
+//               (gross $24.560) · REWARD OUT 3 mov. $926,00 · RETURN IN 3
+//               mov. $302,00.
+//   Vex Pro:    INVEST OUT 1 mov. $3.000,00 y nada más.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const HEDGE_SPEC = WALLET_METRIC_SPECS.find((s) => s.metric === 'hedge_fund')!;
+
+describe('hedge_fund', () => {
+  it('el total de la serie es el CAPITAL INVERTIDO (la pata OUT)', () => {
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_INVEST', direction: 'OUT', net: 23928.88, count: 22 })],
+      HEDGE_SPEC,
+    );
+    const b = r.buckets.get('2026-07')!;
+    expect(b.amount).toBe(23928.88);
+    expect(b.count).toBe(22);
+  });
+
+  it('rendimientos, reversos de rendimiento y capital devuelto van CADA UNO a su columna', () => {
+    // Netearlos daría 23.928,88 − 927,10 − 302 = 22.699,78: un número
+    // plausible que no responde ni "cuánto hay colocado" ni "cuánto rindió".
+    const r = aggregateWalletMetricByMonth(
+      [
+        fila({ concept: 'HEDGE_FUND_INVEST', direction: 'OUT', net: 23928.88, count: 22 }),
+        fila({ concept: 'HEDGE_FUND_REWARD', direction: 'IN', net: 927.1, gross: 24560, count: 23 }),
+        fila({ concept: 'HEDGE_FUND_REWARD', direction: 'OUT', net: 926, count: 3 }),
+        fila({ concept: 'HEDGE_FUND_RETURN', direction: 'IN', net: 302, count: 3 }),
+      ],
+      HEDGE_SPEC,
+    );
+    const b = r.buckets.get('2026-07')!;
+    expect(b.amount).toBe(23928.88);
+    expect(b.cross.rewards).toBe(927.1);
+    expect(b.cross.rewardsCount).toBe(23);
+    expect(b.cross.rewardsReversed).toBe(926);
+    expect(b.cross.capitalReturned).toBe(302);
+    // El bruto del reward es el CAPITAL sobre el que se calculó, no dinero
+    // acreditado: no puede colarse a ninguna columna de importe.
+    expect(b.cross.gross).toBe(0);
+    expect(r.unclassified.size).toBe(0);
+  });
+
+  it('una empresa con sólo INVEST muestra las hermanas en CERO, no en "—"', () => {
+    // Vex Pro: se leyó la familia entera y no hubo un solo reward. Eso ES
+    // cero, no "no lo sabemos".
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_INVEST', direction: 'OUT', net: 3000, monthKey: '2026-06' })],
+      HEDGE_SPEC,
+    );
+    const b = r.buckets.get('2026-06')!;
+    expect(b.amount).toBe(3000);
+    expect(b.cross.rewards).toBe(0);
+    expect(b.cross.capitalReturned).toBe(0);
+  });
+
+  it('una dirección que ninguna entrada declara NO se traga: se cuenta y se avisa', () => {
+    // El día que aparezca un HEDGE_FUND_RETURN OUT (¿un rescate revertido?)
+    // tiene que verse, no desaparecer de la serie.
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_RETURN', direction: 'OUT', net: 77, count: 2 })],
+      HEDGE_SPEC,
+    );
+    expect(r.buckets.size).toBe(0);
+    expect(r.unclassified.get('HEDGE_FUND_RETURN')).toEqual({ count: 2, amount: 77 });
+  });
+
+  it('una hermana sin mes utilizable no se inventa un mes', () => {
+    const r = aggregateWalletMetricByMonth(
+      [fila({ concept: 'HEDGE_FUND_REWARD', direction: 'IN', monthKey: null, net: 12, count: 1 })],
+      HEDGE_SPEC,
+    );
+    expect(r.buckets.size).toBe(0);
+    expect(r.noMonth).toEqual({ count: 1, amount: 12 });
+  });
+
+  it('está en las informativas y NO en las comparadas contra lo manual', () => {
+    expect(CRM_MONTHLY_INFO_METRICS.map((m) => m.key)).toContain('hedge_fund');
+    expect(CRM_MONTHLY_COMPARED_METRICS.map((m) => m.key)).not.toContain('hedge_fund');
+  });
+
+  it('sus tres conceptos entran en la proyección que se le pide a Mongo', () => {
+    // Si uno faltara acá, el $match no lo traería y la columna daría 0 sin
+    // que nada avise: el fallo silencioso de siempre.
+    for (const c of Object.values(HEDGE_FUND_CONCEPTS)) {
+      expect(WALLET_METRIC_CONCEPTS).toContain(c);
+      expect(isUnknownConcept(c)).toBe(false);
     }
   });
 });

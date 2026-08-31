@@ -2880,28 +2880,28 @@ export default function UploadPage() {
         const propFirmWithdrawal =
           withdrawals.find(w => w.category === 'prop_firm')?.amount || 0;
         const propFirmNet = propFirmAmount - propFirmWithdrawal;
-        const totalIngresos = income.broker_pnl + income.other + propFirmNet;
+        // El Broker P&L salió de esta suma junto con su input: acá abajo se
+        // muestra el total de lo que ESTA PANTALLA carga. El ingreso completo
+        // —con el P&L automático del CRM— es el de /resumen-general, que sale
+        // de la cadena canónica. Sumar acá un `broker_pnl` que ya nadie edita
+        // mostraría un total que no coincide con ninguna otra pantalla.
+        const totalIngresos = income.other + propFirmNet;
         return (
         <Card>
           <h2 className="text-lg font-semibold mb-4">{t('upload.operatingIncome')} — {periodLabel}</h2>
           <div className="space-y-4">
-            <div className={showBrokerPnl ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'grid grid-cols-1 gap-4'}>
-              {showBrokerPnl && (
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('movements.brokerPnlBookB')}</label>
-                  {userCanAdd ? (
-                    <input
-                      type="number" step="0.01"
-                      value={income.broker_pnl || ''}
-                      onChange={e => setIncome(p => ({ ...p, broker_pnl: parseFloat(e.target.value) || 0 }))}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                      placeholder="0.00"
-                    />
-                  ) : (
-                    <p className="text-lg font-bold">{formatCurrency(income.broker_pnl)}</p>
-                  )}
-                </div>
-              )}
+            {/* ── El Broker P&L YA NO SE TECLEA ────────────────────────────
+                Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo
+                manual". El campo estaba acá y agosto 2026 de Vex Pro tenía
+                $671.000 escritos contra los $386.665,54 que da el cierre
+                diario del CRM: $284.334,46 de diferencia sobre un número que
+                entra a la base distribuible de los socios.
+                Ahora sale de `crm_daily_pnl` (ver src/lib/broker-pnl.ts) y se
+                muestra en /resumen-general diciendo de dónde salió.
+                El VALOR VIEJO NO SE BORRA de `operating_income.broker_pnl`:
+                es el que conservan los nueve períodos ya cerrados, que son
+                inmutables. Sacar el input es sacar la forma de PISARLO. */}
+            <div className="grid grid-cols-1 gap-4">
               {/* "Otros ingresos" con detalle cargado es un campo DERIVADO: el
                   servidor lo sobreescribe con la suma de lo cobrado en cada
                   guardado del detalle, así que editarlo a mano se perdería. */}

@@ -41,7 +41,8 @@ export type WalletConceptGroup =
   | 'returned'
   | 'feeDebt'
   | 'withdraw'
-  | 'propfirmPurchase';
+  | 'propfirmPurchase'
+  | 'hedgeFund';
 
 /**
  * Qué ES el movimiento dentro de su familia.
@@ -59,7 +60,41 @@ export interface WalletConceptDef {
   kind: WalletConceptKind;
 }
 
+/**
+ * Los tres conceptos del hedge fund, nombrados UNA vez.
+ *
+ * Se exportan como constantes —y el registro de abajo se arma con ellas— para
+ * que la spec de la métrica pueda referirse a cada uno por separado sin
+ * escribir el literal por segunda vez. `conceptsOf('hedgeFund', kind)` no
+ * alcanza acá: los tres son cosas distintas (capital que sale, rendimiento que
+ * entra, capital que vuelve) y cada uno va a su propia columna.
+ *
+ * Direcciones VERIFICADAS contra los documentos reales el 2026-08-31
+ * (`wallettransfers`, censo concepto × dirección):
+ *   · HEDGE_FUND_INVEST  OUT — AP Markets 22 mov. $23.928,88 · Vex Pro 1 mov. $3.000
+ *   · HEDGE_FUND_REWARD  IN  — AP Markets 23 mov. $927,10 (gross $24.560: el
+ *     `grossAmount` es el CAPITAL sobre el que se calculó, no el rendimiento —
+ *     mismo patrón que IB_PROP_FIRM_REWARD, donde $22.471 de net conviven con
+ *     $633.416 de gross. El dinero es `netAmount`.)
+ *   · HEDGE_FUND_REWARD  OUT — AP Markets 3 mov. $926,00 (reverso del anterior)
+ *   · HEDGE_FUND_RETURN  IN  — AP Markets 3 mov. $302,00
+ * Vex Pro sólo tiene la pata INVEST; por eso su tabla muestra las otras
+ * columnas en cero y no "sin datos": la familia entera se leyó y no había más.
+ */
+export const HEDGE_FUND_CONCEPTS = {
+  invest: 'HEDGE_FUND_INVEST',
+  reward: 'HEDGE_FUND_REWARD',
+  capitalReturn: 'HEDGE_FUND_RETURN',
+} as const;
+
 export const WALLET_CONCEPTS: Record<string, WalletConceptDef> = {
+  // ── Hedge fund (decisión de Kevin, 2026-08-31) ──────────────────────────
+  // Informativo: mueve la BILLETERA del cliente hacia un fondo, no la caja
+  // del bróker. Ver el bloque de métricas informativas de `crm-monthly.ts`.
+  [HEDGE_FUND_CONCEPTS.invest]: { group: 'hedgeFund', kind: 'credit' },
+  [HEDGE_FUND_CONCEPTS.reward]: { group: 'hedgeFund', kind: 'plain' },
+  [HEDGE_FUND_CONCEPTS.capitalReturn]: { group: 'hedgeFund', kind: 'plain' },
+
   // ── Comisiones de IB ────────────────────────────────────────────────────
   IB_REWARDS_BROKER: { group: 'ib', kind: 'credit' },
   IB_PROP_FIRM_REWARD: { group: 'ib', kind: 'credit' },

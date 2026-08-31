@@ -71,6 +71,22 @@ export interface DistributionSources {
    * neutralización abajo. Ausente ⇒ default histórico ('broker').
    */
   businessModel?: unknown;
+  /**
+   * Serie MENSUAL de ganancia del bróker calculada desde `crm_daily_pnl`
+   * (decisión de Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo
+   * manual"). Ver `src/lib/broker-pnl.ts` para las tres reglas.
+   *
+   * Sólo se usa en períodos ABIERTOS: los cerrados conservan el número
+   * congelado (`operating_income.broker_pnl`, que es el mismo que quedó en
+   * `closing_snapshot`). Si se usara también en los cerrados,
+   * `getSnapshotDrifts` reportaría deriva en los nueve períodos cerrados de
+   * Vex Pro, donde lo tecleado nunca coincidió con la serie del CRM — un aviso
+   * de nada, todos los días.
+   *
+   * Ausente (llamador que no la trajo, tests viejos) ⇒ se sigue leyendo
+   * `operating_income.broker_pnl`, exactamente como antes.
+   */
+  brokerPnlByPeriod?: ReadonlyMap<string, number>;
 }
 
 /**
@@ -178,13 +194,17 @@ export function buildDistributionInputs(
     const oi = oiIndex.get(period.id);
     const pfs = pfsIndex.get(period.id) || 0;
     const pfW = pfwIndex.get(period.id) || 0;
+    // Broker P&L: automático en los períodos ABIERTOS, congelado en los
+    // cerrados. Ver `brokerPnlByPeriod` arriba y `src/lib/broker-pnl.ts`.
+    const auto = period.is_closed ? undefined : sources.brokerPnlByPeriod?.get(period.id);
+    const brokerPnlValue = auto === undefined ? (oi?.broker_pnl || 0) : auto;
     return {
       periodId: period.id,
       year: period.year,
       month: period.month,
       label: period.label ?? `${period.month}/${period.year}`,
       isClosed: !!period.is_closed,
-      brokerPnl: brokerPnlApplies ? (oi?.broker_pnl || 0) : 0,
+      brokerPnl: brokerPnlApplies ? brokerPnlValue : 0,
       other: oi?.other || 0,
       propFirmNetIncome: brokerPnlApplies ? pfs - pfW : 0,
       investmentProfits: investmentsApply ? (invIndex.get(period.id) || 0) : 0,

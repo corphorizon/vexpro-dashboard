@@ -340,6 +340,14 @@ export default function CrmTotalsPage() {
                     <th className="px-4 py-2 text-right font-medium">{t('crmTotals.txCount')}</th>
                     <th className="px-4 py-2 text-right font-medium">{t('crmInfo.corrections')}</th>
                     <th className="px-4 py-2 text-right font-medium">{t('crmInfo.reversals')}</th>
+                    {/* Columnas extra declaradas por la métrica (hedge fund:
+                        rendimientos y capital devuelto). La lista sale del
+                        registro, no de acá. */}
+                    {(activeInfoDef?.detailColumns ?? []).map((c) => (
+                      <th key={c.key} className="px-4 py-2 text-right font-medium">
+                        {locale === 'en' ? c.labelEn : c.labelEs}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -377,6 +385,25 @@ export default function CrmTotalsPage() {
                             <span title={t('crmInfo.reversalsHint')}>{money(revNum)}</span>
                           )}
                         </td>
+                        {(activeInfoDef?.detailColumns ?? []).map((c) => {
+                          // `undefined` = la serie no vino en el detail (fila
+                          // vieja, calculada antes de que la columna
+                          // existiera) → "—". `0` es un cero real.
+                          const v = r.detail?.[c.key];
+                          const n = typeof v === 'number' ? v : null;
+                          const cnt = r.detail?.[`${c.key}Count`];
+                          return (
+                            <td key={c.key} className="px-4 py-2 text-right tabular-nums">
+                              {n === null ? (
+                                <span className="text-muted-foreground">—</span>
+                              ) : (
+                                <span title={typeof cnt === 'number' ? `${cnt}` : undefined}>
+                                  {money(n)}
+                                </span>
+                              )}
+                            </td>
+                          );
+                        })}
                       </tr>
                     );
                   })}
