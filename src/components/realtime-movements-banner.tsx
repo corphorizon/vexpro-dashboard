@@ -17,7 +17,12 @@ import {
 } from 'lucide-react';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
-import { computeProviderTotals } from '@/lib/api-integrations/totals';
+import { computeProviderTotals, countPayprosPayouts } from '@/lib/api-integrations/totals';
+import {
+  API_WITHDRAWAL_CHANNELS,
+  sumApiWithdrawals,
+  type WithdrawalsByChannel,
+} from '@/lib/withdrawal-channels';
 import { apiFetch } from '@/lib/api-fetch';
 import {
   pinCoinsbuyWallet,
@@ -682,7 +687,45 @@ export function useApiTotals(
     }
     const depositsTotal =
       by['coinsbuy-deposits'] + by.fairpay + by.unipayment + by.paypros;
-    const withdrawalsTotal = by['coinsbuy-withdrawals'];
-    return { by, depositsTotal, withdrawalsTotal };
+
+    // ── Retiros por canal, desde el registro único ────────────────────────
+    // Hasta el 2026-08-31 acá decía `by['coinsbuy-withdrawals']` a secas,
+    // mientras `loadPersistedTotals` (el MISMO número, del lado del servidor)
+    // ya sumaba los payouts de Pay-Pros. Dos verdades para Retiros Totales, y
+    // la que faltaba era la de la pantalla. No se veía porque no había ninguna
+    // fila 'payout_paid'; el día que entrara la primera, /movimientos habría
+    // mostrado un Net Deposit inflado sin que fallara nada. Ver
+    // src/lib/withdrawal-channels.ts.
+    //
+    // `null` cuando el dataset del proveedor todavía no llegó: es "no lo
+    // sabemos", no "no hubo retiros". `sumApiWithdrawals` lo excluye del total
+    // y lo devuelve en `channelsWithoutData` para que la exclusión se pueda
+    // mostrar en vez de tragarse.
+    const withdrawalsByChannel: WithdrawalsByChannel = {};
+    for (const { key, slug } of API_WITHDRAWAL_CHANNELS) {
+      const ds = datasets.find((d) => d.slug === slug);
+      if (!ds) {
+        withdrawalsByChannel[key] = null;
+        continue;
+      }
+      withdrawalsByChannel[key] =
+        slug === 'paypros'
+          ? countPayprosPayouts(ds).total
+          : // Coinsbuy: el slug ya es de retiros, así que el total del dataset
+            // ES el retiro (y `computeProviderTotals` ya descuenta las
+            // excluidas y las transferencias internas, que no son un retiro
+            // del negocio).
+            computeProviderTotals(ds).total;
+    }
+    const { total: withdrawalsTotal, channelsWithoutData: withdrawalChannelsWithoutData } =
+      sumApiWithdrawals(withdrawalsByChannel);
+
+    return {
+      by,
+      depositsTotal,
+      withdrawalsTotal,
+      withdrawalsByChannel,
+      withdrawalChannelsWithoutData,
+    };
   }, [datasets]);
 }

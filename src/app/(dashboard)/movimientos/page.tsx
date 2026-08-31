@@ -27,6 +27,10 @@ import {
   depositChannelLabel,
   manualDepositsByChannel,
 } from '@/lib/deposit-channels';
+import {
+  API_WITHDRAWAL_CHANNELS,
+  withdrawalChannelLabel,
+} from '@/lib/withdrawal-channels';
 import type { Deposit, Withdrawal } from '@/lib/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { apiFetch } from '@/lib/api-fetch';
@@ -217,6 +221,24 @@ export default function MovimientosPage() {
   // "Retiros Totales (API)" tracks the real Coinsbuy-side outflow. For
   // historical periods it reduces to the stored broker value.
   const apiWithdrawalsTotal = useDerivedBroker ? coexist.apiWithdrawalsTotal : storedBroker;
+
+  // ── Retiros por canal de API (Kevin, 2026-08-31) ──────────────────────────
+  // «de paypros en movimientos incluí también los retiros por ese medio».
+  // Hasta hoy la sección de Retiros solo mostraba las cuatro categorías
+  // MANUALES; el lado API era un único número al pie sin decir de dónde salía.
+  // Las filas vienen del registro único `API_WITHDRAWAL_CHANNELS`, el
+  // simétrico de `API_DEPOSIT_CHANNELS` que ya alimenta la tabla de arriba.
+  //
+  // `null` = todavía no llegó el dataset ⇒ «sin datos». No es $0: un canal que
+  // no se pudo leer y uno que no tuvo retiros son dos cosas distintas, y la
+  // segunda es la única que se puede sumar.
+  const apiWithdrawalRows = useDerivedBroker
+    ? API_WITHDRAWAL_CHANNELS.map(({ key }) => ({
+        key,
+        label: withdrawalChannelLabel(key, t),
+        amount: coexist.apiWithdrawalsByChannel[key] ?? null,
+      }))
+    : [];
 
   // Broker display — Kevin (2026-05-03): Broker es información manual
   // estrictamente informativa; no se mezcla con la API porque los retiros
@@ -484,12 +506,41 @@ export default function MovimientosPage() {
             ]}
             footerRow={
               <>
+                {/* Retiros por API, uno por canal del registro único. Van
+                    ANTES del total para que se lea como su desglose. */}
+                {apiWithdrawalRows.map((r) => (
+                  <tr key={r.key} className="text-muted-foreground">
+                    <td className="px-4 py-1">
+                      {r.label}
+                      <span className="ml-2 text-[10px] text-emerald-500 uppercase tracking-wide">
+                        api
+                      </span>
+                    </td>
+                    <td className="px-4 py-1 text-right">
+                      {r.amount === null ? t('movements.noData') : formatCurrency(r.amount)}
+                    </td>
+                  </tr>
+                ))}
                 <tr className="font-bold">
                   <td className="px-4 py-3">{t('summary.withdrawals')}</td>
                   <td className="px-4 py-3 text-right text-red-600">
                     {formatCurrency(displayTotalWithdrawals)}
                   </td>
                 </tr>
+                {/* Un canal que no se pudo leer NO está en el total. Decirlo es
+                    obligatorio: un recorte silencioso es indistinguible de
+                    "no hay más" (docs/reglas-del-proyecto.md §1.2). */}
+                {coexist.withdrawalChannelsWithoutData.length > 0 && (
+                  <tr>
+                    <td colSpan={2} className="px-4 pb-2 text-xs text-amber-600">
+                      {t('movements.withdrawalsMissingChannels', {
+                        channels: coexist.withdrawalChannelsWithoutData
+                          .map((c) => withdrawalChannelLabel(c, t))
+                          .join(', '),
+                      })}
+                    </td>
+                  </tr>
+                )}
                 <tr className="text-muted-foreground">
                   <td className="px-4 py-1">
                     {t('movements.p2pTransfer')}

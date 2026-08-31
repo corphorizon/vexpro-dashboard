@@ -30,6 +30,10 @@ import {
   syncPayprosDepositsFromCrm,
   type PayprosFromCrmResult,
 } from '@/lib/api-integrations/paypros/deposits-from-crm';
+import {
+  syncPayprosWithdrawalsFromCrm,
+  type PayprosWithdrawalsFromCrmResult,
+} from '@/lib/api-integrations/paypros/withdrawals-from-crm';
 import { syncTradingActivity, type Mt5SyncResult } from '@/lib/mt5-sync/trading-activity';
 import { syncExposure, type ExposureResult } from '@/lib/mt5-sync/exposure';
 import { syncWalletSources, type WalletSourcesResult } from '@/lib/crm-sync/wallet-sources';
@@ -320,6 +324,7 @@ export async function GET(request: NextRequest) {
     const results: (CrmSyncResult & {
       companyName: string | null;
       paypros?: PayprosFromCrmResult | null;
+      payprosWithdrawals?: PayprosWithdrawalsFromCrmResult | null;
       mt5?: Mt5SyncResult | null;
       exposure?: ExposureResult | null;
       walletSources?: WalletSourcesResult | null;
@@ -351,6 +356,29 @@ export async function GET(request: NextRequest) {
           }
         } catch (err) {
           payprosErrors.push(`paypros: ${err instanceof Error ? err.message : 'unknown'}`);
+        }
+
+        // Los RETIROS de Pay-Pros (Kevin, 2026-08-31). Misma fuente y mismo
+        // motivo que los depósitos de arriba: el webhook nunca recibió un
+        // evento, y el espejo del CRM sí los tiene (al 2026-08-31: 6 aprobados
+        // por US$ 2.617,62, processor 'PAYPROS_SPEI').
+        //
+        // En su PROPIO try/catch, y no dentro del de arriba, a propósito: si
+        // los depósitos fallan, los retiros igual se asientan. Juntarlos haría
+        // que un error en una punta dejara la otra sin actualizar y el canal
+        // quedaría con entradas y sin salidas — un Net Deposit inflado, que es
+        // peor que no tener ninguno de los dos.
+        let payprosWithdrawals: PayprosWithdrawalsFromCrmResult | null = null;
+        try {
+          payprosWithdrawals = await syncPayprosWithdrawalsFromCrm(admin, company.id);
+          if (payprosWithdrawals.warnings.length > 0) {
+            console.warn(
+              `[cron/sync-crm] paypros-retiros ${company.id}:`,
+              payprosWithdrawals.warnings.join(' | '),
+            );
+          }
+        } catch (err) {
+          payprosErrors.push(`paypros-retiros: ${err instanceof Error ? err.message : 'unknown'}`);
         }
 
         // ── Actividad de trading (MT5) ────────────────────────────────────
@@ -566,6 +594,7 @@ export async function GET(request: NextRequest) {
           ...res,
           companyName: company.name,
           paypros,
+          payprosWithdrawals,
           mt5,
           exposure,
           walletSources,

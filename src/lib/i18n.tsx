@@ -873,6 +873,7 @@ const translations: Record<Locale, TranslationDict> = {
     'ledger.exportPdf': 'Export PDF',
     'ledger.internalHint': 'Moves the channel balance but stays out of Total Withdrawals — it is a transfer between your own wallets, not a business withdrawal.',
     'ledger.adjustmentHint': 'Difference against the real API balance (network fees and movements the provider does not itemise).',
+    'ledger.balanceDeltaHint': 'How much the balance moved that day, as reported by the provider. This channel has no statement: the provider exposes the balance but not the movements, so the amount is known and its breakdown into deposits and withdrawals is not.',
     'ledger.saved': 'Entry saved',
     'ledger.deleted': 'Entry deleted',
     'unitLedger.title': 'Business unit ledger',
@@ -1629,6 +1630,10 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.channelLabel.unipayment': 'Unipayment (Card)',
     'movements.channelLabel.paypros': 'Pay-Pros (Local payment)',
     'movements.channelLabel.other': 'Other deposits',
+    // «Sin datos» ≠ «$0,00»: the first means we could not read the channel.
+    'movements.noData': 'no data',
+    'movements.withdrawalsMissingChannels':
+      'Not included in the total — could not read: {channels}',
     'movements.channel': 'Channel',
     'movements.amount': 'Amount',
     'movements.category': 'Category',
@@ -3202,6 +3207,7 @@ const translations: Record<Locale, TranslationDict> = {
     'ledger.exportPdf': 'Exportar PDF',
     'ledger.internalHint': 'Mueve el saldo del canal pero queda fuera de Retiros Totales — es una transferencia entre wallets propias, no un retiro del negocio.',
     'ledger.adjustmentHint': 'Diferencia contra el saldo real de la API (comisiones de red y movimientos que el proveedor no detalla).',
+    'ledger.balanceDeltaHint': 'Cuánto se movió el saldo ese día según el proveedor. Este canal no tiene extracto: el proveedor informa el saldo pero no los movimientos, así que se sabe el importe y no su desglose en depósitos y retiros.',
     'ledger.saved': 'Asiento guardado',
     'ledger.deleted': 'Asiento eliminado',
     'unitLedger.title': 'Libro de la unidad',
@@ -3950,6 +3956,10 @@ const translations: Record<Locale, TranslationDict> = {
     'movements.channelLabel.unipayment': 'Unipayment (Tarjeta)',
     'movements.channelLabel.paypros': 'Pay-Pros (Medio Local)',
     'movements.channelLabel.other': 'Otros Depósitos',
+    // «Sin datos» ≠ «$0,00»: el primero es que no se pudo leer el canal.
+    'movements.noData': 'sin datos',
+    'movements.withdrawalsMissingChannels':
+      'No entran al total — no se pudo leer: {channels}',
     'movements.channel': 'Canal',
     'movements.amount': 'Monto',
     'movements.category': 'Categoría',

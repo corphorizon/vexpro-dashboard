@@ -9,6 +9,11 @@ import {
   sumApiDeposits,
   type DepositChannel,
 } from '@/lib/deposit-channels';
+import {
+  API_WITHDRAWAL_CHANNELS,
+  type WithdrawalChannel,
+  type WithdrawalsByChannel,
+} from '@/lib/withdrawal-channels';
 import type { ProviderSlug } from '@/lib/api-integrations/types';
 import type { Deposit, Period } from '@/lib/types';
 
@@ -46,8 +51,24 @@ export interface ApiCoexistenceTotals {
    * como se perdió Pay-Pros.
    */
   apiByChannel: Record<DepositChannel, number>;
-  /** Coinsbuy withdrawals reported by the API (0 for historical). */
+  /**
+   * Retiros reportados por la API, sumando TODOS los canales del registro
+   * `API_WITHDRAWAL_CHANNELS` (0 en períodos históricos). Hasta el 2026-08-31
+   * era solo Coinsbuy y el comentario decía "Coinsbuy withdrawals": Pay-Pros
+   * llegaba al servidor y no a la pantalla.
+   */
   apiWithdrawalsTotal: number;
+  /**
+   * Retiro por canal, para poder MOSTRARLOS y no solo sumarlos. `null` = no lo
+   * sabemos todavía (el dataset no llegó), que no es lo mismo que $0.
+   */
+  apiWithdrawalsByChannel: WithdrawalsByChannel;
+  /**
+   * Canales cuyo retiro no se pudo leer y por lo tanto NO están en
+   * `apiWithdrawalsTotal`. Viaja hasta la UI porque una exclusión silenciosa es
+   * indistinguible de un cruce roto (§1.2).
+   */
+  withdrawalChannelsWithoutData: WithdrawalChannel[];
   /**
    * «Depósitos Totales (API)» = Σ (API + manual) sobre los canales con API.
    * Recibe el manual POR CANAL (no posicional): con tres argumentos sueltos,
@@ -106,6 +127,16 @@ export function useApiCoexistence(
   apiByChannel.other = 0; // 'other' es manual puro: no tiene lado API.
   const apiWithdrawalsTotal = useDerivedBroker ? apiTotals.withdrawalsTotal : 0;
 
+  // En un período HISTÓRICO no se consulta la API: el retiro por canal es 0
+  // porque el valor que manda es el guardado, no porque falte el dato. Por eso
+  // acá va 0 y no null — es la única rama donde el cero es una afirmación.
+  const apiWithdrawalsByChannel: WithdrawalsByChannel = useDerivedBroker
+    ? apiTotals.withdrawalsByChannel
+    : Object.fromEntries(API_WITHDRAWAL_CHANNELS.map((c) => [c.key, 0]));
+  const withdrawalChannelsWithoutData: WithdrawalChannel[] = useDerivedBroker
+    ? apiTotals.withdrawalChannelsWithoutData
+    : [];
+
   // Helpers exposed as functions (not precomputed values) because the caller
   // supplies the manual portions — this keeps the hook decoupled from the
   // data-context's summary shape.
@@ -128,6 +159,8 @@ export function useApiCoexistence(
     apiTo,
     apiByChannel,
     apiWithdrawalsTotal,
+    apiWithdrawalsByChannel,
+    withdrawalChannelsWithoutData,
     apiDepositsTotal,
     apiTotalsBy: apiTotals.by,
     derivedBrokerFromApi,
