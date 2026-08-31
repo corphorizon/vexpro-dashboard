@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
+import { buildPeriodCloseChecklist } from '@/lib/period-close-checklist-data';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/data — dispatcher server-side de escrituras de datos.
@@ -174,6 +175,20 @@ export async function POST(request: NextRequest) {
         // de escrituras; reabrir exige un motivo y queda auditado. Un update
         // crudo de `is_closed` se saltearía las dos cosas.
         if (body.isClosed) {
+          // El checklist se calcula ANTES de cerrar: después el estado ya
+          // cambió y «qué había pendiente cuando cerramos» sería otra cosa.
+          // Se computa server-side y NO se acepta del cliente: un checklist
+          // que manda el navegador no es evidencia de nada.
+          let checklist: Awaited<ReturnType<typeof buildPeriodCloseChecklist>> = null;
+          try {
+            checklist = await buildPeriodCloseChecklist(admin, companyId, body.periodId);
+          } catch (checklistErr) {
+            // No fatal: el cierre es la operación importante. Queda el aviso
+            // en el log y la fila de checklist no se escribe — que es
+            // honesto: no se guarda una foto que no se pudo sacar.
+            console.error('[admin/data:period_status] checklist previo:', checklistErr);
+          }
+
           const { error } = await admin.rpc('close_period', {
             p_company_id: companyId,
             p_period_id: body.periodId,
@@ -181,6 +196,22 @@ export async function POST(request: NextRequest) {
             p_actor_name: auth.name || auth.email,
           });
           if (error) return fail(error, op);
+
+          if (checklist) {
+            // Después del cierre, para que no quede una foto de un cierre que
+            // la RPC terminó rechazando (p. ej. por orden cronológico).
+            const { error: snapErr } = await admin.from('period_close_checklists').insert({
+              company_id: companyId,
+              period_id: body.periodId,
+              closed_by: auth.userId,
+              closed_by_name: auth.name || auth.email,
+              items: checklist.items,
+              clean: checklist.clean,
+            });
+            if (snapErr) {
+              console.error('[admin/data:period_status] guardando checklist:', snapErr.message);
+            }
+          }
           return NextResponse.json({ success: true });
         }
 
