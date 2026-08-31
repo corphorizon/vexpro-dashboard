@@ -1530,6 +1530,8 @@ const translations: Record<Locale, TranslationDict> = {
     // porque es como Daniela la busca; se le suma la segunda para que se vea
     // que está ahí y no en otro lado.
     'hr.netDepositTab': 'Net Deposit & production',
+    'hr.netCrmMonth': 'Net CRM (month)',
+    'hr.netCrmCol': 'Net CRM',
     'hr.warningMonth': 'Month',
     'hr.warningNew': 'New warning',
     'hr.warningProfile': 'Profile',
@@ -3917,6 +3919,8 @@ const translations: Record<Locale, TranslationDict> = {
     'hr.noTerminated': 'No hay despedidos. A los despedidos no se los elimina: pasan acá.',
     'hr.warningsTab': 'Warnings',
     'hr.netDepositTab': 'Net Deposit y producción',
+    'hr.netCrmMonth': 'Net CRM (mes)',
+    'hr.netCrmCol': 'Net CRM',
     'hr.warningMonth': 'Mes',
     'hr.warningNew': 'Nuevo warning',
     'hr.warningProfile': 'Perfil',

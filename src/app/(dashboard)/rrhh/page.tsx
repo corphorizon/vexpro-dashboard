@@ -809,6 +809,36 @@ export default function RRHHPage() {
   // Una empresa de servicios lleva empleados y nada más: sin fuerza comercial
   // no hay perfiles, negociaciones, rebates de IB ni onboarding que mostrar.
   const hasCommercialTeam = features(company?.business_model).commercialTeam;
+
+  // ── Net del CRM en las tarjetas de equipo (Kevin, 2026-08-31: «lo de los
+  // net de los bdms y heads sigo sin verlo automatizado») ────────────────────
+  // El rollup automático vivía solo en la pestaña Net Deposit; acá se trae el
+  // MES CORRIENTE y se pinta en cada tarjeta de equipo y fila de BDM, que es
+  // donde se mira a diario. null = aún no cargó / sin dato — nunca $0.
+  const [crmNet, setCrmNet] = useState<Map<string, { own: number; total: number }> | null>(null);
+  useEffect(() => {
+    if (!hasCommercialTeam) return;
+    let cancel = false;
+    (async () => {
+      try {
+        const hoy = new Date();
+        const mes = `${hoy.getUTCFullYear()}-${String(hoy.getUTCMonth() + 1).padStart(2, '0')}`;
+        const res = await apiFetch(`/api/admin/hr-net-deposit-rollup?month=${mes}`);
+        if (!res.ok || cancel) return;
+        const json = await res.json();
+        const mapa = new Map<string, { own: number; total: number }>();
+        const walk = (nodes: Array<{ profileId: string; own: number; total: number; children: unknown[] }>) => {
+          for (const n of nodes) {
+            mapa.set(n.profileId, { own: n.own, total: n.total });
+            walk(n.children as typeof nodes);
+          }
+        };
+        walk(json.tree ?? []);
+        if (!cancel) setCrmNet(mapa);
+      } catch { /* sin dato: las tarjetas muestran — */ }
+    })();
+    return () => { cancel = true; };
+  }, [hasCommercialTeam]);
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const [tab, setTab] = useState<Tab>(hasCommercialTeam ? 'commercial' : 'employees');
   // `company` puede llegar después del primer render: si la pestaña que quedó
@@ -1389,6 +1419,17 @@ export default function RRHHPage() {
           <div className="text-left sm:text-right ml-13 sm:ml-0">
             <p className="text-sm text-muted-foreground">{t('hr.netDeposit')}: {leader.net_deposit_pct != null ? `${leader.net_deposit_pct}%` : 'N/A'}</p>
             <p className="font-semibold">{formatCurrency(leaderTotal)}</p>
+            <p className="text-xs mt-0.5">
+              <span className="text-muted-foreground">{t('hr.netCrmMonth')}: </span>
+              {crmNet === null ? (
+                <span className="text-muted-foreground">—</span>
+              ) : (
+                <span className={cn('font-semibold', (crmNet.get(leader.id)?.total ?? 0) >= 0 ? 'text-positive' : 'text-negative')}>
+                  {formatCurrency(crmNet.get(leader.id)?.total ?? 0)}
+                  <span className="ml-1 text-[10px] uppercase tracking-wide text-positive/80">api</span>
+                </span>
+              )}
+            </p>
           </div>
         </div>
 
@@ -1399,6 +1440,7 @@ export default function RRHHPage() {
                 <tr className="border-b border-border">
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">BDM</th>
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netCrmCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.netDepPct')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.salaryCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.pnl')}</th>
@@ -1422,6 +1464,9 @@ export default function RRHHPage() {
                       <FiredBadge profile={bdm} />
                     </td>
                     <td className="py-2.5 px-3 text-muted-foreground text-xs hidden sm:table-cell">{bdm.email}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">
+                      {crmNet === null ? '—' : formatCurrency(crmNet.get(bdm.id)?.total ?? 0)}
+                    </td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdmPnl > 0 ? formatCurrency(bdmPnl) : '-'}</td>
