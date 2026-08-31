@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useMemo, useEffect } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
@@ -37,6 +37,15 @@ import {
   type CommissionCalcResult,
 } from '@/lib/commission-calculator';
 import { upsertCommissionEntries, type CommissionEntryRow } from '@/lib/supabase/mutations';
+import { apiFetch } from '@/lib/api-fetch';
+import { comisionIndividualDeBdm } from '@/lib/hr/commission-preview';
+import {
+  antesDelCorteHrNet,
+  netParaElMotor,
+  resolveNetDepositInput,
+  type NetDepositSource,
+  type ResolvedNetDeposit,
+} from '@/lib/hr/net-deposit-input';
 import {
   Calculator,
   Save,
@@ -88,6 +97,45 @@ const ROLE_BADGE: Record<string, string> = {
 const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', head: 'HEAD', bdm: 'BDM', bdm_global: 'BDM GLOBAL' };
 
 type Tab = 'teams' | 'individual' | 'history';
+
+/**
+ * El rótulo de procedencia del insumo, debajo del input de ND.
+ *
+ * Existe porque el número dejó de tener una sola fuente: puede venir del rollup
+ * del CRM, de un override cargado a mano, de un período congelado, o no existir.
+ * Sin el rótulo, las cuatro cosas se ven idénticas en pantalla — y "no lo
+ * sabemos" mostrado como $0 es el modo de falla que este repo persigue (§1.2).
+ *
+ * `auto` es el automático del mes: se muestra AL LADO del override para que
+ * quien lo cargó a mano vea contra qué está corrigiendo.
+ */
+function NdSourceTag({
+  source,
+  auto,
+  labels,
+}: {
+  source: NetDepositSource;
+  auto: number | null;
+  labels: (k: string) => string;
+}) {
+  if (source === 'crm') {
+    return <span className="block text-[10px] uppercase tracking-wide text-positive/80 mt-0.5">{labels('comm.ndSourceCrm')}</span>;
+  }
+  if (source === 'manual') {
+    return (
+      <span className="block text-[10px] mt-0.5 text-warning" title={labels('comm.ndOverrideHint')}>
+        {labels('comm.ndSourceManual')}
+        {auto !== null && (
+          <span className="ml-1 text-muted-foreground normal-case">({labels('comm.ndAutoRef')} {formatCurrency(auto)})</span>
+        )}
+      </span>
+    );
+  }
+  if (source === 'frozen') {
+    return <span className="block text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">{labels('comm.ndSourceFrozen')}</span>;
+  }
+  return <span className="block text-[10px] text-muted-foreground mt-0.5">{labels('comm.ndSourceNone')}</span>;
+}
 
 // ═══════════════════════════════════════════════════════════
 // MAIN PAGE
@@ -232,42 +280,148 @@ export default function ComisionesPage() {
 
   // previousResults is defined after headProfile (see below line ~175)
 
-  // SHARED ND inputs — one Map for all profiles, synced between tabs
-  const [ndInputs, setNdInputs] = useState<Map<string, number>>(new Map());
-  // Store raw string for display (allows empty field + typing negatives)
-  const [ndRawInputs, setNdRawInputs] = useState<Map<string, string>>(new Map());
-  // Seed ND inputs from saved data when period changes
+  // ═══════════════════════════════════════════════════════════
+  // EL INSUMO DEL MOTOR — de dónde sale `netDepositCurrent`
+  //
+  // La fórmula NO cambia: sigue viviendo sola en commission-calculator.ts. Lo
+  // único que cambió (tanda 2, 2026-08-31) es de dónde sale el número que entra.
+  // La política —automático manda, manual cargado es override, período cerrado
+  // o anterior a agosto-26 queda congelado— vive entera en el resolver puro
+  // `resolveNetDepositInput`, que es el MISMO que consume /rrhh. Acá sólo se le
+  // pasa el contexto: qué mes, qué manual hay cargado y en qué renglón está la
+  // persona (`own` cuando es el head mirándose a sí mismo, `structure` cuando es
+  // un miembro del grupo — ver la cabecera de hr/net-deposit-input.ts).
+  // ═══════════════════════════════════════════════════════════
+
+  /** `YYYY-MM` del período elegido. */
+  const autoMonth = selectedPeriod
+    ? `${selectedPeriod.year}-${String(selectedPeriod.month).padStart(2, '0')}`
+    : null;
+
+  /**
+   * ¿Este mes usa el automático? Si está cerrado o es anterior al corte, no se
+   * pide siquiera: la RPC del rollup cuesta ~2 s y el número no se va a usar.
+   */
+  const periodoUsaAutomatico =
+    !!selectedPeriod && !selectedPeriod.is_closed && !antesDelCorteHrNet(selectedPeriod);
+
+  const [crmNet, setCrmNet] = useState<{
+    month: string;
+    index: Map<string, { own: number; total: number }>;
+  } | null>(null);
+  const [crmNetLoading, setCrmNetLoading] = useState(false);
+  const [crmNetError, setCrmNetError] = useState(false);
+  // Caché por mes en un ref: cambiar de head o de pestaña no vuelve a pagar la
+  // RPC. Vive lo que vive la pantalla, y la clave lleva la empresa porque una
+  // caché con clave global es cómo el usuario siguiente ve los datos del anterior.
+  const crmNetCache = useRef(new Map<string, Map<string, { own: number; total: number }>>());
+
   useEffect(() => {
-    if (!selectedPeriod) return;
+    if (!company?.id) return;
+    if (!autoMonth || !periodoUsaAutomatico) { setCrmNet(null); setCrmNetError(false); return; }
+    const clave = `${company.id}:${autoMonth}`;
+    const cacheado = crmNetCache.current.get(clave);
+    if (cacheado) { setCrmNet({ month: autoMonth, index: cacheado }); setCrmNetError(false); return; }
+
+    let cancelado = false;
+    setCrmNetLoading(true);
+    setCrmNetError(false);
+    (async () => {
+      try {
+        const res = await apiFetch(`/api/admin/commission-net-input?month=${autoMonth}`);
+        const json = await res.json();
+        if (!res.ok) throw new Error(json?.error || 'commission-net-input failed');
+        const index = new Map<string, { own: number; total: number }>(
+          (json.entries as { profileId: string; own: number; total: number }[]).map((e) => [
+            e.profileId,
+            { own: Number(e.own) || 0, total: Number(e.total) || 0 },
+          ]),
+        );
+        crmNetCache.current.set(clave, index);
+        if (!cancelado) setCrmNet({ month: autoMonth, index });
+      } catch {
+        // El fallo NO se cachea como índice vacío: un árbol en cero se leería
+        // como "este mes no produjo nadie" y le metería $0 al motor. Queda
+        // `crmNet = null` → el resolver devuelve SIN DATOS y la pantalla lo dice.
+        if (!cancelado) { setCrmNet(null); setCrmNetError(true); }
+      } finally {
+        if (!cancelado) setCrmNetLoading(false);
+      }
+    })();
+    return () => { cancelado = true; };
+  }, [company?.id, autoMonth, periodoUsaAutomatico]);
+
+  /**
+   * El insumo resuelto de CADA perfil, con su procedencia.
+   *
+   * OJO con las tablas de PnL: comparten este mismo Map de inputs y ahí el
+   * número NO es un net deposit sino el PnL del mes (se guarda igual en
+   * `net_deposit_current`, ver handleSaveBdm modo 'pnl'). A esos perfiles
+   * —`pnl_pct` cargado— NO se les aplica el automático: meterles el net del CRM
+   * les cambiaría la base del PnL en silencio, que es justo el modo de falla que
+   * este repo persigue. Son 6 perfiles en Vex Pro y ninguno tiene los dos pct.
+   */
+  const ndResolved = useMemo((): Map<string, ResolvedNetDeposit> => {
+    const out = new Map<string, ResolvedNetDeposit>();
+    if (!selectedPeriod) return out;
     const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
-    const m = new Map<string, number>();
+    const index = crmNet && crmNet.month === autoMonth ? crmNet.index : null;
+
     for (const p of commercialProfiles) {
       // Buscar el registro que corresponde al grupo actual (head_id = selectedHeadId)
       // Así no se confunde con registros del mismo usuario en otros grupos
       const ex = tab === 'individual'
         ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null)
         : results.find((r) => r.profile_id === p.id && r.head_id === selectedHeadId);
-      // Fallback al primer registro si no hay uno con head_id (datos anteriores al fix)
-      // If this profile is the currently selected HEAD and has own team + parent,
-      // load their PERSONAL ND from net_deposit_accumulated (not net_deposit_current)
-      // net_deposit_current belongs to the parent group context
-      const isCurrentHead = p.id === selectedHeadId;
+      // El HEAD del grupo seleccionado se mira a sí mismo: su ND es su PRODUCCIÓN
+      // PROPIA (la «línea de ajuste»), no el total de su estructura. Cuando tiene
+      // padre, ese número vive en `net_deposit_accumulated` de su fila en su
+      // propio grupo — el `net_deposit_current` de ahí es del contexto del padre.
+      const esElHeadDelGrupo = tab !== 'individual' && p.id === selectedHeadId;
       const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === p.id && appearsInCommissions(sub));
-      if (isCurrentHead && hasOwnTeam && p.head_id) {
-        // Buscar el registro del HEAD en su PROPIO grupo (head_id = selectedHeadId)
-        // NO el del grupo padre
+      let manual: number | null;
+      if (esElHeadDelGrupo && hasOwnTeam && p.head_id) {
         const ownGroupResult = monthlyResults.find(
           (r) => r.profile_id === p.id
             && r.period_id === selectedPeriod.id
             && r.head_id === selectedHeadId
         );
-        m.set(p.id, ownGroupResult?.net_deposit_accumulated ?? 0);
+        manual = ownGroupResult?.net_deposit_accumulated ?? null;
       } else {
-        m.set(p.id, ex?.net_deposit_current ?? 0);
+        manual = ex?.net_deposit_current ?? null;
       }
+
+      out.set(
+        p.id,
+        resolveNetDepositInput({
+          profileId: p.id,
+          period: selectedPeriod,
+          scope: esElHeadDelGrupo ? 'own' : 'structure',
+          crm: p.pnl_pct != null ? null : index,
+          manual,
+        }),
+      );
     }
+    return out;
+  }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab, crmNet, autoMonth]);
+
+  // SHARED ND inputs — one Map for all profiles, synced between tabs
+  const [ndInputs, setNdInputs] = useState<Map<string, number>>(new Map());
+  // Store raw string for display (allows empty field + typing negatives)
+  const [ndRawInputs, setNdRawInputs] = useState<Map<string, string>>(new Map());
+  // Seed ND inputs from the resolved input (CRM / manual / congelado)
+  useEffect(() => {
+    if (!selectedPeriod) return;
+    const m = new Map<string, number>();
+    // SIN DATOS entra al motor como 0 —y eso es correcto: con ND=0 no se paga
+    // nada pero el acumulado se CONSERVA (commission-calculator.ts:46-64)—, pero
+    // la pantalla lo muestra vacío con el rótulo «sin datos», nunca $0.
+    for (const [id, r] of ndResolved) m.set(id, netParaElMotor(r));
+    setNdInputs(m);
+
     // Seedear lotInputs desde pnl_current (donde se guarda el lotComm)
     if (tab === 'individual') {
+      const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
       const lotMap = new Map<string, number>();
       for (const p of commercialProfiles) {
         if (p.pnl_pct != null) {
@@ -277,10 +431,9 @@ export default function ComisionesPage() {
       }
       setLotInputs(lotMap);
     }
-    setNdInputs(m);
     // NO limpiar ndRawInputs aquí — se limpia en un effect separado
     // para preservar lo que el usuario está editando después de un refresh
-  }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab]);
+  }, [ndResolved, selectedPeriod, monthlyResults, commercialProfiles, tab]);
 
   // Limpiar raw inputs solo cuando cambia el período o el head seleccionado
   useEffect(() => {
@@ -296,8 +449,26 @@ export default function ComisionesPage() {
   const getNdDisplay = useCallback((id: string): string => {
     const raw = ndRawInputs.get(id);
     if (raw !== undefined) return raw;
+    // SIN DATOS se muestra VACÍO, no "0". Un 0 en el input es un dato ("cerró en
+    // cero") y además es lo que se guarda al apretar Guardar: mostrarlo cuando
+    // no sabemos es cómo se pisa lo que había (el incidente de agosto 2026, §6).
+    if (ndResolved.get(id)?.value === null) return '';
     return (ndInputs.get(id) ?? 0).toString();
-  }, [ndRawInputs, ndInputs]);
+  }, [ndRawInputs, ndInputs, ndResolved]);
+
+  /**
+   * De dónde salió el número de esa fila, para el rótulo.
+   *
+   * Si el usuario está tecleando, manda lo tecleado: aunque el resolver diga
+   * `crm`, lo que va a entrar al motor —y a guardarse— es lo que él escribió.
+   */
+  const getNdSource = useCallback((id: string): NetDepositSource => {
+    if (ndRawInputs.get(id) !== undefined) return 'manual';
+    return ndResolved.get(id)?.source ?? 'none';
+  }, [ndRawInputs, ndResolved]);
+
+  /** El automático del mes, para mostrarlo al lado del override como referencia. */
+  const getNdAuto = useCallback((id: string): number | null => ndResolved.get(id)?.crm ?? null, [ndResolved]);
 
   // ─── Lot commissions (PnL section) ───
   const [lotInputs, setLotInputs] = useState<Map<string, number>>(new Map());
@@ -550,19 +721,45 @@ export default function ComisionesPage() {
     [commercialProfiles],
   );
 
+  // La composición (qué % aplica, qué salario, con qué acumulado) vive en
+  // hr/commission-preview.ts: la pestaña Comercial de /rrhh muestra el MISMO
+  // número y no puede salir de otro lado (§2.1, invariante A3). La fórmula
+  // sigue siendo la de commission-calculator.ts, intacta.
   const indCalcs = useMemo((): CommissionCalcResult[] => {
     return allBdms.map((profile) => {
-      const nd = ndInputs.get(profile.id) ?? 0;
       const accIn = getAccumulatedIn(previousResultsAll, profile.id, profile.head_id ?? undefined);
-      // BDM percentage is dynamic based on their individual ND (falls back to profile pct if < $50k)
-      const pct = profile.fixed_salary
-        ? (profile.net_deposit_pct ?? 0)
-        : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
-      const calc = calculateCommission(nd, accIn, pct);
-      const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
-      return { profileId: profile.id, commissionPct: pct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
+      const c = comisionIndividualDeBdm({
+        profile,
+        // Lo que el usuario tenga tecleado manda sobre el resolver: es lo que va
+        // a entrar al motor Y lo que se va a guardar.
+        resolved: ndRawInputs.has(profile.id)
+          ? { value: ndInputs.get(profile.id) ?? 0, source: 'manual', crm: null, manual: ndInputs.get(profile.id) ?? 0 }
+          : ndResolved.get(profile.id) ?? { value: null, source: 'none', crm: null, manual: null },
+        accumulatedIn: accIn,
+        periodYear,
+        periodMonth,
+      });
+      // `allBdms` puede traer perfiles de PnL: para ésos `comisionIndividualDeBdm`
+      // devuelve null y la fila cae a la tabla de PnL, que tiene su propio cálculo.
+      if (!c) {
+        const nd = ndInputs.get(profile.id) ?? 0;
+        const calc = calculateCommission(nd, accIn, 0);
+        return { profileId: profile.id, commissionPct: 0, salary: 0, totalEarnedDebt: 0, ...calc };
+      }
+      return {
+        profileId: profile.id,
+        netDepositCurrent: ndInputs.get(profile.id) ?? 0,
+        accumulatedIn: c.accumulatedIn,
+        division: c.division,
+        commissionPct: c.commissionPct,
+        commission: c.commission,
+        realPayment: c.realPayment,
+        accumulatedOut: c.accumulatedOut,
+        salary: c.salary,
+        totalEarnedDebt: 0,
+      };
     });
-  }, [allBdms, ndInputs, previousResultsAll, periodYear, periodMonth]);
+  }, [allBdms, ndInputs, ndRawInputs, ndResolved, previousResultsAll, periodYear, periodMonth]);
 
   const indSummary = useMemo(() => calculateGroupSummary(indCalcs), [indCalcs]);
 
@@ -1352,6 +1549,18 @@ export default function ComisionesPage() {
               </div>
             </div>
           </div>
+          {/* De dónde sale el insumo de este mes. Se dice SIEMPRE: un mes
+              congelado y un mes automático se ven iguales en la tabla, y la
+              diferencia es de dónde salió cada peso. */}
+          <p className="text-xs text-muted-foreground mt-3">
+            {!periodoUsaAutomatico
+              ? t('comm.ndInputFrozenNotice')
+              : crmNetLoading
+                ? t('comm.ndInputLoading')
+                : crmNetError
+                  ? <span className="text-negative">{t('comm.ndInputError')}</span>
+                  : t('comm.ndInputAutoNotice')}
+          </p>
         </Card>
       )}
 
@@ -1456,7 +1665,8 @@ export default function ComisionesPage() {
                         <td className="px-3 py-3"><span className="font-semibold block">{headProfile.name}</span><span className="text-xs text-muted-foreground">{headProfile.email}</span></td>
                         <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[headProfile.role])}>{ROLE_LABEL[headProfile.role]}</span></td>
                         <td className="px-3 py-3">
-                          <input type="number" aria-label={t('comm.ndHeadAria')} value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                          <input type="number" aria-label={t('comm.ndHeadAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                          <NdSourceTag source={getNdSource(headProfile.id)} auto={getNdAuto(headProfile.id)} labels={t} />
                         </td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.accumulatedIn)}</td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.division)}</td>
@@ -1485,7 +1695,8 @@ export default function ComisionesPage() {
                           </td>
                           <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[profile.role])}>{ROLE_LABEL[profile.role]}</span></td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
@@ -1598,7 +1809,8 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>

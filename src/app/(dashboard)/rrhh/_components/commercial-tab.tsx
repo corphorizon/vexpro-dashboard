@@ -20,7 +20,15 @@ import {
   hrRoleLabel,
   sinSalario,
 } from '@/lib/hr/domain';
-import { flattenRollup } from '@/lib/hr/net-deposit';
+import {
+  indexarNetDelCrm,
+  resolveNetDepositInput,
+  type NetDepositSource,
+  type ResolvedNetDeposit,
+} from '@/lib/hr/net-deposit-input';
+import { comisionIndividualDeBdm, type ComisionDelMes } from '@/lib/hr/commission-preview';
+import { manualDeEstructura } from '@/lib/hr/overview';
+import { getAccumulatedIn, getPreviousPeriod } from '@/lib/commission-calculator';
 import {
   totalesDe,
   totalesGenerales,
@@ -45,6 +53,26 @@ import { useHrPeriod } from './hr-period-context';
 // `crmNet === null` significa "todavía no lo sabemos" (cargando, o el slice
 // falló) y se pinta "—". Nunca $0: un cero acá diría "este equipo no produjo".
 //
+// ── Y desde la tanda 2, es el MISMO insumo que el motor de comisiones ───────
+// El Net CRM de estas tarjetas ya no es el rollup crudo: pasa por
+// `resolveNetDepositInput` (hr/net-deposit-input.ts), el registro único de la
+// política «automático manda, manual cargado es override, período cerrado o
+// anterior a agosto-26 queda congelado». Por eso cada número lleva su rótulo
+// —CRM / manual / cerrado / sin datos—: sin él, un override y un automático se
+// ven idénticos y nadie sabría cuál de los dos está mirando.
+//
+// La columna **Comisión del mes** dejó de ser `commissions_earned` guardado (lo
+// que alguien tecleó y grabó alguna vez) y pasó a ser lo que el MOTOR calcula
+// con ese insumo, por el mismo camino que el tab Individual de /comisiones
+// (hr/commission-preview.ts). El total multi-período guardado sigue estando: es
+// la tabla «Resultados por período» de más abajo, que no cambió.
+//
+// El motor corre en el CLIENTE y no en el overview a propósito: es puro, ya
+// estaba en el bundle, y la cadena que necesita (el `accumulated_out` del mes
+// anterior) sale de `monthlyResults`, que el cliente ya tiene. Calcularlo en el
+// servidor obligaba a duplicar ahí la orquestación de /comisiones — dos copias
+// de la misma plata, que es el modo de falla número uno del repo.
+//
 // Los totales de las columnas de dinero salen de src/lib/hr/monthly-totals.ts,
 // que es el mismo camino que usa el CSV — antes eran cinco `reduce` inline en la
 // tabla y otros cinco en el export.
@@ -56,7 +84,7 @@ export function CommercialTab({
   onToast: (t: { type: 'success' | 'error'; msg: string }) => void;
 }) {
   const { t } = useI18n();
-  const { company, commercialProfiles: profiles, monthlyResults } = useData();
+  const { company, commercialProfiles: profiles, monthlyResults, periods } = useData();
   const { periodIds, overview } = useHrPeriod();
 
   const [showProfileForm, setShowProfileForm] = useState(false);
@@ -79,10 +107,92 @@ export function CommercialTab({
   const crmNet = useMemo(() => {
     const tree = overview?.data.net?.tree;
     if (!tree) return null;
-    const m = new Map<string, { own: number; total: number }>();
-    for (const { node } of flattenRollup(tree)) m.set(node.profileId, { own: node.own, total: node.total });
-    return m;
+    return indexarNetDelCrm(tree);
   }, [overview]);
+
+  /**
+   * EL INSUMO RESUELTO del mes del selector, por perfil — el MISMO resolver que
+   * usa /comisiones (hr/net-deposit-input.ts). Acá el alcance es siempre
+   * `structure`: la pregunta de esta pantalla es «cuánto produjo la estructura
+   * de esta persona», que es lo que muestran la tarjeta del equipo y la columna
+   * Net CRM. La producción propia del líder (la línea de ajuste) se sigue viendo
+   * en la pestaña Net Deposit, que dibuja el árbol entero.
+   */
+  const insumo = useMemo((): Map<string, ResolvedNetDeposit> => {
+    const out = new Map<string, ResolvedNetDeposit>();
+    const period = overview?.period ?? null;
+    const rows = overview?.data.monthlyResults ?? null;
+    const manual = rows ? manualDeEstructura(rows) : null;
+    // Sin período contable no hay manual posible; el mes se trata como abierto y
+    // posterior al corte sólo si el mes del selector lo es.
+    const [y, m] = (overview?.month ?? '').split('-');
+    const periodoLike = period ?? (y && m ? { year: Number(y), month: Number(m), is_closed: false } : null);
+    if (!periodoLike) return out;
+    for (const p of profiles) {
+      out.set(
+        p.id,
+        resolveNetDepositInput({
+          profileId: p.id,
+          period: periodoLike,
+          scope: 'structure',
+          crm: p.pnl_pct != null ? null : crmNet,
+          manual: manual ? manual.get(p.id) ?? null : null,
+        }),
+      );
+    }
+    return out;
+  }, [overview, profiles, crmNet]);
+
+  /**
+   * La comisión del mes que sale del MOTOR con ese insumo — no lo tecleado.
+   *
+   * El acumulado de entrada es el `accumulated_out` del período anterior, que es
+   * de donde lo saca /comisiones: la cadena es secuencial y el acumulado se
+   * arrastra (§2.2). Sin período contable no hay cadena y no se muestra número.
+   */
+  const comisiones = useMemo((): Map<string, ComisionDelMes> => {
+    const out = new Map<string, ComisionDelMes>();
+    const period = overview?.period ?? null;
+    if (!period) return out;
+    const prev = getPreviousPeriod(periods, period.id);
+    const prevRows = prev ? monthlyResults.filter((r) => r.period_id === prev.id) : [];
+    for (const p of profiles) {
+      const resolved = insumo.get(p.id);
+      if (!resolved) continue;
+      const c = comisionIndividualDeBdm({
+        profile: p,
+        resolved,
+        accumulatedIn: getAccumulatedIn(prevRows, p.id, p.head_id ?? undefined),
+        periodYear: period.year,
+        periodMonth: period.month,
+      });
+      if (c) out.set(p.id, c);
+    }
+    return out;
+  }, [overview, periods, monthlyResults, profiles, insumo]);
+
+  /** El rótulo de procedencia, para que nunca se confunda un CRM con un manual. */
+  const sourceTag = (source: NetDepositSource) => {
+    const label = t(
+      source === 'crm' ? 'hr.srcCrm'
+        : source === 'manual' ? 'hr.srcManual'
+          : source === 'frozen' ? 'hr.srcFrozen'
+            : 'hr.srcNone',
+    );
+    return (
+      <span className={cn('ml-1 text-[10px] uppercase tracking-wide', source === 'crm' ? 'text-positive/80' : 'text-muted-foreground')}>
+        {label}
+      </span>
+    );
+  };
+
+  /** Una celda de dinero del mes: «—» cuando no lo sabemos, NUNCA $0. */
+  const celdaDelMes = (value: number | null | undefined, source: NetDepositSource) =>
+    value === null || value === undefined ? (
+      <span className="text-muted-foreground">—{sourceTag(source)}</span>
+    ) : (
+      <span>{formatCurrency(value)}{sourceTag(source)}</span>
+    );
 
   const toggleTeamCollapsed = (leaderId: string) => {
     setCollapsedTeams((prev) => {
@@ -128,8 +238,27 @@ export function CommercialTab({
     }
   };
 
-  const netCrmCell = (profileId: string) =>
-    crmNet === null ? '—' : formatCurrency(crmNet.get(profileId)?.total ?? 0);
+  const netCrmCell = (profileId: string) => {
+    const r = insumo.get(profileId);
+    return celdaDelMes(r?.value ?? null, r?.source ?? 'none');
+  };
+
+  /** La comisión del mes según el motor. «—» si el perfil no cobra por net deposit. */
+  const comisionCell = (profileId: string) => {
+    const c = comisiones.get(profileId);
+    if (!c) return <span className="text-muted-foreground">—</span>;
+    if (c.nd === null) return <span className="text-muted-foreground">—{sourceTag(c.source)}</span>;
+    return (
+      <span title={t('hr.commissionBreakdown', {
+        net: formatCurrency(c.nd),
+        division: formatCurrency(c.division),
+        acc: formatCurrency(c.accumulatedIn),
+        pct: String(c.commissionPct),
+      })}>
+        {formatCurrency(c.commission)}{sourceTag(c.source)}
+      </span>
+    );
+  };
 
   const renderTeamCard = (leader: CommercialProfile) => {
     const allBdms = profiles.filter(p => p.head_id === leader.id);
@@ -194,14 +323,18 @@ export function CommercialTab({
             <p className="font-semibold">{formatCurrency(leaderTotal)}</p>
             <p className="text-xs mt-0.5">
               <span className="text-muted-foreground">{t('hr.netCrmMonth')}: </span>
-              {crmNet === null ? (
-                <span className="text-muted-foreground">—</span>
-              ) : (
-                <span className={cn('font-semibold', (crmNet.get(leader.id)?.total ?? 0) >= 0 ? 'text-positive' : 'text-negative')}>
-                  {formatCurrency(crmNet.get(leader.id)?.total ?? 0)}
-                  <span className="ml-1 text-[10px] uppercase tracking-wide text-positive/80">api</span>
-                </span>
-              )}
+              {(() => {
+                const r = insumo.get(leader.id);
+                if (!r || r.value === null) {
+                  return <span className="text-muted-foreground">—{sourceTag(r?.source ?? 'none')}</span>;
+                }
+                return (
+                  <span className={cn('font-semibold', r.value >= 0 ? 'text-positive' : 'text-negative')}>
+                    {formatCurrency(r.value)}
+                    {sourceTag(r.source)}
+                  </span>
+                );
+              })()}
             </p>
           </div>
         </div>
@@ -217,7 +350,7 @@ export function CommercialTab({
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.netDepPct')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.salaryCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.pnl')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissions')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissionsMonth')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.bonus')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.total')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium"></th>
@@ -240,7 +373,7 @@ export function CommercialTab({
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(tot.commissions)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{comisionCell(bdm.id)}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{tot.bonus > 0 ? formatCurrency(tot.bonus) : '-'}</td>
                     <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(tot.total)}</td>
                     <td className="py-2.5 px-3 text-right">
@@ -381,7 +514,7 @@ export function CommercialTab({
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnlPct')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.salaryCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnl')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissions')}</th>
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissionsMonth')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.bonus')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.total')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium"></th>
@@ -404,7 +537,7 @@ export function CommercialTab({
                     <td className="py-2.5 px-3 text-right">{bdm.pnl_pct != null ? `${bdm.pnl_pct}%` : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(tot.commissions)}</td>
+                    <td className="py-2.5 px-3 text-right tabular-nums">{comisionCell(bdm.id)}</td>
                     <td className="py-2.5 px-3 text-right">{tot.bonus > 0 ? formatCurrency(tot.bonus) : '-'}</td>
                     <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(tot.total)}</td>
                     <td className="py-2.5 px-3 text-right flex items-center justify-end gap-1">
