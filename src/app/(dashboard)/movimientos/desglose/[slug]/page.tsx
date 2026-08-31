@@ -30,6 +30,7 @@ import type {
   CoinsbuyWithdrawalTx,
   FairpayDepositTx,
   UnipaymentDepositTx,
+  PayprosDepositTx,
 } from '@/lib/api-integrations/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,6 +48,9 @@ const VALID_SLUGS: readonly ProviderSlug[] = [
   'coinsbuy-withdrawals',
   'fairpay',
   'unipayment',
+  // Pay-Pros se lee del espejo (api_transactions) como todos: esta pantalla
+  // ya leía de /persisted-movements, no de la API en vivo.
+  'paypros',
 ] as const;
 
 const SLUG_TITLE: Record<ProviderSlug, string> = {
@@ -54,6 +58,7 @@ const SLUG_TITLE: Record<ProviderSlug, string> = {
   'coinsbuy-withdrawals': 'Coinsbuy · Retiros',
   fairpay: 'FairPay · Depósitos',
   unipayment: 'Unipayment · Depósitos',
+  paypros: 'Pay-Pros · Depósitos',
 };
 
 const SLUG_KIND_LABEL: Record<ProviderSlug, { amountCard: string; countCard: string }> = {
@@ -61,6 +66,7 @@ const SLUG_KIND_LABEL: Record<ProviderSlug, { amountCard: string; countCard: str
   'coinsbuy-withdrawals': { amountCard: 'Total Retiros', countCard: 'Total Transacciones' },
   fairpay: { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
   unipayment: { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
+  paypros: { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
 };
 
 // formatDateTime moved to src/lib/dates.ts — centralised across the app.
@@ -608,6 +614,43 @@ function BreakdownTable({
     );
   }
 
+  if (slug === 'paypros') {
+    // Pay-Pros no manda comisión ni email: las columnas son las que el
+    // proveedor realmente informa. Inventar una columna vacía es peor que no
+    // tenerla — parece un dato que se perdió.
+    const r = rows as PayprosDepositTx[];
+    return (
+      <table className="w-full text-xs">
+        <thead>
+          <tr>
+            <th className={thCls}>Fecha</th>
+            <th className={thCls}>ID</th>
+            <th className={thCls}>Referencia</th>
+            <th className={`${thCls} text-right`}>Monto</th>
+            <th className={thCls}>Moneda</th>
+            <th className={thCls}>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {r.map((t) => (
+            <tr key={t.id} className="hover:bg-muted/50 transition-colors">
+              <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
+              <td className={`${tdCls} font-mono`}>{t.id}</td>
+              <td className={`${tdCls} font-mono`}>{t.notifyReference}</td>
+              <td className={`${tdCls} text-right font-medium`}>
+                {formatCurrency(t.amount)}
+              </td>
+              <td className={tdCls}>{t.currency}</td>
+              <td className={tdCls}>
+                <StatusBadge value={t.status} />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+  }
+
   // Unipayment
   const r = rows as UnipaymentDepositTx[];
   return (
@@ -681,7 +724,8 @@ function matchesSearchQuery(
 }
 
 function StatusBadge({ value }: { value: string }) {
-  const ok = ['Confirmed', 'Approved', 'Completed'].includes(value);
+  // 'paid' = el estado aceptado de Pay-Pros (ver ACCEPTED_STATUS en totals.ts).
+  const ok = ['Confirmed', 'Approved', 'Completed', 'paid'].includes(value);
   return (
     <span
       className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${
@@ -773,6 +817,20 @@ function buildCsv(
           t.grossAmount,
           t.fee,
           t.netAmount,
+          t.status,
+        ]),
+      };
+    }
+    case 'paypros': {
+      const r = rows as PayprosDepositTx[];
+      return {
+        headers: ['Fecha', 'ID', 'Referencia', 'Monto', 'Moneda', 'Estado'],
+        rows: r.map((t) => [
+          t.createdAt,
+          t.id,
+          t.notifyReference,
+          t.amount,
+          t.currency,
           t.status,
         ]),
       };

@@ -21,10 +21,10 @@ import type { ProviderDataset, ProviderSlug } from '@/lib/api-integrations/types
 //                       (special value 'all' or empty disables the filter)
 //   slug=<provider>     return only this provider's dataset under
 //                       `dataset` (single object) instead of `datasets`
-//                       (4-array). Used by the breakdown page so it can
-//                       read from DB instead of hitting the live API.
+//                       (one entry per slug). Used by the breakdown page so
+//                       it can read from DB instead of hitting the live API.
 //                       Valid: coinsbuy-deposits | coinsbuy-withdrawals |
-//                              fairpay | unipayment
+//                              fairpay | unipayment | paypros
 // ---------------------------------------------------------------------------
 
 const SLUGS: ProviderSlug[] = [
@@ -32,6 +32,11 @@ const SLUGS: ProviderSlug[] = [
   'coinsbuy-withdrawals',
   'fairpay',
   'unipayment',
+  // Pay-Pros no se sincroniza desde acá (no hay endpoint de listado), pero sus
+  // filas SÍ viven en api_transactions desde el 2026-07-22. Sin este slug la
+  // tarjeta «Depósitos» de /movimientos leía tres canales y dejaba afuera
+  // $44.653,95 que el backend (loadPersistedTotals) sí contaba.
+  'paypros',
 ];
 
 const PROVIDER_KIND: Record<ProviderSlug, 'deposits' | 'withdrawals'> = {
@@ -39,13 +44,17 @@ const PROVIDER_KIND: Record<ProviderSlug, 'deposits' | 'withdrawals'> = {
   'coinsbuy-withdrawals': 'withdrawals',
   fairpay: 'deposits',
   unipayment: 'deposits',
+  // Pay-Pros trae los dos sentidos en el mismo provider; el dataset se
+  // etiqueta 'deposits' porque es lo que totaliza (status 'paid').
+  paypros: 'deposits',
 };
 
-const PROVIDER_ID: Record<ProviderSlug, 'coinsbuy' | 'fairpay' | 'unipayment'> = {
+const PROVIDER_ID: Record<ProviderSlug, 'coinsbuy' | 'fairpay' | 'unipayment' | 'paypros'> = {
   'coinsbuy-deposits': 'coinsbuy',
   'coinsbuy-withdrawals': 'coinsbuy',
   fairpay: 'fairpay',
   unipayment: 'unipayment',
+  paypros: 'paypros',
 };
 
 export async function GET(request: NextRequest) {
@@ -247,6 +256,26 @@ export async function GET(request: NextRequest) {
           mdr: Number(r.fee) || 0,
           fee: Number(r.fee) || 0,
         };
+        // Pay-Pros: el `raw` guardado NO es la transacción, es la PROCEDENCIA
+        // ({source, depositId, externalPaymentId, userId, crmStatus} cuando
+        // viene del espejo del CRM). Si nos quedáramos con él, la fila llegaría
+        // sin id, sin fecha, sin monto y sin status → `computeProviderTotals`
+        // no la contaría y la tarjeta seguiría en cero, sin ningún error a la
+        // vista. Las columnas son la fuente de verdad para este proveedor.
+        if (slug === 'paypros') {
+          const b = base as Record<string, unknown>;
+          b.id = r.external_id;
+          b.provider = 'paypros';
+          b.createdAt = r.transaction_date;
+          b.amount = Number(r.amount) || 0;
+          b.currency = r.currency ?? 'USD';
+          b.status = r.status ?? '';
+          b.kind = r.status === 'payout_paid' ? 'withdrawal' : 'deposit';
+          b.notifyReference =
+            (raw?.notifyReference as string | undefined) ??
+            (raw?.externalPaymentId as string | undefined) ??
+            '';
+        }
         // Always overlay the persisted wallet_id / wallet_label so older
         // raw payloads (from before the 2026-05-01 fetcher upgrade) get
         // the new fields too once a re-sync runs.

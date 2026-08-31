@@ -53,6 +53,7 @@ const CHANNEL_LABEL: Record<string, string> = {
   coinsbuy: 'Coinsbuy',
   fairpay: 'FairPay',
   unipayment: 'UniPayment',
+  paypros: 'Pay-Pros',
   other: 'Otros',
 };
 const CATEGORY_LABEL: Record<string, string> = {

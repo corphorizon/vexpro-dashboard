@@ -3,7 +3,14 @@
 import { useMemo } from 'react';
 import { useApiTotals, DEFAULT_WALLET_ID } from '@/components/realtime-movements-banner';
 import { allPeriodsUseDerivedBroker, computeDerivedBroker } from '@/lib/broker-logic';
-import type { Period } from '@/lib/types';
+import {
+  API_DEPOSIT_CHANNELS,
+  manualDepositsByChannel,
+  sumApiDeposits,
+  type DepositChannel,
+} from '@/lib/deposit-channels';
+import type { ProviderSlug } from '@/lib/api-integrations/types';
+import type { Deposit, Period } from '@/lib/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // useApiCoexistence — the single source of truth for "manual + API" display
@@ -15,6 +22,9 @@ import type { Period } from '@/lib/types';
 //   - `apiFrom / apiTo` = first day of earliest active period → last day of
 //     latest active period (used as the date range for API reads).
 //   - Per-channel display  = apiValue + manualValue (both coexist, always).
+//     Los canales salen de `API_DEPOSIT_CHANNELS` (src/lib/deposit-channels.ts),
+//     que es el registro único. Hasta el 2026-08-31 estaban cableados acá y
+//     Pay-Pros —que el backend ya contaba— no llegaba a la pantalla.
 //   - Broker withdrawal    = API-derived + manual stored (coexist).
 //   - Deposits Broker line = apiDepositsTotal − propFirmSalesDisplay
 //     (includes manual Prop Firm sales so the number reflects reality).
@@ -30,18 +40,32 @@ export interface ApiCoexistenceTotals {
   /** ISO date range (empty strings when `useDerivedBroker` is false). */
   apiFrom: string;
   apiTo: string;
-  /** API-only per-channel amounts (0 for historical periods). */
-  apiCoinsbuy: number;
-  apiFairpay: number;
-  apiUnipayment: number;
+  /**
+   * Importe de API por CANAL (0 en períodos históricos). Sale del registro
+   * único `API_DEPOSIT_CHANNELS`: nada de campos sueltos por canal, que es
+   * como se perdió Pay-Pros.
+   */
+  apiByChannel: Record<DepositChannel, number>;
   /** Coinsbuy withdrawals reported by the API (0 for historical). */
   apiWithdrawalsTotal: number;
-  /** Sum of all API deposit channels (useful for the "Depósitos Totales (API)" row). */
-  apiDepositsTotal: (manualCoinsbuy: number, manualFairpay: number, manualUnipayment: number) => number;
+  /**
+   * «Depósitos Totales (API)» = Σ (API + manual) sobre los canales con API.
+   * Recibe el manual POR CANAL (no posicional): con tres argumentos sueltos,
+   * sumar un cuarto canal significaba tocar tres llamadas y confiar en el
+   * orden.
+   */
+  apiDepositsTotal: (manualByChannel: Record<DepositChannel, number>) => number;
   /** The `api_transactions`-backed totals keyed by provider slug. */
-  apiTotalsBy: Record<'coinsbuy-deposits' | 'coinsbuy-withdrawals' | 'fairpay' | 'unipayment', number>;
+  apiTotalsBy: Record<ProviderSlug, number>;
   /** Derived broker withdrawal from the API side only (pre-manual-add). */
   derivedBrokerFromApi: (ibCommissions: number, propFirmWithdrawal: number, otherWithdrawal: number) => number;
+}
+
+/** Azúcar para las páginas: manual por canal a partir de `summary.deposits`. */
+export function manualDeposits(
+  deposits: Pick<Deposit, 'channel' | 'amount'>[],
+): Record<DepositChannel, number> {
+  return manualDepositsByChannel(deposits);
 }
 
 export function useApiCoexistence(
@@ -73,16 +97,20 @@ export function useApiCoexistence(
 
   const apiTotals = useApiTotals(apiFrom, apiTo, walletId, refreshKey);
 
-  const apiCoinsbuy = useDerivedBroker ? apiTotals.by['coinsbuy-deposits'] ?? 0 : 0;
-  const apiFairpay = useDerivedBroker ? apiTotals.by['fairpay'] ?? 0 : 0;
-  const apiUnipayment = useDerivedBroker ? apiTotals.by['unipayment'] ?? 0 : 0;
+  // Un valor por canal, derivado del registro único. Nadie enumera canales a
+  // mano de acá para abajo.
+  const apiByChannel = {} as Record<DepositChannel, number>;
+  for (const { channel, slug } of API_DEPOSIT_CHANNELS) {
+    apiByChannel[channel] = useDerivedBroker ? apiTotals.by[slug] ?? 0 : 0;
+  }
+  apiByChannel.other = 0; // 'other' es manual puro: no tiene lado API.
   const apiWithdrawalsTotal = useDerivedBroker ? apiTotals.withdrawalsTotal : 0;
 
   // Helpers exposed as functions (not precomputed values) because the caller
   // supplies the manual portions — this keeps the hook decoupled from the
   // data-context's summary shape.
-  const apiDepositsTotal = (m1: number, m2: number, m3: number) =>
-    (apiCoinsbuy + m1) + (apiFairpay + m2) + (apiUnipayment + m3);
+  const apiDepositsTotal = (manualByChannel: Record<DepositChannel, number>) =>
+    sumApiDeposits(apiByChannel, manualByChannel);
 
   const derivedBrokerFromApi = (ib: number, pf: number, other: number) =>
     useDerivedBroker
@@ -98,9 +126,7 @@ export function useApiCoexistence(
     useDerivedBroker,
     apiFrom,
     apiTo,
-    apiCoinsbuy,
-    apiFairpay,
-    apiUnipayment,
+    apiByChannel,
     apiWithdrawalsTotal,
     apiDepositsTotal,
     apiTotalsBy: apiTotals.by,

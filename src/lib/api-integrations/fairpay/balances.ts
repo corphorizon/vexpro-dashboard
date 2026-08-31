@@ -48,6 +48,53 @@
 //
 // Mismo criterio que Pay-Pros: ante un shape desconocido devolvemos error con
 // el JSON crudo truncado, nunca un número inventado.
+//
+// ¿Y LOS MOVIMIENTOS DE LA CUENTA BANCARIA? NO EXISTEN EN LA API (2026-08-31)
+// ---------------------------------------------------------------------------
+// Kevin pidió espejar a `api_transactions` los depósitos que entran a la
+// cuenta bancaria, como se hace con los demás canales. NO SE PUEDE: el
+// banking no expone ningún endpoint de movimientos. Esto no es una sospecha,
+// es un barrido hecho con la credencial real de Vex Pro (solo GETs, UA de
+// navegador, IPv4). Queda escrito para que nadie lo vuelva a "adivinar" —
+// que es exactamente como nació el `POST /api/v1/getBalance` fantasma que
+// devolvió 404 todos los días durante meses.
+//
+// El barrido es CONCLUYENTE porque Laravel distingue las dos respuestas:
+//   · ruta inexistente (cualquier método) → 404 {"message":""}
+//   · ruta existente con otro método      → 405 "The GET method is not
+//     supported for this route. Supported methods: POST."
+// Verificado con `GET /api/auth/getAccessToken` → 405 (existe como POST).
+// O sea: un 404 en el barrido significa que la ruta no existe NI SIQUIERA
+// como POST.
+//
+// TODA la superficie que responde:
+//   POST /api/auth/getAccessToken   · POST /api/auth/refresh
+//   POST /api/auth/logout
+//   GET  /api/v1/accounts           → las 4 cuentas con balance
+//   GET  /api/v1/accounts/{id}      → la cuenta SIN currency/balance/type
+//   GET  /api/v1/cards              → [] (el tenant no tiene tarjetas)
+//
+// Devolvieron 404 (≈150 rutas probadas), entre ellas: transactions,
+// transaction, getTransactionList, getTransactions, transactionList,
+// transaction-history/_history/History, accounts/{id}/transactions,
+// accounts/{id}/statement(s)/history/movements/ledger/entries/balance,
+// statements, account-statement, getAccountStatement, getStatement,
+// getBalance, balance(s), transfers, transfer, payments, deposits,
+// withdrawals, ledger, movements, activities, history, payouts,
+// settlements, wallets, beneficiaries, recipients, users, logs, events,
+// reports, /api/v2/*, /api/transactions, /v1/transactions, y los
+// docs/swagger/openapi.
+//
+// CONSECUENCIA PRÁCTICA: los depósitos a la cuenta bancaria no tienen fuente
+// automática. Tampoco están en el CRM (Orion informa `paymentProvider` =
+// UNIPAYMENT / FAIRPAY / PAYPROS / MUWE; no hay valor de transferencia
+// bancaria) ni en el portal de cobros, que es otro sistema. Hoy se cargan a
+// mano en el canal «Otros Depósitos», que SÍ suma al total del período
+// (aunque no a «Depósitos Totales (API)», que por definición es lo que trae
+// una API). Para automatizarlo hace falta que FairPay exponga el extracto:
+// sin dato no hay espejo, y un espejo derivado de la variación del saldo
+// mezclaría entradas con salidas y liquidaciones del portal — un número
+// plausible y equivocado, que es justo lo que este repo persigue.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { createAdminClient } from '@/lib/supabase/admin';

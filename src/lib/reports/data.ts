@@ -12,6 +12,7 @@ import { getOperatingWalletIds } from '@/lib/pinned-wallets';
 import { fetchOrionCrmUsers } from '@/lib/api-integrations/orion-crm/users';
 import { fetchOrionCrmBrokerPnl } from '@/lib/api-integrations/orion-crm/broker-pnl';
 import { fetchOrionCrmPropTrading } from '@/lib/api-integrations/orion-crm/prop-trading';
+import { ACCEPTED_STATUS as PROVIDER_ACCEPTED_STATUS } from '@/lib/api-integrations/totals';
 import { buildBalancesByChannel, type ReportBalancesByChannel } from './balances-by-channel';
 import { features } from '@/lib/business-model';
 import {
@@ -40,14 +41,19 @@ type ApiTx = {
   internal?: boolean | null;
 };
 
-// Accepted-status whitelist — matches /balances and
-// /api/integrations/period-totals exactly.
-const ACCEPTED_STATUS: Record<string, string[]> = {
-  'coinsbuy-deposits': ['Confirmed'],
-  'coinsbuy-withdrawals': ['Approved'],
-  fairpay: ['Completed'],
-  unipayment: ['Completed'],
-};
+// Accepted-status whitelist — matches /balances y
+// /api/integrations/period-totals exactamente porque SALE DEL MISMO SITIO:
+// `ACCEPTED_STATUS` de api-integrations/totals.ts, que es el registro único.
+//
+// Antes era una copia literal acá, y cuando entró Pay-Pros (2026-07-22) esta
+// copia no se enteró: el informe por mail mandaba los depósitos SIN Pay-Pros
+// mientras el libro del canal sí los contaba. Mismo bug que la tarjeta de
+// /movimientos, otra copia. Un proveedor que no esté en el mapa se descarta
+// entero (el `if (!accepted) continue` de abajo), que es justo el descarte
+// silencioso que el repo prohíbe.
+const ACCEPTED_STATUS: Record<string, string[]> = Object.fromEntries(
+  Object.entries(PROVIDER_ACCEPTED_STATUS).map(([slug, status]) => [slug, [status]]),
+);
 
 export interface ReportDepositRow {
   channel: string;
