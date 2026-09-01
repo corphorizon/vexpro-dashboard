@@ -30,6 +30,9 @@ import 'server-only';
 import { fetchCoinsbuyWallets } from './coinsbuy/wallets';
 import { fetchUnipaymentBalances } from './unipayment/balances';
 import { fetchFairpayBalances } from './fairpay/balances';
+import { createAdminClient } from '@/lib/supabase/admin';
+import { fetchOnchainTotal } from '@/lib/api-integrations/onchain/usdt-balance';
+import { fetchNativePrices } from '@/lib/api-integrations/onchain/prices';
 import { fetchPayprosBalance } from './paypros/balance';
 import { getBalanceWalletIds } from '@/lib/pinned-wallets';
 import { LIVE_BALANCE_CHANNELS } from '@/lib/api-channels';
@@ -74,7 +77,57 @@ const LIVE_BALANCE_FETCHERS: Record<string, LiveBalanceFetcher> = {
     if (res.error || res.balance === null) return null;
     return res.balance;
   },
+
+  // ── Canales ON-CHAIN (Kevin, 2026-09-01: «la trust wallet no está
+  // sincronizada en vex») ───────────────────────────────────────────────────
+  // No estaba desincronizada: se leía UNA vez al día en el cron de medianoche
+  // y la pantalla mostraba esa foto todo el día. Medido el 2026-09-01: el
+  // snapshot de las 00:01 UTC decía 80.539,70 USDT en Tron y a las 12:00 la
+  // cadena tenía 14.807,54 — 65.732 salieron después de la foto. Un saldo de
+  // 12 horas de antigüedad presentado como el saldo de hoy es exactamente el
+  // fallo que no da error.
+  //
+  // La clave del canal es dinámica (wallet_externa o cualquier custom_* con
+  // direcciones), así que este fetcher no vive en el Record de arriba: se
+  // resuelve leyendo `channel_configs.onchain_wallets`, igual que el cron.
 };
+
+/** Saldo en vivo de cada canal con direcciones on-chain configuradas. */
+async function fetchOnchainLiveBalances(
+  companyId: string,
+): Promise<{ byChannel: Map<string, number>; unavailable: string[] }> {
+  const byChannel = new Map<string, number>();
+  const unavailable: string[] = [];
+  const admin = createAdminClient();
+  const { data, error } = await admin
+    .from('channel_configs')
+    .select('channel_key, onchain_wallets')
+    .eq('company_id', companyId)
+    .not('onchain_wallets', 'is', null);
+  if (error || !data) return { byChannel, unavailable };
+
+  // Los precios del gas se leen UNA vez para todos los canales.
+  // `fetchNativePrices` devuelve {prices, at} o {error}: se pasa solo el mapa.
+  const priceRes = await fetchNativePrices().catch(() => ({}) as Record<string, never>);
+  const prices = ('prices' in priceRes ? priceRes.prices : {}) as Parameters<typeof fetchOnchainTotal>[1] extends { prices?: infer P } ? P : never;
+  for (const row of data as Array<{ channel_key: string; onchain_wallets: unknown }>) {
+    const wallets = Array.isArray(row.onchain_wallets) ? row.onchain_wallets : [];
+    if (wallets.length === 0) continue;
+    try {
+      const r = await fetchOnchainTotal(wallets as never, { prices });
+      // `error` o total no numérico ⇒ el canal cae a libro/snapshot y se
+      // informa: nunca un 0 que borre el saldo real.
+      if (r.error || typeof r.total !== 'number' || !Number.isFinite(r.total)) {
+        unavailable.push(row.channel_key);
+      } else {
+        byChannel.set(row.channel_key, r.total);
+      }
+    } catch {
+      unavailable.push(row.channel_key);
+    }
+  }
+  return { byChannel, unavailable };
+}
 
 /**
  * Canales del registro que NO tienen fetcher, y fetchers que no corresponden a
@@ -131,6 +184,19 @@ export async function fetchLiveChannelBalances(
     if (value === null || !Number.isFinite(value)) unavailable.push(key);
     else byChannel.set(key, value);
   });
+
+  // Canales on-chain: mismo contrato (un fallo informa, no pone cero). Van
+  // aparte porque su clave sale de los datos, no del registro estático.
+  try {
+    const onchain = await withTimeout(
+      fetchOnchainLiveBalances(companyId) as unknown as Promise<LiveBalance>,
+    ) as unknown as { byChannel: Map<string, number>; unavailable: string[] };
+    for (const [k, v] of onchain.byChannel) byChannel.set(k, v);
+    unavailable.push(...onchain.unavailable);
+  } catch {
+    // Sin lista de canales on-chain no se puede nombrar cuál falló; el caller
+    // cae a libro/snapshot como siempre.
+  }
 
   return { byChannel, unavailable };
 }
