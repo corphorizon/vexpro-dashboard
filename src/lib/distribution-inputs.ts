@@ -87,6 +87,16 @@ export interface DistributionSources {
    * `operating_income.broker_pnl`, exactamente como antes.
    */
   brokerPnlByPeriod?: ReadonlyMap<string, number>;
+  /**
+   * Prop firm AUTOMÁTICO del CRM por período ABIERTO (ventas y retiros de
+   * crm_monthly_totals: propfirm_sales / propfirm_withdrawals). Mismo patrón
+   * que brokerPnlByPeriod: los cerrados nunca entran acá; y el MANUAL cargado
+   * (>0) gana como override — el mapa solo pisa lo que está en cero.
+   * Kevin (2026-09-01): «en agosto no está sumando el resultado entre ventas
+   * y retiros de propfirm» — agosto tenía $11.981,70/$2.819,04 automáticos y
+   * la cadena leía la tabla manual vacía.
+   */
+  pfAutoByPeriod?: ReadonlyMap<string, { sales: number; withdrawals: number }>;
 }
 
 /**
@@ -192,8 +202,12 @@ export function buildDistributionInputs(
 
   return periods.map(period => {
     const oi = oiIndex.get(period.id);
-    const pfs = pfsIndex.get(period.id) || 0;
-    const pfW = pfwIndex.get(period.id) || 0;
+    const pfsManual = pfsIndex.get(period.id) || 0;
+    const pfWManual = pfwIndex.get(period.id) || 0;
+    // Automático solo en abiertos y solo donde no hay manual (>0 = override).
+    const pfAuto = period.is_closed ? undefined : sources.pfAutoByPeriod?.get(period.id);
+    const pfs = pfsManual > 0 ? pfsManual : (pfAuto?.sales ?? pfsManual);
+    const pfW = pfWManual > 0 ? pfWManual : (pfAuto?.withdrawals ?? pfWManual);
     // Broker P&L: automático en los períodos ABIERTOS, congelado en los
     // cerrados. Ver `brokerPnlByPeriod` arriba y `src/lib/broker-pnl.ts`.
     const auto = period.is_closed ? undefined : sources.brokerPnlByPeriod?.get(period.id);

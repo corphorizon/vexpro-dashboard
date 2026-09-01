@@ -264,6 +264,25 @@ export function DataProvider({ children }: { children: ReactNode }) {
       alive = false;
     };
   }, [effectiveCompanyId]);
+  // Prop firm automático mensual (crm_monthly_totals: propfirm_sales /
+  // propfirm_withdrawals). Mismo contrato que brokerPnlMonths: efecto propio,
+  // fuera del bootstrap, y ante fallo queda vacío ⇒ la cadena cae al manual
+  // heredado — nunca a un cero inventado.
+  const [pfAutoMonths, setPfAutoMonths] = useState<
+    Array<{ year: number; month: number; metric: string; auto: number | null }>
+  >([]);
+  useEffect(() => {
+    if (!effectiveCompanyId) { setPfAutoMonths([]); return; }
+    let alive = true;
+    apiFetch('/api/admin/crm-monthly-totals')
+      .then((r) => r.json())
+      .then((json: { success?: boolean; rows?: Array<{ year: number; month: number; metric: string; auto: number | null }> }) => {
+        if (!alive) return;
+        setPfAutoMonths(json?.success ? (json.rows ?? []).filter((r) => r.metric === 'propfirm_sales' || r.metric === 'propfirm_withdrawals') : []);
+      })
+      .catch(() => { if (alive) setPfAutoMonths([]); });
+    return () => { alive = false; };
+  }, [effectiveCompanyId]);
   const [brokerBalance, setBrokerBalance] = useState<BrokerBalance[]>([]);
   const [financialStatus, setFinancialStatus] = useState<FinancialStatus[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -943,6 +962,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
       if (!r || r.source !== 'crm') continue;
       brokerPnlByPeriod.set(p.id, brokerPnlForChain(r, oiByPeriod.get(p.id) ?? null));
     }
+    // Prop firm automático por período ABIERTO (null del CRM ≠ 0: solo se
+    // mapea lo que la serie realmente trae).
+    const pfAutoByPeriod = new Map<string, { sales: number; withdrawals: number }>();
+    for (const p of periods) {
+      if (p.is_closed) continue;
+      const ventas = pfAutoMonths.find((r) => r.metric === 'propfirm_sales' && r.year === p.year && r.month === p.month);
+      const retiros = pfAutoMonths.find((r) => r.metric === 'propfirm_withdrawals' && r.year === p.year && r.month === p.month);
+      if (ventas?.auto == null && retiros?.auto == null) continue;
+      pfAutoByPeriod.set(p.id, { sales: Number(ventas?.auto ?? 0), withdrawals: Number(retiros?.auto ?? 0) });
+    }
     return {
       operatingIncome,
       propFirmSales,
@@ -951,6 +980,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       investments,
       businessModel: company?.business_model,
       brokerPnlByPeriod,
+      pfAutoByPeriod,
     };
   }, [
     operatingIncome,
@@ -958,6 +988,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
     withdrawals,
     expenses,
     investments,
+    pfAutoMonths,
     company?.business_model,
     periods,
     brokerPnlResolved,

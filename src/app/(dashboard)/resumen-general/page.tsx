@@ -105,9 +105,11 @@ export default function ResumenPage() {
           egresosNetos: acc.egresosNetos + e.egresosNetos,
           saldoAFavor: acc.saldoAFavor + e.saldoAFavor,
           otherIncome: acc.otherIncome + e.desglose.other,
+          propFirmNet: acc.propFirmNet + e.desglose.propFirmNetIncome,
+          investmentProfits: acc.investmentProfits + e.desglose.investmentProfits,
         };
       },
-      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0, otherIncome: 0 },
+      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0, otherIncome: 0, propFirmNet: 0, investmentProfits: 0 },
     );
   }, [saldoChain, mode, selectedPeriodId, selectedPeriodIds]);
 
@@ -340,16 +342,16 @@ export default function ResumenPage() {
             {formatCurrency(totalIncome)}
           </CardValue>
           <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-            {showBrokerPnl && summary.propFirmNetIncome !== 0 && (
+            {showBrokerPnl && chainTotals.propFirmNet !== 0 && (
               <div className="flex justify-between">
                 <span>Balance Prop Firm</span>
-                <span>{formatCurrency(summary.propFirmNetIncome)}</span>
+                <span>{formatCurrency(chainTotals.propFirmNet)}</span>
               </div>
             )}
-            {summary.investmentProfits !== 0 && (
+            {chainTotals.investmentProfits !== 0 && (
               <div className="flex justify-between">
                 <span>Profits Inversiones</span>
-                <span>{formatCurrency(summary.investmentProfits)}</span>
+                <span>{formatCurrency(chainTotals.investmentProfits)}</span>
               </div>
             )}
             {/* «Otros ingresos» (income_lines cobradas → operating_income.other):

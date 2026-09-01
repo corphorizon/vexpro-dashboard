@@ -188,3 +188,44 @@ describe('buildDistributionInputs — base CAJA de egresos (solo company)', () =
     expect(p1.totalExpenses).toBe(5000);
   });
 });
+
+// ── Prop firm automático como insumo de la cadena (Kevin, 2026-09-01) ───────
+describe('pfAutoByPeriod', () => {
+  const base = {
+    operatingIncome: [], propFirmSales: [], withdrawals: [], expenses: [],
+    investments: [], businessModel: 'broker' as const,
+  };
+  const abierto = { id: 'p8', year: 2026, month: 8, label: 'Ago', is_closed: false, reserve_pct: 0.1 };
+  const cerrado = { id: 'p7', year: 2026, month: 7, label: 'Jul', is_closed: true, reserve_pct: 0.1 };
+
+  it('abierto sin manual toma el automático (ventas − retiros)', () => {
+    const [row] = buildDistributionInputs([abierto] as never, {
+      ...base,
+      pfAutoByPeriod: new Map([['p8', { sales: 11981.7, withdrawals: 2819.04 }]]),
+    } as never);
+    expect(row.propFirmNetIncome).toBeCloseTo(9162.66, 2);
+  });
+
+  it('manual > 0 es override: el automático no lo pisa', () => {
+    const [row] = buildDistributionInputs([abierto] as never, {
+      ...base,
+      propFirmSales: [{ period_id: 'p8', amount: 5000 }],
+      pfAutoByPeriod: new Map([['p8', { sales: 11981.7, withdrawals: 0 }]]),
+    } as never);
+    expect(row.propFirmNetIncome).toBe(5000);
+  });
+
+  it('cerrado NUNCA lee el automático', () => {
+    const [row] = buildDistributionInputs([cerrado] as never, {
+      ...base,
+      propFirmSales: [{ period_id: 'p7', amount: 100 }],
+      pfAutoByPeriod: new Map([['p7', { sales: 99999, withdrawals: 0 }]]),
+    } as never);
+    expect(row.propFirmNetIncome).toBe(100);
+  });
+
+  it('sin serie del CRM cae al manual aunque sea 0 — nunca inventa', () => {
+    const [row] = buildDistributionInputs([abierto] as never, base as never);
+    expect(row.propFirmNetIncome).toBe(0);
+  });
+});
