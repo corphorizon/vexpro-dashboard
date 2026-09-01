@@ -1,5 +1,10 @@
 -- ─────────────────────────────────────────────────────────────────────────────
 -- Migración 113 — hr_net_deposit_by_profile: llaves canónicas de monto
+-- NOTA (2026-09-01): la elección de requested_amount para los RETIROS fue
+-- revisada en la migración 120 — la pantalla por usuario del CRM (la que ven
+-- los comerciales) suma transaction_amount, y para comisiones manda esa. El
+-- resto de esta cabecera sigue vigente (amount_paid, fechas, status).
+--
 --
 -- Kevin (2026-08-31): «alinea la llave de fecha para que cuadre exacto» contra
 -- el panel del CRM. Al leer la definición, el desvío no era (solo) la fecha:
