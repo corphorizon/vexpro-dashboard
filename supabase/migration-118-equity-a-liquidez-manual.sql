@@ -1,5 +1,9 @@
+-- APLICADA EL 2026-08-31. El número NO indica el orden real: nació con otro
+-- (105/106/107/108) y se renumeró al chocar con las del equipo, que iban por la
+-- 115. Ver la nota de numeración en docs/reglas-del-proyecto.md §0.
+
 -- ─────────────────────────────────────────────────────────────────────────────
--- migration-106 — El "Equity a Liquidez" se puede corregir a mano.
+-- migration-118 — El "Equity a Liquidez" se puede corregir a mano.
 --
 -- ── QUÉ RESUELVE ────────────────────────────────────────────────────────────
 -- `balance_liquidez` —que en pantalla ahora se llama "Equity a Liquidez"— es

@@ -38,6 +38,7 @@ import { useToasts } from '@/components/ui/toast';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
+import { todayUtcISO } from '@/lib/dates';
 import {
   CRYPTO_NETWORKS,
   computeLineAmount,
@@ -121,18 +122,9 @@ const CURRENCY_COPY = {
   },
 } as const;
 
-/**
- * Hoy en UTC — no en la zona del navegador. Todo el sistema corta los días en
- * UTC (períodos, cierres, series del CRM); con la zona local, una orden creada
- * después de las 20:00 UTC (medianoche en Dubái) nacía fechada «mañana» y
- * caía al mes siguiente. Pasó de verdad: OP-2026-0042, creada y pagada el
- * 31/08 21:39 UTC, salió emitida el 01/09 y hubo que corregirla a mano.
- */
-function todayISO(): string {
-  const d = new Date();
-  const p = (n: number) => String(n).padStart(2, '0');
-  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
-}
+// La fecha por defecto es el día UTC, no el local del navegador: la
+// OP-2026-0042 nació fechada mañana porque quien la creó estaba en un huso
+// adelantado. Ver `todayUtcISO` en lib/dates.ts.
 
 const num = (v: string) => {
   const n = Number(String(v).replace(',', '.'));
@@ -179,7 +171,7 @@ function initialState(order: PaymentOrder | undefined, fallbackCurrency: string)
     order?.crypto_network && (CRYPTO_NETWORKS as readonly string[]).includes(order.crypto_network);
   return {
     locale: order?.locale ?? 'es',
-    issue_date: order?.issue_date ?? todayISO(),
+    issue_date: order?.issue_date ?? todayUtcISO(),
     payment_date: order?.payment_date ?? '',
     beneficiary_id: order?.beneficiary_id ?? null,
     beneficiary_name: order?.beneficiary_name ?? '',

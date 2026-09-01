@@ -73,6 +73,10 @@
       "schedule": "20 20 * * *"
     },
     {
+      "path": "/api/cron/sync-crm?espejo=full",
+      "schedule": "35 3 * * *"
+    },
+    {
       "path": "/api/cron/sync-health",
       "schedule": "40 * * * *"
     },

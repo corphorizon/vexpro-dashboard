@@ -27,6 +27,8 @@ interface MesResumen {
   month: number;
   total: number;
   operations: number;
+  /** Lotes cerrados en el mes. */
+  lots: number;
   /** Cuántas cuentas ESTABAN en el pool ese mes. */
   accounts: number;
   /** De ésas, cuántas operaron. */
@@ -42,6 +44,8 @@ interface FilaMes {
   connection_date: string;
   pnl: number;
   operations_count: number;
+  /** `null` = calculado antes de la migracion 116, no es cero lotes. */
+  lots: number | null;
   is_partial: boolean;
 }
 
@@ -233,7 +237,14 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
           tone={tono(mesActual?.total ?? 0)}
           sub={mesEnCurso ? 'Mes en curso' : undefined}
         />
-        <Stat label="Operaciones" value={String(mesActual?.operations ?? 0)} />
+        <Stat
+          label="Operaciones"
+          value={String(mesActual?.operations ?? 0)}
+          // El volumen dice cuánto TRABAJO hizo el pool para llegar a ese
+          // resultado: dos meses con el mismo PnL no son lo mismo si uno movió
+          // 2 lotes y el otro 400.
+          sub={`${(mesActual?.lots ?? 0).toLocaleString('es', { maximumFractionDigits: 2 })} lotes`}
+        />
         <Stat
           label="Cuentas en el pool"
           value={String(mesActual?.accounts ?? 0)}
@@ -265,6 +276,7 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
                 <th className="py-2 px-3 text-left font-medium">Usuario</th>
                 <th className="py-2 px-3 text-right font-medium">PnL del mes</th>
                 <th className="py-2 px-3 text-right font-medium">Ops</th>
+                <th className="py-2 px-3 text-right font-medium">Lotes</th>
                 <th className="py-2 px-3 text-right font-medium">Equity a Liquidez</th>
                 <th className="py-2 px-3 text-left font-medium">Conectada</th>
               </tr>
@@ -295,6 +307,14 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
                     )}
                   </td>
                   <td className="py-2 px-3 text-right text-muted-foreground">{f.operations_count}</td>
+                  {/* `null` es «se calculó antes de que existiera esta
+                      columna», no «operó cero lotes». Por eso va un guion y no
+                      un 0 — se arregla refrescando esa cuenta. */}
+                  <td className="py-2 px-3 text-right text-muted-foreground">
+                    {f.lots === null || f.lots === undefined
+                      ? <span title="Sin calcular: refrescá la cuenta">—</span>
+                      : f.lots.toLocaleString('es', { maximumFractionDigits: 2 })}
+                  </td>
                   <td className="py-2 px-3 text-right">{formatCurrency(f.balance_liquidez)}</td>
                   <td className="py-2 px-3 text-xs text-muted-foreground">
                     {formatFechaConexion(f.connection_date)}
@@ -312,6 +332,9 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
                   {formatCurrency(mesActual?.total ?? 0)}
                 </td>
                 <td className="py-2 px-3 text-right">{mesActual?.operations ?? 0}</td>
+                <td className="py-2 px-3 text-right">
+                  {(mesActual?.lots ?? 0).toLocaleString('es', { maximumFractionDigits: 2 })}
+                </td>
                 <td colSpan={2} />
               </tr>
             </tfoot>

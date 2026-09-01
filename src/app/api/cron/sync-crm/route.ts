@@ -14,13 +14,53 @@
 // Disparo manual (siempre con el secreto):
 //   ?company_id=<uuid>  → una sola empresa
 //   ?full=1             → ignora el cursor y recorre el histórico entero
+//   ?espejo=full        → SÓLO el espejo base (retiros, depósitos y perfiles)
+//                         con los cursores desde cero, sin ningún extra
 //   ?pnl_from=&pnl_to=  → backfill del cierre diario de PNL para ese rango
 //                         (`YYYY-MM-DD`, UTC, inclusive)
+//
+// En la respuesta, `full` significa "los cursores se ignoraron" y por lo tanto
+// es true con `?full=1` Y con `?espejo=full`; el que distingue cuál corrió es
+// `modo` ('rapido' | 'completo' | 'espejo').
+//
+// ── POR QUÉ EXISTE ?espejo=full: el re-barrido diario ───────────────────────
+// Medido entre el 2026-08-31 y el 2026-09-01: SEIS retiros de agosto —
+// aprobados, USER_WITHDRAW, pedidos entre el 17 y el 21— nunca llegaron a
+// `crm_withdrawals`, aunque el sync incremental corrió cada 15 minutos todos
+// esos días y el espejo ya tenía retiros del 29 y del 30. Sus `createdAt` y
+// `updatedAt` eran normales y del mismo día del retiro, así que el filtro
+// incremental TENÍA que haberlos visto. Un disparo manual con `?full=1` los
+// recuperó a los seis. Faltaban US$ 9.536,98, y eso desviaba el net deposit de
+// RRHH contra el panel oficial del CRM: el fallo que no da error.
+//
+// La causa raíz no es determinable desde afuera. La sospecha principal es que
+// un `find()` sin `sort` sobre la colección VIVA puede saltarse documentos bajo
+// escrituras concurrentes: el cursor no garantiza aislamiento de snapshot entre
+// batches. No es reproducible a voluntad, así que no hay arreglo que probar; lo
+// que sí se puede acotar es cuánto vive un fantasma. Los seis vivieron 10+
+// días. Con un re-barrido diario, 24 h.
+//
+// LO QUE SE DESCARTÓ: programar el `?full=1` completo como cron. Se midió
+// FUNCTION_INVOCATION_TIMEOUT (excede los 300 s de `maxDuration`), porque
+// `full=1` además prende `modoCompleto`: allUsers (20.9k documentos),
+// walletSources (recorre `wallettransfers` entera), ibProduction, behavior, la
+// tanda de MT5… `?espejo=full` es exactamente la parte que sí entra en el
+// presupuesto: el espejo base es una fracción de la corrida completa.
+//
+// La diferencia, en dos líneas:
+//   ?full=1      = TODO + cursores desde cero. Manual. Puede exceder los 300 s.
+//   ?espejo=full = SÓLO el espejo base + cursores desde cero. Apto para cron.
 //
 // Horario: 00:20 UTC (vercel.json). Elegido para no pisar a nadie —
 // 23:55/05:55/11:55/17:55 sync-external-apis, 00:00 balances, 00:05 reportes,
 // 07:30 notification-sweep. A las 00:20 los reportes ya salieron, así que una
 // carga completa de 13.500 retiros no le compite CPU a nada.
+//
+// El re-barrido `?espejo=full` va a las 03:35 UTC, y NO a las 03:40 como se
+// pensó primero: `sync-health` ocupa el minuto :40 de TODAS las horas. Tampoco
+// :00/:15/:30/:45, que son la grilla de los `*/15` (este mismo cron en modo
+// rápido, mt5-pnl) más account-review y propfirm-review. A las 03:35 el minuto
+// está vacío y quedan 10 minutos limpios hasta la corrida rápida de las 03:45.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -283,6 +323,16 @@ export async function GET(request: NextRequest) {
   const onlyCompanyId = url.searchParams.get('company_id');
   const full = url.searchParams.get('full') === '1';
 
+  // Re-barrido del espejo base con los cursores desde cero y SIN extras (ver la
+  // cabecera: los seis retiros fantasma de agosto). Es el único modo que puede
+  // ir en un cron, porque `?full=1` se pasa de los 300 s.
+  const soloEspejo = url.searchParams.get('espejo') === 'full';
+
+  // Los dos caminos que ignoran el cursor. `runCrmSync` lo llama `full` y es lo
+  // que se reporta en la respuesta: "los cursores se ignoraron", no "corrió
+  // todo". Lo que corrió lo dice `modo`.
+  const cursoresDesdeCero = full || soloEspejo;
+
   // Rango manual para el backfill del cierre diario de PNL. Sólo se acepta
   // `YYYY-MM-DD` exacto: una fecha a medias iría a Mongo como texto y ahí un
   // filtro que no matchea devuelve CERO documentos sin dar error, que es
@@ -294,7 +344,7 @@ export async function GET(request: NextRequest) {
   const pnlFrom = fecha('pnl_from');
   const pnlTo = fecha('pnl_to');
 
-  // ── DOS MODOS ────────────────────────────────────────────────────────────
+  // ── TRES MODOS (decía DOS hasta que se agregó el espejo) ─────────────────
   // RÁPIDO (cada 15 min, el default): espeja los movimientos del CRM y
   // recalcula los agregados SÓLO de quien movió dinero. Es lo que necesita el
   // traspaso a Retención, que se dispara con `depositCount` y tiene 15 minutos
@@ -305,6 +355,11 @@ export async function GET(request: NextRequest) {
   // barrer tres colecciones de Mongo cada 15 minutos multiplicaría por 16 la
   // carga sobre la base de PRODUCCIÓN del broker para refrescar datos que casi
   // nunca cambian.
+  //
+  // ESPEJO (`?espejo=full`, diario) es un tercer modo y NO prende `modoCompleto`
+  // a propósito: prenderlo lo volvería la corrida completa, que es justo la que
+  // se midió pasándose de los 300 s. Salta TODOS los extras, incluidos los que
+  // el modo rápido sí hace (paypros, exposición, pnl diario).
   const modoCompleto = url.searchParams.get('mode') === 'full' || full;
 
   // Ventana del modo rápido: qué se considera "movido". Se toma con holgura
@@ -338,254 +393,271 @@ export async function GET(request: NextRequest) {
     })[] = [];
     for (const company of companies) {
       try {
-        const res = await runCrmSync({ companyId: company.id, full });
+        // El espejo base: retiros, depósitos y los perfiles que aparecen en
+        // ellos. Con `?espejo=full` va con los cursores desde cero, que es lo
+        // que recuperó los seis retiros fantasma (ver la cabecera del archivo).
+        const res = await runCrmSync({ companyId: company.id, full: cursoresDesdeCero });
 
-        // Los depósitos de Pay-Pros salen de acá y no del webhook: la URL que
-        // se registró con Pay-Pros es la del CRM, no la nuestra, así que el
-        // receptor nunca recibió un evento. Va DESPUÉS del sync porque lee del
-        // espejo que el sync acaba de refrescar.
+        // ── DE ACÁ HASTA `results.push` SON EXTRAS, Y `?espejo=full` LOS SALTA ──
+        // Un único punto de corte, explícito y a la vista, en vez de un `if`
+        // por paso repartido por el cuerpo: un recorte silencioso es
+        // indistinguible de "no había nada que hacer".
         //
-        // Que falle no puede tumbar la sincronización: el espejo ya quedó bien
-        // y es lo que alimenta la revisión de retiros. Se anota y se sigue.
+        // Las variables se declaran acá arriba en null —null es "no se
+        // calculó", que NO es lo mismo que 0— para que la respuesta conserve
+        // exactamente la misma forma y para que `results.push` siga siendo la
+        // ÚNICA lista de extras del archivo. Si mañana se agrega uno, se agrega
+        // en un solo lugar y queda saltado acá sin que nadie tenga que
+        // acordarse.
         let paypros: PayprosFromCrmResult | null = null;
         const payprosErrors: string[] = [];
-        try {
-          paypros = await syncPayprosDepositsFromCrm(admin, company.id);
-          if (paypros.warnings.length > 0) {
-            console.warn(`[cron/sync-crm] paypros ${company.id}:`, paypros.warnings.join(' | '));
-          }
-        } catch (err) {
-          payprosErrors.push(`paypros: ${err instanceof Error ? err.message : 'unknown'}`);
-        }
-
-        // Los RETIROS de Pay-Pros (Kevin, 2026-08-31). Misma fuente y mismo
-        // motivo que los depósitos de arriba: el webhook nunca recibió un
-        // evento, y el espejo del CRM sí los tiene (al 2026-08-31: 6 aprobados
-        // por US$ 2.617,62, processor 'PAYPROS_SPEI').
-        //
-        // En su PROPIO try/catch, y no dentro del de arriba, a propósito: si
-        // los depósitos fallan, los retiros igual se asientan. Juntarlos haría
-        // que un error en una punta dejara la otra sin actualizar y el canal
-        // quedaría con entradas y sin salidas — un Net Deposit inflado, que es
-        // peor que no tener ninguno de los dos.
         let payprosWithdrawals: PayprosWithdrawalsFromCrmResult | null = null;
-        try {
-          payprosWithdrawals = await syncPayprosWithdrawalsFromCrm(admin, company.id);
-          if (payprosWithdrawals.warnings.length > 0) {
-            console.warn(
-              `[cron/sync-crm] paypros-retiros ${company.id}:`,
-              payprosWithdrawals.warnings.join(' | '),
-            );
-          }
-        } catch (err) {
-          payprosErrors.push(`paypros-retiros: ${err instanceof Error ? err.message : 'unknown'}`);
-        }
-
-        // ── Actividad de trading (MT5) ────────────────────────────────────
-        // Sólo para los clientes con retiro pendiente o reciente: ahí es donde
-        // la señal se usa, y mantiene el costo sobre la base del broker en
-        // decenas de cuentas en vez de 26.422.
-        //
-        // Va al final y aislado por la misma razón que Pay-Pros: si la base
-        // del broker no responde, el espejo del CRM ya quedó bien y la
-        // revisión de retiros sigue funcionando sin esta señal.
         let mt5: Mt5SyncResult | null = null;
         const mt5Errors: string[] = [];
-        try {
-          // La actividad de trading no la mira el traspaso a Retención, así
-          // que no necesita 15 minutos: va con el modo completo.
-          const emails = modoCompleto ? await emailsNeedingTradingActivity(admin, company.id) : [];
-          if (emails.length > 0) {
-            mt5 = await syncTradingActivity(admin, company.id, emails);
-            if (mt5.warnings.length > 0) {
-              console.warn(`[cron/sync-crm] mt5 ${company.id}:`, mt5.warnings.join(' | '));
-            }
-          }
-        } catch (err) {
-          // Sin credenciales de MT5 el tenant simplemente no tiene esta señal:
-          // no es un fallo del sync y no debe contarse como empresa fallida.
-          const msg = err instanceof Error ? err.message : 'unknown';
-          if (!/no configurad|not configured|sin credencial/i.test(msg)) {
-            mt5Errors.push(`mt5: ${msg}`);
-          }
-        }
-
-        // ── Universo completo de usuarios + agregados ──────────────────────
-        // Esto es lo que le vamos a servir a Atlas para que deje su propia
-        // conexión a Orion. Va DESPUÉS del sync de movimientos porque los
-        // agregados de depósitos y retiros se calculan sobre nuestro espejo.
-        //
-        // Aislado como los demás: si falla, el módulo de retiros —que es lo
-        // que ya está en producción— sigue funcionando igual.
         let allUsers: AllUsersResult | null = null;
         let aggregates: AggregatesResult | null = null;
         const orionErrors: string[] = [];
-        try {
-          // Sin cursor a propósito por ahora: son 20.918 documentos en 23 s y
-          // `users` NO tiene índice por `updatedAt` en el broker (verificado
-          // por Atlas el 21/08), así que un filtro por fecha no ahorraría el
-          // barrido. Cuando Orion agregue ese índice, acá va el cursor con
-          // `$gte` — nunca `$gt`: dos usuarios pueden compartir milisegundo y
-          // el segundo se perdería para siempre.
-          // El barrido de usuarios sólo en el modo completo: son 20.900
-          // documentos y casi ninguno cambia entre una corrida y la siguiente.
-          if (modoCompleto) {
-            allUsers = await syncAllOrionUsers(admin, company.id, null);
-          }
-          aggregates = await syncCustomerAggregates(admin, company.id, {
-            changedSince: modoCompleto ? null : desde,
-          });
-          for (const w of [...(allUsers?.warnings ?? []), ...aggregates.warnings]) {
-            console.warn(`[cron/sync-crm] orion ${company.id}: ${w}`);
-          }
-        } catch (err) {
-          orionErrors.push(`orion-agregados: ${err instanceof Error ? err.message : 'unknown'}`);
-        }
-
-        // ── Riesgo vivo: exposición abierta y margen ──────────────────────
-        // Va en TODAS las corridas, incluida la rápida: es un dato que cambia
-        // minuto a minuto y cuya utilidad depende de estar fresco. Cuesta ~8 s.
         let exposure: ExposureResult | null = null;
         const expErrors: string[] = [];
-        try {
-          exposure = await syncExposure(admin, company.id);
-          for (const w of exposure.warnings) {
-            console.warn(`[cron/sync-crm] exposicion ${company.id}: ${w}`);
-          }
-        } catch (err) {
-          // Sin credenciales de MT5 el tenant no tiene esta vista: no es fallo.
-          const msg = err instanceof Error ? err.message : 'unknown';
-          if (!/no configurad|not configured|sin credencial/i.test(msg)) {
-            expErrors.push(`exposicion: ${msg}`);
-          }
-        }
-
-        // ── El cierre diario de PNL, tal como lo da el CRM ────────────────
-        // Va en TODAS las corridas, incluida la rápida, y con una VENTANA de
-        // días en vez de un día. Las dos decisiones tienen la misma causa: el
-        // job de Orion que llena `pnl_daily` va media hora detrás del reloj
-        // (medido el 2026-08-31: lastRunAt 07:00:04, lastWindowTo 06:30:03),
-        // así que el cierre de un día termina de asentarse DESPUÉS de la
-        // medianoche. Reescribir hoy y ayer cada 15 minutos deja el día en
-        // curso en vivo y cierra el anterior solo; la corrida completa mira
-        // siete días y así tapa el hueco de una corrida que falló y recoge lo
-        // que Orion cambió hacia atrás (purga documentos de cuentas
-        // bloqueadas a `pnl_daily_purged`).
-        //
-        // Cuesta poco y por eso puede ir en la corrida rápida: medido contra
-        // producción el 2026-08-31, la ventana de 2 días son 1.933 documentos
-        // y 1.210 cuentas en 2.176 ms; la de 7 días queda por debajo de 2,7 s.
-        // Al lado de los ~8 s que ya paga la exposición en la misma corrida,
-        // no mueve la aguja.
-        //
-        // Se puede pedir un rango a mano para el backfill histórico:
-        //   ?pnl_from=2025-10-01&pnl_to=2026-08-31
-        // La serie empieza el 2025-10-02 y el histórico ENTERO (212.929
-        // documentos, 331 días) tarda 6.897 ms: entra en una sola llamada
-        // dentro de los 300 s de esta ruta, sin paginar.
-        //
-        // Aislado como los demás: si Orion no responde, el espejo del CRM ya
-        // quedó bien y la revisión de retiros sigue funcionando.
         let dailyPnl: CrmDailyPnlSyncResult | null = null;
         const pnlErrors: string[] = [];
-        try {
-          const ventana =
-            pnlFrom && pnlTo
-              ? { from: pnlFrom, to: pnlTo }
-              : defaultWindow(modoCompleto ? CRM_PNL_WINDOW_FULL_DAYS : CRM_PNL_WINDOW_FAST_DAYS);
-          dailyPnl = await syncCrmDailyPnl(admin, company.id, ventana);
-          for (const w of dailyPnl.warnings) {
-            console.warn(`[cron/sync-crm] pnl diario ${company.id}: ${w}`);
-          }
-        } catch (err) {
-          pnlErrors.push(`pnl diario: ${err instanceof Error ? err.message : 'unknown'}`);
-        }
-
-        // ── Origen del dinero y comportamiento de trading ─────────────────
-        // Los dos alimentan el score y la ficha del retiro. Van con el modo
-        // COMPLETO: el origen del dinero recorre wallettransfers entera y el
-        // comportamiento paga ir a la fila en una tabla de 68M — ninguno de
-        // los dos cambia lo suficiente en 15 minutos para justificar ese costo.
         let walletSources: WalletSourcesResult | null = null;
         let monthlyTotals: CrmMonthlyTotalsResult | null = null;
         let ibProduction: IbProductionResult | null = null;
         let behavior: BehaviorResult | null = null;
         let tradingAccounts: TradingAccountsResult | null = null;
         const extraErrors: string[] = [];
-        if (modoCompleto) {
-          // La lista de cuentas del CRM decide qué cuenta entra a las cifras de
-          // PNL y cuál es de prueba. Va con el modo completo: sólo cambia
-          // cuando alguien abre una cuenta, y una cuenta nueva se ve excluida
-          // (y CONTADA como excluida) hasta la siguiente corrida completa.
-          try {
-            tradingAccounts = await syncTradingAccounts(admin, company.id);
-            for (const w of tradingAccounts.warnings) {
-              console.warn(`[cron/sync-crm] cuentas ${company.id}: ${w}`);
-            }
-          } catch (err) {
-            extraErrors.push(`cuentas: ${err instanceof Error ? err.message : 'unknown'}`);
-          }
-          try {
-            walletSources = await syncWalletSources(admin, company.id);
-            for (const w of walletSources.warnings) {
-              console.warn(`[cron/sync-crm] fuentes ${company.id}: ${w}`);
-            }
-          } catch (err) {
-            extraErrors.push(`fuentes: ${err instanceof Error ? err.message : 'unknown'}`);
-          }
-          // ── Totales mensuales del CRM (migración 100) ──────────────────
-          // P2P, ventas de prop firm y retiros de prop firm aprobados, mes a
-          // mes. Va con el modo COMPLETO y recalcula la serie entera: son
-          // cuatro consultas de menos de un segundo sobre colecciones de
-          // miles de documentos, y un cursor sólo agregaría el bug de dejar
-          // contada para siempre una transferencia que después se rechazó.
+
+        if (!soloEspejo) {
+          // Los depósitos de Pay-Pros salen de acá y no del webhook: la URL que
+          // se registró con Pay-Pros es la del CRM, no la nuestra, así que el
+          // receptor nunca recibió un evento. Va DESPUÉS del sync porque lee del
+          // espejo que el sync acaba de refrescar.
           //
-          // NO escribe en p2p_transfers ni en prop_firm_sales: lo cargado a
-          // mano no se toca. La pantalla muestra las dos columnas al lado.
+          // Que falle no puede tumbar la sincronización: el espejo ya quedó bien
+          // y es lo que alimenta la revisión de retiros. Se anota y se sigue.
           try {
-            monthlyTotals = await syncCrmMonthlyTotals(admin, company.id);
-            for (const w of monthlyTotals.warnings) {
-              console.warn(`[cron/sync-crm] totales mensuales ${company.id}: ${w}`);
+            paypros = await syncPayprosDepositsFromCrm(admin, company.id);
+            if (paypros.warnings.length > 0) {
+              console.warn(`[cron/sync-crm] paypros ${company.id}:`, paypros.warnings.join(' | '));
             }
           } catch (err) {
-            extraErrors.push(`totales mensuales: ${err instanceof Error ? err.message : 'unknown'}`);
+            payprosErrors.push(`paypros: ${err instanceof Error ? err.message : 'unknown'}`);
           }
-          // ── Produccion IB por estructura (migracion 098) ──────────────
-          // Va con el modo COMPLETO y no cada 15 minutos por dos razones
-          // medidas: `ib_reward_daily` son 37.146 documentos que se recorren
-          // enteros, y el desglose por simbolo entra por el indice
-          // {ibUserId, dealTime} de `ibrewards` un IB a la vez porque un
-          // barrido por fecha sobre sus 11.829.132 documentos se pasa de los
-          // 15 s del lector de Orion.
+
+          // Los RETIROS de Pay-Pros (Kevin, 2026-08-31). Misma fuente y mismo
+          // motivo que los depósitos de arriba: el webhook nunca recibió un
+          // evento, y el espejo del CRM sí los tiene (al 2026-08-31: 6 aprobados
+          // por US$ 2.617,62, processor 'PAYPROS_SPEI').
           //
-          // LO QUE NO SE ESPEJA HOY SE PIERDE: el broker purga `ibrewards` a
-          // los quince dias, asi que este es el unico momento en que el
-          // desglose forex/sinteticos de un dia se puede capturar. Si esta
-          // llamada deja de correr, la pantalla no muestra ceros: muestra
-          // "sin dato", que es lo correcto y lo visible.
+          // En su PROPIO try/catch, y no dentro del de arriba, a propósito: si
+          // los depósitos fallan, los retiros igual se asientan. Juntarlos haría
+          // que un error en una punta dejara la otra sin actualizar y el canal
+          // quedaría con entradas y sin salidas — un Net Deposit inflado, que es
+          // peor que no tener ninguno de los dos.
           try {
-            ibProduction = await syncIbProduction(admin, company.id);
-            for (const w of ibProduction.warnings) {
-              console.warn(`[cron/sync-crm] produccion ib ${company.id}: ${w}`);
+            payprosWithdrawals = await syncPayprosWithdrawalsFromCrm(admin, company.id);
+            if (payprosWithdrawals.warnings.length > 0) {
+              console.warn(
+                `[cron/sync-crm] paypros-retiros ${company.id}:`,
+                payprosWithdrawals.warnings.join(' | '),
+              );
             }
           } catch (err) {
-            const msg = err instanceof Error ? err.message : 'unknown';
-            if (!/no configurad|not configured|sin credencial/i.test(msg)) {
-              extraErrors.push(`produccion ib: ${msg}`);
-            }
+            payprosErrors.push(`paypros-retiros: ${err instanceof Error ? err.message : 'unknown'}`);
           }
+
+          // ── Actividad de trading (MT5) ────────────────────────────────────
+          // Sólo para los clientes con retiro pendiente o reciente: ahí es donde
+          // la señal se usa, y mantiene el costo sobre la base del broker en
+          // decenas de cuentas en vez de 26.422.
+          //
+          // Va al final y aislado por la misma razón que Pay-Pros: si la base
+          // del broker no responde, el espejo del CRM ya quedó bien y la
+          // revisión de retiros sigue funcionando sin esta señal.
           try {
-            const cuentas = await accountsNeedingBehavior(admin, company.id);
-            if (cuentas.length > 0) {
-              behavior = await syncTradingBehavior(admin, company.id, cuentas);
-              for (const w of behavior.warnings) {
-                console.warn(`[cron/sync-crm] comportamiento ${company.id}: ${w}`);
+            // La actividad de trading no la mira el traspaso a Retención, así
+            // que no necesita 15 minutos: va con el modo completo.
+            const emails = modoCompleto ? await emailsNeedingTradingActivity(admin, company.id) : [];
+            if (emails.length > 0) {
+              mt5 = await syncTradingActivity(admin, company.id, emails);
+              if (mt5.warnings.length > 0) {
+                console.warn(`[cron/sync-crm] mt5 ${company.id}:`, mt5.warnings.join(' | '));
               }
             }
           } catch (err) {
+            // Sin credenciales de MT5 el tenant simplemente no tiene esta señal:
+            // no es un fallo del sync y no debe contarse como empresa fallida.
             const msg = err instanceof Error ? err.message : 'unknown';
             if (!/no configurad|not configured|sin credencial/i.test(msg)) {
-              extraErrors.push(`comportamiento: ${msg}`);
+              mt5Errors.push(`mt5: ${msg}`);
+            }
+          }
+
+          // ── Universo completo de usuarios + agregados ──────────────────────
+          // Esto es lo que le vamos a servir a Atlas para que deje su propia
+          // conexión a Orion. Va DESPUÉS del sync de movimientos porque los
+          // agregados de depósitos y retiros se calculan sobre nuestro espejo.
+          //
+          // Aislado como los demás: si falla, el módulo de retiros —que es lo
+          // que ya está en producción— sigue funcionando igual.
+          try {
+            // Sin cursor a propósito por ahora: son 20.918 documentos en 23 s y
+            // `users` NO tiene índice por `updatedAt` en el broker (verificado
+            // por Atlas el 21/08), así que un filtro por fecha no ahorraría el
+            // barrido. Cuando Orion agregue ese índice, acá va el cursor con
+            // `$gte` — nunca `$gt`: dos usuarios pueden compartir milisegundo y
+            // el segundo se perdería para siempre.
+            // El barrido de usuarios sólo en el modo completo: son 20.900
+            // documentos y casi ninguno cambia entre una corrida y la siguiente.
+            if (modoCompleto) {
+              allUsers = await syncAllOrionUsers(admin, company.id, null);
+            }
+            aggregates = await syncCustomerAggregates(admin, company.id, {
+              changedSince: modoCompleto ? null : desde,
+            });
+            for (const w of [...(allUsers?.warnings ?? []), ...aggregates.warnings]) {
+              console.warn(`[cron/sync-crm] orion ${company.id}: ${w}`);
+            }
+          } catch (err) {
+            orionErrors.push(`orion-agregados: ${err instanceof Error ? err.message : 'unknown'}`);
+          }
+
+          // ── Riesgo vivo: exposición abierta y margen ──────────────────────
+          // Va en TODAS las corridas, incluida la rápida: es un dato que cambia
+          // minuto a minuto y cuya utilidad depende de estar fresco. Cuesta ~8 s.
+          try {
+            exposure = await syncExposure(admin, company.id);
+            for (const w of exposure.warnings) {
+              console.warn(`[cron/sync-crm] exposicion ${company.id}: ${w}`);
+            }
+          } catch (err) {
+            // Sin credenciales de MT5 el tenant no tiene esta vista: no es fallo.
+            const msg = err instanceof Error ? err.message : 'unknown';
+            if (!/no configurad|not configured|sin credencial/i.test(msg)) {
+              expErrors.push(`exposicion: ${msg}`);
+            }
+          }
+
+          // ── El cierre diario de PNL, tal como lo da el CRM ────────────────
+          // Va en TODAS las corridas, incluida la rápida, y con una VENTANA de
+          // días en vez de un día. Las dos decisiones tienen la misma causa: el
+          // job de Orion que llena `pnl_daily` va media hora detrás del reloj
+          // (medido el 2026-08-31: lastRunAt 07:00:04, lastWindowTo 06:30:03),
+          // así que el cierre de un día termina de asentarse DESPUÉS de la
+          // medianoche. Reescribir hoy y ayer cada 15 minutos deja el día en
+          // curso en vivo y cierra el anterior solo; la corrida completa mira
+          // siete días y así tapa el hueco de una corrida que falló y recoge lo
+          // que Orion cambió hacia atrás (purga documentos de cuentas
+          // bloqueadas a `pnl_daily_purged`).
+          //
+          // Cuesta poco y por eso puede ir en la corrida rápida: medido contra
+          // producción el 2026-08-31, la ventana de 2 días son 1.933 documentos
+          // y 1.210 cuentas en 2.176 ms; la de 7 días queda por debajo de 2,7 s.
+          // Al lado de los ~8 s que ya paga la exposición en la misma corrida,
+          // no mueve la aguja.
+          //
+          // Se puede pedir un rango a mano para el backfill histórico:
+          //   ?pnl_from=2025-10-01&pnl_to=2026-08-31
+          // La serie empieza el 2025-10-02 y el histórico ENTERO (212.929
+          // documentos, 331 días) tarda 6.897 ms: entra en una sola llamada
+          // dentro de los 300 s de esta ruta, sin paginar.
+          //
+          // Aislado como los demás: si Orion no responde, el espejo del CRM ya
+          // quedó bien y la revisión de retiros sigue funcionando.
+          try {
+            const ventana =
+              pnlFrom && pnlTo
+                ? { from: pnlFrom, to: pnlTo }
+                : defaultWindow(modoCompleto ? CRM_PNL_WINDOW_FULL_DAYS : CRM_PNL_WINDOW_FAST_DAYS);
+            dailyPnl = await syncCrmDailyPnl(admin, company.id, ventana);
+            for (const w of dailyPnl.warnings) {
+              console.warn(`[cron/sync-crm] pnl diario ${company.id}: ${w}`);
+            }
+          } catch (err) {
+            pnlErrors.push(`pnl diario: ${err instanceof Error ? err.message : 'unknown'}`);
+          }
+
+          // ── Origen del dinero y comportamiento de trading ─────────────────
+          // Los dos alimentan el score y la ficha del retiro. Van con el modo
+          // COMPLETO: el origen del dinero recorre wallettransfers entera y el
+          // comportamiento paga ir a la fila en una tabla de 68M — ninguno de
+          // los dos cambia lo suficiente en 15 minutos para justificar ese costo.
+          if (modoCompleto) {
+            // La lista de cuentas del CRM decide qué cuenta entra a las cifras de
+            // PNL y cuál es de prueba. Va con el modo completo: sólo cambia
+            // cuando alguien abre una cuenta, y una cuenta nueva se ve excluida
+            // (y CONTADA como excluida) hasta la siguiente corrida completa.
+            try {
+              tradingAccounts = await syncTradingAccounts(admin, company.id);
+              for (const w of tradingAccounts.warnings) {
+                console.warn(`[cron/sync-crm] cuentas ${company.id}: ${w}`);
+              }
+            } catch (err) {
+              extraErrors.push(`cuentas: ${err instanceof Error ? err.message : 'unknown'}`);
+            }
+            try {
+              walletSources = await syncWalletSources(admin, company.id);
+              for (const w of walletSources.warnings) {
+                console.warn(`[cron/sync-crm] fuentes ${company.id}: ${w}`);
+              }
+            } catch (err) {
+              extraErrors.push(`fuentes: ${err instanceof Error ? err.message : 'unknown'}`);
+            }
+            // ── Totales mensuales del CRM (migración 100) ──────────────────
+            // P2P, ventas de prop firm y retiros de prop firm aprobados, mes a
+            // mes. Va con el modo COMPLETO y recalcula la serie entera: son
+            // cuatro consultas de menos de un segundo sobre colecciones de
+            // miles de documentos, y un cursor sólo agregaría el bug de dejar
+            // contada para siempre una transferencia que después se rechazó.
+            //
+            // NO escribe en p2p_transfers ni en prop_firm_sales: lo cargado a
+            // mano no se toca. La pantalla muestra las dos columnas al lado.
+            try {
+              monthlyTotals = await syncCrmMonthlyTotals(admin, company.id);
+              for (const w of monthlyTotals.warnings) {
+                console.warn(`[cron/sync-crm] totales mensuales ${company.id}: ${w}`);
+              }
+            } catch (err) {
+              extraErrors.push(`totales mensuales: ${err instanceof Error ? err.message : 'unknown'}`);
+            }
+            // ── Produccion IB por estructura (migracion 098) ──────────────
+            // Va con el modo COMPLETO y no cada 15 minutos por dos razones
+            // medidas: `ib_reward_daily` son 37.146 documentos que se recorren
+            // enteros, y el desglose por simbolo entra por el indice
+            // {ibUserId, dealTime} de `ibrewards` un IB a la vez porque un
+            // barrido por fecha sobre sus 11.829.132 documentos se pasa de los
+            // 15 s del lector de Orion.
+            //
+            // LO QUE NO SE ESPEJA HOY SE PIERDE: el broker purga `ibrewards` a
+            // los quince dias, asi que este es el unico momento en que el
+            // desglose forex/sinteticos de un dia se puede capturar. Si esta
+            // llamada deja de correr, la pantalla no muestra ceros: muestra
+            // "sin dato", que es lo correcto y lo visible.
+            try {
+              ibProduction = await syncIbProduction(admin, company.id);
+              for (const w of ibProduction.warnings) {
+                console.warn(`[cron/sync-crm] produccion ib ${company.id}: ${w}`);
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'unknown';
+              if (!/no configurad|not configured|sin credencial/i.test(msg)) {
+                extraErrors.push(`produccion ib: ${msg}`);
+              }
+            }
+            try {
+              const cuentas = await accountsNeedingBehavior(admin, company.id);
+              if (cuentas.length > 0) {
+                behavior = await syncTradingBehavior(admin, company.id, cuentas);
+                for (const w of behavior.warnings) {
+                  console.warn(`[cron/sync-crm] comportamiento ${company.id}: ${w}`);
+                }
+              }
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : 'unknown';
+              if (!/no configurad|not configured|sin credencial/i.test(msg)) {
+                extraErrors.push(`comportamiento: ${msg}`);
+              }
             }
           }
         }
@@ -618,7 +690,7 @@ export async function GET(request: NextRequest) {
           companyId: company.id,
           companyName: company.name,
           ranAt,
-          full,
+          full: cursoresDesdeCero,
           since: { withdrawals: null, deposits: null },
           withdrawals: { fetched: 0, upserted: 0 },
           deposits: { fetched: 0, upserted: 0 },
@@ -635,8 +707,11 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       success: true,
       ranAt,
-      modo: modoCompleto ? 'completo' : 'rapido',
-      full,
+      // Tres modos, un solo campo: que el log diga cuál corrió. Un re-barrido
+      // del espejo firmado como 'rapido' sería indistinguible de la corrida de
+      // cada 15 minutos, y ahí ya no se puede auditar si el cron diario existe.
+      modo: soloEspejo ? 'espejo' : modoCompleto ? 'completo' : 'rapido',
+      full: cursoresDesdeCero,
       companies_processed: results.length,
       companies_failed: results.filter((r) => r.errors.length > 0).length,
       results,

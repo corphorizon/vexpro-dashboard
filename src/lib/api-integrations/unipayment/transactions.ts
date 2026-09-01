@@ -202,7 +202,7 @@ export async function fetchUnipaymentDepositsV2(
 
       // Corte por ventana: newest-first ⇒ si TODA la página es anterior a
       // `from`, las siguientes lo serán también.
-      let paginaEnteraViejísima = options.from
+      const paginaEnteraViejísima = options.from
         ? models.length > 0 && models.every((m) => (m.create_time ?? '') < `${options.from}T00:00:00`)
         : false;
 

@@ -43,6 +43,8 @@ export interface MonthlyPnl {
   month: number;
   pnl: number;
   operations_count: number;
+  /** Lotes cerrados en el mes. `VolumeClosed` viene en centésimas de milésima. */
+  lots: number;
   /** El mes no está completo: el de la conexión (arranca a mitad) y el actual. */
   is_partial: boolean;
 }
@@ -62,7 +64,19 @@ const SQL_POR_MES = [
   // Los importes se suman sobre TODOS los deals — ver la nota 2 de la cabecera.
   '       SUM(Profit)     AS profit,',
   '       SUM(Storage)    AS swap,',
-  '       SUM(Commission) AS comision',
+  '       SUM(Commission) AS comision,',
+  // ── `VolumeClosed` y NO `Volume` ──────────────────────────────────────
+  // Los dos dan lo mismo (437,66 lotes medidos en la cuenta 137983), pero
+  // `VolumeClosed` está DENTRO de `idx_deals_login_timemsc_entry` y `Volume`
+  // no. Con el primero el plan dice `Using index`; con el segundo, `Using
+  // index condition` — hay que ir a buscar la fila.
+  //
+  // Medido acá: 140 ms contra 316 ms. Y la regla G6 del repo documenta el caso
+  // grande: sumar `Volume` pasó de 345 ms a 13.221 ms, 38 veces más.
+  //
+  // El `CASE` restringe a las salidas: el volumen cerrado vive en el deal de
+  // cierre, igual que la ganancia realizada.
+  '       SUM(CASE WHEN Entry IN (1,3) THEN VolumeClosed ELSE 0 END) AS volumen',
   '  FROM mt5_deals',
   ' WHERE Login = ?',
   '   AND Action IN (0,1)',
@@ -124,7 +138,7 @@ export async function pnlMensualEnSesion(
 
   const filas = await s.query<Record<string, unknown>>(SQL_POR_MES, [login, desde, hasta]);
 
-  const porClave = new Map<string, { pnl: number; ops: number }>();
+  const porClave = new Map<string, { pnl: number; ops: number; lots: number }>();
   for (const r of filas) {
     const y = num(r.anio);
     const m = num(r.mes);
@@ -133,6 +147,7 @@ export async function pnlMensualEnSesion(
       // Swap y comisión ya vienen con su signo desde MT5: se suman, no se restan.
       pnl: Math.round((num(r.profit) + num(r.swap) + num(r.comision)) * 100) / 100,
       ops: num(r.ops),
+      lots: Math.round((num(r.volumen) / 10_000) * 100) / 100,
     });
   }
 
@@ -150,12 +165,13 @@ export async function pnlMensualEnSesion(
   // girar el bucle 600 veces y devolver una tabla sin sentido.
   const MAX_MESES = 240;
   for (let i = 0; i < MAX_MESES; i += 1) {
-    const dato = porClave.get(`${y}-${m}`) ?? { pnl: 0, ops: 0 };
+    const dato = porClave.get(`${y}-${m}`) ?? { pnl: 0, ops: 0, lots: 0 };
     out.push({
       year: y,
       month: m,
       pnl: dato.pnl,
       operations_count: dato.ops,
+      lots: dato.lots,
       // Parcial en los dos extremos: el mes de conexión arranca a mitad y el
       // mes actual todavía no terminó.
       is_partial:
