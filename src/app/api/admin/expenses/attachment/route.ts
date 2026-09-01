@@ -21,6 +21,14 @@
 // tipo se decide por MAGIC BYTES — la extensión y el Content-Type los controla
 // el cliente y son falsificables. Mismo criterio que los comprobantes de
 // órdenes de pago y los contratos de RRHH.
+//
+// 2026-09-01 — EXCEL COMO COMPROBANTE. Pedido del dueño: adjuntar el detalle de
+// gastos del mes (una planilla) como respaldo de un egreso operativo. Hasta hoy
+// el sniff rechazaba XLSX con "Formato no admitido". El criterio NO se inventó
+// acá: se copió tal cual el de sniffAttachment() en
+// /api/admin/payment-orders/[id]/attachment, que ya aceptaba el contenedor ZIP
+// de Office desde antes. Se descartó escribir una regla propia justamente para
+// no terminar con dos criterios de adjuntos que después divergen en silencio.
 // ---------------------------------------------------------------------------
 
 import { NextRequest, NextResponse } from 'next/server';
@@ -34,11 +42,31 @@ const BUCKET = 'expense-attachments';
 const MAX_SIZE = 10 * 1024 * 1024; // 10 MB
 const SIGNED_TTL_SECONDS = 600;
 
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+
+interface Sniffed {
+  ext: string;
+  mime: string;
+  /** true = contenedor ZIP de Office: los bytes NO distinguen docx de xlsx. */
+  office?: boolean;
+}
+
 /**
- * Sniff por magic bytes. Idéntico al de /payment-orders/[id]/proof: si algún
- * día hay que aceptar un formato nuevo, hay que tocar los dos.
+ * Sniff por magic bytes.
+ *
+ * OJO — el comentario que estaba acá antes decía que este sniff era idéntico al
+ * de /payment-orders/[id]/proof y que había que tocar los dos juntos. Desde el
+ * 2026-09-01 eso es FALSO y se corrige en el mismo lugar en vez de borrarlo:
+ *   · El espejo de esta función es sniffAttachment() en
+ *     /api/admin/payment-orders/[id]/attachment — el que YA acepta Office
+ *     (PDF, PNG, JPG, WEBP, XLSX, DOCX). Si mañana entra un formato nuevo, van
+ *     los dos.
+ *   · sniffProof() en lib/payment-orders/proof-files.ts NO sigue este criterio:
+ *     se queda en los 4 formatos clásicos (PDF/PNG/JPG/WEBP) y rechaza el ZIP
+ *     de Office a propósito — proofs.test.ts lo fija.
  */
-function sniff(bytes: Uint8Array): { ext: string; mime: string } | null {
+function sniff(bytes: Uint8Array): Sniffed | null {
   // PDF: "%PDF-"
   if (
     bytes.length >= 5 &&
@@ -68,7 +96,41 @@ function sniff(bytes: Uint8Array): { ext: string; mime: string } | null {
   ) {
     return { ext: 'webp', mime: 'image/webp' };
   }
+  // DOCX / XLSX: los dos son un ZIP y arrancan con el local file header
+  // PK\x03\x04 — por bytes son indistinguibles. Se acepta como "Office
+  // genérico" y cuál de los dos es lo resuelve después la extensión declarada
+  // (solo decide nombre y Content-Type, nunca si el archivo entra).
+  if (
+    bytes.length >= 4 &&
+    bytes[0] === 0x50 && bytes[1] === 0x4b &&
+    bytes[2] === 0x03 && bytes[3] === 0x04
+  ) {
+    return { ext: 'docx', mime: DOCX_MIME, office: true };
+  }
   return null;
+}
+
+/**
+ * Resuelve el ZIP de Office con la extensión DECLARADA en el nombre subido: si
+ * el usuario dijo .xlsx se guarda como planilla; en cualquier otro caso (.docx,
+ * una extensión rara o directamente ninguna) queda como documento. Es la misma
+ * línea del precedente, con el mismo default.
+ *
+ * Diferencia deliberada con el precedente: allá la extensión declarada pasa
+ * antes por una allowlist (`ALLOWED_EXTENSIONS`) como primera pasada barata,
+ * así que para cuando llega acá ya es una de las permitidas. Este endpoint
+ * nunca tuvo esa pasada — la entrada la deciden SOLO los bytes — y agregarla
+ * ahora rechazaría archivos que hoy entran (un PDF sin extensión en el nombre,
+ * por ejemplo). Como la allowlist no cambia el docx-vs-xlsx (solo `'xlsx'`
+ * decide, todo lo demás cae al default), replicarla acá no aportaría nada y
+ * sería una segunda lista para desincronizar.
+ */
+function resolveStored(sniffed: Sniffed, declaredName: string): { ext: string; mime: string } {
+  if (!sniffed.office) return { ext: sniffed.ext, mime: sniffed.mime };
+  const declared = (declaredName.split('.').pop() || '').toLowerCase();
+  return declared === 'xlsx'
+    ? { ext: 'xlsx', mime: XLSX_MIME }
+    : { ext: 'docx', mime: DOCX_MIME };
 }
 
 /** Nombre visible saneado: sin rutas, sin caracteres raros, acotado. */
@@ -107,18 +169,22 @@ export async function POST(request: NextRequest) {
     const kind = sniff(new Uint8Array(buffer.subarray(0, 16)));
     if (!kind) {
       return NextResponse.json(
-        { success: false, error: 'Formato no admitido. Se aceptan PDF, PNG, JPG y WEBP.' },
+        { success: false, error: 'Formato no admitido. Se aceptan PDF, PNG, JPG, WEBP, XLSX y DOCX.' },
         { status: 400 },
       );
     }
 
+    // Para el ZIP de Office los bytes no alcanzan: la extensión declarada elige
+    // entre planilla y documento (ver resolveStored).
+    const stored = resolveStored(kind, file.name);
+
     // Path estable e independiente del id del egreso (ver cabecera).
-    const path = `${auth.companyId}/${randomUUID()}.${kind.ext}`;
+    const path = `${auth.companyId}/${randomUUID()}.${stored.ext}`;
 
     const admin = createAdminClient();
     const { error: upErr } = await admin.storage
       .from(BUCKET)
-      .upload(path, buffer, { contentType: kind.mime, upsert: false });
+      .upload(path, buffer, { contentType: stored.mime, upsert: false });
 
     if (upErr) {
       return apiError('admin/expenses/attachment', upErr, {
@@ -148,7 +214,7 @@ export async function POST(request: NextRequest) {
         bucket: BUCKET,
         path,
         name: safeDisplayName(file.name),
-        mime: kind.mime,
+        mime: stored.mime,
         size: file.size,
         uploaded_at: new Date().toISOString(),
       },

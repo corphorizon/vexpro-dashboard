@@ -35,7 +35,17 @@ interface Props {
   className?: string;
 }
 
-const ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/png,image/jpeg,image/webp';
+// El servidor decide por magic bytes; esto es solo el filtro del diálogo del
+// SO. XLSX/DOCX se agregaron el 2026-09-01 (Excel como comprobante de egresos).
+const ACCEPT = [
+  '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.xlsx', '.docx',
+  'application/pdf',
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+].join(',');
 
 export function ExpenseAttachmentInput({ value, onChange, readOnly, className }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
