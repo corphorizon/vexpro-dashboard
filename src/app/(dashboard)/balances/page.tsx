@@ -503,6 +503,38 @@ export default function BalancesPage() {
   const [unipaymentLive, setUnipaymentLive] = useState<number | null>(null);
   const [unipaymentFailed, setUnipaymentFailed] = useState(false);
 
+  // ── On-chain EN VIVO (Kevin, 2026-09-01: «la trust wallet no está
+  // sincronizada») ──────────────────────────────────────────────────────────
+  // Estos canales se leían sólo en el cron de medianoche y la fila mostraba esa
+  // foto todo el día: el 1/9 el snapshot decía 80.539,70 USDT y la cadena tenía
+  // 14.807,54. Mismo contrato que los demás canales de API: en vivo si hoy,
+  // libro/snapshot si falla (nunca 0), y `degraded` cuando el dato es viejo.
+  const [onchainLive, setOnchainLive] = useState<Record<string, number>>({});
+  const [onchainFailed, setOnchainFailed] = useState<string[]>([]);
+  const [onchainReadAt, setOnchainReadAt] = useState<string | null>(null);
+  useEffect(() => {
+    // `selectedDate === hoy` en vez de `isToday`: esa constante se declara más
+    // abajo y acá haría falta subirla sin necesidad.
+    if (selectedDate !== todayISO()) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/admin/onchain-live');
+        const json = await res.json();
+        if (cancelled || !json?.success) {
+          if (!cancelled) setOnchainFailed(['*']);
+          return;
+        }
+        setOnchainLive(json.balances ?? {});
+        setOnchainFailed(json.unavailable ?? []);
+        setOnchainReadAt(json.readAt ?? null);
+      } catch {
+        if (!cancelled) setOnchainFailed(['*']);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedDate]);
+
   useEffect(() => {
     let cancelled = false;
     const fetchUniBalance = async () => {
@@ -704,6 +736,23 @@ export default function BalancesPage() {
         live: unipaymentLive,
         liveFailed: unipaymentFailed,
         liveAsOf: new Date().toISOString(),
+        stored,
+        storedAsOf,
+      });
+    }
+
+    // Canales ON-CHAIN: la clave es un dato (wallet_externa o custom_*), así
+    // que el caso no se puede escribir por nombre — se reconoce porque el
+    // endpoint devolvió saldo para esa clave (o la marcó no disponible).
+    const esOnchain =
+      Object.prototype.hasOwnProperty.call(onchainLive, key) ||
+      onchainFailed.includes(key) ||
+      onchainFailed.includes('*');
+    if (esOnchain && isToday) {
+      return pickLiveOrStored({
+        live: onchainLive[key] ?? null,
+        liveFailed: onchainFailed.includes(key) || onchainFailed.includes('*'),
+        liveAsOf: onchainReadAt,
         stored,
         storedAsOf,
       });

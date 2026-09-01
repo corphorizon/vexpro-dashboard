@@ -159,7 +159,7 @@ export interface LiveBalancesResult {
  */
 export async function fetchLiveChannelBalances(
   companyId: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; onlyOnchain?: boolean } = {},
 ): Promise<LiveBalancesResult> {
   const timeoutMs = opts.timeoutMs ?? 5000;
   const byChannel = new Map<string, number>();
@@ -173,7 +173,12 @@ export async function fetchLiveChannelBalances(
       ),
     ]);
 
-  const keys = LIVE_BALANCE_CHANNELS.filter((k) => LIVE_BALANCE_FETCHERS[k]);
+  // `onlyOnchain`: la pantalla /balances ya resuelve los PSP por su cuenta y
+  // solo necesita el on-chain — pedir los cuatro sería gastar cuatro llamadas
+  // a proveedores para tirarlas.
+  const keys = opts.onlyOnchain
+    ? []
+    : LIVE_BALANCE_CHANNELS.filter((k) => LIVE_BALANCE_FETCHERS[k]);
   const results = await Promise.allSettled(
     keys.map((k) => withTimeout(LIVE_BALANCE_FETCHERS[k](companyId))),
   );
