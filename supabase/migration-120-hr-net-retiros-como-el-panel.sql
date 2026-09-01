@@ -145,3 +145,14 @@ with recursive sub as (
 select round(sum(r.net), 2) as total_arciniegas_esperado_10702_14
   from hr_net_deposit_by_profile('71715987-5479-52c4-a990-c414fb3a9b36', '2026-08-01') r
   join sub on sub.id = r.profile_id;
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- NOTA (2026-09-01): el criterio de RETIROS de acá (transaction_amount) sigue
+-- vigente, pero la versión VIGENTE de la función es la de la migración 121: el
+-- árbol de patrocinio dejó de enlazarse solo por `sponsor_username` (un usuario
+-- renombrado se llevaba su subred entera fuera del árbol, en silencio) y pasó a
+-- resolverse por 4 capas con precedencia estricta —username, email, ID
+-- histórico de las transacciones y puente por `hierarchy`— recorriéndose por
+-- ID en vez de por strings. Con eso el subárbol de Hugo Ortiz da 687.322,96 y
+-- el de Andres Arciniegas 10.702,14, exactos contra el panel del CRM.
+-- ─────────────────────────────────────────────────────────────────────────────
