@@ -1,5 +1,21 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// El espejo del PNL diario del CRM: Mongo (Orion) → `crm_daily_pnl`.
+// El espejo del PNL diario del CRM: Mongo (Orion) → `crm_daily_pnl` **y**
+// `crm_daily_pnl_users`.
+//
+// ── DOS TABLAS, UNA SOLA LECTURA DE ORION (migración 122) ──────────────────
+// Comisiones de RRHH necesita el PnL por PERSONA y el agregado por día no lo
+// atribuye. La corrida escribe las dos tablas del MISMO barrido de documentos:
+// jamás dos lecturas del Mongo del bróker, porque dos lecturas del mismo
+// universo se separan en silencio (§1.1) y acá "separarse" significa que la
+// suma por persona deja de dar el total del día. El dueño sale de
+// `tradingaccounts.userId` — un campo MÁS en la proyección que ya se pedía
+// para el `centsFactor`, sobre la misma consulta.
+//
+// El invariante, verificable en producción para cualquier día:
+//     sum(crm_daily_pnl_users.pnl_usd) == crm_daily_pnl.pnl_usd
+// (± centavos de redondeo; los lotes y los deals NO cuadran a propósito: las
+// cuentas sin factor conocido suman unidades en el agregado y no tienen fila
+// por persona.)
 //
 // El PORQUÉ de cada número —de dónde sale, por qué se divide el centavo, qué
 // entra y qué no, el signo— está en `daily-pnl.ts`, junto a las funciones
@@ -46,9 +62,11 @@ import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
 import {
   aggregateCrmDailyPnl,
   utcDaysBetween,
+  CRM_PNL_SIN_DUENO,
   type CrmPnlAccount,
   type CrmPnlDailyDoc,
 } from './daily-pnl';
+import { round2 } from '@/lib/utils';
 
 /** Días que reescribe cada modo. Ver la cabecera. */
 export const CRM_PNL_WINDOW_FAST_DAYS = 2;
@@ -69,6 +87,16 @@ export interface CrmDailyPnlSyncResult {
   daysWithoutData: string[];
   docsRead: number;
   accountsResolved: number;
+  /** Filas (día, persona) escritas en `crm_daily_pnl_users` (migración 122). */
+  userRowsWritten: number;
+  /** Filas por persona borradas antes de reescribir los mismos días. Ver §LA PURGA. */
+  userRowsDeleted: number;
+  /** Cuentas con factor conocido pero SIN `userId`: alimentan '(sin-dueño)'. */
+  ownerlessAccounts: number;
+  /** Filas '(sin-dueño)' escritas (una por día con dinero sin dueño). */
+  ownerlessRows: number;
+  /** El dinero que quedó sin atribuir, en USD. Contado, no silenciado. */
+  ownerlessPnlUsd: number;
   elapsedMs: number;
   warnings: string[];
 }
@@ -149,7 +177,16 @@ export async function syncCrmDailyPnl(
     for (const lote of chunk(logins, LOTE_LOGINS)) {
       const accs = await db
         .collection('tradingaccounts')
-        .find({ accountId: { $in: lote } }, { projection: { _id: 0, accountId: 1, groupId: 1 } })
+        // `userId` es UN CAMPO MÁS de la proyección que ya se pedía, no una
+        // consulta nueva: el dueño de la cuenta vive en el mismo documento del
+        // que sale el `groupId` del factor de centavos. Ir a buscarlo aparte
+        // sería una segunda lectura del Mongo del bróker por corrida, y dos
+        // lecturas del mismo universo se pueden separar (§1.1) — que es
+        // exactamente lo que rompería el invariante de la migración 122.
+        .find(
+          { accountId: { $in: lote } },
+          { projection: { _id: 0, accountId: 1, groupId: 1, userId: 1 } },
+        )
         .toArray();
       for (const a of accs as Array<Record<string, unknown>>) {
         const login = a.accountId === null || a.accountId === undefined ? '' : String(a.accountId);
@@ -157,14 +194,22 @@ export async function syncCrmDailyPnl(
         const g = gid ? porGrupo.get(gid) : undefined;
         // Sin grupo o sin factor conocido, la cuenta NO entra al dinero.
         if (!g || g.cf <= 0) continue;
-        cuentas.set(login, { centsFactor: g.cf, metaTraderGroup: g.mt });
+        cuentas.set(login, {
+          centsFactor: g.cf,
+          metaTraderGroup: g.mt,
+          // Mismo `String(userId)` que `syncTradingAccounts`, para que el valor
+          // que se guarda acá sea el MISMO que `crm_trading_accounts
+          // .user_external_id` y RRHH pueda cruzar sin traducir nada.
+          userExternalId:
+            a.userId === null || a.userId === undefined ? null : String(a.userId),
+        });
       }
     }
 
     return { docs, cuentas };
   });
 
-  const { days, warnings } = aggregateCrmDailyPnl(docs, cuentas);
+  const { days, users, ownerlessAccounts, warnings } = aggregateCrmDailyPnl(docs, cuentas);
 
   const now = new Date().toISOString();
   const filas = days.map((d) => ({
@@ -189,6 +234,66 @@ export async function syncCrmDailyPnl(
     if (error) throw new Error(`crm_daily_pnl: ${error.message}`);
   }
 
+  // ── El MISMO barrido, atribuido a la persona (migración 122) ──────────────
+  // Se escribe acá y no en otra corrida a propósito: `days` y `users` salen de
+  // la misma pasada sobre los mismos documentos, así que las dos tablas
+  // quedan siempre en el mismo estado y el invariante
+  //   sum(crm_daily_pnl_users.pnl_usd del día) == crm_daily_pnl.pnl_usd
+  // se puede verificar en producción con una sola consulta.
+  //
+  // POR QUÉ ACÁ HAY UN DELETE Y EN EL AGREGADO NO: el agregado tiene UNA fila
+  // por día y el upsert la pisa sola. Por persona, lo que cambia entre dos
+  // corridas es el CONJUNTO DE CLAVES: si a un usuario le purgan los
+  // documentos (`pnl_daily_purged`, 11.331 documentos) o su cuenta cambia de
+  // dueño, su fila de ayer sobreviviría al upsert de hoy y quedaría cobrando
+  // un PnL que ya no existe.
+  //
+  // Se borran EXACTAMENTE los días que el agregado reescribe (`days`), no el
+  // rango pedido. La diferencia importa: un día del rango que Orion ya no
+  // tiene no genera fila en el agregado —hueco ≠ cero, se conserva lo que
+  // había—, y borrarlo acá dejaría al agregado con un total y a esta tabla sin
+  // nadie a quien atribuírselo. Las dos tablas envejecen juntas o el
+  // invariante deja de ser verificable.
+  //
+  // El orden (borrar y después insertar) tiene una ventana: si el proceso se
+  // muere en el medio, el día queda con total y sin desglose. Es visible por
+  // el mismo invariante y lo repara la corrida siguiente, que reescribe la
+  // ventana entera.
+  const filasUsuarios = users.map((u) => ({
+    company_id: companyId,
+    utc_day: u.utcDay,
+    user_external_id: u.userExternalId,
+    pnl_usd: u.pnlUsd,
+    volume_lots: u.volumeLots,
+    deals_count: u.dealsCount,
+    computed_at: now,
+  }));
+
+  let userRowsDeleted = 0;
+  const diasReescritos = days.map((d) => d.utcDay);
+  // `.in()` por lotes: el backfill histórico son 331 días y PostgREST manda el
+  // filtro en la URL.
+  for (const parte of chunk(diasReescritos, 200)) {
+    // `company_id` explícito: con el service role RLS no aplica (§4.2).
+    const { error, count } = await admin
+      .from('crm_daily_pnl_users')
+      .delete({ count: 'exact' })
+      .eq('company_id', companyId)
+      .in('utc_day', parte);
+    if (error) throw new Error(`crm_daily_pnl_users (delete): ${error.message}`);
+    userRowsDeleted += count ?? 0;
+  }
+
+  for (const parte of chunk(filasUsuarios, 500)) {
+    const { error } = await admin
+      .from('crm_daily_pnl_users')
+      .upsert(parte, { onConflict: 'company_id,utc_day,user_external_id' });
+    if (error) throw new Error(`crm_daily_pnl_users: ${error.message}`);
+  }
+
+  const filasSinDueno = users.filter((u) => u.userExternalId === CRM_PNL_SIN_DUENO);
+  const ownerlessPnlUsd = round2(filasSinDueno.reduce((s, u) => s + u.pnlUsd, 0));
+
   const conDatos = new Set(days.map((d) => d.utcDay));
   // El día de HOY está en curso: no tener actividad todavía no es un hueco.
   const hoy = todayUtc();
@@ -210,6 +315,11 @@ export async function syncCrmDailyPnl(
     daysWithoutData,
     docsRead: docs.length,
     accountsResolved: cuentas.size,
+    userRowsWritten: filasUsuarios.length,
+    userRowsDeleted,
+    ownerlessAccounts,
+    ownerlessRows: filasSinDueno.length,
+    ownerlessPnlUsd,
     elapsedMs: Date.now() - started,
     warnings,
   };
