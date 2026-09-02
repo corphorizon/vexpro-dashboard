@@ -33,6 +33,8 @@
 // consultas viven en la API, la traducción en la UI.
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { features } from './business-model';
+
 /**
  * `warning` = cerrar igual es legítimo (una orden aprobada que se paga el mes
  * que viene). `blocking` = no se puede cerrar, y la RPC lo rechaza aunque
@@ -146,17 +148,21 @@ export function computeCrmDrift(rows: CrmDriftInput[]): CrmDriftRow[] {
 /**
  * Cuánto le cambiarían los egresos al tenant por cerrar el mes.
  *
- * Sólo aplica a `business_model = 'company'`: es el único donde la cadena usa
- * la base CAJA (`paid`) mientras el snapshot de cierre congela el DEVENGADO
- * (`sum(amount)`). En `broker` las dos son devengado y no hay salto. Devuelve
- * `null` cuando el chequeo no corresponde — que no es lo mismo que 0.
+ * Sólo aplica a los modelos con `cashBasisExpenses` (hoy: 'company'): son los
+ * únicos donde la cadena usa la base CAJA (`paid`) mientras el snapshot de
+ * cierre congela el DEVENGADO (`sum(amount)`). Donde las dos son devengado no
+ * hay salto. Devuelve `null` cuando el chequeo no corresponde — que no es lo
+ * mismo que 0.
  */
 export function computeAccrualCashGap(params: {
   businessModel: string | null | undefined;
   totalAccrued: number;
   totalPaid: number;
 }): number | null {
-  if (params.businessModel !== 'company') return null;
+  // Mismo criterio que buildDistributionInputs: lo decide el registro, no una
+  // comparación contra el literal 'company'. Un modelo nuevo que sí usara caja
+  // habría quedado sin este chequeo y sin que nada avise.
+  if (!features(params.businessModel).cashBasisExpenses) return null;
   const gap = params.totalPaid - params.totalAccrued;
   return Math.abs(gap) < 0.005 ? 0 : gap;
 }

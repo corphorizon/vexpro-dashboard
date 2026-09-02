@@ -83,6 +83,7 @@ function PaginationControls({
 }
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
+import { useModuleAccess } from '@/lib/use-module-access';
 import { useConfirm } from '@/lib/use-confirm';
 import { FixedExpenseTemplatesPanel } from '@/components/fixed-expense-templates-panel';
 import { useApiTotals } from '@/components/realtime-movements-banner';
@@ -311,8 +312,13 @@ export default function UploadPage() {
     () => uploadSections(company?.business_model) as DataSection[],
     [company?.business_model],
   );
+  // `defaultUploadSection` puede devolver null (un modelo que no carga datos:
+  // el proveedor de liquidez). Esa cadena vacía no se usa nunca —el módulo
+  // `upload` está bloqueado para ese modelo y el guard devuelve 403 antes—,
+  // pero se escribe explícita: antes la firma decía `: string` y devolvía
+  // `undefined` sin que nada se quejara.
   const [section, setSection] = useState<DataSection>(
-    () => defaultUploadSection(company?.business_model) as DataSection,
+    () => (defaultUploadSection(company?.business_model) ?? '') as DataSection,
   );
   // Prop Firm y P&L del broker viven dentro de la pestaña Ingresos aunque
   // pertenezcan al negocio de broker: se apagan por feature, no por pestaña.
@@ -323,6 +329,7 @@ export default function UploadPage() {
   // de empresa): sin este reajuste la pestaña activa puede quedar apuntando a
   // una sección que el modelo no tiene y la pantalla se ve vacía.
   useEffect(() => {
+    if (allowedSections.length === 0) return;
     if (!allowedSections.includes(section)) setSection(allowedSections[0]);
   }, [allowedSections, section]);
 
@@ -569,6 +576,7 @@ export default function UploadPage() {
   // autosave chocaba contra el trigger cada 3 segundos en bucle infinito de
   // toasts genéricos (auditoría 2026-08-06, hallazgo prioritario).
   const selectedPeriodIsClosed = !!periods.find((p) => p.id === selectedPeriod)?.is_closed;
+  const canManagePeriods = useModuleAccess('periods');
 
   // ── El número que el CRM ya tiene, al lado del campo que se teclea ───────
   // Ventas Prop Firm y Transferencias P2P se cargan a mano acá, y el CRM las
@@ -2234,9 +2242,18 @@ export default function UploadPage() {
           <LockIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" aria-hidden />
           <p className="text-sm">
             <strong>{periodLabel}</strong> está <strong>cerrado</strong>: sus totales quedaron
-            congelados y no admite cambios. Para corregir algo, reabrí el período en{' '}
-            <Link href="/periodos" className="underline font-medium">Períodos</Link> (queda
-            registrado con motivo) o cargá el movimiento en el período abierto.
+            congelados y no admite cambios.{' '}
+            {/* El remedio se ofrece sólo a quien puede aplicarlo. Con el modelo
+                `liquidity_provider` (que sí carga inversiones pero no tiene el
+                módulo Períodos) este enlace mandaba a un 403: un consejo que no
+                se puede seguir es peor que ninguno. */}
+            {canManagePeriods && (
+              <>
+                Para corregir algo, reabrí el período en{' '}
+                <Link href="/periodos" className="underline font-medium">Períodos</Link> (queda
+                registrado con motivo) o cargá el movimiento en el período abierto.
+              </>
+            )}
           </p>
         </div>
       )}

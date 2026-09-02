@@ -120,6 +120,42 @@ describe('buildDistributionInputs — neutralización por modelo de negocio', ()
     expect(asBroker[1].investmentProfits).toBe(77);
   });
 
+  // ── Proveedor de liquidez (Kevin, 2026-09-01) ──────────────────────────
+  // El modelo NO PARTICIPA de la cadena: no tiene `partners` ni
+  // `payment_orders`, así que ninguna pantalla muestra un reparto suyo. Lo que
+  // este test fija es que el constructor no explote ni invente plata mientras
+  // tanto: la cadena se sigue calculando en el data-context (es global) y sus
+  // insumos tienen que ser honestos.
+  it("modelo 'liquidity_provider': sin P&L de broker; las inversiones, que son lo suyo, siguen entrando", () => {
+    const asPool = buildDistributionInputs(periods, sources({ businessModel: 'liquidity_provider' }));
+    expect(asPool[0].brokerPnl).toBe(0);
+    expect(asPool[0].propFirmNetIncome).toBe(0);
+    // `investments` es la única feature de dinero que tiene encendida, así que
+    // los 77 de rendimiento NO se neutralizan. Si alguien la apagara, este
+    // test cae y el módulo /inversiones se habría quedado sin razón de ser.
+    expect(asPool[1].investmentProfits).toBe(77);
+    // `other` y los egresos viajan tal cual: no hay pantalla que los cargue
+    // (su Carga de Datos tiene una sola pestaña, «inversiones»), pero si
+    // hubiera filas viejas se ven como son, sin inventar ni esconder.
+    expect(asPool[0].other).toBe(500);
+    expect(asPool[0].totalExpenses).toBe(250);
+  });
+
+  it("modelo 'liquidity_provider': egresos por DEVENGADO, como el broker", () => {
+    // `cashBasisExpenses` es false: nadie midió que este equipo cargue `paid`,
+    // y suponer que sí lleva los egresos a cero e infla la base (§2.2).
+    const conPagado = sources({
+      businessModel: 'liquidity_provider',
+      expenses: [{ period_id: 'p1', amount: 200, paid: 0 }],
+    });
+    expect(buildDistributionInputs(periods, conPagado)[0].totalExpenses).toBe(200);
+  });
+
+  it('sin períodos la cadena no explota: devuelve lista vacía', () => {
+    // Una empresa informativa puede no tener un solo período cargado.
+    expect(buildDistributionInputs([], sources({ businessModel: 'liquidity_provider' }))).toEqual([]);
+  });
+
   it("modelo 'broker' (y default/desconocido) mantiene los tres términos", () => {
     for (const model of ['broker', undefined, null, 'marciano']) {
       const inputs = buildDistributionInputs(periods, sources({ businessModel: model }));

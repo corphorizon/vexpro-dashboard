@@ -35,6 +35,7 @@ import {
 import { construirHistorial, envolverResultado, MAX_TURNOS_HISTORIAL, buildSystem } from './prompt';
 import { correrConversacion, type ClienteModelo } from './loop';
 import { MODULE_KEYS } from '@/lib/modules';
+import type { BusinessModel } from '@/lib/business-model';
 
 // ── Dobles ───────────────────────────────────────────────────────────────
 
@@ -68,7 +69,7 @@ function fakeDb(porTabla: Record<string, unknown[]> = {}): AssistantDb {
 function ctxCon(
   allowedModules: string[] | null,
   db: AssistantDb = fakeDb(),
-  businessModel: 'broker' | 'company' = 'broker',
+  businessModel: BusinessModel = 'broker',
 ): AssistantContext {
   return {
     db,

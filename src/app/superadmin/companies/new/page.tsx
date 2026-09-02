@@ -6,6 +6,10 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { DEFAULT_ACTIVE_MODULES } from '@/lib/modules';
+// El default del alta sale del registro, no de un literal: cuando se agregó un
+// tercer modelo este archivo era el único lugar donde 'broker' estaba escrito a
+// mano fuera de business-model.ts.
+import { DEFAULT_BUSINESS_MODEL } from '@/lib/business-model';
 import { CompanyForm, type CompanyFormValues } from '../_form';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -28,7 +32,7 @@ const DEFAULT_VALUES: CompanyFormValues = {
   active_modules: [...DEFAULT_ACTIVE_MODULES],
   status: 'active',
   reserve_pct: 0.1,
-  business_model: 'broker',
+  business_model: DEFAULT_BUSINESS_MODEL,
   currency: 'USD',
 };
 
