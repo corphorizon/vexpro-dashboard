@@ -28,9 +28,7 @@ import {
   Landmark,
   AlertTriangle,
   BookUser,
-  ExternalLink,
   FileText,
-  Upload,
 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -41,14 +39,22 @@ import { cn, formatCurrency } from '@/lib/utils';
 import { todayUtcISO } from '@/lib/dates';
 import {
   CRYPTO_NETWORKS,
+  LEGACY_ATTACHMENT_ID,
+  MAX_PAYMENT_ATTACHMENTS,
   computeLineAmount,
   computeTotals,
   type PaymentBeneficiary,
   type PaymentMethod,
   type PaymentOrder,
+  type PaymentOrderAttachment,
   type PaymentOrderInput,
   type PaymentOrderLocale,
 } from '@/lib/payment-orders/types';
+import { PickedFileList, SavedFileList } from '@/components/payment-orders/order-files';
+import {
+  ATTACHMENT_ACCEPT,
+  MAX_ATTACHMENT_SIZE,
+} from '@/lib/payment-orders/attachment-files';
 // NOTA: estas helpers las escribe el módulo hermano (src/lib/payment-orders/api.ts).
 // Firmas asumidas: createPaymentOrder(input), updatePaymentOrder(id, input),
 // transitionPaymentOrder(id, to, payload?), listBeneficiaries().
@@ -59,7 +65,7 @@ import {
   listBeneficiaries,
   listLineSuggestions,
   type LineSuggestion,
-  uploadOrderAttachment,
+  uploadOrderAttachments,
   deleteOrderAttachment,
   orderAttachmentUrl,
 } from '@/lib/payment-orders/api';
@@ -90,17 +96,10 @@ function allowedCurrencies(companyCurrency: string | null | undefined): string[]
   return base === 'USD' ? ['USD', 'USDT'] : [base];
 }
 
-/** Documento de respaldo — mismos límites que el endpoint (validar acá evita
- *  subir 30 MB para nada). */
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx';
-
-function formatFileSize(bytes: number | null): string {
-  const n = Number(bytes) || 0;
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
+/** Documentos de respaldo — mismos límites que el endpoint, importados de él
+ *  (validar acá evita subir 100 MB para nada; la autoridad sigue siendo el
+ *  servidor). El tope de CANTIDAD es MAX_PAYMENT_ATTACHMENTS. */
+const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_SIZE;
 
 /**
  * Textos del bloque de moneda. Viven acá —y no en i18n.tsx— para que el
@@ -224,47 +223,89 @@ export function PaymentOrderForm({ mode, order }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState<null | 'draft' | 'submit'>(null);
 
-  // ── Documento de respaldo (opcional) ───────────────────────────────────────
-  // En alta todavía no hay id de orden, así que el archivo se queda en state y
-  // se sube DESPUÉS de guardar, en su propio try: es un adjunto opcional, un
-  // fallo al subirlo nunca puede desandar ni bloquear la orden ya guardada.
+  // ── Documentos de respaldo (opcionales, hasta MAX_PAYMENT_ATTACHMENTS) ─────
+  // En alta todavía no hay id de orden, así que los archivos se quedan en state
+  // y se suben DESPUÉS de guardar, en su propio try: son adjuntos opcionales,
+  // un fallo al subirlos nunca puede desandar ni bloquear la orden ya guardada.
   // En edición se sigue el mismo camino para que "guardar" sea un solo gesto.
   const attachInputRef = useRef<HTMLInputElement>(null);
-  const [attachFile, setAttachFile] = useState<File | null>(null);
-  const [attachRemoved, setAttachRemoved] = useState(false);
+  /** Elegidos y todavía sin subir. */
+  const [attachFiles, setAttachFiles] = useState<File[]>([]);
+  /** Ids de respaldos YA guardados que se quitan al guardar (solo en edición). */
+  const [attachRemovedIds, setAttachRemovedIds] = useState<string[]>([]);
   const [attachError, setAttachError] = useState('');
-  /** Adjunto ya guardado que sigue vigente (no lo pisó un archivo nuevo ni se marcó para quitar). */
-  const existingAttachment =
-    order?.attachment_path && !attachFile && !attachRemoved ? order : null;
 
-  function onAttachPicked(file: File | null) {
-    if (!file) return;
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      setAttachFile(null);
+  /**
+   * Respaldos ya guardados que siguen vigentes (no se marcaron para quitar).
+   *
+   * Fallback legado: una orden anterior a la migración 127 (o cuyo backfill no
+   * corrió) no trae `attachments` pero sí las columnas attachment_*. Sin esta
+   * rama, abrir a editar esa orden mostraría "sin respaldo" y nadie vería un
+   * error — el fallo silencioso que este repo persigue.
+   */
+  const savedAttachments = useMemo<PaymentOrderAttachment[]>(() => {
+    const list: PaymentOrderAttachment[] =
+      order?.attachments && order.attachments.length > 0
+        ? order.attachments
+        : order?.attachment_path
+          ? [{
+              id: LEGACY_ATTACHMENT_ID,
+              file_name: order.attachment_name,
+              mime: order.attachment_mime,
+              size: order.attachment_size,
+              uploaded_at: order.attachment_uploaded_at ?? '',
+            }]
+          : [];
+    return list.filter((a) => !attachRemovedIds.includes(a.id));
+  }, [order, attachRemovedIds]);
+
+  /** Cuántos habrá después de guardar: los que quedan más los elegidos. */
+  const attachTotal = savedAttachments.length + attachFiles.length;
+  const attachLeft = MAX_PAYMENT_ATTACHMENTS - attachTotal;
+
+  function onAttachPicked(picked: File[]) {
+    if (picked.length === 0) return;
+    // Los dos chequeos que el servidor repite (él es la autoridad): acá solo
+    // evitan un round-trip perdido. Ninguno es silencioso: si no entran, se
+    // dice cuántos entran.
+    if (picked.some((f) => f.size > MAX_ATTACHMENT_BYTES)) {
       setAttachError(t('payOrders.attachTooLarge'));
       return;
     }
+    if (picked.length > attachLeft) {
+      setAttachError(t('payOrders.attachTooMany', { max: String(MAX_PAYMENT_ATTACHMENTS) }));
+      return;
+    }
     setAttachError('');
-    setAttachRemoved(false);
-    setAttachFile(file);
+    // Acumulativo: cada pasada por el input SUMA a lo ya elegido (así se pueden
+    // juntar archivos de carpetas distintas sin perder los anteriores).
+    setAttachFiles((prev) => [...prev, ...picked]);
   }
 
   /**
-   * Sincroniza el adjunto con la orden ya guardada. Devuelve el mensaje de
-   * error si algo falló — el caller lo muestra como aviso, NUNCA como fallo del
-   * guardado.
+   * Sincroniza los respaldos con la orden ya guardada: primero los borrados,
+   * después las subidas (una por request, ver uploadOrderAttachments). Devuelve
+   * el mensaje de error si algo falló — el caller lo muestra como aviso, NUNCA
+   * como fallo del guardado, y lo que sí entró queda arriba.
    */
-  async function syncAttachment(orderId: string): Promise<string | null> {
-    try {
-      if (attachFile) {
-        await uploadOrderAttachment(orderId, attachFile);
-      } else if (attachRemoved && order?.attachment_path) {
-        await deleteOrderAttachment(orderId);
+  async function syncAttachments(orderId: string): Promise<string | null> {
+    const problems: string[] = [];
+    for (const removedId of attachRemovedIds) {
+      try {
+        await deleteOrderAttachment(orderId, removedId);
+      } catch (err) {
+        problems.push(err instanceof Error ? err.message : t('payOrders.attachError'));
       }
-      return null;
-    } catch (err) {
-      return err instanceof Error ? err.message : t('payOrders.attachError');
     }
+    if (attachFiles.length > 0) {
+      try {
+        const { failures } = await uploadOrderAttachments(orderId, attachFiles);
+        for (const f of failures) problems.push(`${f.name}: ${f.error}`);
+      } catch (err) {
+        problems.push(err instanceof Error ? err.message : t('payOrders.attachError'));
+      }
+    }
+    return problems.length > 0 ? problems.join(' · ') : null;
   }
 
   const set = useCallback(<K extends keyof FormState>(key: K, value: FormState[K]) => {
@@ -505,9 +546,10 @@ export function PaymentOrderForm({ mode, order }: Props) {
       const saved = mode === 'edit' && order ? await updatePaymentOrder(order.id, input) : await createPaymentOrder(input);
       const id = saved?.id ?? order?.id;
 
-      // El adjunto va DESPUÉS del guardado y antes de la transición: si falla,
-      // solo se avisa — la orden ya está guardada y no se toca.
-      const attachIssue = id ? await syncAttachment(id) : null;
+      // Los adjuntos van DESPUÉS del guardado y antes de la transición: si
+      // alguno falla, solo se avisa (con nombre y motivo) — la orden ya está
+      // guardada y no se toca, y los que sí subieron quedan.
+      const attachIssue = id ? await syncAttachments(id) : null;
 
       if (action === 'submit' && id) {
         await transitionPaymentOrder(id, 'pending');
@@ -1016,116 +1058,106 @@ export function PaymentOrderForm({ mode, order }: Props) {
             aria-label={t('payOrders.sectionNotes')}
           />
 
-          {/* ── Documento de respaldo (opcional) ─────────────────────────
-              Va pegado al concepto porque es su respaldo documental: la
+          {/* ── Documentos de respaldo (opcionales, hasta 10) ────────────
+              Van pegados al concepto porque son su respaldo documental: la
               factura, el contrato o la cotización que justifica el pago. NO
               confundir con el comprobante de pago, que se adjunta al marcar
               la orden como pagada. */}
           <div className="border-t border-border pt-4 space-y-2">
-            <span className="block text-sm font-medium">{t('payOrders.attachLabel')}</span>
+            <div className="flex items-center justify-between gap-3">
+              <span className="block text-sm font-medium">{t('payOrders.attachLabel')}</span>
+              {attachTotal > 0 && (
+                <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                  {t('payOrders.attachCount', {
+                    n: String(attachTotal),
+                    max: String(MAX_PAYMENT_ATTACHMENTS),
+                  })}
+                </span>
+              )}
+            </div>
 
-            {/* Un solo input oculto sirve para "adjuntar" y "reemplazar". */}
+            {/* `multiple`: se pueden elegir varios de una. El input se limpia
+                siempre para poder volver a elegir el mismo archivo. */}
             <input
               ref={attachInputRef}
               type="file"
+              multiple
               accept={ATTACHMENT_ACCEPT}
               className="sr-only"
               onChange={(e) => {
-                const file = e.target.files?.[0] ?? null;
-                e.target.value = ''; // permite volver a elegir el mismo archivo
-                onAttachPicked(file);
+                const picked = Array.from(e.target.files ?? []);
+                e.target.value = '';
+                onAttachPicked(picked);
               }}
             />
 
-            {existingAttachment ? (
-              // Edición con adjunto ya guardado: no se muestra un picker vacío.
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium break-all">
-                    {existingAttachment.attachment_name || t('payOrders.attachSection')}
-                  </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {formatFileSize(existingAttachment.attachment_size)}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2 shrink-0">
-                  <a
-                    href={orderAttachmentUrl(existingAttachment.id)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    aria-label={t('payOrders.attachViewAria')}
-                  >
-                    <Button type="button" variant="secondary">
-                      <ExternalLink className="w-4 h-4" />
-                      {t('payOrders.attachView')}
-                    </Button>
-                  </a>
-                  <Button
-                    type="button"
-                    aria-label={t('payOrders.attachReplaceAria')}
-                    onClick={() => attachInputRef.current?.click()}
-                  >
-                    <Upload className="w-4 h-4" />
-                    {t('payOrders.attachReplace')}
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    aria-label={t('payOrders.attachRemoveAria')}
-                    onClick={() => {
-                      setAttachFile(null);
-                      setAttachRemoved(true);
-                      setAttachError('');
-                    }}
-                  >
-                    <Trash2 className="w-4 h-4" />
-                    {t('payOrders.attachRemove')}
-                  </Button>
-                </div>
-              </div>
-            ) : attachFile ? (
-              // Archivo elegido y todavía sin subir: se sube al guardar.
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="text-sm font-medium break-all">{attachFile.name}</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {formatFileSize(attachFile.size)} · {t('payOrders.attachPending')}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  aria-label={t('payOrders.attachClearAria')}
-                  onClick={() => {
-                    setAttachFile(null);
-                    setAttachError('');
-                  }}
-                >
-                  <Trash2 className="w-4 h-4" />
-                  {t('payOrders.attachRemove')}
-                </Button>
-              </div>
-            ) : (
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                <Button
-                  type="button"
-                  variant="secondary"
-                  aria-label={t('payOrders.attachAttach')}
-                  onClick={() => attachInputRef.current?.click()}
-                >
-                  <FileText className="w-4 h-4" />
-                  {t('payOrders.attachAttach')}
-                </Button>
-                {attachRemoved && order?.attachment_path && (
-                  <span className="text-xs text-warning">{t('payOrders.attachPendingRemove')}</span>
-                )}
-              </div>
+            {/* Edición: los que YA están guardados. Se pueden abrir y marcar
+                para quitar; el borrado real ocurre al guardar la orden. */}
+            {savedAttachments.length > 0 && (
+              <SavedFileList
+                files={savedAttachments}
+                texts={{
+                  fallbackName: t('payOrders.attachSection'),
+                  uploadedAt: (date) => t('payOrders.attachUploaded', { date }),
+                  view: t('payOrders.attachView'),
+                  viewAria: (name) => t('payOrders.attachViewItemAria', { name }),
+                  download: t('payOrders.attachDownload'),
+                  downloadAria: (name) => t('payOrders.attachDownloadAria', { name }),
+                  remove: t('payOrders.attachRemove'),
+                  removeAria: (name) => t('payOrders.attachRemoveItemAria', { name }),
+                }}
+                hrefFor={(f) => orderAttachmentUrl(order!.id, f.id)}
+                downloadHrefFor={(f) => orderAttachmentUrl(order!.id, f.id, { download: true })}
+                onRemove={(f) => {
+                  setAttachRemovedIds((prev) => [...prev, f.id]);
+                  setAttachError('');
+                }}
+              />
             )}
+
+            {/* Elegidos y todavía sin subir: se suben al guardar. */}
+            <PickedFileList
+              files={attachFiles}
+              onRemove={(i) => {
+                setAttachFiles((prev) => prev.filter((_, j) => j !== i));
+                setAttachError('');
+              }}
+              removeAria={(name) => t('payOrders.attachUnselectAria', { name })}
+              pendingNote={t('payOrders.attachPending')}
+            />
+
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+              <Button
+                type="button"
+                variant="secondary"
+                aria-label={
+                  attachTotal === 0 ? t('payOrders.attachAttach') : t('payOrders.attachAddAria')
+                }
+                disabled={attachLeft <= 0}
+                onClick={() => attachInputRef.current?.click()}
+              >
+                <FileText className="w-4 h-4" />
+                {attachTotal === 0 ? t('payOrders.attachAttach') : t('payOrders.attachAdd')}
+              </Button>
+              {attachRemovedIds.length > 0 && (
+                <span className="text-xs text-warning">
+                  {attachRemovedIds.length === 1
+                    ? t('payOrders.attachPendingRemove')
+                    : t('payOrders.attachPendingRemoveMany', {
+                        count: String(attachRemovedIds.length),
+                      })}
+                </span>
+              )}
+            </div>
 
             {attachError ? (
               <p className="text-xs text-negative">{attachError}</p>
             ) : (
-              <p className="text-xs text-muted-foreground">{t('payOrders.attachHint')}</p>
+              <p className="text-xs text-muted-foreground">
+                {attachLeft <= 0
+                  ? t('payOrders.attachMaxReached', { max: String(MAX_PAYMENT_ATTACHMENTS) })
+                  : t('payOrders.attachHintMulti', { max: String(MAX_PAYMENT_ATTACHMENTS) })}
+              </p>
             )}
           </div>
         </Card>

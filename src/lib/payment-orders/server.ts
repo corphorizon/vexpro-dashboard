@@ -14,8 +14,10 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   computeTotals,
+  LEGACY_ATTACHMENT_ID,
   type PaymentBeneficiary,
   type PaymentOrder,
+  type PaymentOrderAttachment,
   type PaymentOrderInput,
   type PaymentOrderLine,
   type PaymentOrderProof,
@@ -51,12 +53,77 @@ export async function loadOrderProofs(
   return (data ?? []) as unknown as PaymentOrderProof[];
 }
 
-/** La orden con su array `proofs` — lo que consume el detalle del cliente. */
-export async function withProofs(
+// ── Documentos de respaldo (migración 127) ──────────────────────────────────
+// Misma forma que los comprobantes, otra tabla y otro bucket. Ver la migración:
+// si la orden TIENE filas en payment_order_attachments, esas mandan; si no,
+// se cae a las cinco columnas legadas de payment_orders.
+
+/** Lo único que la UI necesita ver de un respaldo. `storage_path` queda adentro. */
+export const ATTACHMENT_CLIENT_COLUMNS = 'id, file_name, mime, size, uploaded_at';
+
+/**
+ * Respaldos de una orden, en el orden en que se muestran.
+ *
+ * FALLBACK LEGADO — no es paranoia: el código se despliega ANTES de que Kevin
+ * aplique la migración a mano, así que hay una ventana en la que la tabla no
+ * existe (error 42P01) y otra en la que existe pero el backfill no corrió. En
+ * las dos, una orden con adjunto tiene que seguir MOSTRÁNDOLO: devolver []
+ * sería exactamente el fallo que no da error — un número plausible y falso.
+ */
+export async function loadOrderAttachments(
+  admin: SupabaseClient,
+  order: {
+    id: string;
+    attachment_path?: string | null;
+    attachment_name?: string | null;
+    attachment_mime?: string | null;
+    attachment_size?: number | null;
+    attachment_uploaded_at?: string | null;
+  },
+): Promise<PaymentOrderAttachment[]> {
+  const legacy = (): PaymentOrderAttachment[] =>
+    order.attachment_path
+      ? [{
+          id: LEGACY_ATTACHMENT_ID,
+          file_name: order.attachment_name ?? null,
+          mime: order.attachment_mime ?? null,
+          size: order.attachment_size ?? null,
+          uploaded_at: order.attachment_uploaded_at ?? '',
+        }]
+      : [];
+
+  const { data, error } = await admin
+    .from('payment_order_attachments')
+    .select(ATTACHMENT_CLIENT_COLUMNS)
+    .eq('payment_order_id', order.id)
+    .order('sort_order', { ascending: true })
+    .order('uploaded_at', { ascending: true });
+
+  if (error) {
+    console.error('[payment-orders] respaldos:', error.message);
+    return legacy();
+  }
+  const rows = (data ?? []) as unknown as PaymentOrderAttachment[];
+  return rows.length > 0 ? rows : legacy();
+}
+
+/**
+ * La orden con sus arrays `proofs` y `attachments` — lo que consume el detalle.
+ *
+ * Se cargan los DOS juntos porque las cuatro rutas del módulo devuelven la
+ * orden completa: si una devolviera solo `proofs`, el cliente que reemplaza
+ * estado con esa respuesta borraría la lista de respaldos de la pantalla sin
+ * que nada falle.
+ */
+export async function withFiles(
   admin: SupabaseClient,
   order: PaymentOrder,
 ): Promise<PaymentOrder> {
-  return { ...order, proofs: await loadOrderProofs(admin, order.id) };
+  const [proofs, attachments] = await Promise.all([
+    loadOrderProofs(admin, order.id),
+    loadOrderAttachments(admin, order),
+  ]);
+  return { ...order, proofs, attachments };
 }
 
 /**

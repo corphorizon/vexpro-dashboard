@@ -14,7 +14,7 @@ import {
   createExpenseForPaidOrder,
   normalizeOrder,
   primaryProofForExpense,
-  withProofs,
+  withFiles,
 } from '@/lib/payment-orders/server';
 import { notifyOrderTransition } from '@/lib/payment-orders/notifications';
 
@@ -267,9 +267,10 @@ export async function POST(
         (reference ? ` — ref: ${reference}` : ''),
     });
 
-    // La orden viaja SIEMPRE con `proofs` para que el cliente reemplace estado
-    // sin un refetch (mismo shape que devuelven /[id] GET y /proof).
-    return NextResponse.json({ success: true, order: await withProofs(admin, result), warning });
+    // La orden viaja SIEMPRE con `proofs` y `attachments` para que el cliente
+    // reemplace estado sin un refetch (mismo shape que /[id] GET, /proof y
+    // /attachment).
+    return NextResponse.json({ success: true, order: await withFiles(admin, result), warning });
   } catch (err) {
     return apiError('admin/payment-orders/transition', err, { status: 500 });
   }

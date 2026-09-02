@@ -39,17 +39,31 @@ export interface PaymentOrderLine {
   amount: number;
 }
 
-// ── Comprobantes de pago ────────────────────────────────────────────────────
-// Espeja supabase/migration-086-payment-order-proofs.sql.
+// ── Archivos adjuntos de una orden ──────────────────────────────────────────
+// Dos tipos, dos tablas hijas con la MISMA forma:
+//   · comprobantes    → payment_order_proofs      (migración 086)
+//   · respaldos       → payment_order_attachments (migración 127)
+// Todo lo que sigue —el tope, la fila que ve la UI, el mensaje de "no entra"—
+// vive acá y en ningún otro lado.
 
 /**
- * Tope de comprobantes por orden (pedido de Kevin, 2026-08-17).
+ * Tope de archivos por orden y por tipo (pedido de Kevin: "hasta 10 archivos",
+ * 2026-09-02). Antes eran 5 comprobantes; sube a 10 junto con los respaldos.
  *
- * ÚNICA fuente de verdad: la usan el endpoint (autoridad real) y la UI (para
- * deshabilitar el botón y avisar antes de subir). Un "5" suelto en dos archivos
- * es la forma más segura de que un día el cliente permita 5 y el servidor 3.
+ * UN SOLO TOPE PARA LOS DOS: dos números distintos obligan al usuario a
+ * recordar cuál rige dónde y a nosotros a explicar "¿por qué acá 5 y allá 10?".
+ * Las constantes quedan separadas por nombre (son reglas distintas y mañana
+ * pueden divergir), pero hoy salen del mismo valor.
+ *
+ * ÚNICA fuente de verdad: las usan el endpoint (autoridad real) y la UI (para
+ * deshabilitar el botón y avisar antes de subir). Un "10" suelto en dos
+ * archivos es la forma más segura de que un día el cliente permita 10 y el
+ * servidor 5.
  */
-export const MAX_PAYMENT_PROOFS = 5;
+export const MAX_PAYMENT_PROOFS = 10;
+
+/** Tope de documentos de respaldo por orden. Ver MAX_PAYMENT_PROOFS. */
+export const MAX_PAYMENT_ATTACHMENTS = 10;
 
 /** Fila de payment_order_proofs tal como la ve la UI (sin el storage_path: el
  *  path del bucket nunca sale del servidor). */
@@ -61,23 +75,62 @@ export interface PaymentOrderProof {
   uploaded_at: string;
 }
 
+/** Fila de payment_order_attachments tal como la ve la UI. Misma forma que
+ *  PaymentOrderProof a propósito: el mismo componente muestra las dos listas. */
+export type PaymentOrderAttachment = PaymentOrderProof;
+
+/**
+ * Id sintético del respaldo LEGADO — el que todavía vive en las cinco columnas
+ * attachment_* de payment_orders porque la migración 127 no corrió (o el
+ * backfill no lo alcanzó).
+ *
+ * Existe para que la UI y el endpoint traten a ese archivo como a cualquier
+ * otro de la lista (verlo, descargarlo, quitarlo) sin una segunda rama de
+ * "orden vieja" en cada componente. Nunca es un uuid, así que no puede
+ * colisionar con un id real.
+ */
+export const LEGACY_ATTACHMENT_ID = 'legacy';
+
 /**
  * ¿Entran `incoming` archivos nuevos sobre `existing` ya guardados?
  *
  * Pura a propósito: es la regla que el servidor tiene que aplicar sí o sí y la
  * UI quiere anticipar, así que se testea sin Supabase ni DOM. Devuelve el
  * mensaje en castellano (mostrable tal cual) o null si entra.
+ *
+ * El recorte NUNCA es silencioso: el mensaje dice cuántos hay, cuántos entran
+ * todavía y cuál es el máximo (regla del repo — un recorte que no se avisa es
+ * indistinguible de "no hay más").
  */
-export function proofCountError(existing: number, incoming: number): string | null {
+function countError(
+  existing: number,
+  incoming: number,
+  max: number,
+  singular: string,
+  plural: string,
+): string | null {
   if (incoming <= 0) return 'No se recibió ningún archivo.';
-  const total = existing + incoming;
-  if (total > MAX_PAYMENT_PROOFS) {
-    const libres = Math.max(0, MAX_PAYMENT_PROOFS - existing);
+  if (existing + incoming > max) {
+    const libres = Math.max(0, max - existing);
     return libres === 0
-      ? `La orden ya tiene ${MAX_PAYMENT_PROOFS} comprobantes (el máximo). Quitá alguno antes de subir otro.`
-      : `La orden ya tiene ${existing} comprobante${existing === 1 ? '' : 's'}: solo se pueden agregar ${libres} más (máximo ${MAX_PAYMENT_PROOFS}).`;
+      ? `La orden ya tiene ${max} ${plural} (el máximo). Quitá alguno antes de subir otro.`
+      : `La orden ya tiene ${existing} ${existing === 1 ? singular : plural}: solo se pueden agregar ${libres} más (máximo ${max}).`;
   }
   return null;
+}
+
+export function proofCountError(existing: number, incoming: number): string | null {
+  return countError(existing, incoming, MAX_PAYMENT_PROOFS, 'comprobante', 'comprobantes');
+}
+
+export function attachmentCountError(existing: number, incoming: number): string | null {
+  return countError(
+    existing,
+    incoming,
+    MAX_PAYMENT_ATTACHMENTS,
+    'documento de respaldo',
+    'documentos de respaldo',
+  );
 }
 
 export interface PaymentOrder {
@@ -156,12 +209,21 @@ export interface PaymentOrder {
   payment_proof_size: number | null;
   payment_proof_uploaded_at: string | null;
 
-  // Documento de respaldo — OPCIONAL y DISTINTO del comprobante de arriba:
-  // acá va lo que JUSTIFICA la orden (factura del proveedor, contrato,
-  // cotización), no la prueba de que el pago se hizo. Se guarda el PATH dentro
-  // del bucket privado `payment-attachments`: la lectura pasa por
-  // /api/admin/payment-orders/[id]/attachment, que valida sesión + empresa y
-  // emite una URL firmada de corta vida.
+  // Documentos de respaldo — OPCIONALES, hasta MAX_PAYMENT_ATTACHMENTS, y
+  // DISTINTOS del comprobante de arriba: acá va lo que JUSTIFICA la orden
+  // (factura del proveedor, contrato, cotización), no la prueba de que el pago
+  // se hizo. Viven en la tabla payment_order_attachments (migración 127); el
+  // archivo está en el bucket PRIVADO `payment-attachments` y la lectura pasa
+  // por /api/admin/payment-orders/[id]/attachment?attachment_id=…, que valida
+  // sesión + empresa y emite una URL firmada de corta vida.
+  //
+  // Opcional en el tipo porque no todas las respuestas lo traen (el listado no
+  // hace el join); el detalle y las respuestas de /attachment sí.
+  attachments?: PaymentOrderAttachment[];
+
+  // LEGADO (migración 127) — el respaldo único de antes. Se conserva para que
+  // un rollback del código siga funcionando; NO leer de acá en código nuevo: si
+  // la orden tiene filas en payment_order_attachments, esas mandan.
   attachment_path: string | null;
   attachment_name: string | null;
   attachment_mime: string | null;

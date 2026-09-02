@@ -22,14 +22,12 @@ import {
   Ban,
   CheckCheck,
   Download,
-  ExternalLink,
   FileText,
   History,
   Landmark,
   Paperclip,
   Pencil,
   Send,
-  Trash2,
   Upload,
   Wallet,
   X,
@@ -51,8 +49,10 @@ import { formatDate, formatDateTime, todayUtcISO } from '@/lib/dates';
 import {
   canTransition,
   isEditable,
+  MAX_PAYMENT_ATTACHMENTS,
   MAX_PAYMENT_PROOFS,
   type PaymentOrder,
+  type PaymentOrderAttachment,
   type PaymentOrderLine,
   type PaymentOrderProof,
   type PaymentOrderStatus,
@@ -64,10 +64,15 @@ import {
   orderAttachmentUrl,
   paymentProofUrl,
   transitionPaymentOrder,
-  uploadOrderAttachment,
+  uploadOrderAttachments,
   uploadPaymentProofs,
   type TransitionOptions,
 } from '@/lib/payment-orders/api';
+import {
+  PickedFileList,
+  SavedFileList,
+} from '@/components/payment-orders/order-files';
+import { ATTACHMENT_ACCEPT, MAX_ATTACHMENT_SIZE } from '@/lib/payment-orders/attachment-files';
 
 type Dialog =
   | null
@@ -87,16 +92,11 @@ const MAX_PROOF_BYTES = 10 * 1024 * 1024;
 const PROOF_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp';
 const MAX_PROOFS_STR = String(MAX_PAYMENT_PROOFS);
 
-/** Documento de respaldo: mismo tope, pero admite además Office (docx/xlsx). */
-const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
-const ATTACHMENT_ACCEPT = '.pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx';
-
-function formatFileSize(bytes: number | null): string {
-  const n = Number(bytes) || 0;
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
+/** Documento de respaldo: mismo tope por archivo, pero admite además Office
+ *  (docx/xlsx). El `accept` y el tope de bytes salen del módulo compartido para
+ *  que la UI no pueda ofrecer un formato que el endpoint rechaza. */
+const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_SIZE;
+const MAX_ATTACHMENTS_STR = String(MAX_PAYMENT_ATTACHMENTS);
 
 
 const INPUT =
@@ -261,22 +261,53 @@ export default function OrdenPagoDetallePage() {
     }
   }
 
-  // ── Documento de respaldo (adjunto opcional) ──────────────────────────────
-  // OTRO adjunto, no el comprobante: acá va lo que JUSTIFICA la orden (factura,
-  // contrato, cotización). Bucket y endpoint propios.
+  // ── Documentos de respaldo (adjuntos opcionales, hasta MAX_PAYMENT_ATTACHMENTS) ──
+  // OTROS adjuntos, no los comprobantes: acá va lo que JUSTIFICA la orden
+  // (factura, contrato, cotización). Bucket y endpoint propios. Desde la
+  // migración 127 son una LISTA, con las mismas reglas que los comprobantes.
   const attachInputRef = useRef<HTMLInputElement>(null);
   const [attachBusy, setAttachBusy] = useState(false);
+  /** Cuál se está por borrar: con varios, "borrá el respaldo" no alcanza. */
+  const [attachToRemove, setAttachToRemove] = useState<PaymentOrderAttachment | null>(null);
 
-  async function onAttachmentPicked(file: File | null) {
-    if (!order || !file) return;
-    if (file.size > MAX_ATTACHMENT_BYTES) {
+  const attachments = useMemo(() => order?.attachments ?? [], [order?.attachments]);
+  const attachmentsFull = attachments.length >= MAX_PAYMENT_ATTACHMENTS;
+
+  async function onAttachmentsPicked(picked: File[]) {
+    if (!order || picked.length === 0) return;
+    // Dos chequeos que el servidor repite (él es la autoridad): acá solo evitan
+    // un round-trip perdido con 100 MB de subida.
+    if (attachments.length + picked.length > MAX_PAYMENT_ATTACHMENTS) {
+      toast.error(t('payOrders.attachTooMany', { max: MAX_ATTACHMENTS_STR }));
+      return;
+    }
+    if (picked.some((f) => f.size > MAX_ATTACHMENT_BYTES)) {
       toast.error(t('payOrders.attachTooLarge'));
       return;
     }
     setAttachBusy(true);
     try {
-      setOrder(await uploadOrderAttachment(order.id, file));
-      toast.success(t('payOrders.attachUploadOk'));
+      // Uno por request: lo que entró QUEDA aunque uno falle, y el aviso dice
+      // cuál falló y por qué (nunca un "no se pudo" genérico que se traga el
+      // detalle).
+      const { order: updated, failures } = await uploadOrderAttachments(order.id, picked);
+      if (updated) setOrder(updated);
+      const ok = picked.length - failures.length;
+      if (ok > 0) {
+        toast.success(
+          ok === 1
+            ? t('payOrders.attachUploadOk')
+            : t('payOrders.attachUploadOkMany', { count: String(ok) }),
+        );
+      }
+      if (failures.length > 0) {
+        const detail = failures.map((f) => `${f.name}: ${f.error}`).join(' · ');
+        toast.error(
+          ok > 0
+            ? t('payOrders.attachSomeFailed', { error: detail })
+            : detail,
+        );
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('payOrders.attachError'));
     } finally {
@@ -285,11 +316,12 @@ export default function OrdenPagoDetallePage() {
   }
 
   async function removeAttachment() {
-    if (!order) return;
+    if (!order || !attachToRemove) return;
     setAttachBusy(true);
     try {
-      setOrder(await deleteOrderAttachment(order.id));
+      setOrder(await deleteOrderAttachment(order.id, attachToRemove.id));
       setDialog(null);
+      setAttachToRemove(null);
       toast.success(t('payOrders.attachRemoveOk'));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('payOrders.attachError'));
@@ -558,72 +590,27 @@ export default function OrdenPagoDetallePage() {
               />
 
               {proofs.length > 0 ? (
-                <ul className="divide-y divide-border">
-                  {proofs.map((p) => (
-                    <li
-                      key={p.id}
-                      className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-3 first:pt-0 last:pb-0"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium break-all">
-                          {p.file_name || t('payOrders.proofSection')}
-                        </p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          {formatFileSize(p.size)}
-                          {p.uploaded_at && (
-                            <>
-                              {' · '}
-                              {t('payOrders.proofUploaded', { date: formatDateTime(p.uploaded_at) })}
-                            </>
-                          )}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <a
-                          href={paymentProofUrl(order.id, p.id)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          aria-label={t('payOrders.proofViewItemAria', {
-                            name: p.file_name || '',
-                          })}
-                        >
-                          <Button variant="secondary">
-                            <ExternalLink className="w-4 h-4" />
-                            {t('payOrders.proofView')}
-                          </Button>
-                        </a>
-                        {/* La descarga usa su propia URL firmada (el servidor le
-                            pone Content-Disposition: attachment): con el
-                            redirect cross-origin, un <a download> no alcanza. */}
-                        <a
-                          href={paymentProofUrl(order.id, p.id, { download: true })}
-                          aria-label={t('payOrders.proofDownloadAria', {
-                            name: p.file_name || '',
-                          })}
-                        >
-                          <Button variant="secondary">
-                            <Download className="w-4 h-4" />
-                            {t('payOrders.proofDownload')}
-                          </Button>
-                        </a>
-                        <Button
-                          variant="ghost"
-                          aria-label={t('payOrders.proofRemoveItemAria', {
-                            name: p.file_name || '',
-                          })}
-                          disabled={proofBusy}
-                          onClick={() => {
-                            setProofToRemove(p);
-                            setDialog('removeProof');
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          {t('payOrders.proofRemove')}
-                        </Button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
+                <SavedFileList
+                  files={proofs}
+                  texts={{
+                    fallbackName: t('payOrders.proofSection'),
+                    uploadedAt: (date) =>
+                      t('payOrders.proofUploaded', { date: formatDateTime(date) }),
+                    view: t('payOrders.proofView'),
+                    viewAria: (name) => t('payOrders.proofViewItemAria', { name }),
+                    download: t('payOrders.proofDownload'),
+                    downloadAria: (name) => t('payOrders.proofDownloadAria', { name }),
+                    remove: t('payOrders.proofRemove'),
+                    removeAria: (name) => t('payOrders.proofRemoveItemAria', { name }),
+                  }}
+                  hrefFor={(f) => paymentProofUrl(order.id, f.id)}
+                  downloadHrefFor={(f) => paymentProofUrl(order.id, f.id, { download: true })}
+                  disabled={proofBusy}
+                  onRemove={(f) => {
+                    setProofToRemove(f as PaymentOrderProof);
+                    setDialog('removeProof');
+                  }}
+                />
               ) : (
                 <p className="text-sm text-muted-foreground">{t('payOrders.proofNone')}</p>
               )}
@@ -657,93 +644,89 @@ export default function OrdenPagoDetallePage() {
           {/* Compañero del concepto: la factura / contrato / cotización que
               justifica el pago. Va acá y no al lado del comprobante para que
               los dos adjuntos no se confundan nunca. */}
-          {(order.attachment_path || order.status !== 'cancelled') && (
+          {(attachments.length > 0 || order.status !== 'cancelled') && (
             <Card className="space-y-3">
-              <h2 className="text-base font-semibold flex items-center gap-2">
-                <FileText className="w-4 h-4 text-muted-foreground" />
-                {t('payOrders.attachSection')}
-              </h2>
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-muted-foreground" />
+                  {t('payOrders.attachSection')}
+                </h2>
+                {attachments.length > 0 && (
+                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                    {t('payOrders.attachCount', {
+                      n: String(attachments.length),
+                      max: MAX_ATTACHMENTS_STR,
+                    })}
+                  </span>
+                )}
+              </div>
 
-              {/* Un solo input oculto sirve para "adjuntar" y "reemplazar". */}
+              {/* `multiple`: se pueden elegir varios de una. El input se limpia
+                  siempre para poder volver a elegir el mismo archivo. */}
               <input
                 ref={attachInputRef}
                 type="file"
+                multiple
                 accept={ATTACHMENT_ACCEPT}
                 className="sr-only"
                 onChange={(e) => {
-                  const file = e.target.files?.[0] ?? null;
-                  e.target.value = ''; // permite volver a elegir el mismo archivo
-                  void onAttachmentPicked(file);
+                  const picked = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  void onAttachmentsPicked(picked);
                 }}
               />
 
-              {order.attachment_path ? (
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium break-all">
-                      {order.attachment_name || t('payOrders.attachSection')}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {formatFileSize(order.attachment_size)}
-                      {order.attachment_uploaded_at && (
-                        <>
-                          {' · '}
-                          {t('payOrders.attachUploaded', {
-                            date: formatDateTime(order.attachment_uploaded_at),
-                          })}
-                        </>
-                      )}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <a
-                      href={orderAttachmentUrl(order.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      aria-label={t('payOrders.attachViewAria')}
-                    >
-                      <Button variant="secondary">
-                        <ExternalLink className="w-4 h-4" />
-                        {t('payOrders.attachView')}
-                      </Button>
-                    </a>
-                    {/* Una orden anulada es un documento cerrado: se puede ver
-                        el respaldo, pero no cambiarlo. */}
-                    {order.status !== 'cancelled' && (
-                      <>
-                        <Button
-                          aria-label={t('payOrders.attachReplaceAria')}
-                          disabled={attachBusy}
-                          onClick={() => attachInputRef.current?.click()}
-                        >
-                          <Upload className="w-4 h-4" />
-                          {t('payOrders.attachReplace')}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          aria-label={t('payOrders.attachRemoveAria')}
-                          disabled={attachBusy}
-                          onClick={() => setDialog('removeAttachment')}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          {t('payOrders.attachRemove')}
-                        </Button>
-                      </>
-                    )}
-                  </div>
-                </div>
+              {attachments.length > 0 ? (
+                <SavedFileList
+                  files={attachments}
+                  texts={{
+                    fallbackName: t('payOrders.attachSection'),
+                    uploadedAt: (date) =>
+                      t('payOrders.attachUploaded', { date: formatDateTime(date) }),
+                    view: t('payOrders.attachView'),
+                    viewAria: (name) => t('payOrders.attachViewItemAria', { name }),
+                    download: t('payOrders.attachDownload'),
+                    downloadAria: (name) => t('payOrders.attachDownloadAria', { name }),
+                    remove: t('payOrders.attachRemove'),
+                    removeAria: (name) => t('payOrders.attachRemoveItemAria', { name }),
+                  }}
+                  hrefFor={(f) => orderAttachmentUrl(order.id, f.id)}
+                  downloadHrefFor={(f) => orderAttachmentUrl(order.id, f.id, { download: true })}
+                  disabled={attachBusy}
+                  // Una orden anulada es un documento cerrado: se puede ver el
+                  // respaldo, pero no cambiarlo.
+                  onRemove={
+                    order.status === 'cancelled'
+                      ? null
+                      : (f) => {
+                          setAttachToRemove(f as PaymentOrderAttachment);
+                          setDialog('removeAttachment');
+                        }
+                  }
+                />
               ) : (
+                <p className="text-sm text-muted-foreground">{t('payOrders.attachNone')}</p>
+              )}
+
+              {order.status !== 'cancelled' && (
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                   <Button
                     variant="secondary"
-                    aria-label={t('payOrders.attachAttach')}
+                    aria-label={t('payOrders.attachAddAria')}
                     loading={attachBusy}
+                    disabled={attachmentsFull}
                     onClick={() => attachInputRef.current?.click()}
                   >
                     <FileText className="w-4 h-4" />
-                    {t('payOrders.attachAttach')}
+                    {attachments.length === 0
+                      ? t('payOrders.attachAttach')
+                      : t('payOrders.attachAdd')}
                   </Button>
-                  <span className="text-xs text-muted-foreground">{t('payOrders.attachHint')}</span>
+                  <span className="text-xs text-muted-foreground">
+                    {attachmentsFull
+                      ? t('payOrders.attachMaxReached', { max: MAX_ATTACHMENTS_STR })
+                      : t('payOrders.attachHintMulti', { max: MAX_ATTACHMENTS_STR })}
+                  </span>
                 </div>
               )}
             </Card>
@@ -887,13 +870,16 @@ export default function OrdenPagoDetallePage() {
         />
       )}
 
-      {dialog === 'removeAttachment' && (
+      {dialog === 'removeAttachment' && attachToRemove && (
         <ConfirmDialog
           title={t('payOrders.attachRemoveTitle')}
           message={t('payOrders.attachRemoveMessage')}
           confirmLabel={t('payOrders.attachRemove')}
           onConfirm={removeAttachment}
-          onClose={() => setDialog(null)}
+          onClose={() => {
+            setDialog(null);
+            setAttachToRemove(null);
+          }}
         />
       )}
     </div>
@@ -1206,29 +1192,11 @@ function PayDialog({
             fileError && 'border-negative',
           )}
         />
-        {proofFiles.length > 0 && (
-          <ul className="space-y-1">
-            {proofFiles.map((f, i) => (
-              <li
-                key={`${f.name}-${f.size}-${i}`}
-                className="flex items-center justify-between gap-2 text-xs"
-              >
-                <span className="min-w-0 truncate">
-                  {f.name}
-                  <span className="text-muted-foreground"> · {formatFileSize(f.size)}</span>
-                </span>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-negative shrink-0"
-                  aria-label={t('payOrders.proofUnselectAria', { name: f.name })}
-                  onClick={() => setProofFiles((prev) => prev.filter((_, j) => j !== i))}
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
+        <PickedFileList
+          files={proofFiles}
+          onRemove={(i) => setProofFiles((prev) => prev.filter((_, j) => j !== i))}
+          removeAria={(name) => t('payOrders.proofUnselectAria', { name })}
+        />
         {fileError ? (
           <span className="block text-xs text-negative">{fileError}</span>
         ) : (

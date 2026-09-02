@@ -14,6 +14,7 @@ import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
 import type {
   PaymentBeneficiary,
   PaymentOrder,
+  PaymentOrderAttachment,
   PaymentOrderInput,
   PaymentOrderProof,
   PaymentOrderStatus,
@@ -186,41 +187,99 @@ export function paymentProofUrl(
 // contrato o la cotización que justifica la orden; el comprobante es la prueba
 // del pago ya hecho. Endpoints y buckets separados a propósito.
 
+// Migración 127: cada archivo es una fila de payment_order_attachments. El
+// POST ya no reemplaza: AGREGA, hasta MAX_PAYMENT_ATTACHMENTS.
+
+/** Qué archivo falló y por qué — para poder nombrarlo en el aviso al usuario. */
+export interface AttachmentUploadFailure {
+  name: string;
+  error: string;
+}
+
 /**
- * Sube (o reemplaza) el documento de respaldo. PDF/PNG/JPG/WEBP/DOCX/XLSX, máx
- * 10 MB — el servidor valida los magic bytes, no la extensión.
+ * Sube uno o varios documentos de respaldo. PDF/PNG/JPG/WEBP/DOCX/XLSX, máx
+ * 10 MB CADA UNO — el servidor valida los magic bytes, no la extensión, y
+ * responde 409 si existentes + nuevos superan el tope.
+ *
+ * POR QUÉ UNO POR REQUEST (y no un multipart con los diez)
+ * Porque acá el lote NO es atómico a propósito: si el sexto archivo está
+ * corrupto, los cinco anteriores tienen que quedar arriba y el usuario tiene
+ * que enterarse de CUÁL falló y POR QUÉ. Un solo POST con los diez devuelve un
+ * único error y descarta todo — que es exactamente lo que Kevin no quiere al
+ * cargar una orden con varias facturas. (Los comprobantes de pago sí van en un
+ * lote atómico: son la prueba de un pago único, o están todos o no está
+ * ninguno.)
+ *
+ * Devuelve la última orden que respondió el servidor —con `attachments` al
+ * día— y la lista de fallos. `order` es null solo si NINGUNO entró.
  *
  * OJO: no se setea Content-Type a mano. apiFetch solo lo agrega cuando el body
  * es string, así que con FormData el browser pone el multipart con su boundary
  * (fijarlo a mano rompe el parseo server-side).
  */
-export async function uploadOrderAttachment(orderId: string, file: File): Promise<PaymentOrder> {
-  const body = new FormData();
-  body.append('file', file);
-  const { order } = await request<{ order: PaymentOrder }>(
-    `/api/admin/payment-orders/${orderId}/attachment`,
-    { method: 'POST', body },
-  );
-  return order;
+export async function uploadOrderAttachments(
+  orderId: string,
+  files: File[],
+): Promise<{ order: PaymentOrder | null; failures: AttachmentUploadFailure[] }> {
+  let order: PaymentOrder | null = null;
+  const failures: AttachmentUploadFailure[] = [];
+  for (const file of files) {
+    const body = new FormData();
+    body.append('file', file);
+    try {
+      const res = await request<{ order: PaymentOrder }>(
+        `/api/admin/payment-orders/${orderId}/attachment`,
+        { method: 'POST', body },
+      );
+      order = res.order;
+    } catch (err) {
+      failures.push({
+        name: file.name,
+        error: err instanceof Error ? err.message : 'Error desconocido',
+      });
+    }
+  }
+  return { order, failures };
 }
 
-/** Quita el documento (archivo + columnas). No permitido en órdenes anuladas. */
-export async function deleteOrderAttachment(orderId: string): Promise<PaymentOrder> {
+/** Quita UN documento (fila + archivo). No permitido en órdenes anuladas. */
+export async function deleteOrderAttachment(
+  orderId: string,
+  attachmentId: string,
+): Promise<PaymentOrder> {
   const { order } = await request<{ order: PaymentOrder }>(
-    `/api/admin/payment-orders/${orderId}/attachment`,
+    `/api/admin/payment-orders/${orderId}/attachment?attachment_id=${encodeURIComponent(attachmentId)}`,
     { method: 'DELETE' },
   );
   return order;
 }
 
+/** Lista de respaldos de la orden. El detalle ya los recibe dentro de la orden
+ *  (`order.attachments`); esto es para quien solo necesite la lista. */
+export async function listOrderAttachments(orderId: string): Promise<PaymentOrderAttachment[]> {
+  const { attachments } = await request<{ attachments: PaymentOrderAttachment[] }>(
+    `/api/admin/payment-orders/${orderId}/attachment`,
+  );
+  return attachments ?? [];
+}
+
 /**
- * URL de lectura del documento para un <a href> / window.open: el GET responde
- * un 302 a una URL firmada de 10 minutos. Pasa por withActiveCompany porque una
- * navegación directa no atraviesa apiFetch (el superadmin en modo "viendo como"
- * necesita el ?company_id en la URL).
+ * URL de lectura de UN documento para un <a href> / window.open: el GET con
+ * ?attachment_id responde un 302 a una URL firmada de 10 minutos. Pasa por
+ * withActiveCompany porque una navegación directa no atraviesa apiFetch (el
+ * superadmin en modo "viendo como" necesita el ?company_id en la URL).
+ *
+ * `download: true` pide la variante que fuerza la descarga (el servidor firma
+ * la URL con Content-Disposition: attachment). Hace falta porque el redirect es
+ * cross-origin y el atributo `download` de un <a> se ignora en ese caso.
  */
-export function orderAttachmentUrl(orderId: string): string {
-  return withActiveCompany(`/api/admin/payment-orders/${orderId}/attachment`);
+export function orderAttachmentUrl(
+  orderId: string,
+  attachmentId: string,
+  opts?: { download?: boolean },
+): string {
+  const qs = `attachment_id=${encodeURIComponent(attachmentId)}${opts?.download ? '&download=1' : ''}`;
+  return withActiveCompany(`/api/admin/payment-orders/${orderId}/attachment?${qs}`);
 }
 
 // ── Conceptos ya facturados a un beneficiario ───────────────────────────────

@@ -7,12 +7,21 @@
 // se testea acá es justamente la función compartida.
 
 import { describe, it, expect } from 'vitest';
-import { MAX_PAYMENT_PROOFS, proofCountError } from './types';
+import { MAX_PAYMENT_ATTACHMENTS, MAX_PAYMENT_PROOFS, proofCountError } from './types';
 import { hasAllowedProofExtension, sniffProof } from './proof-files';
 
 describe('MAX_PAYMENT_PROOFS', () => {
+  // 2026-08-17 arrancó en 5; 2026-09-02 Kevin pidió "hasta 10 archivos" y el
+  // tope subió junto con el de los documentos de respaldo (migración 127). El
+  // assert no se borra: se mueve, porque lo que importa es que el número siga
+  // siendo el que se pidió y no el que quedó.
   it('es el tope que pidió Kevin', () => {
-    expect(MAX_PAYMENT_PROOFS).toBe(5);
+    expect(MAX_PAYMENT_PROOFS).toBe(10);
+  });
+
+  it('es el MISMO tope que el de los documentos de respaldo', () => {
+    // Dos topes distintos obligan a explicar "¿por qué acá 5 y allá 10?".
+    expect(MAX_PAYMENT_PROOFS).toBe(MAX_PAYMENT_ATTACHMENTS);
   });
 });
 
@@ -27,8 +36,15 @@ describe('proofCountError', () => {
     expect(proofCountError(2, 3)).toBeNull();
   });
 
+  it('el tope exacto entra y uno más no', () => {
+    expect(proofCountError(0, MAX_PAYMENT_PROOFS)).toBeNull();
+    expect(proofCountError(0, MAX_PAYMENT_PROOFS + 1)).not.toBeNull();
+    expect(proofCountError(MAX_PAYMENT_PROOFS - 1, 1)).toBeNull();
+    expect(proofCountError(MAX_PAYMENT_PROOFS - 1, 2)).not.toBeNull();
+  });
+
   it('rechaza cuando existentes + nuevos se pasan por uno', () => {
-    const err = proofCountError(3, 3);
+    const err = proofCountError(MAX_PAYMENT_PROOFS - 2, 3);
     expect(err).not.toBeNull();
     // El mensaje tiene que decir CUÁNTOS entran todavía, no solo "no se puede".
     expect(err).toMatch(/2 más/);

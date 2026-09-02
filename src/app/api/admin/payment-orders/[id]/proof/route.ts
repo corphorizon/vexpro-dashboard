@@ -4,7 +4,7 @@ import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { PAYMENT_ORDER_READ_ROLES } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
-import { ORDER_COLUMNS, actorName, normalizeOrder, withProofs } from '@/lib/payment-orders/server';
+import { ORDER_COLUMNS, actorName, normalizeOrder, withFiles } from '@/lib/payment-orders/server';
 import { proofCountError } from '@/lib/payment-orders/types';
 import {
   ALLOWED_PROOF_EXTENSIONS,
@@ -127,7 +127,7 @@ async function orderResponse(
     .eq('company_id', companyId)
     .maybeSingle();
   if (!data) return null;
-  return withProofs(admin, normalizeOrder(data as Record<string, unknown>));
+  return withFiles(admin, normalizeOrder(data as Record<string, unknown>));
 }
 
 // ── POST — agregar uno o varios comprobantes ────────────────────────────────
