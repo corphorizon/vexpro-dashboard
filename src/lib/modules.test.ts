@@ -134,12 +134,21 @@ describe('la carga de datos es solo para quien puede escribir', () => {
 // administra la plataforma veía el módulo en todas las empresas.
 // ─────────────────────────────────────────────────────────────────────────────
 describe('canAccessModule · onlyWhereActivated', () => {
+  // El modelo es `liquidity_provider` porque desde el 2026-09-01 el pool es
+  // suyo: con 'broker' el paso 1 (modelo de negocio) cortaría antes y este
+  // bloque probaría otra cosa. Son DOS capas distintas y las dos hacen falta:
+  // el modelo dice «este negocio no administra un pool», `onlyWhereActivated`
+  // dice «esta pantalla vive en una sola empresa».
   const superadmin = (activeModules: string[] | null) => ({
     role: 'superadmin',
     isSuperadmin: true,
     allowedModules: null,
     activeModules,
-    businessModel: 'broker',
+    businessModel: 'liquidity_provider',
+  });
+
+  it('el modelo lo corta antes que `active_modules`, superadmin incluido', () => {
+    expect(canAccessModule('liquidity_pool', { ...superadmin(['liquidity_pool']), businessModel: 'broker' })).toBe(false);
   });
 
   it('se lo oculta al superadmin en una empresa que no lo tiene activo', () => {

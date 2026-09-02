@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { blockedModules, isBusinessModel, normalizeBusinessModel } from '@/lib/business-model';
+import { blockedModules, features, isBusinessModel, normalizeBusinessModel } from '@/lib/business-model';
 import { sanitizeModuleKeys } from '@/lib/modules';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
@@ -14,19 +14,30 @@ import { apiError } from '@/lib/api-error';
 // ---------------------------------------------------------------------------
 
 /**
- * ¿La entidad NO era 'company' todavía? Solo entonces el cambio de modelo
- * apaga datos que hoy cuentan — re-guardar el mismo modelo no debe avisar nada.
+ * ¿El cambio de modelo APAGA el P&L de broker / prop firm que hoy sí cuenta?
+ *
+ * Antes esto era `!== 'company'`: la pregunta binaria «¿pasa a company?».
+ * Con un tercer modelo ('liquidity_provider', que tampoco tiene P&L de
+ * broker) esa forma dejaba de avisar exactamente igual que avisaba antes, y
+ * en silencio — el aviso simplemente no salía. Lo que importa no es el nombre
+ * del modelo destino sino el interruptor: `features().brokerPnl` pasando de
+ * true a false es lo que neutraliza buildDistributionInputs.
+ *
+ * Re-guardar el mismo modelo (o cualquier cambio que no apague el
+ * interruptor) no avisa nada.
  */
-async function isChangingToCompany(
+async function turnsOffBrokerPnl(
   admin: ReturnType<typeof createAdminClient>,
   id: string,
+  nextModel: unknown,
 ): Promise<boolean> {
+  if (features(nextModel).brokerPnl) return false;
   const { data } = await admin
     .from('companies')
     .select('business_model')
     .eq('id', id)
     .maybeSingle();
-  return (data?.business_model ?? 'broker') !== 'company';
+  return features(data?.business_model).brokerPnl;
 }
 
 export async function PATCH(
@@ -88,14 +99,15 @@ export async function PATCH(
     }
 
     // ── Aviso de datos que dejan de contar ──────────────────────────────────
-    // Pasar a 'company' apaga el P&L de broker y el circuito de prop firm en
-    // la cadena de distribución (ver la neutralización en
+    // Pasar a un modelo sin `brokerPnl` (hoy 'company' y 'liquidity_provider')
+    // apaga el P&L de broker y el circuito de prop firm en la cadena de
+    // distribución (ver la neutralización en
     // src/lib/distribution-inputs.ts) y esconde depósitos/retiros de toda
     // pantalla. Si la entidad ya tiene esa data cargada, el cambio le mueve
     // el "Monto a Distribuir" sin que ninguna pantalla explique por qué. Se
     // avisa ANTES de que pase por sorpresa; no bloquea el cambio.
     let warning: string | null = null;
-    if (allowed.business_model === 'company' && (await isChangingToCompany(admin, id))) {
+    if ('business_model' in allowed && (await turnsOffBrokerPnl(admin, id, allowed.business_model))) {
       const countOf = async (table: string) => {
         const { count } = await admin
           .from(table)

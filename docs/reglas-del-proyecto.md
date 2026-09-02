@@ -114,8 +114,13 @@ la auditoría A3.
   cronológico, o el arrastre de deuda/reserva diverge.
 - Mes negativo: **la reserva NO se drena** (modelo "cuenta de ahorro").
 - `investmentProfits` **sí** entra en la base distribuible (decisión de Kevin).
-- Base **caja** de egresos solo en `business_model = 'company'`; en `broker` es
-  devengado (aplicar caja al broker **infla** su base).
+- Base **caja** de egresos solo en los modelos con `features().cashBasisExpenses`
+  (hoy: `company`); en `broker` y `liquidity_provider` es devengado (aplicar caja
+  donde no se carga `paid` **infla** la base). La pregunta se le hace al registro,
+  no a un `=== 'company'` suelto.
+- **`liquidity_provider` no participa de la cadena**: es un modelo informativo
+  (pool de liquidez + inversiones) sin `partners` ni `payment_orders`, así que
+  ninguna pantalla muestra un reparto suyo.
 - Retiros de prop firm se **suman**, nunca `.set()`.
 - El `amount` guardado en `partner_distributions` **nunca se lee**: se deriva
   siempre.

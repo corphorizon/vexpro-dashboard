@@ -311,8 +311,13 @@ export default function UploadPage() {
     () => uploadSections(company?.business_model) as DataSection[],
     [company?.business_model],
   );
+  // `defaultUploadSection` puede devolver null (un modelo que no carga datos:
+  // el proveedor de liquidez). Esa cadena vacía no se usa nunca —el módulo
+  // `upload` está bloqueado para ese modelo y el guard devuelve 403 antes—,
+  // pero se escribe explícita: antes la firma decía `: string` y devolvía
+  // `undefined` sin que nada se quejara.
   const [section, setSection] = useState<DataSection>(
-    () => defaultUploadSection(company?.business_model) as DataSection,
+    () => (defaultUploadSection(company?.business_model) ?? '') as DataSection,
   );
   // Prop Firm y P&L del broker viven dentro de la pestaña Ingresos aunque
   // pertenezcan al negocio de broker: se apagan por feature, no por pestaña.
@@ -323,6 +328,7 @@ export default function UploadPage() {
   // de empresa): sin este reajuste la pestaña activa puede quedar apuntando a
   // una sección que el modelo no tiene y la pantalla se ve vacía.
   useEffect(() => {
+    if (allowedSections.length === 0) return;
     if (!allowedSections.includes(section)) setSection(allowedSections[0]);
   }, [allowedSections, section]);
 

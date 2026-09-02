@@ -206,7 +206,7 @@ export interface ModuleAccessContext {
    * VACÍO sí bloquea: es una empresa sin módulos habilitados.
    */
   activeModules?: readonly string[] | null;
-  /** `companies.business_model` ('broker' | 'company'). */
+  /** `companies.business_model` — ver `BusinessModel` en business-model.ts. */
   businessModel?: unknown;
 }
 

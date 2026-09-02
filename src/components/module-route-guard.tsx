@@ -21,6 +21,13 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/movimientos(\/|$)/, 'movements'],
   [/^\/egresos(\/|$)/, 'expenses'],
   [/^\/ingresos(\/|$)/, 'income'],
+  // ANTES que /liquidez aunque no se solapen (`/liquidez-pool` no matchea
+  // `^\/liquidez(\/|$)`): el orden acá es contrato y dejarlos juntos evita que
+  // alguien agregue mañana un `^\/liquidez` suelto y se coma el pool.
+  // Faltaba: el pool era la única pantalla del dashboard sin guardián, así que
+  // el bloqueo por modelo de negocio lo escondía del menú pero la URL escrita
+  // a mano seguía entrando.
+  [/^\/liquidez-pool(\/|$)/, 'liquidity_pool'],
   [/^\/liquidez(\/|$)/, 'liquidity'],
   [/^\/inversiones(\/|$)/, 'investments'],
   [/^\/balances(\/|$)/, 'balances'],

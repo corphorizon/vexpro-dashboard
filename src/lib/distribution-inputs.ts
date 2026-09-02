@@ -16,7 +16,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type { PeriodDistInput } from './distribution';
-import { features, normalizeBusinessModel } from './business-model';
+import { features } from './business-model';
 
 /** Lo mínimo que el constructor necesita de un período. */
 export interface PeriodForInputs {
@@ -67,8 +67,9 @@ export interface DistributionSources {
   expenses: ExpenseLike[];
   investments: InvestmentLike[];
   /**
-   * Modelo de negocio de la empresa ('broker' | 'company'). Ver la nota de
-   * neutralización abajo. Ausente ⇒ default histórico ('broker').
+   * Modelo de negocio de la empresa (`BusinessModel` en business-model.ts).
+   * Ver la nota de neutralización abajo. Ausente ⇒ default histórico
+   * ('broker').
    */
   businessModel?: unknown;
   /**
@@ -154,7 +155,11 @@ export function buildDistributionInputs(
   // egresos casi a cero e INFLARÍA su base distribuible, que es exactamente el
   // error de dinero que este archivo existe para evitar. En 'broker' no se
   // cambia nada: sigue mandando el devengado.
-  const cashBasisExpenses = normalizeBusinessModel(sources.businessModel) === 'company';
+  // Quién usa base caja lo decide el REGISTRO, no una comparación contra un
+  // literal: acá decía `=== 'company'`, y con un tercer modelo esa pregunta
+  // deja de ser binaria (un modelo nuevo caía en devengado por accidente, no
+  // por decisión). Ver `cashBasisExpenses` en business-model.ts.
+  const cashBasisExpenses = features(sources.businessModel).cashBasisExpenses;
   const expIndex = new Map<string, number>();
   for (const e of expenses) {
     const accrued = Number(e.amount) || 0;

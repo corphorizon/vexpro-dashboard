@@ -21,6 +21,7 @@ import { isEmailLocale, type EmailLocale } from '@/lib/email-i18n';
 import { serverAuditLog } from '@/lib/server-audit';
 import { buildReportData, referenceDateFor } from './data';
 import { loadReportConfig } from './config';
+import { moduleAllowedForModel } from '@/lib/business-model';
 import {
   renderReportEmail,
   renderReportEmailText,
@@ -51,6 +52,7 @@ interface CompanyRow {
   color_primary: string | null;
   active_modules: string[];
   status: string;
+  business_model: string | null;
 }
 interface UserRow {
   id: string;
@@ -143,7 +145,7 @@ export async function sendReportsForCadence(
 
   const { data: companies, error: companiesError } = await admin
     .from('companies')
-    .select('id, name, logo_url, color_primary, active_modules, status')
+    .select('id, name, logo_url, color_primary, active_modules, status, business_model')
     .eq('status', 'active');
 
   if (companiesError || !companies) {
@@ -152,6 +154,13 @@ export async function sendReportsForCadence(
 
   const eligible = (companies as CompanyRow[]).filter((c) => {
     if (options.onlyCompanyId && c.id !== options.onlyCompanyId) return false;
+    // El MODELO manda sobre `active_modules`, igual que en toda la app (ver
+    // canAccessModule, paso 1). Acá faltaba: el cron miraba SOLO la lista de
+    // módulos, así que una empresa cuyo modelo no tiene reportes seguía
+    // recibiendo el mail diario mientras la fila vieja de `active_modules`
+    // dijera 'reports'. Exura Liquidez lo recibía en $0 todos los días
+    // (hallazgo de la auditoría, 2026-09-01).
+    if (!moduleAllowedForModel(c.business_model, 'reports')) return false;
     return Array.isArray(c.active_modules) && c.active_modules.includes('reports');
   });
 
