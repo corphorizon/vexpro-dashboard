@@ -34,7 +34,9 @@ import {
   BDM_PCT_TIERS,
   applyTotalEarnedDebt,
   calculateExtraOverHeadCommission,
+  calcularPasoPnlEncadenado,
   type CommissionCalcResult,
+  type PnlChainState,
 } from '@/lib/commission-calculator';
 import { upsertCommissionEntries, type CommissionEntryRow } from '@/lib/supabase/mutations';
 import { apiFetch } from '@/lib/api-fetch';
@@ -99,6 +101,17 @@ const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', hea
 type Tab = 'teams' | 'individual' | 'history';
 
 /**
+ * Desde dónde reescribe el botón «Recalcular desde abril (CRM)».
+ *
+ * ABRIL 2026 y no el corte del net deposit (`HR_NET_AUTO_DESDE`, agosto): son
+ * dos decisiones distintas de dos momentos distintos. El del net deposit lo
+ * fijó Kevin el 2026-08-31 sobre datos que sólo cuadraban desde agosto; éste lo
+ * pidió el dueño el 2026-09-02 sabiendo que pisa meses cerrados. Compartir la
+ * constante uniría dos cosas que pueden moverse por separado.
+ */
+const RECALC_PNL_DESDE = { year: 2026, month: 4 } as const;
+
+/**
  * El rótulo de procedencia del insumo, debajo del input de ND.
  *
  * Existe porque el número dejó de tener una sola fuente: puede venir del rollup
@@ -135,6 +148,105 @@ function NdSourceTag({
     return <span className="block text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">{labels('comm.ndSourceFrozen')}</span>;
   }
   return <span className="block text-[10px] text-muted-foreground mt-0.5">{labels('comm.ndSourceNone')}</span>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EL INSUMO AUTOMÁTICO DEL GRUPO PnL (migración 123, 2026-09-02)
+//
+// Los dos campos del grupo PnL —«PnL» y «Com. Lotes»— se tecleaban a mano
+// mirando dos pantallas del CRM. Desde la 123 salen de
+// `hr_pnl_input_by_profile` y llegan por /api/admin/commission-net-input, que
+// es además EL ÚNICO lugar donde se invierte el signo: la RPC devuelve el
+// `pnl_crm` crudo (negativo = los clientes perdieron) y el endpoint entrega ya
+// dado vuelta lo que la EMPRESA gana, que es sobre lo que se paga la comisión.
+// Acá no se vuelve a tocar el signo — invertirlo dos veces se cancela y no
+// lanza ninguna excepción.
+//
+// La POLÍTICA es la misma del net deposit y sale del mismo resolver puro
+// (`resolveNetDepositInput`): automático manda, lo tecleado es override
+// visible, período cerrado congelado. Para reusarlo tal cual, el PnL y los
+// lotes se envuelven en índices con la forma `{own, total}` que el resolver
+// espera, con own === total (no hay estructura que agregar: la RPC ya devuelve
+// la subred entera del perfil).
+//
+// `sinDatoCrm` / `pnl === null` NO entran al índice: así el resolver devuelve
+// `crm: null` y el campo queda con lo que tuviera, con el rótulo «sin dato
+// CRM». Un 0 automático diría "su red no operó", que es otra cosa (§1.3).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PnlCrmEntry {
+  /** Ya invertido por el endpoint: lo que la empresa gana. `null` = no lo sabemos. */
+  pnl: number | null;
+  comLotes: number | null;
+  /** Tamaño de la subred que produjo ese PnL, para que el número sea auditable. */
+  usuariosRed: number | null;
+  /** El perfil no tiene usuario en el CRM. No es un mes flojo: es un cruce faltante. */
+  sinDatoCrm: boolean;
+}
+
+/**
+ * `pnlEntries` de la respuesta → índice por perfil.
+ *
+ * Devuelve `null` cuando el endpoint no mandó el array (la RPC del PnL falló y
+ * viene `pnlEntries: null` + `pnlError`). `null` y `[]` significan cosas
+ * distintas y por eso no se colapsan: `[]` es "no hay perfiles PnL".
+ */
+function indexarPnlDelCrm(json: unknown): Map<string, PnlCrmEntry> | null {
+  const raw = (json as { pnlEntries?: unknown } | null)?.pnlEntries;
+  if (!Array.isArray(raw)) return null;
+  const out = new Map<string, PnlCrmEntry>();
+  const num = (v: unknown): number | null =>
+    v === null || v === undefined || !Number.isFinite(Number(v)) ? null : Number(v);
+  for (const e of raw as unknown[]) {
+    const row = e as { profileId: string; pnl: unknown; comLotes: unknown; usuariosRed: unknown; sinDatoCrm?: boolean };
+    if (!row?.profileId) continue;
+    out.set(row.profileId, {
+      pnl: num(row.pnl),
+      comLotes: num(row.comLotes),
+      usuariosRed: num(row.usuariosRed),
+      sinDatoCrm: !!row.sinDatoCrm,
+    });
+  }
+  return out;
+}
+
+/** Índice `{own, total}` para el resolver, con own === total. Sin dato → fuera del índice. */
+function indiceParaResolver(
+  src: Map<string, PnlCrmEntry> | null,
+  campo: 'pnl' | 'comLotes',
+): Map<string, { own: number; total: number }> | null {
+  if (!src) return null;
+  const out = new Map<string, { own: number; total: number }>();
+  for (const [id, e] of src) {
+    const v = e[campo];
+    if (e.sinDatoCrm || v === null) continue;
+    out.set(id, { own: v, total: v });
+  }
+  return out;
+}
+
+/**
+ * El contexto del número: de qué red salió, o que no hay cruce con el CRM.
+ *
+ * Se muestra SIEMPRE que el perfil esté en la respuesta del CRM, incluso
+ * cuando el campo lo pisó un override: quien corrige a mano tiene derecho a
+ * saber contra qué red está corrigiendo.
+ */
+function PnlCrmHint({ info, labels }: { info: PnlCrmEntry | undefined; labels: (k: string, p?: Record<string, string>) => string }) {
+  if (!info) return null;
+  if (info.sinDatoCrm) {
+    return (
+      <span className="block text-[10px] text-warning mt-0.5" title={labels('comm.pnlNoCrmData')}>
+        {labels('comm.pnlNoCrmDataShort')}
+      </span>
+    );
+  }
+  if (info.usuariosRed === null) return null;
+  return (
+    <span className="block text-[10px] text-muted-foreground mt-0.5">
+      {labels('comm.pnlNetworkUsers', { n: info.usuariosRed.toLocaleString('es-AR') })}
+    </span>
+  );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -308,24 +420,36 @@ export default function ComisionesPage() {
   const [crmNet, setCrmNet] = useState<{
     month: string;
     index: Map<string, { own: number; total: number }>;
+    /** Insumo del grupo PnL. `null` = la RPC del PnL falló (el net deposit igual sirve). */
+    pnl: Map<string, PnlCrmEntry> | null;
   } | null>(null);
   const [crmNetLoading, setCrmNetLoading] = useState(false);
   const [crmNetError, setCrmNetError] = useState(false);
+  /** El PnL falló pero el net deposit no: son dos insumos y se avisan por separado. */
+  const [crmPnlError, setCrmPnlError] = useState(false);
   // Caché por mes en un ref: cambiar de head o de pestaña no vuelve a pagar la
   // RPC. Vive lo que vive la pantalla, y la clave lleva la empresa porque una
   // caché con clave global es cómo el usuario siguiente ve los datos del anterior.
-  const crmNetCache = useRef(new Map<string, Map<string, { own: number; total: number }>>());
+  const crmNetCache = useRef(
+    new Map<string, { index: Map<string, { own: number; total: number }>; pnl: Map<string, PnlCrmEntry> | null }>(),
+  );
 
   useEffect(() => {
     if (!company?.id) return;
-    if (!autoMonth || !periodoUsaAutomatico) { setCrmNet(null); setCrmNetError(false); return; }
+    if (!autoMonth || !periodoUsaAutomatico) { setCrmNet(null); setCrmNetError(false); setCrmPnlError(false); return; }
     const clave = `${company.id}:${autoMonth}`;
     const cacheado = crmNetCache.current.get(clave);
-    if (cacheado) { setCrmNet({ month: autoMonth, index: cacheado }); setCrmNetError(false); return; }
+    if (cacheado) {
+      setCrmNet({ month: autoMonth, index: cacheado.index, pnl: cacheado.pnl });
+      setCrmNetError(false);
+      setCrmPnlError(cacheado.pnl === null);
+      return;
+    }
 
     let cancelado = false;
     setCrmNetLoading(true);
     setCrmNetError(false);
+    setCrmPnlError(false);
     (async () => {
       try {
         const res = await apiFetch(`/api/admin/commission-net-input?month=${autoMonth}`);
@@ -337,8 +461,12 @@ export default function ComisionesPage() {
             { own: Number(e.own) || 0, total: Number(e.total) || 0 },
           ]),
         );
-        crmNetCache.current.set(clave, index);
-        if (!cancelado) setCrmNet({ month: autoMonth, index });
+        // El PnL puede faltar sin que falte el net: el endpoint devuelve
+        // `pnlEntries: null` + `pnlError` en vez de tumbar todo. Se cachea el
+        // null igual (es el resultado de este mes) y la pantalla lo dice aparte.
+        const pnl = indexarPnlDelCrm(json);
+        crmNetCache.current.set(clave, { index, pnl });
+        if (!cancelado) { setCrmNet({ month: autoMonth, index, pnl }); setCrmPnlError(pnl === null); }
       } catch {
         // El fallo NO se cachea como índice vacío: un árbol en cero se leería
         // como "este mes no produjo nadie" y le metería $0 al motor. Queda
@@ -352,14 +480,31 @@ export default function ComisionesPage() {
   }, [company?.id, autoMonth, periodoUsaAutomatico]);
 
   /**
+   * Los dos índices que consume el resolver para el grupo PnL. Sólo se usan si
+   * el mes cargado es el que se está mirando (mismo control que el net).
+   */
+  const pnlCrmIndex = useMemo(
+    () => (crmNet && crmNet.month === autoMonth ? crmNet.pnl : null),
+    [crmNet, autoMonth],
+  );
+  const pnlIndexParaResolver = useMemo(() => indiceParaResolver(pnlCrmIndex, 'pnl'), [pnlCrmIndex]);
+  const lotIndexParaResolver = useMemo(() => indiceParaResolver(pnlCrmIndex, 'comLotes'), [pnlCrmIndex]);
+
+  /**
    * El insumo resuelto de CADA perfil, con su procedencia.
    *
    * OJO con las tablas de PnL: comparten este mismo Map de inputs y ahí el
    * número NO es un net deposit sino el PnL del mes (se guarda igual en
-   * `net_deposit_current`, ver handleSaveBdm modo 'pnl'). A esos perfiles
-   * —`pnl_pct` cargado— NO se les aplica el automático: meterles el net del CRM
-   * les cambiaría la base del PnL en silencio, que es justo el modo de falla que
-   * este repo persigue. Son 6 perfiles en Vex Pro y ninguno tiene los dos pct.
+   * `net_deposit_current`, ver handleSaveBdm modo 'pnl'). Por eso a los perfiles
+   * con `pnl_pct` se les pasa OTRO índice —el de `hr_pnl_input_by_profile`, ya
+   * con el signo dado vuelta por el endpoint— y no el del net deposit: meterles
+   * el net del CRM les cambiaría la base del PnL en silencio.
+   *
+   * Hasta el 2026-09-02 esos perfiles recibían `crm: null` y quedaban FUERA del
+   * automático, porque su insumo todavía no existía (la RPC es de la migración
+   * 123). Ese comentario era correcto entonces y ya no lo es: hoy tienen fuente
+   * propia y la MISMA política que todos los demás. Son 6 perfiles en Vex Pro y
+   * ninguno tiene los dos pct, así que el `if` no es ambiguo.
    */
   const ndResolved = useMemo((): Map<string, ResolvedNetDeposit> => {
     const out = new Map<string, ResolvedNetDeposit>();
@@ -396,14 +541,46 @@ export default function ComisionesPage() {
         resolveNetDepositInput({
           profileId: p.id,
           period: selectedPeriod,
+          // Para el grupo PnL el índice ya viene con own === total, así que el
+          // scope no cambia nada: la RPC devuelve la subred entera del perfil.
           scope: esElHeadDelGrupo ? 'own' : 'structure',
-          crm: p.pnl_pct != null ? null : index,
+          crm: p.pnl_pct != null ? pnlIndexParaResolver : index,
           manual,
         }),
       );
     }
     return out;
-  }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab, crmNet, autoMonth]);
+  }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab, crmNet, autoMonth, pnlIndexParaResolver]);
+
+  /**
+   * Lo mismo para «Com. Lotes», con su propia fuente (el Commissions Report del
+   * uid PROPIO del perfil, no de su red) y el mismo resolver: el valor guardado
+   * en `pnl_current` es el manual, y el CRM el automático.
+   *
+   * Va aparte de `ndResolved` porque un perfil puede tener el PnL automático y
+   * los lotes tecleados, o al revés — y mezclarlos en un solo resolver haría
+   * que un override en un campo apagara el automático del otro.
+   */
+  const lotResolved = useMemo((): Map<string, ResolvedNetDeposit> => {
+    const out = new Map<string, ResolvedNetDeposit>();
+    if (!selectedPeriod) return out;
+    const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
+    for (const p of commercialProfiles) {
+      if (p.pnl_pct == null) continue;
+      const ex = results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null);
+      out.set(
+        p.id,
+        resolveNetDepositInput({
+          profileId: p.id,
+          period: selectedPeriod,
+          scope: 'structure',
+          crm: lotIndexParaResolver,
+          manual: ex?.pnl_current ?? null,
+        }),
+      );
+    }
+    return out;
+  }, [commercialProfiles, selectedPeriod, monthlyResults, lotIndexParaResolver]);
 
   // SHARED ND inputs — one Map for all profiles, synced between tabs
   const [ndInputs, setNdInputs] = useState<Map<string, number>>(new Map());
@@ -432,21 +609,23 @@ export default function ComisionesPage() {
       return m;
     });
 
-    // Seedear lotInputs desde pnl_current (donde se guarda el lotComm)
-    if (tab === 'individual') {
-      const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
-      const lotMap = new Map<string, number>();
-      for (const p of commercialProfiles) {
-        if (p.pnl_pct != null) {
-          const ex = results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null);
-          lotMap.set(p.id, ex?.pnl_current ?? 0);
-        }
+    // Seedear lotInputs con la MISMA política (automático / override / cerrado)
+    // que el campo de arriba. Antes salía siempre de `pnl_current` guardado; hoy
+    // ese guardado es sólo el "manual" que entra al resolver.
+    //
+    // Y con la misma guarda del ref: la respuesta del CRM llega ~2 s después, y
+    // sin esto a quien estaba tecleando los lotes se le cambiaba el número
+    // debajo del cursor.
+    setLotInputs((prev) => {
+      const m = new Map<string, number>();
+      for (const [id, r] of lotResolved) {
+        m.set(id, lotRawRef.current.has(id) ? prev.get(id) ?? 0 : netParaElMotor(r));
       }
-      setLotInputs(lotMap);
-    }
+      return m;
+    });
     // NO limpiar ndRawInputs aquí — se limpia en un effect separado
     // para preservar lo que el usuario está editando después de un refresh
-  }, [ndResolved, selectedPeriod, monthlyResults, commercialProfiles, tab]);
+  }, [ndResolved, lotResolved, selectedPeriod]);
 
   // Limpiar raw inputs solo cuando cambia el período o el head seleccionado
   useEffect(() => {
@@ -486,6 +665,13 @@ export default function ComisionesPage() {
   // ─── Lot commissions (PnL section) ───
   const [lotInputs, setLotInputs] = useState<Map<string, number>>(new Map());
   const [lotRawInputs, setLotRawInputs] = useState<Map<string, string>>(new Map());
+  // Mismo espejo en ref que el ND: el seeding tiene que saber qué NO pisar sin
+  // re-correr en cada tecla.
+  const lotRawRef = useRef(lotRawInputs);
+  useEffect(() => { lotRawRef.current = lotRawInputs; }, [lotRawInputs]);
+  // Y se limpian con el período/head, igual que ndRawInputs: lo tecleado para
+  // un mes no puede quedar colgado tapando el automático de otro.
+  useEffect(() => { setLotRawInputs(new Map()); }, [selectedPeriod?.id, selectedHeadId]);
 
   const handleLotChange = useCallback((id: string, v: string) => {
     setLotRawInputs((prev) => { const n = new Map(prev); n.set(id, v); return n; });
@@ -496,8 +682,20 @@ export default function ComisionesPage() {
   const getLotDisplay = useCallback((id: string): string => {
     const raw = lotRawInputs.get(id);
     if (raw !== undefined) return raw;
+    // SIN DATOS se muestra VACÍO, no "0" — mismo criterio que getNdDisplay. Un 0
+    // acá se guardaría como "el Commissions Report dio $0,00", que es otra cosa.
+    if (lotResolved.get(id)?.value === null) return '';
     return (lotInputs.get(id) ?? 0).toString();
-  }, [lotRawInputs, lotInputs]);
+  }, [lotRawInputs, lotInputs, lotResolved]);
+
+  /** Procedencia y automático del campo Com. Lotes, para el rótulo. */
+  const getLotSource = useCallback((id: string): NetDepositSource => {
+    if (lotRawInputs.get(id) !== undefined) return 'manual';
+    return lotResolved.get(id)?.source ?? 'none';
+  }, [lotRawInputs, lotResolved]);
+  const getLotAuto = useCallback((id: string): number | null => lotResolved.get(id)?.crm ?? null, [lotResolved]);
+  /** El contexto del CRM de ese perfil (tamaño de red / sin cruce). */
+  const getPnlCrmInfo = useCallback((id: string): PnlCrmEntry | undefined => pnlCrmIndex?.get(id), [pnlCrmIndex]);
 
   useEffect(() => { if (!selectedHeadId && heads.length > 0) setSelectedHeadId(heads[0].id); }, [heads, selectedHeadId]);
 
@@ -947,7 +1145,11 @@ export default function ComisionesPage() {
         salary_paid: entry.salary_paid ?? 0,
         total_earned: entry.total_earned ?? 0,
         bonus: entry.bonus ?? 0,
-        pnl_current: 0,
+        // Los lotes guardados se reflejan en el patch local. Antes iba un 0
+        // fijo y el campo «Com. Lotes» volvía a mostrar el automático del CRM
+        // justo después de que alguien lo pisara a mano — el override
+        // desaparecía de la pantalla sin que nadie lo tocara.
+        pnl_current: entry.pnl_current ?? 0,
         pnl_accumulated: 0,
         pnl_total: 0,
       }]);
@@ -959,6 +1161,9 @@ export default function ComisionesPage() {
         return next;
       });
       setNdRawInputs((prev) => { const next = new Map(prev); next.delete(profileId); return next; });
+      // Y lo tecleado en Com. Lotes: guardar es el acto que FIJA el número, así
+      // que el raw deja de mandar y el campo vuelve a leerse del resolver.
+      setLotRawInputs((prev) => { const next = new Map(prev); next.delete(profileId); return next; });
 
       setToast({ type: 'success', msg: t('comm.savedOk') });
       setTimeout(() => setToast(null), 3000);
@@ -1064,6 +1269,222 @@ export default function ComisionesPage() {
       setRecalcInProgress(false);
     }
   }, [user, pnlSpecialBdms, monthlyResults, company, refresh, t]);
+
+  // ─── Recalcular el grupo PnL desde ABRIL con el insumo del CRM (admin-only) ──
+  //
+  // Decisión explícita del dueño, 2026-09-02: reescribir TODOS los meses desde
+  // abril 2026 con lo que dice el CRM, incluidos los CERRADOS y pisando lo
+  // tecleado a mano. No es el `handleRecalcHistory` de PnL Especial —aquél
+  // conserva los insumos guardados y usa `prevDebt = 0`— y por eso convive con
+  // él en vez de reemplazarlo.
+  //
+  // ── POR QUÉ ES SECUENCIAL Y CRONOLÓGICO ────────────────────────────────────
+  // Cada mes depende de DOS valores del anterior: la deuda (`bonus`) y el
+  // acumulado (`accumulated_out`). Es la misma cadena que rige la distribución a
+  // socios (§2.2): *"hay que procesar todos los períodos en orden cronológico o
+  // el arrastre diverge"*. Y se encadena con el valor RECIÉN calculado, no con
+  // el guardado viejo — si no, el segundo mes seguiría arrastrando la deuda que
+  // el primero acaba de borrar. El test
+  // «EL ORDEN IMPORTA» de commission-calculator.test.ts fija justamente eso.
+  //
+  // ── SE ABORTA ANTES DE ESCRIBIR SI FALTA UN MES ────────────────────────────
+  // Un hueco en la cadena no da error: escribe deudas equivocadas y sigue. Por
+  // eso los period_id se resuelven TODOS primero, y si falta alguno no se
+  // escribe una sola fila. Y si un mes falla a mitad de camino se PARA ahí y se
+  // dice hasta dónde quedó aplicado: saltear un eslabón es peor que cortar.
+  const [recalcPnlCrmInProgress, setRecalcPnlCrmInProgress] = useState(false);
+
+  const handleRecalcPnlDesdeCrm = useCallback(async () => {
+    if (!isCompanyAdmin(user)) {
+      setToast({ type: 'error', msg: t('comm.recalcHistoryAdminOnly') });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+    if (!company) return;
+    if (!selectedPeriod) {
+      setToast({ type: 'error', msg: t('comm.recalcPnlCrmNoPeriod') });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    const perfiles = [
+      ...pnlBdms.map((p) => ({ p, mode: 'normal' as const })),
+      ...pnlSpecialBdms.map((p) => ({ p, mode: 'special' as const })),
+    ];
+    if (perfiles.length === 0) {
+      setToast({ type: 'error', msg: t('comm.recalcPnlCrmNoProfiles') });
+      setTimeout(() => setToast(null), 4000);
+      return;
+    }
+
+    // 1. La lista de meses, de abril al período que se está mirando.
+    const hasta = selectedPeriod.year * 100 + selectedPeriod.month;
+    if (hasta < RECALC_PNL_DESDE.year * 100 + RECALC_PNL_DESDE.month) {
+      setToast({ type: 'error', msg: t('comm.recalcPnlCrmBeforeStart') });
+      setTimeout(() => setToast(null), 5000);
+      return;
+    }
+    const meses: { key: string; label: string; periodId: string | null }[] = [];
+    // Anotados como `number` a mano: `as const` los infiere como los literales
+    // 2026 y 4, y el `m += 1` no compila contra un tipo literal.
+    for (let y: number = RECALC_PNL_DESDE.year, m: number = RECALC_PNL_DESDE.month; y * 100 + m <= hasta; ) {
+      const key = `${y}-${String(m).padStart(2, '0')}`;
+      const per = sortedPeriods.find((p) => p.year === y && p.month === m) ?? null;
+      meses.push({ key, label: per?.label || key, periodId: per?.id ?? null });
+      m += 1;
+      if (m > 12) { m = 1; y += 1; }
+    }
+
+    // 2. Si falta un período intermedio NO se escribe nada. Una cadena con un
+    //    hueco no falla: paga mal y en silencio.
+    const faltantes = meses.filter((x) => !x.periodId).map((x) => x.key);
+    if (faltantes.length > 0) {
+      setToast({ type: 'error', msg: t('comm.recalcPnlCrmMissingPeriods', { months: faltantes.join(', ') }) });
+      setTimeout(() => setToast(null), 9000);
+      return;
+    }
+
+    const etiquetaUltimo = meses[meses.length - 1].label;
+    if (!confirm(t('comm.recalcPnlCrmConfirm', { last: etiquetaUltimo }))) return;
+
+    // La fila de un perfil en un mes, con el mismo desempate por head que usan
+    // getPrevDebtAll y getAccumulatedIn (registro del grupo de su head; si no,
+    // cualquiera). Sin esto, un perfil con filas en dos grupos leería la que no es.
+    const filaDe = (profileId: string, headIdPropio: string | null | undefined, periodId: string) => {
+      const rows = monthlyResults.filter((r) => r.profile_id === profileId && r.period_id === periodId);
+      return rows.find((r) => r.head_id === (headIdPropio ?? profileId)) ?? rows[0] ?? null;
+    };
+
+    setRecalcPnlCrmInProgress(true);
+    let ultimoOk: string | null = null;
+    let mesesAplicados = 0;
+    let actualizadas = 0;
+    let creadas = 0;
+    let salteadas = 0;
+    try {
+      // 3. El estado inicial de la cadena sale del mes ANTERIOR a abril tal como
+      //    está guardado hoy: es el único eslabón que este recálculo no reescribe.
+      const previo = sortedPeriods.find(
+        (p) => p.year * 100 + p.month === RECALC_PNL_DESDE.year * 100 + RECALC_PNL_DESDE.month - 1,
+      );
+      const estados = new Map<string, PnlChainState>();
+      for (const { p } of perfiles) {
+        const f = previo ? filaDe(p.id, p.head_id, previo.id) : null;
+        estados.set(p.id, { prevDebt: f?.bonus ?? 0, accumulatedIn: f?.accumulated_out ?? 0 });
+      }
+
+      for (const mes of meses) {
+        // 4. El insumo del mes. Si no se puede leer se PARA: seguir con el mes
+        //    siguiente rompería la cadena en un punto y nadie lo vería.
+        let entradas: Map<string, PnlCrmEntry> | null = null;
+        try {
+          const res = await apiFetch(`/api/admin/commission-net-input?month=${mes.key}`);
+          const json = await res.json();
+          entradas = res.ok ? indexarPnlDelCrm(json) : null;
+        } catch {
+          entradas = null;
+        }
+        if (!entradas) {
+          const razon = t('comm.recalcPnlCrmFetchFailed');
+          setToast({
+            type: 'error',
+            msg: ultimoOk
+              ? t('comm.recalcPnlCrmFailedAt', { month: mes.label, reason: razon, lastOk: ultimoOk })
+              : t('comm.recalcPnlCrmFailedFirst', { month: mes.label, reason: razon }),
+          });
+          setTimeout(() => setToast(null), 9000);
+          return;
+        }
+
+        // 5. Una entrada por perfil con dato, agrupadas por (period, head)
+        //    porque upsertCommissionEntries trabaja por grupo.
+        const grouped = new Map<string, { headId: string; entries: CommissionEntryRow[] }>();
+        for (const { p, mode } of perfiles) {
+          const dato = entradas.get(p.id);
+          const fila = filaDe(p.id, p.head_id, mes.periodId!);
+          if (!dato || dato.sinDatoCrm || dato.pnl === null) {
+            // Sin dato del CRM el mes NO se reescribe. Y la cadena se re-ancla
+            // en la fila que quedó guardada para ese mes (si existe): el mes
+            // siguiente tiene que arrastrar lo que la base dice de verdad, no
+            // saltear un eslabón como si ese mes no hubiera existido.
+            salteadas += 1;
+            if (fila) estados.set(p.id, { prevDebt: fila.bonus ?? 0, accumulatedIn: fila.accumulated_out ?? 0 });
+            continue;
+          }
+          const paso = calcularPasoPnlEncadenado({
+            mode,
+            pnlPct: p.pnl_pct ?? 0,
+            // El signo ya viene invertido del endpoint. Acá NO se toca.
+            pnl: dato.pnl,
+            lotCommissions: dato.comLotes ?? 0,
+            // El salario se CONSERVA del guardado, igual que handleRecalcHistory:
+            // no es un insumo del CRM y re-tierizarlo cambiaría plata que nadie pidió.
+            salary: fila?.salary_paid ?? 0,
+            state: estados.get(p.id) ?? { prevDebt: 0, accumulatedIn: 0 },
+          });
+          estados.set(p.id, paso.next);
+          if (fila) actualizadas += 1; else creadas += 1;
+
+          const headId = fila?.head_id ?? p.head_id ?? p.id;
+          if (!grouped.has(headId)) grouped.set(headId, { headId, entries: [] });
+          grouped.get(headId)!.entries.push({
+            profile_id: p.id,
+            head_id: headId,
+            net_deposit_current: paso.netDepositCurrent,
+            net_deposit_accumulated: paso.netDepositAccumulated,
+            division: paso.division,
+            base_amount: 0,
+            commissions_earned: paso.commissionsEarned,
+            real_payment: paso.realPayment,
+            pnl_current: paso.pnlCurrent,
+            accumulated_out: paso.accumulatedOut,
+            salary_paid: paso.salaryPaid,
+            total_earned: paso.totalEarned,
+            bonus: paso.bonus,
+          });
+        }
+
+        // 6. Escritura del mes, secuencial. El orden entre grupos del MISMO mes
+        //    da igual (son perfiles distintos); el que no da igual es el de los
+        //    meses, y ese lo fija el for de arriba.
+        try {
+          for (const g of grouped.values()) {
+            await upsertCommissionEntries(company.id, mes.periodId!, g.headId, g.entries);
+          }
+        } catch (err) {
+          const razon = err instanceof Error ? err.message : t('comm.recalcPnlCrmFetchFailed');
+          setToast({
+            type: 'error',
+            msg: ultimoOk
+              ? t('comm.recalcPnlCrmFailedAt', { month: mes.label, reason: razon, lastOk: ultimoOk })
+              : t('comm.recalcPnlCrmFailedFirst', { month: mes.label, reason: razon }),
+          });
+          setTimeout(() => setToast(null), 9000);
+          return;
+        }
+        ultimoOk = mes.label;
+        mesesAplicados += 1;
+      }
+
+      await refresh();
+      setToast({
+        type: 'success',
+        msg: t('comm.recalcPnlCrmDone', {
+          months: String(mesesAplicados),
+          profiles: String(perfiles.length),
+          updated: String(actualizadas),
+          created: String(creadas),
+          skipped: String(salteadas),
+        }),
+      });
+      setTimeout(() => setToast(null), 9000);
+    } catch (err) {
+      setToast({ type: 'error', msg: err instanceof Error ? err.message : 'Error' });
+      setTimeout(() => setToast(null), 6000);
+    } finally {
+      setRecalcPnlCrmInProgress(false);
+    }
+  }, [user, company, selectedPeriod, sortedPeriods, pnlBdms, pnlSpecialBdms, monthlyResults, refresh, t]);
 
   const handleSave = async () => {
     if (!selectedPeriod || !company) return;
@@ -1276,7 +1697,9 @@ export default function ComisionesPage() {
         salary_paid: e.salary_paid ?? 0,
         total_earned: e.total_earned ?? 0,
         bonus: e.bonus ?? 0,
-        pnl_current: 0,
+        // Ver la nota del mismo campo en handleSaveBdm: un 0 fijo acá borraba
+        // el override de lotes de la pantalla apenas se guardaba.
+        pnl_current: e.pnl_current ?? 0,
         pnl_accumulated: 0,
         pnl_total: 0,
       }));
@@ -1291,6 +1714,7 @@ export default function ComisionesPage() {
         return next;
       });
       setNdRawInputs(new Map());
+      setLotRawInputs(new Map());
       setSaving(false);
       setToast({ type: 'success', msg: t('comm.saveSuccess') });
       setTimeout(() => setToast(null), 4000);
@@ -1574,6 +1998,12 @@ export default function ComisionesPage() {
                   ? <span className="text-negative">{t('comm.ndInputError')}</span>
                   : t('comm.ndInputAutoNotice')}
           </p>
+          {/* El PnL se avisa APARTE: puede fallar su RPC sin que falle la del
+              net deposit, y decir "falló el CRM" a secas haría dudar de los 120
+              perfiles de net que sí cargaron bien. */}
+          {periodoUsaAutomatico && !crmNetLoading && !crmNetError && crmPnlError && (
+            <p className="text-xs text-negative mt-1">{t('comm.pnlInputError')}</p>
+          )}
         </Card>
       )}
 
@@ -1925,11 +2355,27 @@ export default function ComisionesPage() {
           )}
 
           {/* ── Section: PnL ── */}
-          <h3 className="text-base font-semibold flex items-center gap-2 mt-6">
-            <BarChart3 className="w-4 h-4 text-blue-600" />
-            {t('comm.sectionPnL')}
-            <span className="text-xs text-muted-foreground font-normal">({pnlBdms.length})</span>
-          </h3>
+          {/* El botón de recálculo vive acá y no en la sección Especial porque
+              reescribe A LOS DOS grupos (normal y especial) — son los perfiles
+              con pnl_pct, que es exactamente lo que devuelve la RPC 123. */}
+          <div className="flex items-center justify-between mt-6 gap-2 flex-wrap">
+            <h3 className="text-base font-semibold flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-blue-600" />
+              {t('comm.sectionPnL')}
+              <span className="text-xs text-muted-foreground font-normal">({pnlBdms.length})</span>
+            </h3>
+            {isCompanyAdmin(user) && (pnlBdms.length > 0 || pnlSpecialBdms.length > 0) && (
+              <button
+                onClick={() => handleRecalcPnlDesdeCrm()}
+                disabled={recalcPnlCrmInProgress}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-400 text-xs font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50"
+                title={t('comm.recalcPnlCrmTitle')}
+              >
+                {recalcPnlCrmInProgress ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                {recalcPnlCrmInProgress ? t('comm.recalcPnlCrmInProgress') : t('comm.recalcPnlCrmButton')}
+              </button>
+            )}
+          </div>
           {pnlBdms.length > 0 ? (
             <Card className="p-0 overflow-hidden">
               <div className="overflow-x-auto">
@@ -1960,7 +2406,9 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
                           <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                            <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
+                            <PnlCrmHint info={getPnlCrmInfo(calc.profileId)} labels={t} />
                           </td>
                           <td className="px-3 py-3">
                             <input
@@ -1968,9 +2416,11 @@ export default function ComisionesPage() {
                               value={getLotDisplay(calc.profileId)}
                               onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
                               onFocus={(e) => e.target.select()}
-                              placeholder="0"
+                              placeholder={t('comm.ndPlaceholder')}
+                              title={t('comm.ndOverrideHint')}
                               className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                             />
+                            <NdSourceTag source={getLotSource(calc.profileId)} auto={getLotAuto(calc.profileId)} labels={t} />
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
@@ -2148,8 +2598,12 @@ export default function ComisionesPage() {
                                 value={getNdDisplay(calc.profileId)}
                                 onChange={(e) => handleNdChange(calc.profileId, e.target.value)}
                                 onFocus={(e) => e.target.select()}
+                                placeholder={t('comm.ndPlaceholder')}
+                                title={t('comm.ndOverrideHint')}
                                 className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                               />
+                              <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
+                              <PnlCrmHint info={getPnlCrmInfo(calc.profileId)} labels={t} />
                             </td>
                             <td className="px-3 py-3">
                               <input
@@ -2157,9 +2611,11 @@ export default function ComisionesPage() {
                                 value={getLotDisplay(calc.profileId)}
                                 onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
                                 onFocus={(e) => e.target.select()}
-                                placeholder="0"
+                                placeholder={t('comm.ndPlaceholder')}
+                                title={t('comm.ndOverrideHint')}
                                 className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
                               />
+                              <NdSourceTag source={getLotSource(calc.profileId)} auto={getLotAuto(calc.profileId)} labels={t} />
                             </td>
                             <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
                             <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>

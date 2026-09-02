@@ -349,3 +349,19 @@ alter function public.hr_net_deposit_by_profile(uuid, date) set statement_timeou
 --   from hr_net_deposit_by_profile('71715987-5479-52c4-a990-c414fb3a9b36', '2026-08-01') r
 --   join sub on sub.id = r.profile_id;
 -- ─────────────────────────────────────────────────────────────────────────────
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- SEGUIDO POR LA MIGRACIÓN 123 (mismo patrón que 113 → 120 → 121)
+--
+-- Las capas 1-4 que están escritas arriba YA NO VIVEN dentro de esta función:
+-- la 123 las extrajo a `public.hr_padres_resueltos(company)` porque una segunda
+-- RPC (`hr_pnl_input_by_profile`, el PnL del CRM para Comisiones RRHH) necesita
+-- exactamente el mismo árbol, y copiarlo era fabricar la lista duplicada que se
+-- desincroniza en silencio (§1.1).
+--
+-- Esta cabecera sigue siendo el documento de POR QUÉ el árbol es así — las 4
+-- capas, lo que se descartó y los números de la calibración. El CÓDIGO vivo del
+-- árbol está en la 123. Si hay que tocar una capa, se toca allá y se vuelve a
+-- correr la verificación de acá: Hugo 687.322,96 y Arciniegas 10.702,14 para
+-- 2026-08-01 son el contrato, y la 123 los repite al pie por eso mismo.
+-- ─────────────────────────────────────────────────────────────────────────────
