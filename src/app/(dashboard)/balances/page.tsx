@@ -419,6 +419,27 @@ export default function BalancesPage() {
   // Load pinned wallets from Supabase
   const loadPinnedWallets = useCallback(async () => {
     if (!company) return;
+    // Por la API y no por el cliente del navegador: la lectura directa con RLS
+    // no conoce la empresa ACTIVA del superadmin, así que fijar una wallet en
+    // otra empresa escribía bien y leía vacío («0 fijadas», sin error).
+    // Ver la cabecera de /api/admin/pinned-wallets.
+    try {
+      const res = await apiFetch('/api/admin/pinned-wallets');
+      const json = await res.json();
+      if (json?.success) {
+        setPinnedWallets(
+          (json.wallets ?? []).map((w: { wallet_id: string; wallet_label: string; role: PinnedWalletRole }) => ({
+            company_id: company.id,
+            wallet_id: w.wallet_id,
+            wallet_label: w.wallet_label,
+            role: w.role,
+          })) as PinnedCoinsbuyWallet[],
+        );
+        return;
+      }
+    } catch {
+      // Cae al camino viejo: mejor un dato por RLS que ninguno.
+    }
     const pins = await fetchPinnedCoinsbuyWallets(company.id);
     setPinnedWallets(pins);
   }, [company]);
