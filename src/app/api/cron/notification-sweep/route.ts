@@ -2,10 +2,17 @@
 // GET /api/cron/notification-sweep
 //
 // Los otros avisos nacen de un evento (una orden se aprueba, un sync falla).
-// Estos dos NO tienen evento: nacen del PASO DEL TIEMPO. Una orden aprobada se
+// Estos NO tienen evento: nacen del PASO DEL TIEMPO. Una orden aprobada se
 // vuelve un problema porque nadie la pagó, y un período se vuelve un problema
 // porque nadie lo cerró — en los dos casos el hecho que hay que avisar es que
 // no pasó nada. Sin un barrido diario no existe el momento en que emitirlos.
+//
+// Desde el 2026-09-02 el barrido también mira el HEDGE FUND (migración 125):
+// capital que vence en 30 días, inversiones esperando una aprobación manual,
+// solicitudes de retiro sin resolver y fondos con capital activo que no pagaron
+// rendimiento este mes. Son cuatro variantes del mismo hecho —no pasó nada— y
+// la decisión de si hay que avisar vive en `src/lib/hedge-fund/alerts.ts`, que
+// es puro y está testeado. Acá sólo se leen las filas y se emite.
 //
 // El dedupe por día (dailyKey) es lo que hace que esto no sea spam: mientras el
 // aviso siga sin leerse no se repite, y si el pendiente sigue mañana vuelve a
@@ -17,6 +24,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { notify, dailyKey } from '@/lib/notifications/notify';
+import { features } from '@/lib/business-model';
+import { buildHedgeFundAlerts } from '@/lib/hedge-fund/alerts';
+import { readHedgeFundMirror } from '@/lib/hedge-fund/server';
 
 /** Antigüedad a partir de la cual una orden aprobada y sin pagar preocupa. */
 const UNPAID_DAYS = 3;
@@ -42,7 +52,11 @@ export async function GET(request: NextRequest) {
 
   const { data: companies, error: listError } = await admin
     .from('companies')
-    .select('id, name')
+    // `business_model` viaja en el MISMO select: el hedge fund es exclusivo de
+    // `broker` y barrer una consultora buscando fondos que no existen sólo
+    // llenaría los logs. Una consulta más por empresa sería regalarle trabajo a
+    // la base para no avisar de nada.
+    .select('id, name, business_model')
     .eq('status', 'active');
 
   if (listError || !companies) {
@@ -57,7 +71,7 @@ export async function GET(request: NextRequest) {
   const year = now.getUTCFullYear();
   const month = now.getUTCMonth() + 1;
 
-  const sweepOneCompany = async (company: { id: string; name: string }) => {
+  const sweepOneCompany = async (company: { id: string; name: string; business_model?: unknown }) => {
     const entry: Record<string, unknown> = { company_id: company.id, company_name: company.name };
 
     // ── Órdenes aprobadas sin pagar ──
@@ -115,6 +129,39 @@ export async function GET(request: NextRequest) {
       entry.periods_open = periods.length;
     } catch (err) {
       entry.periods_open_error = err instanceof Error ? err.message : 'Unknown error';
+    }
+
+    // ── Hedge Fund (migración 125) ──
+    // En su propio try/catch, como los otros dos: que el espejo del hedge fund
+    // falle no puede dejar sin avisar una orden aprobada y sin pagar.
+    //
+    // Las filas llegan YA filtradas de datos de prueba (readHedgeFundMirror usa
+    // la lista canónica de test-data.ts): un aviso por el vencimiento del fondo
+    // `qa-tst` es la forma más rápida de que el equipo deje de leer los avisos.
+    if (features(company.business_model).hedgeFund) {
+      try {
+        const mirror = await readHedgeFundMirror(admin, company.id, {
+          funds: true, investments: true, payouts: true, withdrawalRequests: true,
+        });
+        const alerts = buildHedgeFundAlerts({
+          funds: mirror.funds,
+          investments: mirror.investments,
+          payouts: mirror.payouts,
+          withdrawalRequests: mirror.withdrawalRequests,
+        });
+        for (const a of alerts) {
+          await notify(admin, {
+            companyId: company.id,
+            type: a.type,
+            params: a.params,
+            link: '/hedge-fund',
+            dedupeKey: dailyKey(`hf:${a.dedupeSuffix}:${company.id}`),
+          });
+        }
+        entry.hedge_fund_alerts = alerts.map((a) => a.type);
+      } catch (err) {
+        entry.hedge_fund_error = err instanceof Error ? err.message : 'Unknown error';
+      }
     }
 
     return entry;

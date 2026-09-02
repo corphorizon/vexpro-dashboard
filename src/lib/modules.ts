@@ -77,6 +77,21 @@ const MODULE_DEFS = [
   { key: 'ib_rebates',     labelEs: 'Configuración IBs',  labelEn: 'IB Settings', parent: 'hr' },
   { key: 'commissions',    labelEs: 'Comisiones',         labelEn: 'Commissions' },
   { key: 'risk',           labelEs: 'Gestión de Riesgo',  labelEn: 'Risk Management' },
+  // Hedge Fund (migración 125). Es un producto de INVERSIÓN que venden los
+  // brokers del grupo, con sus propias colecciones en el CRM: programa,
+  // inversión por cliente, libro, corridas de pago y comisiones de red.
+  //
+  // NO es `investments`, aunque la palabra se parezca: aquél es la tabla que
+  // el propio equipo carga a mano con el rendimiento de sus inversiones
+  // (/inversiones es de solo lectura y /upload la escribe). Éste es dinero DE
+  // CLIENTES espejado del CRM y no se carga a mano en ningún lado. Confundirlos
+  // sería el mismo error que el comentario de `liquidity_pool` ya advierte.
+  //
+  // Sin `onlyWhereActivated`: a diferencia del pool, esto NO vive en una sola
+  // empresa. Lo tienen las dos que son `broker` —Vex Pro y AP Markets— y lo
+  // que decide si se ve es el MODELO DE NEGOCIO (business-model.ts:
+  // `hedgeFund`), que además bloquea al superadmin.
+  { key: 'hedge_fund',     labelEs: 'Hedge Fund',         labelEn: 'Hedge Fund' },
   { key: 'users',          labelEs: 'Usuarios',           labelEn: 'Users' },
   { key: 'logs',           labelEs: 'Registro de Actividad', labelEn: 'Activity Log' },
   // Migración 100 — el asistente de IA. Es de SOLO LECTURA por construcción:

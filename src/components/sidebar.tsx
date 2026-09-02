@@ -48,6 +48,7 @@ import {
   Contact,
   Database,
   Sparkles,
+  Landmark,
 } from 'lucide-react';
 
 // ─── Types ───
@@ -95,6 +96,11 @@ const NAV_STRUCTURE: NavEntry[] = [
       { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
       { href: '/liquidez-pool', i18nKey: 'nav.liquidityPool', icon: Droplets, module: 'liquidity_pool' },
       { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
+      // El producto de inversión que el broker le vende a SUS clientes,
+      // espejado del CRM. No confundir con 'investments', que es la cartera
+      // propia cargada a mano — ver el comentario de `hedge_fund` en
+      // modules.ts. Se ve sólo en el modelo `broker`.
+      { href: '/hedge-fund', i18nKey: 'nav.hedgeFund', icon: Landmark, module: 'hedge_fund' },
       { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
       { href: '/socios', i18nKey: 'nav.partners', icon: Briefcase, module: 'partners' },
       { href: '/clientes', i18nKey: 'nav.clients', icon: Contact, module: 'clients' },

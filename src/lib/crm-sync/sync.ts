@@ -44,6 +44,8 @@ import {
   toUserRow,
   toWithdrawalRow,
 } from './normalize';
+import { syncHedgeFund } from './hedge-fund';
+import type { HedgeFundSyncResult } from '@/lib/hedge-fund/types';
 import type {
   CrmDepositRow,
   CrmSyncCollectionStats,
@@ -277,6 +279,8 @@ export async function runCrmSync(opts: RunCrmSyncOptions): Promise<CrmSyncResult
   let withdrawals: CrmSyncCollectionStats = { ...EMPTY_STATS };
   let deposits: CrmSyncCollectionStats = { ...EMPTY_STATS };
   let users: CrmSyncCollectionStats = { ...EMPTY_STATS };
+  // `null` y no un objeto en cero: «no se calculó» no es «no hay fondos».
+  let hedgeFund: HedgeFundSyncResult | null = null;
   const nextCursors: CrmSyncCursors = { ...previous };
 
   // userId crudo indexado por su forma string: el `$in` necesita el valor tal
@@ -350,6 +354,29 @@ export async function runCrmSync(opts: RunCrmSyncOptions): Promise<CrmSyncResult
       } catch (err) {
         errors.push(`users: ${err instanceof Error ? err.message : String(err)}`);
       }
+
+      // ── Hedge fund (migración 125) ────────────────────────────────────────
+      // Va ACÁ, dentro de `runCrmSync`, y no como un extra del cron. La
+      // diferencia importa: los extras del cron los SALTA `?espejo=full`
+      // (ver la cabecera de sync-crm/route.ts), que es justamente la corrida
+      // diaria que vuelve a barrer el histórico entero. Un espejo cuyo re-
+      // barrido no lo incluye es un espejo que sólo se repara a mano.
+      //
+      // Reusa ESTA sesión de Mongo: abrir una segunda conexión al CRM por
+      // corrida sería regalarle carga al broker por documentos que ya podíamos
+      // leer con la conexión abierta.
+      //
+      // En su propio try/catch (§5.1): que el hedge fund falle no puede dejar
+      // sin espejar retiros y depósitos, que es lo que ya está en producción.
+      try {
+        hedgeFund = await syncHedgeFund(session, admin, companyId, ranAt);
+        for (const w of hedgeFund.warnings) {
+          console.warn(`[crm-sync] hedge fund ${companyId}: ${w}`);
+        }
+        errors.push(...hedgeFund.errors.map((e) => `hedge_fund/${e}`));
+      } catch (err) {
+        errors.push(`hedge_fund: ${err instanceof Error ? err.message : String(err)}`);
+      }
     });
   } catch (err) {
     // Falla la conexión entera (credencial ausente, timeout, DNS…).
@@ -366,6 +393,7 @@ export async function runCrmSync(opts: RunCrmSyncOptions): Promise<CrmSyncResult
     users,
     unknownStatuses: [...unknownStatuses].sort(),
     corruptDepositValues,
+    hedgeFund,
     cursors: nextCursors,
     elapsedMs: Date.now() - startedAt,
     errors,

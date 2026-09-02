@@ -147,6 +147,55 @@ export const NOTIFICATION_TYPES: NotificationTypeDef[] = [
     email: false, i18nKey: 'notif.propfirmReviewFailed',
   },
 
+  // ── Hedge Fund (migración 125) ──────────────────────────────────────────
+  // Los cinco avisos del módulo. Los cuatro primeros nacen del PASO DEL TIEMPO
+  // y los emite el barrido diario (cron/notification-sweep); el quinto lo
+  // emite el vigilante dentro del sync, porque tiene evento.
+  //
+  // NINGUNO manda email salvo el cambio de configuración, y es a propósito: un
+  // vencimiento a 30 días no es una urgencia, es una agenda. El correo se
+  // reserva para lo que no puede esperar a que alguien abra el dashboard.
+  {
+    // Capital que hay que devolver pronto. Va a `finance` (admin + auditor):
+    // es una decisión de caja, no de administración de usuarios.
+    key: 'hedge_fund.maturing_soon',
+    severity: 'high', audience: 'finance', module: 'hedge_fund',
+    email: false, i18nKey: 'notif.hedgeFundMaturingSoon',
+  },
+  {
+    // Fondo con `approvalMode = MANUAL` y una inversión sin aprobar: hay plata
+    // de un cliente esperando que una persona apriete un botón EN EL CRM. El
+    // dashboard no aprueba nada — misma regla que la cola de retiros (§4.3).
+    key: 'hedge_fund.pending_approval',
+    severity: 'high', audience: 'admins', module: 'hedge_fund',
+    email: false, i18nKey: 'notif.hedgeFundPendingApproval',
+  },
+  {
+    key: 'hedge_fund.withdrawal_pending',
+    severity: 'high', audience: 'finance', module: 'hedge_fund',
+    email: false, i18nKey: 'notif.hedgeFundWithdrawalPending',
+  },
+  {
+    // Un fondo con inversiones ACTIVE que no pagó rendimiento en el mes en
+    // curso. Es el aviso del SILENCIO: si el payout no corre, no falla nada y
+    // no hay error en ningún lado — sólo clientes que no cobraron. Kevin,
+    // 2026-09-02: los primeros rendimientos se pagan en septiembre de 2026, y
+    // por eso el barrido no mira meses anteriores a ése (ver el cron).
+    key: 'hedge_fund.no_payout_this_month',
+    severity: 'high', audience: 'admins', module: 'hedge_fund',
+    email: false, i18nKey: 'notif.hedgeFundNoPayout',
+  },
+  {
+    // El vigilante. Va con correo y como CRÍTICA porque lo que cambió decide
+    // cuánto se le paga a la red por cada inversión, y porque el estado
+    // correcto de AP Markets es 0/0/0 por decisión de Kevin (2026-09-02): si
+    // alguien lo mueve, hay que enterarse el mismo día y no en la próxima
+    // auditoría.
+    key: 'hedge_fund.commission_config_changed',
+    severity: 'critical', audience: 'admins', module: 'hedge_fund',
+    email: true, i18nKey: 'notif.hedgeFundConfigChanged',
+  },
+
   // ── Seguridad. Estas rutas no dejaban NINGÚN rastro (ni audit log) ───────
   {
     key: 'security.twofa_reset',

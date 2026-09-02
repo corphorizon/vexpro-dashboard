@@ -34,6 +34,9 @@ describe('modelo de negocio', () => {
     expect(f).toEqual({
       deposits: true, withdrawals: true, netDeposit: true, brokerPnl: true,
       movements: true, liquidity: true, liquidityPool: false, investments: true,
+      // `hedgeFund` se sumó el 2026-09-02 (migración 125) y es EXCLUSIVO del
+      // broker: es dinero de clientes de una plataforma de trading.
+      hedgeFund: true,
       incomeLines: false, riskManagement: true, commercialTeam: true,
       cashBasisExpenses: false, accounting: true,
     });
@@ -45,6 +48,10 @@ describe('modelo de negocio', () => {
     // pool de liquidez se sumó el 2026-09-01: administrarlo es un negocio
     // propio (modelo `liquidity_provider`), no algo que haga un broker.
     expect(blockedModules('broker')).toEqual(['liquidity_pool', 'income', 'clients']);
+    // Y el hedge fund es SUYO: es el único modelo que lo tiene.
+    expect(blockedModules('broker')).not.toContain('hedge_fund');
+    expect(moduleAllowedForModel('company', 'hedge_fund')).toBe(false);
+    expect(moduleAllowedForModel('liquidity_provider', 'hedge_fund')).toBe(false);
   });
 
   it('los módulos de facturación siguen encendidos para una empresa de servicios', () => {
@@ -65,6 +72,9 @@ describe('modelo de negocio', () => {
     expect(f.liquidity).toBe(false);
     expect(f.liquidityPool).toBe(false);
     expect(f.investments).toBe(false);
+    // Ni hedge fund: una consultora no le vende un producto de inversión a
+    // clientes que no tiene.
+    expect(f.hedgeFund).toBe(false);
     // Sí lleva contabilidad: Horizon vive de cargar egresos y cerrar meses.
     expect(f.accounting).toBe(true);
     // Pero sí factura: el detalle de ingresos es su contabilidad.
@@ -250,9 +260,16 @@ describe('ningún modelo pierde lo que ya tenía', () => {
       broker: ['income', 'clients'],
       company: ['risk', 'commissions', 'ib_rebates', 'movements', 'liquidity', 'investments'],
     };
+    // `hedge_fund` (migración 125, 2026-09-02) se suma a los bloqueados de
+    // TODOS los modelos menos `broker`, que es el único que vende el producto.
+    // Al broker NO le saca nada: es un módulo nuevo, no uno que perdiera.
+    const sumados: Record<string, string[]> = {
+      broker: ['liquidity_pool'],
+      company: ['liquidity_pool', 'hedge_fund'],
+    };
     for (const [model, bloqueadosAntes] of Object.entries(antes)) {
       expect(new Set(blockedModules(model))).toEqual(
-        new Set([...bloqueadosAntes, 'liquidity_pool']),
+        new Set([...bloqueadosAntes, ...sumados[model]]),
       );
     }
     expect(uploadSections('broker')).toEqual([

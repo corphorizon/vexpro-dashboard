@@ -100,6 +100,24 @@ export interface BusinessModelFeatures {
   liquidityPool: boolean;
   /** Inversiones activas y su rendimiento. */
   investments: boolean;
+  /**
+   * Hedge Fund (migración 125): el producto de inversión que los brokers del
+   * grupo le venden a sus clientes, espejado del CRM.
+   *
+   * `true` SÓLO en `broker`, y por la misma razón que `deposits` o
+   * `riskManagement`: es dinero de CLIENTES de una plataforma de trading. Una
+   * consultora no tiene clientes que inviertan, y un proveedor de liquidez es
+   * informativo y no vende nada al público — encenderlo ahí sería una pantalla
+   * permanentemente vacía invitando a buscar datos que no existen.
+   *
+   * NO es `investments`: aquélla es la tabla que el propio equipo carga a mano
+   * con SU rendimiento. Ver el comentario de `hedge_fund` en modules.ts.
+   *
+   * Medido el 2026-09-02: las dos empresas `broker` que tienen credencial de
+   * Orion —AP Markets y Vex Pro— tienen fondos en el CRM (7 y 5). Las otras
+   * no tienen ninguna colección `hedgefund*`.
+   */
+  hedgeFund: boolean;
   /** Detalle de ingresos por concepto y cliente (facturación). */
   incomeLines: boolean;
   /** Gestión de riesgo: revisión de retiros, cuentas MT, wallets externas. */
@@ -163,6 +181,11 @@ export const BUSINESS_MODEL_FEATURES: Record<BusinessModel, BusinessModelFeature
     // nota de orden de despliegue en la migración 122.
     liquidityPool: false,
     investments: true,
+    // El único modelo que lo tiene. Vex Pro lo ofrece como «Vex Capital» aunque
+    // sus cinco fondos figuren con `enabled=false` (Kevin, 2026-09-02): la
+    // feature dice si el NEGOCIO vende el producto, no si hoy hay un fondo
+    // abierto.
+    hedgeFund: true,
     // ── Corregido (Kevin, 2026-08-26): un broker NO factura por concepto ────
     // Antes esto estaba en true con el argumento de que "no molesta". Sí
     // molesta: Ingresos y Clientes son la contabilidad de una empresa de
@@ -191,6 +214,7 @@ export const BUSINESS_MODEL_FEATURES: Record<BusinessModel, BusinessModelFeature
     liquidity: false,
     liquidityPool: false,
     investments: false,
+    hedgeFund: false,
     incomeLines: true,
     riskManagement: false,
     commercialTeam: false,
@@ -239,6 +263,9 @@ export const BUSINESS_MODEL_FEATURES: Record<BusinessModel, BusinessModelFeature
     liquidity: false,
     liquidityPool: true,
     investments: true,
+    // Informativo y sin clientes públicos: no vende el producto. Ver la nota
+    // de `hedgeFund` arriba.
+    hedgeFund: false,
     incomeLines: false,
     riskManagement: false,
     commercialTeam: false,
@@ -271,6 +298,10 @@ export function blockedModules(model: unknown): string[] {
   // guardar el modelo nuevo lo rechaza Postgres.
   if (!f.liquidityPool) blocked.push('liquidity_pool');
   if (!f.investments) blocked.push('investments');
+  // Igual que el pool: el modelo bloquea INCLUSO al superadmin. Sin esta línea
+  // el bypass dibujaría «Hedge Fund» en el sidebar de Horizon y de Exura
+  // Liquidez, que no tienen ni una colección `hedgefund*` en ningún CRM.
+  if (!f.hedgeFund) blocked.push('hedge_fund');
   // Ingresos por concepto y la cartera de clientes a los que se factura: son
   // la misma contabilidad y se encienden o apagan juntos.
   if (!f.incomeLines) blocked.push('income', 'clients');

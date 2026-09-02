@@ -42,6 +42,12 @@ export const MODULE_GROUPS: ModuleGroup[] = [
       { module: 'liquidity',   href: '/liquidez',        labelEs: 'Liquidez' },
       { module: 'liquidity_pool', href: '/liquidez-pool', labelEs: 'Pool de Liquidez' },
       { module: 'investments', href: '/inversiones',     labelEs: 'Inversiones' },
+      // El hedge fund va en FINANZAS y no en Risk: lo que la pantalla contesta
+      // es cuánto capital hay bajo gestión, cuánto se le debe a los clientes y
+      // cuándo vence — preguntas de plata, no de riesgo. Queda al lado de
+      // Inversiones, que es su vecino conceptual (rendimiento de capital),
+      // aunque sea otra cosa: ver el comentario de `hedge_fund` en modules.ts.
+      { module: 'hedge_fund',  href: '/hedge-fund',      labelEs: 'Hedge Fund' },
       { module: 'balances',    href: '/balances',        labelEs: 'Balances' },
       { module: 'partners',    href: '/socios',          labelEs: 'Socios' },
       { module: 'clients',     href: '/clientes',        labelEs: 'Clientes' },

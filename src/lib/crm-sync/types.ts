@@ -7,6 +7,8 @@
 // el lote entero, no la fila).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import type { HedgeFundSyncResult } from '@/lib/hedge-fund/types';
+
 /** Estados normalizados de retiro. Mismo check que la migración 088. */
 export type WithdrawalStatusNorm =
   | 'approved'
@@ -152,6 +154,15 @@ export interface CrmSyncResult {
   unknownStatuses: string[];
   /** Cuántos depositValue absurdos se guardaron como null (trampa 1). */
   corruptDepositValues: number;
+  /**
+   * El espejo del hedge fund (migración 125). `null` = la empresa no lo tiene
+   * o la corrida no llegó a hacerlo — que NO es lo mismo que «cero fondos».
+   *
+   * Va DENTRO de `runCrmSync` y no como un extra del cron a propósito: así
+   * corre en las tres corridas, incluida `?espejo=full`, que es la única que
+   * vuelve a barrer el histórico entero.
+   */
+  hedgeFund: HedgeFundSyncResult | null;
   /** Cursor que queda guardado para la próxima corrida. */
   cursors: CrmSyncCursors;
   elapsedMs: number;

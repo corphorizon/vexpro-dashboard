@@ -30,6 +30,10 @@ const ROUTE_TO_MODULE: Array<[RegExp, string]> = [
   [/^\/liquidez-pool(\/|$)/, 'liquidity_pool'],
   [/^\/liquidez(\/|$)/, 'liquidity'],
   [/^\/inversiones(\/|$)/, 'investments'],
+  // Hedge Fund (migración 125). Va acá y no sólo en el menú por lo que enseñó
+  // el pool: el bloqueo por modelo de negocio esconde el ítem del sidebar,
+  // pero la URL escrita a mano entra igual si el guardián no la conoce.
+  [/^\/hedge-fund(\/|$)/, 'hedge_fund'],
   [/^\/balances(\/|$)/, 'balances'],
   [/^\/socios(\/|$)/, 'partners'],
   [/^\/clientes(\/|$)/, 'clients'],

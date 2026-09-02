@@ -707,6 +707,9 @@ export async function GET(request: NextRequest) {
           users: { fetched: 0, upserted: 0 },
           unknownStatuses: [],
           corruptDepositValues: 0,
+          // `null` = no se calculó. Una empresa que reventó antes de llegar al
+          // hedge fund NO tiene «cero fondos»: no tiene dato.
+          hedgeFund: null,
           cursors: { withdrawals: null, deposits: null },
           elapsedMs: 0,
           errors: [msg],
