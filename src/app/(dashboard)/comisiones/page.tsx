@@ -2496,7 +2496,14 @@ export default function ComisionesPage() {
                                     realPayment: adjustedReal,
                                     accumulatedOut: calc.accumulatedOut,
                                     salary: calc.salary,
-                                    total: adjustedReal + calc.salary,
+                                    // El MISMO total que muestra la columna Total de la fila:
+                                    // con la deuda arrastrada ya descontada. Sin esto el PDF
+                                    // decía un número y la pantalla otro (dueño, 2026-09-02).
+                                    ...(() => {
+                                      const prevDebt = getPrevDebtAll(calc.profileId);
+                                      const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, adjustedReal + calc.salary);
+                                      return { prevDebt, total: finalTotalEarned };
+                                    })(),
                                   });
                                 })}
                                 className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
@@ -2678,7 +2685,13 @@ export default function ComisionesPage() {
                                       realPayment: calc.realPayment,
                                       accumulatedOut: 0,
                                       salary: calc.salary,
-                                      total: calc.realPayment + calc.salary,
+                                      // Igual que el PnL normal: el total del PDF es el de la
+                                      // columna Total (deuda arrastrada ya descontada).
+                                      ...(() => {
+                                        const prevDebt = getPrevDebtAll(calc.profileId);
+                                        const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, calc.realPayment + calc.salary);
+                                        return { prevDebt, total: finalTotalEarned };
+                                      })(),
                                       mode: 'special',
                                     });
                                   })}

@@ -1,5 +1,10 @@
 -- ─────────────────────────────────────────────────────────────────────────────
--- Migración 122 — Tercer modelo de negocio: `liquidity_provider`
+-- Migración 124 — Tercer modelo de negocio: `liquidity_provider`
+--
+-- (Nació como 122 en la rama de Kevin, pero el 122 y el 123 ya estaban tomados
+--  y APLICADOS por el espejo de PNL por usuario y las RPC del grupo PnL — la
+--  colisión se resolvió al mergear, como manda el §0. Solo cambió el número
+--  del archivo: el SQL es idéntico al que se aplicó.)
 --
 -- ── QUÉ ES ──────────────────────────────────────────────────────────────────
 -- Una empresa administradora de POOL DE LIQUIDEZ (Kevin, 2026-09-01):
