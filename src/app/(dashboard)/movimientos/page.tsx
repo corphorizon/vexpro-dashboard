@@ -138,6 +138,14 @@ export default function MovimientosPage() {
   // $932.444,83 en vez de $469.650,98 y Net Deposit −$231.127, que es el
   // número que después consume la cadena de distribución.
   const coexist = useApiCoexistence(activePeriods, '', apiRefreshKey);
+  // Canales apagados para la empresa: su fila no se dibuja (ni con $0). Ver
+  // la cabecera del endpoint persisted-movements.
+  //
+  // Declarado ACÁ, pegado a `coexist`, y no más abajo junto a `apiByChannel`:
+  // el 2026-09-02 vivió 100 líneas después de su primer uso (`fullDeposits`) y
+  // tiró ReferenceError (zona muerta temporal de `const`) en cuanto el período
+  // tuvo datos. tsc no lo ve; la pantalla de Movimientos se cayó en prod.
+  const canalOculto = (k: string) => coexist.hiddenChannels.includes(k);
 
   // ── Las series automáticas del espejo del CRM ──────────────────────────────
   // Viven en `crm_monthly_totals` (migración 100) y las calcula el cron desde
@@ -241,9 +249,6 @@ export default function MovimientosPage() {
 
   // API amounts from the shared coexistence hook (0 for historical periods).
   const { apiByChannel } = coexist;
-  // Canales apagados para la empresa: su fila no se dibuja (ni con $0). Ver
-  // la cabecera del endpoint persisted-movements.
-  const canalOculto = (k: string) => coexist.hiddenChannels.includes(k);
 
   // "Depósitos Totales (API)" — la suma de los canales con API, incluyendo lo
   // que el usuario haya cargado a mano en esos canales. Sale del registro
