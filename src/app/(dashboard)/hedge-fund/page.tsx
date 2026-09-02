@@ -23,13 +23,11 @@
 //     mensuales reales (colección VACÍA hoy en las dos empresas) y el ticket
 //     promedio de un fondo sin inversiones activas.
 //
-// ── EL TÍTULO ES 'Hedge Fund' EN LAS DOS EMPRESAS ──────────────────────────
-// Kevin pidió que Vex Pro pudiera verlo como «Vex Capital». NO se implementó y
-// NO se agregó una columna para eso: `companies` no tiene ningún jsonb de
-// settings donde meterlo (verificado contra schema.sql y las 124 migraciones el
-// 2026-09-02), y crear una columna para un rótulo es una decisión de esquema
-// que merece su propia migración y su propio pedido. Queda anotado en el
-// reporte de la tanda.
+// ── EL TÍTULO LO PONE LA EMPRESA ───────────────────────────────────────────
+// Vex Pro lo vende como «Vex Capital» (Kevin, 2026-09-02). El rótulo vive en
+// `companies.hedge_fund_label` (migración 126) y se resuelve con
+// `moduleDisplayLabel`, el MISMO helper que usa el menú: título y menú no
+// pueden decir cosas distintas. NULL = 'Hedge Fund'.
 //
 // ── LA CARGA ES POR PESTAÑA ────────────────────────────────────────────────
 // El Resumen y los Programas salen de la MISMA llamada (`/overview`): son la
@@ -60,6 +58,8 @@ import { useI18n } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/utils';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
+import { moduleDisplayLabel } from '@/lib/modules';
+import { useData } from '@/lib/data-context';
 
 // ── Tipos de la respuesta ────────────────────────────────────────────────────
 
@@ -176,6 +176,7 @@ function ExcludedBadge({ excluded, t }: { excluded: Exclusion | null; t: (k: str
 
 export default function HedgeFundPage() {
   const { t } = useI18n();
+  const { company } = useData();
   const canAccess = useModuleAccess('hedge_fund');
   const { toast, ToastHost } = useToasts();
 
@@ -305,7 +306,7 @@ export default function HedgeFundPage() {
       {ToastHost}
 
       <PageHeader
-        title={t('hf.title')}
+        title={moduleDisplayLabel('hedge_fund', t('hf.title'), company)}
         subtitle={t('hf.subtitle')}
         icon={Landmark}
         actions={

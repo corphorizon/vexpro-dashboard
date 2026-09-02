@@ -1,5 +1,7 @@
 'use client';
 
+import { moduleDisplayLabel } from '@/lib/modules';
+
 import { useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -267,7 +269,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
       pathname === item.href ||
       (item.href !== '/' && pathname.startsWith(item.href + '/'));
     const Icon = item.icon;
-    const label = t(item.i18nKey);
+    const label = moduleDisplayLabel(item.module, t(item.i18nKey), company);
 
     // Rail contraído: solo icono, centrado, con `title` nativo como tooltip.
     if (isCollapsed) {
@@ -310,7 +312,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
           'w-4 h-4 shrink-0 transition-colors',
           isActive ? 'text-white' : 'text-slate-400 group-hover:text-white'
         )} />
-        <span className="truncate">{t(item.i18nKey)}</span>
+        <span className="truncate">{label}</span>
       </Link>
     );
   };
@@ -466,8 +468,8 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
                     key={item.href}
                     href={item.href}
                     onClick={handleNavClick}
-                    title={item.labelEs}
-                    aria-label={item.labelEs}
+                    title={moduleDisplayLabel(item.module, item.labelEs, company)}
+                    aria-label={moduleDisplayLabel(item.module, item.labelEs, company)}
                     className={cn(
                       'group flex items-center justify-center h-10 rounded-lg transition-all',
                       isActive
@@ -494,7 +496,7 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
                       : 'text-slate-300 hover:bg-slate-800 hover:text-white',
                   )}
                 >
-                  <span className="truncate">{item.labelEs}</span>
+                  <span className="truncate">{moduleDisplayLabel(item.module, item.labelEs, company)}</span>
                 </Link>
               );
             })

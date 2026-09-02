@@ -291,3 +291,22 @@ export function sanitizeModuleKeys(input: unknown): string[] {
   }
   return [...seen];
 }
+
+/**
+ * Rótulo que VE la empresa para un módulo. Hoy el único módulo con nombre
+ * comercial propio es `hedge_fund` (Vex Pro lo vende como «Vex Capital»,
+ * migración 126). Se resuelve acá, en el registro, para que el menú, el título
+ * de la pantalla y cualquier pantalla futura digan lo mismo — si cada uno
+ * consultara la columna por su cuenta, uno se olvidaría.
+ */
+export function moduleDisplayLabel(
+  moduleKey: string,
+  fallback: string,
+  company: { hedge_fund_label?: string | null } | null | undefined,
+): string {
+  if (moduleKey === 'hedge_fund') {
+    const custom = company?.hedge_fund_label?.trim();
+    if (custom) return custom;
+  }
+  return fallback;
+}

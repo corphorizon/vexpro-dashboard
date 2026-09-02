@@ -10,6 +10,9 @@ export interface Company {
   /** Isotipo cuadrado (migración 072) para superficies angostas: el sidebar
    *  contraído. Null = se muestra la inicial del nombre. */
   logo_icon_url: string | null;
+  /** Rótulo comercial del módulo hedge_fund (migración 126). Vex Pro = «Vex
+   *  Capital». null = nombre genérico del módulo. */
+  hedge_fund_label?: string | null;
   color_primary: string;
   color_secondary: string;
   currency: string;
