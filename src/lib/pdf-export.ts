@@ -525,6 +525,14 @@ interface PdfPnlData {
   salary: number;
   total: number;
   /**
+   * Deuda arrastrada del mes anterior (negativa = hay deuda; >= 0 = sin deuda).
+   * Mismo contrato que PdfIndividualData: la pantalla ya la descuenta del
+   * TOTAL, así que sin esta fila el PDF mostraba un total que no cuadraba con
+   * "Pago Real + Salario" y nadie sabía por qué (reporte del dueño, 2026-09-02:
+   * la deuda no se estaba mostrando en el PDF).
+   */
+  prevDebt: number;
+  /**
    * Modo de cálculo:
    *   - 'normal'  → reporte tradicional con División, Acumulado previo,
    *                 Acumulado→Siguiente (default).
@@ -620,30 +628,44 @@ export async function generatePnlPDF(data: PdfPnlData) {
     margin: { left: 14, right: 14 },
   });
 
-  // Resumen de pago
+  // Resumen de pago. Con deuda arrastrada (prevDebt < 0) se agregan el
+  // subtotal y la fila de deuda, igual que en generateIndividualPDF: el TOTAL
+  // tiene que cuadrar A LA VISTA con las filas de arriba, no por fe.
   y = getLastTableY(doc, y + 60, 10);
   y = pdfSection(doc, 'Resumen de Pago', y);
+  const hasDebt = data.prevDebt < 0;
+  const rawTotal = Math.round((data.realPayment + data.salary) * 100) / 100;
+  const summaryBody: string[][] = [
+    ['Comision bruta', money(data.commission)],
+    ['Comisiones por Lotes (descuento)', `-${money(data.lotCommissions)}`],
+    ['Pago Real (Comision - Lotes)', money(data.realPayment)],
+    ['Salario', money(data.salary)],
+  ];
+  if (hasDebt) {
+    summaryBody.push(['Subtotal antes de deuda', money(rawTotal)]);
+    summaryBody.push(['(-) Deuda arrastrada del mes anterior', money(data.prevDebt)]);
+  }
+  summaryBody.push(['TOTAL A PAGAR', money(data.total)]);
+  const totalRowIdx = summaryBody.length - 1;
+  const debtRowIdx = hasDebt ? summaryBody.length - 2 : -1;
   autoTable(doc, {
     startY: y,
     head: [['Concepto', 'Monto']],
-    body: [
-      ['Comision bruta', money(data.commission)],
-      ['Comisiones por Lotes (descuento)', `-${money(data.lotCommissions)}`],
-      ['Pago Real (Comision - Lotes)', money(data.realPayment)],
-      ['Salario', money(data.salary)],
-      ['TOTAL A PAGAR', money(data.total)],
-    ],
+    body: summaryBody,
     theme: 'grid',
     styles: { fontSize: 10, cellPadding: 4 },
     headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
     bodyStyles: { textColor: C.ink },
     didParseCell: (hookData) => {
-      if (hookData.section === 'body' && hookData.row.index === 4) {
+      if (hookData.section !== 'body') return;
+      if (hookData.row.index === totalRowIdx) {
         hookData.cell.styles.fontStyle = 'bold';
         hookData.cell.styles.fillColor = [234, 241, 250];
         hookData.cell.styles.textColor = C.primary;
-      }
-      if (hookData.section === 'body' && hookData.row.index === 1) {
+      } else if (hookData.row.index === debtRowIdx) {
+        hookData.cell.styles.fillColor = [254, 243, 199]; // ámbar suave
+        hookData.cell.styles.textColor = [146, 64, 14];
+      } else if (hookData.row.index === 1) {
         hookData.cell.styles.textColor = C.warning;
       }
     },
