@@ -195,7 +195,7 @@ export default function MovimientosPage() {
   // estos valores solo se usan en el render (no como deps de efectos).
   const fullDeposits: Deposit[] = !summary
     ? []
-    : ALL_CHANNELS.map((ch) => {
+    : ALL_CHANNELS.filter((ch) => !canalOculto(ch)).map((ch) => {
         const existing = summary.deposits.find((d) => d.channel === ch);
         return (
           existing || {
@@ -241,6 +241,9 @@ export default function MovimientosPage() {
 
   // API amounts from the shared coexistence hook (0 for historical periods).
   const { apiByChannel } = coexist;
+  // Canales apagados para la empresa: su fila no se dibuja (ni con $0). Ver
+  // la cabecera del endpoint persisted-movements.
+  const canalOculto = (k: string) => coexist.hiddenChannels.includes(k);
 
   // "Depósitos Totales (API)" — la suma de los canales con API, incluyendo lo
   // que el usuario haya cargado a mano en esos canales. Sale del registro
@@ -266,7 +269,7 @@ export default function MovimientosPage() {
   // no se pudo leer y uno que no tuvo retiros son dos cosas distintas, y la
   // segunda es la única que se puede sumar.
   const apiWithdrawalRows = useDerivedBroker
-    ? API_WITHDRAWAL_CHANNELS.map(({ key }) => ({
+    ? API_WITHDRAWAL_CHANNELS.filter(({ key }) => !canalOculto(key)).map(({ key }) => ({
         key,
         label: withdrawalChannelLabel(key, t),
         amount: coexist.apiWithdrawalsByChannel[key] ?? null,

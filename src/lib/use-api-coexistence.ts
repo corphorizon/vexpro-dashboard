@@ -54,6 +54,12 @@ export interface ApiCoexistenceTotals {
    */
   apiByChannel: Record<DepositChannel, number>;
   /**
+   * Canales apagados para esta empresa (channel_configs.is_visible=false).
+   * La tabla no dibuja su fila: AP Markets no tiene "FairPay en $0", no tiene
+   * FairPay. Kevin, 2026-09-02.
+   */
+  hiddenChannels: string[];
+  /**
    * Retiros reportados por la API, sumando TODOS los canales del registro
    * `API_WITHDRAWAL_CHANNELS` (0 en períodos históricos). Hasta el 2026-08-31
    * era solo Coinsbuy y el comentario decía "Coinsbuy withdrawals": Pay-Pros
@@ -126,6 +132,7 @@ export function useApiCoexistence(
   }
   apiByChannel.other = 0; // 'other' es manual puro: no tiene lado API.
   const apiWithdrawalsTotal = useDerivedBroker ? apiTotals.withdrawalsTotal : 0;
+  const hiddenChannels = apiTotals.hiddenChannels ?? [];
 
   // En un período HISTÓRICO no se consulta la API: el retiro por canal es 0
   // porque el valor que manda es el guardado, no porque falte el dato. Por eso
@@ -152,6 +159,7 @@ export function useApiCoexistence(
   return {
     useDerivedBroker,
     apiByChannel,
+    hiddenChannels,
     apiWithdrawalsTotal,
     apiWithdrawalsByChannel,
     withdrawalChannelsWithoutData,

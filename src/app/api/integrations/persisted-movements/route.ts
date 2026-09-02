@@ -317,22 +317,47 @@ export async function GET(request: NextRequest) {
       };
     };
 
+    // ── Canales ocultos: no se devuelven (Kevin, 2026-09-02) ───────────────
+    // «desactiva y quita visualmente todo lo de fairpay y paypros, ya que ap
+    // no los usa». La visibilidad por empresa YA existe en `channel_configs`
+    // (es lo que apaga la fila en /balances); acá se respeta la MISMA
+    // configuración en vez de inventar una segunda lista de proveedores por
+    // tenant. Un canal apagado no manda una tarjeta en $0 — que es un dato
+    // plausible y falso: AP no tiene 0 en FairPay, no tiene FairPay.
+    //
+    // Sólo se filtra lo apagado EXPLÍCITAMENTE: sin fila en channel_configs el
+    // canal se muestra, que es como se comportaba antes de este cambio.
+    const { data: ocultosRows } = await admin
+      .from('channel_configs')
+      .select('channel_key, is_visible')
+      .eq('company_id', auth.companyId)
+      .eq('is_visible', false);
+    const ocultos = new Set((ocultosRows ?? []).map((r) => r.channel_key as string));
+    const canalDelSlug = (slug: ProviderSlug): string =>
+      slug.startsWith('coinsbuy-') ? 'coinsbuy' : slug;
     if (requestedSlug) {
       return NextResponse.json({
         success: true,
         dataset: buildDataset(requestedSlug),
         fetchedAt: lastSyncRow?.last_synced_at ?? null,
         truncatedSlugs,
+        hiddenChannels: [] as string[],
       });
     }
 
-    const datasets = SLUGS.map((slug) => buildDataset(slug));
+    const datasets = SLUGS.filter((slug) => !ocultos.has(canalDelSlug(slug))).map((slug) =>
+      buildDataset(slug),
+    );
 
     return NextResponse.json({
       success: true,
       datasets,
       fetchedAt: lastSyncRow?.last_synced_at ?? null,
       truncatedSlugs,
+      // Explícito y no inferido: la tabla de Depósitos/Retiros esconde estas
+      // filas. Si se dedujera de "qué datasets faltan", un período histórico
+      // (que no consulta la API) escondería canales que sí existen.
+      hiddenChannels: [...ocultos],
     });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Internal server error';

@@ -757,6 +757,11 @@ export function useApiTotals(
   refreshKey: number = 0,
 ) {
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
+  // Canales apagados para esta empresa (channel_configs.is_visible = false).
+  // Viajan explícitos desde el endpoint: deducirlos de "qué dataset falta"
+  // escondería canales reales en los períodos históricos, que no consultan la
+  // API. Ver la cabecera de /api/integrations/persisted-movements.
+  const [hiddenChannels, setHiddenChannels] = useState<string[]>([]);
 
   // Debounce rapid wallet-selector clicks (350 ms) and support AbortController
   // so a newer request supersedes an older one mid-flight — fixes N-fetches-
@@ -782,6 +787,7 @@ export function useApiTotals(
           const json = await res.json();
           if (!cancelled && json.success) {
             setDatasets(json.datasets ?? []);
+            setHiddenChannels(json.hiddenChannels ?? []);
           }
         } catch {
           // Silent — card already shows errors.
@@ -849,6 +855,8 @@ export function useApiTotals(
       withdrawalsTotal,
       withdrawalsByChannel,
       withdrawalChannelsWithoutData,
+      /** Canales apagados para la empresa: la tabla no dibuja su fila. */
+      hiddenChannels,
     };
-  }, [datasets]);
+  }, [datasets, hiddenChannels]);
 }
