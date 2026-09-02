@@ -127,18 +127,26 @@ export interface BusinessModelFeatures {
   cashBasisExpenses: boolean;
   /**
    * La empresa LLEVA CONTABILIDAD de período. Un solo interruptor porque es
-   * una sola pregunta: si la respuesta es no, no hay nada que cargar, nada que
-   * cerrar, nada que repartir y nada que reportar. Apaga, juntos:
+   * una sola pregunta: si la respuesta es no, no hay nada que cerrar, nada que
+   * repartir y nada que reportar. Apaga, juntos:
    *   · `expenses` (Egresos) y `balances` (Balances)
    *   · `partners` (Socios) y `payment_orders` (Órdenes de Pago)
-   *   · `upload` (Carga de Datos) — y por lo tanto `uploadSections` queda VACÍO
    *   · `periods` (Períodos) y `reports` (Reportes, incluido el mail diario)
+   *   · y las pestañas de carga que son contables: Egresos e Ingresos.
    *
-   * Van juntos A PROPÓSITO y no como siete flags: separarlos invitaría a
+   * Van juntos A PROPÓSITO y no como seis flags: separarlos invitaría a
    * dejar, por ejemplo, «Balances» prendido en una empresa que no carga un
    * solo número — una pantalla en cero que se lee como un dato. Cuando exista
    * un modelo que quiera uno sí y otro no, ahí se parte el flag, con la
    * medición que lo justifique.
+   *
+   * NO apaga el módulo `upload` (Kevin, 2026-09-01: el proveedor de liquidez
+   * lleva la carga de datos con la pestaña reducida a «inversiones»). Esa
+   * decisión NO se toma con una excepción escrita a mano: el módulo se bloquea
+   * cuando `uploadSections(model)` queda VACÍO, o sea cuando no hay ni una
+   * pestaña que mostrar. Así la pantalla y sus pestañas contestan siempre la
+   * misma pregunta y no pueden desincronizarse — no hay forma de tener el
+   * módulo prendido sin pestañas ni pestañas sin módulo.
    */
   accounting: boolean;
 }
@@ -196,8 +204,15 @@ export const BUSINESS_MODEL_FEATURES: Record<BusinessModel, BusinessModelFeature
   // necesito lo del pool y lo de inversiones».
   //
   // Es una empresa INFORMATIVA: administra un pool de liquidez sobre cuentas
-  // MT5 y mira el rendimiento de sus inversiones. NO lleva contabilidad, no
-  // carga datos, no cierra períodos, no reparte a socios y no manda reportes.
+  // MT5 y mira el rendimiento de sus inversiones. NO lleva contabilidad: no
+  // cierra períodos, no reparte a socios y no manda reportes.
+  //
+  // SÍ tiene la Carga de Datos, con UNA sola pestaña: «inversiones» (Kevin,
+  // 2026-09-01). Es la única pantalla del dashboard que escribe en la tabla
+  // `investments` —/inversiones es de solo lectura—, así que sin ella el
+  // módulo Inversiones que Kevin pidió conservar mostraría una tabla vacía
+  // para siempre. El módulo `upload` no está bloqueado porque
+  // `uploadSections` le devuelve una sección; no hay excepción escrita a mano.
   //
   // Lo único que queda encendido, entonces, son `liquidityPool` e
   // `investments`. Los módulos que no dependen de ninguna feature —`summary`,
@@ -259,11 +274,16 @@ export function blockedModules(model: unknown): string[] {
   // Ingresos por concepto y la cartera de clientes a los que se factura: son
   // la misma contabilidad y se encienden o apagan juntos.
   if (!f.incomeLines) blocked.push('income', 'clients');
-  // Sin contabilidad de período no queda nada que cargar, cerrar, repartir ni
+  // Sin contabilidad de período no queda nada que cerrar, repartir ni
   // reportar. Ver `accounting` arriba para por qué es un solo interruptor.
   if (!f.accounting) {
-    blocked.push('expenses', 'balances', 'partners', 'payment_orders', 'upload', 'periods', 'reports');
+    blocked.push('expenses', 'balances', 'partners', 'payment_orders', 'periods', 'reports');
   }
+  // La carga de datos se bloquea por AUSENCIA DE PESTAÑAS, no por un flag
+  // propio: un modelo con al menos una sección que cargar tiene la pantalla, y
+  // uno sin ninguna no. Derivarlo de `uploadSections` es lo que hace imposible
+  // el desfasaje clásico (módulo prendido y pantalla vacía, o al revés).
+  if (uploadSections(model).length === 0) blocked.push('upload');
   return blocked;
 }
 
@@ -281,11 +301,6 @@ export function features(model: unknown): BusinessModelFeatures {
  */
 export function uploadSections(model: unknown): string[] {
   const f = features(model);
-  // Sin contabilidad no hay nada que cargar: lista VACÍA, y el módulo `upload`
-  // además está bloqueado. Se devuelve vacío en vez de "una pestaña por las
-  // dudas" porque una pestaña de carga en una empresa que no carga datos es
-  // una invitación a cargarlos donde no corresponde.
-  if (!f.accounting) return [];
   // El ORDEN de las pestañas de un broker no se toca: moverlas cambiaría la
   // pantalla que su equipo usa todos los días. Para 'company' arranca por
   // Ingresos, que es de donde nace su contabilidad.
@@ -294,6 +309,19 @@ export function uploadSections(model: unknown): string[] {
     if (f.deposits) sections.push('depositos');
     if (f.withdrawals) sections.push('retiros');
     sections.push('egresos', 'ingresos', 'liquidez', 'inversiones');
+    return sections;
+  }
+  // ── Sin contabilidad: sólo las pestañas que son suyas ───────────────────
+  // Egresos e Ingresos son contables (alimentan `expenses` y
+  // `operating_income`, o sea la cadena y el cierre); las otras dos cuelgan de
+  // su propia feature. El proveedor de liquidez cae acá y queda con
+  // ['inversiones'] — Kevin, 2026-09-01: «la pestaña reducida a inversiones,
+  // nada más». Si algún día un modelo así no tuviera ninguna, la lista queda
+  // vacía y `blockedModules` le saca el módulo `upload` solo.
+  if (!f.accounting) {
+    const sections: string[] = [];
+    if (f.liquidity) sections.push('liquidez');
+    if (f.investments) sections.push('inversiones');
     return sections;
   }
   const sections = ['ingresos', 'egresos'];

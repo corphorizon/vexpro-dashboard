@@ -82,16 +82,28 @@ describe('pestañas de carga', () => {
 
   it('la empresa arranca por Ingresos y no ve depósitos ni retiros', () => {
     expect(uploadSections('company')).toEqual(['ingresos', 'egresos']);
+    expect(moduleAllowedForModel('broker', 'upload')).toBe(true);
+    expect(moduleAllowedForModel('company', 'upload')).toBe(true);
     expect(defaultUploadSection('company')).toBe('ingresos');
   });
 
-  it('todo modelo con contabilidad tiene pestañas; el que no carga datos, ninguna', () => {
+  // El módulo `upload` y sus pestañas contestan la MISMA pregunta y se derivan
+  // uno del otro: no puede haber pantalla sin pestañas ni pestañas sin
+  // pantalla. Este test es el candado de esa equivalencia.
+  it('tener pestañas y tener el módulo de carga son lo mismo', () => {
     for (const m of BUSINESS_MODELS) {
-      const esperadas = features(m).accounting;
-      expect(uploadSections(m).length > 0, `${m}`).toBe(esperadas);
+      const tienePestanas = uploadSections(m).length > 0;
+      expect(moduleAllowedForModel(m, 'upload'), `${m}`).toBe(tienePestanas);
       // `null` explícito, no un `undefined` con tipo `string`.
-      expect(defaultUploadSection(m) === null, `${m}`).toBe(!esperadas);
+      expect(defaultUploadSection(m) === null, `${m}`).toBe(!tienePestanas);
     }
+  });
+
+  it('el proveedor de liquidez carga SOLO inversiones', () => {
+    // Kevin, 2026-09-01: «con la pestaña reducida a inversiones, nada más».
+    // Ni depósitos, ni retiros, ni egresos, ni ingresos, ni liquidez.
+    expect(uploadSections('liquidity_provider')).toEqual(['inversiones']);
+    expect(defaultUploadSection('liquidity_provider')).toBe('inversiones');
   });
 });
 
@@ -188,12 +200,20 @@ describe('proveedor de liquidez', () => {
     expect(features(M).investments).toBe(true);
   });
 
-  it('no lleva contabilidad: ni carga, ni cierre, ni socios, ni reportes', () => {
-    for (const m of ['expenses', 'balances', 'partners', 'payment_orders', 'upload', 'periods', 'reports']) {
+  it('no lleva contabilidad: ni cierre, ni socios, ni reportes', () => {
+    for (const m of ['expenses', 'balances', 'partners', 'payment_orders', 'periods', 'reports']) {
       expect(moduleAllowedForModel(M, m), m).toBe(false);
     }
-    expect(uploadSections(M)).toEqual([]);
-    expect(defaultUploadSection(M)).toBeNull();
+  });
+
+  it('SÍ tiene la carga de datos, y con una sola pestaña', () => {
+    // Es la única pantalla que escribe en `investments` (/inversiones es de
+    // solo lectura), así que sin ella el módulo Inversiones nunca tendría un
+    // dato. Kevin lo decidió el 2026-09-01 con esa evidencia.
+    expect(moduleAllowedForModel(M, 'upload')).toBe(true);
+    expect(uploadSections(M)).toEqual(['inversiones']);
+    // Y no se prendió nada de rebote: la contabilidad sigue afuera.
+    expect(features(M).accounting).toBe(false);
   });
 
   it('lo que hace que la app se pueda usar sigue accesible', () => {
@@ -239,6 +259,8 @@ describe('ningún modelo pierde lo que ya tenía', () => {
       'depositos', 'retiros', 'egresos', 'ingresos', 'liquidez', 'inversiones',
     ]);
     expect(uploadSections('company')).toEqual(['ingresos', 'egresos']);
+    expect(moduleAllowedForModel('broker', 'upload')).toBe(true);
+    expect(moduleAllowedForModel('company', 'upload')).toBe(true);
     expect(blockedReportSections('broker')).toEqual([]);
   });
 

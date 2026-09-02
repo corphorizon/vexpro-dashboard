@@ -135,8 +135,8 @@ describe('buildDistributionInputs — neutralización por modelo de negocio', ()
     // test cae y el módulo /inversiones se habría quedado sin razón de ser.
     expect(asPool[1].investmentProfits).toBe(77);
     // `other` y los egresos viajan tal cual: no hay pantalla que los cargue
-    // (sin módulo `upload` sus tablas quedan vacías), pero si hubiera filas
-    // viejas se ven como son, sin inventar ni esconder.
+    // (su Carga de Datos tiene una sola pestaña, «inversiones»), pero si
+    // hubiera filas viejas se ven como son, sin inventar ni esconder.
     expect(asPool[0].other).toBe(500);
     expect(asPool[0].totalExpenses).toBe(250);
   });

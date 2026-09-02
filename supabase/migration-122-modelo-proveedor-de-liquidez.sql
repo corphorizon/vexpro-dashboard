@@ -9,8 +9,10 @@
 --    de inversiones»
 --
 -- Es una entidad INFORMATIVA: mira el aporte al pool sobre cuentas MT5 y el
--- rendimiento de sus inversiones. No lleva contabilidad, no carga datos, no
--- cierra períodos, no reparte a socios y no manda reportes.
+-- rendimiento de sus inversiones. No lleva contabilidad: no cierra períodos,
+-- no reparte a socios y no manda reportes. Sí tiene la Carga de Datos, con
+-- UNA sola pestaña —«inversiones»— porque es la única pantalla del dashboard
+-- que escribe en la tabla `investments` (/inversiones es de solo lectura).
 --
 -- Qué apaga el modelo NO se decide acá: vive en src/lib/business-model.ts
 -- (registro único). La base guarda el modelo; el registro decide qué implica.
@@ -71,10 +73,11 @@ update public.companies
 -- bloquea los módulos que el modelo no admite, así que dejarlos en la fila no
 -- abre ninguna pantalla — pero sí se ofrecen al asignar permisos a los
 -- usuarios de la empresa, y ahí se leen como si existieran. Se conserva
--- SÓLO lo que el modelo admite: el pool, inversiones, y lo que hace que la
--- app se pueda usar (resumen, usuarios, registro de actividad).
+-- SÓLO lo que el modelo admite: el pool, inversiones, la carga de datos (con
+-- su única pestaña, «inversiones») y lo que hace que la app se pueda usar
+-- (resumen, usuarios, registro de actividad).
 update public.companies
-   set active_modules = array['summary', 'liquidity_pool', 'investments', 'users', 'logs']::text[]
+   set active_modules = array['summary', 'liquidity_pool', 'investments', 'upload', 'users', 'logs']::text[]
  where id = '012b6f0d-ab35-433c-b8f7-dba0a771a8bb';
 
 -- Verificación (correr a mano después de aplicar):
