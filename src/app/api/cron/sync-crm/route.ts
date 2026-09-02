@@ -574,6 +574,16 @@ export async function GET(request: NextRequest) {
             for (const w of dailyPnl.warnings) {
               console.warn(`[cron/sync-crm] pnl diario ${company.id}: ${w}`);
             }
+            // La misma corrida escribe el desglose por persona (migración 122).
+            // Se avisa SÓLO si hay dinero sin dueño: si esa fila crece, el
+            // cruce cuenta→usuario se está rompiendo, y una exclusión
+            // silenciosa es indistinguible de un cruce roto. Cuando es cero no
+            // se loguea nada — un aviso que sale siempre deja de leerse.
+            if (dailyPnl.ownerlessAccounts > 0) {
+              console.warn(
+                `[cron/sync-crm] pnl por usuario ${company.id}: ${dailyPnl.ownerlessAccounts} cuenta(s) con factor conocido pero SIN userId en tradingaccounts. Su dinero (${dailyPnl.ownerlessPnlUsd} USD en ${dailyPnl.ownerlessRows} día(s)) quedó en la fila '(sin-dueño)': contado, no silenciado.`,
+              );
+            }
           } catch (err) {
             pnlErrors.push(`pnl diario: ${err instanceof Error ? err.message : 'unknown'}`);
           }

@@ -6,11 +6,15 @@ import {
   calculateBdmPctFromND,
   calculateHeadDifferential,
   calculatePnlSpecial,
+  calcularPasoPnlEncadenado,
+  applyTotalEarnedDebt,
   getPreviousPeriod,
   SALARY_TIERS,
   HEAD_SALARY_TIERS,
   BDM_PCT_TIERS,
+  type PnlChainState,
 } from './commission-calculator';
+import { round2 } from './utils';
 import type { Period } from './types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -207,6 +211,138 @@ describe('calculatePnlSpecial (modo Especial — aislado del normal)', () => {
   it('preserva el salario fijo sin aplicar tiers', () => {
     const r = calculatePnlSpecial(10_000, 35, 0, 800);
     expect(r.salary).toBe(800);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// La cadena del grupo PnL. Lo que protege: el recálculo «desde abril» reescribe
+// varios meses seguidos y cada uno depende del ANTERIOR RECALCULADO. Si el
+// encadenado se rompe (deuda que no se arrastra, acumulado que se destruye,
+// orden invertido) el resultado sigue siendo un número plausible y equivocado
+// — el modo de falla que persigue este repo.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('calcularPasoPnlEncadenado (recálculo mes a mes del grupo PnL)', () => {
+  const cero: PnlChainState = { prevDebt: 0, accumulatedIn: 0 };
+
+  it('modo normal: misma fórmula que el ND (pnl/2 + acumulado) × pct, menos lotes', () => {
+    const p = calcularPasoPnlEncadenado({
+      mode: 'normal', pnlPct: 10, pnl: 100_000, lotCommissions: 1_000, salary: 0, state: cero,
+    });
+    expect(p.division).toBe(50_000);        // 100.000 / 2
+    expect(p.commissionsEarned).toBe(5_000); // 50.000 × 10%
+    expect(p.realPayment).toBe(4_000);       // 5.000 − 1.000 de lotes
+    expect(p.accumulatedOut).toBe(50_000);   // la división pasa al mes siguiente
+    expect(p.next.accumulatedIn).toBe(50_000);
+  });
+
+  it('modo normal: el acumulado del mes anterior entra al siguiente y suma comisión', () => {
+    const abril = calcularPasoPnlEncadenado({
+      mode: 'normal', pnlPct: 10, pnl: 100_000, lotCommissions: 0, salary: 0, state: cero,
+    });
+    const mayo = calcularPasoPnlEncadenado({
+      mode: 'normal', pnlPct: 10, pnl: 100_000, lotCommissions: 0, salary: 0, state: abril.next,
+    });
+    // (50.000 de división + 50.000 arrastrados) × 10% = 10.000, no 5.000.
+    expect(mayo.commissionsEarned).toBe(10_000);
+  });
+
+  it('modo normal: un mes SIN dato (PnL 0) no destruye el acumulado', () => {
+    // §2.1 regla 2. El caso real es un perfil sin usuario CRM en un mes suelto.
+    const abril = calcularPasoPnlEncadenado({
+      mode: 'normal', pnlPct: 10, pnl: 100_000, lotCommissions: 0, salary: 0, state: cero,
+    });
+    const mayoVacio = calcularPasoPnlEncadenado({
+      mode: 'normal', pnlPct: 10, pnl: 0, lotCommissions: 0, salary: 0, state: abril.next,
+    });
+    expect(mayoVacio.realPayment).toBe(0);
+    expect(mayoVacio.next.accumulatedIn).toBe(50_000); // intacto
+  });
+
+  it('la deuda de un mes se arrastra al siguiente y se salda contra lo ganado', () => {
+    // Abril negativo (PNL Report positivo = los clientes ganaron) → deuda.
+    const abril = calcularPasoPnlEncadenado({
+      mode: 'special', pnlPct: 35, pnl: -10_000, lotCommissions: 0, salary: 0, state: cero,
+    });
+    expect(abril.totalEarned).toBe(-3_500);
+    expect(abril.bonus).toBe(-3_500);          // queda debiendo
+    expect(abril.next.prevDebt).toBe(-3_500);
+
+    // Mayo positivo: cobra descontando la deuda de abril.
+    const mayo = calcularPasoPnlEncadenado({
+      mode: 'special', pnlPct: 35, pnl: 20_000, lotCommissions: 0, salary: 0, state: abril.next,
+    });
+    expect(mayo.commissionsEarned).toBe(7_000);
+    expect(mayo.totalEarned).toBe(3_500);      // 7.000 − 3.500 de deuda
+    expect(mayo.bonus).toBe(0);                // saldada
+  });
+
+  it('la deuda que NO se salda sigue acumulando hacia el mes siguiente', () => {
+    const abril = calcularPasoPnlEncadenado({
+      mode: 'special', pnlPct: 35, pnl: -10_000, lotCommissions: 0, salary: 0, state: cero,
+    });
+    const mayo = calcularPasoPnlEncadenado({
+      mode: 'special', pnlPct: 35, pnl: -4_000, lotCommissions: 0, salary: 0, state: abril.next,
+    });
+    // −1.400 del mes + −3.500 arrastrados
+    expect(mayo.bonus).toBe(-4_900);
+    expect(mayo.next.prevDebt).toBe(-4_900);
+  });
+
+  it('modo especial: nunca arrastra acumulado, sólo deuda', () => {
+    const p = calcularPasoPnlEncadenado({
+      mode: 'special', pnlPct: 35, pnl: 10_000, lotCommissions: 1_000, salary: 800, state: cero,
+    });
+    expect(p.division).toBe(0);
+    expect(p.netDepositAccumulated).toBe(0);
+    expect(p.accumulatedOut).toBe(0);
+    expect(p.next.accumulatedIn).toBe(0);
+    expect(p.realPayment).toBe(2_500);   // 3.500 − 1.000 de lotes
+    expect(p.totalEarned).toBe(3_300);   // 2.500 + 800 de salario
+  });
+
+  it('el salario del mes entra al total pero NO a la comisión', () => {
+    const p = calcularPasoPnlEncadenado({
+      mode: 'normal', pnlPct: 10, pnl: 100_000, lotCommissions: 0, salary: 1_000, state: cero,
+    });
+    expect(p.commissionsEarned).toBe(5_000);
+    expect(p.salaryPaid).toBe(1_000);
+    expect(p.totalEarned).toBe(6_000);
+  });
+
+  it('EL ORDEN IMPORTA: recorrer los meses al revés da otro número', () => {
+    // El control que justifica que el recálculo sea secuencial y cronológico.
+    const mesA = { mode: 'special' as const, pnlPct: 35, pnl: -10_000, lotCommissions: 0, salary: 0 };
+    const mesB = { mode: 'special' as const, pnlPct: 35, pnl: 20_000, lotCommissions: 0, salary: 0 };
+
+    const enOrden = calcularPasoPnlEncadenado({
+      ...mesB, state: calcularPasoPnlEncadenado({ ...mesA, state: cero }).next,
+    });
+    const alReves = calcularPasoPnlEncadenado({
+      ...mesA, state: calcularPasoPnlEncadenado({ ...mesB, state: cero }).next,
+    });
+    expect(enOrden.totalEarned).toBe(3_500);
+    expect(alReves.totalEarned).toBe(-3_500);
+    expect(enOrden.totalEarned).not.toBe(alReves.totalEarned);
+  });
+
+  it('el guardado a mano y el recálculo dan EXACTAMENTE el mismo número (§2.1 A3)', () => {
+    // Un mismo número tiene que salir del mismo camino. Acá se compara el paso
+    // encadenado contra la composición que hace handleSaveBdm en la pantalla.
+    const pnl = 87_432.19, lotes = 3_399.39, salario = 800, pct = 12, accIn = 12_345.67, deuda = -900;
+
+    const paso = calcularPasoPnlEncadenado({
+      mode: 'normal', pnlPct: pct, pnl, lotCommissions: lotes, salary: salario,
+      state: { prevDebt: deuda, accumulatedIn: accIn },
+    });
+
+    const aMano = calculateCommission(pnl, accIn, pct);
+    const realAMano = round2(aMano.realPayment - lotes);
+    const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(deuda, realAMano + salario);
+    expect(paso.commissionsEarned).toBe(aMano.commission);
+    expect(paso.realPayment).toBe(realAMano);
+    expect(paso.accumulatedOut).toBe(aMano.accumulatedOut);
+    expect(paso.totalEarned).toBe(finalTotalEarned);
+    expect(paso.bonus).toBe(debtOut);
   });
 });
 

@@ -438,6 +438,110 @@ export function calculatePnlSpecial(
   };
 }
 
+// ---------------------------------------------------------------------------
+// UN MES DE LA CADENA DEL GRUPO PnL
+//
+// Existe por el recálculo «desde abril» de /comisiones (2026-09-02): reescribir
+// varios meses seguidos con el insumo del CRM obliga a encadenar DOS estados de
+// un mes al siguiente —la deuda (`bonus`) y el acumulado (`accumulated_out`)—
+// y a hacerlo con el valor RECIÉN calculado, no con el guardado viejo. Esa
+// cadena es la misma que ya rige la distribución a socios (§2.2): *"hay que
+// procesar todos los períodos en orden cronológico o el arrastre diverge"*.
+//
+// Es pura y vive acá —y no en la pantalla— por el invariante A3 de §2.1: *un
+// mismo número tiene que salir del mismo camino*. Este paso NO inventa fórmula:
+// llama a `calculateCommission` / `calculatePnlSpecial` y a
+// `applyTotalEarnedDebt` exactamente como lo hace `handleSaveBdm`, así que
+// recalcular un mes solo da el mismo peso que guardarlo a mano.
+//
+// Lo que NO decide: de dónde salen `pnl`, `lotCommissions` y `salary`. El signo
+// del PnL ya viene dado vuelta desde /api/admin/commission-net-input (único
+// punto de inversión) y el salario lo conserva quien llama.
+// ---------------------------------------------------------------------------
+
+export interface PnlChainState {
+  /** `bonus` del mes anterior. NEGATIVO = deuda arrastrada (§2.1 regla 6). */
+  prevDebt: number;
+  /** `accumulated_out` del mes anterior. En modo Especial no se usa (siempre 0). */
+  accumulatedIn: number;
+}
+
+/** Una fila de `commercial_monthly_results`, más el estado que entra al mes siguiente. */
+export interface PnlChainStep {
+  netDepositCurrent: number;
+  netDepositAccumulated: number;
+  division: number;
+  commissionsEarned: number;
+  realPayment: number;
+  pnlCurrent: number;
+  accumulatedOut: number;
+  salaryPaid: number;
+  totalEarned: number;
+  bonus: number;
+  /** Lo que hay que pasarle a ESTE mismo perfil el mes siguiente. */
+  next: PnlChainState;
+}
+
+export function calcularPasoPnlEncadenado(params: {
+  /** 'special' = perfiles con `pnl_special_mode`; 'normal' = el resto del grupo PnL. */
+  mode: 'normal' | 'special';
+  pnlPct: number;
+  /** El PnL del mes YA con el signo de la pantalla (lo que la empresa gana). */
+  pnl: number;
+  /** Com. Lotes del mes. Se RESTAN del pago real en los dos modos. */
+  lotCommissions: number;
+  /** Salario del mes. El recálculo lo conserva del guardado, no lo re-tieriza. */
+  salary: number;
+  state: PnlChainState;
+}): PnlChainStep {
+  const { mode, pnlPct, pnl, lotCommissions, salary, state } = params;
+
+  if (mode === 'special') {
+    // Aislado de calculateCommission a propósito (§2.1 regla 5): sin división,
+    // sin acumulado de entrada y sin acumulado de salida. Lo único que cruza al
+    // mes siguiente es la deuda.
+    const calc = calculatePnlSpecial(pnl, pnlPct, lotCommissions, salary);
+    const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(
+      state.prevDebt,
+      calc.realPayment + calc.salary,
+    );
+    return {
+      netDepositCurrent: calc.pnl,
+      netDepositAccumulated: 0,
+      division: 0,
+      commissionsEarned: calc.commission,
+      realPayment: calc.realPayment,
+      pnlCurrent: calc.lotCommissions,
+      accumulatedOut: 0,
+      salaryPaid: calc.salary,
+      totalEarned: finalTotalEarned,
+      bonus: debtOut,
+      next: { prevDebt: debtOut, accumulatedIn: 0 },
+    };
+  }
+
+  // Modo normal: la MISMA fórmula del net deposit (ND/2 + acumulado × pct) pero
+  // con `pnl_pct` y sin tiers de salario, que es lo que hace `pnlCalcs`.
+  const calc = calculateCommission(pnl, state.accumulatedIn, pnlPct);
+  const realPayment = round2(calc.realPayment - lotCommissions);
+  const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(state.prevDebt, realPayment + salary);
+  return {
+    netDepositCurrent: calc.netDepositCurrent,
+    netDepositAccumulated: calc.accumulatedIn,
+    division: calc.division,
+    commissionsEarned: calc.commission,
+    realPayment,
+    pnlCurrent: lotCommissions,
+    // Con PnL = 0 el acumulado se CONSERVA (calculateCommission lo garantiza):
+    // un mes sin dato no puede borrarle el arrastre a nadie (§2.1 regla 2).
+    accumulatedOut: calc.accumulatedOut,
+    salaryPaid: salary,
+    totalEarned: finalTotalEarned,
+    bonus: debtOut,
+    next: { prevDebt: debtOut, accumulatedIn: calc.accumulatedOut },
+  };
+}
+
 // NOTA: el BDM GLOBAL NO usa una función aparte. Por definición del negocio,
 // el HEAD le aplica el MISMO cálculo de diferencial que a un BDM normal —
 // lo único que cambia es la referencia: usa pct_sobre_bdm_global en lugar de

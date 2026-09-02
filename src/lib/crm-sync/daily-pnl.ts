@@ -75,6 +75,21 @@
 // siguiente lo tapa sola, y el `pnl_daily` de Orion también puede cambiar
 // hacia atrás (`pnl_daily_purged` guarda 11.331 documentos retirados a mano
 // por cuentas bloqueadas — el último lote, el 2026-08-31 a las 01:22).
+//
+// ── EL MISMO DINERO, ATRIBUIDO A LA PERSONA (migración 122) ────────────────
+// Comisiones de RRHH paga por el PnL de la RED de cada persona, así que el
+// total del día no le alcanza: necesita saber de quién es. `aggregateCrmDailyPnl`
+// devuelve las dos cosas EN UNA SOLA PASADA sobre los mismos documentos —
+// `days` y `users`— justamente para que no puedan divergir: el `pnl` que entra
+// al total del día es literalmente la misma variable que entra al de la
+// persona, ya dividida por el factor de centavos.
+//
+// De ahí sale el invariante que se puede verificar en producción:
+//     sum(users[día].pnlUsd)  ==  days[día].pnlUsd   (± centavos de redondeo)
+// El dueño sale de `tradingaccounts.userId`; el dinero de una cuenta con
+// factor conocido y SIN dueño va a la fila `CRM_PNL_SIN_DUENO` — contado, no
+// silenciado. Las cuentas sin factor no aparecen en `users`: su dinero tampoco
+// está en el total, así que el invariante se sostiene.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { PNL_CATEGORIES, type PnlCategory } from '@/lib/mt5-sync/pnl';
@@ -96,7 +111,25 @@ export interface CrmPnlAccount {
   centsFactor: number;
   /** `servergroups.metaTraderGroupId`, p.ej. `real\Broker\Synthetics`. */
   metaTraderGroup: string | null;
+  /**
+   * `tradingaccounts.userId`: el DUEÑO de la cuenta, que es por donde RRHH
+   * arma el PnL por persona (migración 122). Es obligatorio en el tipo aunque
+   * pueda ser `null`: el día que alguien construya un `CrmPnlAccount` sin
+   * pensarlo, que rompa la compilación en vez de mandar su dinero al
+   * sentinela en silencio.
+   */
+  userExternalId: string | null;
 }
+
+/**
+ * La fila que se lleva el dinero de las cuentas SIN `userId`.
+ *
+ * No se inventa un dueño ni se descarta: se cuenta. Es la regla de §1.2 —
+ * *una exclusión silenciosa es indistinguible de un cruce roto*. No puede
+ * colisionar con un id real (los `userId` de Orion son ObjectIds hex de 24
+ * caracteres), y quien consulte por persona tiene que EXCLUIRLO a propósito.
+ */
+export const CRM_PNL_SIN_DUENO = '(sin-dueño)';
 
 /**
  * La categoría de la cuenta, con el MISMO registro que el módulo de MT5
@@ -149,8 +182,36 @@ export interface CrmDailyPnlDay {
   unmatchedRawPnl: number;
 }
 
+/**
+ * El MISMO dinero del día, partido por dueño de la cuenta (migración 122).
+ *
+ * Sale del mismo barrido de documentos que `CrmDailyPnlDay` y con las mismas
+ * exclusiones, así que para un día:
+ *
+ *     sum(pnlUsd) de estas filas  ==  el `pnlUsd` del día  (± centavos de redondeo)
+ *
+ * Los lotes y los deals NO cuadran contra el día, y está bien: en el día las
+ * cuentas sin factor conocido suman unidades (regla G3) y acá no tienen fila.
+ */
+export interface CrmDailyPnlUser {
+  utcDay: string;
+  /** `tradingaccounts.userId`, o `CRM_PNL_SIN_DUENO`. */
+  userExternalId: string;
+  /** PNL del CLIENTE en USD (Cent ya dividido), por el mismo camino del día. */
+  pnlUsd: number;
+  volumeLots: number;
+  dealsCount: number;
+}
+
 export interface CrmDailyPnlAggregate {
   days: CrmDailyPnlDay[];
+  /** El desglose por persona, ordenado por (día, persona). */
+  users: CrmDailyPnlUser[];
+  /**
+   * Cuentas con factor CONOCIDO (su dinero entra al total) pero sin `userId`:
+   * las que alimentan la fila `CRM_PNL_SIN_DUENO`. Contadas para poder avisar.
+   */
+  ownerlessAccounts: number;
   warnings: string[];
 }
 
@@ -183,8 +244,21 @@ export function aggregateCrmDailyPnl(
     unmatchedRaw: number;
   }
 
+  /**
+   * El mismo dinero, indexado por (día, dueño). Se llena EN ESTE MISMO bucle y
+   * no en una segunda pasada: es lo que hace que las dos tablas salgan del
+   * mismo universo de documentos y que el invariante de la 122 se sostenga.
+   * La clave se arma con un separador que no puede aparecer dentro de las
+   * partes: el día YA tiene guiones y el sentinela tiene paréntesis.
+   */
+  const porUsuario = new Map<
+    string,
+    { day: string; uid: string; pnl: number; lots: number; deals: number }
+  >();
   const porDia = new Map<string, Acc>();
   const sinCuenta = new Set<string>();
+  /** Logins con factor conocido y sin `userId`. Son cuentas, no documentos. */
+  const sinDueno = new Set<string>();
 
   for (const doc of docs) {
     const day = String(doc.day ?? '');
@@ -227,6 +301,21 @@ export function aggregateCrmDailyPnl(
     const pnl = raw / factor;
     acc.pnl += pnl;
 
+    // El MISMO `pnl` que acaba de entrar al total del día —ya dividido por el
+    // factor, por este único camino— entra también al desglose por persona.
+    // Si esto se hiciera aparte, serían dos conversiones del centavo que se
+    // pueden separar (§1.1), y la que se separa en silencio da 163 veces el
+    // número real.
+    const dueno = (cuenta.userExternalId ?? '').trim();
+    if (!dueno) sinDueno.add(login);
+    const uid = dueno || CRM_PNL_SIN_DUENO;
+    const clave = `${day}\u0000${uid}`;
+    const u = porUsuario.get(clave) ?? { day, uid, pnl: 0, lots: 0, deals: 0 };
+    u.pnl += pnl;
+    u.lots += lots;
+    u.deals += deals;
+    porUsuario.set(clave, u);
+
     const cat = crmPnlCategory(cuenta.metaTraderGroup, factor);
     const c =
       acc.cats.get(cat) ?? { pnl: 0, lots: 0, deals: 0, logins: new Set<string>() };
@@ -266,7 +355,17 @@ export function aggregateCrmDailyPnl(
       unmatchedRawPnl: round2(a.unmatchedRaw),
     }));
 
-  return { days, warnings };
+  const users: CrmDailyPnlUser[] = [...porUsuario.values()]
+    .map((u) => ({
+      utcDay: u.day,
+      userExternalId: u.uid,
+      pnlUsd: round2(u.pnl),
+      volumeLots: round2(u.lots),
+      dealsCount: u.deals,
+    }))
+    .sort((a, b) => a.utcDay.localeCompare(b.utcDay) || a.userExternalId.localeCompare(b.userExternalId));
+
+  return { days, users, ownerlessAccounts: sinDueno.size, warnings };
 }
 
 /**
