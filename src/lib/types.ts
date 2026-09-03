@@ -347,6 +347,9 @@ export interface CommercialProfile {
   role: CommercialRole;
   head_id: string | null; // who they report to (null for sales_manager/independent heads)
   net_deposit_pct: number | null; // null = N/A
+  // true = el % de ND es FIJO: no lo mejoran los tramos por volumen
+  // (BDM_PCT_TIERS). Excepción por perfil pedida el 2026-09-03; default false.
+  nd_pct_fixed?: boolean;
   pnl_pct: number | null; // null = N/A
   commission_per_lot: number | null; // USD per lot, null = N/A
   salary: number | null; // monthly USD, null = N/A

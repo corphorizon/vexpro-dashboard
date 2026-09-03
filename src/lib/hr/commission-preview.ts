@@ -38,6 +38,8 @@ import { netParaElMotor, type NetDepositSource, type ResolvedNetDeposit } from '
 export type PerfilParaComision = {
   id: string;
   net_deposit_pct?: number | null;
+  /** true = % fijo: los tramos por volumen no aplican (migración 128). */
+  nd_pct_fixed?: boolean | null;
   pnl_pct?: number | null;
   fixed_salary?: boolean | null;
   salary?: number | null;
@@ -79,7 +81,7 @@ export function comisionIndividualDeBdm(params: {
   // volumen es la contrapartida de no tener piso. Mismo criterio que indCalcs.
   const commissionPct = profile.fixed_salary
     ? (profile.net_deposit_pct ?? 0)
-    : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
+    : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
 
   const calc = calculateCommission(nd, accumulatedIn, commissionPct);
   const salary = profile.fixed_salary

@@ -10,7 +10,7 @@ import { apiError } from '@/lib/api-error';
 // Fields a client is allowed to set on commercial_profiles.
 // Must match actual DB columns — no 'phone' (doesn't exist in table).
 const ALLOWED_FIELDS = [
-  'name', 'role', 'head_id', 'net_deposit_pct', 'extra_pct', 'pnl_pct',
+  'name', 'role', 'head_id', 'net_deposit_pct', 'nd_pct_fixed', 'extra_pct', 'pnl_pct',
   'commission_per_lot', 'salary', 'fixed_salary',
   'pnl_special_mode',
   // BDM GLOBAL — campos extra del HEAD/Sales Manager
