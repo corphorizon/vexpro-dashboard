@@ -3,7 +3,14 @@
 //
 // Reproduce el formulario del cliente: banda oscura con logo + título, tres
 // campos de cabecera, bloque de beneficiario, tabla de detalle, totales, el
-// medio de pago ELEGIDO (no el formulario en blanco) y observaciones.
+// medio de pago ELEGIDO (no el formulario en blanco), observaciones y el
+// ÍNDICE de archivos adjuntos.
+//
+// ÍNDICE DE ARCHIVOS (Kevin 2026-09-03: "que el PDF liste los adjuntos")
+// El PDF no nombraba ningún archivo: una orden con la factura y el comprobante
+// adentro salía idéntica a una sin nada. Se listan nombre, tipo, tamaño y
+// fecha — nunca el contenido ni URLs firmadas, que caducan. Las listas llegan
+// en la orden (withFiles() en el servidor); acá no hay consulta propia.
 //
 // Reutiliza la paleta y el lenguaje visual de src/lib/pdf-export.ts (navy
 // #1E3A5F + acento, tarjetas con borde, tablas autotable con cabecera navy),
@@ -16,6 +23,7 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { formatNumber } from '@/lib/utils';
+import { buildFileIndexRows } from './file-index';
 import {
   isAuthorized,
   STATUS_LABELS,
@@ -71,6 +79,15 @@ const LABELS = {
     swift: 'SWIFT / BIC',
     accountType: 'TIPO DE CUENTA',
     notes: 'CONCEPTO / OBSERVACIONES',
+    attachments: 'DOCUMENTOS DE RESPALDO',
+    proofs: 'COMPROBANTES DE PAGO',
+    fileNo: 'N°',
+    fileNameCol: 'ARCHIVO',
+    fileType: 'TIPO',
+    fileSize: 'TAMAÑO',
+    fileUploadedAt: 'SUBIDO EL',
+    fileUnnamed: '(sin nombre)',
+    filesHint: 'Archivos adjuntos a la orden. Se consultan en el sistema; este documento solo los lista.',
     issuedBy: 'Emitida por',
     approvedBy: 'Aprobada por',
     footer: 'Documento interno · Verificá la red y la dirección antes de ejecutar el pago.',
@@ -113,6 +130,15 @@ const LABELS = {
     swift: 'SWIFT · BIC',
     accountType: 'ACCOUNT TYPE',
     notes: 'NOTES · REMARKS',
+    attachments: 'SUPPORTING DOCUMENTS',
+    proofs: 'PAYMENT RECEIPTS',
+    fileNo: 'No.',
+    fileNameCol: 'FILE',
+    fileType: 'TYPE',
+    fileSize: 'SIZE',
+    fileUploadedAt: 'UPLOADED',
+    fileUnnamed: '(unnamed)',
+    filesHint: 'Files attached to this order. They live in the system; this document only lists them.',
     issuedBy: 'Issued by',
     approvedBy: 'Approved by',
     footer: 'Internal document · Verify network and address before executing the payment.',
@@ -289,6 +315,55 @@ function sectionBar(doc: jsPDF, y: number, label: string, brand: RGB): number {
   doc.setTextColor(...C.white);
   doc.text(label, MARGIN + 3, y + 4.4, { charSpace: 0.5 });
   return y + 6.4 + 4.2;
+}
+
+/**
+ * Sección de índice de archivos (respaldos o comprobantes).
+ *
+ * Solo se pinta si hay AL MENOS uno: sin archivos no hay barra, no hay tabla y
+ * no hay "0 adjuntos". Un contador en cero se lee como "se verificó que no
+ * hay", y acá la lista puede simplemente no venir cargada.
+ */
+function filesSection(
+  doc: jsPDF,
+  y: number,
+  label: string,
+  rows: string[][],
+  L: (typeof LABELS)[PaymentOrderLocale],
+  brand: RGB,
+): number {
+  if (rows.length === 0) return y;
+  const pageW = doc.internal.pageSize.getWidth();
+  const pageH = doc.internal.pageSize.getHeight();
+  const contentW = pageW - MARGIN * 2;
+
+  // La barra de sección no salta de página sola (autoTable sí): si no entran
+  // el título y la primera fila, se cambia de hoja ANTES de pintar el título,
+  // para que no quede una cabecera huérfana al pie.
+  if (y + 20 > pageH - 18) {
+    doc.addPage();
+    y = MARGIN + 4;
+  }
+  y = sectionBar(doc, y, label, brand);
+
+  autoTable(doc, {
+    startY: y,
+    head: [[L.fileNo, L.fileNameCol, L.fileType, L.fileSize, L.fileUploadedAt]],
+    body: rows,
+    theme: 'grid',
+    styles: { fontSize: 7.6, cellPadding: 1.7, textColor: C.ink, lineColor: C.border, lineWidth: 0.2 },
+    headStyles: { fillColor: brand, textColor: 255, fontStyle: 'bold', fontSize: 6.6 },
+    alternateRowStyles: { fillColor: C.surface },
+    columnStyles: {
+      0: { cellWidth: 9, halign: 'center' },
+      1: { cellWidth: contentW - 9 - 18 - 20 - 26 },
+      2: { cellWidth: 18, halign: 'center' },
+      3: { cellWidth: 20, halign: 'right' },
+      4: { cellWidth: 26, halign: 'right' },
+    },
+    margin: { left: MARGIN, right: MARGIN },
+  });
+  return ((doc as AutoTableDoc).lastAutoTable?.finalY ?? y + 20) + 4;
 }
 
 // ── Generador ───────────────────────────────────────────────────────────────
@@ -520,16 +595,35 @@ export async function generatePaymentOrderPDF(
   doc.text(noteLines, MARGIN + 4, y + 5.5);
   y += notesH;
 
-  // ── 8. (Sin bloque de firmas) ─────────────────────────────────────────────
+  // ── 8. Índice de archivos (solo si los hay) ───────────────────────────────
+  // Las dos listas llegan YA cargadas en la orden: las trae withFiles() en el
+  // servidor con el mismo lector que usa la pantalla (loadOrderAttachments /
+  // loadOrderProofs, con su fallback legado). Acá no se consulta nada — una
+  // segunda consulta sería una segunda verdad.
+  const fileOpts = { unnamed: L.fileUnnamed, formatDate: (v: string | null | undefined) => formatDate(v, order.locale) };
+  const attachmentRows = buildFileIndexRows(order.attachments, fileOpts);
+  const proofRows = buildFileIndexRows(order.proofs, fileOpts);
+
+  y = filesSection(doc, y + 6, L.attachments, attachmentRows, L, brand);
+  y = filesSection(doc, y + (attachmentRows.length ? 2 : 6), L.proofs, proofRows, L, brand);
+
+  if (attachmentRows.length > 0 || proofRows.length > 0) {
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.4);
+    doc.setTextColor(...C.muted);
+    doc.text(doc.splitTextToSize(L.filesHint, contentW), MARGIN, y + 1.5);
+  }
+
+  // ── 9. (Sin bloque de firmas) ─────────────────────────────────────────────
   // Kevin pidió quitar "Solicitado por / Autorizado por" (2026-08-05): con la
   // aprobación digital las rayas para firmar a mano perdieron sentido. La
   // traza de quién emitió y quién aprobó va en el pie, y el historial completo
   // vive en la pantalla de detalle de la orden.
 
-  // ── 9. Marca de agua / sello de estado ────────────────────────────────────
+  // ── 10. Marca de agua / sello de estado ───────────────────────────────────
   paintStatusWatermark(doc, order, L);
 
-  // ── 10. Pie ───────────────────────────────────────────────────────────────
+  // ── 11. Pie ───────────────────────────────────────────────────────────────
   const pages = doc.getNumberOfPages();
   for (let p = 1; p <= pages; p++) {
     doc.setPage(p);

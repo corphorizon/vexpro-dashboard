@@ -25,14 +25,13 @@
 
 import { Download, ExternalLink, Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { formatFileSize } from '@/lib/payment-orders/file-index';
 
-/** Tamaño legible. Vivía copiado en el detalle y en el formulario. */
-export function formatFileSize(bytes: number | null | undefined): string {
-  const n = Number(bytes) || 0;
-  if (n < 1024) return `${n} B`;
-  if (n < 1024 * 1024) return `${Math.round(n / 1024)} KB`;
-  return `${(n / (1024 * 1024)).toFixed(1)} MB`;
-}
+/** Tamaño legible. Vivía copiado en el detalle y en el formulario; ahora vive
+ *  en lib/payment-orders/file-index.ts porque el PDF también lo necesita y
+ *  este archivo es 'use client'. Se re-exporta para no tocar a quien ya lo
+ *  importaba desde acá — sigue habiendo UNA sola implementación. */
+export { formatFileSize };
 
 /** Lo mínimo que necesita la lista. Lo cumplen PaymentOrderProof y
  *  PaymentOrderAttachment sin adaptador. */

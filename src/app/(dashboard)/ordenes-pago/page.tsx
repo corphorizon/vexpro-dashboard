@@ -28,7 +28,7 @@ import { cn, formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import type { PaymentOrder, PaymentOrderStatus } from '@/lib/payment-orders/types';
 // Firma asumida: listPaymentOrders(): Promise<PaymentOrder[]>
-import { listPaymentOrders } from '@/lib/payment-orders/api';
+import { getPaymentOrder, listPaymentOrders } from '@/lib/payment-orders/api';
 
 type Filter = 'all' | PaymentOrderStatus;
 
@@ -119,7 +119,12 @@ export default function OrdenesPagoPage() {
       const { generatePaymentOrderPDF } = await import('@/lib/payment-orders/pdf');
       // El documento lleva la marca de la empresa: sin empresa activa no se emite.
       if (!company) throw new Error(t('payOrders.pdfError'));
-      await generatePaymentOrderPDF(order, company, { download: true });
+      // El LISTADO no trae `proofs` ni `attachments` (no hace el join), y desde
+      // que el PDF los índiza, generarlo con la fila del listado imprimiría una
+      // orden "sin archivos" que sí los tiene — el fallo que no da error. Se
+      // pide la orden completa (mismo endpoint que el detalle, mismo lector).
+      const full = await getPaymentOrder(order.id);
+      await generatePaymentOrderPDF(full, company, { download: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('payOrders.pdfError'));
     } finally {
