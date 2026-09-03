@@ -57,6 +57,18 @@ describe('calculateCommission (fórmula estándar PnL normal)', () => {
     expect(calculateBdmPctFromND(10_000, 4)).toBe(4);
   });
 
+  it('nd_pct_fixed: el % del perfil es fijo y los tramos no aplican ni para subir', () => {
+    // El caso que motivó la excepción (2026-09-03): 4% pactado, ND $283K.
+    // Sin el flag el tramo lo subía al 6%; con el flag cobra su 4%.
+    expect(calculateBdmPctFromND(283_139, 4, true)).toBe(4);
+    // Fijo sin % configurado = 0 (no hay acuerdo que respetar).
+    expect(calculateBdmPctFromND(283_139, undefined, true)).toBe(0);
+    // false y undefined se comportan EXACTAMENTE como antes (regresión).
+    expect(calculateBdmPctFromND(283_139, 4, false)).toBe(6);
+    expect(calculateBdmPctFromND(283_139, 4)).toBe(6);
+    expect(calculateBdmPctFromND(120_000, 7, false)).toBe(7);
+  });
+
   it('división = ND/2 y comisión = (división + acumulado) × pct', () => {
     // ND 100k, acumulado previo 0, 5% → división 50k, comisión 2500
     const r = calculateCommission(100_000, 0, 5);

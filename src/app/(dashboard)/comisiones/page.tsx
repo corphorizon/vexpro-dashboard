@@ -831,7 +831,7 @@ export default function ComisionesPage() {
         || commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
       const bdmOwnPct = isSubHead || profile.fixed_salary
         ? (profile.net_deposit_pct ?? 0)
-        : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
+        : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
       // BDM GLOBAL: el HEAD usa pct_sobre_bdm_global como su % de referencia en
       // vez de su net_deposit_pct. El resto del cálculo es idéntico al normal.
       const refPct = profile.role === 'bdm_global' ? pctSobreBdmGlobal : headPct;
@@ -1554,7 +1554,7 @@ export default function ComisionesPage() {
           // HEAD/sub-HEADs keep profile pct; only actual BDMs use dynamic pct based on ND
           const isSubHead = !isHead && (profile.role === 'head' || profile.role === 'sales_manager'
             || commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub)));
-          const pct = (isHead || isSubHead || profile.fixed_salary) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0);
+          const pct = (isHead || isSubHead || profile.fixed_salary) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
           const calc = calculateCommission(nd, accIn, pct);
 
           if (isHead && headHasParent) {

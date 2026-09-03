@@ -257,7 +257,19 @@ export const BDM_PCT_TIERS: PctTier[] = [
 
 /** BDM commission percentage based on individual ND.
  *  If ND < $50,000, returns null so the caller can fall back to the profile default. */
-export function calculateBdmPctFromND(individualND: number, profilePct?: number): number {
+export function calculateBdmPctFromND(
+  individualND: number,
+  profilePct?: number,
+  /**
+   * true = el % del perfil es FIJO y los tramos NO aplican (ni para subir).
+   * Excepción por perfil (`commercial_profiles.nd_pct_fixed`, migración 128),
+   * pedida el 2026-09-03: Ana García tiene 4% pactado y un agosto de $283K la
+   * subía al 6% del tramo. El default (false/undefined) conserva la regla del
+   * piso de la auditoría 2026-08-06 tal cual.
+   */
+  pctFixed?: boolean,
+): number {
+  if (pctFixed) return profilePct ?? 0;
   let tierPct = 0;
   if (individualND >= 0) {
     for (const tier of BDM_PCT_TIERS) {

@@ -44,6 +44,7 @@ export function ProfileForm({
   const [role, setRole] = useState(editing?.role || 'bdm');
   const [headId, setHeadId] = useState(editing?.head_id || '');
   const [ndPct, setNdPct] = useState(editing?.net_deposit_pct?.toString() || '');
+  const [ndPctFixed, setNdPctFixed] = useState(!!editing?.nd_pct_fixed);
   const [pnlPct, setPnlPct] = useState(editing?.pnl_pct?.toString() || '');
   const [commLot, setCommLot] = useState(editing?.commission_per_lot?.toString() || '');
   const [salary, setSalary] = useState(editing?.salary?.toString() || '');
@@ -103,6 +104,9 @@ export function ProfileForm({
         name, email, role,
         head_id: headId || null,
         net_deposit_pct: ndPct ? parseFloat(ndPct) : null,
+        // Mismo criterio que pnl_special_mode: sin % cargado el flag se apaga,
+        // para que no quede una excepción huérfana de un config anterior.
+        nd_pct_fixed: ndPct ? ndPctFixed : false,
         pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
         // Force pnl_special_mode off when pct is empty — avoids stale flags
         // from a previous config (profile lost its pct but the flag lingered).
@@ -189,6 +193,15 @@ export function ProfileForm({
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.ndPctPlaceholder')}</label>
             <input aria-label={t('hr.ndPctPlaceholder')} type="number" value={ndPct} onChange={e => setNdPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+            {/* Excepción a los tramos por volumen (BDM_PCT_TIERS): con esto
+                activo la persona cobra SIEMPRE su % configurado. Solo tiene
+                sentido con un % cargado, por eso se muestra únicamente ahí. */}
+            {ndPct && (
+              <label className="flex items-center gap-2 mt-1.5 text-xs text-muted-foreground cursor-pointer">
+                <input type="checkbox" checked={ndPctFixed} onChange={e => setNdPctFixed(e.target.checked)} className="rounded border-border" />
+                {t('hr.ndPctFixedCheckbox')}
+              </label>
+            )}
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pnlPctPlaceholder')}</label>

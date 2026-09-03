@@ -1601,6 +1601,7 @@ const translations: Record<Locale, TranslationDict> = {
     // HR i18n coverage
     'hr.saveError': 'Error while saving',
     'hr.fixedSalaryCheckbox': 'Fixed salary (not tied to ND)',
+    'hr.ndPctFixedCheckbox': 'Fixed ND % (volume tiers do not apply)',
     'hr.amountUsdPlaceholder': 'Amount USD',
     'hr.pctOverGlobalBdms': '% on GLOBAL BDMs',
     'hr.pctOverGlobalBdmsHint': '% this HEAD earns on the ND of each GLOBAL BDM in their structure',
@@ -4141,6 +4142,7 @@ const translations: Record<Locale, TranslationDict> = {
     // HR i18n coverage
     'hr.saveError': 'Error al guardar',
     'hr.fixedSalaryCheckbox': 'Salario fijo (no depende de ND)',
+    'hr.ndPctFixedCheckbox': '% de ND fijo (no aplicar tramos por volumen)',
     'hr.amountUsdPlaceholder': 'Monto USD',
     'hr.pctOverGlobalBdms': '% sobre BDM Globales',
     'hr.pctOverGlobalBdmsHint': '% que cobra este HEAD sobre el ND de cada BDM GLOBAL en su estructura',
