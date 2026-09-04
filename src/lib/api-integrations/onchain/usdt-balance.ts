@@ -14,8 +14,11 @@
 // `notConfigured`: si hay dirección se consulta, y si no, no existe.
 //
 // LO QUE SE CONSULTA
-//   · Tron: GET https://api.trongrid.io/v1/accounts/{address} — UNA llamada
-//     trae las dos puntas: `data[0].trc20` (array de {contrato: saldo}, 6
+//   · Tron: el USDT se lee con balanceOf(address) del contrato
+//     (POST /wallet/triggerconstantcontract) y el TRX con
+//     GET /v1/accounts/{address} — DOS llamadas desde el 2026-09-04, ver el
+//     bloque "Tron: USDT por el CONTRATO". Antes era una sola:
+//     `data[0].trc20` (array de {contrato: saldo}, 6
 //     decimales) y `data[0].balance`, el saldo nativo en sun (TRX × 1e6).
 //     Con `TRONGRID_API_KEY` se manda el header 'TRON-PRO-API-KEY' y la cuota
 //     sube; sin key funciona igual con cuota baja.
@@ -150,6 +153,35 @@ export function truncateRaw(value: unknown, max = 300): string {
   return text.length > max ? `${text.slice(0, max)}…` : text;
 }
 
+// ── Freno para TronGrid ─────────────────────────────────────────────────────
+// Sin API key TronGrid admite 3 req/s y responde 429 «query server is
+// suspended for 5 s» al pasarse (medido 2026-09-04 leyendo 3 wallets: la 2ª y
+// la 3ª volvieron 429). Desde hoy Tron cuesta DOS llamadas por wallet
+// (contrato + cuenta) y `fetchOnchainTotal` lee las redes en paralelo, así que
+// sin freno el snapshot diario de Vex (2 wallets Tron) se pasa solo. Las
+// llamadas a TronGrid se serializan con un espacio mínimo entre ellas; el 429
+// que igual llegue sigue siendo error visible, nunca un 0.
+// `TRONGRID_MIN_INTERVAL_MS` permite bajarlo a 0 en tests o con API key.
+let tronGate: Promise<void> = Promise.resolve();
+let tronLastCallAt = 0;
+function tronMinIntervalMs(): number {
+  const raw = process.env.TRONGRID_MIN_INTERVAL_MS;
+  if (raw === undefined || raw === '') return process.env.TRONGRID_API_KEY?.trim() ? 120 : 400;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 400;
+}
+async function tronThrottled<T>(fn: () => Promise<T>): Promise<T> {
+  const wait = tronGate.then(async () => {
+    const gap = tronMinIntervalMs();
+    const elapsed = Date.now() - tronLastCallAt;
+    if (gap > 0 && elapsed < gap) await new Promise((r) => setTimeout(r, gap - elapsed));
+    tronLastCallAt = Date.now();
+  });
+  tronGate = wait.catch(() => undefined);
+  await wait;
+  return fn();
+}
+
 /** Headers de TronGrid: la API key es opcional y solo sube la cuota. */
 export function tronHeaders(): Record<string, string> {
   const headers: Record<string, string> = { Accept: 'application/json' };
@@ -237,11 +269,11 @@ export function parseEvmHexBalance(result: unknown): bigint | null {
 
 /** GET de la cuenta Tron: una sola llamada sirve para USDT y para TRX. */
 async function tronAccount(address: string): Promise<{ json: unknown } | { error: string }> {
-  const res = await fetch(`${TRONGRID_URL}/v1/accounts/${address}`, {
+  const res = await tronThrottled(() => fetch(`${TRONGRID_URL}/v1/accounts/${address}`, {
     method: 'GET',
     headers: tronHeaders(),
     signal: AbortSignal.timeout(ONCHAIN_TIMEOUT_MS),
-  });
+  }));
   const text = await res.text().catch(() => '');
   if (!res.ok) {
     return { error: `TronGrid ${res.status} ${res.statusText}: ${truncateRaw(text, 200)}` };
@@ -251,6 +283,93 @@ async function tronAccount(address: string): Promise<{ json: unknown } | { error
   } catch {
     return { error: `TronGrid respondió algo que no es JSON: ${truncateRaw(text)}` };
   }
+}
+
+// ── Tron: USDT por el CONTRATO, no por la cuenta ────────────────────────────
+//
+// Hallazgo 2026-09-04 (Kevin: «REVISA BIEN, TIENE $29,945.53»). La wallet
+// TMwSxJ…GaV es una cuenta GasFree de TronLink: recibe USDT sin haber sido
+// activada nunca con TRX. Para `/v1/accounts/{addr}` esa cuenta NO EXISTE
+// (`data: []`) aunque el contrato de USDT le tenga 29.938,57 asignados, y
+// `parseTronUsdtRaw` lo traducía a 0. Un cero plausible y falso: el fallo que
+// no da error. La verdad del saldo de un TRC20 la tiene el contrato; por eso
+// el USDT se lee SIEMPRE con `balanceOf(address)` vía triggerconstantcontract
+// (igual que en BSC/Ethereum) y `/v1/accounts` queda solo para el TRX, que sí
+// vive en la cuenta (una cuenta sin activar no puede tener TRX: ahí el 0 es
+// verdad).
+//
+// Descartado: "usar /v1/accounts y caer al contrato solo si data está vacío".
+// Tapa este caso pero no el de una cuenta activada cuya lista `trc20` llegue
+// incompleta o paginada; preguntar al contrato no depende de cómo TronGrid
+// arme la vista de la cuenta.
+
+const BASE58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+
+/**
+ * Base58check de Tron → los 20 bytes de la dirección en hex (sin el prefijo
+ * 0x41, sin checksum). null si la cadena no decodifica a 25 bytes con prefijo
+ * 0x41: no se adivina una dirección.
+ */
+export function tronBase58ToHex20(address: string): string | null {
+  let n = BigInt(0);
+  for (const ch of address) {
+    const idx = BASE58_ALPHABET.indexOf(ch);
+    if (idx < 0) return null;
+    n = n * BigInt(58) + BigInt(idx);
+  }
+  let hex = n.toString(16);
+  if (hex.length > 50) return null;
+  hex = hex.padStart(50, '0'); // 25 bytes: 0x41 + 20 bytes + 4 bytes checksum
+  if (!hex.startsWith('41')) return null;
+  return hex.slice(2, 42);
+}
+
+/** `constant_result[0]` de triggerconstantcontract → unidades crudas. */
+export function parseTronConstantResult(json: unknown): bigint | null {
+  if (!isRecord(json)) return null;
+  const result = json.constant_result;
+  if (!Array.isArray(result) || typeof result[0] !== 'string') return null;
+  const hex = result[0].trim();
+  if (!/^[0-9a-fA-F]*$/.test(hex)) return null;
+  if (hex === '') return BigInt(0);
+  return BigInt(`0x${hex}`);
+}
+
+/** balanceOf(address) del contrato USDT en Tron. */
+async function tronUsdtBalanceOf(address: string): Promise<{ raw: bigint } | { error: string }> {
+  const hex20 = tronBase58ToHex20(address);
+  if (!hex20) return { error: 'Dirección Tron inválida: no decodifica como base58check con prefijo 0x41.' };
+  const res = await tronThrottled(() => fetch(`${TRONGRID_URL}/wallet/triggerconstantcontract`, {
+    method: 'POST',
+    headers: { ...tronHeaders(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      owner_address: address,
+      contract_address: ONCHAIN_ASSETS.tron.contract,
+      function_selector: 'balanceOf(address)',
+      parameter: hex20.padStart(64, '0'),
+      visible: true,
+    }),
+    signal: AbortSignal.timeout(ONCHAIN_TIMEOUT_MS),
+  }));
+  const text = await res.text().catch(() => '');
+  if (!res.ok) {
+    return { error: `TronGrid ${res.status} ${res.statusText}: ${truncateRaw(text, 200)}` };
+  }
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return { error: `TronGrid respondió algo que no es JSON: ${truncateRaw(text)}` };
+  }
+  const raw = parseTronConstantResult(json);
+  if (raw === null) {
+    return {
+      error:
+        'TronGrid respondió OK pero balanceOf(USDT) no trajo un resultado legible. ' +
+        `Crudo: ${truncateRaw(json)}`,
+    };
+  }
+  return { raw };
 }
 
 /** Una llamada JSON-RPC que devuelve un hex en `result`. */
@@ -332,19 +451,13 @@ export async function fetchUsdtBalance(
 
   try {
     if (network === 'tron') {
-      const account = await tronAccount(clean);
-      if ('error' in account) return account;
-      const raw = parseTronUsdtRaw(account.json);
-      if (raw === null) {
-        return {
-          error:
-            'TronGrid respondió OK pero no se pudo leer el saldo de USDT. ' +
-            `Revisar parseTronUsdtRaw(). Crudo: ${truncateRaw(account.json)}`,
-        };
-      }
+      // Por el contrato, no por la cuenta: ver el bloque "Tron: USDT por el
+      // CONTRATO" más arriba (cuentas GasFree sin activar).
+      const call = await tronUsdtBalanceOf(clean);
+      if ('error' in call) return call;
       return {
-        balance: rawToAmount(raw, ONCHAIN_ASSETS.tron.decimals),
-        raw: raw.toString(),
+        balance: rawToAmount(call.raw, ONCHAIN_ASSETS.tron.decimals),
+        raw: call.raw.toString(),
         source: 'trongrid',
       };
     }
@@ -400,11 +513,13 @@ export async function fetchNetworkBalance(
 
   try {
     if (network === 'tron') {
+      const usdtCall = await tronUsdtBalanceOf(clean);
+      if ('error' in usdtCall) return { network, address: clean, error: usdtCall.error };
+      const usdtRaw = usdtCall.raw;
       const account = await tronAccount(clean);
       if ('error' in account) return { network, address: clean, error: account.error };
-      const usdtRaw = parseTronUsdtRaw(account.json);
       const nativeRaw = parseTronNativeRaw(account.json);
-      if (usdtRaw === null || nativeRaw === null) {
+      if (nativeRaw === null) {
         return {
           network,
           address: clean,

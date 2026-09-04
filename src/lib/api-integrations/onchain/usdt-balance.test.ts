@@ -49,9 +49,27 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
 
 const mockFetch = vi.fn();
 
+// balanceOf(USDT) del contrato para TRON_ADDR: 17.051,70 USDT. Desde el
+// 2026-09-04 el USDT de Tron se lee acá y NO en `data[0].trc20` (cuentas
+// GasFree sin activar: la cuenta no existe pero el contrato sí las conoce).
+const TRON_BALANCEOF = { constant_result: ['00000000000000000000000000000000000000000000000000000003f85c4b20'], result: { result: true } };
+
+/** Enruta por URL/cuerpo en vez de por orden: las redes se leen en paralelo. */
+function routeFetch(routes: { tronContract?: Response; tronAccount?: Response; evmCall?: Response; evmNative?: Response }) {
+  mockFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+    const u = String(url);
+    if (u.includes('/wallet/triggerconstantcontract')) return routes.tronContract ?? jsonResponse(TRON_BALANCEOF);
+    if (u.includes('/v1/accounts/')) return routes.tronAccount ?? jsonResponse(TRON_ACCOUNT);
+    const body = typeof init?.body === 'string' ? init.body : '';
+    if (body.includes('eth_getBalance')) return routes.evmNative ?? jsonResponse({ result: '0x0' });
+    return routes.evmCall ?? jsonResponse({ result: '0x0' });
+  });
+}
+
 beforeEach(() => {
   mockFetch.mockReset();
   vi.stubGlobal('fetch', mockFetch);
+  vi.stubEnv('TRONGRID_MIN_INTERVAL_MS', '0'); // sin freno en tests
 });
 
 afterEach(() => {
@@ -132,9 +150,10 @@ describe('parseEvmHexBalance', () => {
 // ── fetchUsdtBalance ────────────────────────────────────────────────────────
 
 describe('fetchUsdtBalance', () => {
-  it('lee el saldo TRC20 real', async () => {
-    mockFetch.mockResolvedValueOnce(jsonResponse(TRON_ACCOUNT));
+  it('lee el saldo TRC20 real (por el contrato, no por la cuenta)', async () => {
+    mockFetch.mockResolvedValueOnce(jsonResponse(TRON_BALANCEOF));
     const res = await fetchUsdtBalance('tron', TRON_ADDR);
+    expect(String(mockFetch.mock.calls[0][0])).toContain('/wallet/triggerconstantcontract');
     expect(res).toMatchObject({ balance: 17051.7, raw: '17051700000', source: 'trongrid' });
   });
 
@@ -188,10 +207,10 @@ describe('fetchUsdtBalance', () => {
 // ── fetchNetworkBalance: token + gas ────────────────────────────────────────
 
 describe('fetchNetworkBalance', () => {
-  it('Tron trae USDT y TRX con UNA sola llamada', async () => {
-    mockFetch.mockResolvedValueOnce(jsonResponse(TRON_ACCOUNT));
+  it('Tron necesita dos llamadas: balanceOf del contrato y la cuenta para el TRX', async () => {
+    routeFetch({});
     const res = await fetchNetworkBalance('tron', TRON_ADDR);
-    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(res).toMatchObject({
       usdt: 17051.7,
       native: { symbol: 'TRX', amount: 220.88 },
@@ -227,10 +246,10 @@ describe('fetchOnchainTotal', () => {
   const prices = { TRX: 0.331, BNB: 603, ETH: 2400 };
 
   it('suma USDT + gas valuado de todas las redes', async () => {
-    mockFetch
-      .mockResolvedValueOnce(jsonResponse(TRON_ACCOUNT)) // tron: 17051,70 + 220,88 TRX
-      .mockResolvedValueOnce(jsonResponse({ result: '0x4f94ae6af8000' })) // bsc USDT 0,0014
-      .mockResolvedValueOnce(jsonResponse({ result: '0x1f9e80ba804000' })); // bsc BNB 0,0089
+    routeFetch({
+      evmCall: jsonResponse({ result: '0x4f94ae6af8000' }), // bsc USDT 0,0014
+      evmNative: jsonResponse({ result: '0x1f9e80ba804000' }), // bsc BNB 0,0089
+    }); // tron: 17051,70 + 220,88 TRX
 
     const res = await fetchOnchainTotal(wallets, { prices, priceAt: '2026-08-17T00:00:00Z' });
     expect(res.error).toBeUndefined();
@@ -242,9 +261,7 @@ describe('fetchOnchainTotal', () => {
   });
 
   it('FAIL-CLOSED: si una red falla no devuelve el total de las otras', async () => {
-    mockFetch
-      .mockResolvedValueOnce(jsonResponse(TRON_ACCOUNT))
-      .mockResolvedValueOnce(jsonResponse('gateway timeout', false, 504));
+    routeFetch({ evmCall: jsonResponse('gateway timeout', false, 504) });
 
     const res = await fetchOnchainTotal(wallets, { prices });
     expect(res.total).toBeUndefined();
@@ -254,9 +271,10 @@ describe('fetchOnchainTotal', () => {
   });
 
   it('sin precio, un polvo de gas se cuenta 0 y no bloquea el canal', async () => {
-    mockFetch.mockResolvedValueOnce(
-      jsonResponse({ data: [{ balance: 1_000_000, trc20: [{ [ONCHAIN_ASSETS.tron.contract]: '5000000' }] }] }),
-    );
+    routeFetch({
+      tronContract: jsonResponse({ constant_result: [(5_000_000).toString(16).padStart(64, '0')] }),
+      tronAccount: jsonResponse({ data: [{ balance: 1_000_000, trc20: [{ [ONCHAIN_ASSETS.tron.contract]: '5000000' }] }] }),
+    });
     const res = await fetchOnchainTotal([wallets[0]], { prices: {} });
     expect(res.error).toBeUndefined();
     expect(res.total).toBe(5); // 5 USDT; 1 TRX sin precio → 0
@@ -264,7 +282,7 @@ describe('fetchOnchainTotal', () => {
   });
 
   it('sin precio y con gas RELEVANTE falla cerrado: no se valúa a ciegas', async () => {
-    mockFetch.mockResolvedValueOnce(jsonResponse(TRON_ACCOUNT)); // 220,88 TRX
+    routeFetch({}); // 220,88 TRX
     const res = await fetchOnchainTotal([wallets[0]], { prices: {} });
     expect(res.total).toBeUndefined();
     expect(res.error).toMatch(/sin precio para 220.88 TRX/);
@@ -274,5 +292,33 @@ describe('fetchOnchainTotal', () => {
     const res = await fetchOnchainTotal([]);
     expect(res.error).toMatch(/no tiene direcciones/);
     expect(mockFetch).not.toHaveBeenCalled();
+  });
+});
+
+
+describe('Tron: USDT por el contrato (cuentas GasFree sin activar)', () => {
+  it('decodifica base58check a los 20 bytes hex (vector real)', async () => {
+    const { tronBase58ToHex20 } = await import('./usdt-balance');
+    expect(tronBase58ToHex20('TMwSxJMjdPJzKXpdqrr69gfPawQ3sK5GaV')).toBe(
+      '834c530af3aefc74aa31195ad2e6e2814a6f43e2',
+    );
+    expect(tronBase58ToHex20('0x321814ca95a24348551239466d778e2fc93539c9')).toBeNull();
+  });
+
+  it('una cuenta que NO existe para /v1/accounts pero tiene USDT en el contrato NO da 0', async () => {
+    // El caso real del 2026-09-04: data: [] y 29.938,57 USDT en el contrato.
+    routeFetch({
+      tronContract: jsonResponse({ constant_result: [(29_938_570_000).toString(16).padStart(64, '0')] }),
+      tronAccount: jsonResponse({ data: [], success: true }),
+    });
+    const res = await fetchNetworkBalance('tron', 'TMwSxJMjdPJzKXpdqrr69gfPawQ3sK5GaV');
+    expect(res).toMatchObject({ usdt: 29938.57, native: { symbol: 'TRX', amount: 0 } });
+  });
+
+  it('constant_result ilegible es error, no 0', async () => {
+    const { parseTronConstantResult } = await import('./usdt-balance');
+    expect(parseTronConstantResult({ constant_result: ['zz'] })).toBeNull();
+    expect(parseTronConstantResult({})).toBeNull();
+    expect(parseTronConstantResult({ constant_result: [''] })).toBe(BigInt(0));
   });
 });
