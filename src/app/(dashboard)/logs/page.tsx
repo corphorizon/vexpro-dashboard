@@ -1,5 +1,6 @@
 'use client';
 
+import { todayUtcISO } from '@/lib/dates';
 // ─────────────────────────────────────────────────────────────────────────────
 // Registro de Actividad — /logs
 //
@@ -44,11 +45,11 @@ interface Facets {
   users: string[];
 }
 
-function todayISO(): string {
-  const d = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-}
+// «Hoy» en UTC, como los created_at contra los que filtra — era una copia
+// local con el día del navegador (misma familia del bug de Balances/órdenes:
+// desde UTC−5 el filtro "hoy" no encontraba los registros de la noche).
+// El registro canónico vive en lib/dates.ts.
+const todayISO = todayUtcISO;
 
 // Los módulos del log NO son los del menú: además de los 16 asignables
 // aparecen orígenes técnicos (auth, integrations_sync, api_transactions) y

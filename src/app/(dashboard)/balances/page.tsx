@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
+import { todayUtcISO } from '@/lib/dates';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
 import { features } from '@/lib/business-model';
@@ -61,13 +62,15 @@ import { generateChannelBalancesPDF } from '@/lib/pdf-export';
 // Helpers
 // ─────────────────────────────────────────────────────────────────────────────
 
-function todayISO(): string {
-  const d = new Date();
-  const yyyy = d.getFullYear();
-  const mm = String(d.getMonth() + 1).padStart(2, '0');
-  const dd = String(d.getDate()).padStart(2, '0');
-  return `${yyyy}-${mm}-${dd}`;
-}
+// «Hoy» es el día UTC, no el del navegador — todo el sistema corta los días en
+// UTC (asientos del libro, snapshots, series del CRM). Acá vivía una copia
+// LOCAL de todayISO() con getDate() del navegador, y esa es la tercera vez que
+// el mismo bug muerde (reportes en PR #94, órdenes de pago el 01/09): medido el
+// 04/09 desde UTC−5, la tarjeta pedía el saldo asof 04/09 (69.909) mientras el
+// libro ya tenía un asiento del 05/09 UTC y decía 38.909. El registro canónico
+// es todayUtcISO en lib/dates.ts; una copia local es la lista duplicada de
+// siempre (§1.1).
+const todayISO = todayUtcISO;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Page
