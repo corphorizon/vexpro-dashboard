@@ -1207,14 +1207,17 @@ export default function ComisionesPage() {
   const autoSalary = useMemo(() => {
     if (!headProfile) return calculateHeadSalaryFromND(teamTotalND);
     if (headProfile.fixed_salary) return prorateFixedSalary(headProfile.salary ?? 0, headProfile.hire_date, periodYear, periodMonth);
-    // Un BDM que lidera su grupo cobra el salario de BDM sobre SU ND, no la
-    // tabla de HEAD sobre el total del grupo: es la misma persona que en el
-    // grupo de su head cobra `calculateSalaryFromND`, y darle acá la tabla de
-    // head le cambiaría el sueldo por el sólo hecho de mirarla desde otra
-    // pantalla (§2.1: un mismo número, un mismo camino).
-    if (liderEsBdm) return calculateSalaryFromND(ndInputs.get(headProfile.id) ?? 0);
+    // Un BDM que lidera su grupo cobra el salario de BDM (SALARY_TIERS, no la
+    // tabla de head) sobre EL TOTAL DE SU LÍNEA — que es el mismo teamTotalND
+    // del grupo. CORRECCIÓN (dueño, 2026-09-06): acá se usaba su ND propio
+    // (−5.124 tras el corte del master → salario $0), pero la base de los
+    // tramos de un BDM siempre fue lo que TRAE su línea completa: bajo el
+    // grupo de Luka su fila cobra el salario sobre su total (278.130 →
+    // $2.000), y ese es el mismo número que tiene que salir acá (§2.1: un
+    // mismo número, un mismo camino — el camino es la línea, no la fila).
+    if (liderEsBdm) return calculateSalaryFromND(teamTotalND);
     return calculateHeadSalaryFromND(teamTotalND);
-  }, [teamTotalND, headProfile, periodYear, periodMonth, liderEsBdm, ndInputs]);
+  }, [teamTotalND, headProfile, periodYear, periodMonth, liderEsBdm]);
 
   // Validation: if this HEAD belongs to a parent group, check that team total matches
   // what was entered for them in the parent's group
