@@ -28,6 +28,8 @@ import {
   prorateFixedSalary,
   calculateBdmPctFromND,
   resolvePctDelMes,
+  diffNaturalDeLinea,
+  resolveDiffPctDeLinea,
   getAccumulatedIn,
   calculatePnlSpecial,
   SALARY_TIERS,
@@ -935,7 +937,7 @@ export default function ComisionesPage() {
   // fijo — o si este HEAD activó apply_pct_extra_to_head_without_salary — el
   // HEAD cobra pct_extra_sobre_head sobre la suma de ND de los BDMs de ese
   // HEAD intermedio. Si no aplica, se mantiene el diferencial de siempre.
-  const bdmCalcs = useMemo((): (CommissionCalcResult & { bdmOwnPct: number; bdmOwnPctAuto: number; diffPct: number })[] => {
+  const bdmCalcs = useMemo((): (CommissionCalcResult & { bdmOwnPct: number; bdmOwnPctAuto: number; diffPct: number; pctLinea: number | null })[] => {
     const bdms = teamProfiles.filter((_, i) => i > 0);
     const pctSobreBdmGlobal = headProfile?.pct_sobre_bdm_global ?? 0;
     const pctExtraSobreHead = headProfile?.pct_extra_sobre_head ?? 0;
@@ -956,8 +958,12 @@ export default function ComisionesPage() {
           .filter((s) => s.head_id === profile.id && (s.role === 'bdm' || s.role === 'bdm_global') && appearsInCommissions(s))
           .reduce((sum, s) => sum + (ndInputs.get(s.id) ?? 0), 0);
         const sumNdBdms = nd !== 0 ? nd : sumNdBdmsFromTeam;
+        // La línea de un sub-HEAD también es una línea: `pct_linea` la pisa
+        // igual que a la de un BDM (migración 130). `null` = `pct_extra_sobre_head`
+        // tal cual, que es lo de siempre.
+        const pctExtraDeLinea = resolveDiffPctDeLinea(profile.pct_linea, pctExtraSobreHead);
         const e = calculateExtraOverHeadCommission(
-          pctExtraSobreHead,
+          pctExtraDeLinea,
           applyExtraNoSalary,
           [{ profileId: profile.id, name: profile.name, hasFixedSalary: !!profile.fixed_salary, sumNdBdms, accumulatedIn: accIn }],
         );
@@ -965,10 +971,11 @@ export default function ComisionesPage() {
           const d = e.details[0];
           return {
             profileId: profile.id,
-            commissionPct: pctExtraSobreHead,
+            commissionPct: pctExtraDeLinea,
             bdmOwnPct: profile.net_deposit_pct ?? 0,
             bdmOwnPctAuto: profile.net_deposit_pct ?? 0,
-            diffPct: pctExtraSobreHead,
+            diffPct: pctExtraDeLinea,
+            pctLinea: profile.pct_linea ?? null,
             salary: profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd),
             totalEarnedDebt: 0,
             netDepositCurrent: sumNdBdms,
@@ -1003,17 +1010,18 @@ export default function ComisionesPage() {
       // BDM GLOBAL: el HEAD usa pct_sobre_bdm_global como su % de referencia en
       // vez de su net_deposit_pct. El resto del cálculo es idéntico al normal.
       const refPct = profile.role === 'bdm_global' ? pctSobreBdmGlobal : headPct;
-      const naturalDiff = refPct - bdmOwnPct;
-      // Extra % solo aplica cuando el diferencial natural es 0 (mismo %).
-      // Y NUNCA negativo: si el BDM tieriza por encima del head, el head no
-      // "paga" por el buen mes de su BDM — cobra 0 por ese diferencial
-      // (auditoría 2026-08-06: head 5% con BDM tierizado a 6% le restaba
-      // $1.000 al head). La función calculateHeadDifferential ya clampeaba
-      // así, pero no era la que usaba esta pantalla.
-      const diffPct = naturalDiff > 0 ? naturalDiff : naturalDiff === 0 ? extraPct : 0;
+      // El diferencial natural (clamp a 0 + extra_pct) se mudó a
+      // commission-calculator.ts: son las reglas 7 y 8 del §2.1 y vivían acá
+      // inline. Y encima de él, la PISADA POR LÍNEA (`pct_linea`, migración
+      // 130): el % que el de arriba cobra por ESTA línea, con la misma base de
+      // siempre. `null` = el natural, intacto.
+      const diffPct = resolveDiffPctDeLinea(
+        profile.pct_linea,
+        diffNaturalDeLinea(refPct, bdmOwnPct, extraPct),
+      );
       const calc = calculateCommission(nd, accIn, diffPct);
       const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
-      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, bdmOwnPctAuto, diffPct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
+      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, bdmOwnPctAuto, diffPct, pctLinea: profile.pct_linea ?? null, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
   }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride]);
 
@@ -2357,7 +2365,18 @@ export default function ComisionesPage() {
                                 Abajo, el % BASE del BDM, que es el editable: el
                                 manual del mes pisa tramos y % del perfil, y el
                                 diferencial se recalcula solo. */}
-                            <span className="text-violet-600">{calc.diffPct}%</span>
+                            {/* Un % pisado y uno derivado NO se pueden ver
+                                igual (§1.2): con `pct_linea` cargado el
+                                diferencial va rotulado «línea» y en ámbar. */}
+                            <span
+                              className={cn(calc.pctLinea !== null ? 'text-warning font-semibold' : 'text-violet-600')}
+                              title={calc.pctLinea !== null ? t('comm.pctLineaHint') : undefined}
+                            >
+                              {calc.diffPct}%
+                              {calc.pctLinea !== null && (
+                                <span className="ml-1 text-[10px] uppercase tracking-wide">{t('comm.pctLineaTag')}</span>
+                              )}
+                            </span>
                             <span className="flex items-center justify-center gap-1 mt-0.5">
                               <PctOverrideInput
                                 value={getPctOverrideDisplay(calc.profileId)}

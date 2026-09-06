@@ -48,6 +48,13 @@ export function ProfileForm({
   // Master IB (migración 129): cuelga de la línea de un BDM y su red se
   // descuenta de ese BDM, como pasa con un head.
   const [isMasterIb, setIsMasterIb] = useState(!!editing?.is_master_ib);
+  // % POR LÍNEA (migración 130): lo que cobra EL DE ARRIBA por la línea de
+  // este perfil. Vacío = diferencial natural de siempre; `0` = el de arriba no
+  // cobra nada por esta línea. Por eso el estado es string y NO number: un 0
+  // tecleado y un campo vacío tienen que poder distinguirse (§1.3).
+  const [pctLinea, setPctLinea] = useState(
+    editing?.pct_linea === null || editing?.pct_linea === undefined ? '' : String(editing.pct_linea),
+  );
   const [pnlPct, setPnlPct] = useState(editing?.pnl_pct?.toString() || '');
   const [commLot, setCommLot] = useState(editing?.commission_per_lot?.toString() || '');
   const [salary, setSalary] = useState(editing?.salary?.toString() || '');
@@ -121,6 +128,11 @@ export function ProfileForm({
         // El flag NO depende de ningún % (a diferencia de nd_pct_fixed): el
         // master del caso real cobra por PnL Especial y no tiene net_deposit_pct.
         is_master_ib: isMasterIb,
+        // OJO con el `? :` de los demás campos: acá NO sirve, porque '0' es
+        // falsy en JS y un 0 tecleado (el de arriba no cobra nada por esta
+        // línea) se guardaría como null (la lógica de siempre) sin lanzar
+        // ninguna excepción — el §1.2 en su forma más barata de cometer.
+        pct_linea: pctLinea.trim() === '' ? null : parseFloat(pctLinea),
         pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
         // Force pnl_special_mode off when pct is empty — avoids stale flags
         // from a previous config (profile lost its pct but the flag lingered).
@@ -245,6 +257,24 @@ export function ProfileForm({
                 {t('hr.ndPctFixedCheckbox')}
               </label>
             )}
+          </div>
+          {/* % POR LÍNEA — lo que cobra el de ARRIBA por la línea de esta
+              persona. Se muestra siempre: aplica tanto al BDM dentro de un
+              head como al Master IB dentro de un BDM (son la misma mecánica,
+              un nivel más abajo). El mismo campo se edita en la fila de la
+              tarjeta de Fuerza Comercial. */}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pctLineaLabel')}</label>
+            <input
+              aria-label={t('hr.pctLineaLabel')}
+              type="number"
+              step="0.01"
+              value={pctLinea}
+              onChange={e => setPctLinea(e.target.value)}
+              placeholder={t('hr.pctLineaPlaceholder')}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1 leading-tight">{t('hr.pctLineaHint')}</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pnlPctPlaceholder')}</label>

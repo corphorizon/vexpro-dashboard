@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { formatCurrency, cn } from '@/lib/utils';
-import { deleteCommercialProfile } from '@/lib/supabase/mutations';
+import { deleteCommercialProfile, updateCommercialProfile } from '@/lib/supabase/mutations';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import {
   ChevronDown, ChevronRight, Pencil, Plus, Search, Trash2, UserCircle, UserRound,
@@ -275,6 +275,91 @@ export function CommercialTab({
     }
   };
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // EL % POR LÍNEA, editable en la fila (migración 130, dueño 2026-09-06)
+  //
+  // Va acá y no sólo en el formulario porque es lo que el dueño pidió con su
+  // captura: la fila de cada miembro, al lado de su «Net Dep %». El número
+  // significa «lo que cobra EL DE ARRIBA por la línea de esta persona», no el
+  // % de ella — por eso está en su fila DENTRO de la tarjeta de su líder, que
+  // es donde se lee la relación.
+  //
+  // VACÍO NO ES CERO (§1.3): el input vacío guarda `null` = diferencial
+  // natural de siempre; un `0` tecleado guarda `0` y significa que el de
+  // arriba no cobra nada por esa línea. Lo tecleado queda en un mapa local y
+  // manda sobre el perfil: `useData()` no se refresca solo tras el PATCH, así
+  // que limpiarlo mostraría el valor viejo como si el guardado no hubiera
+  // pasado. Si el guardado FALLA se revierte a lo del perfil: un input que
+  // muestra lo que no se guardó es exactamente el fallo mudo del §1.2.
+  //
+  // Escribir lo sigue decidiendo el rol (§4.1): el endpoint de perfiles ya
+  // exige HR_ROLES + módulo `hr`, el mismo que habilita el lápiz de esta fila.
+  // ───────────────────────────────────────────────────────────────────────────
+  const [pctLineaRaw, setPctLineaRaw] = useState<Map<string, string>>(new Map());
+  const [savingPctLinea, setSavingPctLinea] = useState<string | null>(null);
+
+  const pctLineaDisplay = (p: CommercialProfile): string => {
+    const raw = pctLineaRaw.get(p.id);
+    if (raw !== undefined) return raw;
+    return p.pct_linea === null || p.pct_linea === undefined ? '' : String(p.pct_linea);
+  };
+
+  const guardarPctLinea = async (p: CommercialProfile) => {
+    const raw = pctLineaRaw.get(p.id);
+    if (raw === undefined) return; // no lo tocaron
+    const txt = raw.trim();
+    const valor = txt === '' || txt === '-' ? null : Number(txt);
+    if (valor !== null && !Number.isFinite(valor)) {
+      // Basura tecleada: no se guarda nada y el campo vuelve a lo real.
+      setPctLineaRaw((prev) => { const n = new Map(prev); n.delete(p.id); return n; });
+      return;
+    }
+    const actual = p.pct_linea ?? null;
+    if (valor === actual) return; // sin cambios: ni PATCH ni toast
+    setSavingPctLinea(p.id);
+    try {
+      await updateCommercialProfile(p.id, { pct_linea: valor });
+      onToast({
+        type: 'success',
+        msg: t('hr.pctLineaSaved', { name: p.name, pct: valor === null ? t('hr.pctLineaAuto') : `${valor}%` }),
+      });
+    } catch (err) {
+      setPctLineaRaw((prev) => { const n = new Map(prev); n.delete(p.id); return n; });
+      onToast({ type: 'error', msg: err instanceof Error ? err.message : t('hr.saveError') });
+    } finally {
+      setSavingPctLinea(null);
+    }
+  };
+
+  /** La celda editable del % por línea. */
+  const pctLineaCell = (p: CommercialProfile) => {
+    const value = pctLineaDisplay(p);
+    const cargado = value.trim() !== '' && value.trim() !== '-';
+    return (
+      <span className="inline-flex items-center gap-0.5">
+        <input
+          type="number"
+          step="0.01"
+          aria-label={t('hr.pctLineaAria', { name: p.name })}
+          title={t('hr.pctLineaHint')}
+          placeholder={t('hr.pctLineaPlaceholder')}
+          value={value}
+          disabled={savingPctLinea === p.id}
+          onChange={(e) => {
+            const v = e.target.value;
+            setPctLineaRaw((prev) => { const n = new Map(prev); n.set(p.id, v); return n; });
+          }}
+          onBlur={() => { void guardarPctLinea(p); }}
+          className={cn(
+            'w-16 px-1 py-0.5 text-right rounded border border-border bg-background text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] disabled:opacity-60',
+            cargado && 'border-warning text-warning font-semibold',
+          )}
+        />
+        <span className="text-[10px] text-muted-foreground">%</span>
+      </span>
+    );
+  };
+
   const netCrmCell = (profileId: string) => {
     const r = insumo.get(profileId);
     return celdaDelMes(r?.value ?? null, r?.source ?? 'none');
@@ -386,6 +471,10 @@ export function CommercialTab({
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netCrmCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.netDepPct')}</th>
+                  {/* El % que cobra el LÍDER por esta línea (migración 130).
+                      Al lado del Net Dep % porque es la comparación que el
+                      dueño hace al mirar la tarjeta. */}
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell" title={t('hr.pctLineaHint')}>{t('hr.pctLineaCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.salaryCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.pnl')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissionsMonth')}</th>
@@ -412,6 +501,7 @@ export function CommercialTab({
                     <td className="py-2.5 px-3 text-muted-foreground text-xs hidden sm:table-cell">{bdm.email}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">{netCrmCell(bdm.id)}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
+                    <td className="py-2.5 px-3 text-right hidden sm:table-cell">{pctLineaCell(bdm)}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">{comisionCell(bdm.id)}</td>
@@ -552,6 +642,10 @@ export function CommercialTab({
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.email')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netDepPct')}</th>
+                  {/* Los Master IB de un BDM sin líder caen en esta tabla: su
+                      línea también la cobra alguien (su BDM), así que el campo
+                      tiene que estar acá también. */}
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('hr.pctLineaHint')}>{t('hr.pctLineaCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnlPct')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.salaryCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnl')}</th>
@@ -578,6 +672,7 @@ export function CommercialTab({
                     </td>
                     <td className="py-2.5 px-3 text-muted-foreground text-xs">{bdm.email}</td>
                     <td className="py-2.5 px-3 text-right">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
+                    <td className="py-2.5 px-3 text-right">{pctLineaCell(bdm)}</td>
                     <td className="py-2.5 px-3 text-right">{bdm.pnl_pct != null ? `${bdm.pnl_pct}%` : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>

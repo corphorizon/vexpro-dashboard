@@ -5,6 +5,8 @@ import {
   calculateHeadSalaryFromND,
   calculateBdmPctFromND,
   resolvePctDelMes,
+  diffNaturalDeLinea,
+  resolveDiffPctDeLinea,
   calculateHeadDifferential,
   calculatePnlSpecial,
   calcularPasoPnlEncadenado,
@@ -221,6 +223,107 @@ describe('calculateHeadDifferential', () => {
     // BDM1: diff (6−4)+1=3% sobre división 50k = 1500
     // BDM2: diff (6−5)+1=2% sobre división 100k = 2000
     expect(r.totalDifferential).toBe(3_500);
+  });
+
+  it('pct_linea pisa el diferencial de ESA línea y no toca las demás', () => {
+    const r = calculateHeadDifferential(7, 0, [
+      { profileId: 'b1', name: 'BDM1', netDepositCurrent: 100_000, accumulatedIn: 0, commissionPct: 4, pctLinea: 1 },
+      { profileId: 'b2', name: 'BDM2', netDepositCurrent: 100_000, accumulatedIn: 0, commissionPct: 4 },
+    ]);
+    expect(r.details[0].diffPct).toBe(1);   // pisado
+    expect(r.details[0].commission).toBe(500); // 50k × 1%
+    expect(r.details[1].diffPct).toBe(3);   // intacto
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EL % POR LÍNEA (migración 130) — lo que cobra EL DE ARRIBA por la línea del
+// de abajo. La mitad de estos tests son de REGRESIÓN: sin `pct_linea` cargado
+// el número tiene que ser bit a bit el de antes, porque el diferencial natural
+// se mudó desde `bdmCalcs` (/comisiones) a `diffNaturalDeLinea` y una mudanza
+// que cambia un decimal no lanza ninguna excepción (§1.2).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('diffNaturalDeLinea (el diferencial de siempre, ahora con nombre)', () => {
+  /** La expresión EXACTA que vivía inline en bdmCalcs antes de la 130. */
+  const comoEstabaAntes = (refPct: number, pctPropio: number, extraPct: number) => {
+    const naturalDiff = refPct - pctPropio;
+    return naturalDiff > 0 ? naturalDiff : naturalDiff === 0 ? extraPct : 0;
+  };
+
+  it('reproduce bit a bit la expresión que vivía en bdmCalcs', () => {
+    const casos: [number, number, number][] = [
+      [7, 4, 0], [7, 4, 1], [4, 4, 1], [4, 4, 0], [5, 6, 2], [5, 6, 0],
+      [0, 0, 0], [0, 0, 3], [6, 0, 0], [2.5, 1.25, 0.5], [-1, 0, 1],
+    ];
+    for (const [ref, propio, extra] of casos) {
+      expect(diffNaturalDeLinea(ref, propio, extra)).toBe(comoEstabaAntes(ref, propio, extra));
+    }
+  });
+
+  it('§2.1 regla 7 — el diferencial del head NUNCA es negativo', () => {
+    // Head 5% con un BDM tierizado a 6%: el head cobra 0, no −1 (le restaba
+    // $1.000 al head, auditoría 2026-08-06). Y el extra NO lo rescata.
+    expect(diffNaturalDeLinea(5, 6, 0)).toBe(0);
+    expect(diffNaturalDeLinea(5, 6, 2)).toBe(0);
+  });
+
+  it('§2.1 regla 8 — extra_pct sólo con diferencial natural EXACTAMENTE 0', () => {
+    expect(diffNaturalDeLinea(4, 4, 1)).toBe(1);   // mismo % → entra el extra
+    expect(diffNaturalDeLinea(7, 4, 1)).toBe(3);   // natural > 0 → NO se suma
+  });
+
+  it('el % del master normalmente es 0 → el BDM cobra su % COMPLETO por esa línea', () => {
+    // La analogía de la 130: el Master IB dentro de un BDM es el BDM dentro de
+    // un head. Un master no tiene net_deposit_pct, así que el natural da el %
+    // entero del BDM — que es lo que económicamente ya pasaba (el BDM cobra su
+    // % sobre el total de su línea, master incluido).
+    expect(diffNaturalDeLinea(4, 0, 0)).toBe(4);
+  });
+});
+
+describe('resolveDiffPctDeLinea (la pisada por línea)', () => {
+  it('sin pisada (null/undefined) manda el diferencial natural, intacto', () => {
+    expect(resolveDiffPctDeLinea(null, 3)).toBe(3);
+    expect(resolveDiffPctDeLinea(undefined, 3)).toBe(3);
+    // Y un natural de 0 sigue siendo 0 sin pisada (regresión §1.3).
+    expect(resolveDiffPctDeLinea(null, 0)).toBe(0);
+    expect(resolveDiffPctDeLinea(undefined, 0)).toBe(0);
+  });
+
+  it('el caso del dueño: Luka cobra 1% por la línea de Ana', () => {
+    // Ana al 4% bajo un head al 4%: el natural daba 0 (o el extra_pct). Con
+    // pct_linea = 1 el head cobra 1% sin que a Ana le cambie nada.
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(4, 4, 0))).toBe(1);
+    // Sobre la MISMA base de siempre: ND 100k → división 50k → 1% = 500.
+    expect(calculateCommission(100_000, 0, resolveDiffPctDeLinea(1, diffNaturalDeLinea(4, 4, 0))).commission).toBe(500);
+  });
+
+  it('VACÍO no es CERO: 0 = el de arriba no cobra nada por esta línea', () => {
+    expect(resolveDiffPctDeLinea(0, 3)).toBe(0);
+    expect(calculateCommission(100_000, 0, resolveDiffPctDeLinea(0, 3)).commission).toBe(0);
+    // Un `pisada || natural` habría devuelto 3 acá y pagado igual, sin error.
+    expect(resolveDiffPctDeLinea(0, 3)).not.toBe(3);
+  });
+
+  it('el clamp «nunca negativo» NO se le aplica a la pisada', () => {
+    // El natural clampeaba a 0 (BDM tierizado por encima del head); la pisada
+    // manda igual: el dueño puso 1% y se cobra 1%.
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(5, 6, 0))).toBe(1);
+    // Y una pisada negativa tampoco se clampea: es un acuerdo, no un derivado
+    // (mismo criterio que pct_override).
+    expect(resolveDiffPctDeLinea(-2, 3)).toBe(-2);
+  });
+
+  it('una pisada MAYOR que el % del head se permite (el dueño manda)', () => {
+    expect(resolveDiffPctDeLinea(9, diffNaturalDeLinea(4, 4, 0))).toBe(9);
+  });
+
+  it('la pisada NO toca el % propio del de abajo', () => {
+    // El % del mes de la persona sale de su propio camino (tramos + override)
+    // y `pct_linea` no participa: son dos números distintos.
+    expect(resolvePctDelMes(null, calculateBdmPctFromND(120_000, 7))).toBe(7);
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(7, 7, 0))).toBe(1);
   });
 });
 

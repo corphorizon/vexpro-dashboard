@@ -445,6 +445,9 @@ export interface CommercialProfileInput {
   termination_category: string | null;
   terminated_by: string | null;
   pnl_special_mode?: boolean;
+  // % que cobra el de arriba por la línea de este perfil (migración 130).
+  // `null` = automático (diferencial natural); `0` es un valor real.
+  pct_linea?: number | null;
 }
 
 // ─── Commercial Profiles via API route (bypasses RLS with service role) ───

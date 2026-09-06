@@ -354,6 +354,12 @@ export interface CommercialProfile {
   // se corta del ND de ese BDM (mecanismo de roots de la RPC), sin que el BDM
   // pase a contar como sub-head. Default false.
   is_master_ib?: boolean;
+  // % que cobra EL DE ARRIBA por la LÍNEA de este perfil (migración 130):
+  // pisa el diferencial natural de esa línea sobre la misma base de siempre.
+  // `null`/ausente = la lógica de siempre; `0` es válido y significa que el de
+  // arriba no cobra nada por esta línea (§1.3). NO es el % propio de esta
+  // persona: su comisión y su acuerdo no lo miran.
+  pct_linea?: number | null;
   pnl_pct: number | null; // null = N/A
   commission_per_lot: number | null; // USD per lot, null = N/A
   salary: number | null; // monthly USD, null = N/A

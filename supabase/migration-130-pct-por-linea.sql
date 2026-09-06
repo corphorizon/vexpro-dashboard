@@ -1,0 +1,132 @@
+-- ─────────────────────────────────────────────────────────────────────────────
+-- Migración 130 — `commercial_profiles.pct_linea`: el % POR LÍNEA que pisa el
+-- diferencial del de arriba.
+--
+-- (El número se elige AL MERGEAR, §0: hoy 2026-09-06 la última nuestra es la
+--  129 —`ls supabase/migration-*.sql | tail -3` antes de aplicar—. Si 130 ya
+--  está tomado se renumera y se avisa en el commit; el ALTER es idempotente.)
+--
+-- ═══════════════════════════════════════════════════════════════════════════
+-- LA REGLA DE ORO (dueño, 2026-09-06, tercera iteración)
+-- ═══════════════════════════════════════════════════════════════════════════
+--
+--   «El Master IB dentro de un BDM es EXACTAMENTE el BDM dentro de un head.
+--    Misma mecánica, un nivel más abajo.»
+--
+-- Y sobre esa mecánica, lo único configurable: un % POR LÍNEA que pisa el
+-- diferencial de esa línea.
+--
+-- El campo vive en el HIJO y significa: «el % que cobra EL DE ARRIBA por la
+-- línea de este perfil». No es el % del hijo — su comisión, su acuerdo y su
+-- PDF no se enteran de este número.
+--
+--   · NULL = la lógica de siempre (diferencial natural, intacta).
+--   · 0    = el de arriba NO cobra nada por esa línea. VÁLIDO y distinto de
+--            NULL (§1.3): un `pct_linea || natural` habría tratado ese cero
+--            como «no hay nada cargado» y le habría pagado el diferencial
+--            igual, sin lanzar ninguna excepción (§1.2). Por eso `numeric`
+--            sin default y sin NOT NULL, y `??` en el código.
+--
+-- ── El caso que lo pidió ───────────────────────────────────────────────────
+-- Luka (head) cobra hoy sobre la línea de Ana el diferencial natural
+-- (headPct − anaPct, nunca negativo, con `extra_pct` cuando el natural es
+-- exactamente 0). El dueño quiere que Luka cobre 1% por la línea de Ana SIN
+-- subirle el % a Ana. Con `pct_linea = 1` en el perfil de ANA: ese 1% pisa el
+-- diferencial de esa línea, sobre la MISMA base de cálculo de siempre
+-- (división del ND de la línea + acumulado). Lo único que cambia es el
+-- porcentaje: no se inventa ninguna base nueva.
+--
+-- ── La analogía master ↔ bdm, y por qué NO hizo falta un motor nuevo ───────
+-- El camino del sub-head YA sirve un nivel más abajo, sin tocarlo:
+--   · el selector de grupos de /comisiones lista a cualquier perfil que tenga
+--     hijos (`commercialProfiles.some(sub => sub.head_id === p.id)`), así que
+--     un BDM con masters ya se puede elegir como grupo;
+--   · elegido, `bdmCalcs` le arma al master la MISMA fila de diferencial que
+--     un head le arma a un BDM: natural = bdmPct − (nd% del master ?? 0).
+-- Como un master normalmente no tiene `net_deposit_pct`, ese natural da el %
+-- COMPLETO del BDM, que es económicamente lo que ya pasa hoy (el BDM cobra su
+-- % sobre el total de su línea, master incluido — ver la corrección del
+-- 2026-09-06 en comisiones/page.tsx ~línea 542: el descuento al insumo era la
+-- semántica equivocada y se retiró). Sin configurar `pct_linea`, entonces, la
+-- plata no se mueve.
+--
+-- Lo que NO se cambió, a propósito (continuidad > simetría, §0 del pedido):
+-- `tieneEquipoPropio` sigue ignorando a los masters (migración 129), así que
+-- un BDM con masters NO se vuelve sub-head: conserva sus tramos de % por
+-- volumen y su fila bajo el head se sigue guardando como la de un BDM
+-- (`net_deposit_current` + `net_deposit_accumulated`). Hacerlo sub-head
+-- «para que la analogía sea total» le cambiaría los números a Ana sin que
+-- nadie lo haya pedido, y eso es exactamente lo que la 129 midió y evitó.
+--
+-- ── Precedencia, en UNA sola función ───────────────────────────────────────
+-- `resolveDiffPctDeLinea` (src/lib/commission-calculator.ts), al lado de
+-- `resolvePctDelMes` y por el mismo motivo (§1.1 / §2.1 «un mismo número sale
+-- del mismo camino»): son varios los lugares que deciden el diferencial de una
+-- línea —la tabla del tab Equipos, el guardado, el PDF y el CSV de equipo— y
+-- tienen que decidirlo igual.
+--
+--   pisada por línea  ??  diferencial natural (clamp a 0 + extra_pct)
+--
+-- El clamp de «el diferencial del HEAD nunca es negativo» (§2.1 regla 7) vive
+-- DENTRO de la rama natural y NO se le aplica a la pisada: si el dueño pone 1%
+-- donde el natural daba 0, el head cobra 1%. Y una pisada MAYOR que el % del
+-- head también se permite: el dueño manda, es un acuerdo, no un derivado. Lo
+-- que no cambia nunca es el resto de la fórmula.
+--
+-- ── Dónde NO aplica ────────────────────────────────────────────────────────
+-- El % PROPIO del hijo (tramos, `nd_pct_fixed`, `net_deposit_pct` y el
+-- `pct_override` mensual de la 129) queda intacto: `pct_linea` es del de
+-- arriba. Y no toca el grupo PnL ni el PnL Especial, que tienen su `pnl_pct`.
+-- ─────────────────────────────────────────────────────────────────────────────
+
+alter table public.commercial_profiles
+  add column if not exists pct_linea numeric;
+
+comment on column public.commercial_profiles.pct_linea is
+  '% que cobra EL DE ARRIBA (el head de este BDM, o el BDM de este Master IB) '
+  'por la LINEA de este perfil. Pisa el diferencial natural de esa linea sobre '
+  'la misma base de calculo de siempre (division del ND + acumulado): lo unico '
+  'que cambia es el porcentaje. NULL = logica de siempre (diferencial natural, '
+  'con su clamp a 0 y su extra_pct). 0 es VALIDO y significa que el de arriba '
+  'no cobra nada por esta linea; NULL != 0 (regla 1.3 del repo). El clamp '
+  '"nunca negativo" NO se aplica a la pisada, y una pisada mayor que el % del '
+  'head se permite. NO es el % propio de esta persona: su comision, su acuerdo '
+  'y su PDF no lo miran. Caso que lo motivo: Luka cobrando 1% por la linea de '
+  'Ana Garcia sin subirle el % a ella (2026-09-06).';
+
+-- ─────────────────────────────────────────────────────────────────────────────
+-- VERIFICACIÓN (correr a mano; los dos pasos, en este orden):
+--
+-- ── (1) NADA CAMBIA con solo aplicar la migración ──────────────────────────
+-- SIN ningún `pct_linea` cargado, /comisiones tiene que dar el mismo número
+-- que antes de aplicar. El control es el grupo de LUKA en SEPTIEMBRE 2026
+-- (tab Equipos), anotado ANTES de aplicar:
+--
+--     total del grupo (ND del mes)      =  ____________   ← anotar antes
+--     pago total del grupo              =  ____________   ← anotar antes
+--     diferencial de la línea de Ana    =  ____________   ← anotar antes
+--
+-- Los tres tienen que quedar IDÉNTICOS después de aplicar. Si alguno se movió,
+-- parar: con la columna en NULL en todas las filas no puede moverse un
+-- centavo. Y en la base:
+--
+--   select count(*) filter (where pct_linea is not null) as con_pct_linea,
+--          count(*)                                      as perfiles
+--     from commercial_profiles
+--    where company_id = '71715987-5479-52c4-a990-c414fb3a9b36';
+--   -- con_pct_linea = 0
+--
+-- ── (2) DESPUÉS de cargarle 1% a la línea de Ana ───────────────────────────
+-- En /rrhh → Fuerza Comercial, en la fila de Ana dentro de la tarjeta de Luka,
+-- campo «% línea» = 1. Después, en /comisiones → Equipos, grupo de Luka:
+--
+--     · la columna % de la fila de Ana pasa a mostrar 1% (rotulado «línea»);
+--     · la comisión de esa fila = (ND de Ana / 2 + acumulado) × 1%;
+--     · el % BASE de Ana (la celda editable de abajo) NO cambia, y su comisión
+--       propia en el tab Individual y en su PDF tampoco;
+--     · el total del grupo se mueve SOLO por esa línea.
+--
+--   select name, pct_linea, net_deposit_pct, head_id
+--     from commercial_profiles
+--    where email = 'ana.garcia@mail.vexprofx.com';
+-- ─────────────────────────────────────────────────────────────────────────────

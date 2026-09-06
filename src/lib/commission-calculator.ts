@@ -309,6 +309,70 @@ export function resolvePctDelMes(
   return pctOverride ?? pctAutomatico;
 }
 
+/**
+ * EL DIFERENCIAL NATURAL DE UNA LÍNEA — lo que el de arriba cobra por el de
+ * abajo cuando nadie configuró nada.
+ *
+ * Estaba escrito inline en `bdmCalcs` (/comisiones, tab Equipos) y es donde
+ * viven DOS reglas del §2.1 que no se rompen:
+ *
+ *   · regla 7 — el diferencial del HEAD **nunca es negativo**. Si el BDM
+ *     tieriza por encima de su head, el head cobra 0 por esa línea, no paga
+ *     por el buen mes de su BDM (auditoría 2026-08-06: head al 5% con un BDM
+ *     tierizado al 6% le restaba $1.000 al head).
+ *   · regla 8 — `extra_pct` aplica **sólo** cuando el natural es exactamente
+ *     0 (mismo %). Con natural > 0 no se suma, y con natural < 0 no rescata
+ *     nada: el clamp manda.
+ *
+ * `refPct` es el % de referencia del de arriba: su `net_deposit_pct`, o
+ * `pct_sobre_bdm_global` cuando el de abajo es BDM GLOBAL. `pctPropio` es el
+ * % ya resuelto del de abajo (tramos + `nd_pct_fixed` + `pct_override` del
+ * mes) — este cálculo no lo re-deriva, lo recibe.
+ */
+export function diffNaturalDeLinea(
+  refPct: number,
+  pctPropio: number,
+  extraPct: number,
+): number {
+  const natural = refPct - pctPropio;
+  return natural > 0 ? natural : natural === 0 ? extraPct : 0;
+}
+
+/**
+ * EL % QUE COBRA EL DE ARRIBA POR ESTA LÍNEA (migración 130, pedido del dueño
+ * el 2026-09-06).
+ *
+ * `commercial_profiles.pct_linea` vive en el HIJO y significa «el % que cobra
+ * el de arriba por la línea de este perfil». Pisa el diferencial de esa línea
+ * sobre la MISMA base de siempre (división del ND + acumulado): lo único que
+ * cambia es el porcentaje. El caso: Luka cobrando 1% por la línea de Ana sin
+ * subirle el % a Ana.
+ *
+ * ── null ≠ 0, otra vez ─────────────────────────────────────────────────────
+ * `null`/`undefined` = «no hay pisada» → manda el diferencial natural. `0` =
+ * «el de arriba no cobra nada por esta línea» y es un valor VÁLIDO. Un
+ * `pisada || natural` habría tratado ese cero como campo vacío y habría
+ * pagado el diferencial igual, sin lanzar excepción (§1.2/§1.3). Por eso `??`,
+ * y por eso esto es una función con nombre —al lado de `resolvePctDelMes`, por
+ * el mismo motivo— y no un operador suelto repetido: son varios los lugares
+ * que deciden este número (la tabla del tab Equipos, el guardado, el PDF y el
+ * CSV de equipo) y tienen que decidirlo igual (§1.1, §2.1 «un mismo número
+ * sale del mismo camino»).
+ *
+ * ── El clamp NO se le aplica a la pisada ───────────────────────────────────
+ * El «nunca negativo» de la regla 7 vive dentro de `diffNaturalDeLinea`, o
+ * sea en la rama natural. Si el dueño pone 1% donde el natural daba 0, el de
+ * arriba cobra 1%: eso es el pedido, no un accidente. Y una pisada MAYOR que
+ * el % del head también se permite —es un acuerdo, no un derivado— igual que
+ * `pct_override` tampoco se clampea. Lo que valida lo tecleado es la pantalla.
+ */
+export function resolveDiffPctDeLinea(
+  pctLinea: number | null | undefined,
+  diffNatural: number,
+): number {
+  return pctLinea ?? diffNatural;
+}
+
 // ---------------------------------------------------------------------------
 // HEAD differential calculation
 //
@@ -341,10 +405,20 @@ export interface HeadDifferentialResult {
 export function calculateHeadDifferential(
   headPct: number,
   extraPct: number,
-  bdmResults: { profileId: string; name: string; netDepositCurrent: number; accumulatedIn: number; commissionPct: number }[],
+  /**
+   * `pctLinea` (migración 130) = el `commercial_profiles.pct_linea` del BDM:
+   * pisa el diferencial de ESA línea. `null`/ausente = el de siempre.
+   */
+  bdmResults: { profileId: string; name: string; netDepositCurrent: number; accumulatedIn: number; commissionPct: number; pctLinea?: number | null }[],
 ): HeadDifferentialResult {
   const details: DifferentialDetail[] = bdmResults.map((bdm) => {
-    const diffPct = (headPct - bdm.commissionPct) + extraPct;
+    // OJO: la rama natural de acá NO es la de la pantalla — suma `extraPct`
+    // siempre y no clampea el diferencial (sólo el pago real, más abajo). Se
+    // deja tal cual a propósito: sus tests fijan ese comportamiento y el
+    // camino de producción es `bdmCalcs` + `diffNaturalDeLinea` (§2.1 regla
+    // 7/8). Lo que SÍ se comparte es la precedencia de la pisada por línea,
+    // que tiene que decidirse en un solo lugar (§1.1).
+    const diffPct = resolveDiffPctDeLinea(bdm.pctLinea, (headPct - bdm.commissionPct) + extraPct);
     const division = round2(bdm.netDepositCurrent / 2);
     const commission = round2((division + bdm.accumulatedIn) * (diffPct / 100));
     const realPayment = round2(Math.max(0, commission));
