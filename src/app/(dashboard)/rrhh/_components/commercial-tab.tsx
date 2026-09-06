@@ -350,6 +350,10 @@ export function CommercialTab({
             setPctLineaRaw((prev) => { const n = new Map(prev); n.set(p.id, v); return n; });
           }}
           onBlur={() => { void guardarPctLinea(p); }}
+          // Enter también guarda (dueño, 2026-09-06: "¿cómo lo guardo?"). El
+          // blur ya lo hacía, pero Enter es lo que la mano teclea primero: se
+          // dispara el blur y el guardado sale por el mismo único camino.
+          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
           className={cn(
             'w-16 px-1 py-0.5 text-right rounded border border-border bg-background text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] disabled:opacity-60',
             cargado && 'border-warning text-warning font-semibold',
