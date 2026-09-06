@@ -4,6 +4,7 @@ import {
   calculateSalaryFromND,
   calculateHeadSalaryFromND,
   calculateBdmPctFromND,
+  resolvePctDelMes,
   calculateHeadDifferential,
   calculatePnlSpecial,
   calcularPasoPnlEncadenado,
@@ -67,6 +68,29 @@ describe('calculateCommission (fórmula estándar PnL normal)', () => {
     expect(calculateBdmPctFromND(283_139, 4, false)).toBe(6);
     expect(calculateBdmPctFromND(283_139, 4)).toBe(6);
     expect(calculateBdmPctFromND(120_000, 7, false)).toBe(7);
+  });
+
+  it('pct_override: el % manual del mes pisa tramos, % fijo y % del perfil', () => {
+    // El mismo caso de arriba, con un 3 tecleado para ESE mes.
+    expect(resolvePctDelMes(3, calculateBdmPctFromND(283_139, 4))).toBe(3);
+    expect(resolvePctDelMes(3, calculateBdmPctFromND(283_139, 4, true))).toBe(3);
+    // Y no hace falta que sea menor: sube igual.
+    expect(resolvePctDelMes(9, calculateBdmPctFromND(10_000, 4))).toBe(9);
+  });
+
+  it('pct_override: VACÍO (null/undefined) no es CERO', () => {
+    // El 0 tecleado es una decisión: ese mes no se paga comisión.
+    expect(resolvePctDelMes(0, 6)).toBe(0);
+    expect(calculateCommission(283_139, 0, resolvePctDelMes(0, 6)).commission).toBe(0);
+    // null/undefined = no hay override: manda el automático, intacto.
+    expect(resolvePctDelMes(null, 6)).toBe(6);
+    expect(resolvePctDelMes(undefined, 6)).toBe(6);
+    // Y el automático de 0 sigue siendo 0 sin override (regresión de §1.3).
+    expect(resolvePctDelMes(null, 0)).toBe(0);
+  });
+
+  it('pct_override: un override negativo NO se clampea (es deuda, como el ND)', () => {
+    expect(resolvePctDelMes(-2, 6)).toBe(-2);
   });
 
   it('división = ND/2 y comisión = (división + acumulado) × pct', () => {

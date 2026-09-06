@@ -282,6 +282,33 @@ export function calculateBdmPctFromND(
   return Math.max(tierPct, profilePct ?? 0);
 }
 
+/**
+ * EL % QUE MANDA ESTE MES.
+ *
+ * `commercial_monthly_results.pct_override` (migración 129, pedido del dueño el
+ * 2026-09-06) fija a mano el % de UN mes sin tocar el acuerdo del perfil: pisa
+ * los tramos por volumen, `nd_pct_fixed` y `net_deposit_pct`.
+ *
+ * ── null ≠ 0, y acá se paga la diferencia ──────────────────────────────────
+ * `null`/`undefined` = "no hay override" → manda el automático que ya venía
+ * calculado. `0` = "este mes no cobra comisión" y es un valor VÁLIDO. Un
+ * `override || automatico` habría tratado el 0 tecleado como "no hay nada
+ * cargado" y le habría pagado igual, sin lanzar ninguna excepción (§1.2/§1.3).
+ * Por eso `??` y por eso esto es una función con nombre y no un operador
+ * suelto repetido en cada pantalla: son tres los lugares que deciden este
+ * número (tab Equipos, tab Individual y el guardado) y tienen que decidirlo
+ * igual (§1.1, §2.1 "un mismo número sale del mismo camino").
+ *
+ * Un override negativo o disparatado NO se clampea acá: el % del perfil
+ * tampoco se clampea y la pantalla es la que valida lo que se teclea.
+ */
+export function resolvePctDelMes(
+  pctOverride: number | null | undefined,
+  pctAutomatico: number,
+): number {
+  return pctOverride ?? pctAutomatico;
+}
+
 // ---------------------------------------------------------------------------
 // HEAD differential calculation
 //

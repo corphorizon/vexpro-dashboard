@@ -32,6 +32,41 @@ describe('comisionIndividualDeBdm', () => {
     expect(c.accumulatedOut).toBe(esperado.accumulatedOut);
   });
 
+  // ── El % manual del mes (pct_override, migración 129) ──────────────────────
+  it('pct_override pisa el tramo y el automático viaja igual, para el placeholder', () => {
+    const c = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8, pctOverride: 3,
+    })!;
+    expect(c.commissionPct).toBe(3);
+    expect(c.commissionPctAuto).toBe(6); // el tramo que se pisó
+    expect(c.commission).toBe(calculateCommission(212_025.95, 1_000, 3).commission);
+  });
+
+  it('pct_override 0 = este mes no cobra comisión (y NO es "sin override")', () => {
+    const c = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8, pctOverride: 0,
+    })!;
+    expect(c.commissionPct).toBe(0);
+    expect(c.commission).toBe(0);
+    // El acumulado NO se destruye: es la regla 2 de §2.1, que el % no toca.
+    expect(c.accumulatedOut).toBe(calculateCommission(212_025.95, 1_000, 0).accumulatedOut);
+  });
+
+  it('sin pct_override (null/ausente) el resultado es idéntico al de siempre', () => {
+    const base = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8,
+    })!;
+    const conNull = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8, pctOverride: null,
+    })!;
+    expect(conNull).toEqual(base);
+    expect(base.commissionPct).toBe(base.commissionPctAuto);
+  });
+
   it('con salario fijo el % es el pactado, sin tiers', () => {
     const c = comisionIndividualDeBdm({
       profile: { ...bdm, fixed_salary: true, salary: 2_000 }, resolved: resuelto(212_025.95),

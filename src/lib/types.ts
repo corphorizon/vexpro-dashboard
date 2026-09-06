@@ -350,6 +350,10 @@ export interface CommercialProfile {
   // true = el % de ND es FIJO: no lo mejoran los tramos por volumen
   // (BDM_PCT_TIERS). Excepción por perfil pedida el 2026-09-03; default false.
   nd_pct_fixed?: boolean;
+  // true = Master IB (migración 129): cuelga de la línea de un BDM y su subred
+  // se corta del ND de ese BDM (mecanismo de roots de la RPC), sin que el BDM
+  // pase a contar como sub-head. Default false.
+  is_master_ib?: boolean;
   pnl_pct: number | null; // null = N/A
   commission_per_lot: number | null; // USD per lot, null = N/A
   salary: number | null; // monthly USD, null = N/A
@@ -398,6 +402,10 @@ export interface CommercialMonthlyResult {
   bonus: number;
   salary_paid: number;
   total_earned: number;
+  // % de comisión manual de ESE mes (migración 129). `null`/ausente =
+  // automático (tramos + nd_pct_fixed + net_deposit_pct); `0` es un valor real
+  // y significa que ese mes no se paga comisión. Solo grupo Net Deposit.
+  pct_override?: number | null;
   // Commission calculator fields
   head_id?: string | null;
   division: number;

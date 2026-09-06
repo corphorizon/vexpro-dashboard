@@ -395,6 +395,12 @@ export interface CommissionEntryRow {
   total_earned: number;
   bonus?: number;
   pnl_current?: number;
+  /**
+   * % manual del mes (migración 129, solo grupo Net Deposit). `null` =
+   * automático, y se escribe como null a propósito: es como se saca un
+   * override. `0` es un valor real (ese mes no cobra comisión).
+   */
+  pct_override?: number | null;
 }
 
 export async function upsertCommissionEntries(

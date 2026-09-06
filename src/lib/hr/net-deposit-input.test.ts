@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   HR_NET_AUTO_DESDE,
   antesDelCorteHrNet,
+  descontarSubredesDeMasters,
   esOverrideManual,
   indexarNetDelCrm,
   netParaElMotor,
@@ -200,5 +201,103 @@ describe('el puente al motor', () => {
     const cAuto = calculateCommission(netParaElMotor(auto), 1_000, 6);
     const cMan = calculateCommission(netParaElMotor(override), 1_000, 6);
     expect(cAuto).toEqual(cMan);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MASTER IB — la subred del master no es del BDM del que cuelga (migración 129)
+//
+// El caso real y sus números (agosto 2026, medidos el 2026-09-06): Ana García
+// (BDM) con el master Jose Emanuel Hernandez Alvarez colgando de ella.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('descontarSubredesDeMasters', () => {
+  const perfilesReales: RollupProfile[] = [
+    { id: 'hugo', name: 'Hugo Ortiz', role: 'head', head_id: null, salary: null, hire_date: null, status: 'active' },
+    { id: 'ana', name: 'Ana García', role: 'bdm', head_id: 'hugo', salary: null, hire_date: null, status: 'active' },
+    { id: 'master', name: 'Jose Emanuel', role: 'bdm', head_id: 'ana', salary: null, hire_date: null, status: 'active' },
+  ];
+  // Lo que devuelve la RPC DESPUÉS de que el master es root: a Ana ya sólo se
+  // le atribuye su línea directa y al master su subred entera.
+  const netDelCrm = new Map([['ana', -3_037.83], ['master', 281_168.49]]);
+  const conMaster = [
+    { id: 'hugo', head_id: null, is_master_ib: false },
+    { id: 'ana', head_id: 'hugo', is_master_ib: false },
+    { id: 'master', head_id: 'ana', is_master_ib: true },
+  ];
+
+  it('el BDM padre queda con su producción propia y el master con su subred', () => {
+    const crudo = indexarNetDelCrm(buildRollup(perfilesReales, netDelCrm));
+    // Sin descontar, el rollup le sube la subred del master a Ana.
+    expect(crudo.get('ana')).toEqual({ own: -3_037.83, total: 278_130.66 });
+
+    const neto = descontarSubredesDeMasters(crudo, conMaster)!;
+    expect(neto.get('ana')!.total).toBeCloseTo(-3_037.83, 2);
+    expect(neto.get('master')!.total).toBe(281_168.49);
+    // Y la suma sigue dando el ND que Ana tenía sola: no se perdió ni se
+    // inventó producción, cambió de dueño.
+    expect(neto.get('ana')!.total + neto.get('master')!.total).toBeCloseTo(278_130.66, 2);
+  });
+
+  it('SIN ningún master marcado devuelve el MISMO índice (nada cambia hoy)', () => {
+    const crudo = indexarNetDelCrm(buildRollup(perfilesReales, netDelCrm));
+    const sinMasters = conMaster.map((p) => ({ ...p, is_master_ib: false }));
+    expect(descontarSubredesDeMasters(crudo, sinMasters)).toBe(crudo);
+  });
+
+  it('`own` NO se toca: por definición nunca incluyó a los hijos', () => {
+    const crudo = indexarNetDelCrm(buildRollup(perfilesReales, netDelCrm));
+    const neto = descontarSubredesDeMasters(crudo, conMaster)!;
+    expect(neto.get('ana')!.own).toBe(crudo.get('ana')!.own);
+    expect(neto.get('hugo')!.own).toBe(crudo.get('hugo')!.own);
+  });
+
+  it('los ancestros no se tocan: el corte se aplica en la fila del padre', () => {
+    const crudo = indexarNetDelCrm(buildRollup(perfilesReales, netDelCrm));
+    const neto = descontarSubredesDeMasters(crudo, conMaster)!;
+    expect(neto.get('hugo')).toEqual(crudo.get('hugo'));
+  });
+
+  it('un padre con un master Y un BDM propio conserva al BDM', () => {
+    const perfiles: RollupProfile[] = [
+      ...perfilesReales,
+      { id: 'sub', name: 'BDM propio', role: 'bdm', head_id: 'ana', salary: null, hire_date: null, status: 'active' },
+    ];
+    const crudo = indexarNetDelCrm(
+      buildRollup(perfiles, new Map([...netDelCrm, ['sub', 10_000]])),
+    );
+    const neto = descontarSubredesDeMasters(crudo, [...conMaster, { id: 'sub', head_id: 'ana', is_master_ib: false }])!;
+    // −3.037,83 propios + 10.000 del BDM que sí es suyo. Usar `own` en vez de
+    // restar los masters le habría borrado esos 10.000 en silencio.
+    expect(neto.get('ana')!.total).toBeCloseTo(6_962.17, 2);
+  });
+
+  it('dos masters colgando del mismo BDM se restan los dos', () => {
+    const perfiles: RollupProfile[] = [
+      ...perfilesReales,
+      { id: 'master2', name: 'Otro master', role: 'bdm', head_id: 'ana', salary: null, hire_date: null, status: 'active' },
+    ];
+    const crudo = indexarNetDelCrm(buildRollup(perfiles, new Map([...netDelCrm, ['master2', 5_000]])));
+    const neto = descontarSubredesDeMasters(crudo, [...conMaster, { id: 'master2', head_id: 'ana', is_master_ib: true }])!;
+    expect(neto.get('ana')!.total).toBeCloseTo(-3_037.83, 2);
+  });
+
+  it('un master que el CRM no conoce no resta un 0 inventado', () => {
+    const crudo = idx([['ana', { own: -10, total: 100 }]]);
+    const neto = descontarSubredesDeMasters(crudo, [
+      { id: 'ana', head_id: 'hugo', is_master_ib: false },
+      { id: 'fantasma', head_id: 'ana', is_master_ib: true },
+    ])!;
+    // El master no está en el índice: no hay resta, y el índice vuelve igual.
+    expect(neto.get('ana')).toEqual({ own: -10, total: 100 });
+  });
+
+  it('un master SIN head_id no le resta a nadie', () => {
+    const crudo = idx([['master', { own: 281_168.49, total: 281_168.49 }]]);
+    const neto = descontarSubredesDeMasters(crudo, [{ id: 'master', head_id: null, is_master_ib: true }])!;
+    expect(neto.get('master')!.total).toBe(281_168.49);
+  });
+
+  it('sin índice (el CRM no respondió) sigue siendo null, nunca un mapa vacío', () => {
+    expect(descontarSubredesDeMasters(null, conMaster)).toBeNull();
   });
 });

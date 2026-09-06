@@ -27,6 +27,7 @@ import {
   calculateHeadSalaryFromND,
   prorateFixedSalary,
   calculateBdmPctFromND,
+  resolvePctDelMes,
   getAccumulatedIn,
   calculatePnlSpecial,
   SALARY_TIERS,
@@ -43,11 +44,13 @@ import { apiFetch } from '@/lib/api-fetch';
 import { comisionIndividualDeBdm } from '@/lib/hr/commission-preview';
 import {
   antesDelCorteHrNet,
+  descontarSubredesDeMasters,
   netParaElMotor,
   resolveNetDepositInput,
   type NetDepositSource,
   type ResolvedNetDeposit,
 } from '@/lib/hr/net-deposit-input';
+import { tieneEquipoPropio } from '@/lib/hr/domain';
 import {
   Calculator,
   Save,
@@ -148,6 +151,52 @@ function NdSourceTag({
     return <span className="block text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">{labels('comm.ndSourceFrozen')}</span>;
   }
   return <span className="block text-[10px] text-muted-foreground mt-0.5">{labels('comm.ndSourceNone')}</span>;
+}
+
+/**
+ * La celda del % de una fila de NET DEPOSIT: el % manual del mes.
+ *
+ * Vacío = automático, y el PLACEHOLDER muestra cuál es ese automático — el
+ * mismo recurso que el rótulo del ND: quien corrige a mano tiene que ver contra
+ * qué está corrigiendo. Un `0` tecleado es un 0 de verdad (ese mes no cobra
+ * comisión) y NO es lo mismo que vaciar el campo (§1.3).
+ *
+ * En período CERRADO no se edita, como el resto de la fila.
+ */
+function PctOverrideInput({
+  value,
+  auto,
+  disabled,
+  onChange,
+  labels,
+}: {
+  value: string;
+  auto: number;
+  disabled: boolean;
+  onChange: (v: string) => void;
+  labels: (k: string) => string;
+}) {
+  const manual = value.trim() !== '' && value.trim() !== '-';
+  return (
+    <span className="inline-flex items-center gap-0.5">
+      <input
+        type="number"
+        step="0.01"
+        aria-label={labels('comm.pctOverrideAria')}
+        title={labels('comm.pctOverrideHint')}
+        placeholder={String(auto)}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        onFocus={(e) => e.target.select()}
+        className={cn(
+          'w-14 px-1 py-0.5 text-right rounded border border-border bg-background text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] disabled:opacity-60 disabled:cursor-not-allowed',
+          manual && 'border-warning text-warning font-semibold',
+        )}
+      />
+      <span className="text-[10px] text-muted-foreground">%</span>
+    </span>
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -491,6 +540,25 @@ export default function ComisionesPage() {
   const lotIndexParaResolver = useMemo(() => indiceParaResolver(pnlCrmIndex, 'comLotes'), [pnlCrmIndex]);
 
   /**
+   * El índice del net deposit YA NETO de las subredes de los Master IB
+   * (migración 129). Ver la cabecera de `descontarSubredesDeMasters`.
+   *
+   * Se hace acá y no en el endpoint porque el corte depende de
+   * `commercial_profiles.is_master_ib`, que la pantalla ya tiene cargado y el
+   * endpoint no necesita conocer: la RPC no cambia y el árbol tampoco.
+   *
+   * Sin ningún perfil marcado —el estado de hoy— devuelve LA MISMA referencia
+   * que entró, así que ni siquiera invalida los memos que dependen de él.
+   */
+  const ndIndexNeto = useMemo(
+    () => descontarSubredesDeMasters(
+      crmNet && crmNet.month === autoMonth ? crmNet.index : null,
+      commercialProfiles,
+    ),
+    [crmNet, autoMonth, commercialProfiles],
+  );
+
+  /**
    * El insumo resuelto de CADA perfil, con su procedencia.
    *
    * OJO con las tablas de PnL: comparten este mismo Map de inputs y ahí el
@@ -510,7 +578,7 @@ export default function ComisionesPage() {
     const out = new Map<string, ResolvedNetDeposit>();
     if (!selectedPeriod) return out;
     const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
-    const index = crmNet && crmNet.month === autoMonth ? crmNet.index : null;
+    const index = ndIndexNeto;
 
     for (const p of commercialProfiles) {
       // Buscar el registro que corresponde al grupo actual (head_id = selectedHeadId)
@@ -523,6 +591,14 @@ export default function ComisionesPage() {
       // padre, ese número vive en `net_deposit_accumulated` de su fila en su
       // propio grupo — el `net_deposit_current` de ahí es del contexto del padre.
       const esElHeadDelGrupo = tab !== 'individual' && p.id === selectedHeadId;
+      // OJO: este `.some()` cuenta a los Master IB a propósito y NO usa
+      // `tieneEquipoPropio` (migración 129). Acá no se decide un %: se decide de
+      // qué COLUMNA se lee el ND propio del líder del grupo, y eso tiene que
+      // quedar emparejado con lo que escribe el guardado — que elige por
+      // `isHead && headHasParent`, sin mirar los hijos. Excluir a los masters
+      // acá haría que se leyera `net_deposit_current` mientras el guardado
+      // sigue escribiendo `net_deposit_accumulated`: el ND propio de esa
+      // persona desaparecería de la pantalla sin ningún error.
       const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === p.id && appearsInCommissions(sub));
       let manual: number | null;
       if (esElHeadDelGrupo && hasOwnTeam && p.head_id) {
@@ -550,7 +626,7 @@ export default function ComisionesPage() {
       );
     }
     return out;
-  }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab, crmNet, autoMonth, pnlIndexParaResolver]);
+  }, [commercialProfiles, selectedPeriod, monthlyResults, selectedHeadId, tab, ndIndexNeto, pnlIndexParaResolver]);
 
   /**
    * Lo mismo para «Com. Lotes», con su propia fuente (el Commissions Report del
@@ -661,6 +737,89 @@ export default function ComisionesPage() {
 
   /** El automático del mes, para mostrarlo al lado del override como referencia. */
   const getNdAuto = useCallback((id: string): number | null => ndResolved.get(id)?.crm ?? null, [ndResolved]);
+
+  // ═══════════════════════════════════════════════════════════
+  // EL % MANUAL DEL MES (`pct_override`, migración 129 — 2026-09-06)
+  //
+  // El % de un BDM por net deposit sale de tres reglas encadenadas —tramos por
+  // volumen (piso, nunca techo), `nd_pct_fixed` y el % del perfil— y las tres
+  // son configuración PERMANENTE. El dueño pidió poder fijar el % de UN mes sin
+  // tocar el acuerdo: "este mes a fulano le pagamos 3", o 0 (no cobra comisión
+  // este mes) sin borrarle el % del perfil.
+  //
+  // ── VACÍO NO ES CERO ───────────────────────────────────────────────────────
+  // El input vacío guarda `null` = automático. Un `0` tecleado guarda `0` y ese
+  // mes no se paga comisión. Es el §1.3 aplicado a un campo donde confundirlos
+  // sale carísimo: un `0` que se leyera como "no hay override" pagaría al %
+  // pactado cuando alguien decidió que no se pagara, y un `null` que se leyera
+  // como `0` dejaría a media empresa sin comisión sin que nadie teclee nada.
+  // Las dos cosas dan un número plausible y ninguna lanza excepción (§1.2).
+  //
+  // Solo el grupo NET DEPOSIT: PnL y PnL Especial tienen su propio % (`pnl_pct`)
+  // y no se pidió tocarlos.
+  // ═══════════════════════════════════════════════════════════
+
+  /** Lo que se está tecleando en la celda del %. Ausente = no lo tocaron. */
+  const [pctOverrideRaw, setPctOverrideRaw] = useState<Map<string, string>>(new Map());
+  // Con el período o el grupo, igual que ndRawInputs: lo tecleado para un mes no
+  // puede quedar colgado pisando el % de otro.
+  useEffect(() => { setPctOverrideRaw(new Map()); }, [selectedPeriod?.id, selectedHeadId]);
+
+  /**
+   * El `pct_override` GUARDADO de cada perfil en el mes.
+   *
+   * La fila se elige con el MISMO criterio que `ndResolved` (en Individual, la
+   * fila con ND cargado; en Equipos, la del grupo que se está mirando) para que
+   * el % y el ND que se muestran salgan siempre de la misma fila.
+   */
+  const pctOverrideSaved = useMemo((): Map<string, number> => {
+    const out = new Map<string, number>();
+    if (!selectedPeriod) return out;
+    const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
+    for (const p of commercialProfiles) {
+      const ex = tab === 'individual'
+        ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null)
+        : results.find((r) => r.profile_id === p.id && r.head_id === selectedHeadId);
+      const v = ex?.pct_override;
+      // `null`/`undefined` = automático y NO entra al Map. Un 0 sí entra: es
+      // una decisión, no un campo vacío.
+      if (v === null || v === undefined) continue;
+      const n = Number(v);
+      if (Number.isFinite(n)) out.set(p.id, n);
+    }
+    return out;
+  }, [commercialProfiles, monthlyResults, selectedPeriod, selectedHeadId, tab]);
+
+  /**
+   * El % manual vigente de esa fila. `null` = automático.
+   *
+   * Lo tecleado manda sobre lo guardado: es lo que va a entrar al motor Y lo que
+   * se va a guardar (mismo criterio que `getNdSource`).
+   */
+  const getPctOverride = useCallback((id: string): number | null => {
+    const raw = pctOverrideRaw.get(id);
+    if (raw === undefined) return pctOverrideSaved.get(id) ?? null;
+    const t = raw.trim();
+    // '' y '-' son estados intermedios del tecleo, no un cero.
+    if (t === '' || t === '-') return null;
+    const n = parseFloat(t);
+    return Number.isFinite(n) ? n : null;
+  }, [pctOverrideRaw, pctOverrideSaved]);
+
+  /** Lo que muestra el input. Vacío = automático (el placeholder dice cuál es). */
+  const getPctOverrideDisplay = useCallback((id: string): string => {
+    const raw = pctOverrideRaw.get(id);
+    if (raw !== undefined) return raw;
+    const saved = pctOverrideSaved.get(id);
+    return saved === undefined ? '' : String(saved);
+  }, [pctOverrideRaw, pctOverrideSaved]);
+
+  const handlePctOverrideChange = useCallback((id: string, v: string) => {
+    setPctOverrideRaw((prev) => { const n = new Map(prev); n.set(id, v); return n; });
+  }, []);
+
+  /** Período cerrado: el % del mes tampoco se edita, como el resto de la fila. */
+  const periodoCerrado = !!selectedPeriod?.is_closed;
 
   // ─── Lot commissions (PnL section) ───
   const [lotInputs, setLotInputs] = useState<Map<string, number>>(new Map());
@@ -779,7 +938,7 @@ export default function ComisionesPage() {
   // fijo — o si este HEAD activó apply_pct_extra_to_head_without_salary — el
   // HEAD cobra pct_extra_sobre_head sobre la suma de ND de los BDMs de ese
   // HEAD intermedio. Si no aplica, se mantiene el diferencial de siempre.
-  const bdmCalcs = useMemo((): (CommissionCalcResult & { bdmOwnPct: number; diffPct: number })[] => {
+  const bdmCalcs = useMemo((): (CommissionCalcResult & { bdmOwnPct: number; bdmOwnPctAuto: number; diffPct: number })[] => {
     const bdms = teamProfiles.filter((_, i) => i > 0);
     const pctSobreBdmGlobal = headProfile?.pct_sobre_bdm_global ?? 0;
     const pctExtraSobreHead = headProfile?.pct_extra_sobre_head ?? 0;
@@ -811,6 +970,7 @@ export default function ComisionesPage() {
             profileId: profile.id,
             commissionPct: pctExtraSobreHead,
             bdmOwnPct: profile.net_deposit_pct ?? 0,
+            bdmOwnPctAuto: profile.net_deposit_pct ?? 0,
             diffPct: pctExtraSobreHead,
             salary: profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd),
             totalEarnedDebt: 0,
@@ -826,12 +986,23 @@ export default function ComisionesPage() {
       }
 
       // ── (a) BDM normal (y BDM GLOBAL): diferencial actual ──
-      // Dynamic BDM pct tiers only apply to actual BDMs, not sub-HEADs
+      // Dynamic BDM pct tiers only apply to actual BDMs, not sub-HEADs.
+      //
+      // «Tiene hijos» ignora a los MASTER IB (migración 129, 2026-09-06): colgar
+      // al master Jose Emanuel de Ana García es lo que hace que la RPC le corte
+      // la subred a Ana, pero Ana sigue siendo BDM y conserva sus tramos — un
+      // master es un socio con red propia, no un equipo a su cargo. Medido ese
+      // día: NINGÚN BDM de Vex Pro tiene hijos hoy (todos los padres son
+      // head/sales_manager), así que con el flag en false —el default— esto
+      // devuelve exactamente lo mismo que antes para todo el mundo.
       const isSubHead = profile.role === 'head' || profile.role === 'sales_manager'
-        || commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
-      const bdmOwnPct = isSubHead || profile.fixed_salary
+        || tieneEquipoPropio(profile.id, commercialProfiles);
+      const bdmOwnPctAuto = isSubHead || profile.fixed_salary
         ? (profile.net_deposit_pct ?? 0)
         : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+      // El % manual del mes pisa lo anterior — y con él se recalcula el
+      // diferencial del head, que es (% del head − % del BDM).
+      const bdmOwnPct = resolvePctDelMes(getPctOverride(profile.id), bdmOwnPctAuto);
       // BDM GLOBAL: el HEAD usa pct_sobre_bdm_global como su % de referencia en
       // vez de su net_deposit_pct. El resto del cálculo es idéntico al normal.
       const refPct = profile.role === 'bdm_global' ? pctSobreBdmGlobal : headPct;
@@ -845,9 +1016,9 @@ export default function ComisionesPage() {
       const diffPct = naturalDiff > 0 ? naturalDiff : naturalDiff === 0 ? extraPct : 0;
       const calc = calculateCommission(nd, accIn, diffPct);
       const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
-      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, diffPct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
+      return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, bdmOwnPctAuto, diffPct, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth]);
+  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride]);
 
   // HEAD differential total (sum of all BDM differential commissions)
   const headDiff = useMemo(() => {
@@ -936,11 +1107,14 @@ export default function ComisionesPage() {
   // hr/commission-preview.ts: la pestaña Comercial de /rrhh muestra el MISMO
   // número y no puede salir de otro lado (§2.1, invariante A3). La fórmula
   // sigue siendo la de commission-calculator.ts, intacta.
-  const indCalcs = useMemo((): CommissionCalcResult[] => {
+  const indCalcs = useMemo((): (CommissionCalcResult & { commissionPctAuto: number })[] => {
     return allBdms.map((profile) => {
       const accIn = getAccumulatedIn(previousResultsAll, profile.id, profile.head_id ?? undefined);
       const c = comisionIndividualDeBdm({
         profile,
+        // El % manual del mes (migración 129). `null` = automático: la
+        // composición de siempre, intacta.
+        pctOverride: getPctOverride(profile.id),
         // Lo que el usuario tenga tecleado manda sobre el resolver: es lo que va
         // a entrar al motor Y lo que se va a guardar.
         resolved: ndRawInputs.has(profile.id)
@@ -955,7 +1129,7 @@ export default function ComisionesPage() {
       if (!c) {
         const nd = ndInputs.get(profile.id) ?? 0;
         const calc = calculateCommission(nd, accIn, 0);
-        return { profileId: profile.id, commissionPct: 0, salary: 0, totalEarnedDebt: 0, ...calc };
+        return { profileId: profile.id, commissionPct: 0, commissionPctAuto: 0, salary: 0, totalEarnedDebt: 0, ...calc };
       }
       return {
         profileId: profile.id,
@@ -963,6 +1137,9 @@ export default function ComisionesPage() {
         accumulatedIn: c.accumulatedIn,
         division: c.division,
         commissionPct: c.commissionPct,
+        // El automático viaja al lado del efectivo para poder mostrarlo como
+        // placeholder: quien teclea un % ve contra qué está corrigiendo.
+        commissionPctAuto: c.commissionPctAuto,
         commission: c.commission,
         realPayment: c.realPayment,
         accumulatedOut: c.accumulatedOut,
@@ -970,7 +1147,7 @@ export default function ComisionesPage() {
         totalEarnedDebt: 0,
       };
     });
-  }, [allBdms, ndInputs, ndRawInputs, ndResolved, previousResultsAll, periodYear, periodMonth]);
+  }, [allBdms, ndInputs, ndRawInputs, ndResolved, previousResultsAll, periodYear, periodMonth, getPctOverride]);
 
   const indSummary = useMemo(() => calculateGroupSummary(indCalcs), [indCalcs]);
 
@@ -1077,6 +1254,10 @@ export default function ComisionesPage() {
           salary_paid: calc.salary,
           total_earned: finalTotalEarned,
           bonus: debtOut,
+          // El % manual del mes (migración 129). `null` = automático, y ese null
+          // es el que BORRA un override anterior: por eso se manda siempre y no
+          // sólo cuando hay valor.
+          pct_override: getPctOverride(profileId),
         };
       } else if (mode === 'pnl') {
         // PnL BDM
@@ -1152,6 +1333,10 @@ export default function ComisionesPage() {
         pnl_current: entry.pnl_current ?? 0,
         pnl_accumulated: 0,
         pnl_total: 0,
+        // Igual que pnl_current: sin esto el % manual recién guardado
+        // desaparecía del input apenas se guardaba (el patch local decía que la
+        // fila no tenía override).
+        pct_override: entry.pct_override ?? null,
       }]);
 
       // Actualizar input visual
@@ -1164,6 +1349,9 @@ export default function ComisionesPage() {
       // Y lo tecleado en Com. Lotes: guardar es el acto que FIJA el número, así
       // que el raw deja de mandar y el campo vuelve a leerse del resolver.
       setLotRawInputs((prev) => { const next = new Map(prev); next.delete(profileId); return next; });
+      // Y el % manual: ya está guardado, así que el input vuelve a leerse de la
+      // fila (que el patch local acaba de actualizar).
+      setPctOverrideRaw((prev) => { const next = new Map(prev); next.delete(profileId); return next; });
 
       setToast({ type: 'success', msg: t('comm.savedOk') });
       setTimeout(() => setToast(null), 3000);
@@ -1173,7 +1361,7 @@ export default function ComisionesPage() {
     } finally {
       setSavingBdm((prev) => { const next = new Set(prev); next.delete(profileId); return next; });
     }
-  }, [selectedPeriod, company, commercialProfiles, ndInputs, indCalcs, pnlCalcs, pnlSpecialCalcs, lotInputs, getPrevDebtAll, applyTotalEarnedDebt, patchMonthlyResults]);
+  }, [selectedPeriod, company, commercialProfiles, ndInputs, indCalcs, pnlCalcs, pnlSpecialCalcs, lotInputs, getPrevDebtAll, applyTotalEarnedDebt, patchMonthlyResults, getPctOverride]);
 
   // ─── Recalcular histórico de perfiles en PnL Especial (admin-only) ───
   //
@@ -1551,10 +1739,14 @@ export default function ComisionesPage() {
 
           const nd = ndInputs.get(profile.id) ?? 0;
           const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
-          // HEAD/sub-HEADs keep profile pct; only actual BDMs use dynamic pct based on ND
+          // HEAD/sub-HEADs keep profile pct; only actual BDMs use dynamic pct based on ND.
+          // Los hijos MASTER IB no cuentan como equipo — ver la nota de bdmCalcs.
           const isSubHead = !isHead && (profile.role === 'head' || profile.role === 'sales_manager'
-            || commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub)));
-          const pct = (isHead || isSubHead || profile.fixed_salary) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+            || tieneEquipoPropio(profile.id, commercialProfiles));
+          const pctAuto = (isHead || isSubHead || profile.fixed_salary) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+          // Lo GUARDADO tiene que salir del mismo camino que lo MOSTRADO (§2.1):
+          // el % manual del mes pisa acá igual que en bdmCalcs.
+          const pct = resolvePctDelMes(getPctOverride(profile.id), pctAuto);
           const calc = calculateCommission(nd, accIn, pct);
 
           if (isHead && headHasParent) {
@@ -1573,11 +1765,21 @@ export default function ComisionesPage() {
               salary_paid: autoSalary,
               total_earned: teamSummary.totalWithSalary,
               bonus: teamSummary.debtOut,
+              // El head no tiene celda de % manual, pero se reenvía lo que
+              // hubiera guardado en su fila: mandar `null` a ciegas borraría un
+              // override cargado desde otra pantalla.
+              pct_override: getPctOverride(profile.id),
             });
           } else {
             // Sub-members with own team: preserve net_deposit_accumulated (-1 flag)
             // because that field stores their personal ND from their own group
-            const isSubWithTeam = !isHead && commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
+            // Mismo criterio que `isSubHead`: un hijo MASTER IB no convierte a
+            // un BDM en sub-head (migración 129). Si contara, colgar al master
+            // le cambiaría a Ana la fila que se guarda bajo su head —pasaría a
+            // guardarse el diferencial en vez de su comisión propia y su
+            // `net_deposit_accumulated` dejaría de escribirse— sin que nadie
+            // haya pedido eso. Con el flag en false (default) es idéntico a antes.
+            const isSubWithTeam = !isHead && tieneEquipoPropio(profile.id, commercialProfiles);
             // Para sub-HEADs la comisión correcta (extra sobre head, sobre el ND
             // de su equipo) ya la resuelve bdmCalcs. Reusamos ese resultado para
             // que lo GUARDADO coincida con lo MOSTRADO. Los BDMs normales
@@ -1617,6 +1819,9 @@ export default function ComisionesPage() {
                 ? teamSummary.totalWithSalary
                 : (memberDebt?.finalTotalEarned ?? src.realPayment + memberSalary),
               bonus: isHead ? teamSummary.debtOut : (memberDebt?.debtOut ?? 0),
+              // El % manual del mes. `null` = automático, y es el null que saca
+              // un override anterior.
+              pct_override: getPctOverride(profile.id),
             });
           }
         }
@@ -1635,6 +1840,8 @@ export default function ComisionesPage() {
             real_payment: c.realPayment,
             accumulated_out: c.accumulatedOut,
             salary_paid: c.salary,
+            // El % manual del mes (migración 129); `null` = automático.
+            pct_override: getPctOverride(c.profileId),
             ...(() => {
               const prevDebt = getPrevDebtAll(c.profileId);
               const rawTE = c.realPayment + c.salary;
@@ -1702,6 +1909,9 @@ export default function ComisionesPage() {
         pnl_current: e.pnl_current ?? 0,
         pnl_accumulated: 0,
         pnl_total: 0,
+        // Ver la misma nota en handleSaveBdm: sin esto el % manual recién
+        // guardado desaparecía del input.
+        pct_override: e.pct_override ?? null,
       }));
       patchMonthlyResults(patched);
 
@@ -1715,6 +1925,8 @@ export default function ComisionesPage() {
       });
       setNdRawInputs(new Map());
       setLotRawInputs(new Map());
+      // El % manual ya quedó guardado: el input vuelve a leerse de la fila.
+      setPctOverrideRaw(new Map());
       setSaving(false);
       setToast({ type: 'success', msg: t('comm.saveSuccess') });
       setTimeout(() => setToast(null), 4000);
@@ -2144,8 +2356,21 @@ export default function ComisionesPage() {
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
                           <td className="px-3 py-3 text-center text-xs font-medium">
+                            {/* Arriba, el diferencial que cobra el HEAD (derivado).
+                                Abajo, el % BASE del BDM, que es el editable: el
+                                manual del mes pisa tramos y % del perfil, y el
+                                diferencial se recalcula solo. */}
                             <span className="text-violet-600">{calc.diffPct}%</span>
-                            <span className="block text-muted-foreground text-[10px]">({calc.bdmOwnPct}% base)</span>
+                            <span className="flex items-center justify-center gap-1 mt-0.5">
+                              <PctOverrideInput
+                                value={getPctOverrideDisplay(calc.profileId)}
+                                auto={calc.bdmOwnPctAuto}
+                                disabled={periodoCerrado}
+                                onChange={(v) => handlePctOverrideChange(calc.profileId, v)}
+                                labels={t}
+                              />
+                              <span className="text-muted-foreground text-[10px]">{t('comm.pctBase')}</span>
+                            </span>
                           </td>
                           <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
                           <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
@@ -2257,7 +2482,17 @@ export default function ComisionesPage() {
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
-                          <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
+                          {/* El % del mes: vacío = automático (el placeholder lo
+                              muestra), un valor —0 incluido— manda este mes. */}
+                          <td className="px-3 py-3 text-center text-xs font-medium">
+                            <PctOverrideInput
+                              value={getPctOverrideDisplay(calc.profileId)}
+                              auto={calc.commissionPctAuto}
+                              disabled={periodoCerrado}
+                              onChange={(v) => handlePctOverrideChange(calc.profileId, v)}
+                              labels={t}
+                            />
+                          </td>
                           <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
                           <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.salary)}</td>

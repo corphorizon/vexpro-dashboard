@@ -21,6 +21,7 @@ import {
   sinSalario,
 } from '@/lib/hr/domain';
 import {
+  descontarSubredesDeMasters,
   indexarNetDelCrm,
   resolveNetDepositInput,
   type NetDepositSource,
@@ -107,8 +108,12 @@ export function CommercialTab({
   const crmNet = useMemo(() => {
     const tree = overview?.data.net?.tree;
     if (!tree) return null;
-    return indexarNetDelCrm(tree);
-  }, [overview]);
+    // Neto de las subredes de los Master IB, igual que /comisiones: si las dos
+    // pantallas resolvieran distinto el mismo insumo tendríamos dos números
+    // para la misma persona y el mismo mes, que es lo que el §2.1 prohíbe.
+    // Sin ningún perfil marcado devuelve el mismo índice que entró.
+    return descontarSubredesDeMasters(indexarNetDelCrm(tree), profiles);
+  }, [overview, profiles]);
 
   /**
    * EL INSUMO RESUELTO del mes del selector, por perfil — el MISMO resolver que
@@ -156,12 +161,26 @@ export function CommercialTab({
     if (!period) return out;
     const prev = getPreviousPeriod(periods, period.id);
     const prevRows = prev ? monthlyResults.filter((r) => r.period_id === prev.id) : [];
+    // El % manual del mes (migración 129), cargado desde /comisiones. Se lee
+    // acá por el mismo motivo que el insumo: esta pantalla muestra lo que se le
+    // va a pagar a la persona, y si ignorara el override mostraría un número
+    // distinto del que /comisiones va a guardar. Se saltea la fila del líder en
+    // su propio grupo (head_id === profile_id), igual que `manualDeEstructura`.
+    const overridePorPerfil = new Map<string, number>();
+    for (const r of monthlyResults) {
+      if (r.period_id !== period.id) continue;
+      if (r.head_id && r.head_id === r.profile_id) continue;
+      if (r.pct_override === null || r.pct_override === undefined) continue;
+      const n = Number(r.pct_override);
+      if (Number.isFinite(n)) overridePorPerfil.set(r.profile_id, n);
+    }
     for (const p of profiles) {
       const resolved = insumo.get(p.id);
       if (!resolved) continue;
       const c = comisionIndividualDeBdm({
         profile: p,
         resolved,
+        pctOverride: overridePorPerfil.get(p.id) ?? null,
         accumulatedIn: getAccumulatedIn(prevRows, p.id, p.head_id ?? undefined),
         periodYear: period.year,
         periodMonth: period.month,

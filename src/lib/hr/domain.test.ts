@@ -12,6 +12,7 @@ import {
   hrRoleLabel,
   possibleHeads,
   puedeSerHeadDe,
+  tieneEquipoPropio,
   sinSalario,
 } from './domain';
 
@@ -75,6 +76,56 @@ describe('jerarquía', () => {
     ];
     expect(possibleHeads(perfiles).map((p) => p.id)).toEqual(['a', 'b']);
     expect(possibleHeads(perfiles, { excludeId: 'b' }).map((p) => p.id)).toEqual(['a']);
+  });
+
+  it('possibleHeads con incluirBdms suma los BDM (excepción Master IB)', () => {
+    const perfiles = [
+      { id: 'a', role: 'sales_manager' },
+      { id: 'ana', role: 'bdm' },
+      { id: 'glob', role: 'bdm_global' },
+      { id: 'd', role: 'closer' },
+    ];
+    // Sin el flag, el selector queda EXACTAMENTE como estaba.
+    expect(possibleHeads(perfiles).map((p) => p.id)).toEqual(['a']);
+    expect(possibleHeads(perfiles, { incluirBdms: true }).map((p) => p.id)).toEqual(['a', 'ana', 'glob']);
+    // El rol libre sigue afuera con y sin flag.
+    expect(possibleHeads(perfiles, { incluirBdms: true }).some((p) => p.id === 'd')).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EQUIPO PROPIO — y por qué un Master IB no lo es (migración 129)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('tieneEquipoPropio', () => {
+  const activo = (id: string, head_id: string | null, is_master_ib = false) =>
+    ({ id, head_id, is_master_ib, status: 'active', termination_date: null });
+
+  it('un hijo activo cuenta como equipo', () => {
+    expect(tieneEquipoPropio('ana', [activo('ana', 'hugo'), activo('sub', 'ana')])).toBe(true);
+  });
+
+  it('un hijo MASTER IB NO cuenta: el BDM padre sigue siendo BDM', () => {
+    // Jose Emanuel colgando de Ana García (2026-09-06): la RPC ya le corta la
+    // subred a Ana, pero Ana conserva sus tramos de % por volumen.
+    expect(tieneEquipoPropio('ana', [activo('ana', 'hugo'), activo('master', 'ana', true)])).toBe(false);
+    // Y si además tiene un BDM propio, sí tiene equipo.
+    expect(
+      tieneEquipoPropio('ana', [activo('ana', 'hugo'), activo('master', 'ana', true), activo('sub', 'ana')]),
+    ).toBe(true);
+  });
+
+  it('un DESPEDIDO sigue contando como equipo (se le cargan ND negativos)', () => {
+    const despedido = { id: 'x', head_id: 'ana', status: 'inactive', termination_date: '2026-08-01' };
+    expect(tieneEquipoPropio('ana', [despedido])).toBe(true);
+  });
+
+  it('un inactivo SIN fecha de baja (licencia) no cuenta', () => {
+    const enPausa = { id: 'x', head_id: 'ana', status: 'inactive', termination_date: null };
+    expect(tieneEquipoPropio('ana', [enPausa])).toBe(false);
+  });
+
+  it('sin hijos, no hay equipo', () => {
+    expect(tieneEquipoPropio('ana', [activo('ana', 'hugo')])).toBe(false);
   });
 });
 

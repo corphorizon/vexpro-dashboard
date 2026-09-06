@@ -151,12 +151,70 @@ export function puedeSerHeadDe(headRole: string, memberRole: string): boolean {
   return esLider(headRole) && (esLider(memberRole) || esBdm(memberRole));
 }
 
-/** Los perfiles que pueden aparecer en el selector "Supervisor" de un perfil. */
+/**
+ * Los perfiles que pueden aparecer en el selector "Supervisor" de un perfil.
+ *
+ * `incluirBdms` es la excepción del MASTER IB (migración 129, 2026-09-06): un
+ * master cuelga de la línea de un BDM, no de un head, así que sin esto Jose
+ * Emanuel Hernandez Alvarez no se podía colgar de Ana García —que es BDM— y la
+ * feature entera no se podía configurar. Se pide explícitamente (el formulario
+ * lo activa solo con el checkbox «Master IB» tildado) en vez de aflojar
+ * `puedeSerHeadDe` para todos: colgar un BDM común de otro BDM sigue sin
+ * tener sentido y el selector sigue sin ofrecerlo.
+ */
 export function possibleHeads<T extends { id: string; role: string }>(
   profiles: readonly T[],
-  opts?: { excludeId?: string },
+  opts?: { excludeId?: string; incluirBdms?: boolean },
 ): T[] {
-  return profiles.filter((p) => esLider(p.role) && p.id !== opts?.excludeId);
+  return profiles.filter(
+    (p) =>
+      (esLider(p.role) || (opts?.incluirBdms === true && esBdm(p.role))) &&
+      p.id !== opts?.excludeId,
+  );
+}
+
+/** Lo mínimo de un perfil para decidir si cuenta como equipo de otro. */
+export type MiembroDeEquipo = EstadoPerfil & {
+  id: string;
+  head_id: string | null;
+  /** Master IB (migración 129): cuelga de un BDM pero NO es su equipo. */
+  is_master_ib?: boolean | null;
+};
+
+/**
+ * ¿Esta persona tiene EQUIPO PROPIO a los efectos de comisiones?
+ *
+ * Es la pregunta que /comisiones hacía inline en tres lugares con la forma
+ * «¿alguien tiene mi id como head_id?», y que decide dos cosas caras: si la
+ * persona pierde los tramos de % por volumen (un sub-head cobra su % pactado,
+ * no el del tramo) y qué fila se guarda para ella bajo su head.
+ *
+ * ── Los hijos MASTER IB no cuentan (migración 129, 2026-09-06) ─────────────
+ * Colgar al Master IB Jose Emanuel de Ana García es lo que hace que la RPC le
+ * corte la subred a Ana (281.168,49 de agosto que no son suyos). Pero Ana
+ * sigue siendo una BDM: si ese hijo la convirtiera en "sub-head" perdería sus
+ * tramos y cambiaría la fila que se guarda bajo su head, y nadie pidió eso —
+ * el master es un socio con red propia, no un equipo de ventas a su cargo.
+ *
+ * MEDIDO el 2026-09-06, antes de tocar nada: ningún BDM de Vex Pro tiene hijos
+ * en `commercial_profiles` (todos los padres son head/sales_manager). Con
+ * `is_master_ib = false` en todas las filas —el default de la migración— esta
+ * función devuelve exactamente lo mismo que el `.some()` que reemplaza.
+ *
+ * Los DESPEDIDOS sí cuentan como equipo: se les siguen cargando net deposits
+ * negativos post-despido (misma regla que `appearsInCommissions`). Los
+ * inactivos sin fecha de baja (licencia) no.
+ */
+export function tieneEquipoPropio(
+  profileId: string,
+  profiles: readonly MiembroDeEquipo[],
+): boolean {
+  return profiles.some(
+    (s) =>
+      s.head_id === profileId &&
+      !s.is_master_ib &&
+      (estaActivo(s) || estaDespedido(s)),
+  );
 }
 
 // ─── Predicados de estado ────────────────────────────────────────────────────

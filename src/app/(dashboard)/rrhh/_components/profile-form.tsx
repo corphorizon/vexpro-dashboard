@@ -45,6 +45,9 @@ export function ProfileForm({
   const [headId, setHeadId] = useState(editing?.head_id || '');
   const [ndPct, setNdPct] = useState(editing?.net_deposit_pct?.toString() || '');
   const [ndPctFixed, setNdPctFixed] = useState(!!editing?.nd_pct_fixed);
+  // Master IB (migración 129): cuelga de la línea de un BDM y su red se
+  // descuenta de ese BDM, como pasa con un head.
+  const [isMasterIb, setIsMasterIb] = useState(!!editing?.is_master_ib);
   const [pnlPct, setPnlPct] = useState(editing?.pnl_pct?.toString() || '');
   const [commLot, setCommLot] = useState(editing?.commission_per_lot?.toString() || '');
   const [salary, setSalary] = useState(editing?.salary?.toString() || '');
@@ -73,7 +76,15 @@ export function ProfileForm({
   const [error, setError] = useState('');
 
   // Registro único: quién puede ser supervisor de quién lo decide hr/domain.ts.
-  const heads = possibleHeads(commercialProfiles, { excludeId: editing?.id });
+  //
+  // `incluirBdms` sólo con «Master IB» tildado: un master cuelga de la LÍNEA de
+  // un BDM (Jose Emanuel Hernandez Alvarez de Ana García, 2026-09-06) y el
+  // selector normal lista únicamente líderes. Sin el flag el desplegable queda
+  // exactamente como estaba.
+  const heads = possibleHeads(commercialProfiles, {
+    excludeId: editing?.id,
+    incluirBdms: isMasterIb,
+  });
   // Los campos de HEAD/Sales Manager se muestran para cualquier rol líder.
   const mostrarCamposDeLider = esLider(role);
 
@@ -107,6 +118,9 @@ export function ProfileForm({
         // Mismo criterio que pnl_special_mode: sin % cargado el flag se apaga,
         // para que no quede una excepción huérfana de un config anterior.
         nd_pct_fixed: ndPct ? ndPctFixed : false,
+        // El flag NO depende de ningún % (a diferencia de nd_pct_fixed): el
+        // master del caso real cobra por PnL Especial y no tiene net_deposit_pct.
+        is_master_ib: isMasterIb,
         pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
         // Force pnl_special_mode off when pct is empty — avoids stale flags
         // from a previous config (profile lost its pct but the flag lingered).
@@ -189,6 +203,35 @@ export function ProfileForm({
                 <option key={h.id} value={h.id}>{h.name} ({hrRoleLabel(h.role)})</option>
               ))}
             </select>
+          </div>
+          {/* Master IB — habilita colgar el perfil de un BDM y hace que su red
+              se descuente de ese BDM (migración 129). Se muestra siempre: el
+              master del caso real cobra por PnL Especial y no tiene % de ND. */}
+          <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30">
+            <input
+              id="is-master-ib"
+              type="checkbox"
+              checked={isMasterIb}
+              onChange={(e) => {
+                setIsMasterIb(e.target.checked);
+                // Al destildar, un supervisor BDM dejaría de estar en la lista y
+                // el desplegable se vería vacío mientras el valor viejo seguía
+                // ahí para guardarse: una discrepancia muda entre lo que se ve y
+                // lo que se persiste. Se limpia.
+                if (!e.target.checked && headId) {
+                  const sigueSiendoValido = possibleHeads(commercialProfiles, { excludeId: editing?.id })
+                    .some((h) => h.id === headId);
+                  if (!sigueSiendoValido) setHeadId('');
+                }
+              }}
+              className="mt-0.5 h-4 w-4 rounded border-border"
+            />
+            <label htmlFor="is-master-ib" className="flex-1 cursor-pointer">
+              <span className="block text-sm font-medium">{t('hr.masterIb')}</span>
+              <span className="block text-[11px] text-muted-foreground mt-0.5 leading-tight">
+                {t('hr.masterIbHint')}
+              </span>
+            </label>
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.ndPctPlaceholder')}</label>

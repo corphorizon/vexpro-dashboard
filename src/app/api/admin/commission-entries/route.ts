@@ -81,6 +81,12 @@ export async function POST(request: NextRequest) {
         pnl_accumulated: 0,
         pnl_total: 0,
         bonus: entry.bonus ?? 0,
+        // % manual del mes (migración 129). Va SIN `?? 0` y sin preservar lo
+        // que hubiera: `null` es "volvé al automático" y es justo lo que se
+        // guarda cuando alguien vacía el input. Un `?? 0` acá dejaría a esa
+        // persona cobrando 0% para siempre sin que nadie lo haya tecleado
+        // (§1.3: null ≠ 0), y preservarlo haría imposible sacar un override.
+        pct_override: entry.pct_override ?? null,
       };
 
       // Upsert: check if exists, then update or insert.

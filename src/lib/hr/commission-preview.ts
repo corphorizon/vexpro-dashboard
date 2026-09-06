@@ -31,6 +31,7 @@ import {
   calculateCommission,
   calculateSalaryFromND,
   prorateFixedSalary,
+  resolvePctDelMes,
 } from '@/lib/commission-calculator';
 import { netParaElMotor, type NetDepositSource, type ResolvedNetDeposit } from './net-deposit-input';
 
@@ -52,7 +53,15 @@ export type ComisionDelMes = {
   nd: number | null;
   source: NetDepositSource;
   accumulatedIn: number;
+  /** El que se aplicó de verdad: `pctOverride` si lo hay, si no el automático. */
   commissionPct: number;
+  /**
+   * El automático de este mes (tramos + nd_pct_fixed + % del perfil), calculado
+   * SIEMPRE aunque haya override. La pantalla lo muestra como placeholder del
+   * input para que quien teclea un % vea contra qué está corrigiendo — mismo
+   * criterio que el `auto` del rótulo de net deposit.
+   */
+  commissionPctAuto: number;
   division: number;
   commission: number;
   realPayment: number;
@@ -72,16 +81,24 @@ export function comisionIndividualDeBdm(params: {
   accumulatedIn: number;
   periodYear: number;
   periodMonth: number;
+  /**
+   * `commercial_monthly_results.pct_override` de ESE mes (migración 129).
+   * `null`/ausente = automático, que es lo que hacía esta función antes de
+   * existir el campo. `0` es válido: ese mes no cobra comisión.
+   */
+  pctOverride?: number | null;
 }): ComisionDelMes | null {
-  const { profile, resolved, accumulatedIn, periodYear, periodMonth } = params;
+  const { profile, resolved, accumulatedIn, periodYear, periodMonth, pctOverride } = params;
   if (profile.pnl_pct != null) return null;
 
   const nd = netParaElMotor(resolved);
   // Con salario fijo el % es el pactado y no lo mejoran los tiers: el tier de
   // volumen es la contrapartida de no tener piso. Mismo criterio que indCalcs.
-  const commissionPct = profile.fixed_salary
+  const commissionPctAuto = profile.fixed_salary
     ? (profile.net_deposit_pct ?? 0)
     : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+  // El % manual del mes pisa TODO lo de arriba, incluido el piso por volumen.
+  const commissionPct = resolvePctDelMes(pctOverride, commissionPctAuto);
 
   const calc = calculateCommission(nd, accumulatedIn, commissionPct);
   const salary = profile.fixed_salary
@@ -93,6 +110,7 @@ export function comisionIndividualDeBdm(params: {
     nd: resolved.value,
     source: resolved.source,
     commissionPct,
+    commissionPctAuto,
     salary,
     accumulatedIn: calc.accumulatedIn,
     division: calc.division,
