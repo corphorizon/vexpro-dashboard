@@ -236,13 +236,31 @@ export function CommercialTab({
   const heads = profiles.filter((p) => p.role === 'head');
   const independentBdms = profiles.filter((p) => esBdm(p.role) && !p.head_id);
 
-  // Un equipo se muestra si matchea el líder O algún BDM bajo su estructura.
+  /**
+   * Los Master IB de un miembro (migración 129). Cuelgan de un BDM — no de un
+   * líder — así que sin esto no caían en NINGUNA tarjeta y desaparecían de la
+   * pantalla (dueño, 2026-09-06: buscó a millonariosteam2018 para editarlo y
+   * "no sale"). Se listan dentro de la tarjeta donde está su BDM, a
+   * continuación de él. Un nivel alcanza: un master no puede colgar de otro
+   * master por el formulario, y si algún día pasa, el de abajo vuelve a caer
+   * acá al buscarse por su propio BDM.
+   */
+  const mastersDe = (bdmId: string) =>
+    profiles.filter((m) => m.is_master_ib && m.head_id === bdmId);
+  const conSusMasters = (miembros: CommercialProfile[]) =>
+    miembros.flatMap((b) => [b, ...mastersDe(b.id)]);
+
+  // Un equipo se muestra si matchea el líder O algún BDM bajo su estructura
+  // (masters de esos BDM incluidos).
   const teamHasMatch = (leader: CommercialProfile) =>
     (matchesCommercial(leader, commercialQ) && pasaFiltroSalario(leader)) ||
-    profiles.some((p) => p.head_id === leader.id && matchesCommercial(p, commercialQ) && pasaFiltroSalario(p));
+    conSusMasters(profiles.filter((p) => p.head_id === leader.id))
+      .some((p) => matchesCommercial(p, commercialQ) && pasaFiltroSalario(p));
   const visibleSalesManagers = salesManagers.filter(teamHasMatch);
   const visibleHeads = heads.filter(teamHasMatch);
-  const visibleIndependentBdms = independentBdms.filter(
+  // También acá van los masters: un Master IB colgado de un BDM SIN head no
+  // cae en ninguna tarjeta de líder, así que se lista a continuación de su BDM.
+  const visibleIndependentBdms = conSusMasters(independentBdms).filter(
     (b) => matchesCommercial(b, commercialQ) && pasaFiltroSalario(b),
   );
 
@@ -280,7 +298,8 @@ export function CommercialTab({
   };
 
   const renderTeamCard = (leader: CommercialProfile) => {
-    const allBdms = profiles.filter(p => p.head_id === leader.id);
+    // Miembros directos + los Master IB colgados de ellos (ver mastersDe).
+    const allBdms = conSusMasters(profiles.filter(p => p.head_id === leader.id));
     const leaderMatches = matchesCommercial(leader, commercialQ);
     // Al buscar: si el líder NO matchea, mostrar sólo los BDM que matchean.
     const bdms = (!commercialQ || leaderMatches) ? allBdms : allBdms.filter(b => matchesCommercial(b, commercialQ));
@@ -380,10 +399,13 @@ export function CommercialTab({
                   const tot = totalesDe(totales, bdm.id);
                   return (
                   <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm))}>
+                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm), bdm.is_master_ib && 'pl-7')}>
                       {bdm.name}
                       {esBdmGlobal(bdm.role) && (
                         <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
+                      )}
+                      {bdm.is_master_ib && (
+                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
                       )}
                       <FiredBadge profile={bdm} />
                     </td>
@@ -544,10 +566,13 @@ export function CommercialTab({
                   const tot = totalesDe(totales, bdm.id);
                   return (
                   <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm))}>
+                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm), bdm.is_master_ib && 'pl-7')}>
                       {bdm.name}
                       {esBdmGlobal(bdm.role) && (
                         <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
+                      )}
+                      {bdm.is_master_ib && (
+                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
                       )}
                       <FiredBadge profile={bdm} />
                     </td>
