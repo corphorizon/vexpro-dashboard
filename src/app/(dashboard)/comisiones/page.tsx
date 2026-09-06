@@ -780,6 +780,66 @@ export default function ComisionesPage() {
   const getNdAuto = useCallback((id: string): number | null => ndResolved.get(id)?.crm ?? null, [ndResolved]);
 
   // ═══════════════════════════════════════════════════════════
+  // EL CARRIL ND DE LOS MASTER IB (dueño, 2026-09-06: «no puedes confundir
+  // PnL con net deposit, mucho cuidado»)
+  //
+  // Un master suele ser un perfil del grupo PnL, y para un perfil PnL el valor
+  // de `ndInputs` es su CAMPO PnL (el PNL Report con el signo dado vuelta).
+  // Por eso la línea del master en el grupo ND de su BDM mostraba +300.397 de
+  // «ND» cuando su net deposit real era 283.254,66 — el número que la RPC le
+  // corta al BDM, verificado exacto contra el Net Deposits report del CRM. El
+  // MISMO perfil vive en dos contextos con dos números distintos (su PnL
+  // Especial y su línea ND), así que la línea ND tiene su PROPIO carril:
+  // índice ND + manual guardado bajo el grupo de su BDM. Jamás toca ndInputs.
+  // ═══════════════════════════════════════════════════════════
+  const masterNdResolved = useMemo((): Map<string, ResolvedNetDeposit> => {
+    const out = new Map<string, ResolvedNetDeposit>();
+    if (!selectedPeriod) return out;
+    for (const p of commercialProfiles) {
+      if (!p.is_master_ib) continue;
+      const ex = monthlyResults.find(
+        (r) => r.profile_id === p.id && r.period_id === selectedPeriod.id && r.head_id === (p.head_id ?? p.id),
+      );
+      out.set(p.id, resolveNetDepositInput({
+        profileId: p.id,
+        period: selectedPeriod,
+        scope: 'structure',
+        crm: ndIndexNeto,
+        manual: ex?.net_deposit_current ?? null,
+      }));
+    }
+    return out;
+  }, [commercialProfiles, selectedPeriod, monthlyResults, ndIndexNeto]);
+
+  const [masterNdRaw, setMasterNdRaw] = useState<Map<string, string>>(new Map());
+  useEffect(() => { setMasterNdRaw(new Map()); }, [selectedPeriod?.id, selectedHeadId]);
+
+  const getMasterNd = useCallback((id: string): number => {
+    const raw = masterNdRaw.get(id);
+    if (raw !== undefined) { const n = parseFloat(raw); return Number.isFinite(n) ? n : 0; }
+    return masterNdResolved.get(id)?.value ?? 0;
+  }, [masterNdRaw, masterNdResolved]);
+
+  const getMasterNdDisplay = useCallback((id: string): string => {
+    const raw = masterNdRaw.get(id);
+    if (raw !== undefined) return raw;
+    const v = masterNdResolved.get(id)?.value;
+    return v === null || v === undefined ? '' : String(v);
+  }, [masterNdRaw, masterNdResolved]);
+
+  const handleMasterNdChange = useCallback((id: string, v: string) => {
+    setMasterNdRaw((prev) => { const n = new Map(prev); n.set(id, v); return n; });
+  }, []);
+
+  const getMasterNdSource = useCallback((id: string): NetDepositSource => {
+    if (masterNdRaw.get(id) !== undefined) return 'manual';
+    return masterNdResolved.get(id)?.source ?? 'none';
+  }, [masterNdRaw, masterNdResolved]);
+
+  // `accInDeMaster` vive más abajo, después de `previousResults`: necesita el
+  // período anterior COMPLETO (el arrastre del líder está bajo OTRO grupo).
+
+  // ═══════════════════════════════════════════════════════════
   // EL % MANUAL DEL MES (`pct_override`, migración 129 — 2026-09-06)
   //
   // El % de un BDM por net deposit sale de tres reglas encadenadas —tramos por
@@ -945,6 +1005,32 @@ export default function ComisionesPage() {
     );
   }, [selectedPeriod, selectedHeadId, getPreviousPeriodResults]);
 
+  /**
+   * El acumulado de la línea de un master: su fila previa bajo ESTE grupo; si
+   * nunca hubo (primera vez que el grupo del BDM existe), HEREDA el arrastre
+   * del LÍDER (dueño, 2026-09-06: «el acumulado que traía Ana desde julio,
+   * ponlo en la línea de millonarios» — ese arrastre nació de la red del
+   * master cuando aún se contaba dentro del BDM; al separarse la línea, el
+   * arrastre se muda con ella). Una vez guardado el grupo, la cadena sigue
+   * sola por las filas del master.
+   *
+   * OJO: lee el período anterior COMPLETO (`getPreviousPeriodResults`), no el
+   * `previousResults` filtrado por este grupo — el arrastre del líder vive
+   * bajo el grupo de SU head (la fila de Ana bajo Luka), que este filtro
+   * excluye. Con el filtrado, el fallback daba 0 en silencio.
+   *
+   * Limitación documentada: con DOS masters bajo el mismo BDM, la primera vez
+   * los dos heredarían el mismo arrastre. Hoy hay uno; si aparece otro, esto
+   * necesita un reparto explícito antes de guardar.
+   */
+  const accInDeMaster = useCallback((masterId: string): number => {
+    if (!selectedPeriod || !selectedHeadId) return 0;
+    const todasLasPrevias = getPreviousPeriodResults(selectedPeriod.id);
+    const propia = todasLasPrevias.find((r) => r.profile_id === masterId && r.head_id === selectedHeadId);
+    if (propia) return propia.accumulated_out ?? 0;
+    return getAccumulatedIn(todasLasPrevias, selectedHeadId);
+  }, [selectedPeriod, selectedHeadId, getPreviousPeriodResults]);
+
   const previousResultsAll = useMemo(() => {
     if (!selectedPeriod) return [];
     return getPreviousPeriodResults(selectedPeriod.id);
@@ -1008,8 +1094,12 @@ export default function ComisionesPage() {
     const pctExtraSobreHead = headProfile?.pct_extra_sobre_head ?? 0;
     const applyExtraNoSalary = headProfile?.apply_pct_extra_to_head_without_salary ?? false;
     return bdms.map((profile) => {
-      const nd = ndInputs.get(profile.id) ?? 0;
-      const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
+      // La línea de un master usa SU carril de ND (nunca ndInputs: para un
+      // perfil PnL eso es su campo PnL — ver la cabecera del carril).
+      const nd = profile.is_master_ib ? getMasterNd(profile.id) : ndInputs.get(profile.id) ?? 0;
+      const accIn = profile.is_master_ib
+        ? accInDeMaster(profile.id)
+        : getAccumulatedIn(previousResults, profile.id, selectedHeadId);
 
       // ── (c)/(d) HEAD intermedio bajo este HEAD ──
       const isIntermediateHead = profile.role === 'head' || profile.role === 'sales_manager';
@@ -1096,7 +1186,7 @@ export default function ComisionesPage() {
       const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, bdmOwnPctAuto, diffPct, pctLinea: profile.pct_linea ?? null, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride, liderEsBdm]);
+  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride, liderEsBdm, getMasterNd, accInDeMaster, selectedHeadId]);
 
   // HEAD differential total (sum of all BDM differential commissions)
   const headDiff = useMemo(() => {
@@ -1108,9 +1198,11 @@ export default function ComisionesPage() {
   // Team totals — sum of ALL members including HEAD
   const teamTotalND = useMemo(() => {
     let total = 0;
-    for (const p of teamProfiles) total += ndInputs.get(p.id) ?? 0;
+    for (const p of teamProfiles) {
+      total += p.is_master_ib ? getMasterNd(p.id) : ndInputs.get(p.id) ?? 0;
+    }
     return total;
-  }, [teamProfiles, ndInputs]);
+  }, [teamProfiles, ndInputs, getMasterNd]);
 
   const autoSalary = useMemo(() => {
     if (!headProfile) return calculateHeadSalaryFromND(teamTotalND);
@@ -1812,7 +1904,7 @@ export default function ComisionesPage() {
         if (profile.id === headProfile?.id) continue; // el HEAD tiene ND propio (net_deposit_accumulated)
         const saved = existingResults.find((r) => r.profile_id === profile.id && r.head_id === selectedHeadId);
         const savedNd = saved ? Number(saved.net_deposit_current) : 0;
-        const inputNd = ndInputs.get(profile.id) ?? 0;
+        const inputNd = profile.is_master_ib ? getMasterNd(profile.id) : ndInputs.get(profile.id) ?? 0;
         if (savedNd !== 0 && inputNd === 0) wouldZero.push(profile.name);
       }
       if (wouldZero.length > 0) {
@@ -1845,8 +1937,12 @@ export default function ComisionesPage() {
         for (const profile of teamProfiles) {
           const isHead = profile.id === headProfile?.id;
 
-          const nd = ndInputs.get(profile.id) ?? 0;
-          const accIn = getAccumulatedIn(previousResults, profile.id, selectedHeadId);
+          // El guardado usa EXACTAMENTE los mismos carriles que la tabla
+          // (bdmCalcs): guardar por otro camino es el bug A3 del §2.1.
+          const nd = profile.is_master_ib ? getMasterNd(profile.id) : ndInputs.get(profile.id) ?? 0;
+          const accIn = profile.is_master_ib
+            ? accInDeMaster(profile.id)
+            : getAccumulatedIn(previousResults, profile.id, selectedHeadId);
           // HEAD/sub-HEADs keep profile pct; only actual BDMs use dynamic pct based on ND.
           // Los hijos MASTER IB no cuentan como equipo — ver la nota de bdmCalcs.
           const isSubHead = !isHead && (profile.role === 'head' || profile.role === 'sales_manager'
@@ -2525,10 +2621,28 @@ export default function ComisionesPage() {
                             </span>
                             <span className="text-xs text-muted-foreground">{profile.email}</span>
                           </td>
-                          <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[profile.role])}>{ROLE_LABEL[profile.role]}</span></td>
                           <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
-                            <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
+                            {/* Un master NO es un BDM: su tag es el mismo ámbar
+                                de Fuerza Comercial (dueño, 2026-09-06). */}
+                            {profile.is_master_ib
+                              ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
+                              : <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[profile.role])}>{ROLE_LABEL[profile.role]}</span>}
+                          </td>
+                          <td className="px-3 py-3">
+                            {/* La línea de un master lee/escribe SU carril de ND
+                                — jamás ndInputs, que para un perfil PnL es su
+                                campo PnL (ver la cabecera del carril). */}
+                            {profile.is_master_ib ? (
+                              <>
+                                <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getMasterNdDisplay(calc.profileId)} onChange={(e) => handleMasterNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                                <NdSourceTag source={getMasterNdSource(calc.profileId)} auto={masterNdResolved.get(calc.profileId)?.crm ?? null} labels={t} />
+                              </>
+                            ) : (
+                              <>
+                                <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
+                                <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
+                              </>
+                            )}
                           </td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
                           <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
