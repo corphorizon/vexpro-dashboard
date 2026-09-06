@@ -44,7 +44,6 @@ import { apiFetch } from '@/lib/api-fetch';
 import { comisionIndividualDeBdm } from '@/lib/hr/commission-preview';
 import {
   antesDelCorteHrNet,
-  descontarSubredesDeMasters,
   netParaElMotor,
   resolveNetDepositInput,
   type NetDepositSource,
@@ -540,22 +539,20 @@ export default function ComisionesPage() {
   const lotIndexParaResolver = useMemo(() => indiceParaResolver(pnlCrmIndex, 'comLotes'), [pnlCrmIndex]);
 
   /**
-   * El índice del net deposit YA NETO de las subredes de los Master IB
-   * (migración 129). Ver la cabecera de `descontarSubredesDeMasters`.
-   *
-   * Se hace acá y no en el endpoint porque el corte depende de
-   * `commercial_profiles.is_master_ib`, que la pantalla ya tiene cargado y el
-   * endpoint no necesita conocer: la RPC no cambia y el árbol tampoco.
-   *
-   * Sin ningún perfil marcado —el estado de hoy— devuelve LA MISMA referencia
-   * que entró, así que ni siquiera invalida los memos que dependen de él.
+   * CORRECCIÓN (dueño, 2026-09-06, mismo día que salió): acá se aplicaba
+   * `descontarSubredesDeMasters` y era la SEMÁNTICA EQUIVOCADA. El BDM cobra
+   * su % sobre el TOTAL de su línea, master incluido ("ella sí gana un
+   * porcentaje de millonarios team"), y su HEAD lo ve igual: el total. La
+   * discriminación del master es para VER su volumen aparte en el equipo del
+   * BDM — como un head ve a sus BDMs — NO para restárselo del insumo. Con el
+   * descuento aplicado, Ana pasaba de 278.130,66 a −5.124 también a los ojos
+   * de Luka y el total del equipo se achicaba. El índice queda con los
+   * totales del rollup tal cual (el master, al ser root, ya trae su propia
+   * fila con su subred: eso ES la discriminación).
    */
   const ndIndexNeto = useMemo(
-    () => descontarSubredesDeMasters(
-      crmNet && crmNet.month === autoMonth ? crmNet.index : null,
-      commercialProfiles,
-    ),
-    [crmNet, autoMonth, commercialProfiles],
+    () => (crmNet && crmNet.month === autoMonth ? crmNet.index : null),
+    [crmNet, autoMonth],
   );
 
   /**

@@ -21,7 +21,6 @@ import {
   sinSalario,
 } from '@/lib/hr/domain';
 import {
-  descontarSubredesDeMasters,
   indexarNetDelCrm,
   resolveNetDepositInput,
   type NetDepositSource,
@@ -108,12 +107,13 @@ export function CommercialTab({
   const crmNet = useMemo(() => {
     const tree = overview?.data.net?.tree;
     if (!tree) return null;
-    // Neto de las subredes de los Master IB, igual que /comisiones: si las dos
-    // pantallas resolvieran distinto el mismo insumo tendríamos dos números
-    // para la misma persona y el mismo mes, que es lo que el §2.1 prohíbe.
-    // Sin ningún perfil marcado devuelve el mismo índice que entró.
-    return descontarSubredesDeMasters(indexarNetDelCrm(tree), profiles);
-  }, [overview, profiles]);
+    // CORRECCIÓN (dueño, 2026-09-06): acá se aplicaba
+    // descontarSubredesDeMasters y era la semántica equivocada — el BDM cobra
+    // su % sobre el TOTAL de su línea, master incluido, y esta pantalla tiene
+    // que mostrar el mismo insumo que /comisiones (§2.1). La discriminación
+    // del master es su PROPIA fila (es root del árbol), no una resta al padre.
+    return indexarNetDelCrm(tree);
+  }, [overview]);
 
   /**
    * EL INSUMO RESUELTO del mes del selector, por perfil — el MISMO resolver que

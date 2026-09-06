@@ -146,87 +146,12 @@ export function indexarNetDelCrm(tree: readonly RollupNode[]): Map<string, { own
   return out;
 }
 
-/** Lo mínimo de un perfil para saber si tiene masters colgando. */
-export type PerfilConMasters = {
-  id: string;
-  head_id: string | null;
-  /** true = Master IB (migración 129): su subred no es del BDM del que cuelga. */
-  is_master_ib?: boolean | null;
-};
-
-/**
- * EL INSUMO DE UN BDM QUE TIENE MASTER IBs COLGANDO (migración 129, 2026-09-06).
- *
- * ── El problema, medido ────────────────────────────────────────────────────
- * Ana García (BDM) tiene en su línea del CRM al usuario `millonariosteam2018`,
- * que tiene perfil comercial propio (Jose Emanuel Hernandez Alvarez) y su
- * propia red de 3.511 usuarios. Agosto 2026:
- *
- *     ND automático de Ana, sin cortar   278.130,66
- *     subred del master                  281.168,49
- *     producción propia de Ana            −3.037,83
- *
- * Sin corte, esos 281.168,49 se pagan dos veces: a Ana por net deposit y al
- * master por su propio esquema.
- *
- * ── Por qué acá y no en la RPC ─────────────────────────────────────────────
- * El corte del ÁRBOL DEL CRM ya lo hace la base sola: colgar al master de Ana
- * (`head_id`) lo vuelve un "perfil con rol" y la RPC `hr_net_deposit_by_profile`
- * deja de subirle su subred (mismo mecanismo que los heads; la RPC NO se toca).
- * Después de eso el rollup de este archivo da, para Ana:
- *
- *     own   = −3.037,83     (su línea directa, ya sin el master)
- *     team  = 281.168,49    (el `total` del master, que cuelga de ella)
- *     total = 278.130,66
- *
- * y el motor de comisiones toma `total` para todo el que no es el líder del
- * grupo que se está mirando. Esta función devuelve el índice con el `total` de
- * los padres de masters ya NETO de esas subredes.
- *
- * ── Por qué `total − Σ(total de los hijos master)` y no `own` ─────────────
- * Con el único caso real dan lo mismo (Ana no tiene otros hijos), pero no son
- * la misma regla: un BDM que mañana tenga un master Y un BDM propio colgando
- * tiene que seguir cobrando por su BDM. Restar los masters conserva el resto
- * de la estructura; usar `own` la borraría en silencio, que es el modo de
- * falla del §1.2 (número plausible, ninguna excepción).
- *
- * Alcanza con los hijos DIRECTOS: el `total` de un master ya trae su subárbol
- * entero, incluido otro master colgando de él.
- *
- * ── Lo que NO cambia ───────────────────────────────────────────────────────
- * · `own` queda intacto: por definición nunca incluyó a los hijos.
- * · Un perfil sin hijos master sale idéntico (y una hoja tiene own === total).
- * · Los ancestros NO se tocan: el head sigue viendo el `total` completo de su
- *   BDM… hasta la fila del BDM, que es donde el master se descuenta. Bajar el
- *   corte hasta la raíz sería otra decisión (a quién se le paga la red del
- *   master) y no es la que se pidió.
- * · El master mismo sale como cualquier otro root: su fila usa SU total. No se
- *   asume que cobre por PnL —hoy Jose Emanuel está en el grupo PnL Especial,
- *   pero un master podría cobrar por net deposit y su número ya es el correcto.
- */
-export function descontarSubredesDeMasters(
-  index: CrmNetIndex | null,
-  profiles: readonly PerfilConMasters[],
-): CrmNetIndex | null {
-  if (!index) return null;
-  // Cuánto hay que restarle a cada padre. Se arma primero para no recorrer los
-  // perfiles una vez por fila del índice.
-  const aRestar = new Map<string, number>();
-  for (const p of profiles) {
-    if (!p.is_master_ib || !p.head_id) continue;
-    const nodo = index.get(p.id);
-    if (!nodo) continue; // el CRM no sabe de ese master: no se inventa un 0.
-    aRestar.set(p.head_id, (aRestar.get(p.head_id) ?? 0) + nodo.total);
-  }
-  if (aRestar.size === 0) return index; // caso de todos los días: misma referencia.
-
-  const out = new Map<string, { own: number; total: number }>();
-  for (const [id, v] of index) {
-    const resta = aRestar.get(id);
-    out.set(id, resta === undefined ? v : { own: v.own, total: v.total - resta });
-  }
-  return out;
-}
+// NOTA (2026-09-06): acá vivió descontarSubredesDeMasters (migración 129,
+// retirada el MISMO día): restaba la subred de los Master IB del insumo del
+// BDM padre. Semántica equivocada — el BDM cobra su % sobre el TOTAL de su
+// línea, master incluido, y su head lo ve igual; la discriminación del master
+// es su PROPIA fila del rollup (es root del árbol), no una resta al padre.
+// Si alguien vuelve a proponer la resta, ese es el porqué del no.
 
 /**
  * ¿Ese manual es un override de verdad?
