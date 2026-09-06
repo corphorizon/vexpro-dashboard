@@ -26,7 +26,12 @@ import {
   calculateSalaryFromND,
   calculateHeadSalaryFromND,
   prorateFixedSalary,
-  calculateBdmPctFromND,
+  // El % propio de cada renglón del tab Equipos sale de estas dos funciones (el
+  // del líder y el de cada línea); `calculateBdmPctFromND` ya no se llama
+  // directo desde acá — vive dentro de ellas, que es lo que garantiza que la
+  // tabla y el guardado tericen igual.
+  pctPropioDelLiderDeGrupo,
+  pctPropioDeLineaDeGrupo,
   resolvePctDelMes,
   diffNaturalDeLinea,
   resolveDiffPctDeLinea,
@@ -51,7 +56,7 @@ import {
   type NetDepositSource,
   type ResolvedNetDeposit,
 } from '@/lib/hr/net-deposit-input';
-import { tieneEquipoPropio } from '@/lib/hr/domain';
+import { bdmsConEquipo, tieneEquipoPropio } from '@/lib/hr/domain';
 import {
   Calculator,
   Save,
@@ -412,11 +417,48 @@ export default function ComisionesPage() {
   // TAB: TEAMS (HEAD + BDMs with differential)
   // ═══════════════════════════════════════════════════════════
 
+  // ═══════════════════════════════════════════════════════════
+  // LOS DOS SELECTORES DE GRUPO — «Seleccionar HEAD» y «Seleccionar BDM»
+  //
+  // Pedido del dueño (2026-09-06): «si a un BDM como Ana ya se le asignó
+  // alguien como millonariosteam, que aparezca acá en equipo… y que tengamos
+  // otro seleccionador que diga Seleccionar BDM, y que obviamente solo se pueda
+  // seleccionar o head o bdm para no pedir la info de 2 a la vez».
+  //
+  // ── LA EXCLUSIÓN MUTUA ES POR CONSTRUCCIÓN, no por sincronizar dos estados ─
+  // Hay UN solo estado —`selectedHeadId`, el líder del grupo activo— y los dos
+  // `<select>` lo muestran sólo si su propia lista lo contiene; el otro queda en
+  // "". Elegir en uno limpia el otro sin escribir una línea para limpiarlo. Dos
+  // estados espejados serían dos listas que se desincronizan en silencio (§1.1),
+  // y acá desincronizarlas significaría calcular un grupo y guardar otro.
+  // Por lo mismo las listas son DISJUNTAS: un BDM con equipo sale de `heads` y
+  // vive sólo en el selector de BDM.
+  const bdmsLideres = useMemo(() => {
+    // El registro único vive en hr/domain.ts (al lado de `tieneEquipoPropio`,
+    // que responde otra pregunta y por eso ignora a los masters).
+    //
+    // El filtro por `pnl_pct` es lo único que se agrega acá y es a propósito:
+    // el tab Equipos calcula grupos por NET DEPOSIT, no por PnL. Sacar a un
+    // perfil de PnL de Individual para mandarlo a un grupo que no sabe
+    // calcularlo lo haría desaparecer de las dos pantallas sin ningún error
+    // (§1.2). Hoy no existe ninguno: el único BDM con hijos es Ana, que es de ND.
+    return bdmsConEquipo(commercialProfiles).filter((p) => p.pnl_pct == null);
+  }, [commercialProfiles]);
+
+  /** Los ids de arriba, para preguntar rápido «¿este perfil lidera su grupo?». */
+  const bdmLiderIds = useMemo(() => new Set(bdmsLideres.map((p) => p.id)), [bdmsLideres]);
+
   const heads = useMemo(() => {
-    const list = commercialProfiles.filter((p) => p.role === 'head' || p.role === 'sales_manager' || commercialProfiles.some((sub) => sub.head_id === p.id));
+    const list = commercialProfiles.filter(
+      (p) =>
+        (p.role === 'head' || p.role === 'sales_manager' || commercialProfiles.some((sub) => sub.head_id === p.id))
+        // Los BDMs con equipo tienen su propio selector: sin esto aparecerían
+        // en los dos y los dos se verían "seleccionados" a la vez.
+        && !bdmLiderIds.has(p.id),
+    );
     const roleOrder: Record<string, number> = { sales_manager: 0, head: 1, bdm: 2 };
     return list.sort((a, b) => (roleOrder[a.role] ?? 9) - (roleOrder[b.role] ?? 9));
-  }, [commercialProfiles]);
+  }, [commercialProfiles, bdmLiderIds]);
 
   // Lookup maps para que el buscador resuelva nombre/email/head a partir de
   // profileId (los cálculos de Teams/Individual solo tienen profileId). Se
@@ -865,9 +907,32 @@ export default function ComisionesPage() {
     return [head, ...subs];
   }, [selectedHeadId, commercialProfiles, getProfilesByHead]);
 
-  // HEAD profile
+  // HEAD profile — o el BDM que lidera su grupo (el master colgado de un BDM es
+  // «exactamente el BDM dentro de un head, un nivel más abajo», migración 130).
   const headProfile = teamProfiles[0] ?? null;
-  const headPct = headProfile?.net_deposit_pct ?? 0;
+  /** El líder del grupo es un BDM con masters, no un head/sales_manager. */
+  const liderEsBdm = !!headProfile && bdmLiderIds.has(headProfile.id);
+  /**
+   * El % PROPIO del líder. Para un head es su `net_deposit_pct` de siempre;
+   * para un BDM-líder se resuelve COMO BDM (tramos + nd_pct_fixed + el % manual
+   * del mes) — ver `pctPropioDelLiderDeGrupo`. Es también el % de REFERENCIA
+   * con el que se calcula el diferencial de cada línea del grupo.
+   */
+  const headPctAuto = headProfile
+    ? pctPropioDelLiderDeGrupo({
+        liderEsBdm,
+        profilePct: headProfile.net_deposit_pct ?? 0,
+        nd: ndInputs.get(headProfile.id) ?? 0,
+        ndPctFixed: headProfile.nd_pct_fixed,
+        fixedSalary: headProfile.fixed_salary,
+        // El override entra abajo, para poder mostrar el automático como
+        // placeholder de la celda editable (igual que en las filas de BDM).
+        pctOverride: null,
+      })
+    : 0;
+  const headPct = liderEsBdm && headProfile
+    ? resolvePctDelMes(getPctOverride(headProfile.id), headPctAuto)
+    : headPctAuto;
   const extraPct = headProfile?.extra_pct ?? 0;
 
   const headHasParent = !!(headProfile?.head_id);
@@ -1001,9 +1066,17 @@ export default function ComisionesPage() {
       // devuelve exactamente lo mismo que antes para todo el mundo.
       const isSubHead = profile.role === 'head' || profile.role === 'sales_manager'
         || tieneEquipoPropio(profile.id, commercialProfiles);
-      const bdmOwnPctAuto = isSubHead || profile.fixed_salary
-        ? (profile.net_deposit_pct ?? 0)
-        : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+      // La precedencia (sub-head / salario fijo / tramos) vive en
+      // `pctPropioDeLineaDeGrupo`, que además sabe que la línea de un MASTER IB
+      // NO se tieriza: la escalera por volumen es la de un BDM empleado.
+      const bdmOwnPctAuto = pctPropioDeLineaDeGrupo({
+        grupoLideradoPorBdm: liderEsBdm,
+        esSubHead: isSubHead,
+        profilePct: profile.net_deposit_pct ?? 0,
+        nd,
+        ndPctFixed: profile.nd_pct_fixed,
+        fixedSalary: profile.fixed_salary,
+      });
       // El % manual del mes pisa lo anterior — y con él se recalcula el
       // diferencial del head, que es (% del head − % del BDM).
       const bdmOwnPct = resolvePctDelMes(getPctOverride(profile.id), bdmOwnPctAuto);
@@ -1023,7 +1096,7 @@ export default function ComisionesPage() {
       const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, bdmOwnPctAuto, diffPct, pctLinea: profile.pct_linea ?? null, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride]);
+  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride, liderEsBdm]);
 
   // HEAD differential total (sum of all BDM differential commissions)
   const headDiff = useMemo(() => {
@@ -1040,14 +1113,31 @@ export default function ComisionesPage() {
   }, [teamProfiles, ndInputs]);
 
   const autoSalary = useMemo(() => {
-    if (headProfile?.fixed_salary) return prorateFixedSalary(headProfile.salary ?? 0, headProfile.hire_date, periodYear, periodMonth);
+    if (!headProfile) return calculateHeadSalaryFromND(teamTotalND);
+    if (headProfile.fixed_salary) return prorateFixedSalary(headProfile.salary ?? 0, headProfile.hire_date, periodYear, periodMonth);
+    // Un BDM que lidera su grupo cobra el salario de BDM sobre SU ND, no la
+    // tabla de HEAD sobre el total del grupo: es la misma persona que en el
+    // grupo de su head cobra `calculateSalaryFromND`, y darle acá la tabla de
+    // head le cambiaría el sueldo por el sólo hecho de mirarla desde otra
+    // pantalla (§2.1: un mismo número, un mismo camino).
+    if (liderEsBdm) return calculateSalaryFromND(ndInputs.get(headProfile.id) ?? 0);
     return calculateHeadSalaryFromND(teamTotalND);
-  }, [teamTotalND, headProfile, periodYear, periodMonth]);
+  }, [teamTotalND, headProfile, periodYear, periodMonth, liderEsBdm, ndInputs]);
 
   // Validation: if this HEAD belongs to a parent group, check that team total matches
   // what was entered for them in the parent's group
   const teamNdValidation = useMemo(() => {
     if (!headProfile || !headProfile.head_id || !selectedPeriod) return null;
+    // ── LAS BASES DE UN GRUPO DE BDM NO SUMAN, y por eso este chequeo no corre ─
+    // Es la advertencia que dejó la migración 130 y que este cambio resuelve.
+    // Para un sub-HEAD el chequeo es correcto: el ND que se le carga en el grupo
+    // del padre ES el total de su equipo, así que la suma tiene que dar igual.
+    // Para un BDM con Master IBs, no: la RPC del rollup le CORTA la subred del
+    // master (migración 129 — los 281.168,49 de agosto que no son de Ana), el
+    // master entra como raíz con su propia fila, y el ND de Ana en el grupo de
+    // Luka es sólo su línea. Exigir «Ana + master = Ana» bloquearía TODO
+    // guardado desde su grupo, que es justamente el camino que el dueño pidió.
+    if (liderEsBdm) return null;
     // Find what was saved for this HEAD in the parent's context
     const savedResult = existingResults.find((r) => r.profile_id === headProfile.id);
     if (!savedResult || savedResult.net_deposit_current === 0) return null;
@@ -1061,7 +1151,7 @@ export default function ComisionesPage() {
       };
     }
     return null;
-  }, [headProfile, selectedPeriod, existingResults, teamTotalND, commercialProfiles]);
+  }, [headProfile, selectedPeriod, existingResults, teamTotalND, commercialProfiles, liderEsBdm]);
 
   const teamSummary = useMemo(() => {
     const diffTotal = bdmCalcs.reduce((s, c) => s + c.realPayment, 0);
@@ -1103,9 +1193,22 @@ export default function ComisionesPage() {
   // Incluye BDM GLOBAL: en el tab Individual cobran su comisión propia igual
   // que un BDM normal (el aspecto "global" solo cambia lo que el HEAD cobra
   // sobre ellos en el tab Equipos, no su comisión individual).
+  //
+  // EXCLUYE a los BDMs que lideran un grupo (dueño, 2026-09-06: «que YA NO
+  // salga en Individual, porque ahí la quiero calcular como se calculan en
+  // equipo»). No quedan huérfanos: su grupo en el tab Equipos es ahora su
+  // camino —muestra su fila propia con SU % de BDM y guarda su fila bajo su
+  // propio head_id—, y su línea bajo su head sigue igual que siempre. El
+  // contador «Todos los BDMs — N» sale de esta misma lista, así que refleja la
+  // exclusión sin una segunda cuenta. Sin ningún master configurado
+  // `bdmLiderIds` está vacío y esta lista es la de siempre.
   const allBdms = useMemo(
-    () => commercialProfiles.filter((p) => (p.role === 'bdm' || p.role === 'bdm_global') && appearsInCommissions(p)),
-    [commercialProfiles],
+    () => commercialProfiles.filter(
+      (p) => (p.role === 'bdm' || p.role === 'bdm_global')
+        && appearsInCommissions(p)
+        && !bdmLiderIds.has(p.id),
+    ),
+    [commercialProfiles, bdmLiderIds],
   );
 
   // La composición (qué % aplica, qué salario, con qué acumulado) vive en
@@ -1748,7 +1851,28 @@ export default function ComisionesPage() {
           // Los hijos MASTER IB no cuentan como equipo — ver la nota de bdmCalcs.
           const isSubHead = !isHead && (profile.role === 'head' || profile.role === 'sales_manager'
             || tieneEquipoPropio(profile.id, commercialProfiles));
-          const pctAuto = (isHead || isSubHead || profile.fixed_salary) ? (profile.net_deposit_pct ?? 0) : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+          // El % propio del LÍDER sale de la misma función que usa la tabla
+          // (`headPctAuto`): para un head es su % pactado —idéntico a antes— y
+          // para un BDM-líder son sus tramos. Guardar por otro camino que el
+          // que se muestra es el bug A3 que el §2.1 prohíbe.
+          const pctAuto = isHead
+            ? pctPropioDelLiderDeGrupo({
+                liderEsBdm,
+                profilePct: profile.net_deposit_pct ?? 0,
+                nd,
+                ndPctFixed: profile.nd_pct_fixed,
+                fixedSalary: profile.fixed_salary,
+                pctOverride: null,
+              })
+            // Y el de cada línea sale de la misma función que la tabla.
+            : pctPropioDeLineaDeGrupo({
+                grupoLideradoPorBdm: liderEsBdm,
+                esSubHead: isSubHead,
+                profilePct: profile.net_deposit_pct ?? 0,
+                nd,
+                ndPctFixed: profile.nd_pct_fixed,
+                fixedSalary: profile.fixed_salary,
+              });
           // Lo GUARDADO tiene que salir del mismo camino que lo MOSTRADO (§2.1):
           // el % manual del mes pisa acá igual que en bdmCalcs.
           const pct = resolvePctDelMes(getPctOverride(profile.id), pctAuto);
@@ -2014,7 +2138,9 @@ export default function ComisionesPage() {
         })
         .map((c) => {
           const p = commercialProfiles.find((pr) => pr.id === c.profileId);
-          return [p?.name ?? '', 'BDM', c.commissionPct, c.netDepositCurrent, c.division, c.commission, c.realPayment] as (string | number)[];
+          // El rol REAL y no 'BDM' fijo: las líneas de un grupo pueden ser
+          // sub-HEADs o Master IBs, y el CSV los rotulaba a todos como BDM.
+          return [p?.name ?? '', p ? (ROLE_LABEL[p.role] || p.role) : '', c.commissionPct, c.netDepositCurrent, c.division, c.commission, c.realPayment] as (string | number)[];
         });
       if (headProfile) {
         rows.push([headProfile.name, ROLE_LABEL[headProfile.role], `Diff`, '', '', '', headDiff.totalDifferential, headDiff.totalRealPayment]);
@@ -2058,8 +2184,9 @@ export default function ComisionesPage() {
     if (!selectedPeriod || !headProfile) return;
     const periodLabel = selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`;
 
-    // Build salary tier label
-    const tierLabels = HEAD_SALARY_TIERS.map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
+    // Build salary tier label — la tabla que de verdad se le aplicó al líder
+    // (la de BDM cuando el grupo lo lidera un BDM, ver `autoSalary`).
+    const tierLabels = (liderEsBdm ? SALARY_TIERS : HEAD_SALARY_TIERS).map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
 
     const { generateCommissionPDF } = await loadPdfExports();
     generateCommissionPDF({
@@ -2186,9 +2313,32 @@ export default function ComisionesPage() {
             {tab === 'teams' && (
               <div className="flex-1">
                 <label className="block text-sm font-medium mb-1.5">{t('comm.selectHead')}</label>
-                <select value={selectedHeadId} onChange={(e) => setSelectedHeadId(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
+                {/* El `value` es "" cuando el grupo activo es el de un BDM: así
+                    los dos selectores nunca se ven elegidos a la vez sin que
+                    haya que limpiarlos a mano (un solo estado, ver arriba). */}
+                <select
+                  value={heads.some((h) => h.id === selectedHeadId) ? selectedHeadId : ''}
+                  onChange={(e) => setSelectedHeadId(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                >
                   <option value="">{t('comm.selectHead')}</option>
                   {heads.map((h) => <option key={h.id} value={h.id}>{h.name} — {h.net_deposit_pct ?? 0}%</option>)}
+                </select>
+              </div>
+            )}
+            {/* Sin ningún BDM con equipo el selector NO aparece: hoy sólo Ana
+                García lo tiene (un Master IB colgado). */}
+            {tab === 'teams' && bdmsLideres.length > 0 && (
+              <div className="flex-1">
+                <label className="block text-sm font-medium mb-1.5">{t('comm.selectBdm')}</label>
+                <select
+                  value={bdmLiderIds.has(selectedHeadId) ? selectedHeadId : ''}
+                  onChange={(e) => setSelectedHeadId(e.target.value)}
+                  title={t('comm.selectBdmHint')}
+                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+                >
+                  <option value="">{t('comm.selectBdm')}</option>
+                  {bdmsLideres.map((b) => <option key={b.id} value={b.id}>{b.name} — {b.net_deposit_pct ?? 0}%</option>)}
                 </select>
               </div>
             )}
@@ -2245,7 +2395,9 @@ export default function ComisionesPage() {
             <Card>
               <p className="text-sm text-muted-foreground">{t('comm.autoSalary')}</p>
               <p className="text-2xl font-bold text-blue-600">{formatCurrency(autoSalary)}</p>
-              <p className="text-xs text-muted-foreground mt-1">{HEAD_SALARY_TIERS.map((tier) => `≥${formatCurrency(tier.minND)} → ${formatCurrency(tier.salary)}`).join(' | ')}</p>
+              {/* La tabla que se muestra es la que se aplicó: a un BDM-líder se
+                  le paga por SALARY_TIERS sobre su ND, no por la de HEAD. */}
+              <p className="text-xs text-muted-foreground mt-1">{(liderEsBdm ? SALARY_TIERS : HEAD_SALARY_TIERS).map((tier) => `≥${formatCurrency(tier.minND)} → ${formatCurrency(tier.salary)}`).join(' | ')}</p>
             </Card>
             <Card>
               <p className="text-sm text-muted-foreground">{t('comm.totalWithSalary')}</p>
@@ -2330,7 +2482,27 @@ export default function ComisionesPage() {
                         </td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.accumulatedIn)}</td>
                         <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.division)}</td>
-                        <td className="px-3 py-3 text-center text-xs font-medium">{headOwnCalc.commissionPct}%</td>
+                        {/* El % del líder. Un head cobra su % pactado y no hay
+                            nada que editar; un BDM-líder conserva sus tramos y
+                            su % manual del mes, y sin esta celda ese override
+                            no tendría dónde cargarse (en Individual ya no
+                            aparece). El placeholder muestra el automático. */}
+                        <td className="px-3 py-3 text-center text-xs font-medium">
+                          {liderEsBdm ? (
+                            <span className="flex items-center justify-center gap-1">
+                              <PctOverrideInput
+                                value={getPctOverrideDisplay(headProfile.id)}
+                                auto={headPctAuto}
+                                disabled={periodoCerrado}
+                                onChange={(v) => handlePctOverrideChange(headProfile.id, v)}
+                                labels={t}
+                              />
+                              <span className="text-muted-foreground text-[10px]">{t('comm.pctBase')}</span>
+                            </span>
+                          ) : (
+                            `${headOwnCalc.commissionPct}%`
+                          )}
+                        </td>
                         <td className={cn('px-3 py-3 text-right font-medium', headOwnCalc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(headOwnCalc.commission)}</td>
                         <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(headOwnCalc.realPayment)}</td>
                         <td className={cn('px-3 py-3 text-right', headOwnCalc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(headOwnCalc.accumulatedOut)}</td>

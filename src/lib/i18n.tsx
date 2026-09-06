@@ -1946,6 +1946,10 @@ const translations: Record<Locale, TranslationDict> = {
     'comm.title': 'Net Deposit Commissions',
     'comm.subtitle': 'Commission calculator by HEAD group',
     'comm.selectHead': 'Select HEAD',
+    // Segundo selector de grupo del tab Equipos: sólo aparece si hay algún BDM
+    // con gente colgada (Master IB). Excluyente con el de HEAD.
+    'comm.selectBdm': 'Select BDM',
+    'comm.selectBdmHint': 'BDMs with their own line (Master IB). Selecting one clears the HEAD selector: only one group at a time.',
     'comm.selectPeriod': 'Select Period',
     'comm.allHeads': 'All HEADs',
     'comm.ndCurrent': 'ND Current Month',
@@ -4493,6 +4497,10 @@ const translations: Record<Locale, TranslationDict> = {
     'comm.title': 'Comisiones Net Deposit',
     'comm.subtitle': 'Calculadora de comisiones por grupo HEAD',
     'comm.selectHead': 'Seleccionar HEAD',
+    // Segundo selector de grupo del tab Equipos: sólo aparece si hay algún BDM
+    // con gente colgada (Master IB). Excluyente con el de HEAD.
+    'comm.selectBdm': 'Seleccionar BDM',
+    'comm.selectBdmHint': 'BDMs con línea propia (Master IB). Elegir uno limpia el selector de HEAD: un solo grupo a la vez.',
     'comm.selectPeriod': 'Seleccionar Período',
     'comm.allHeads': 'Todos los HEADs',
     'comm.ndCurrent': 'ND Mes Actual',

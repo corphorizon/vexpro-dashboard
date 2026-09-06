@@ -217,6 +217,44 @@ export function tieneEquipoPropio(
   );
 }
 
+/**
+ * LOS BDMs QUE LIDERAN UN GRUPO — el registro único de «BDM con gente colgada».
+ *
+ * ── Por qué existe, al lado de `tieneEquipoPropio` y no dentro ─────────────
+ * Son DOS preguntas distintas que se ven iguales y por eso van juntas acá:
+ *
+ *   · `tieneEquipoPropio` decide **plata**: si la persona pierde los tramos de
+ *     % por volumen y qué fila se guarda para ella bajo SU head. Ahí los hijos
+ *     MASTER IB NO cuentan (migración 129): Ana García sigue siendo una BDM y
+ *     conserva sus tramos, porque el master es un socio con red propia, no un
+ *     equipo de ventas a su cargo.
+ *   · `bdmsConEquipo` decide **pantalla**: a quién ofrece el selector
+ *     «Seleccionar BDM» del tab Equipos y a quién saca el tab Individual
+ *     (pedido del dueño, 2026-09-06: «si a un BDM como Ana ya se le asignó
+ *     alguien como millonariosteam… que YA NO salga en Individual, porque ahí
+ *     la quiero calcular como se calculan en equipo»). Acá los masters SÍ
+ *     cuentan: son justamente las líneas que ese grupo muestra.
+ *
+ * Unificarlas —hacer que un master convierta a Ana en sub-head— es exactamente
+ * lo que la 129 midió y evitó: le cambiaría los números sin que nadie lo pida.
+ *
+ * MEDIDO el 2026-09-06: en Vex Pro el único BDM con hijos es Ana García (un
+ * Master IB). Sin ningún master configurado esta función devuelve `[]`, el
+ * selector no aparece e Individual lista exactamente lo de siempre.
+ *
+ * Los DESPEDIDOS cuentan, igual que en `tieneEquipoPropio` (se les siguen
+ * cargando ND negativos post-despido); los inactivos sin fecha de baja no.
+ */
+export function bdmsConEquipo<T extends MiembroDeEquipo & { role: string }>(
+  profiles: readonly T[],
+): T[] {
+  return profiles.filter(
+    (p) =>
+      esBdm(p.role) &&
+      profiles.some((s) => s.head_id === p.id && (estaActivo(s) || estaDespedido(s))),
+  );
+}
+
 // ─── Predicados de estado ────────────────────────────────────────────────────
 
 /** Lo mínimo que hace falta para decidir si alguien está despedido. */

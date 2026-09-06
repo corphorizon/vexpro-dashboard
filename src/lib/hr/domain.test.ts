@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  bdmsConEquipo,
   HR_COMMERCIAL_ROLES,
   HR_LEADER_ROLES,
   ROLE_LABELS_HR,
@@ -126,6 +127,54 @@ describe('tieneEquipoPropio', () => {
 
   it('sin hijos, no hay equipo', () => {
     expect(tieneEquipoPropio('ana', [activo('ana', 'hugo')])).toBe(false);
+  });
+});
+
+describe('bdmsConEquipo', () => {
+  const perfil = (
+    id: string,
+    role: string,
+    head_id: string | null,
+    is_master_ib = false,
+    status = 'active',
+    termination_date: string | null = null,
+  ) => ({ id, role, head_id, is_master_ib, status, termination_date });
+
+  const ana = perfil('ana', 'bdm', 'luka');
+  const luka = perfil('luka', 'head', null);
+  const master = perfil('master', 'bdm', 'ana', true);
+
+  it('un BDM con un MASTER IB colgado SÍ lidera grupo (al revés que tieneEquipoPropio)', () => {
+    // Las dos preguntas conviven a propósito: la de la plata ignora al master,
+    // la de la pantalla lo cuenta — es la línea que ese grupo muestra.
+    expect(bdmsConEquipo([luka, ana, master]).map((p) => p.id)).toEqual(['ana']);
+    expect(tieneEquipoPropio('ana', [luka, ana, master])).toBe(false);
+  });
+
+  it('sin ningún master configurado la lista es vacía (la regresión que importa)', () => {
+    expect(bdmsConEquipo([luka, ana])).toEqual([]);
+  });
+
+  it('un head con equipo NO entra: tiene su propio selector', () => {
+    expect(bdmsConEquipo([luka, ana, master]).some((p) => p.id === 'luka')).toBe(false);
+    expect(bdmsConEquipo([perfil('sm', 'sales_manager', null), perfil('x', 'bdm', 'sm')])).toEqual([]);
+  });
+
+  it('BDM GLOBAL con gente colgada también cuenta como líder', () => {
+    const global = perfil('glob', 'bdm_global', 'luka');
+    expect(bdmsConEquipo([global, perfil('m2', 'bdm', 'glob', true)]).map((p) => p.id)).toEqual(['glob']);
+  });
+
+  it('un hijo DESPEDIDO cuenta; uno en licencia (inactive sin fecha) no', () => {
+    const despedido = perfil('m', 'bdm', 'ana', true, 'inactive', '2026-08-01');
+    const enPausa = perfil('m', 'bdm', 'ana', true, 'inactive', null);
+    expect(bdmsConEquipo([ana, despedido]).map((p) => p.id)).toEqual(['ana']);
+    expect(bdmsConEquipo([ana, enPausa])).toEqual([]);
+  });
+
+  it('un rol desconocido colgando de un BDM igual lo hace líder de grupo', () => {
+    // La pregunta es «¿tiene gente colgada?», no «¿de qué rol?».
+    expect(bdmsConEquipo([ana, perfil('c', 'closer', 'ana')]).map((p) => p.id)).toEqual(['ana']);
   });
 });
 

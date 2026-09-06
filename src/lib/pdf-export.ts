@@ -284,7 +284,12 @@ export async function generateCommissionPDF(data: PdfCommissionData) {
 
   // ─── HEAD Own Commission Table ───
   if (data.headOwnCalc) {
-    y = pdfSection(doc, 'Comision Propia del HEAD', y + 2);
+    // El ROL REAL y no "HEAD" fijo (dueño, 2026-09-06): desde que un BDM con
+    // Master IBs puede liderar un grupo, este informe también sale con un BDM
+    // arriba, y un papel que dijera "Comision Propia del HEAD" para Ana sería
+    // el mismo tipo de dato plausible y equivocado que persigue el §1.2. Para
+    // un head la etiqueta sigue diciendo HEAD, letra por letra.
+    y = pdfSection(doc, `Comision Propia del ${data.headRole}`, y + 2);
     autoTable(doc, {
       startY: y,
       head: [['ND Mes Actual', 'Acumulado', 'Division', '%', 'Comision', 'Pago Real', 'Acc -> Sig.']],
@@ -340,8 +345,10 @@ export async function generateCommissionPDF(data: PdfCommissionData) {
   y = pdfSection(doc, 'Resumen de Pagos', y);
 
   const summaryRows: string[][] = [
-    ['Comision propia del HEAD', money(data.teamSummary.headOwnPayment)],
-    ['Diferencial de BDMs', money(data.teamSummary.diffTotal)],
+    [`Comision propia del ${data.headRole}`, money(data.teamSummary.headOwnPayment)],
+    // «Diferencial del equipo» y no «de BDMs»: las líneas de un grupo pueden ser
+    // BDMs (grupo de un head) o Master IBs (grupo de un BDM).
+    ['Diferencial del equipo', money(data.teamSummary.diffTotal)],
     ['Total comisiones', money(data.teamSummary.totalPayment)],
     ['Salario base', money(data.autoSalary)],
   ];

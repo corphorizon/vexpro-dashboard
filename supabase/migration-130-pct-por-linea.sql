@@ -58,6 +58,50 @@
 -- «para que la analogía sea total» le cambiaría los números a Ana sin que
 -- nadie lo haya pedido, y eso es exactamente lo que la 129 midió y evitó.
 --
+-- ── ACTUALIZACIÓN (mismo día, 2026-09-06, más tarde) ───────────────────────
+-- Cuando se escribió lo de arriba, elegir a un BDM en el selector de grupos
+-- «ya se podía» pero era un camino a medio hacer: el guardado se bloqueaba
+-- solo. `teamNdValidation` exige que la suma del grupo sea igual al ND que el
+-- líder tiene cargado en el grupo de su padre —correcto para un sub-HEAD, que
+-- ahí lleva el total de su equipo— y para un BDM con masters esas bases NO
+-- suman: la RPC le CORTA la subred del master (129), el master entra al rollup
+-- como raíz con su propia fila, y el ND de Ana en el grupo de Luka es sólo su
+-- línea. «Ana + master = Ana» no da nunca, así que el grupo se veía pero no se
+-- podía guardar.
+--
+-- Desde hoy el grupo del BDM es el camino SOPORTADO y es donde se lo calcula
+-- (pedido del dueño: «que YA NO salga en Individual, porque ahí la quiero
+-- calcular como se calculan en equipo»). Lo que se hizo, todo en el código —
+-- esta migración NO se reescribe y no hay columnas nuevas:
+--
+--   · un segundo selector «Seleccionar BDM» que lista sólo a los BDMs con
+--     gente colgada (`bdmsConEquipo`, en hr/domain.ts al lado de
+--     `tieneEquipoPropio`), excluyente con el de HEAD por construcción: hay un
+--     solo estado de grupo activo y cada selector lo muestra o muestra vacío;
+--   · el % PROPIO del BDM-líder se resuelve COMO BDM —tramos, `nd_pct_fixed`,
+--     `pct_override`— y no como el % pactado de un head
+--     (`pctPropioDelLiderDeGrupo`, commission-calculator.ts). Su salario
+--     también sale de la tabla de BDM sobre SU ND, no de la de HEAD sobre el
+--     total del grupo;
+--   · el chequeo de ND total NO corre para un grupo de BDM (es la advertencia
+--     de arriba, resuelta);
+--   · la línea de un MASTER IB no se tieriza (`pctPropioDeLineaDeGrupo`). El
+--     párrafo de arriba daba por sentado que un master sin `net_deposit_pct`
+--     entra con 0 y deja el % COMPLETO del BDM: no era cierto en el código.
+--     `calculateBdmPctFromND(283.139, 0)` devuelve el 6% del tramo —los tramos
+--     son la escalera de un BDM EMPLEADO, y un master no está en ella—, el
+--     natural caía a 6 − 6 = 0 y Ana no cobraba NADA por la línea que el dueño
+--     dijo que cobra. Sin excepción, sin aviso: el §1.2 en estado puro. En un
+--     grupo de head no cambia nada;
+--   · el guardado escribe, bajo `head_id` = el BDM, su fila propia y la de
+--     cada master, igual que un sub-head con su grupo. La fila de Ana bajo
+--     LUKA no cambia: sigue siendo su línea con `pct_linea`/diferencial y se
+--     sigue guardando bajo `head_id` = Luka.
+--
+-- Sigue en pie lo de arriba: `tieneEquipoPropio` no mira masters y el % que
+-- Ana cobra es el mismo en las dos pantallas. Sin ningún master configurado el
+-- selector no aparece y no se mueve un centavo.
+--
 -- ── Precedencia, en UNA sola función ───────────────────────────────────────
 -- `resolveDiffPctDeLinea` (src/lib/commission-calculator.ts), al lado de
 -- `resolvePctDelMes` y por el mismo motivo (§1.1 / §2.1 «un mismo número sale

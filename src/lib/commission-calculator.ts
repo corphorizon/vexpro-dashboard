@@ -310,6 +310,86 @@ export function resolvePctDelMes(
 }
 
 /**
+ * EL % PROPIO DEL LÍDER DE UN GRUPO (tab Equipos).
+ *
+ * Un grupo lo puede liderar un head/sales_manager o —desde el pedido del dueño
+ * del 2026-09-06— un BDM con Master IBs colgados («que aparezca acá en equipo…
+ * porque ahí la quiero calcular como se calculan en equipo»). El grupo se
+ * calcula igual en los dos casos; lo único que cambia es de dónde sale el %
+ * PROPIO del líder, y por eso esa decisión vive acá y no inline en la pantalla:
+ * la toman la tabla del tab Equipos Y el guardado, y tienen que tomarla igual
+ * (§2.1: «un mismo número sale del mismo camino»).
+ *
+ *   · head / sales_manager → su `net_deposit_pct` pactado, tal cual. Sin
+ *     tramos: un líder cobra lo pactado, no lo que le dé el volumen del mes.
+ *     Es la rama de siempre y no cambia un centavo.
+ *   · BDM que lidera su grupo → se resuelve **como BDM**: tramos por volumen
+ *     (piso, nunca techo — regla 3 del §2.1), la excepción `nd_pct_fixed`
+ *     (migración 128) y el `pct_override` del mes (129). Liderar un grupo NO
+ *     le saca a Ana sus tramos: es la MISMA persona que en el grupo de Luka
+ *     cobra su % de BDM, y los dos caminos tienen que dar el mismo número —
+ *     si acá se leyera `net_deposit_pct` a secas, un mes de $283K le pagaría
+ *     al 4% en una pantalla y al 6% en la otra, sin lanzar ninguna excepción.
+ *   · `fixed_salary` apaga los tramos, exactamente como en `bdmCalcs`: es el
+ *     mismo criterio con el que se le calcula la línea bajo su propio head.
+ */
+export function pctPropioDelLiderDeGrupo(params: {
+  /** El líder del grupo es un BDM (no head ni sales_manager). */
+  liderEsBdm: boolean;
+  /** `net_deposit_pct` del perfil. */
+  profilePct: number;
+  /** ND propio del mes — sólo se usa para tierizar a un BDM. */
+  nd: number;
+  ndPctFixed?: boolean | null;
+  fixedSalary?: boolean | null;
+  /** `pct_override` del mes; `null` = automático (§1.3: 0 es una decisión). */
+  pctOverride?: number | null;
+}): number {
+  if (!params.liderEsBdm) return params.profilePct;
+  const auto = params.fixedSalary
+    ? params.profilePct
+    : calculateBdmPctFromND(params.nd, params.profilePct, params.ndPctFixed ?? false);
+  return resolvePctDelMes(params.pctOverride, auto);
+}
+
+/**
+ * EL % PROPIO DE UNA LÍNEA DEL GRUPO — el del de abajo, con el que se calcula
+ * el diferencial del de arriba.
+ *
+ * Es la precedencia que ya vivía inline en `bdmCalcs` y en el guardado del tab
+ * Equipos, extraída para que los dos la decidan igual (§2.1), MÁS una condición
+ * nueva. En orden:
+ *
+ *   · sub-HEAD o `fixed_salary` → su % pactado, sin tramos. Lo de siempre.
+ *   · línea de un grupo liderado por un BDM (un MASTER IB) → su % pactado
+ *     también, `?? 0`. **Los tramos de % por volumen son la escalera de un BDM
+ *     empleado y un master no está en ella.** Tierizarlo paga mal y en
+ *     silencio: el master no suele tener `net_deposit_pct`, así que
+ *     `calculateBdmPctFromND(283.139, 0)` le devolvía el 6% del tramo, el
+ *     diferencial natural de la BDM caía a 6 − 6 = 0 y ella cobraba NADA por
+ *     la línea que el dueño dijo explícitamente que cobra («ella sí gana un
+ *     porcentaje de millonarios team»). Con el % en 0, el natural es el %
+ *     COMPLETO del BDM, que es justo lo que la migración 130 documenta.
+ *   · BDM normal bajo un head → los tramos de siempre (piso, nunca techo).
+ *
+ * La condición nueva sólo se enciende dentro del grupo de un BDM: en un grupo
+ * de head no cambia un centavo.
+ */
+export function pctPropioDeLineaDeGrupo(params: {
+  /** El grupo lo lidera un BDM (la línea es la de un Master IB). */
+  grupoLideradoPorBdm: boolean;
+  /** El de abajo tiene equipo propio o es head/sales_manager. */
+  esSubHead: boolean;
+  profilePct: number;
+  nd: number;
+  ndPctFixed?: boolean | null;
+  fixedSalary?: boolean | null;
+}): number {
+  if (params.grupoLideradoPorBdm || params.esSubHead || params.fixedSalary) return params.profilePct;
+  return calculateBdmPctFromND(params.nd, params.profilePct, params.ndPctFixed ?? false);
+}
+
+/**
  * EL DIFERENCIAL NATURAL DE UNA LÍNEA — lo que el de arriba cobra por el de
  * abajo cuando nadie configuró nada.
  *

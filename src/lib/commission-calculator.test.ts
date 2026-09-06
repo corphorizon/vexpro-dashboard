@@ -5,6 +5,8 @@ import {
   calculateHeadSalaryFromND,
   calculateBdmPctFromND,
   resolvePctDelMes,
+  pctPropioDelLiderDeGrupo,
+  pctPropioDeLineaDeGrupo,
   diffNaturalDeLinea,
   resolveDiffPctDeLinea,
   calculateHeadDifferential,
@@ -324,6 +326,96 @@ describe('resolveDiffPctDeLinea (la pisada por línea)', () => {
     // y `pct_linea` no participa: son dos números distintos.
     expect(resolvePctDelMes(null, calculateBdmPctFromND(120_000, 7))).toBe(7);
     expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(7, 7, 0))).toBe(1);
+  });
+});
+
+describe('pctPropioDelLiderDeGrupo (el % propio del que lidera un grupo)', () => {
+  it('un HEAD cobra su % pactado: los tramos NO lo tocan', () => {
+    // La rama de siempre, byte por byte: un ND de $283K no lo sube al 6%.
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: false, profilePct: 4, nd: 283_139 }),
+    ).toBe(4);
+    // Y el pct_override tampoco entra por esta rama (el head no tiene celda).
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: false, profilePct: 4, nd: 0, pctOverride: 9 }),
+    ).toBe(4);
+  });
+
+  it('un BDM que lidera su grupo NO pierde sus tramos', () => {
+    // El mismo número que le da su línea en el grupo de su head: si acá se
+    // leyera `net_deposit_pct` a secas, la misma persona cobraría 4% en una
+    // pantalla y 6% en la otra, sin lanzar ninguna excepción.
+    expect(pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139 }))
+      .toBe(calculateBdmPctFromND(283_139, 4));
+    expect(pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139 })).toBe(6);
+    // Bajo el piso del primer tramo manda el % del perfil.
+    expect(pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 10_000 })).toBe(4);
+  });
+
+  it('`nd_pct_fixed` apaga los tramos también para el líder (migración 128)', () => {
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, ndPctFixed: true }),
+    ).toBe(4);
+  });
+
+  it('con salario fijo no se tieriza — mismo criterio que su línea bajo el head', () => {
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, fixedSalary: true }),
+    ).toBe(4);
+  });
+
+  it('el % manual del mes pisa el automático, y 0 no es vacío (§1.3)', () => {
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, pctOverride: 3 }),
+    ).toBe(3);
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, pctOverride: 0 }),
+    ).toBe(0);
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, pctOverride: null }),
+    ).toBe(6);
+  });
+
+  it('es el % de REFERENCIA del diferencial de cada línea del grupo', () => {
+    // Master sin % propio bajo un BDM al 6%: el natural es el % completo del
+    // BDM (lo que ya pasaba económicamente), y `pct_linea` lo pisa si está.
+    const bdmPct = pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139 });
+    expect(diffNaturalDeLinea(bdmPct, 0, 0)).toBe(6);
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(bdmPct, 0, 0))).toBe(1);
+  });
+});
+
+describe('pctPropioDeLineaDeGrupo (el % del de abajo, con el que se saca el diferencial)', () => {
+  it('en un grupo de HEAD es la precedencia de siempre, intacta', () => {
+    const base = { grupoLideradoPorBdm: false, esSubHead: false, profilePct: 4 };
+    // BDM normal: los tramos son piso, nunca techo.
+    expect(pctPropioDeLineaDeGrupo({ ...base, nd: 283_139 })).toBe(6);
+    expect(pctPropioDeLineaDeGrupo({ ...base, nd: 10_000 })).toBe(4);
+    expect(pctPropioDeLineaDeGrupo({ ...base, nd: 120_000, profilePct: 7 })).toBe(7);
+    // Sub-head y salario fijo: su % pactado, sin tramos.
+    expect(pctPropioDeLineaDeGrupo({ ...base, esSubHead: true, nd: 283_139 })).toBe(4);
+    expect(pctPropioDeLineaDeGrupo({ ...base, fixedSalary: true, nd: 283_139 })).toBe(4);
+    // Y `nd_pct_fixed` (migración 128).
+    expect(pctPropioDeLineaDeGrupo({ ...base, ndPctFixed: true, nd: 283_139 })).toBe(4);
+  });
+
+  it('la línea de un MASTER IB no se tieriza — si no, la BDM cobra 0 por ella', () => {
+    // Un master sin % configurado y un mes de $283K: con tramos daba 6%, el
+    // diferencial natural de una BDM al 6% caía a 0 y ella no cobraba nada por
+    // la línea que el dueño dijo que cobra. No lanza ninguna excepción: paga mal.
+    const master = { grupoLideradoPorBdm: true, esSubHead: false, profilePct: 0, nd: 283_139 };
+    expect(pctPropioDeLineaDeGrupo(master)).toBe(0);
+    expect(diffNaturalDeLinea(6, pctPropioDeLineaDeGrupo(master), 0)).toBe(6);
+    // El contraste, en la misma línea con el grupo de un head: 6% tierizado.
+    expect(pctPropioDeLineaDeGrupo({ ...master, grupoLideradoPorBdm: false })).toBe(6);
+    expect(diffNaturalDeLinea(6, pctPropioDeLineaDeGrupo({ ...master, grupoLideradoPorBdm: false }), 0)).toBe(0);
+  });
+
+  it('un master CON % configurado conserva ese %, y `pct_linea` lo pisa igual', () => {
+    const conPct = pctPropioDeLineaDeGrupo({ grupoLideradoPorBdm: true, esSubHead: false, profilePct: 2, nd: 283_139 });
+    expect(conPct).toBe(2);
+    expect(diffNaturalDeLinea(6, conPct, 0)).toBe(4);
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(6, conPct, 0))).toBe(1);
   });
 });
 
