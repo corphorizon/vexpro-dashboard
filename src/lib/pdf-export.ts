@@ -311,11 +311,14 @@ export async function generateCommissionPDF(data: PdfCommissionData) {
   y = pdfSection(doc, `Miembros del Equipo (${data.bdms.length})`, y);
   autoTable(doc, {
     startY: y,
-    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Acumulado', 'Division', 'Comision', 'Pago Real', 'Acc -> Sig.', 'Sueldo']],
+    // «% Pagado» y NO «% Diff» ni «% Propio» (dueño, 2026-09-06): el informe
+    // muestra SOLO el % por el que se le paga al head por esa línea — que con
+    // pct_linea cargado ya no es un diferencial derivado. El % propio del BDM
+    // es asunto de SU informe individual, no de este.
+    head: [['Nombre', 'Email', '% Pagado', 'ND Mes', 'Acumulado', 'Division', 'Comision', 'Pago Real', 'Acc -> Sig.', 'Sueldo']],
     body: data.bdms.map(b => [
       b.name,
       b.email,
-      `${b.pct}%`,
       `${b.diffPct}%`,
       money(b.nd),
       money(b.accIn),
