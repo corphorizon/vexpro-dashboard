@@ -577,12 +577,15 @@ export async function generatePnlPDF(data: PdfPnlData) {
   doc.text(`${data.role}  |  ${data.email}  |  HEAD: ${data.headName}`, 14, y);
   y += 8;
 
-  // KPIs
+  // KPIs. SIN tarjeta de «Pago Real» a propósito (dueño, 2026-09-11): esa
+  // cifra es ANTES de la deuda arrastrada, y con deuda el total del Resumen de
+  // Pago de abajo da otra cosa — dos números grandes distintos para "lo que
+  // cobro" confunden a quien recibe el informe. El único total visible es el
+  // del Resumen, que es el que ya descuenta la deuda.
   y = pdfCards(doc, y, [
     { label: 'PnL Mes Actual', value: money(data.pnl), tone: 'primary' },
     { label: 'Comision', value: money(data.commission), tone: 'accent' },
     { label: 'Com. por Lotes', value: money(data.lotCommissions), tone: 'ink' },
-    { label: 'Pago Real', value: money(data.realPayment), tone: data.realPayment >= 0 ? 'positive' : 'negative' },
   ], 14, 18);
 
   // Calculation detail
