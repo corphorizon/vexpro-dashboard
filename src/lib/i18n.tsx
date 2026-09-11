@@ -1965,6 +1965,7 @@ const translations: Record<Locale, TranslationDict> = {
     'comm.ndInputFrozenNotice': 'Closed period (or before August 2026): the saved values stand and the CRM is not used.',
     'comm.ndInputLoading': 'Loading the net deposit from the CRM…',
     'comm.ndInputError': 'The CRM net deposit could not be read: rows without a manual value show “no data”, not $0.',
+    'comm.ndInputRetry': 'Retry',
     // % manual del mes (migración 129) — solo grupo Net Deposit.
     'comm.pctOverrideAria': 'Commission % for this month',
     'comm.pctOverrideHint': 'Manual % for this month only: it overrides the volume tiers, the fixed % and the profile %. Empty = automatic. 0 is valid and means no commission this month.',
@@ -4516,6 +4517,7 @@ const translations: Record<Locale, TranslationDict> = {
     'comm.ndInputFrozenNotice': 'Período cerrado (o anterior a agosto 2026): mandan los valores guardados y no se usa el CRM.',
     'comm.ndInputLoading': 'Cargando el net deposit del CRM…',
     'comm.ndInputError': 'No se pudo leer el net del CRM: las filas sin manual muestran «sin datos», no $0.',
+    'comm.ndInputRetry': 'Reintentar',
     // % manual del mes (migración 129) — solo grupo Net Deposit.
     'comm.pctOverrideAria': '% de comisión de este mes',
     'comm.pctOverrideHint': '% manual sólo de este mes: pisa los tramos por volumen, el % fijo y el % del perfil. Vacío = automático. El 0 es válido y significa que este mes no cobra comisión.',

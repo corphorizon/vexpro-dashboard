@@ -517,6 +517,9 @@ export default function ComisionesPage() {
   } | null>(null);
   const [crmNetLoading, setCrmNetLoading] = useState(false);
   const [crmNetError, setCrmNetError] = useState(false);
+  /** Contador del botón «Reintentar» del banner: re-dispara el fetch (el
+      fallo nunca se cachea, así que re-correr el efecto vuelve a pedir). */
+  const [crmNetIntento, setCrmNetIntento] = useState(0);
   /** El PnL falló pero el net deposit no: son dos insumos y se avisan por separado. */
   const [crmPnlError, setCrmPnlError] = useState(false);
   // Caché por mes en un ref: cambiar de head o de pestaña no vuelve a pagar la
@@ -543,33 +546,55 @@ export default function ComisionesPage() {
     setCrmNetError(false);
     setCrmPnlError(false);
     (async () => {
-      try {
-        const res = await apiFetch(`/api/admin/commission-net-input?month=${autoMonth}`);
-        const json = await res.json();
-        if (!res.ok) throw new Error(json?.error || 'commission-net-input failed');
-        const index = new Map<string, { own: number; total: number }>(
-          (json.entries as { profileId: string; own: number; total: number }[]).map((e) => [
-            e.profileId,
-            { own: Number(e.own) || 0, total: Number(e.total) || 0 },
-          ]),
-        );
-        // El PnL puede faltar sin que falte el net: el endpoint devuelve
-        // `pnlEntries: null` + `pnlError` en vez de tumbar todo. Se cachea el
-        // null igual (es el resultado de este mes) y la pantalla lo dice aparte.
-        const pnl = indexarPnlDelCrm(json);
-        crmNetCache.current.set(clave, { index, pnl });
-        if (!cancelado) { setCrmNet({ month: autoMonth, index, pnl }); setCrmPnlError(pnl === null); }
-      } catch {
-        // El fallo NO se cachea como índice vacío: un árbol en cero se leería
-        // como "este mes no produjo nadie" y le metería $0 al motor. Queda
-        // `crmNet = null` → el resolver devuelve SIN DATOS y la pantalla lo dice.
-        if (!cancelado) { setCrmNet(null); setCrmNetError(true); }
-      } finally {
-        if (!cancelado) setCrmNetLoading(false);
+      // REINTENTOS (dueño, 2026-09-11: «a veces cuando cambio de mes sale
+      // esto y no carga la info»). Medido: la RPC del net tarda ~2 s sola pero
+      // ~16 s cuando compiten dos cambios de mes seguidos (la del mes viejo
+      // sigue corriendo en el servidor aunque el cliente la cancele) — con
+      // algo más de carga cruza su statement_timeout de 30 s y la primera
+      // llamada falla. Es transitorio por naturaleza: al segundo intento la
+      // competencia ya terminó y el caché de Postgres está caliente. Tres
+      // intentos con espera creciente; el banner queda solo si fallan todos.
+      const ESPERAS_MS = [0, 1_500, 4_000];
+      for (let intento = 0; intento < ESPERAS_MS.length; intento += 1) {
+        if (cancelado) return;
+        if (ESPERAS_MS[intento] > 0) await new Promise((r) => setTimeout(r, ESPERAS_MS[intento]));
+        try {
+          const res = await apiFetch(`/api/admin/commission-net-input?month=${autoMonth}`);
+          const json = await res.json();
+          if (!res.ok) throw new Error(json?.error || 'commission-net-input failed');
+          const index = new Map<string, { own: number; total: number }>(
+            (json.entries as { profileId: string; own: number; total: number }[]).map((e) => [
+              e.profileId,
+              { own: Number(e.own) || 0, total: Number(e.total) || 0 },
+            ]),
+          );
+          // El PnL puede faltar sin que falte el net: el endpoint devuelve
+          // `pnlEntries: null` + `pnlError` en vez de tumbar todo. Se cachea el
+          // null igual (es el resultado de este mes) y la pantalla lo dice aparte.
+          const pnl = indexarPnlDelCrm(json);
+          crmNetCache.current.set(clave, { index, pnl });
+          if (!cancelado) {
+            setCrmNet({ month: autoMonth, index, pnl });
+            setCrmPnlError(pnl === null);
+            setCrmNetLoading(false);
+          }
+          return;
+        } catch {
+          // Al último intento se rinde y avisa. El fallo NO se cachea como
+          // índice vacío: un árbol en cero se leería como "este mes no produjo
+          // nadie" y le metería $0 al motor. Queda `crmNet = null` → el
+          // resolver devuelve SIN DATOS y la pantalla lo dice, con botón de
+          // reintentar (que borra la clave del caché y re-dispara esto).
+          if (intento === ESPERAS_MS.length - 1 && !cancelado) {
+            setCrmNet(null);
+            setCrmNetError(true);
+            setCrmNetLoading(false);
+          }
+        }
       }
     })();
     return () => { cancelado = true; };
-  }, [company?.id, autoMonth, periodoUsaAutomatico]);
+  }, [company?.id, autoMonth, periodoUsaAutomatico, crmNetIntento]);
 
   /**
    * Los dos índices que consume el resolver para el grupo PnL. Sólo se usan si
@@ -2461,7 +2486,18 @@ export default function ComisionesPage() {
               : crmNetLoading
                 ? t('comm.ndInputLoading')
                 : crmNetError
-                  ? <span className="text-negative">{t('comm.ndInputError')}</span>
+                  ? (
+                    <span className="text-negative">
+                      {t('comm.ndInputError')}{' '}
+                      <button
+                        type="button"
+                        onClick={() => setCrmNetIntento((n) => n + 1)}
+                        className="underline font-medium hover:opacity-80"
+                      >
+                        {t('comm.ndInputRetry')}
+                      </button>
+                    </span>
+                  )
                   : t('comm.ndInputAutoNotice')}
           </p>
           {/* El PnL se avisa APARTE: puede fallar su RPC sin que falle la del
