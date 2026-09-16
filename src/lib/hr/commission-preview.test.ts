@@ -16,7 +16,7 @@ const resuelto = (value: number | null, source: ResolvedNetDeposit['source'] = '
 });
 
 describe('comisionIndividualDeBdm', () => {
-  const bdm = { id: 'b', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
+  const bdm = { role: 'bdm', id: 'b', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
 
   it('es exactamente la fórmula del motor, sin tocarla', () => {
     const c = comisionIndividualDeBdm({
@@ -98,7 +98,7 @@ describe('comisionIndividualDeBdm', () => {
 
   it('un perfil de PnL no pasa por acá: devuelve null, no 0', () => {
     const c = comisionIndividualDeBdm({
-      profile: { id: 'p', pnl_pct: 30 }, resolved: resuelto(9_999),
+      profile: { role: 'bdm', id: 'p', pnl_pct: 30 }, resolved: resuelto(9_999),
       accumulatedIn: 0, periodYear: 2026, periodMonth: 8,
     });
     expect(c).toBeNull();
@@ -106,7 +106,7 @@ describe('comisionIndividualDeBdm', () => {
 
   it('prorratea el salario fijo en el mes de alta', () => {
     const c = comisionIndividualDeBdm({
-      profile: { id: 'b', net_deposit_pct: 4, fixed_salary: true, salary: 2_000, hire_date: '2026-08-12' },
+      profile: { role: 'bdm', id: 'b', net_deposit_pct: 4, fixed_salary: true, salary: 2_000, hire_date: '2026-08-12' },
       resolved: resuelto(1_000), accumulatedIn: 0, periodYear: 2026, periodMonth: 8,
     })!;
     // 31 − 12 + 1 = 20 días de 31.
@@ -170,7 +170,7 @@ describe('oráculo julio 2026 — manual vs automático', () => {
 
   it('con el manual como override y con el automático puro, el motor da lo MISMO cuando el número es el mismo', () => {
     const crm = new Map([['eric', { own: 112_056.59, total: 112_056.59 }]]);
-    const perfil = { id: 'eric', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
+    const perfil = { role: 'bdm', id: 'eric', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
     const auto = comisionIndividualDeBdm({
       profile: perfil,
       resolved: resolveNetDepositInput({ profileId: 'eric', period: AGOSTO, scope: 'structure', crm, manual: null }),

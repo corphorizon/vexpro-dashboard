@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { calculateBdmPctFromND } from '@/lib/commission-calculator';
 import {
   bdmsConEquipo,
   HR_COMMERCIAL_ROLES,
@@ -15,6 +16,7 @@ import {
   puedeSerHeadDe,
   tieneEquipoPropio,
   sinSalario,
+  pctEsFijoDePerfil,
 } from './domain';
 
 // Los tests ITERAN sobre el registro (no repiten la lista): agregar un rol
@@ -199,5 +201,22 @@ describe('predicados de estado', () => {
     expect(sinSalario({})).toBe(true);
     expect(sinSalario({ salary: 1000 })).toBe(false);
     expect(sinSalario({ salary: '1500' })).toBe(false);
+  });
+});
+
+describe('pctEsFijoDePerfil — la regla «BDM GLOBAL no tieriza» (2026-09-16)', () => {
+  it('un bdm_global tiene el % fijo aunque no marque nd_pct_fixed', () => {
+    expect(pctEsFijoDePerfil({ role: 'bdm_global' })).toBe(true);
+    expect(pctEsFijoDePerfil({ role: 'bdm_global', nd_pct_fixed: false })).toBe(true);
+  });
+  it('un bdm común solo es fijo con nd_pct_fixed (regresión)', () => {
+    expect(pctEsFijoDePerfil({ role: 'bdm' })).toBe(false);
+    expect(pctEsFijoDePerfil({ role: 'bdm', nd_pct_fixed: true })).toBe(true);
+    expect(pctEsFijoDePerfil({ role: 'head', nd_pct_fixed: null })).toBe(false);
+  });
+  it('el caso que la destapó: Mariana 3% con ND $102K queda en 3%, no en el tramo del 5%', () => {
+    // Compuesto con el calculador real para fijar el efecto de punta a punta.
+    expect(calculateBdmPctFromND(102_423.92, 3, pctEsFijoDePerfil({ role: 'bdm_global' }))).toBe(3);
+    expect(calculateBdmPctFromND(102_423.92, 3, pctEsFijoDePerfil({ role: 'bdm' }))).toBe(5);
   });
 });

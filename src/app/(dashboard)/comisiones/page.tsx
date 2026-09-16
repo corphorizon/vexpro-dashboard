@@ -56,7 +56,7 @@ import {
   type NetDepositSource,
   type ResolvedNetDeposit,
 } from '@/lib/hr/net-deposit-input';
-import { bdmsConEquipo, tieneEquipoPropio } from '@/lib/hr/domain';
+import { bdmsConEquipo, pctEsFijoDePerfil, tieneEquipoPropio } from '@/lib/hr/domain';
 import {
   Calculator,
   Save,
@@ -1008,7 +1008,7 @@ export default function ComisionesPage() {
         liderEsBdm,
         profilePct: headProfile.net_deposit_pct ?? 0,
         nd: ndInputs.get(headProfile.id) ?? 0,
-        ndPctFixed: headProfile.nd_pct_fixed,
+        ndPctFixed: pctEsFijoDePerfil(headProfile),
         fixedSalary: headProfile.fixed_salary,
         // El override entra abajo, para poder mostrar el automático como
         // placeholder de la celda editable (igual que en las filas de BDM).
@@ -1189,7 +1189,7 @@ export default function ComisionesPage() {
         esSubHead: isSubHead,
         profilePct: profile.net_deposit_pct ?? 0,
         nd,
-        ndPctFixed: profile.nd_pct_fixed,
+        ndPctFixed: pctEsFijoDePerfil(profile),
         fixedSalary: profile.fixed_salary,
       });
       // El % manual del mes pisa lo anterior — y con él se recalcula el
@@ -1984,7 +1984,7 @@ export default function ComisionesPage() {
                 liderEsBdm,
                 profilePct: profile.net_deposit_pct ?? 0,
                 nd,
-                ndPctFixed: profile.nd_pct_fixed,
+                ndPctFixed: pctEsFijoDePerfil(profile),
                 fixedSalary: profile.fixed_salary,
                 pctOverride: null,
               })
@@ -1994,7 +1994,7 @@ export default function ComisionesPage() {
                 esSubHead: isSubHead,
                 profilePct: profile.net_deposit_pct ?? 0,
                 nd,
-                ndPctFixed: profile.nd_pct_fixed,
+                ndPctFixed: pctEsFijoDePerfil(profile),
                 fixedSalary: profile.fixed_salary,
               });
           // Lo GUARDADO tiene que salir del mismo camino que lo MOSTRADO (§2.1):

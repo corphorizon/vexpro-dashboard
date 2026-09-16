@@ -34,10 +34,14 @@ import {
   resolvePctDelMes,
 } from '@/lib/commission-calculator';
 import { netParaElMotor, type NetDepositSource, type ResolvedNetDeposit } from './net-deposit-input';
+import { pctEsFijoDePerfil } from './domain';
 
 /** Lo mínimo del perfil que hace falta para componer la comisión. */
 export type PerfilParaComision = {
   id: string;
+  /** Obligatorio a propósito: la regla «BDM GLOBAL no tieriza» (2026-09-16)
+      depende del rol, y un rol opcional que se olvida la apagaría en silencio. */
+  role: string;
   net_deposit_pct?: number | null;
   /** true = % fijo: los tramos por volumen no aplican (migración 128). */
   nd_pct_fixed?: boolean | null;
@@ -96,7 +100,9 @@ export function comisionIndividualDeBdm(params: {
   // volumen es la contrapartida de no tener piso. Mismo criterio que indCalcs.
   const commissionPctAuto = profile.fixed_salary
     ? (profile.net_deposit_pct ?? 0)
-    : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+    // `pctEsFijoDePerfil` y no el flag pelado: la regla «BDM GLOBAL no
+    // tieriza» (2026-09-16) vive en UN registro (hr/domain.ts), no acá.
+    : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, pctEsFijoDePerfil(profile));
   // El % manual del mes pisa TODO lo de arriba, incluido el piso por volumen.
   const commissionPct = resolvePctDelMes(pctOverride, commissionPctAuto);
 

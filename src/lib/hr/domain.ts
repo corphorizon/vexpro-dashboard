@@ -139,6 +139,25 @@ export function esBdmGlobal(role: string): boolean {
 }
 
 /**
+ * ¿El % de net deposit de este perfil es FIJO (los tramos por volumen no lo
+ * mueven)?
+ *
+ * Dos causas, UN registro (§1.1):
+ *  · `nd_pct_fixed` — la excepción por perfil (migración 128).
+ *  · `bdm_global` — regla de rol del dueño (2026-09-16): «todo BDM GLOBAL no
+ *    se mueve de porcentajes según la tabla; lo máximo que puede ganar es lo
+ *    que tenga configurado». El caso que la destapó: Mariana Novelo (3%
+ *    pactado) tierizaba al 5% con $102K de ND y el diferencial de Luka sobre
+ *    su línea (pct_sobre_bdm_global 5 − 5) caía a 0 → cobraba el extra 0,5%
+ *    en vez del 2% pactado.
+ *
+ * Solo habla del % de comisión: los tramos de SALARIO no pasan por acá.
+ */
+export function pctEsFijoDePerfil(p: { role: string; nd_pct_fixed?: boolean | null }): boolean {
+  return esBdmGlobal(p.role) || !!p.nd_pct_fixed;
+}
+
+/**
  * ¿Puede `headRole` ser el `head_id` de alguien con `memberRole`?
  *
  * Hoy la regla es simple —lidera quien es líder— y NO se restringe por nivel a
