@@ -403,12 +403,31 @@ export interface CommissionEntryRow {
   pct_override?: number | null;
 }
 
+export interface UpsertCommissionOptions {
+  /**
+   * Pedirle al servidor que, tras el upsert, BORRE las filas de ese
+   * (perfil, período) que hayan quedado en buckets ajenos — la auto-limpieza
+   * del grupo PnL (2026-09-16). Solo la mandan las escrituras de PnL de
+   * /comisiones. El route decide qué se borra y valida que el perfil sea de
+   * PnL: el cliente no puede borrar filas arbitrarias. Ver la cabecera de
+   * src/app/api/admin/commission-entries/route.ts y de hr/pnl-buckets.ts.
+   */
+  pnlBucketCleanup?: boolean;
+}
+
+/** Lo que el servidor informa de la auto-limpieza (0 también se informa). */
+export interface PnlBucketCleanupResult {
+  deleted: number;
+  skipped: number;
+}
+
 export async function upsertCommissionEntries(
   companyId: string,
   periodId: string,
   headId: string,
   entries: CommissionEntryRow[],
-): Promise<void> {
+  opts?: UpsertCommissionOptions,
+): Promise<PnlBucketCleanupResult | null> {
   const res = await fetch(withActiveCompany('/api/admin/commission-entries'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -417,10 +436,12 @@ export async function upsertCommissionEntries(
       period_id: periodId,
       head_id: headId,
       entries,
+      ...(opts?.pnlBucketCleanup ? { pnl_bucket_cleanup: true } : {}),
     }),
   });
   const data = await res.json();
   if (!res.ok || data.error) throw new Error(data.error || 'Error guardando comisiones');
+  return (data.pnl_bucket_cleanup as PnlBucketCleanupResult | undefined) ?? null;
 }
 
 // ─── Commercial Profiles CRUD ───

@@ -57,6 +57,10 @@ import {
   type ResolvedNetDeposit,
 } from '@/lib/hr/net-deposit-input';
 import { bdmsConEquipo, pctEsFijoDePerfil, tieneEquipoPropio } from '@/lib/hr/domain';
+// El bucket de los resultados del grupo PnL — la doctrina, la excepción del
+// Master IB y el fallback de lectura viven enteros en hr/pnl-buckets.ts.
+// TODA escritura y TODA lectura de PnL de esta página pasa por acá.
+import { bucketDePnl, filaPnlVigente } from '@/lib/hr/pnl-buckets';
 import {
   Calculator,
   Save,
@@ -97,6 +101,54 @@ function appearsInCommissions(p: { status: string; termination_date?: string | n
   if (p.status === 'active') return true;
   if (p.status === 'inactive' && p.termination_date) return true;
   return false;
+}
+
+/**
+ * EL TOTAL GUARDADO de una persona en un mes — el número del tab Historial.
+ *
+ * ── Por qué es una función y no dos copias ────────────────────────────────
+ * Estaba escrito DOS veces, idéntico: en la tabla del Historial y en el CSV que
+ * la exporta. Es el §1.1 en miniatura, y ya divergía en la práctica porque cada
+ * copia se tocó por separado. Ahora hay una sola.
+ *
+ * ── PnL: el bucket propio, siempre ────────────────────────────────────────
+ * Medido el 2026-09-16: Hector Gamboa mostraba $319,77 en el tab del mes y
+ * $740,61 acá, para el mismo agosto. Las dos pantallas leían la misma tabla y
+ * pescaban filas distintas de las TRES que tenía. Para un perfil de PnL la fila
+ * es la de su bucket (hr/pnl-buckets.ts) y nunca más «la de mayor |total|», que
+ * era el desempate viejo — un desempate que, por construcción, elige el número
+ * más grande de los que haya.
+ *
+ * Para NET DEPOSIT no cambia nada: su fila sigue viviendo en el grupo de su
+ * head y el orden de búsqueda es el de siempre.
+ *
+ * Devuelve `null` cuando no hay ninguna fila para leer (§1.3: no lo sabemos, no
+ * es cero). También es `null` el caso del Master IB cuyo único registro del mes
+ * es su línea de net deposit: esa fila es plata del grupo de su head y no se
+ * lee como resultado de PnL.
+ */
+function totalGuardadoDelMes(
+  records: readonly CommercialMonthlyResult[],
+  profile: {
+    id: string;
+    head_id?: string | null;
+    is_master_ib?: boolean | null;
+    pnl_pct?: number | null;
+  },
+): number | null {
+  if (records.length === 0) return null;
+  if (profile.pnl_pct != null) {
+    return filaPnlVigente(records, profile)?.total_earned ?? null;
+  }
+  const ownGroupRecord = records.find((r) => r.head_id === profile.id);
+  if (ownGroupRecord) return ownGroupRecord.total_earned;
+  if (profile.head_id) {
+    const headRecord = records.find((r) => r.head_id === profile.head_id);
+    if (headRecord) return headRecord.total_earned;
+  }
+  return records.reduce((best, r) =>
+    Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best,
+  ).total_earned;
 }
 
 const ROLE_BADGE: Record<string, string> = {
@@ -648,10 +700,19 @@ export default function ComisionesPage() {
 
     for (const p of commercialProfiles) {
       // Buscar el registro que corresponde al grupo actual (head_id = selectedHeadId)
-      // Así no se confunde con registros del mismo usuario en otros grupos
-      const ex = tab === 'individual'
-        ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null)
-        : results.find((r) => r.profile_id === p.id && r.head_id === selectedHeadId);
+      // Así no se confunde con registros del mismo usuario en otros grupos.
+      //
+      // Un perfil de PnL NO tiene "grupo actual": su resultado vive en su bucket
+      // propio (hr/pnl-buckets.ts). Antes se tomaba «la primera fila con ND
+      // cargado», que con los duplicados de 2026-09-16 era una fila al azar
+      // entre buckets ajenos — el campo del mes mostraba un PnL y el Historial
+      // otro. `filaPnlVigente` prefiere la propia y cae a una ajena sólo
+      // mientras queden datos sin migrar.
+      const ex = p.pnl_pct != null
+        ? filaPnlVigente(results, p)
+        : tab === 'individual'
+          ? results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null)
+          : results.find((r) => r.profile_id === p.id && r.head_id === selectedHeadId);
       // El HEAD del grupo seleccionado se mira a sí mismo: su ND es su PRODUCCIÓN
       // PROPIA (la «línea de ajuste»), no el total de su estructura. Cuando tiene
       // padre, ese número vive en `net_deposit_accumulated` de su fila en su
@@ -709,7 +770,10 @@ export default function ComisionesPage() {
     const results = monthlyResults.filter((r) => r.period_id === selectedPeriod.id);
     for (const p of commercialProfiles) {
       if (p.pnl_pct == null) continue;
-      const ex = results.find((r) => r.profile_id === p.id && r.net_deposit_current !== null);
+      // Misma regla que `ndResolved`: el bucket PROPIO manda. Los lotes se
+      // guardan en la MISMA fila que el PnL, así que leerlos de otra fila
+      // mezclaba los lotes de un guardado con el PnL de otro.
+      const ex = filaPnlVigente(results, p);
       out.set(
         p.id,
         resolveNetDepositInput({
@@ -1073,9 +1137,16 @@ export default function ComisionesPage() {
 
   const getPrevDebtAll = useCallback((profileId: string): number => {
     const profile = commercialProfiles.find((p) => p.id === profileId);
-    const prev = previousResultsAll.find(
-      (r) => r.profile_id === profileId && r.head_id === (profile?.head_id ?? profileId)
-    ) ?? previousResultsAll.find((r) => r.profile_id === profileId);
+    // Para un perfil de PnL la deuda arrastrada sale de SU bucket (y nunca de la
+    // línea ND de un Master IB, que es plata de otro grupo). Con los duplicados
+    // de 2026-09-16 este `?? cualquiera` traía el `bonus` de una fila vieja: la
+    // deuda arrastrada (§2.1 regla 6) se calculaba contra un mes que ya nadie
+    // miraba, y eso paga de más o de menos sin lanzar ningún error.
+    const prev = profile && profile.pnl_pct != null
+      ? filaPnlVigente(previousResultsAll, profile)
+      : previousResultsAll.find(
+        (r) => r.profile_id === profileId && r.head_id === (profile?.head_id ?? profileId)
+      ) ?? previousResultsAll.find((r) => r.profile_id === profileId);
     return prev?.bonus ?? 0;
   }, [previousResultsAll, commercialProfiles]);
 
@@ -1400,7 +1471,11 @@ export default function ComisionesPage() {
   const pnlCalcs = useMemo((): CommissionCalcResult[] => {
     return pnlBdms.map((profile) => {
       const nd = ndInputs.get(profile.id) ?? 0; // "PnL" value input
-      const accIn = getAccumulatedIn(previousResultsAll, profile.id, profile.head_id ?? undefined);
+      // El acumulado del PnL sale de SU bucket, no del grupo de su head: el PnL
+      // no cuelga de ninguna estructura (hr/pnl-buckets.ts). `getAccumulatedIn`
+      // con el head y su fallback a «cualquier fila» es lo que hacía que la
+      // cadena del acumulado (§2.1 regla 2) se enganchara con una fila vieja.
+      const accIn = filaPnlVigente(previousResultsAll, profile)?.accumulated_out ?? 0;
       const pct = profile.pnl_pct ?? 0; // always fixed, no dynamic tiers
       const calc = calculateCommission(nd, accIn, pct);
       // No salary tiers for PnL — only fixed salary if configured
@@ -1458,7 +1533,12 @@ export default function ComisionesPage() {
       const profile = commercialProfiles.find((p) => p.id === profileId);
       if (!profile) return;
 
-      const headId = profile.head_id ?? profileId;
+      // El bucket donde se escribe. Para NET DEPOSIT sigue siendo el head (la
+      // fila del BDM vive dentro del grupo de su head, que cobra diferencial
+      // sobre ella). Para PnL es SIEMPRE el propio: el PnL no pertenece a
+      // ninguna estructura — ver la doctrina completa en hr/pnl-buckets.ts.
+      const esPnl = mode === 'pnl' || mode === 'pnlSpecial';
+      const headId = esPnl ? bucketDePnl(profile) : (profile.head_id ?? profileId);
 
       let entry: CommissionEntryRow;
 
@@ -1535,7 +1615,12 @@ export default function ComisionesPage() {
         };
       }
 
-      await upsertCommissionEntries(company.id, selectedPeriod.id, headId, [entry]);
+      // El cleanup viaja SOLO en los modos de PnL: borra del servidor las filas
+      // de este (perfil, mes) que hayan quedado en buckets ajenos, para que el
+      // desastre no se regenere desde una pantalla vieja. Ver el route.
+      await upsertCommissionEntries(company.id, selectedPeriod.id, headId, [entry], {
+        pnlBucketCleanup: esPnl,
+      });
 
       // Actualizar monthlyResults localmente
       patchMonthlyResults([{
@@ -1622,8 +1707,29 @@ export default function ComisionesPage() {
 
     setRecalcInProgress(true);
     try {
-      const specialProfileIds = new Set(pnlSpecialBdms.map((p) => p.id));
-      const affected = monthlyResults.filter((r) => specialProfileIds.has(r.profile_id));
+      // UNA fila por (perfil, período): la vigente de su bucket (hr/pnl-buckets.ts).
+      //
+      // Antes se tomaban TODAS las filas del perfil, y eso traía dos problemas
+      // que medimos el 2026-09-16. (1) Con los duplicados, el mismo mes entraba
+      // dos y tres veces al mismo lote y ganaba la última del array — al azar.
+      // (2) La fila de Jose Emanuel bajo Ana García entraba como si fuera PnL, y
+      // no lo es: es su línea de net deposit dentro del grupo de Ana (agosto:
+      // ND 284.557,45, TOTAL −110.151,25). Recalcularla con la fórmula de PnL
+      // la habría reescrito con `pnl = net_deposit_current` — plata del grupo de
+      // Ana destruida, sin ningún error.
+      const affected: CommercialMonthlyResult[] = [];
+      for (const profile of pnlSpecialBdms) {
+        const porPeriodo = new Map<string, CommercialMonthlyResult[]>();
+        for (const r of monthlyResults) {
+          if (r.profile_id !== profile.id) continue;
+          const arr = porPeriodo.get(r.period_id);
+          if (arr) arr.push(r); else porPeriodo.set(r.period_id, [r]);
+        }
+        for (const filas of porPeriodo.values()) {
+          const vigente = filaPnlVigente(filas, profile);
+          if (vigente) affected.push(vigente);
+        }
+      }
 
       // Agrupar por (head_id, period_id) porque upsertCommissionEntries
       // trabaja por grupo — un solo call por (period, head).
@@ -1643,7 +1749,10 @@ export default function ComisionesPage() {
         const rawTE = calc.realPayment + calc.salary;
         const { finalTotalEarned, debtOut } = applyTotalEarnedDebt(prevDebt, rawTE);
 
-        const headId = r.head_id ?? profile.head_id ?? profile.id;
+        // Bucket PROPIO, nunca `r.head_id` (hr/pnl-buckets.ts): heredar el
+        // bucket de la fila vieja es exactamente lo que multiplicó las filas.
+        // Las viejas que queden se borran solas con el cleanup del route.
+        const headId = bucketDePnl(profile);
         const key = `${headId}::${r.period_id}`;
         if (!grouped.has(key)) grouped.set(key, { headId, periodId: r.period_id, entries: [] });
         grouped.get(key)!.entries.push({
@@ -1672,7 +1781,9 @@ export default function ComisionesPage() {
       // Secuencial — simpler + safer que Promise.all si un tenant tiene
       // muchos meses y la DB lockea a nivel de fila.
       for (const { headId, periodId, entries } of grouped.values()) {
-        await upsertCommissionEntries(company.id, periodId, headId, entries);
+        await upsertCommissionEntries(company.id, periodId, headId, entries, {
+          pnlBucketCleanup: true,
+        });
       }
 
       await refresh();
@@ -1763,13 +1874,16 @@ export default function ComisionesPage() {
     const etiquetaUltimo = meses[meses.length - 1].label;
     if (!confirm(t('comm.recalcPnlCrmConfirm', { last: etiquetaUltimo }))) return;
 
-    // La fila de un perfil en un mes, con el mismo desempate por head que usan
-    // getPrevDebtAll y getAccumulatedIn (registro del grupo de su head; si no,
-    // cualquiera). Sin esto, un perfil con filas en dos grupos leería la que no es.
-    const filaDe = (profileId: string, headIdPropio: string | null | undefined, periodId: string) => {
-      const rows = monthlyResults.filter((r) => r.profile_id === profileId && r.period_id === periodId);
-      return rows.find((r) => r.head_id === (headIdPropio ?? profileId)) ?? rows[0] ?? null;
-    };
+    // La fila de PnL de un perfil en un mes: SU bucket (hr/pnl-buckets.ts), con
+    // el fallback documentado mientras queden datos sin migrar.
+    //
+    // Antes desempataba por el head del perfil («la fila del grupo de su head;
+    // si no, cualquiera»). Eso es lo correcto para NET DEPOSIT y lo exactamente
+    // equivocado para PnL: era la mano que iba a buscar la fila vieja bajo Hugo
+    // o Luka, le copiaba el `head_id` al guardar (`fila?.head_id ?? …`) y de paso
+    // encadenaba la deuda y el acumulado con la fila que nadie estaba mirando.
+    const filaDe = (profile: (typeof perfiles)[number]['p'], periodId: string) =>
+      filaPnlVigente(monthlyResults.filter((r) => r.period_id === periodId), profile);
 
     setRecalcPnlCrmInProgress(true);
     let ultimoOk: string | null = null;
@@ -1785,7 +1899,7 @@ export default function ComisionesPage() {
       );
       const estados = new Map<string, PnlChainState>();
       for (const { p } of perfiles) {
-        const f = previo ? filaDe(p.id, p.head_id, previo.id) : null;
+        const f = previo ? filaDe(p, previo.id) : null;
         estados.set(p.id, { prevDebt: f?.bonus ?? 0, accumulatedIn: f?.accumulated_out ?? 0 });
       }
 
@@ -1817,7 +1931,7 @@ export default function ComisionesPage() {
         const grouped = new Map<string, { headId: string; entries: CommissionEntryRow[] }>();
         for (const { p, mode } of perfiles) {
           const dato = entradas.get(p.id);
-          const fila = filaDe(p.id, p.head_id, mes.periodId!);
+          const fila = filaDe(p, mes.periodId!);
           if (!dato || dato.sinDatoCrm || dato.pnl === null) {
             // Sin dato del CRM el mes NO se reescribe. Y la cadena se re-ancla
             // en la fila que quedó guardada para ese mes (si existe): el mes
@@ -1841,7 +1955,10 @@ export default function ComisionesPage() {
           estados.set(p.id, paso.next);
           if (fila) actualizadas += 1; else creadas += 1;
 
-          const headId = fila?.head_id ?? p.head_id ?? p.id;
+          // Bucket PROPIO. `fila?.head_id ?? p.head_id ?? p.id` era el corazón
+          // del bug: cada recálculo heredaba el bucket de la fila vieja que
+          // hubiera encontrado, así que el desastre se reimprimía solo.
+          const headId = bucketDePnl(p);
           if (!grouped.has(headId)) grouped.set(headId, { headId, entries: [] });
           grouped.get(headId)!.entries.push({
             profile_id: p.id,
@@ -1865,7 +1982,9 @@ export default function ComisionesPage() {
         //    meses, y ese lo fija el for de arriba.
         try {
           for (const g of grouped.values()) {
-            await upsertCommissionEntries(company.id, mes.periodId!, g.headId, g.entries);
+            await upsertCommissionEntries(company.id, mes.periodId!, g.headId, g.entries, {
+              pnlBucketCleanup: true,
+            });
           }
         } catch (err) {
           const razon = err instanceof Error ? err.message : t('comm.recalcPnlCrmFetchFailed');
@@ -2110,7 +2229,12 @@ export default function ComisionesPage() {
           const adjustedReal = c.realPayment - lotComm;
           return {
             profile_id: c.profileId,
-            head_id: profile?.head_id ?? selectedHeadId,
+            // Bucket PROPIO (hr/pnl-buckets.ts). Este «Guardar todo» del tab
+            // Individual escribía `profile.head_id ?? selectedHeadId`: es una de
+            // las tres manos que repartieron las filas de PnL por los buckets de
+            // Hugo, Luka, Ana y Nicolas — y la peor, porque el `selectedHeadId`
+            // de fallback depende de qué grupo estaba elegido en el otro tab.
+            head_id: profile ? bucketDePnl(profile) : c.profileId,
             net_deposit_current: c.netDepositCurrent,
             net_deposit_accumulated: c.accumulatedIn,
             division: c.division,
@@ -2138,7 +2262,12 @@ export default function ComisionesPage() {
         setTimeout(() => setToast(null), 4000);
         return;
       }
-      await upsertCommissionEntries(company.id, selectedPeriod.id, selectedHeadId, entries);
+      // El cleanup se pide solo cuando el lote lleva filas de PnL (tab
+      // Individual). El route igual valida perfil por perfil: una fila de ND
+      // dentro del mismo lote nunca dispara un borrado.
+      await upsertCommissionEntries(company.id, selectedPeriod.id, selectedHeadId, entries, {
+        pnlBucketCleanup: tab !== 'teams',
+      });
 
       // Actualizar monthlyResults localmente con los datos guardados
       const patched: CommercialMonthlyResult[] = entries.map((e) => ({
@@ -2215,21 +2344,7 @@ export default function ComisionesPage() {
           const records = monthlyResults.filter(
             (mr) => mr.profile_id === profile.id && mr.period_id === p.id
           );
-          if (records.length === 0) return 0;
-          let val: number;
-          const ownGroupRecord = records.find((r) => r.head_id === profile.id);
-          if (ownGroupRecord) {
-            val = ownGroupRecord.total_earned;
-          } else if (profile.head_id) {
-            const headRecord = records.find((r) => r.head_id === profile.head_id);
-            val = headRecord ? headRecord.total_earned : records.reduce((best, r) =>
-              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
-            ).total_earned;
-          } else {
-            val = records.reduce((best, r) =>
-              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
-            ).total_earned;
-          }
+          const val = totalGuardadoDelMes(records, profile) ?? 0;
           // Negativos se muestran como 0 en historial
           return val < 0 ? 0 : val;
         });
@@ -2283,10 +2398,16 @@ export default function ComisionesPage() {
         // Find the best record for this profile
         const records = periodData.filter((r) => r.profile_id === profile.id);
         if (records.length === 0) continue;
-        // For HEADs: use own-group record; for BDMs: use head's group record
-        const rec = records.find((r) => r.head_id === profile.id)
-          ?? records.find((r) => r.head_id === profile.head_id)
-          ?? records[0];
+        // For HEADs: use own-group record; for BDMs: use head's group record.
+        // Para PnL: su bucket propio (hr/pnl-buckets.ts) — el `?? records[0]`
+        // suelto era otra puerta por la que el CSV podía sacar un número
+        // distinto del que la pantalla mostraba.
+        const rec = profile.pnl_pct != null
+          ? filaPnlVigente(records, profile)
+          : records.find((r) => r.head_id === profile.id)
+            ?? records.find((r) => r.head_id === profile.head_id)
+            ?? records[0];
+        if (!rec) continue;
         rows.push([
           profile.name,
           ROLE_LABEL[profile.role] || profile.role,
@@ -3355,23 +3476,11 @@ export default function ComisionesPage() {
           const records = monthlyResults.filter(
             (mr) => mr.profile_id === profileId && mr.period_id === periodId
           );
-          if (records.length === 0) return null;
-          let val: number;
-          // Para HEADs/SM: buscar registro donde head_id = su propio ID (su grupo)
-          const ownGroupRecord = records.find(r => r.head_id === profileId);
-          if (ownGroupRecord) {
-            val = ownGroupRecord.total_earned;
-          } else if (profile?.head_id) {
-            // Para BDMs: buscar registro donde head_id = su HEAD real
-            const headRecord = records.find(r => r.head_id === profile.head_id);
-            val = headRecord ? headRecord.total_earned : records.reduce((best, r) =>
-              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
-            ).total_earned;
-          } else {
-            val = records.reduce((best, r) =>
-              Math.abs(r.total_earned) > Math.abs(best.total_earned) ? r : best
-            ).total_earned;
-          }
+          if (!profile) return null;
+          // HEADs/SM: su propio grupo. BDMs: el grupo de su head. PnL: SU
+          // bucket, siempre. Una sola función, compartida con el CSV.
+          const val = totalGuardadoDelMes(records, profile);
+          if (val === null) return null;
           // Negativos se muestran como 0 en historial (solo visualización)
           return val < 0 ? 0 : val;
         };
