@@ -66,6 +66,19 @@ export default function EgresosPage() {
       result.sort((a, b) => b.amount - a.amount);
     } else if (sortState === 'asc') {
       result.sort((a, b) => a.amount - b.amount);
+    } else {
+      // ORDEN POR DEFECTO: fecha DESCENDENTE (dueño, 2026-09-25: la tabla
+      // salía en el orden de carga y se veía desordenada). Los egresos SIN
+      // fecha (null = «cuenta para el mes del período», jamás se les inventa
+      // una — ver Expense.expense_date) van al FINAL, conservando entre sí su
+      // orden de carga (el sort de JS es estable). El CSV exporta este mismo
+      // orden porque sale de filteredExpenses.
+      result.sort((a, b) => {
+        if (!a.expense_date && !b.expense_date) return 0;
+        if (!a.expense_date) return 1;
+        if (!b.expense_date) return -1;
+        return b.expense_date.localeCompare(a.expense_date);
+      });
     }
 
     return result;
