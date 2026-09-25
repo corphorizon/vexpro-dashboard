@@ -51,6 +51,7 @@ import { apiFetch } from '@/lib/api-fetch';
 import { comisionIndividualDeBdm } from '@/lib/hr/commission-preview';
 import {
   antesDelCorteHrNet,
+  esCeroMedido,
   netParaElMotor,
   resolveNetDepositInput,
   type NetDepositSource,
@@ -925,6 +926,39 @@ export default function ComisionesPage() {
     return masterNdResolved.get(id)?.source ?? 'none';
   }, [masterNdRaw, masterNdResolved]);
 
+  // ═══════════════════════════════════════════════════════════
+  // CERO MEDIDO (dueño, 2026-09-25 — caso Yudy Otero, agosto)
+  //
+  // Un ND = 0 que vino del CRM y que nadie pisó tecleando es un cero MEDIDO:
+  // la red no depositó. Ese mes se paga sobre el acumulado y el acumulado se
+  // consume (`calculateCommission(…, ceroMedido)`, historia en su cabecera).
+  // Cualquier otro 0 —tecleado, congelado, sin datos— sigue siendo AMBIGUO y
+  // conserva la protección de la auditoría 2026-08-06.
+  //
+  // `ndCeroMedidoDeFila` elige el carril con el MISMO criterio con el que se
+  // elige el ND (`is_master_ib ? getMasterNd : ndInputs`), y la usan la tabla
+  // del tab Equipos, el cálculo propio del líder y el guardado del grupo: un
+  // mismo número, un mismo camino (§2.1). La decisión en sí es `esCeroMedido`
+  // (hr/net-deposit-input.ts); acá sólo se le pasa si hubo tecleo.
+  //
+  // Un perfil de PnL (`pnl_pct`) NUNCA califica en el carril de `ndInputs`:
+  // para él ese valor es su PnL (el resolver le pasa el índice de PnL), y el
+  // grupo PnL no entra en este cambio. Su línea ND de master va por su propio
+  // carril, con el índice ND, y ahí sí se evalúa.
+  // ═══════════════════════════════════════════════════════════
+  const esNdCeroMedido = useCallback(
+    (p: { id: string; pnl_pct?: number | null }): boolean =>
+      p.pnl_pct == null && esCeroMedido(ndResolved.get(p.id), ndRawInputs.has(p.id)),
+    [ndResolved, ndRawInputs],
+  );
+  const ndCeroMedidoDeFila = useCallback(
+    (p: { id: string; pnl_pct?: number | null; is_master_ib?: boolean | null }): boolean =>
+      p.is_master_ib
+        ? esCeroMedido(masterNdResolved.get(p.id), masterNdRaw.has(p.id))
+        : esNdCeroMedido(p),
+    [masterNdResolved, masterNdRaw, esNdCeroMedido],
+  );
+
   // `accInDeMaster` vive más abajo, después de `previousResults`: necesita el
   // período anterior COMPLETO (el arrastre del líder está bajo OTRO grupo).
 
@@ -1171,9 +1205,11 @@ export default function ComisionesPage() {
       );
       accIn = prevResult?.accumulated_out ?? 0;
     }
-    const calc = calculateCommission(nd, accIn, headPct);
+    // El ND propio del líder sale de `ndInputs` (scope 'own' en el resolver):
+    // su cero medido se evalúa en ese carril, igual que en el guardado.
+    const calc = calculateCommission(nd, accIn, headPct, esNdCeroMedido(headProfile));
     return { profileId: headProfile.id, commissionPct: headPct, salary: 0, totalEarnedDebt: 0, ...calc };
-  }, [headProfile, ndInputs, previousResults, headPct, headHasParent]);
+  }, [headProfile, ndInputs, previousResults, headPct, headHasParent, esNdCeroMedido]);
 
   // BDM rows — commission calculated at the DIFFERENTIAL rate (what HEAD earns from each BDM)
   //
@@ -1278,11 +1314,14 @@ export default function ComisionesPage() {
         profile.pct_linea,
         diffNaturalDeLinea(refPct, bdmOwnPct, extraPct),
       );
-      const calc = calculateCommission(nd, accIn, diffPct);
+      // Cero medido de la línea (ver `ndCeroMedidoDeFila`): con ND 0 del CRM el
+      // diferencial del de arriba ACOMPAÑA — misma base (el acumulado de la
+      // línea), el mismo acumulado consumido que en la fila propia del de abajo.
+      const calc = calculateCommission(nd, accIn, diffPct, ndCeroMedidoDeFila(profile));
       const bdmSalary = profile.fixed_salary ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth) : calculateSalaryFromND(nd);
       return { profileId: profile.id, commissionPct: diffPct, bdmOwnPct, bdmOwnPctAuto, diffPct, pctLinea: profile.pct_linea ?? null, salary: bdmSalary, totalEarnedDebt: 0, ...calc };
     });
-  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride, liderEsBdm, getMasterNd, accInDeMaster, selectedHeadId]);
+  }, [teamProfiles, ndInputs, previousResults, headPct, extraPct, headProfile, commercialProfiles, periodYear, periodMonth, getPctOverride, liderEsBdm, getMasterNd, accInDeMaster, selectedHeadId, ndCeroMedidoDeFila]);
 
   // HEAD differential total (sum of all BDM differential commissions)
   const headDiff = useMemo(() => {
@@ -1415,7 +1454,11 @@ export default function ComisionesPage() {
         // composición de siempre, intacta.
         pctOverride: getPctOverride(profile.id),
         // Lo que el usuario tenga tecleado manda sobre el resolver: es lo que va
-        // a entrar al motor Y lo que se va a guardar.
+        // a entrar al motor Y lo que se va a guardar. Y viaja con `source:
+        // 'manual'` a propósito: así `comisionIndividualDeBdm` nunca toma un 0
+        // tecleado por CERO MEDIDO (2026-09-25) — sólo el `crm` sin tecleo paga
+        // sobre el acumulado. El guardado individual (`handleSaveBdm` 'nd' y el
+        // «Guardar» del tab) lee de este mismo `indCalcs`.
         resolved: ndRawInputs.has(profile.id)
           ? { value: ndInputs.get(profile.id) ?? 0, source: 'manual', crm: null, manual: ndInputs.get(profile.id) ?? 0 }
           : ndResolved.get(profile.id) ?? { value: null, source: 'none', crm: null, manual: null },
@@ -2119,7 +2162,11 @@ export default function ComisionesPage() {
           // Lo GUARDADO tiene que salir del mismo camino que lo MOSTRADO (§2.1):
           // el % manual del mes pisa acá igual que en bdmCalcs.
           const pct = resolvePctDelMes(getPctOverride(profile.id), pctAuto);
-          const calc = calculateCommission(nd, accIn, pct);
+          // Cero medido con el MISMO criterio que la tabla (`ndCeroMedidoDeFila`
+          // elige carril igual que `nd` más arriba, así que el flag siempre es
+          // el del número que entra): guardar un 0 del CRM tiene que escribir
+          // el mismo pago y el mismo acumulado consumido que se ve.
+          const calc = calculateCommission(nd, accIn, pct, ndCeroMedidoDeFila(profile));
 
           if (isHead && headHasParent) {
             // HEAD with parent: save their personal ND and calculations

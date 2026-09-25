@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   HR_NET_AUTO_DESDE,
   antesDelCorteHrNet,
+  esCeroMedido,
   esOverrideManual,
   indexarNetDelCrm,
   netParaElMotor,
@@ -200,6 +201,34 @@ describe('el puente al motor', () => {
     const cAuto = calculateCommission(netParaElMotor(auto), 1_000, 6);
     const cMan = calculateCommission(netParaElMotor(override), 1_000, 6);
     expect(cAuto).toEqual(cMan);
+  });
+});
+
+describe('esCeroMedido — sólo el 0 del CRM sin tecleo encima (2026-09-25)', () => {
+  const crmCero = idx([['a', { own: 0, total: 0 }]]);
+  const r = (period: typeof ABIERTO, crm: CrmNetIndex | null, manual: number | null) =>
+    resolveNetDepositInput({ profileId: 'a', period, scope: 'structure', crm, manual });
+
+  it('CRM 0, mes abierto, sin tecleo → medido', () => {
+    expect(esCeroMedido(r(ABIERTO, crmCero, null), false)).toBe(true);
+    // Un 0 guardado no es override: sigue mandando el CRM y sigue medido.
+    expect(esCeroMedido(r(ABIERTO, crmCero, 0), false)).toBe(true);
+  });
+
+  it('con algo tecleado encima → NO medido, aunque el resolver diga crm', () => {
+    expect(esCeroMedido(r(ABIERTO, crmCero, null), true)).toBe(false);
+  });
+
+  it('manual, congelado (cerrado o antes del corte) y sin datos → NO medido', () => {
+    expect(esCeroMedido({ value: 0, source: 'manual', crm: 0, manual: 0 }, false)).toBe(false);
+    expect(esCeroMedido(r(CERRADO, crmCero, 0), false)).toBe(false);
+    expect(esCeroMedido(r(ANTES, crmCero, 0), false)).toBe(false);
+    expect(esCeroMedido(r(ABIERTO, null, null), false)).toBe(false);
+    expect(esCeroMedido(undefined, false)).toBe(false);
+  });
+
+  it('CRM distinto de 0 → NO es cero medido (el flag sólo existe para el 0)', () => {
+    expect(esCeroMedido(r(ABIERTO, idx([['a', { own: 0, total: 5_000 }]]), null), false)).toBe(false);
   });
 });
 

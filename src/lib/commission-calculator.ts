@@ -36,18 +36,70 @@ export interface CommissionCalcResult {
 // ⚠ OJO: no "corregir" esto a MAX(0, commission) ni a arrastrar `base` en
 // meses negativos — rompería el arrastre de deuda y pagaría de más. Los tests
 // en commission-calculator.test.ts fijan este comportamiento a propósito.
+//
+// ── ND = 0: DOS reglas, y cuál aplica lo decide la PROCEDENCIA del cero ─────
+// La historia, en orden:
+//
+//   1. Auditoría 2026-08-06. El ND se tecleaba a mano y el input arrancaba en
+//      0, así que un 0 era indistinguible de «nadie lo cargó». Pagar sobre
+//      `accumulatedIn` con ese 0 convertía cada fila sin cargar en un PAGO
+//      FANTASMA. Por eso con ND=0 no se paga nada.
+//   2. El mismo día se vio el otro lado: `accumulatedOut` salía en 0 y el
+//      acumulado se DESTRUÍA (un BDM con $50.000 arrastrados los perdía por un
+//      mes sin depósitos). Fix: con ND=0 el acumulado se CONSERVA intacto
+//      (§2.1 regla 2).
+//   3. Desde agosto 2026 el ND sale del CRM automático (hr/net-deposit-input.ts,
+//      `source: 'crm'`): el rollup mide la red de la persona y un 0 de ahí es
+//      un CERO MEDIDO — «tu red no depositó», no «nadie cargó». Caso del dueño
+//      (2026-09-25): Yudy Otero, agosto, ND CRM = 0, acumulado $2.533, 3%. La
+//      regla 1 le pagó $0 y le pasó los 2.533 a septiembre; lo correcto es
+//      2.533 × 3% = $75,99 y el acumulado CONSUMIDO — «de manera general».
+//
+// Con `ceroMedido = true` y ND = 0 se aplica la fórmula general tal cual con
+// división 0: base = accumulatedIn, commission = base × pct, realPayment =
+// commission (sin clamp: un acumulado NEGATIVO es deuda y se cobra igual que
+// con cualquier otro ND), accumulatedOut = 0 — el arrastre se paga y se
+// consume, no se paga dos veces. Es exactamente lo que daría un ND de 0,001.
+//
+// El DEFAULT sigue siendo el conservador (regla 1 + 2, bit a bit), y a
+// propósito: un 0 tecleado, uno congelado de un período cerrado (la época
+// manual, donde 0 puede ser «nunca cargado») o un SIN DATOS siguen siendo
+// ambiguos, y pagarles sobre el acumulado es resucitar el pago fantasma. Quien
+// quiera el cero medido tiene que AFIRMARLO con la procedencia en la mano
+// (`esCeroMedido`, hr/net-deposit-input.ts) — §1.3: el 0 que no sabemos de
+// dónde vino no es un 0.
 // ---------------------------------------------------------------------------
 
 export function calculateCommission(
   netDepositCurrent: number,
   accumulatedIn: number,
   commissionPct: number,
+  /**
+   * true = el ND es un CERO MEDIDO (vino del CRM automático y nadie tecleó
+   * encima). Sólo cambia algo cuando `netDepositCurrent === 0`. Default false =
+   * el comportamiento conservador de la auditoría 2026-08-06. Ver arriba.
+   */
+  ceroMedido: boolean = false,
 ): Omit<CommissionCalcResult, 'profileId' | 'salary' | 'commissionPct' | 'totalEarnedDebt'> {
+  if (netDepositCurrent === 0 && ceroMedido) {
+    // Cero MEDIDO: se paga el acumulado y se consume. Explícito (y no cayendo
+    // a la rama general) para que ningún `-0` se cuele en división/acumulado.
+    const commission = round2(accumulatedIn * (commissionPct / 100));
+    return {
+      netDepositCurrent: 0,
+      accumulatedIn,
+      division: 0,
+      commission,
+      realPayment: commission,
+      accumulatedOut: 0,
+    };
+  }
+
   if (netDepositCurrent === 0) {
-    // ND=0 significa dos cosas indistinguibles: "mes sin depósitos" o "el
-    // operador todavía no cargó el ND" (el default del input es 0). Por eso
-    // acá NO se paga nada — pagar sobre accumulatedIn convertiría cada fila
-    // sin cargar en un pago fantasma.
+    // Cero AMBIGUO (tecleado, congelado o sin datos): "mes sin depósitos" o
+    // "el operador todavía no cargó el ND" (el default del input es 0). Acá NO
+    // se paga nada — pagar sobre accumulatedIn convertiría cada fila sin
+    // cargar en un pago fantasma.
     //
     // Lo que SÍ estaba mal (auditoría 2026-08-06): accumulatedOut salía en 0
     // y el acumulado arrastrado se DESTRUÍA — un BDM que venía con $50.000
@@ -727,6 +779,13 @@ export function calcularPasoPnlEncadenado(params: {
     pnlCurrent: lotCommissions,
     // Con PnL = 0 el acumulado se CONSERVA (calculateCommission lo garantiza):
     // un mes sin dato no puede borrarle el arrastre a nadie (§2.1 regla 2).
+    //
+    // NOTA (2026-09-25): el grupo Net Deposit ganó el «cero medido» —ND = 0
+    // del CRM sin tecleo encima paga sobre el acumulado y lo consume (ver la
+    // cabecera de `calculateCommission`). Acá NO se pasa a propósito: el PnL
+    // tiene su propia semántica y esta cadena del recálculo desde abril se
+    // validó con el 0 conservador. Si el dueño pide lo mismo para PnL, es una
+    // decisión aparte, con su medición, no una extensión de aquella.
     accumulatedOut: calc.accumulatedOut,
     salaryPaid: salary,
     totalEarned: finalTotalEarned,

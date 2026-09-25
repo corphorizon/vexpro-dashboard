@@ -78,8 +78,11 @@
 // ── null ≠ 0 ───────────────────────────────────────────────────────────────
 // `value: null` es "no lo sabemos" y la pantalla muestra «sin datos», nunca $0.
 // El motor necesita un número igual (el ND=0 tiene un significado propio: no
-// paga nada pero CONSERVA el acumulado, commission-calculator.ts:46-64), así
+// paga nada pero CONSERVA el acumulado, ver `calculateCommission`), así
 // que la traducción a número está aparte y con nombre: `netParaElMotor()`.
+// Desde 2026-09-25 el 0 con `source: 'crm'` es la excepción —un CERO MEDIDO
+// que paga sobre el acumulado y lo consume—, y esa lectura también tiene
+// nombre y vive acá: `esCeroMedido()`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { flattenRollup, type RollupNode } from './net-deposit';
@@ -217,11 +220,41 @@ export function resolveNetDepositInput(params: {
  * El número que entra al motor.
  *
  * SIN DATOS entra como 0 y eso es correcto, no un parche: `calculateCommission`
- * trata el 0 como "no se paga nada este mes pero el acumulado se conserva
- * intacto" (commission-calculator.ts:46-64), que es exactamente lo que
- * corresponde cuando no sabemos cuánto produjo. Lo que NO se puede hacer es
- * mostrar ese 0 en pantalla como si fuera un dato: para eso está `source`.
+ * trata el 0 AMBIGUO como "no se paga nada este mes pero el acumulado se
+ * conserva intacto", que es exactamente lo que corresponde cuando no sabemos
+ * cuánto produjo. Lo que NO se puede hacer es mostrar ese 0 en pantalla como si
+ * fuera un dato: para eso está `source`. Y tampoco pasarlo como cero medido:
+ * `esCeroMedido` exige `source === 'crm'`, así que un SIN DATOS nunca califica.
  */
 export function netParaElMotor(r: ResolvedNetDeposit): number {
   return r.value ?? 0;
+}
+
+/**
+ * ¿Este ND es un CERO MEDIDO? — la decisión que habilita, con ND = 0, pagar
+ * sobre el acumulado y consumirlo (`calculateCommission(…, ceroMedido)`; la
+ * historia completa está en su cabecera). Pedido del dueño el 2026-09-25 con el
+ * caso de Yudy Otero (agosto: CRM 0, acumulado $2.533, 3% → $75,99).
+ *
+ * Califica SÓLO cuando las tres cosas son ciertas:
+ *   · `source === 'crm'` — el número lo midió el rollup del CRM este mes.
+ *   · `value === 0` exacto — el cero es el del CRM, no uno heredado de otra
+ *     render (el seeding de los inputs corre en un efecto y puede ir un paso
+ *     atrás del resolver: exigir el valor acá cierra esa ventana).
+ *   · `tecleado === false` — si el usuario escribió algo encima, lo que entra
+ *     al motor es lo tecleado, y un 0 tecleado es ambiguo.
+ *
+ * NO califican, y siguen con la protección de la auditoría 2026-08-06 (no paga,
+ * conserva el acumulado): `manual` (lo tecleado), `frozen` (período cerrado o
+ * anterior al corte: un 0 de la época manual puede ser «nunca cargado» — pagarle
+ * sobre el acumulado ES el pago fantasma) y `none` (sin datos).
+ *
+ * Un `manual` guardado en 0 no es override (`esOverrideManual`), así que el mes
+ * se sigue leyendo del CRM: guardar un cero medido no lo vuelve ambiguo.
+ */
+export function esCeroMedido(
+  r: ResolvedNetDeposit | null | undefined,
+  tecleado: boolean,
+): boolean {
+  return !tecleado && !!r && r.source === 'crm' && r.value === 0;
 }

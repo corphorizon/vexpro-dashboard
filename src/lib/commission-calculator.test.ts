@@ -52,6 +52,52 @@ describe('calculateCommission (fórmula estándar PnL normal)', () => {
     expect(mesSiguiente.commission).toBe(5_000);
   });
 
+  // ── CERO MEDIDO (2026-09-25) ──────────────────────────────────────────────
+  // Los dos tests de arriba siguen fijando el DEFAULT a propósito: un 0 cuya
+  // procedencia no se afirma es ambiguo (tecleado, congelado de la época
+  // manual, sin datos) y pagarle sobre el acumulado es el pago fantasma de la
+  // auditoría 2026-08-06. Lo nuevo es la rama `ceroMedido`: el 0 que midió el
+  // CRM ("tu red no depositó") paga sobre el acumulado y lo CONSUME.
+
+  it('cero medido — caso Yudy Otero (agosto): paga 2.533 × 3% y consume el acumulado', () => {
+    const r = calculateCommission(0, 2533, 3, true);
+    expect(r.netDepositCurrent).toBe(0);
+    expect(r.accumulatedIn).toBe(2533);
+    expect(r.division).toBe(0);
+    expect(r.commission).toBe(75.99);
+    expect(r.realPayment).toBe(75.99);
+    // El arrastre se pagó: no pasa a septiembre (no se paga dos veces).
+    expect(r.accumulatedOut).toBe(0);
+  });
+
+  it('cero medido = la fórmula general con división 0 (lo mismo que un ND ínfimo)', () => {
+    // ND 0,001 → división round2(0,0005) = 0 → base = acumulado, acumulado out = 0.
+    const casi = calculateCommission(0.001, 2533, 3);
+    const medido = calculateCommission(0, 2533, 3, true);
+    expect(medido.commission).toBe(casi.commission);
+    expect(medido.accumulatedOut).toBe(0);
+    expect(Object.is(medido.division, 0)).toBe(true); // sin -0 colado
+  });
+
+  it('cero medido con acumulado NEGATIVO cobra la deuda (sin clamp, regla 1)', () => {
+    const r = calculateCommission(0, -20_000, 5, true);
+    expect(r.commission).toBe(-1_000);
+    expect(r.realPayment).toBe(-1_000);
+    expect(r.accumulatedOut).toBe(0);
+  });
+
+  it('regresión: sin flag y con flag=false, ND=0 es EXACTAMENTE lo de antes', () => {
+    const antes = { netDepositCurrent: 0, accumulatedIn: 2533, division: 0, commission: 0, realPayment: 0, accumulatedOut: 2533 };
+    expect(calculateCommission(0, 2533, 3)).toEqual(antes);
+    expect(calculateCommission(0, 2533, 3, false)).toEqual(antes);
+  });
+
+  it('con ND ≠ 0 el flag no cambia nada (positivo, negativo, con y sin acumulado)', () => {
+    for (const [nd, acc, pct] of [[100_000, 10_000, 5], [-40_000, 0, 5], [33_333, 1_234.56, 3], [0.01, 2533, 3]] as const) {
+      expect(calculateCommission(nd, acc, pct, true)).toEqual(calculateCommission(nd, acc, pct));
+    }
+  });
+
   it('el tier de % nunca degrada un porcentaje negociado mayor', () => {
     // BDM con 7% pactado y ND $120K: el tier de la tabla dice 5%, pero el
     // acuerdo manda (auditoría 2026-08-06: cobraba 3.000 en vez de 4.200).

@@ -33,7 +33,7 @@ import {
   prorateFixedSalary,
   resolvePctDelMes,
 } from '@/lib/commission-calculator';
-import { netParaElMotor, type NetDepositSource, type ResolvedNetDeposit } from './net-deposit-input';
+import { esCeroMedido, netParaElMotor, type NetDepositSource, type ResolvedNetDeposit } from './net-deposit-input';
 import { pctEsFijoDePerfil } from './domain';
 
 /** Lo mínimo del perfil que hace falta para componer la comisión. */
@@ -106,7 +106,14 @@ export function comisionIndividualDeBdm(params: {
   // El % manual del mes pisa TODO lo de arriba, incluido el piso por volumen.
   const commissionPct = resolvePctDelMes(pctOverride, commissionPctAuto);
 
-  const calc = calculateCommission(nd, accumulatedIn, commissionPct);
+  // CERO MEDIDO (2026-09-25): ND = 0 venido del CRM paga sobre el acumulado y
+  // lo consume; cualquier otro 0 (manual, congelado, sin datos) queda con la
+  // protección de siempre. La decisión es `esCeroMedido` y se toma con el
+  // `resolved` tal como llega: en /comisiones, `indCalcs` ya reemplaza el
+  // resolved por uno con `source: 'manual'` cuando hay algo tecleado en la
+  // fila, así que un 0 tecleado nunca califica; en /rrhh no hay tecleo y el
+  // `source` es el del resolver. Por eso `tecleado` va en false acá.
+  const calc = calculateCommission(nd, accumulatedIn, commissionPct, esCeroMedido(resolved, false));
   const salary = profile.fixed_salary
     ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth)
     : calculateSalaryFromND(nd);

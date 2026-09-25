@@ -96,6 +96,53 @@ describe('comisionIndividualDeBdm', () => {
     expect(c.accumulatedOut).toBe(50_000);
   });
 
+  // ── CERO MEDIDO (2026-09-25): la procedencia decide qué hace el 0 ───────────
+  describe('ND = 0 — medido (CRM) vs ambiguo (manual / congelado / sin datos)', () => {
+    const yudy = { role: 'bdm', id: 'yudy', net_deposit_pct: 3, fixed_salary: false, salary: null, hire_date: null };
+    const crmCero = new Map([['yudy', { own: 0, total: 0 }]]);
+    const calcular = (resolved: ResolvedNetDeposit) => comisionIndividualDeBdm({
+      profile: yudy, resolved, accumulatedIn: 2533, periodYear: 2026, periodMonth: 8,
+    })!;
+
+    it('caso Yudy Otero, agosto: CRM 0 sin tecleo → 2.533 × 3% = 75,99 y Acc→Sig 0', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: AGOSTO, scope: 'structure', crm: crmCero, manual: null });
+      expect(r.source).toBe('crm');
+      const c = calcular(r);
+      expect(c.commissionPct).toBe(3);
+      expect(c.commission).toBe(75.99);
+      expect(c.realPayment).toBe(75.99);
+      expect(c.accumulatedOut).toBe(0);
+    });
+
+    it('guardar el cero medido no lo vuelve ambiguo: un 0 guardado no es override y el mes sigue leyéndose del CRM', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: AGOSTO, scope: 'structure', crm: crmCero, manual: 0 });
+      expect(r.source).toBe('crm');
+      expect(calcular(r).commission).toBe(75.99);
+    });
+
+    it('0 TECLEADO (indCalcs lo pasa con source manual) → no paga y conserva el acumulado', () => {
+      const c = calcular({ value: 0, source: 'manual', crm: null, manual: 0 });
+      expect(c.commission).toBe(0);
+      expect(c.accumulatedOut).toBe(2533);
+    });
+
+    it('0 CONGELADO (período cerrado / época manual) → no paga y conserva el acumulado', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: JULIO, scope: 'structure', crm: crmCero, manual: 0 });
+      expect(r.source).toBe('frozen');
+      const c = calcular(r);
+      expect(c.commission).toBe(0);
+      expect(c.accumulatedOut).toBe(2533);
+    });
+
+    it('SIN DATOS (CRM caído) → no paga y conserva el acumulado', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: AGOSTO, scope: 'structure', crm: null, manual: null });
+      expect(r.source).toBe('none');
+      const c = calcular(r);
+      expect(c.commission).toBe(0);
+      expect(c.accumulatedOut).toBe(2533);
+    });
+  });
+
   it('un perfil de PnL no pasa por acá: devuelve null, no 0', () => {
     const c = comisionIndividualDeBdm({
       profile: { role: 'bdm', id: 'p', pnl_pct: 30 }, resolved: resuelto(9_999),
