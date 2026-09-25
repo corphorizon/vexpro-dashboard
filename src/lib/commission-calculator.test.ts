@@ -10,6 +10,7 @@ import {
   diffNaturalDeLinea,
   resolveDiffPctDeLinea,
   calculateHeadDifferential,
+  calculateExtraOverHeadCommission,
   calculatePnlSpecial,
   calcularPasoPnlEncadenado,
   applyTotalEarnedDebt,
@@ -645,5 +646,43 @@ describe('getPreviousPeriod (orden cronológico)', () => {
       { id: 'jan26', company_id: 'c', year: 2026, month: 1, label: 'Ene 26', is_closed: false, reserve_pct: 0.1 },
     ];
     expect(getPreviousPeriod(cross, 'jan26')?.id).toBe('dec25');
+  });
+});
+
+describe('calculateExtraOverHeadCommission — protección ND=0 (2026-09-25)', () => {
+  const linea = (sumNdBdms: number, accumulatedIn: number, ceroMedido?: boolean) => ({
+    profileId: 'sub', name: 'Sub Head', hasFixedSalary: true, sumNdBdms, accumulatedIn, ceroMedido,
+  });
+
+  it('ND 0 SIN cero medido: no paga fantasma y CONSERVA el acumulado', () => {
+    // El agujero original: pagaba pct sobre el acumulado y lo borraba aunque
+    // el 0 fuera "sin cargar" — el mismo bug que la auditoría 2026-08-06 mató
+    // en calculateCommission, que acá nunca tuvo protección.
+    const r = calculateExtraOverHeadCommission(2, false, [linea(0, 5_000)]);
+    expect(r.details[0].commission).toBe(0);
+    expect(r.details[0].realPayment).toBe(0);
+    expect(r.details[0].accumulatedOut).toBe(5_000);
+  });
+
+  it('ND 0 CON cero medido (CRM): paga sobre el acumulado y lo consume', () => {
+    // Dueño, 2026-09-25: «si trae 0 y tiene acumulado debe de pagar igual».
+    const r = calculateExtraOverHeadCommission(2, false, [linea(0, 5_000, true)]);
+    expect(r.details[0].commission).toBe(100); // 5.000 × 2%
+    expect(r.details[0].realPayment).toBe(100);
+    expect(r.details[0].accumulatedOut).toBe(0);
+  });
+
+  it('con ND distinto de 0 el flag no cambia nada (regresión)', () => {
+    const sin = calculateExtraOverHeadCommission(2, false, [linea(100_000, 5_000)]);
+    const con = calculateExtraOverHeadCommission(2, false, [linea(100_000, 5_000, true)]);
+    expect(sin.details[0]).toEqual(con.details[0]);
+    expect(sin.details[0].commission).toBe(1_100); // (50.000 + 5.000) × 2%
+    expect(sin.details[0].accumulatedOut).toBe(50_000);
+  });
+
+  it('sin salario fijo y sin flag de empresa, la línea se salta igual que siempre', () => {
+    const r = calculateExtraOverHeadCommission(2, false, [{ ...linea(0, 5_000), hasFixedSalary: false }]);
+    expect(r.details).toHaveLength(0);
+    expect(r.skipped).toHaveLength(1);
   });
 });

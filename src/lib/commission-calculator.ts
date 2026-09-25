@@ -836,6 +836,17 @@ export function calculateExtraOverHeadCommission(
     hasFixedSalary: boolean;
     sumNdBdms: number;
     accumulatedIn: number;
+    /**
+     * true = el ND en 0 de esta línea es un CERO MEDIDO (source crm, nada
+     * tecleado — lo decide `esCeroMedido` en hr/net-deposit-input.ts, el
+     * registro único). Con 0 medido la línea SÍ paga sobre el acumulado y lo
+     * consume (dueño, 2026-09-25: «si trae 0 y tiene acumulado debe de pagar
+     * igual»). Con 0 NO medido (sin cargar/manual/congelado) esta función
+     * pagaba fantasma sobre el acumulado Y lo borraba — el mismo agujero que
+     * la auditoría 2026-08-06 mató en calculateCommission, que acá nunca tuvo
+     * protección. Default false = protegido.
+     */
+    ceroMedido?: boolean;
   }[],
 ): {
   totalCommission: number;
@@ -854,6 +865,27 @@ export function calculateExtraOverHeadCommission(
         profileId: h.profileId,
         name: h.name,
         reason: 'HEAD sin salario fijo y flag apply_pct_extra_to_head_without_salary=false',
+      });
+      continue;
+    }
+
+    // ND del equipo en 0 SIN cero medido: misma protección que el ND=0 de
+    // calculateCommission — no se paga sobre el acumulado (pago fantasma) y el
+    // arrastre SE CONSERVA en vez de borrarse. Con `ceroMedido` (el 0 vino del
+    // CRM) la línea paga sobre el acumulado y lo consume, igual que el resto
+    // del motor desde el 2026-09-25.
+    if (h.sumNdBdms === 0 && !h.ceroMedido) {
+      details.push({
+        headIntermediateProfileId: h.profileId,
+        headIntermediateName: h.name,
+        hasFixedSalary: h.hasFixedSalary,
+        sumNdBdms: 0,
+        accumulatedIn: h.accumulatedIn,
+        pctApplied: pctExtraSobreHead,
+        division: 0,
+        commission: 0,
+        realPayment: 0,
+        accumulatedOut: h.accumulatedIn,
       });
       continue;
     }

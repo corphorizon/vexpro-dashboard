@@ -1252,7 +1252,11 @@ export default function ComisionesPage() {
         const e = calculateExtraOverHeadCommission(
           pctExtraDeLinea,
           applyExtraNoSalary,
-          [{ profileId: profile.id, name: profile.name, hasFixedSalary: !!profile.fixed_salary, sumNdBdms, accumulatedIn: accIn }],
+          // `ceroMedido`: con el ND de la línea en 0 DEL CRM, el extra paga
+          // sobre el acumulado y lo consume (dueño, 2026-09-25: «si trae 0 y
+          // tiene acumulado debe de pagar igual»); un 0 sin cargar ya no paga
+          // fantasma ni borra el arrastre. Mismo registro que el resto del ND.
+          [{ profileId: profile.id, name: profile.name, hasFixedSalary: !!profile.fixed_salary, sumNdBdms, accumulatedIn: accIn, ceroMedido: ndCeroMedidoDeFila(profile) }],
         );
         if (e.details.length > 0) {
           const d = e.details[0];
