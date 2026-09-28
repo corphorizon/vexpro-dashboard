@@ -227,6 +227,28 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
             );
           })}
         </div>
+
+        {/* El mes EN CURSO sin datos no está «bloqueado»: nadie lo generó aún.
+            Este módulo carga a demanda por pedido del dueño (agosto 2026:
+            botón en vez de carga automática), así que hasta el primer
+            «Refrescar todo» del mes el botón sale apagado y parecía un bug
+            (dueño, 2026-09-28: «sep no me deja abrirlo, está bloqueado»).
+            El aviso lo dice en el momento, sin depender de un tooltip que un
+            botón disabled no siempre dispara. Corte de mes en UTC, como todo
+            el sistema. */}
+        {(() => {
+          const ahora = new Date();
+          const esteAnio = ahora.getUTCFullYear();
+          const esteMes = ahora.getUTCMonth() + 1;
+          if (anio === esteAnio && !delAnio.has(esteMes)) {
+            return (
+              <p className="text-xs text-warning">
+                {MESES[esteMes - 1]} aún no tiene datos: tocá «Refrescar todo» (arriba) para calcular el mes en curso.
+              </p>
+            );
+          }
+          return null;
+        })()}
       </div>
 
       {/* Totales del mes elegido */}
