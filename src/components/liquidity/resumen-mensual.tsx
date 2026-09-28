@@ -66,7 +66,7 @@ function esMesDeConexion(
   return d.getUTCFullYear() === sel.year && d.getUTCMonth() + 1 === sel.month;
 }
 
-export function ResumenMensual({ companyId }: { companyId: string }) {
+export function ResumenMensual({ companyId, refrescoNonce = 0 }: { companyId: string; refrescoNonce?: number }) {
   const [meses, setMeses] = useState<MesResumen[] | null>(null);
   const [totales, setTotales] = useState<{ pnl: number; ops: number }>({ pnl: 0, ops: 0 });
   const [sel, setSel] = useState<{ year: number; month: number } | null>(null);
@@ -99,7 +99,7 @@ export function ResumenMensual({ companyId }: { companyId: string }) {
       }
     })();
     return () => { vivo = false; };
-  }, [companyId]);
+  }, [companyId, refrescoNonce]);
 
   // El detalle del mes elegido.
   useEffect(() => {
