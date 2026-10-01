@@ -15,6 +15,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import {
   computeTotals,
   LEGACY_ATTACHMENT_ID,
+  PAYMENT_PROOFS_BUCKET,
   type PaymentBeneficiary,
   type PaymentOrder,
   type PaymentOrderAttachment,
@@ -659,7 +660,7 @@ export async function createExpenseForPaidOrder(
       reference: str(order.payment_reference) || null,
       // El archivo NO se copia: el egreso apunta al comprobante original en
       // el bucket de la orden. Por eso hace falta guardar cuál es.
-      attachment_bucket: order.payment_proof_path ? 'payment-proofs' : null,
+      attachment_bucket: order.payment_proof_path ? PAYMENT_PROOFS_BUCKET : null,
       attachment_path: str(order.payment_proof_path) || null,
       attachment_name: str(order.payment_proof_name) || null,
       attachment_mime: str(order.payment_proof_mime) || null,

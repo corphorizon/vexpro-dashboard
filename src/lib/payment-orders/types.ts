@@ -65,6 +65,17 @@ export const MAX_PAYMENT_PROOFS = 10;
 /** Tope de documentos de respaldo por orden. Ver MAX_PAYMENT_PROOFS. */
 export const MAX_PAYMENT_ATTACHMENTS = 10;
 
+/**
+ * Buckets PRIVADOS de Storage de cada tipo de archivo. Hasta 2026-10-01 eran
+ * un literal suelto en cada route (/proof, /attachment, server.ts); el borrado
+ * definitivo de una orden (DELETE /[id]) necesita los DOS, y una tercera copia
+ * del string es justo la lista duplicada que diverge en silencio: si un día se
+ * renombra el bucket en /proof y no acá, el borrado dejaría los archivos sin
+ * que nada falle.
+ */
+export const PAYMENT_PROOFS_BUCKET = 'payment-proofs';
+export const PAYMENT_ATTACHMENTS_BUCKET = 'payment-attachments';
+
 /** Fila de payment_order_proofs tal como la ve la UI (sin el storage_path: el
  *  path del bucket nunca sale del servidor). */
 export interface PaymentOrderProof {

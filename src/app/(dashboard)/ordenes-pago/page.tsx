@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { FileText, Plus, Search, Download, Eye, ClockAlert, CheckCheck, Banknote } from 'lucide-react';
+import { FileText, Plus, Search, Download, Eye, ClockAlert, CheckCheck, Banknote, Trash2 } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { StatCard } from '@/components/ui/stat-card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToasts } from '@/components/ui/toast';
-import { StatusBadge } from '@/components/payment-orders/status-badge';
+import { StatusBadge, useStatusLabel } from '@/components/payment-orders/status-badge';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { roleCanWriteFinance } from '@/lib/roles';
@@ -28,7 +28,8 @@ import { cn, formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import type { PaymentOrder, PaymentOrderStatus } from '@/lib/payment-orders/types';
 // Firma asumida: listPaymentOrders(): Promise<PaymentOrder[]>
-import { getPaymentOrder, listPaymentOrders } from '@/lib/payment-orders/api';
+import { deletePaymentOrder, getPaymentOrder, listPaymentOrders } from '@/lib/payment-orders/api';
+import { deleteConfirmKind, type DeletedOrderSummary } from '@/lib/payment-orders/delete';
 
 type Filter = 'all' | PaymentOrderStatus;
 
@@ -54,6 +55,8 @@ export default function OrdenesPagoPage() {
   const [filter, setFilter] = useState<Filter>('all');
   const [query, setQuery] = useState('');
   const [pdfBusy, setPdfBusy] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState<string | null>(null);
+  const statusLabel = useStatusLabel();
 
   useEffect(() => {
     let alive = true;
@@ -129,6 +132,77 @@ export default function OrdenesPagoPage() {
       toast.error(err instanceof Error ? err.message : t('payOrders.pdfError'));
     } finally {
       setPdfBusy(null);
+    }
+  }
+
+  // ── Eliminar DEFINITIVAMENTE (pedido del dueño, 2026-10-01) ───────────────
+  // Anular sigue siendo lo habitual; esto es para la orden que no debió
+  // existir. El servidor es la autoridad (gate de rol, período cerrado,
+  // egreso vinculado); acá solo se pide una confirmación que diga QUÉ se va
+  // —número, total, estado y, si está pagada, que también se va su egreso— y
+  // después se muestra el desglose que devuelve el servidor, sin resumirlo a
+  // un "listo". La pantalla no usa verify2FA para nada (ni siquiera para
+  // exportar), así que no se inventa acá un segundo patrón de confirmación.
+  function deleteSummaryText(r: DeletedOrderSummary): string {
+    const lines = [t('payOrders.deleteDone', { number: r.orden.order_number })];
+    if (r.egresosBorrados.length > 0) {
+      const amount = r.egresosBorrados.reduce((s, e) => s + e.amount, 0);
+      lines.push(
+        t('payOrders.deleteDoneExpense', { amount: money(amount, r.orden.currency) }),
+      );
+      // La trampa de replace_period_expenses (reglas §2.4): una pestaña de
+      // Egresos/Carga abierta desde antes sigue MOSTRANDO la fila, pero la
+      // migración 079 impide que guardar el mes la re-inserte. Se dice tal cual.
+      lines.push(t('payOrders.deleteDoneStaleTabs'));
+    } else if (r.orden.status === 'paid') {
+      lines.push(t('payOrders.deleteDoneNoExpense'));
+    }
+    lines.push(
+      t('payOrders.deleteDoneFiles', {
+        proofs: String(r.adjuntosBorrados.comprobantes),
+        attachments: String(r.adjuntosBorrados.respaldos),
+      }),
+    );
+    if (r.archivosFallidos > 0) {
+      lines.push(t('payOrders.deleteDoneFilesFailed', { count: String(r.archivosFallidos) }));
+    }
+    if (r.archivosPreservados > 0) {
+      lines.push(t('payOrders.deleteDoneFilesKept', { count: String(r.archivosPreservados) }));
+    }
+    return lines.join('\n');
+  }
+
+  async function removeOrder(order: PaymentOrder) {
+    const vars = {
+      number: order.order_number,
+      beneficiary: order.beneficiary_name || '—',
+      total: money(order.total ?? 0, order.currency),
+      status: statusLabel(order.status),
+    };
+    const message =
+      deleteConfirmKind(order) === 'paid'
+        ? t('payOrders.deleteConfirmPaid', vars)
+        : t('payOrders.deleteConfirm', vars) +
+          (order.status === 'cancelled' ? '' : `\n\n${t('payOrders.deleteConfirmVoidHint')}`);
+    if (!window.confirm(message)) return;
+
+    setDeleteBusy(order.id);
+    try {
+      const result = await deletePaymentOrder(order.id);
+      // La fila ya no existe: se saca de la lista aunque el refresh falle, y
+      // después se recarga del servidor para que KPIs y contadores salgan de
+      // la verdad y no de un estado local parchado.
+      setOrders((prev) => prev.filter((o) => o.id !== order.id));
+      toast.success(deleteSummaryText(result));
+      try {
+        setOrders(await listPaymentOrders());
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : t('payOrders.loadError'));
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t('payOrders.deleteError'));
+    } finally {
+      setDeleteBusy(null);
     }
   }
 
@@ -281,6 +355,20 @@ export default function OrdenesPagoPage() {
                       >
                         <Download className="w-4 h-4" />
                       </Button>
+                      {canAct && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={`${t('payOrders.delete')} ${o.order_number}`}
+                          title={t('payOrders.delete')}
+                          loading={deleteBusy === o.id}
+                          disabled={deleteBusy !== null && deleteBusy !== o.id}
+                          onClick={() => removeOrder(o)}
+                          className="text-negative hover:text-negative"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </Button>
+                      )}
                     </div>
                   ),
                 },
