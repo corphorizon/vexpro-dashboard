@@ -186,7 +186,7 @@ describe('companyReportCsvRows', () => {
       expenses: buildExpenses([{ category: 'Sueldos', amount: 30, paid: 30, pending: 0 }]),
       result: buildResult(60, 30, []),
       cash: {
-        summary: { liquid: 500, lent: 100, total: 600, fund: 600, outsideFund: 0 },
+        summary: { liquid: 500, lent: 100, owed: 0, gross: 600, total: 600, fund: 600, outsideFund: 0 },
         byType: [],
         byUnit: [
           {

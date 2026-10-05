@@ -25,6 +25,7 @@ import { periodLabel } from '@/lib/utils';
 import {
   groupByType,
   groupByUnit,
+  signedBalance,
   summarize,
   type AllocatedLocation,
   type BusinessUnit,
@@ -405,12 +406,18 @@ export function companyReportCsvRows(report: CompanyReport): (string | number)[]
 
     ['Dinero', 'Disponible', report.cash.summary.liquid],
     ['Dinero', 'Prestado', report.cash.summary.lent],
-    ['Dinero', 'Total', report.cash.summary.total],
+    // Préstamos recibidos (2026-10-05). Va siempre, aunque sea 0: en un CSV
+    // una fila que a veces está y a veces no rompe cualquier planilla que lo
+    // lea por posición.
+    ['Dinero', 'Deuda con terceros', report.cash.summary.owed],
+    ['Dinero', 'Total neto', report.cash.summary.total],
+    // Con signo: una deuda sale en negativo para que las filas sumen el
+    // Total neto de arriba.
     ...report.cash.byUnit.flatMap((g) =>
       g.locations.map((l) => [
         'Dinero · Ubicaciones',
         allocationLabel(l, g.unit),
-        l.balance,
+        signedBalance(l),
       ] as (string | number)[]),
     ),
   ];

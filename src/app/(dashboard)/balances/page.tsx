@@ -48,6 +48,7 @@ import {
   type ReportChannelSource,
 } from '@/lib/channel-balance-source';
 import { generateChannelBalancesPDF } from '@/lib/pdf-export';
+import { isDebt, normalizeLocationType, signedBalance, tallyCash } from '@/lib/cash-locations';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Channel list is now resolved dynamically from channel_configs (see
@@ -820,17 +821,31 @@ export default function BalancesPage() {
   };
 
   const exportChannelsPdf = () => {
+    const typeByKey = new Map(
+      channelConfigRows.map((r) => [r.channel_key, normalizeLocationType(r.location_type)]),
+    );
+    const items = visibleChannels.map((ch) => ({
+      ch,
+      location_type: normalizeLocationType(typeByKey.get(ch.key)),
+      balance: getChannelValue(ch.key),
+    }));
     generateChannelBalancesPDF({
       company: { name: company?.name ?? 'Dashboard', logoUrl: company?.logo_url ?? null },
       asOf: selectedDate,
-      channels: visibleChannels.map((ch) => ({
-        label: ch.label,
-        isAuto: isAutoLedger(ch.key) || ch.type === 'auto',
-        balance: getChannelValue(ch.key),
+      // Una deuda (préstamo recibido) sale con signo negativo para que las
+      // filas cierren contra el total del pie.
+      channels: items.map((it) => ({
+        label: it.ch.label,
+        isAuto: isAutoLedger(it.ch.key) || it.ch.type === 'auto',
+        debt: isDebt(it.location_type),
+        balance: signedBalance(it),
       })),
       // Total consolidado — suma SOLO los canales visibles (los ocultados con
-      // el toggle en el modal "Configurar" no aportan al total).
-      total: visibleChannels.reduce((s, ch) => s + getChannelValue(ch.key), 0),
+      // el toggle en el modal "Configurar" no aportan al total). NETO de deuda
+      // y calculado por `tallyCash`, la misma fórmula que la tarjeta de arriba
+      // y /api/balances/total-consolidado: sumar `getChannelValue` a mano acá
+      // contaba un préstamo recibido como plata propia.
+      total: tallyCash(items).total,
       locale: locale === 'en' ? 'en' : 'es',
     });
   };

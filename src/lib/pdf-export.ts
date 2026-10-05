@@ -1133,6 +1133,7 @@ const LEDGER_T = {
     inflow: 'Ingreso', outflow: 'Egreso', balance: 'Saldo',
     detail: 'Detalle del libro', summary: 'Resumen del período',
     channel: 'Canal', type: 'Tipo', auto: 'Automático', manual: 'Manual',
+    debt: 'Deuda con terceros',
     total: 'Total consolidado', channels: 'Canales',
     autoNote: 'Libro escrito automaticamente cada dia a las 00:00 UTC con los datos de la API del proveedor. El saldo de cierre coincide con el saldo real reportado por el proveedor.',
     internalNote: 'Las transferencias internas mueven el saldo del canal pero quedan fuera de Retiros Totales: son movimientos entre wallets propias, no retiros del negocio.',
@@ -1146,6 +1147,7 @@ const LEDGER_T = {
     inflow: 'Inflow', outflow: 'Outflow', balance: 'Balance',
     detail: 'Ledger detail', summary: 'Period summary',
     channel: 'Channel', type: 'Type', auto: 'Automatic', manual: 'Manual',
+    debt: 'Debt to third parties',
     total: 'Total consolidated', channels: 'Channels',
     autoNote: 'Ledger written automatically every day at 00:00 UTC from the provider API. The closing balance matches the real balance reported by the provider.',
     internalNote: 'Internal transfers move the channel balance but stay out of Total Withdrawals: they are movements between your own wallets, not business withdrawals.',
@@ -1261,7 +1263,13 @@ export async function generateChannelLedgerPDF(data: PdfChannelLedgerData) {
 export interface PdfChannelBalancesData {
   company: { name: string; logoUrl?: string | null };
   asOf: string;
-  channels: Array<{ label: string; isAuto: boolean; balance: number }>;
+  /**
+   * `balance` llega CON SIGNO: un lugar `debt` (préstamo recibido) viene en
+   * negativo, así las filas cierran contra `total`. `debt` solo cambia el
+   * rótulo de la columna Tipo.
+   */
+  channels: Array<{ label: string; isAuto: boolean; balance: number; debt?: boolean }>;
+  /** Neto de deuda (`tallyCash`). */
   total: number;
   locale?: LedgerLocale;
 }
@@ -1287,7 +1295,11 @@ export async function generateChannelBalancesPDF(data: PdfChannelBalancesData) {
   autoTable(doc, {
     startY: y,
     head: [[L.channel, L.type, L.balance]],
-    body: data.channels.map((c) => [c.label, c.isAuto ? L.auto : L.manual, money(c.balance)]),
+    body: data.channels.map((c) => [
+      c.label,
+      c.debt ? L.debt : c.isAuto ? L.auto : L.manual,
+      money(c.balance),
+    ]),
     foot: [[L.total, '', money(data.total)]],
     theme: 'striped',
     styles: { fontSize: 9.5, cellPadding: 3 },

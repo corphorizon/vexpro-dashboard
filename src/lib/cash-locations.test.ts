@@ -3,6 +3,10 @@ import {
   LOCATION_TYPES,
   normalizeLocationType,
   isLiquid,
+  isDebt,
+  requiresHolder,
+  signedBalance,
+  tallyCash,
   isAutomatic,
   isOnchain,
   isValidOnchainAddress,
@@ -45,10 +49,27 @@ describe('tipos de ubicación', () => {
 
   // La regla que da sentido a todo el módulo: lo prestado es patrimonio pero
   // no es caja disponible.
-  it('solo lo prestado deja de ser líquido', () => {
+  // Desde 2026-10-05 hay un segundo tipo no líquido: la deuda (préstamo
+  // recibido), que además es pasivo.
+  it('solo lo prestado y lo adeudado dejan de ser líquidos', () => {
     for (const t of LOCATION_TYPES) {
-      expect(isLiquid(t), t).toBe(t !== 'loan');
+      expect(isLiquid(t), t).toBe(t !== 'loan' && t !== 'debt');
     }
+  });
+
+  it('la deuda es el único pasivo, no se sincroniza sola y exige holder', () => {
+    for (const t of LOCATION_TYPES) {
+      expect(isDebt(t), t).toBe(t === 'debt');
+      expect(requiresHolder(t), t).toBe(t === 'debt');
+    }
+    expect(isAutomatic('debt')).toBe(false);
+    expect(normalizeLocationType('debt')).toBe('debt');
+  });
+
+  it('el signo de la deuda lo pone signedBalance, no el usuario', () => {
+    expect(signedBalance({ location_type: 'debt', balance: 10_000 })).toBe(-10_000);
+    expect(signedBalance({ location_type: 'loan', balance: 10_000 })).toBe(10_000);
+    expect(signedBalance({ location_type: 'wallet', balance: 'basura' })).toBe(0);
   });
 
   it('solo las pasarelas se sincronizan solas', () => {
@@ -68,7 +89,51 @@ describe('summarize', () => {
     ], []);
     expect(s.liquid).toBe(25_000);
     expect(s.lent).toBe(48_351);
+    expect(s.owed).toBe(0);
+    expect(s.gross).toBe(73_351);
     expect(s.total).toBe(73_351);
+  });
+
+  // Caso de Kevin (2026-10-05): un socio le presta $10.000 a la empresa y
+  // entran a la Trust Wallet. La wallet ya los suma al Disponible; el lugar
+  // `debt` tiene que restarlos del Total — si sumara, serían $20.000 de
+  // patrimonio que no existen.
+  it('la deuda resta del total y no toca el disponible ni lo prestado', () => {
+    const s = summarize([
+      loc({ location_type: 'wallet', balance: 30_000 }),
+      loc({ location_type: 'loan', balance: 5_000, holder: 'Kevin' }),
+      loc({ location_type: 'debt', balance: 10_000, holder: 'Socio' }),
+    ], []);
+    expect(s.liquid).toBe(30_000);
+    expect(s.lent).toBe(5_000);
+    expect(s.owed).toBe(10_000);
+    expect(s.gross).toBe(35_000);
+    expect(s.total).toBe(25_000);
+  });
+
+  it('la deuda no entra al fondo ni a lo que se lleva aparte', () => {
+    const horizon = unit({ id: 'u1', name: 'Horizon', counts_to_fund: true });
+    const exura = unit({ id: 'u2', name: 'Exura', counts_to_fund: false, sort_order: 1 });
+    const s = summarize([
+      loc({ business_unit_id: 'u1', balance: 8_000 }),
+      loc({ business_unit_id: 'u2', balance: 2_000 }),
+      loc({ location_type: 'debt', business_unit_id: 'u1', balance: 3_000, holder: 'Socio' }),
+      loc({ location_type: 'debt', business_unit_id: null, balance: 1_000, holder: 'Banco' }),
+    ], [horizon, exura]);
+    expect(s.fund).toBe(8_000);
+    expect(s.outsideFund).toBe(2_000);
+    expect(s.fund + s.outsideFund).toBe(s.gross);
+    expect(s.total).toBe(6_000);
+  });
+
+  it('tallyCash es la misma fórmula que summarize, sin redondear', () => {
+    const items = [
+      loc({ location_type: 'wallet', balance: 100.005 }),
+      loc({ location_type: 'debt', balance: 40 }),
+    ];
+    const raw = tallyCash(items);
+    expect(raw.total).toBeCloseTo(60.005, 6);
+    expect(summarize(items, []).total).toBe(60.01);
   });
 
   it('el fondo excluye a las unidades que se llevan aparte', () => {
@@ -129,11 +194,13 @@ describe('summarize', () => {
 
     expect(s.outsideFund).toBe(1_000);
     expect(s.fund).toBe(3_000);
-    expect(s.fund + s.outsideFund).toBe(s.total);
+    expect(s.fund + s.outsideFund).toBe(s.gross);
   });
 
   it('sin ubicaciones da todo en cero', () => {
-    expect(summarize([], [])).toEqual({ liquid: 0, lent: 0, total: 0, fund: 0, outsideFund: 0 });
+    expect(summarize([], [])).toEqual({
+      liquid: 0, lent: 0, owed: 0, gross: 0, total: 0, fund: 0, outsideFund: 0,
+    });
   });
 });
 
@@ -205,6 +272,25 @@ describe('agrupaciones', () => {
     ]);
     expect(g.map((x) => x.type)).toEqual(['gateway', 'loan']);
     expect(g[0]).toEqual({ type: 'gateway', total: 1_250, count: 2 });
+  });
+
+  it('una deuda resta en el total de su unidad (los grupos cierran contra el total neto)', () => {
+    const g = groupByUnit([
+      loc({ business_unit_id: 'u1', balance: 5_000 }),
+      loc({ location_type: 'debt', business_unit_id: 'u1', balance: 2_000, holder: 'Socio' }),
+    ], [unit({ id: 'u1', name: 'Horizon' })]);
+    expect(g[0].total).toBe(3_000);
+    // La fila conserva el monto adeudado en positivo: el signo es de la vista.
+    expect(g[0].locations.find((l) => l.location_type === 'debt')?.balance).toBe(2_000);
+  });
+
+  it('por tipo, la deuda sale en positivo y al final del catálogo', () => {
+    const g = groupByType([
+      loc({ location_type: 'debt', balance: 700 }),
+      loc({ location_type: 'wallet', balance: 100 }),
+    ]);
+    expect(g.map((x) => x.type)).toEqual(['wallet', 'debt']);
+    expect(g[1].total).toBe(700);
   });
 });
 

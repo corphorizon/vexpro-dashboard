@@ -13,6 +13,11 @@
 // de lugar, el holder, el agrupado por unidad de negocio, el resumen
 // Disponible/Prestado/Total/Fondo, archivar/eliminar y las unidades.
 //
+// DEUDA (2026-10-05): un lugar `debt` es un préstamo RECIBIDO. Su saldo se
+// muestra en rojo con «Deuda ·», suma a la tarjeta «Deuda con terceros» y
+// resta del Total, que pasa a llamarse «Total neto» mientras haya deuda. Los
+// números salen de `summarize` — esta tarjeta no decide ningún signo.
+//
 // No inventa saldos: usa el `getValue` de la pantalla, así que la fecha elegida
 // arriba manda sobre todo lo que se ve acá.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -50,11 +55,13 @@ import {
   groupByType,
   groupByUnit,
   isAutomatic,
+  isDebt,
   isLiquid,
   isOnchain,
   normalizeLocationType,
   parseOnchainWallets,
   primaryUnitId,
+  requiresHolder,
   summarize,
   type BusinessUnit,
   type CashLocation,
@@ -63,6 +70,8 @@ import {
   type UnitShare,
 } from '@/lib/cash-locations';
 import type { OnchainSnapshotMeta } from '@/lib/types';
+import { InfoTip } from '@/components/ui/info-tip';
+import { GLOSSARY } from '@/lib/glossary';
 import { BusinessUnitsModal } from './business-units-modal';
 import { UnitSharesEditor } from './unit-shares-editor';
 import { OnchainWalletsEditor } from './onchain-wallets-editor';
@@ -203,6 +212,8 @@ export function ChannelBalancesCard({
   }, [channels, configRows, getValue, sharesByKey]);
 
   const summary = useMemo(() => summarize(locations, units), [locations, units]);
+  // Declarado justo después de `summary` y antes de cualquier uso en el JSX.
+  const hasDebt = summary.owed !== 0;
   const byUnit = useMemo(() => groupByUnit(locations, units), [locations, units]);
   const byType = useMemo(() => groupByType(locations), [locations]);
 
@@ -299,6 +310,11 @@ export function ChannelBalancesCard({
 
   const saveEdit = async (loc: CashLocation) => {
     if (!draft) return;
+    // El servidor lo valida igual; acá es para no hacer el viaje.
+    if (requiresHolder(draft.location_type) && !draft.holder.trim()) {
+      setStatus({ kind: 'err', msg: t('balances.cfgDebtNeedsHolder') });
+      return;
+    }
     setSaving(true);
     setStatus(null);
     try {
@@ -427,8 +443,14 @@ export function ChannelBalancesCard({
       )}
 
       {/* Resumen. Disponible y Prestado van primero y separados a propósito:
-          confundirlos es creer que hay caja para pagar algo que no está. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          confundirlos es creer que hay caja para pagar algo que no está. La
+          Deuda solo aparece si hay: una tarjeta en $0 para todas las empresas
+          que nunca pidieron prestado sería ruido. */}
+      <div
+        className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${
+          hasDebt ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
+        }`}
+      >
         <div className="p-4 rounded-lg border border-positive/30 bg-positive/5">
           <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('cash.available')}</p>
           <p className="text-2xl font-bold text-positive tabular-nums">{formatCurrency(summary.liquid)}</p>
@@ -439,10 +461,23 @@ export function ChannelBalancesCard({
           <p className="text-2xl font-bold text-warning tabular-nums">{formatCurrency(summary.lent)}</p>
           <p className="text-[10px] text-muted-foreground mt-0.5">{t('cash.lentHint')}</p>
         </div>
+        {hasDebt && (
+          <div className="p-4 rounded-lg border border-negative/30 bg-negative/5">
+            <p className="flex items-center gap-1 text-xs text-muted-foreground uppercase tracking-wide">
+              {t('cash.owed')} <InfoTip text={GLOSSARY.deudaConTerceros} />
+            </p>
+            <p className="text-2xl font-bold text-negative tabular-nums">{formatCurrency(summary.owed)}</p>
+            <p className="text-[10px] text-muted-foreground mt-0.5">{t('cash.owedHint')}</p>
+          </div>
+        )}
         <div className="p-4 rounded-lg border border-border">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('balances.totalConsolidated')}</p>
+          <p className="text-xs text-muted-foreground uppercase tracking-wide">
+            {hasDebt ? t('cash.totalNet') : t('balances.totalConsolidated')}
+          </p>
           <p className="text-2xl font-bold tabular-nums">{formatCurrency(summary.total)}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{t('cash.totalHint')}</p>
+          <p className="text-[10px] text-muted-foreground mt-0.5">
+            {hasDebt ? t('cash.totalNetHint') : t('cash.totalHint')}
+          </p>
         </div>
         <div className="p-4 rounded-lg border border-border bg-muted/30">
           <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('cash.fund')}</p>
@@ -457,6 +492,12 @@ export function ChannelBalancesCard({
         <p className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
           <HandCoins className="w-4 h-4 shrink-0 text-warning" />
           <span>{t('cash.lentNotice')}</span>
+        </p>
+      )}
+      {hasDebt && (
+        <p className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
+          <HandCoins className="w-4 h-4 shrink-0 text-negative" />
+          <span>{t('cash.owedNotice')}</span>
         </p>
       )}
 
@@ -600,10 +641,19 @@ export function ChannelBalancesCard({
                       <div className="flex items-center gap-1 shrink-0">
                         <span
                           className={`font-semibold tabular-nums ${
-                            isLiquid(loc.location_type) ? '' : 'text-warning'
+                            isDebt(loc.location_type)
+                              ? 'text-negative'
+                              : isLiquid(loc.location_type)
+                                ? ''
+                                : 'text-warning'
                           }`}
                         >
-                          {formatCurrency(loc.balance)}
+                          {/* Una deuda se muestra con su monto en positivo y el
+                              rótulo: «−$10.000» a secas se leería como una
+                              wallet en rojo, no como plata que se debe. */}
+                          {isDebt(loc.location_type)
+                            ? `${t('cash.debtPrefix')} · ${formatCurrency(loc.balance)}`
+                            : formatCurrency(loc.balance)}
                         </span>
                         {hasLedger(loc.channel_key) && (
                           <Link
@@ -681,7 +731,13 @@ export function ChannelBalancesCard({
                           <input
                             value={draft.holder}
                             onChange={(e) => setDraft({ ...draft, holder: e.target.value })}
-                            placeholder={t('cash.holderPlaceholder')}
+                            placeholder={
+                              isDebt(draft.location_type)
+                                ? t('cash.debtHolderPlaceholder')
+                                : t('cash.holderPlaceholder')
+                            }
+                            required={requiresHolder(draft.location_type)}
+                            aria-required={requiresHolder(draft.location_type)}
                             className={INPUT}
                           />
                         </label>
@@ -705,7 +761,11 @@ export function ChannelBalancesCard({
                         )}
                         <div className="sm:col-span-2 flex items-center justify-between gap-2">
                           <p className="text-[11px] text-muted-foreground">
-                            {automatic ? t('cash.autoBalanceNote') : t('cash.manualBalanceNote')}
+                            {automatic
+                              ? t('cash.autoBalanceNote')
+                              : isDebt(draft.location_type)
+                                ? t('balances.cfgDebtHelp')
+                                : t('cash.manualBalanceNote')}
                           </p>
                           <div className="flex items-center gap-1">
                             <button
@@ -745,13 +805,13 @@ export function ChannelBalancesCard({
           <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2">
             {t('cash.byType')}
           </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
             {byType.map((row) => (
               <div key={row.type} className="p-3 rounded-lg border border-border">
                 <p className="text-xs text-muted-foreground truncate">{typeLabel(row.type)}</p>
                 <p
                   className={`text-base font-semibold tabular-nums ${
-                    isLiquid(row.type) ? '' : 'text-warning'
+                    isDebt(row.type) ? 'text-negative' : isLiquid(row.type) ? '' : 'text-warning'
                   }`}
                 >
                   {formatCurrency(row.total)}

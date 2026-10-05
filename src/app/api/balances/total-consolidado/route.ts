@@ -5,7 +5,13 @@ import { fetchLiveChannelBalances } from '@/lib/api-integrations/live-balances';
 import { apiError } from '@/lib/api-error';
 import { resolveChannels, type ChannelConfigRow } from '@/lib/channel-configs';
 import { pickChannelAmount, type ReportChannelSource } from '@/lib/reports/balances-by-channel';
-import { isLiquid, normalizeLocationType, type LocationType } from '@/lib/cash-locations';
+import {
+  isDebt,
+  isLiquid,
+  normalizeLocationType,
+  tallyCash,
+  type LocationType,
+} from '@/lib/cash-locations';
 
 // ---------------------------------------------------------------------------
 // GET /api/balances/total-consolidado
@@ -57,8 +63,15 @@ import { isLiquid, normalizeLocationType, type LocationType } from '@/lib/cash-l
 //
 // `total` incluye lo prestado, porque es lo que muestra /balances y los dos
 // números tienen que coincidir. Para quien necesite la distinción, la
-// respuesta trae además `liquid` (todo menos las ubicaciones `loan`) y `lent`
+// respuesta trae además `liquid` (todo menos `loan` y `debt`) y `lent`
 // — un préstamo es patrimonio, pero no es caja disponible mañana.
+//
+// DEUDA (2026-10-05). Un lugar `debt` (préstamo que un tercero le hizo a la
+// empresa) RESTA: `total = liquid + lent − owed`, y `gross = liquid + lent`.
+// La fórmula NO se escribe acá: sale de `tallyCash` (cash-locations.ts), la
+// misma que usa `summarize` para la tarjeta de /balances. Antes este archivo
+// sumaba liquid/lent a mano; con dos copias, la deuda agregada en una sola
+// habría separado la home de /balances exactamente por el monto adeudado.
 // ---------------------------------------------------------------------------
 
 const API_TIMEOUT_MS = 5000;
@@ -179,11 +192,16 @@ export async function GET(request: NextRequest) {
     // ── Un renglón por canal visible ─────────────────────────────────────
     const breakdown: Record<
       string,
-      { amount: number; source: ReportChannelSource; label: string; liquid: boolean }
+      {
+        amount: number;
+        source: ReportChannelSource;
+        label: string;
+        liquid: boolean;
+        /** Pasivo: `amount` es lo que se debe, en positivo, y resta del total. */
+        debt: boolean;
+      }
     > = {};
-    let total = 0;
-    let liquid = 0;
-    let lent = 0;
+    const tallied: Array<{ location_type: LocationType; balance: number }> = [];
 
     for (const ch of visibleChannels) {
       let amount: number;
@@ -209,20 +227,32 @@ export async function GET(request: NextRequest) {
       }
 
       // liquidez/inversiones no son ubicaciones físicas: no tienen fila en
-      // channel_configs con tipo, y ninguna de las dos es un préstamo.
-      const isLent = !isLiquid(locationTypeByKey.get(ch.key));
-      total += amount;
-      if (isLent) lent += amount;
-      else liquid += amount;
+      // channel_configs con tipo, y ninguna de las dos es un préstamo — caen
+      // al tipo por defecto (wallet, líquido).
+      const locationType = normalizeLocationType(locationTypeByKey.get(ch.key));
+      tallied.push({ location_type: locationType, balance: amount });
 
-      breakdown[ch.key] = { amount, source, label: ch.label, liquid: !isLent };
+      breakdown[ch.key] = {
+        amount,
+        source,
+        label: ch.label,
+        liquid: isLiquid(locationType),
+        debt: isDebt(locationType),
+      };
     }
+
+    const { total, liquid, lent, owed, gross } = tallyCash(tallied);
 
     return NextResponse.json({
       success: true,
+      /** Neto: liquid + lent − owed. Es el mismo número que la tarjeta de /balances. */
       total,
       liquid,
       lent,
+      /** Préstamos recibidos de terceros (deuda), en positivo. */
+      owed,
+      /** liquid + lent, sin descontar deuda. */
+      gross,
       asOf: new Date().toISOString(),
       breakdown,
       /**

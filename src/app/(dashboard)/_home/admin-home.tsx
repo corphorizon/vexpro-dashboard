@@ -141,6 +141,11 @@ export function AdminHome() {
   // incluso antes de que el cron diario capture el snapshot de hoy.
   // Auto-refresh every 5 min while the tab is visible.
   const [totalConsolidado, setTotalConsolidado] = useState<number | null>(null);
+  // Deuda con terceros (lugares `debt`, 2026-10-05). El `total` de la ruta ya
+  // viene NETO (sale de `tallyCash`, la misma fórmula que /balances); esto es
+  // solo para que el subtítulo no diga «suma de todos los balances» cuando en
+  // realidad se restó un préstamo recibido.
+  const [owedConsolidado, setOwedConsolidado] = useState(0);
   // ── PNL del mes (Kevin, 2026-08-31: «en vez de socios pon el dato del PNL
   // del mes») — la serie diaria del CRM (crm_daily_pnl). El signo se invierte
   // UNA sola vez en daily-pnl-query.ts (totals.brokerPnl); esta tarjeta lo
@@ -174,7 +179,10 @@ export function AdminHome() {
       try {
         const res = await apiFetch('/api/balances/total-consolidado');
         const json = await res.json();
-        if (!cancelled && json.success) setTotalConsolidado(Number(json.total));
+        if (!cancelled && json.success) {
+          setTotalConsolidado(Number(json.total));
+          setOwedConsolidado(Number(json.owed) || 0);
+        }
       } catch {
         if (!cancelled) setTotalConsolidado(0);
       }
@@ -311,7 +319,11 @@ export function AdminHome() {
             value={totalConsolidado === null ? '—' : formatCurrency(totalConsolidado)}
             icon={Layers}
             tone={(totalConsolidado ?? 0) >= 0 ? 'positive' : 'negative'}
-            hint="Suma de todos los balances"
+            hint={
+              owedConsolidado !== 0
+                ? `Neto: disponible + prestado − deuda (${formatCurrency(owedConsolidado)})`
+                : 'Suma de todos los balances'
+            }
           />
         )}
         {has('investments') && (

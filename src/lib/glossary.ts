@@ -51,6 +51,12 @@ export const GLOSSARY = {
   // de /movimientos NO explica: cada fila es «API + manual», los dos suman y el
   // manual nunca se pisa. Va en el encabezado de la columna Canal, que es donde
   // aparece el rótulo «api» que la motiva.
+  // Préstamo recibido (lugar `debt` de Balances, 2026-10-05). La regla del
+  // signo vive en cash-locations.ts (`signedBalance` / `tallyCash`); esto es la
+  // explicación para quien lee la tarjeta o el reporte.
+  deudaConTerceros:
+    'Deuda con terceros: préstamos que una persona o entidad le hizo a la empresa. Es un pasivo: resta del Total neto (disponible + prestado − deuda) y no suma al Disponible. La plata recibida ya está contada en la wallet o banco donde entró; el lugar de deuda solo registra cuánto se debe y a quién. Un abono se registra bajando su saldo desde el libro y cargando el pago en Egresos.',
+
   apiManualCoexist:
     'Los canales con integración suman dos fuentes: lo reportado por la API y lo cargado manualmente en Carga de Datos. Ambos conviven — el manual nunca se sobrescribe.',
 } as const;

@@ -26,7 +26,9 @@ import {
 import { apiError } from '@/lib/api-error';
 import {
   DEFAULT_LOCATION_TYPE,
+  isDebt,
   isLocationType,
+  requiresHolder,
   validateOnchainWallets,
   type UnitShare,
 } from '@/lib/cash-locations';
@@ -245,6 +247,32 @@ export async function POST(request: NextRequest) {
       payload.holder = typeof holder === 'string' ? holder.trim() || null : null;
     }
 
+    // Préstamo recibido (`debt`, 2026-10-05): el holder ES el acreedor y es
+    // obligatorio. Se valida contra el estado FINAL de la fila: si el body no
+    // trae el tipo pero sí un holder vacío, hay que mirar el tipo guardado —
+    // si no, borrarle el acreedor a una deuda existente pasaría sin aviso.
+    if (location_type !== undefined || holder !== undefined) {
+      type CurrentRow = { location_type?: string | null; holder?: string | null };
+      let current: CurrentRow | null = null;
+      if (location_type === undefined || holder === undefined) {
+        const { data } = await admin
+          .from('channel_configs')
+          .select('location_type, holder')
+          .eq('company_id', ctx.companyId)
+          .eq('channel_key', channel_key)
+          .maybeSingle();
+        current = (data as CurrentRow | null) ?? null;
+      }
+      const finalType = location_type !== undefined ? location_type : current?.location_type;
+      const finalHolder = holder !== undefined ? payload.holder : current?.holder;
+      if (requiresHolder(finalType) && !finalHolder) {
+        return NextResponse.json(
+          { success: false, error: 'Indicá quién prestó el dinero' },
+          { status: 400 },
+        );
+      }
+    }
+
     // Direcciones on-chain (migración 085). Mismo criterio que los campos de
     // arriba: OMITIRLO no es lo mismo que mandarlo vacío. Si no viene, la
     // ubicación conserva sus direcciones — así el toggle de visibilidad o un
@@ -309,6 +337,19 @@ export async function POST(request: NextRequest) {
     }
     if (location_type !== undefined && !isLocationType(location_type)) {
       return NextResponse.json({ success: false, error: 'Tipo de ubicación no válido' }, { status: 400 });
+    }
+    // Préstamo recibido: acreedor obligatorio y monto en POSITIVO. El signo lo
+    // pone `signedBalance` (cash-locations.ts); un monto negativo acá se
+    // asentaría como egreso y, con el signo del sistema encima, la deuda
+    // terminaría SUMANDO al total — el error que no da error.
+    if (requiresHolder(location_type) && !(typeof holder === 'string' && holder.trim())) {
+      return NextResponse.json({ success: false, error: 'Indicá quién prestó el dinero' }, { status: 400 });
+    }
+    if (isDebt(location_type) && typeof initial_balance === 'number' && initial_balance < 0) {
+      return NextResponse.json(
+        { success: false, error: 'El monto del préstamo va en positivo: el sistema lo resta solo' },
+        { status: 400 },
+      );
     }
     // Sin esto no habría forma de dar de alta un "Préstamo a X": el alta
     // creaba el lugar y el tipo había que ponérselo después, en otra pantalla.

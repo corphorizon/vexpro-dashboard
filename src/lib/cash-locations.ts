@@ -6,18 +6,48 @@
 // un banco, efectivo, una cuenta de trading, una pasarela con API, o alguien
 // a quien se le prestó.
 //
-// LA DISTINCIÓN QUE IMPORTA: LÍQUIDO vs PRESTADO.
-// Lo prestado ES plata de la empresa, pero no se puede usar mañana. Sumarlo al
-// disponible haría creer que hay caja donde no la hay; ignorarlo haría creer
-// que la empresa vale menos de lo que vale. Por eso se cuenta aparte y se
-// muestra aparte.
+// LA DISTINCIÓN QUE IMPORTA: LÍQUIDO vs PRESTADO vs ADEUDADO.
+// · LÍQUIDO   — plata propia que se puede usar mañana (wallet, banco, efectivo,
+//               trading, pasarela).
+// · PRESTADO  (`loan`) — ES plata de la empresa, pero no se puede usar mañana.
+//               Sumarlo al disponible haría creer que hay caja donde no la hay;
+//               ignorarlo haría creer que la empresa vale menos de lo que vale.
+//               Por eso se cuenta aparte y se muestra aparte.
+// · ADEUDADO  (`debt`, 2026-10-05) — un préstamo que un TERCERO le hizo a la
+//               empresa. Es un PASIVO: `total = liquid + lent − owed`.
+//
+// POR QUÉ LA DEUDA RESTA Y NO ES "OTRO LUGAR CON PLATA"
+// La plata del préstamo YA está en la wallet o el banco donde se recibió, y
+// esa ubicación ya la suma al Disponible. Registrar el préstamo además como un
+// lugar con saldo positivo la contaría DOS veces (Kevin recibe $10.000 de un
+// socio → la wallet sube $10.000 y el "lugar" préstamo sumaría otros $10.000:
+// $20.000 de patrimonio que no existen). Por eso el saldo del lugar `debt` se
+// carga POSITIVO (el monto que se debe) y el signo lo pone `signedBalance`,
+// nunca el usuario: un solo lugar decide, y no hay forma de cargar "−10.000"
+// por error y que la deuda termine SUMANDO.
+//
+// Descartado: guardar el saldo negativo en el libro. `channel_ledger_entries`
+// tiene `amount` siempre positivo con el signo en `kind`; una apertura negativa
+// se asienta como egreso y el libro del lugar quedaría en rojo, con lo que
+// "abonar" la deuda sería cargar un INGRESO — exactamente al revés de lo que
+// cualquiera esperaría al mirar el libro.
+//
+// CÓMO SE PAGA UNA DEUDA (no hay flujo nuevo, a propósito)
+// El abono se registra bajando el saldo del lugar `debt` desde su libro
+// (/balances/libro/<clave>, asiento de egreso — la misma edición manual que
+// cualquier ubicación manual) y el pago real se carga en Egresos / en el libro
+// de la wallet de la que salió la plata. Cuando el saldo llega a cero, el lugar
+// se puede eliminar.
 //
 // Import-safe desde cliente y servidor: no toca Supabase ni React.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { round2 } from './utils';
 
-export const LOCATION_TYPES = ['gateway', 'wallet', 'bank', 'cash', 'trading', 'loan'] as const;
+// El orden es el del catálogo: lo usan el select «Tipo» y el desglose por tipo.
+// 'debt' tiene que estar también en el CHECK de channel_configs.location_type
+// (migración 129): si no, el alta revienta en la base con un 23514.
+export const LOCATION_TYPES = ['gateway', 'wallet', 'bank', 'cash', 'trading', 'loan', 'debt'] as const;
 export type LocationType = (typeof LOCATION_TYPES)[number];
 
 export const DEFAULT_LOCATION_TYPE: LocationType = 'wallet';
@@ -37,6 +67,7 @@ export const LOCATION_TYPE_LABELS: Record<LocationType, { es: string; en: string
   cash:    { es: 'Efectivo',          en: 'Cash' },
   trading: { es: 'Cuenta de trading', en: 'Trading account' },
   loan:    { es: 'Prestado a',        en: 'Lent to' },
+  debt:    { es: 'Préstamo recibido de', en: 'Loan received from' },
 };
 
 /**
@@ -46,7 +77,34 @@ export const LOCATION_TYPE_LABELS: Record<LocationType, { es: string; en: string
  * — la diferencia con un préstamo es que no depende de que un tercero pague.
  */
 export function isLiquid(type: unknown): boolean {
-  return normalizeLocationType(type) !== 'loan';
+  const t = normalizeLocationType(type);
+  return t !== 'loan' && t !== 'debt';
+}
+
+/**
+ * Pasivo: plata que la empresa DEBE a un tercero (préstamo recibido). Su saldo
+ * se guarda positivo y resta del total — ver la cabecera.
+ */
+export function isDebt(type: unknown): boolean {
+  return normalizeLocationType(type) === 'debt';
+}
+
+/**
+ * Tipos cuyo `holder` es obligatorio. En un `debt` el holder ES el acreedor:
+ * una deuda sin saber con quién no se puede pagar ni conciliar.
+ */
+export function requiresHolder(type: unknown): boolean {
+  return isDebt(type);
+}
+
+/**
+ * Cuánto aporta una ubicación al patrimonio: su saldo, o su saldo en negativo
+ * si es una deuda. ÚNICO lugar que decide el signo — lo usan `tallyCash`,
+ * `groupByUnit`, los reportes y el PDF.
+ */
+export function signedBalance(loc: { location_type: unknown; balance: unknown }): number {
+  const balance = Number(loc.balance) || 0;
+  return isDebt(loc.location_type) ? -balance : balance;
 }
 
 /** Solo estas ubicaciones se sincronizan solas; el resto se carga a mano. */
@@ -237,7 +295,10 @@ export interface CashLocation {
    * `business_unit_id`, que es como quedaron todas las ubicaciones viejas.
    */
   unit_shares?: UnitShare[] | null;
-  /** Para 'loan', a quién se le prestó; para 'bank', el banco. */
+  /**
+   * Para 'loan', a quién se le prestó; para 'debt', quién le prestó a la
+   * empresa (obligatorio); para 'bank', el banco.
+   */
   holder: string | null;
   is_visible: boolean;
   /** Propia del usuario: solo estas se pueden eliminar (las base se archivan). */
@@ -245,17 +306,54 @@ export interface CashLocation {
   /** Direcciones públicas cuyo saldo se lee de la cadena (migración 085). */
   onchain_wallets?: OnchainWallet[] | null;
   sort_order: number;
-  /** Saldo actual del libro de esa ubicación. */
+  /**
+   * Saldo actual del libro de esa ubicación. En un 'debt' es el monto que se
+   * DEBE, en positivo: el signo lo pone `signedBalance`.
+   */
   balance: number;
 }
 
-export interface CashSummary {
-  /** Disponible: todo menos lo prestado. */
+export interface CashTotals {
+  /** Disponible: todo menos lo prestado y lo adeudado. */
   liquid: number;
   /** Plata de la empresa en manos de terceros. */
   lent: number;
-  /** liquid + lent — el patrimonio en efectivo. */
+  /** Lo que la empresa debe a terceros (préstamos recibidos), en positivo. */
+  owed: number;
+  /** liquid + lent — el bruto, sin descontar deudas. */
+  gross: number;
+  /** liquid + lent − owed — el patrimonio neto en efectivo. */
   total: number;
+}
+
+/**
+ * Disponible / Prestado / Adeudado / Total de una lista de ubicaciones.
+ *
+ * Es la ÚNICA implementación de la fórmula: la usan `summarize` (tarjeta de
+ * Balances, reporte de empresa, PDF del reporte) y
+ * /api/balances/total-consolidado (tarjeta «Total consolidado» de la home).
+ * Antes la ruta recalculaba liquid/lent a mano; con dos copias, agregar la
+ * deuda en una sola habría hecho divergir la home de /balances justo por el
+ * monto del préstamo.
+ *
+ * No redondea: `summarize` redondea para mostrar; la ruta devuelve crudo como
+ * siempre lo hizo.
+ */
+export function tallyCash(
+  items: Array<{ location_type: unknown; balance: unknown }>,
+): CashTotals {
+  let liquid = 0, lent = 0, owed = 0;
+  for (const it of items) {
+    const balance = Number(it.balance) || 0;
+    if (isDebt(it.location_type)) owed += balance;
+    else if (isLiquid(it.location_type)) liquid += balance;
+    else lent += balance;
+  }
+  const gross = liquid + lent;
+  return { liquid, lent, owed, gross, total: gross - owed };
+}
+
+export interface CashSummary extends CashTotals {
   /** Saldo de las unidades marcadas como parte del fondo (el ahorro real). */
   fund: number;
   /** Saldo de las unidades que se llevan aparte. */
@@ -378,14 +476,24 @@ export function unitLocationShares(
   return out;
 }
 
+/**
+ * Resumen de la tarjeta de Balances y del reporte de empresa.
+ *
+ * EL FONDO NO DESCUENTA DEUDA (decisión 2026-10-05). `fund`/`outsideFund`
+ * reparten la plata que la empresa TIENE entre las unidades dueñas de cada
+ * lugar; una deuda es de la empresa entera, no del ahorro de una unidad, y
+ * restarla del fondo obligaría a decidir a qué unidad se le carga. Por eso
+ * `fund + outsideFund === gross` (no `total`): con deuda, el fondo sigue
+ * diciendo cuánto hay guardado y el Total neto dice cuánto es realmente propio.
+ */
 export function summarize(locations: CashLocation[], units: BusinessUnit[]): CashSummary {
   const fundUnits = new Set(units.filter((u) => u.counts_to_fund).map((u) => u.id));
-  let liquid = 0, lent = 0, fund = 0, outsideFund = 0;
+  const totals = tallyCash(locations);
+  let fund = 0, outsideFund = 0;
 
   for (const loc of locations) {
+    if (isDebt(loc.location_type)) continue;
     const balance = Number(loc.balance) || 0;
-    if (isLiquid(loc.location_type)) liquid += balance;
-    else lent += balance;
 
     // Sin unidad asignada la plata igual existe: entra al fondo, que es el
     // saldo general de la empresa. Dejarla afuera la haría desaparecer del
@@ -398,9 +506,11 @@ export function summarize(locations: CashLocation[], units: BusinessUnit[]): Cas
   }
 
   return {
-    liquid: round2(liquid),
-    lent: round2(lent),
-    total: round2(liquid + lent),
+    liquid: round2(totals.liquid),
+    lent: round2(totals.lent),
+    owed: round2(totals.owed),
+    gross: round2(totals.gross),
+    total: round2(totals.total),
     fund: round2(fund),
     outsideFund: round2(outsideFund),
   };
@@ -416,7 +526,14 @@ export interface AllocatedLocation extends CashLocation {
   fullBalance: number;
 }
 
-/** Agrupa por unidad de negocio para el desglose. Sin unidad va al final. */
+/**
+ * Agrupa por unidad de negocio para el desglose. Sin unidad va al final.
+ *
+ * `total` de cada grupo es NETO (`signedBalance`): una deuda asignada a una
+ * unidad resta en su grupo, para que la suma de los grupos cierre contra el
+ * Total neto de la tarjeta y del reporte. `balance` de cada ubicación queda
+ * como está (positivo en un `debt`); quien la muestre decide cómo marcarla.
+ */
 export function groupByUnit(
   locations: CashLocation[],
   units: BusinessUnit[],
@@ -442,7 +559,7 @@ export function groupByUnit(
     .map(([id, locs]) => ({
       unit: id ? byId.get(id) ?? null : null,
       locations: locs,
-      total: round2(locs.reduce((s, l) => s + (Number(l.balance) || 0), 0)),
+      total: round2(locs.reduce((s, l) => s + signedBalance(l), 0)),
     }))
     .sort((a, b) => {
       if (!a.unit) return 1;
@@ -451,7 +568,10 @@ export function groupByUnit(
     });
 }
 
-/** Agrupa por tipo de ubicación, en el orden del catálogo. */
+/**
+ * Agrupa por tipo de ubicación, en el orden del catálogo. El total de 'debt'
+ * sale en positivo (el monto adeudado), igual que `owed`.
+ */
 export function groupByType(locations: CashLocation[]): Array<{ type: LocationType; total: number; count: number }> {
   const totals = new Map<LocationType, { total: number; count: number }>();
   for (const loc of locations) {

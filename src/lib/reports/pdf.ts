@@ -14,7 +14,7 @@
 
 import type { ReportData, ReportBucket, ReportDepositRow, ReportWithdrawalRow } from './data';
 import { UNASSIGNED_CLIENT_KEY, UNCATEGORIZED, formatShare, type CompanyReport } from './company-report';
-import { LOCATION_TYPE_LABELS } from '@/lib/cash-locations';
+import { LOCATION_TYPE_LABELS, signedBalance } from '@/lib/cash-locations';
 import type { ReportCadence } from './email-template';
 import jsPDF from 'jspdf';
 import { BRAND_RGB, hexToRgb } from '@/lib/brand';
@@ -522,7 +522,14 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
         value: fmtCurrency(r.cash.summary.lent),
         tone: r.cash.summary.lent > 0 ? 'bad' : 'neutral',
       },
-      { label: 'Total', value: fmtCurrency(r.cash.summary.total) },
+      // Préstamos recibidos (2026-10-05): solo si hay, igual que en pantalla.
+      ...(r.cash.summary.owed !== 0
+        ? [{ label: 'Deuda con terceros', value: fmtCurrency(r.cash.summary.owed), tone: 'bad' as const }]
+        : []),
+      {
+        label: r.cash.summary.owed !== 0 ? 'Total neto' : 'Total',
+        value: fmtCurrency(r.cash.summary.total),
+      },
     ]);
     // Una ubicación compartida sale una vez por unidad dueña, con su parte.
     // El "· 60% de $X" no es decorativo: sin él dos filas de la misma wallet
@@ -537,7 +544,9 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
           .join(' · '),
         LOCATION_TYPE_LABELS[l.location_type].es,
         g.unit?.name ?? 'Sin unidad',
-        fmtCurrency(l.balance),
+        // Con signo: una deuda sale en negativo y las filas cierran contra el
+        // Total (neto) del pie.
+        fmtCurrency(signedBalance(l)),
       ]),
     );
     if (cashRows.length === 0) {
@@ -546,7 +555,7 @@ export async function downloadReportPDF(params: DownloadReportPdfParams): Promis
       renderAutoTable(
         [['Ubicación', 'Tipo', 'Unidad', 'Saldo']],
         cashRows,
-        [['Total', '', '', fmtCurrency(r.cash.summary.total)]],
+        [[r.cash.summary.owed !== 0 ? 'Total neto' : 'Total', '', '', fmtCurrency(r.cash.summary.total)]],
       );
     }
   }

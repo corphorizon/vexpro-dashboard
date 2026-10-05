@@ -12,6 +12,11 @@
 //     un "canal" pelado y el tipo había que ponérselo después en otra pantalla,
 //     así que no había forma de cargar un "Préstamo a Kevin".
 //   · Elimina los propios (los predefinidos solo se ocultan).
+//   · Tipo «Préstamo recibido de» (`debt`, 2026-10-05): un préstamo que una
+//     persona le hizo a la EMPRESA. El holder (quién prestó) es obligatorio y
+//     el «Balance inicial» pasa a ser el monto del préstamo, siempre positivo:
+//     el signo lo pone `signedBalance` en cash-locations.ts, nunca el usuario.
+//     Por qué resta y no suma: ver la cabecera de cash-locations.ts.
 //
 // Todo se persiste en /api/admin/channel-configs y el reparto por unidad en
 // /api/admin/location-units. Tras cada mutación se llama `onChanged()` para que
@@ -40,7 +45,10 @@ import {
   DEFAULT_LOCATION_TYPE,
   LOCATION_TYPES,
   LOCATION_TYPE_LABELS,
+  isDebt,
+  normalizeLocationType,
   primaryUnitId,
+  requiresHolder,
   validateOnchainWallets,
   type BusinessUnit,
   type LocationType,
@@ -122,6 +130,8 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
   }, [open, loadUnits, t]);
 
   const resolved: ResolvedChannel[] = resolveChannels(rows);
+  const rowByKey = new Map(rows.map((r) => [r.channel_key, r]));
+  const newIsDebt = isDebt(newType);
 
   async function refresh() {
     const res = await apiFetch('/api/admin/channel-configs');
@@ -182,6 +192,17 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
     const onchain = validateOnchainWallets(newOnchain.filter((w) => w.address.trim()));
     if (onchain.error) {
       setStatus({ kind: 'err', msg: onchain.error });
+      return;
+    }
+    // Una deuda sin acreedor no se puede pagar ni conciliar; y un monto
+    // negativo, con el signo que ya pone el sistema, terminaría SUMANDO al
+    // total. El servidor valida lo mismo.
+    if (requiresHolder(newType) && !newHolder.trim()) {
+      setStatus({ kind: 'err', msg: t('balances.cfgDebtNeedsHolder') });
+      return;
+    }
+    if (isDebt(newType) && parseFloat(newChannelBalance) < 0) {
+      setStatus({ kind: 'err', msg: t('balances.cfgDebtNegative') });
       return;
     }
 
@@ -322,6 +343,9 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                   const isApi = !canRename;
                   const editing = editingLabelFor === ch.key;
                   const busy = saving === ch.key;
+                  const row = rowByKey.get(ch.key);
+                  const debtRow =
+                    row && isDebt(normalizeLocationType(row.location_type)) ? row : null;
                   return (
                     <div
                       key={ch.key}
@@ -402,10 +426,22 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                                 </span>
                               )}
                             </div>
-                            <p className="text-xs text-muted-foreground truncate">
-                              {ch.description} · {t('balances.cfgCurrentBalance')}{' '}
-                              <span className="font-medium">{formatCurrency(getValue(ch.key))}</span>
-                            </p>
+                            {debtRow ? (
+                              // Una deuda: rótulo + acreedor + monto en rojo. Sin
+                              // esto se leía como «Balance actual: $10.000», igual
+                              // que una wallet con plata.
+                              <p className="text-xs text-muted-foreground truncate">
+                                <span className="font-medium text-negative">
+                                  {t('cash.debtPrefix')} · {formatCurrency(getValue(ch.key))}
+                                </span>
+                                {debtRow.holder ? ` · ${debtRow.holder}` : ''}
+                              </p>
+                            ) : (
+                              <p className="text-xs text-muted-foreground truncate">
+                                {ch.description} · {t('balances.cfgCurrentBalance')}{' '}
+                                <span className="font-medium">{formatCurrency(getValue(ch.key))}</span>
+                              </p>
+                            )}
                           </>
                         )}
                       </div>
@@ -458,11 +494,12 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                   <input
                     type="number"
                     step="0.01"
+                    min={newIsDebt ? 0 : undefined}
                     value={newChannelBalance}
                     onChange={(e) => setNewChannelBalance(e.target.value)}
-                    placeholder={t('balances.cfgInitialBalance')}
+                    placeholder={newIsDebt ? t('balances.cfgLoanAmount') : t('balances.cfgInitialBalance')}
                     className={`${INPUT} text-right`}
-                    aria-label={t('balances.cfgInitialBalance')}
+                    aria-label={newIsDebt ? t('balances.cfgLoanAmount') : t('balances.cfgInitialBalance')}
                   />
                   <label className="flex flex-col gap-1 text-xs text-muted-foreground">
                     {t('cash.locationType')}
@@ -483,11 +520,22 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                     <input
                       value={newHolder}
                       onChange={(e) => setNewHolder(e.target.value)}
-                      placeholder={t('cash.holderPlaceholder')}
+                      placeholder={
+                        newIsDebt ? t('cash.debtHolderPlaceholder') : t('cash.holderPlaceholder')
+                      }
+                      required={requiresHolder(newType)}
+                      aria-required={requiresHolder(newType)}
                       className={INPUT}
                     />
                   </label>
                 </div>
+
+                {newIsDebt && (
+                  <p className="flex items-start gap-2 p-3 rounded-md text-xs border border-negative/30 bg-negative/5 text-muted-foreground">
+                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-negative" />
+                    <span>{t('balances.cfgDebtHelp')}</span>
+                  </p>
+                )}
 
                 <UnitSharesEditor units={units} value={newShares} onChange={setNewShares} />
 
@@ -508,7 +556,11 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                   <p className="text-xs text-muted-foreground">{t('balances.cfgAddHint')}</p>
                   <button
                     onClick={createCustom}
-                    disabled={creating || !newChannelName.trim()}
+                    disabled={
+                      creating ||
+                      !newChannelName.trim() ||
+                      (requiresHolder(newType) && !newHolder.trim())
+                    }
                     className="inline-flex items-center justify-center gap-1.5 min-h-11 sm:min-h-9 px-4 rounded-md bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 shrink-0"
                   >
                     <Plus className="w-4 h-4" />

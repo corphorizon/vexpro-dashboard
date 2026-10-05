@@ -30,6 +30,7 @@ import {
   DEFAULT_LOCATION_TYPE,
   LOCATION_TYPE_LABELS,
   normalizeLocationType,
+  signedBalance,
   type BusinessUnit,
   type CashLocation,
 } from '@/lib/cash-locations';
@@ -341,7 +342,11 @@ export function CompanyReportSections({ report }: { report: CompanyReport }) {
           icon={<Banknote className="w-5 h-5 text-muted-foreground" />}
           title={t('companyReports.cashTitle')}
         />
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
+        <div
+          className={`grid grid-cols-1 gap-4 mb-4 ${
+            report.cash.summary.owed !== 0 ? 'sm:grid-cols-2 lg:grid-cols-4' : 'sm:grid-cols-3'
+          }`}
+        >
           <StatCard label={t('companyReports.available')} value={money(report.cash.summary.liquid)} tone="positive" />
           <StatCard
             label={t('companyReports.lent')}
@@ -349,7 +354,22 @@ export function CompanyReportSections({ report }: { report: CompanyReport }) {
             tone={report.cash.summary.lent > 0 ? 'warning' : 'neutral'}
             hint={t('companyReports.lentHint')}
           />
-          <StatCard label={t('companyReports.totalCash')} value={money(report.cash.summary.total)} tone="primary" />
+          {/* Préstamos recibidos (2026-10-05): solo si hay. Resta del total. */}
+          {report.cash.summary.owed !== 0 && (
+            <StatCard
+              label={t('companyReports.owed')}
+              value={money(report.cash.summary.owed)}
+              tone="negative"
+              hint={t('companyReports.owedHint')}
+            />
+          )}
+          <StatCard
+            label={
+              report.cash.summary.owed !== 0 ? t('companyReports.totalNet') : t('companyReports.totalCash')
+            }
+            value={money(report.cash.summary.total)}
+            tone="primary"
+          />
         </div>
         {report.cash.byType.length === 0 ? (
           <EmptyLine text={t('companyReports.noLocations')} />
@@ -393,8 +413,14 @@ export function CompanyReportSections({ report }: { report: CompanyReport }) {
                       <td className="px-3 py-2 text-xs text-muted-foreground">
                         {group.unit?.name ?? t('companyReports.noUnit')}
                       </td>
-                      <td className={`px-3 py-2 text-right font-medium ${l.balance < 0 ? 'text-negative' : ''}`}>
-                        {money(l.balance)}
+                      {/* Con signo: una deuda sale en negativo para que las
+                          filas cierren contra el total (neto) del pie. */}
+                      <td
+                        className={`px-3 py-2 text-right font-medium ${
+                          signedBalance(l) < 0 ? 'text-negative' : ''
+                        }`}
+                      >
+                        {money(signedBalance(l))}
                       </td>
                     </tr>
                   )),
@@ -403,9 +429,15 @@ export function CompanyReportSections({ report }: { report: CompanyReport }) {
               <tfoot className="bg-muted/30 font-bold">
                 <tr className="border-t border-border">
                   <td className="px-3 py-2" colSpan={3}>
-                    {t('common.total')}
+                    {report.cash.summary.owed !== 0 ? t('companyReports.totalNet') : t('common.total')}
                   </td>
-                  <td className="px-3 py-2 text-right text-positive">{money(report.cash.summary.total)}</td>
+                  <td
+                    className={`px-3 py-2 text-right ${
+                      report.cash.summary.total < 0 ? 'text-negative' : 'text-positive'
+                    }`}
+                  >
+                    {money(report.cash.summary.total)}
+                  </td>
                 </tr>
               </tfoot>
             </table>
