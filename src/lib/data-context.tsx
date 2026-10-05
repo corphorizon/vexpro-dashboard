@@ -85,6 +85,15 @@ import {
   type BrokerPnlMonth,
   type ResolvedBrokerPnl,
 } from '@/lib/broker-pnl';
+import { CRM_MONTHLY_RESULT_METRIC_KEYS } from '@/lib/crm-monthly';
+
+/** Una fila de `/api/admin/crm-monthly-totals`. `auto: null` = sin dato (≠ 0). */
+export interface CrmMonthlyTotalRow {
+  year: number;
+  month: number;
+  metric: string;
+  auto: number | null;
+}
 
 // Magic numbers centralized in src/lib/config.ts (Sprint 3 quick win
 // 2026-06-06). Tuning them no longer means grepping the codebase.
@@ -165,6 +174,12 @@ export interface DataContextValue {
    * `null` como retorno = ese período no existe.
    */
   getBrokerPnl: (periodId: string) => ResolvedBrokerPnl | null;
+  /**
+   * Filas de `/api/admin/crm-monthly-totals` (todas las métricas, todos los
+   * meses), leídas UNA vez. `truncated` = el endpoint recortó por su techo de
+   * filas: lo que se sume de acá puede estar corto y hay que decirlo.
+   */
+  crmMonthlyTotals: { rows: CrmMonthlyTotalRow[]; truncated: boolean };
 
   // HR data
   employees: Employee[];
@@ -264,25 +279,42 @@ export function DataProvider({ children }: { children: ReactNode }) {
       alive = false;
     };
   }, [effectiveCompanyId]);
-  // Prop firm automático mensual (crm_monthly_totals: propfirm_sales /
-  // propfirm_withdrawals). Mismo contrato que brokerPnlMonths: efecto propio,
-  // fuera del bootstrap, y ante fallo queda vacío ⇒ la cadena cae al manual
-  // heredado — nunca a un cero inventado.
-  const [pfAutoMonths, setPfAutoMonths] = useState<
-    Array<{ year: number; month: number; metric: string; auto: number | null }>
-  >([]);
+  // Serie mensual del espejo del CRM (crm_monthly_totals), UNA lectura.
+  // Prop firm automático mensual (propfirm_sales / propfirm_withdrawals): mismo
+  // contrato que brokerPnlMonths — efecto propio, fuera del bootstrap, y ante
+  // fallo queda vacío ⇒ la cadena cae al manual heredado, nunca a un cero
+  // inventado.
+  //
+  // 2026-10-05: antes se filtraba acá a las dos series de prop firm y el resto
+  // se tiraba. El informe de cierre mensual (/socios) necesita las demás
+  // (comisiones IB, P2P, hedge fund…) como datos informativos; guardarlas
+  // completas evita una SEGUNDA llamada al mismo endpoint. Qué series entran a
+  // la cadena lo dice el registro (`feedsResult` en crm-monthly.ts), no una
+  // lista suelta acá.
+  const [crmMonthlyTotals, setCrmMonthlyTotals] = useState<{
+    rows: CrmMonthlyTotalRow[];
+    truncated: boolean;
+  }>({ rows: [], truncated: false });
   useEffect(() => {
-    if (!effectiveCompanyId) { setPfAutoMonths([]); return; }
+    if (!effectiveCompanyId) { setCrmMonthlyTotals({ rows: [], truncated: false }); return; }
     let alive = true;
     apiFetch('/api/admin/crm-monthly-totals')
       .then((r) => r.json())
-      .then((json: { success?: boolean; rows?: Array<{ year: number; month: number; metric: string; auto: number | null }> }) => {
+      .then((json: { success?: boolean; rows?: CrmMonthlyTotalRow[]; truncated?: boolean }) => {
         if (!alive) return;
-        setPfAutoMonths(json?.success ? (json.rows ?? []).filter((r) => r.metric === 'propfirm_sales' || r.metric === 'propfirm_withdrawals') : []);
+        setCrmMonthlyTotals(
+          json?.success
+            ? { rows: json.rows ?? [], truncated: json.truncated === true }
+            : { rows: [], truncated: false },
+        );
       })
-      .catch(() => { if (alive) setPfAutoMonths([]); });
+      .catch(() => { if (alive) setCrmMonthlyTotals({ rows: [], truncated: false }); });
     return () => { alive = false; };
   }, [effectiveCompanyId]);
+  const pfAutoMonths = useMemo(
+    () => crmMonthlyTotals.rows.filter((r) => CRM_MONTHLY_RESULT_METRIC_KEYS.includes(r.metric)),
+    [crmMonthlyTotals],
+  );
   const [brokerBalance, setBrokerBalance] = useState<BrokerBalance[]>([]);
   const [financialStatus, setFinancialStatus] = useState<FinancialStatus[]>([]);
   const [partners, setPartners] = useState<Partner[]>([]);
@@ -1365,6 +1397,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       allPropFirmSales: propFirmSales,
       allP2PTransfers: p2pTransfers,
       getBrokerPnl,
+      crmMonthlyTotals,
 
       employees,
       commercialProfiles,
@@ -1500,6 +1533,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       propFirmSales,
       p2pTransfers,
       getBrokerPnl,
+      crmMonthlyTotals,
       employees,
       commercialProfiles,
       monthlyResults,

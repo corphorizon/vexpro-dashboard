@@ -30,7 +30,18 @@ import {
   PiggyBank, Plus, Pencil, Trash2, X, Check, Settings, ChevronDown, FileText, FileBarChart,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
-import { computeProviderTotals, monthRange } from '@/lib/api-integrations/totals';
+import { monthRange } from '@/lib/api-integrations/totals';
+import type { ProviderDataset } from '@/lib/api-integrations/types';
+import { allPeriodsUseDerivedBroker } from '@/lib/broker-logic';
+import { depositChannelLabel } from '@/lib/deposit-channels';
+import { withdrawalChannelLabel } from '@/lib/withdrawal-channels';
+import { CRM_MONTHLY_OUTSIDE_RESULT_METRICS } from '@/lib/crm-monthly';
+import {
+  buildClientFlow,
+  buildCrmInfoRows,
+  longPeriodLabel,
+  type ClientFlow,
+} from '@/lib/monthly-close-pdf-data';
 import { features } from '@/lib/business-model';
 import { cardsFromLines, UNASSIGNED_CLIENT_KEY } from '@/lib/clients';
 import { buildBilling } from '@/lib/reports/company-report';
@@ -45,7 +56,7 @@ export default function SociosPage() {
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const isAdmin = canEdit(user);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { periods, partners, partnerDistributions, getPeriodSummary, getDistributionInputs, getSnapshotDrifts, company, refresh } = useData();
+  const { periods, partners, partnerDistributions, getPeriodSummary, getDistributionInputs, getSnapshotDrifts, company, refresh, crmMonthlyTotals } = useData();
 
   // Esta pantalla no leía el modelo de negocio en ninguna línea, y el informe
   // de cierre que genera es el documento que reciben los socios: a una
@@ -363,58 +374,54 @@ export default function SociosPage() {
 
                 // Flujo de clientes — MISMA fuente y filtros que /movimientos y
                 // /balances: persisted-movements en modo 'pinned' (walletId
-                // vacío) + computeProviderTotals (descuenta excluidas). Así los
-                // números del informe coinciden con los del dashboard.
+                // vacío). Los canales salen de los REGISTROS
+                // (API_DEPOSIT_CHANNELS / API_WITHDRAWAL_CHANNELS) dentro de
+                // `buildClientFlow`, no de una lista de slugs escrita acá: la
+                // que había preguntaba por coinsbuy/fairpay/unipayment y dejaba
+                // afuera Pay-Pros — 93.968,69 de depósitos y 10.302,17 de
+                // retiros de Vex Pro en sep-2026 (Kevin, 2026-10-05).
                 //
                 // Solo para un broker: sin depósitos ni retiros de clientes,
                 // esta llamada devolvería ceros y el PDF imprimiría una página
                 // de "Depósitos por canal: $0,00" al socio de una consultora.
-                let depCoinsbuy = 0, depFairpay = 0, depUnipay = 0, wdCoinsbuy = 0;
+                let clientFlow: ClientFlow | null = null;
                 if (model.movements) {
-                  try {
-                    const res = await apiFetch(`/api/integrations/persisted-movements?from=${from}&to=${to}`);
-                    const json = await res.json();
-                    for (const ds of (json.datasets ?? [])) {
-                      const totals = computeProviderTotals(ds);
-                      if (ds.slug === 'coinsbuy-deposits') depCoinsbuy = totals.total;
-                      else if (ds.slug === 'fairpay') depFairpay = totals.total;
-                      else if (ds.slug === 'unipayment') depUnipay = totals.total;
-                      else if (ds.slug === 'coinsbuy-withdrawals') wdCoinsbuy = totals.total;
+                  let datasets: ProviderDataset[] = [];
+                  let hiddenChannels: string[] = [];
+                  let truncatedSlugs: string[] = [];
+                  let fetchFailed = false;
+                  const derived = allPeriodsUseDerivedBroker([currentPeriod]);
+                  if (derived) {
+                    try {
+                      const res = await apiFetch(`/api/integrations/persisted-movements?from=${from}&to=${to}`);
+                      const json = await res.json();
+                      if (!res.ok || json?.success === false) throw new Error('persisted-movements');
+                      datasets = json.datasets ?? [];
+                      hiddenChannels = json.hiddenChannels ?? [];
+                      truncatedSlugs = json.truncatedSlugs ?? [];
+                    } catch {
+                      // Sin conexión a movimientos: el informe sale con los
+                      // manuales y LO DICE (buildClientFlow agrega el aviso).
+                      fetchFailed = true;
                     }
-                  } catch {
-                    // Sin conexión a movimientos: el informe sale con manuales.
                   }
+                  clientFlow = buildClientFlow({
+                    derived,
+                    datasets,
+                    hiddenChannels,
+                    truncatedSlugs,
+                    fetchFailed,
+                    manualDeposits: model.deposits ? sum.deposits : [],
+                    // WITHDRAWAL_LABELS, no un mapa propio (2026-08-31,
+                    // auditoría de finanzas): el mapa local tenía 'ib' y 'p2p'
+                    // —que no son categorías válidas— y le faltaba
+                    // `ib_commissions`, que salía impresa cruda en el PDF.
+                    manualWithdrawals: model.withdrawals ? sum.withdrawals : [],
+                    depositLabel: (ch) => depositChannelLabel(ch, t),
+                    withdrawalLabel: (ch) => withdrawalChannelLabel(ch, t),
+                    withdrawalCategoryLabel: (cat) => WITHDRAWAL_LABELS[cat] ?? cat,
+                  });
                 }
-
-                const manualDepTotal = sum.deposits.reduce((s, d) => s + d.amount, 0);
-                const depositsByChannel = model.deposits
-                  ? [
-                      { label: 'Coinsbuy (crypto)', amount: depCoinsbuy },
-                      { label: 'UniPayment (tarjeta)', amount: depUnipay },
-                      { label: 'FairPay (local)', amount: depFairpay },
-                      { label: 'Otros (manual)', amount: manualDepTotal },
-                    ].filter((c) => c.amount !== 0)
-                  : [];
-                const depositsTotal = depositsByChannel.reduce((s, c) => s + c.amount, 0);
-
-                // WITHDRAWAL_LABELS, no un mapa propio (2026-08-31, auditoría de
-                // finanzas). Éste tenía 'ib' y 'p2p' —que NO son categorías
-                // válidas: el CHECK de schema.sql:87 admite ib_commissions,
-                // broker, prop_firm y other— y justo le faltaba
-                // `ib_commissions`, la más grande del período. Con el fallback
-                // `?? k`, el PDF que se manda a los socios imprimía el string
-                // crudo «ib_commissions». Un fallback que no rompe es cómo una
-                // lista desincronizada llega hasta el papel.
-                const CAT_LABEL = WITHDRAWAL_LABELS;
-                const wdMap = new Map<string, number>();
-                for (const w of sum.withdrawals) wdMap.set(w.category, (wdMap.get(w.category) ?? 0) + w.amount);
-                const withdrawalsByCategory = model.withdrawals
-                  ? [
-                      ...Array.from(wdMap.entries()).map(([k, v]) => ({ label: CAT_LABEL[k] ?? k, amount: v })),
-                      { label: 'Coinsbuy (crypto)', amount: wdCoinsbuy },
-                    ].filter((c) => c.amount !== 0)
-                  : [];
-                const withdrawalsTotal = withdrawalsByCategory.reduce((s, c) => s + c.amount, 0);
 
                 // Empresa de servicios: en lugar del flujo de clientes va la
                 // facturación del mes. NO se calcula acá — sale de buildBilling
@@ -454,40 +461,56 @@ export default function SociosPage() {
                   };
                 }
 
-                const topExpenses = [...sum.expenses]
-                  .sort((a, b) => b.amount - a.amount)
-                  .slice(0, 10)
-                  .map((e) => ({ concept: e.concept, amount: e.amount }));
+                // Datos del CRM (informativo): la serie ya está en memoria
+                // (data-context la lee UNA vez para la cadena); acá solo se
+                // filtra el mes y las métricas que NO suman al resultado.
+                const crmInfo = buildCrmInfoRows(
+                  crmMonthlyTotals.rows,
+                  CRM_MONTHLY_OUTSIDE_RESULT_METRICS,
+                  currentPeriod.year,
+                  currentPeriod.month,
+                );
+
+                // Los cuatro sumandos de los ingresos salen de la MISMA cadena
+                // que calcula `ingresosNetos` (currentChain.desglose). Antes
+                // venían de las tablas manuales (operating_income.broker_pnl,
+                // propFirmNetIncome), vacías desde ago-2026 porque esos
+                // renglones pasaron a automático: el PDF imprimía Broker P&L y
+                // Prop Firm en $0,00 con 263.469,99 de ingresos netos.
+                const desglose = currentChain?.desglose ?? {
+                  brokerPnl: 0,
+                  other: 0,
+                  propFirmNetIncome: 0,
+                  investmentProfits: 0,
+                };
 
                 const { generateMonthlyClosePDF } = await import('@/lib/pdf-export');
-                generateMonthlyClosePDF({
+                await generateMonthlyClosePDF({
                   companyName: company?.name ?? '',
                   companyLogoUrl: company?.logo_url ?? null,
-                  periodLabel: currentPeriod.label ?? `${currentPeriod.year}-${pad(currentPeriod.month)}`,
+                  periodLabel: longPeriodLabel(currentPeriod),
                   billing,
-                  // En modo company estos cuatro van en cero por diseño (el PDF
-                  // no los imprime): brokerPnl y propFirmNetIncome ya salen en
-                  // cero de la cadena de distribución, y las inversiones no son
-                  // un módulo de este modelo.
-                  brokerPnl: model.brokerPnl ? (sum.operatingIncome?.broker_pnl ?? 0) : 0,
-                  propFirmNet: model.brokerPnl ? (sum.propFirmNetIncome ?? 0) : 0,
-                  investmentProfits: model.investments ? (sum.investmentProfits ?? 0) : 0,
-                  otherIncome: sum.operatingIncome?.other ?? 0,
-                  ingresosNetos: currentChain?.ingresosNetos ?? 0,
-                  egresosTotal: sum.totalExpenses,
-                  egresosPagados: sum.totalExpensesPaid,
-                  egresosPendientes: sum.totalExpensesPending,
-                  saldo: currentChain?.saldoAFavor ?? 0,
+                  desglose,
+                  ingresosNetos,
+                  egresosNetos,
+                  saldo: saldoAFavor,
                   reservaMes: reserveThisPeriod,
+                  reservePct: currentPeriod.reserve_pct ?? 0.1,
                   reservaAcumulada: accumulatedReserve,
                   deudaEntrada: carryDebt,
                   montoDistribuir: totalToDistribute,
-                  depositsByChannel,
-                  depositsTotal,
-                  withdrawalsByCategory,
-                  withdrawalsTotal,
-                  netFlow: depositsTotal - withdrawalsTotal,
-                  topExpenses,
+                  expenses: sum.expenses.map((e) => ({
+                    concept: e.concept,
+                    amount: e.amount,
+                    paid: e.paid,
+                    pending: e.pending,
+                  })),
+                  egresosPagados: sum.totalExpensesPaid,
+                  egresosPendientes: sum.totalExpensesPending,
+                  cashBasisExpenses: model.cashBasisExpenses,
+                  clientFlow,
+                  crmInfo,
+                  crmInfoTruncated: crmInfo.length > 0 && crmMonthlyTotals.truncated,
                   partners: partners.map((p) => {
                     const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
                     return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };

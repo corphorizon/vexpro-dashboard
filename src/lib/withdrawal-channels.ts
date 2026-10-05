@@ -30,8 +30,13 @@
 // CLIENT-SAFE a propósito: no importa Supabase ni nada de servidor.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ProviderSlug } from './api-integrations/types';
-import { ACCEPTED_STATUS, PAYPROS_PAYOUT_STATUS } from './api-integrations/totals';
+import type { ProviderDataset, ProviderSlug } from './api-integrations/types';
+import {
+  ACCEPTED_STATUS,
+  PAYPROS_PAYOUT_STATUS,
+  computeProviderTotals,
+  countPayprosPayouts,
+} from './api-integrations/totals';
 
 /** Clave del canal de retiro. No hay tabla de carga manual por canal (todavía). */
 export type WithdrawalChannel = 'coinsbuy' | 'paypros';
@@ -142,6 +147,43 @@ export function sumApiWithdrawals(byChannel: WithdrawalsByChannel): {
     total += value;
   }
   return { total, channelsWithoutData };
+}
+
+/**
+ * Retiro por canal a partir de los datasets de `/api/integrations/persisted-movements`.
+ *
+ * POR QUÉ VIVE ACÁ (2026-10-05)
+ * Esta cuenta estaba escrita en línea en `useApiTotals`
+ * (realtime-movements-banner.tsx), y el informe de cierre mensual de /socios
+ * necesitaba la misma: su lista a mano preguntaba solo por
+ * `coinsbuy-withdrawals` y dejaba afuera los $10.302,17 de payouts de Pay-Pros
+ * de Vex Pro en sep-2026. Copiar el ternario habría sido la segunda copia de
+ * una regla de dinero; ahora las dos puntas llaman a esta función.
+ *
+ * Por qué no alcanza `computeProviderTotals` para todos: en Pay-Pros el slug es
+ * uno solo para los dos sentidos y `computeProviderTotals('paypros')` devuelve
+ * los DEPÓSITOS ('paid'). Los retiros son los 'payout_paid', que cuenta
+ * `countPayprosPayouts`. En Coinsbuy el slug ya es de retiros y su total
+ * descuenta excluidas y transferencias internas.
+ *
+ * Dataset ausente ⇒ `null` («no lo sabemos»), nunca 0. Un canal apagado para la
+ * empresa tampoco viene en `datasets` (el endpoint lo filtra): quien llame
+ * tiene que sacarlo con `hiddenChannels` ANTES de tratar el null como falta.
+ */
+export function apiWithdrawalsFromDatasets(
+  datasets: readonly ProviderDataset[],
+): WithdrawalsByChannel {
+  const out: WithdrawalsByChannel = {};
+  for (const { key, slug } of API_WITHDRAWAL_CHANNELS) {
+    const ds = datasets.find((d) => d.slug === slug);
+    if (!ds) {
+      out[key] = null;
+      continue;
+    }
+    out[key] =
+      slug === 'paypros' ? countPayprosPayouts(ds).total : computeProviderTotals(ds).total;
+  }
+  return out;
 }
 
 /**

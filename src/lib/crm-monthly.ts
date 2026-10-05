@@ -143,6 +143,16 @@ export interface CrmMonthlyMetricDef {
    * `undefined` en el `detail` se muestra "—" (no lo sabemos), nunca $0.
    */
   detailColumns?: readonly { key: string; labelEs: string; labelEn: string }[];
+  /**
+   * `true` = la serie ALIMENTA la cadena de distribución (data-context
+   * `pfAutoByPeriod` → `propFirmNetIncome`). Hoy: ventas y retiros de prop
+   * firm. Todo lo demás (P2P incluido, que no es `informational` porque se
+   * compara con un manual, pero tampoco suma a ningún total) queda fuera del
+   * resultado — y el informe de cierre mensual lo imprime aparte, rotulado
+   * «no suma al resultado». Marcarlo acá y no en una lista suelta en
+   * data-context es para que las dos puntas lean el mismo dato (2026-10-05).
+   */
+  feedsResult?: boolean;
 }
 
 const METRIC_DEFS = [
@@ -157,12 +167,14 @@ const METRIC_DEFS = [
     labelEs: 'Ventas Prop Firm',
     labelEn: 'Prop firm sales',
     manualSource: 'prop_firm_sales.amount',
+    feedsResult: true,
   },
   {
     key: 'propfirm_withdrawals',
     labelEs: 'Retiros Prop Firm aprobados',
     labelEn: 'Approved prop firm withdrawals',
     manualSource: "withdrawals.amount (category 'prop_firm')",
+    feedsResult: true,
   },
   // ── MÉTRICAS INFORMATIVAS (decisión de Kevin, 2026-08-28) ────────────────
   //
@@ -291,6 +303,18 @@ export const CRM_MONTHLY_COMPARED_METRICS: CrmMonthlyMetricDef[] =
 /** Las que son DATO y no cuentan en el resultado (la sección de abajo). */
 export const CRM_MONTHLY_INFO_METRICS: CrmMonthlyMetricDef[] =
   CRM_MONTHLY_METRICS.filter((m) => m.informational === true);
+
+/** Las series que entran a la cadena de distribución (ver `feedsResult`). */
+export const CRM_MONTHLY_RESULT_METRIC_KEYS: string[] = CRM_MONTHLY_METRICS.filter(
+  (m) => m.feedsResult === true,
+).map((m) => m.key);
+
+/**
+ * Las que NO suman al resultado del mes: las informativas y P2P. Es lo que el
+ * informe de cierre mensual muestra en «Datos del CRM (informativo)».
+ */
+export const CRM_MONTHLY_OUTSIDE_RESULT_METRICS: CrmMonthlyMetricDef[] =
+  CRM_MONTHLY_METRICS.filter((m) => m.feedsResult !== true);
 
 /** Los ÚNICOS campos que se piden de cada colección. La proyección es la aduana. */
 export const ORION_P2P_LEG_FIELDS = [

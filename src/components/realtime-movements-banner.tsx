@@ -19,7 +19,7 @@ import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { computeProviderTotals, countPayprosPayouts } from '@/lib/api-integrations/totals';
 import {
-  API_WITHDRAWAL_CHANNELS,
+  apiWithdrawalsFromDatasets,
   sumApiWithdrawals,
   type WithdrawalsByChannel,
 } from '@/lib/withdrawal-channels';
@@ -830,22 +830,9 @@ export function useApiTotals(
     // sabemos", no "no hubo retiros". `sumApiWithdrawals` lo excluye del total
     // y lo devuelve en `channelsWithoutData` para que la exclusión se pueda
     // mostrar en vez de tragarse.
-    const withdrawalsByChannel: WithdrawalsByChannel = {};
-    for (const { key, slug } of API_WITHDRAWAL_CHANNELS) {
-      const ds = datasets.find((d) => d.slug === slug);
-      if (!ds) {
-        withdrawalsByChannel[key] = null;
-        continue;
-      }
-      withdrawalsByChannel[key] =
-        slug === 'paypros'
-          ? countPayprosPayouts(ds).total
-          : // Coinsbuy: el slug ya es de retiros, así que el total del dataset
-            // ES el retiro (y `computeProviderTotals` ya descuenta las
-            // excluidas y las transferencias internas, que no son un retiro
-            // del negocio).
-            computeProviderTotals(ds).total;
-    }
+    // La cuenta por canal vive en el registro (`apiWithdrawalsFromDatasets`):
+    // el informe de cierre de /socios necesita exactamente la misma.
+    const withdrawalsByChannel: WithdrawalsByChannel = apiWithdrawalsFromDatasets(datasets);
     const { total: withdrawalsTotal, channelsWithoutData: withdrawalChannelsWithoutData } =
       sumApiWithdrawals(withdrawalsByChannel);
 
