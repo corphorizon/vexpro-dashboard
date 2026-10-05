@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
-import { PAYMENT_ORDER_READ_ROLES } from '@/lib/roles';
+import { verifyAdminAuth } from '@/lib/api-auth';
+import { PAYMENT_ORDER_READ_ROLES, PAYMENT_ORDER_PREPARE_ROLES } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { ORDER_COLUMNS, actorName, normalizeOrder, withFiles } from '@/lib/payment-orders/server';
@@ -190,7 +190,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
+    const auth = await verifyAdminAuth(request, { roles: PAYMENT_ORDER_PREPARE_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
 
     const { id } = await params;
@@ -432,7 +432,7 @@ export async function DELETE(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
+    const auth = await verifyAdminAuth(request, { roles: PAYMENT_ORDER_PREPARE_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
 
     const { id } = await params;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
+import { verifyAdminAuth } from '@/lib/api-auth';
+import { PAYMENT_ORDER_PREPARE_ROLES, paymentOrderTransitionNeedsFinance, roleCanWriteFinance } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import {
@@ -67,7 +68,7 @@ export async function POST(
     // Aprobación abierta (decisión Kevin 2026-08-05): cualquier usuario con
     // acceso al módulo puede aprobar/rechazar, incluida su propia orden. La
     // trazabilidad (approved_by/at) reemplaza al bloqueo como control.
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
+    const auth = await verifyAdminAuth(request, { roles: PAYMENT_ORDER_PREPARE_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
 
     const { id } = await params;
@@ -91,6 +92,17 @@ export async function POST(
 
     const order = normalizeOrder(current as Record<string, unknown>);
     const from = order.status;
+
+    // Preparar ≠ decidir (roles.ts, 2026-10-05). El gate de arriba deja pasar
+    // a quien PREPARA; aprobar, rechazar, pagar o anular algo ya enviado exige
+    // finanzas. Se chequea acá y no arriba porque depende del estado ACTUAL de
+    // la orden, que recién ahora se conoce.
+    if (paymentOrderTransitionNeedsFinance(from, to) && !roleCanWriteFinance(auth.role)) {
+      return NextResponse.json(
+        { success: false, error: 'Tu rol puede preparar y enviar órdenes, pero aprobar, rechazar, pagar o anular una orden enviada lo decide Finanzas.' },
+        { status: 403 },
+      );
+    }
 
     if (!canTransition(from, to)) {
       return NextResponse.json(

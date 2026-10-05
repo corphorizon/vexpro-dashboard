@@ -23,7 +23,8 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
+import { verifyAdminAuth } from '@/lib/api-auth';
+import { PAYMENT_ORDER_PREPARE_ROLES } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 
 /** Órdenes recientes que se miran. Más allá el concepto ya no es "el que usa". */
@@ -45,7 +46,7 @@ export interface LineSuggestion {
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
+    const auth = await verifyAdminAuth(request, { roles: PAYMENT_ORDER_PREPARE_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
 
     const beneficiaryId = request.nextUrl.searchParams.get('beneficiary_id')?.trim() || null;

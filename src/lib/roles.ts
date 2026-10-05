@@ -89,6 +89,44 @@ export const HR_ROLES = ['admin', 'hr'] as const;
 export const PAYMENT_ORDER_READ_ROLES = ['admin', 'auditor', 'hr'] as const;
 
 /**
+ * PREPARAR una Orden de Pago: crearla, editar el borrador, adjuntar respaldos,
+ * enviarla a aprobación, retirarla a borrador y anular un borrador/rechazada.
+ *
+ * Kevin, 2026-10-05: «necesito que hr@vexprofx.com pueda crear órdenes de
+ * pago». Hasta hoy RRHH solo LEÍA (decisión del 2026-08-18) y toda escritura
+ * exigía FINANCE_ROLES. No se le subió el rol a esa usuaria (admin le daría
+ * todas las escrituras de finanzas y la gestión de usuarios; auditor le
+ * quitaría las de RRHH): se separó PREPARAR de DECIDIR, que es la misma
+ * segregación de funciones que ya rige la Revisión de Retiros — quien arma la
+ * orden de salarios no es quien libera el dinero.
+ *
+ * DECIDIR (aprobar, rechazar, marcar pagada, subir comprobantes de pago,
+ * anular una orden enviada o aprobada, borrar) sigue siendo FINANCE_ROLES.
+ * El módulo 'payment_orders' en allowed_modules sigue siendo requisito: es la
+ * llave por usuario. Medido ese día: 2 usuarios con rol hr y el módulo
+ * (Daniela en Vex Pro, Natalia Morales en AP Markets); los otros 2 hr no lo
+ * tienen y no cambian.
+ */
+export const PAYMENT_ORDER_PREPARE_ROLES = ['admin', 'auditor', 'hr'] as const;
+
+export function roleCanPreparePaymentOrder(role: string): boolean {
+  return role === 'superadmin' || (PAYMENT_ORDER_PREPARE_ROLES as readonly string[]).includes(role);
+}
+
+/**
+ * ¿Esta transición es una DECISIÓN de finanzas? Lo usan el servidor (403) y la
+ * UI (no dibujar el botón que el servidor va a rechazar): una sola regla.
+ * Estados como string para no importar el módulo de órdenes desde acá.
+ */
+export function paymentOrderTransitionNeedsFinance(from: string, to: string): boolean {
+  if (to === 'approved' || to === 'rejected' || to === 'paid') return true;
+  // Anular algo ya enviado o aprobado es decidir sobre ello; anular el propio
+  // borrador (o una rechazada) no.
+  if (to === 'cancelled') return from === 'pending' || from === 'approved';
+  return false;
+}
+
+/**
  * Asistente de IA (/asistente, migración 102).
  *
  * Son TODOS los roles a propósito, y no es un descuido: el asistente NO

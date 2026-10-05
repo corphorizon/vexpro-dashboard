@@ -22,7 +22,7 @@ import { useToasts } from '@/components/ui/toast';
 import { StatusBadge, useStatusLabel } from '@/components/payment-orders/status-badge';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
-import { roleCanWriteFinance } from '@/lib/roles';
+import { roleCanPreparePaymentOrder, roleCanWriteFinance } from '@/lib/roles';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
@@ -47,6 +47,9 @@ export default function OrdenesPagoPage() {
   const { user } = useAuth();
   // El servidor rechaza el alta a roles fuera de finanzas: no dibujar el botón.
   const canAct = roleCanWriteFinance(user?.effective_role ?? '');
+  // Preparar ≠ decidir (roles.ts, 2026-10-05): RRHH crea y envía; borrar,
+  // aprobar y pagar siguen siendo de finanzas (`canAct`).
+  const canPrepare = roleCanPreparePaymentOrder(user?.effective_role ?? '');
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
 
@@ -216,7 +219,7 @@ export default function OrdenesPagoPage() {
         subtitle={t('payOrders.subtitle')}
         icon={FileText}
         actions={
-          canAct ? (
+          canPrepare ? (
             <Link href="/ordenes-pago/nueva">
               <Button variant="primary">
                 <Plus className="w-4 h-4" />
@@ -387,7 +390,7 @@ export default function OrdenesPagoPage() {
                     title={t('payOrders.emptyTitle')}
                     description={t('payOrders.emptyDesc')}
                     action={
-                      canAct ? (
+                      canPrepare ? (
                         <Link href="/ordenes-pago/nueva">
                           <Button variant="primary">
                             <Plus className="w-4 h-4" />

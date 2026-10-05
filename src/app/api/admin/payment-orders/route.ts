@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
-import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
-import { PAYMENT_ORDER_READ_ROLES } from '@/lib/roles';
+import { verifyAdminAuth } from '@/lib/api-auth';
+import { PAYMENT_ORDER_READ_ROLES, PAYMENT_ORDER_PREPARE_ROLES } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import type { PaymentOrderStatus } from '@/lib/payment-orders/types';
@@ -85,7 +85,7 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
-    const auth = await verifyAdminAuth(request, { roles: FINANCE_ROLES, modules: ['payment_orders'] });
+    const auth = await verifyAdminAuth(request, { roles: PAYMENT_ORDER_PREPARE_ROLES, modules: ['payment_orders'] });
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json().catch(() => null);

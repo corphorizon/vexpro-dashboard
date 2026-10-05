@@ -42,7 +42,7 @@ import { useToasts } from '@/components/ui/toast';
 import { StatusBadge } from '@/components/payment-orders/status-badge';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
-import { roleCanWriteFinance } from '@/lib/roles';
+import { paymentOrderTransitionNeedsFinance, roleCanPreparePaymentOrder, roleCanWriteFinance } from '@/lib/roles';
 import { useData } from '@/lib/data-context';
 import { cn, formatCurrency } from '@/lib/utils';
 import { formatDate, formatDateTime, todayUtcISO } from '@/lib/dates';
@@ -151,6 +151,12 @@ export default function OrdenPagoDetallePage() {
   // El servidor solo acepta transiciones de FINANCE_ROLES (403 para el resto):
   // dibujarle Aprobar/Pagar a un socio o invitado es invitarlo a un error.
   const canAct = roleCanWriteFinance(user?.effective_role ?? '');
+  // Preparar ≠ decidir (roles.ts, 2026-10-05). `canDo(to)` es la MISMA regla
+  // que aplica el servidor en /transition: quien prepara puede enviar, retirar
+  // a borrador y anular su borrador; aprobar/rechazar/pagar exige finanzas.
+  const canPrepare = roleCanPreparePaymentOrder(user?.effective_role ?? '');
+  const canDo = (from: string, to: string) =>
+    paymentOrderTransitionNeedsFinance(from, to) ? canAct : canPrepare;
 
   /**
    * `proofFiles` solo llega desde el diálogo de pago (hasta MAX_PAYMENT_PROOFS).
@@ -408,7 +414,7 @@ export default function OrdenPagoDetallePage() {
             {t('payOrders.downloadPdf')}
           </Button>
 
-          {canAct && isEditable(order.status) && (
+          {canPrepare && isEditable(order.status) && (
             <Link href={`/ordenes-pago/${order.id}/editar`}>
               <Button variant="secondary">
                 <Pencil className="w-4 h-4" />
@@ -417,41 +423,41 @@ export default function OrdenPagoDetallePage() {
             </Link>
           )}
 
-          {canAct && canTransition(order.status, 'pending') && (
+          {canDo(order.status, 'pending') && canTransition(order.status, 'pending') && (
             <Button variant="primary" onClick={() => setDialog('submit')}>
               <Send className="w-4 h-4" />
               {t('payOrders.submit')}
             </Button>
           )}
 
-          {canAct && canTransition(order.status, 'approved') && (
+          {canDo(order.status, 'approved') && canTransition(order.status, 'approved') && (
             <Button variant="primary" onClick={() => setDialog('approve')}>
               <CheckCheck className="w-4 h-4" />
               {t('payOrders.approve')}
             </Button>
           )}
 
-          {canAct && canTransition(order.status, 'rejected') && (
+          {canDo(order.status, 'rejected') && canTransition(order.status, 'rejected') && (
             <Button variant="destructive" onClick={() => setDialog('reject')}>
               <X className="w-4 h-4" />
               {t('payOrders.reject')}
             </Button>
           )}
 
-          {canAct && canTransition(order.status, 'paid') && (
+          {canDo(order.status, 'paid') && canTransition(order.status, 'paid') && (
             <Button variant="primary" onClick={() => setDialog('pay')}>
               <Wallet className="w-4 h-4" />
               {t('payOrders.markPaid')}
             </Button>
           )}
 
-          {canAct && canTransition(order.status, 'draft') && order.status !== 'draft' && (
+          {canDo(order.status, 'draft') && canTransition(order.status, 'draft') && order.status !== 'draft' && (
             <Button variant="ghost" onClick={() => setDialog('reopen')}>
               {t('payOrders.reopen')}
             </Button>
           )}
 
-          {canAct && canTransition(order.status, 'cancelled') && (
+          {canDo(order.status, 'cancelled') && canTransition(order.status, 'cancelled') && (
             <Button variant="ghost" onClick={() => setDialog('cancel')}>
               <Ban className="w-4 h-4" />
               {t('payOrders.void')}
