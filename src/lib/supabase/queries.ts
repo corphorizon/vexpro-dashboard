@@ -1,5 +1,6 @@
 import { createClient } from './client';
 import { normalizePinnedWalletRole } from '../pinned-wallet-roles';
+import { descripcionDeLineas } from '../payment-orders/types';
 import type {
   Company,
   Period,
@@ -181,25 +182,6 @@ export async function fetchWithdrawals(companyId: string, periodIds?: string[], 
 
 // ─── Expenses ───
 
-/**
- * Junta las descripciones de las líneas de una orden de pago en un texto
- * mostrable ("Comisiones septiembre · Bono referidos"). `lines` llega como
- * jsonb embebido → defensivo a propósito: cualquier forma inesperada devuelve
- * null y la UI simplemente no muestra el subtítulo (el link a la orden sigue
- * existiendo; esto es informativo, no plata).
- */
-function descripcionDeOrden(lines: unknown): string | null {
-  if (!Array.isArray(lines)) return null;
-  const partes = lines
-    .map((l) =>
-      l && typeof l === 'object'
-        ? String((l as { description?: unknown }).description ?? '').trim()
-        : '',
-    )
-    .filter(Boolean);
-  return partes.length ? partes.join(' · ') : null;
-}
-
 export async function fetchExpenses(companyId: string, periodIds?: string[], opts?: QueryOpts): Promise<Expense[]> {
   // Se embebe la orden origen (FK payment_order_id, migration-058) SOLO para
   // derivar payment_order_description: el dueño quiere ver qué es cada egreso
@@ -238,7 +220,7 @@ export async function fetchExpenses(companyId: string, periodIds?: string[], opt
     return {
       ...row,
       is_fixed: !!row.is_fixed,
-      payment_order_description: descripcionDeOrden(orden?.lines),
+      payment_order_description: descripcionDeLineas(orden?.lines),
     };
   });
 }

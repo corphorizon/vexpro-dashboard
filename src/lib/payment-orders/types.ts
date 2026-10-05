@@ -144,6 +144,32 @@ export function attachmentCountError(existing: number, incoming: number): string
   );
 }
 
+/**
+ * Junta las descripciones de las líneas de una orden en un texto mostrable
+ * ("Comisiones septiembre · Bono referidos") para el subtítulo de Egresos
+ * (payment_order_description, dueño 2026-10-05).
+ *
+ * REGISTRO ÚNICO: la usan /api/bootstrap (camino primario de datos) y
+ * fetchExpenses en queries.ts (camino de respaldo). El bug del 2026-10-05 fue
+ * exactamente tener la derivación solo en uno de los dos: el respaldo la
+ * traía y el primario no, y la UI (que come del primario) nunca la vio.
+ *
+ * `lines` llega como jsonb embebido → defensivo a propósito: cualquier forma
+ * inesperada devuelve null y la UI no muestra subtítulo (el link a la orden
+ * sigue existiendo; esto es informativo, no plata).
+ */
+export function descripcionDeLineas(lines: unknown): string | null {
+  if (!Array.isArray(lines)) return null;
+  const partes = lines
+    .map((l) =>
+      l && typeof l === 'object'
+        ? String((l as { description?: unknown }).description ?? '').trim()
+        : '',
+    )
+    .filter(Boolean);
+  return partes.length ? partes.join(' · ') : null;
+}
+
 export interface PaymentOrder {
   id: string;
   company_id: string;

@@ -9,6 +9,7 @@ import {
   slicesVedados,
   type BootstrapSliceKey,
 } from '@/lib/bootstrap-slices';
+import { descripcionDeLineas } from '@/lib/payment-orders/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GET /api/bootstrap — los 20 slices del arranque en UNA respuesta.
@@ -161,7 +162,17 @@ export async function GET(request: NextRequest) {
       consulta('deposits', () => t('deposits').limit(ROW_CAP)),
       consulta('withdrawals', () => t('withdrawals').limit(ROW_CAP)),
       consulta('expenses', () =>
-        t('expenses').order('sort_order', { ascending: true }).limit(ROW_CAP)),
+        // Igual que fetchExpenses: se embebe la OP origen SOLO para derivar
+        // payment_order_description (subtítulo en Egresos, 2026-10-05). El
+        // `!payment_order_id` desambigua las DOS relaciones expenses↔
+        // payment_orders (está el expense_id legado) — sin él PostgREST
+        // rechaza el embed. Solo viaja `lines`: nada bancario sale de la orden.
+        admin
+          .from('expenses')
+          .select('*, payment_orders!payment_order_id(lines)')
+          .eq('company_id', companyId)
+          .order('sort_order', { ascending: true })
+          .limit(ROW_CAP)),
       consulta('expenseTemplates', () =>
         t('expense_templates').order('sort_order', { ascending: true })),
       consulta('expenseTemplateHidden', () =>
@@ -212,12 +223,21 @@ export async function GET(request: NextRequest) {
     const expensesNormalizados =
       expenses === null
         ? null
-        : expenses.map((e) => ({
-            ...(e as Record<string, unknown>),
-            // Default defensivo idéntico a fetchExpenses: filas viejas sin la
-            // columna no deben llegar como `undefined` a la UI.
-            is_fixed: !!(e as { is_fixed?: unknown }).is_fixed,
-          }));
+        : expenses.map((e) => {
+            // El objeto embebido se descarta tras derivar la descripción:
+            // ningún consumidor debe ver una clave `payment_orders` colada
+            // en un Expense. Mismo tratamiento que fetchExpenses.
+            const { payment_orders: orden, ...row } = e as Record<string, unknown> & {
+              payment_orders?: { lines?: unknown } | null;
+            };
+            return {
+              ...row,
+              // Default defensivo idéntico a fetchExpenses: filas viejas sin la
+              // columna no deben llegar como `undefined` a la UI.
+              is_fixed: !!(row as { is_fixed?: unknown }).is_fixed,
+              payment_order_description: descripcionDeLineas(orden?.lines),
+            };
+          });
 
     return NextResponse.json({
       success: true,
