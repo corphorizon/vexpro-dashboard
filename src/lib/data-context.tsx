@@ -76,8 +76,13 @@ import {
   LOAD_MAX_RETRIES,
   LOAD_BOOTSTRAP_TIMEOUT_MS,
 } from '@/lib/config';
-import { computeDistributionChain, type PeriodDistInput } from '@/lib/distribution';
-import { buildDistributionInputs } from '@/lib/distribution-inputs';
+import {
+  buildDistributionInputs,
+  computeCheckedChain,
+  type AutoSeriesStatus,
+  type AutoSeriesStatusMap,
+  type PeriodDistResultChecked,
+} from '@/lib/distribution-inputs';
 import {
   brokerPnlForChain,
   indexBrokerPnlMonths,
@@ -105,17 +110,13 @@ const MAX_RETRIES = LOAD_MAX_RETRIES;
 // tenía un modelo divergente (saldoAnterior/saldoUsado/saldoNuevo con drenaje
 // de acumulado) que contradecía a /socios — ver BUG-01. Ahora expone los
 // campos canónicos (reserva-ahorro + deuda arrastrada + montoDistribuir).
-export interface SaldoInfo {
-  ingresosNetos: number;
-  /** De dónde sale ingresosNetos — ver PeriodDistResult.desglose. */
-  desglose: import('./distribution').PeriodDistResult['desglose'];
-  egresosNetos: number;
-  saldoAFavor: number;
-  deudaArrastradaEntrada: number;
-  reserveThisPeriod: number;
-  reserveAccumulated: number;
-  deudaArrastradaSalida: number;
-  montoDistribuir: number;
+//
+// 2026-10-05: sale de `computeCheckedChain`, así que trae `incompleto` /
+// `pendiente` y los sumandos automáticos son `null` mientras su serie del CRM
+// no llegó. Un `pendiente: true` significa que NINGÚN total de este período es
+// definitivo: la pantalla muestra «Cargando datos del CRM…» o «Sin datos del
+// CRM», no el número (ver la cabecera de distribution-inputs.ts).
+export interface SaldoInfo extends PeriodDistResultChecked {
   /** Alias retro-compat = montoDistribuir (consumidores viejos). */
   totalDistribuir: number;
 }
@@ -145,8 +146,19 @@ export interface DataContextValue {
   getLiquidityData: () => LiquidityMovement[];
   getInvestmentsData: () => Investment[];
   computeSaldoChain: () => Map<string, SaldoInfo>;
-  /** Insumos canónicos de la cadena, con year/month/label/is_closed — para el forecast. */
-  getDistributionInputs: () => Array<PeriodDistInput & { year: number; month: number; label: string; isClosed: boolean }>;
+  /**
+   * Insumos canónicos de la cadena, con year/month/label/is_closed — para el
+   * forecast y /socios. Traen `incompleto` / `incompletoEstado`: pasarlos por
+   * `computeCheckedChain`, no por la fórmula pelada.
+   */
+  getDistributionInputs: () => import('@/lib/distribution-inputs').PeriodDistInputWithMeta[];
+  /**
+   * Estado de las dos series del CRM que viajan FUERA del bootstrap
+   * (broker-pnl-monthly y crm-monthly-totals). `failed` = `success:false`, red
+   * caída o JSON inválido. Incidente 2026-10-05: mientras estaban en vuelo la
+   * cadena caía al manual 0 y el «PDF mes» salió con Monto a distribuir $0.
+   */
+  autoSeriesStatus: AutoSeriesStatusMap;
   /** Ediciones retroactivas detectadas en períodos cerrados (vacío = limpio). */
   getSnapshotDrifts: () => import('@/lib/distribution-snapshot').SnapshotDrift[];
   isPeriodAfterSaldoStart: (periodId: string) => boolean;
@@ -256,24 +268,42 @@ export function DataProvider({ children }: { children: ReactNode }) {
   // derivado del espejo del CRM, y si su endpoint falla el resto de la app
   // tiene que seguir cargando igual (cae a `[]` ⇒ "sin datos").
   const [brokerPnlMonths, setBrokerPnlMonths] = useState<BrokerPnlMonth[]>([]);
+  // ── Estado de las dos series automáticas (incidente 2026-10-05) ─────────
+  // Se guarda CON la empresa a la que corresponde: al cambiar de empresa el
+  // estado viejo no aplica y se lee 'loading' sin un setState síncrono en el
+  // efecto. «Todavía no llegó» y «falló» tienen que poder distinguirse de
+  // «llegó y es cero» — ver la cabecera de distribution-inputs.ts.
+  const [brokerPnlLoad, setBrokerPnlLoad] = useState<{ companyId: string | null; status: AutoSeriesStatus }>(
+    { companyId: null, status: 'loading' },
+  );
+  const [crmMonthlyLoad, setCrmMonthlyLoad] = useState<{ companyId: string | null; status: AutoSeriesStatus }>(
+    { companyId: null, status: 'loading' },
+  );
 
   // `apiFetch` y no `fetch` pelado: el fetch directo rompe el "ver como" del
   // superadmin. Ante cualquier fallo la serie queda vacía y el resolver dice
-  // "sin datos" —que es la verdad— en vez de inventar un cero.
+  // "sin datos" —que es la verdad— en vez de inventar un cero; además el
+  // estado queda 'failed' para que la cadena marque los períodos que la leen.
   useEffect(() => {
     if (!effectiveCompanyId) {
       setBrokerPnlMonths([]);
       return;
     }
     let alive = true;
+    const companyId = effectiveCompanyId;
     apiFetch('/api/admin/broker-pnl-monthly')
       .then((r) => r.json())
       .then((json: { success?: boolean; months?: BrokerPnlMonth[] }) => {
         if (!alive) return;
-        setBrokerPnlMonths(json?.success ? (json.months ?? []) : []);
+        const ok = json?.success === true && Array.isArray(json.months);
+        setBrokerPnlMonths(ok ? (json.months ?? []) : []);
+        setBrokerPnlLoad({ companyId, status: ok ? 'ready' : 'failed' });
       })
       .catch(() => {
-        if (alive) setBrokerPnlMonths([]);
+        // Red caída o JSON inválido (r.json() lanza): 'failed', no 'ready'.
+        if (!alive) return;
+        setBrokerPnlMonths([]);
+        setBrokerPnlLoad({ companyId, status: 'failed' });
       });
     return () => {
       alive = false;
@@ -298,19 +328,33 @@ export function DataProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!effectiveCompanyId) { setCrmMonthlyTotals({ rows: [], truncated: false }); return; }
     let alive = true;
+    const companyId = effectiveCompanyId;
     apiFetch('/api/admin/crm-monthly-totals')
       .then((r) => r.json())
       .then((json: { success?: boolean; rows?: CrmMonthlyTotalRow[]; truncated?: boolean }) => {
         if (!alive) return;
+        const ok = json?.success === true && Array.isArray(json.rows);
         setCrmMonthlyTotals(
-          json?.success
+          ok
             ? { rows: json.rows ?? [], truncated: json.truncated === true }
             : { rows: [], truncated: false },
         );
+        setCrmMonthlyLoad({ companyId, status: ok ? 'ready' : 'failed' });
       })
-      .catch(() => { if (alive) setCrmMonthlyTotals({ rows: [], truncated: false }); });
+      .catch(() => {
+        if (!alive) return;
+        setCrmMonthlyTotals({ rows: [], truncated: false });
+        setCrmMonthlyLoad({ companyId, status: 'failed' });
+      });
     return () => { alive = false; };
   }, [effectiveCompanyId]);
+  const autoSeriesStatus = useMemo<AutoSeriesStatusMap>(
+    () => ({
+      brokerPnl: brokerPnlLoad.companyId === effectiveCompanyId ? brokerPnlLoad.status : 'loading',
+      crmMonthly: crmMonthlyLoad.companyId === effectiveCompanyId ? crmMonthlyLoad.status : 'loading',
+    }),
+    [brokerPnlLoad, crmMonthlyLoad, effectiveCompanyId],
+  );
   const pfAutoMonths = useMemo(
     () => crmMonthlyTotals.rows.filter((r) => CRM_MONTHLY_RESULT_METRIC_KEYS.includes(r.metric)),
     [crmMonthlyTotals],
@@ -1013,8 +1057,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
       businessModel: company?.business_model,
       brokerPnlByPeriod,
       pfAutoByPeriod,
+      autoSeriesStatus,
     };
   }, [
+    autoSeriesStatus,
     operatingIncome,
     propFirmSales,
     withdrawals,
@@ -1036,14 +1082,16 @@ export function DataProvider({ children }: { children: ReactNode }) {
     // forecast (/finanzas/forecast): la proyección appendea meses sintéticos
     // a ESTOS insumos y corre la misma fórmula — una construcción paralela
     // divergiría.
-    const inputs: PeriodDistInput[] = buildDistributionInputs(periods, distSources);
+    const inputs = buildDistributionInputs(periods, distSources);
 
     // Períodos CERRADOS: mandan los insumos congelados en closing_snapshot,
     // no las tablas vivas. Sin esto, editar una inversión fechada en un mes
     // cerrado (o su reserve_pct) recalculaba el mes, la cadena posterior y lo
     // ya distribuido (auditoría 2026-08-06, C2 — el snapshot era write-only).
     const { inputs: frozen } = applySnapshotOverrides(periods, inputs);
-    const canonical = computeDistributionChain(frozen);
+    // computeCheckedChain = la fórmula + la marca de «serie del CRM que no
+    // llegó» (incidente 2026-10-05). Ver distribution-inputs.ts.
+    const canonical = computeCheckedChain(frozen);
     const chain = new Map<string, SaldoInfo>();
     for (const [pid, r] of canonical) {
       chain.set(pid, { ...r, totalDistribuir: r.montoDistribuir });
@@ -1398,6 +1446,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       allP2PTransfers: p2pTransfers,
       getBrokerPnl,
       crmMonthlyTotals,
+      autoSeriesStatus,
 
       employees,
       commercialProfiles,
@@ -1534,6 +1583,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
       p2pTransfers,
       getBrokerPnl,
       crmMonthlyTotals,
+      autoSeriesStatus,
       employees,
       commercialProfiles,
       monthlyResults,

@@ -37,9 +37,32 @@
 //   · Imprimir «$0,00» en los canales sin movimiento: un renglón en cero es
 //     ruido; un canal SIN DATO (dataset ausente) se imprime «sin datos» y se
 //     avisa, porque no es lo mismo que cero (§1.3).
+//
+// 2026-10-05, ~22:10 — EL MISMO NÚMERO, OTRA CAUSA. Kevin bajó el «PDF mes» de
+// /socios (Vex Pro, sep-2026, ABIERTO) y salió «Ingresos netos $23.616,52» y
+// «Monto a distribuir $0». Esta vez el desglose SÍ venía de la cadena, pero la
+// cadena había caído al manual 0 porque las series del CRM (broker-pnl-monthly
+// y crm-monthly-totals) todavía estaban en vuelo. Ahora el desglose trae
+// `null` en los sumandos sin serie y la cascada:
+//   · imprime «sin datos» en esos renglones, nunca $0,00;
+//   · deja SIN NÚMERO los totales que dependen de ellos (ingresos, resultado,
+//     reserva, a distribuir y lo de cada socio) — un total parcial impreso con
+//     cara de total es exactamente el incidente;
+//   · pone ARRIBA el aviso «Broker P&L / Prop Firm: sin datos del CRM — el
+//     informe está incompleto» (`incompleteNotice`, el mismo texto que la
+//     pantalla) y no corre los controles de cuadre, que darían una
+//     «diferencia» falsa.
+//   DESCARTADO: imprimir el total parcial con «(parcial)» al lado. Es el
+//   número que Kevin tuvo en la mano y casi manda; el rótulo se pierde al
+//   copiarlo a un mensaje.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { formatNumber, round2 } from './utils';
+import {
+  incompleteNotice,
+  type AutoSeriesKey,
+  type ChainCompleteness,
+} from './distribution-inputs';
 import { MONTH_LABELS } from './types';
 import type { ProviderDataset } from './api-integrations/types';
 import { computeProviderTotals } from './api-integrations/totals';
@@ -96,19 +119,27 @@ export function generatedOnLabel(d: Date = new Date()): string {
 
 // ─── Cascada: cómo se llega al resultado ─────────────────────────────────────
 
+/**
+ * Los cuatro sumandos de `ingresosNetos`, tal cual la cadena. Los dos
+ * automáticos son `null` cuando su serie del CRM no llegó (ver
+ * `DesgloseConocido` en distribution-inputs.ts): «sin datos», no cero.
+ */
 export interface CloseDesglose {
-  brokerPnl: number;
-  propFirmNetIncome: number;
+  brokerPnl: number | null;
+  propFirmNetIncome: number | null;
   investmentProfits: number;
   other: number;
 }
+
+/** Estado de completitud del período, tal cual `computeCheckedChain`. */
+export type CloseCompleteness = ChainCompleteness & { heredaIncompleto: boolean };
 
 export type WaterfallKind = 'income' | 'expense' | 'total';
 
 export interface WaterfallRow {
   label: string;
-  /** Importe con su signo económico (un egreso va negativo). */
-  amount: number;
+  /** Importe con su signo económico (un egreso va negativo). `null` = sin datos. */
+  amount: number | null;
   kind: WaterfallKind;
 }
 
@@ -124,22 +155,39 @@ export interface WaterfallInput {
   montoDistribuir: number;
   /** Rótulo de `other`: en una empresa de servicios es la facturación cobrada. */
   otherLabel?: string;
+  /** Ausente ⇒ completo (llamadores viejos). */
+  completeness?: CloseCompleteness | null;
 }
 
 export interface WaterfallResult {
   rows: WaterfallRow[];
-  /** Σ componentes − ingresosNetos, o null si cuadra (|dif| ≤ 1 centavo). */
+  /** Σ componentes − ingresosNetos, o null si cuadra (|dif| ≤ 1 centavo) o no se pudo controlar. */
   diferenciaIngresos: number | null;
-  /** Resultado − deuda cubierta − reserva − a distribuir, o null si cuadra. */
+  /** Resultado − deuda cubierta − reserva − a distribuir, o null si cuadra o no se pudo controlar. */
   diferenciaDistribucion: number | null;
   /** Mes negativo: la pérdida pasa como deuda al mes siguiente. */
   deudaQuePasa: number;
   /** Avisos para imprimir tal cual debajo de la cascada. */
   warnings: string[];
+  /**
+   * Aviso de serie del CRM faltante, para imprimir ARRIBA del informe. null =
+   * el período está completo. Mismo texto que la pantalla (`incompleteNotice`).
+   */
+  aviso: string | null;
+  /** Ingresos netos / Resultado: `false` si dependen de una serie que no llegó. */
+  resultadoConocido: boolean;
+  /** Reserva / A distribuir / reparto: `false` si este mes o uno anterior está incompleto. */
+  distribucionConocida: boolean;
 }
 
 const pctLabel = (p: number | null | undefined) =>
   p == null ? '' : ` (${(p * 100).toFixed(p * 100 === Math.round(p * 100) ? 0 : 1)}%)`;
+
+/** Texto de un importe que puede faltar: «sin datos» en vez de $0,00. */
+export const SIN_DATOS = 'sin datos';
+export function pdfMoneyOrMissing(n: number | null | undefined): string {
+  return n === null || n === undefined ? SIN_DATOS : pdfMoney(n);
+}
 
 /**
  * Las filas de «Cómo se llega al resultado», con su signo.
@@ -150,38 +198,53 @@ const pctLabel = (p: number | null | undefined) =>
  * cubre la deuda, la reserva sale del remanente); invertirlas en el papel haría
  * que la reserva impresa no sea el % del renglón de arriba.
  *
- * Renglones de detalle en cero se omiten; los totales se imprimen siempre.
+ * Renglones de detalle en cero se omiten; los totales se imprimen siempre. Un
+ * sumando SIN DATOS (`null`) se imprime siempre: es un aviso, no ruido.
  */
 export function buildCloseWaterfall(input: WaterfallInput): WaterfallResult {
   const { desglose } = input;
+  const c = input.completeness ?? null;
+  const own = (c?.incompleto.length ?? 0) > 0;
+  const resultadoConocido = !own;
+  const distribucionConocida = !own && !c?.heredaIncompleto;
+  const aviso = incompleteNotice(c);
+
   const rows: WaterfallRow[] = [];
   const warnings: string[] = [];
-  const push = (label: string, amount: number, kind: WaterfallKind) => {
-    if (kind !== 'total' && Math.abs(amount) < 0.005) return;
-    rows.push({ label, amount: round2(amount), kind });
+  const push = (label: string, amount: number | null, kind: WaterfallKind) => {
+    if (amount !== null && kind !== 'total' && Math.abs(amount) < 0.005) return;
+    rows.push({ label, amount: amount === null ? null : round2(amount), kind });
   };
 
   push('Broker P&L', desglose.brokerPnl, 'income');
   push('Prop Firm neto', desglose.propFirmNetIncome, 'income');
   push('Ganancias de inversiones', desglose.investmentProfits, 'income');
   push(input.otherLabel ?? 'Otros ingresos', desglose.other, 'income');
-  push('Ingresos netos', input.ingresosNetos, 'total');
+  push('Ingresos netos', resultadoConocido ? input.ingresosNetos : null, 'total');
 
-  const suma = round2(
-    desglose.brokerPnl + desglose.propFirmNetIncome + desglose.investmentProfits + desglose.other,
-  );
-  const difIng = round2(suma - input.ingresosNetos);
-  const diferenciaIngresos = Math.abs(difIng) > CLOSE_TOLERANCE ? difIng : null;
-  if (diferenciaIngresos !== null) {
-    warnings.push(`Diferencia no explicada: ${pdfMoney(diferenciaIngresos)}`);
+  let diferenciaIngresos: number | null = null;
+  if (resultadoConocido && desglose.brokerPnl !== null && desglose.propFirmNetIncome !== null) {
+    const suma = round2(
+      desglose.brokerPnl + desglose.propFirmNetIncome + desglose.investmentProfits + desglose.other,
+    );
+    const difIng = round2(suma - input.ingresosNetos);
+    diferenciaIngresos = Math.abs(difIng) > CLOSE_TOLERANCE ? difIng : null;
+    if (diferenciaIngresos !== null) {
+      warnings.push(`Diferencia no explicada: ${pdfMoney(diferenciaIngresos)}`);
+    }
   }
 
   push('Egresos del mes', -input.egresos, 'expense');
-  push('Resultado del mes', input.saldo, 'total');
+  push('Resultado del mes', resultadoConocido ? input.saldo : null, 'total');
 
   let deudaQuePasa = 0;
   let diferenciaDistribucion: number | null = null;
-  if (input.saldo > 0) {
+  if (!distribucionConocida) {
+    // Sin el resultado definitivo (o con un arrastre que no lo es) no se sabe
+    // cuánta deuda se cubre, cuánta reserva sale ni cuánto se reparte.
+    if (input.deudaEntrada > 0.005 || c?.heredaIncompleto) push('Deuda arrastrada cubierta', null, 'expense');
+    push(`Reserva del mes${pctLabel(input.reservePct)}`, null, 'expense');
+  } else if (input.saldo > 0) {
     const deudaCubierta = Math.min(input.deudaEntrada, input.saldo);
     push('Deuda arrastrada cubierta', -deudaCubierta, 'expense');
     push(`Reserva del mes${pctLabel(input.reservePct)}`, -input.reservaMes, 'expense');
@@ -198,7 +261,7 @@ export function buildCloseWaterfall(input: WaterfallInput): WaterfallResult {
       diferenciaDistribucion = round2(-input.montoDistribuir);
     }
   }
-  push('A distribuir', input.montoDistribuir, 'total');
+  push('A distribuir', distribucionConocida ? input.montoDistribuir : null, 'total');
 
   if (diferenciaDistribucion !== null) {
     warnings.push(`Diferencia no explicada en la distribución: ${pdfMoney(diferenciaDistribucion)}`);
@@ -207,17 +270,66 @@ export function buildCloseWaterfall(input: WaterfallInput): WaterfallResult {
     warnings.push(`Deuda que pasa al mes siguiente: ${pdfMoney(deudaQuePasa)}`);
   }
 
-  return { rows, diferenciaIngresos, diferenciaDistribucion, deudaQuePasa, warnings };
+  return {
+    rows,
+    diferenciaIngresos,
+    diferenciaDistribucion,
+    deudaQuePasa,
+    warnings,
+    aviso,
+    resultadoConocido,
+    distribucionConocida,
+  };
 }
 
 /** «Broker + Prop Firm + Inversiones»: qué componentes tienen dato. */
 export function incomeSourcesLabel(d: CloseDesglose, otherShort = 'Otros'): string {
   const parts: string[] = [];
-  if (Math.abs(d.brokerPnl) >= 0.005) parts.push('Broker');
-  if (Math.abs(d.propFirmNetIncome) >= 0.005) parts.push('Prop Firm');
-  if (Math.abs(d.investmentProfits) >= 0.005) parts.push('Inversiones');
-  if (Math.abs(d.other) >= 0.005) parts.push(otherShort);
+  const has = (n: number | null) => n !== null && Math.abs(n) >= 0.005;
+  if (has(d.brokerPnl)) parts.push('Broker');
+  if (has(d.propFirmNetIncome)) parts.push('Prop Firm');
+  if (has(d.investmentProfits)) parts.push('Inversiones');
+  if (has(d.other)) parts.push(otherShort);
   return parts.join(' + ');
+}
+
+// ─── Reparto por socio ───────────────────────────────────────────────────────
+
+export interface PartnerShareInput {
+  name: string;
+  pct: number;
+  amount: number;
+}
+
+export interface PartnerShareRow {
+  name: string;
+  pct: number;
+  /** `null` = el monto a distribuir no es definitivo (serie del CRM faltante). */
+  amount: number | null;
+}
+
+/**
+ * Filas del reparto para el PDF. Con la distribución desconocida ningún socio
+ * tiene monto: imprimir «$0,00» le diría a cada socio que este mes no cobra.
+ */
+export function partnerShareRows(
+  partners: readonly PartnerShareInput[],
+  distribucionConocida: boolean,
+): { rows: PartnerShareRow[]; total: number | null } {
+  const rows = partners.map((p) => ({
+    name: p.name,
+    pct: p.pct,
+    amount: distribucionConocida ? round2(p.amount) : null,
+  }));
+  return {
+    rows,
+    total: distribucionConocida ? round2(partners.reduce((s, p) => s + p.amount, 0)) : null,
+  };
+}
+
+/** Las series que faltan, para el nombre corto en una tarjeta («sin Broker P&L»). */
+export function missingSeriesShort(keys: readonly AutoSeriesKey[]): string {
+  return keys.map((k) => (k === 'brokerPnl' ? 'Broker P&L' : 'Prop Firm')).join(' / ');
 }
 
 // ─── Egresos ─────────────────────────────────────────────────────────────────

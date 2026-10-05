@@ -8,6 +8,8 @@ import {
   buildClientFlow,
   buildCrmInfoRows,
   incomeSourcesLabel,
+  partnerShareRows,
+  pdfMoneyOrMissing,
   type WaterfallInput,
   type ClientFlowInput,
 } from './monthly-close-pdf-data';
@@ -340,5 +342,76 @@ describe('buildCrmInfoRows — informativo, no suma al resultado', () => {
 
   it('sin datos del mes ⇒ vacío (el PDF omite la sección)', () => {
     expect(buildCrmInfoRows([], CRM_MONTHLY_OUTSIDE_RESULT_METRICS, 2026, 9)).toEqual([]);
+  });
+});
+
+// ─── Incidente 2026-10-05 ~22:10: serie del CRM faltante en el PDF ────────────
+describe('buildCloseWaterfall — serie del CRM faltante', () => {
+  // Lo que la cadena le dio al «PDF mes» de Vex Pro sep-2026 con las series en
+  // vuelo: solo inversiones, y los automáticos caídos al manual 0.
+  const base: WaterfallInput = {
+    desglose: { brokerPnl: null, propFirmNetIncome: null, investmentProfits: 23616.52, other: 0 },
+    ingresosNetos: 23616.52,
+    egresos: 30000,
+    saldo: -6383.48,
+    reservaMes: 0,
+    reservePct: 0.1,
+    deudaEntrada: 0,
+    montoDistribuir: 0,
+  };
+
+  it('emite el aviso arriba y «sin datos» en vez de ceros cuando falta una serie', () => {
+    const wf = buildCloseWaterfall({
+      ...base,
+      completeness: { incompleto: ['brokerPnl', 'propFirm'], incompletoEstado: 'failed', heredaIncompleto: false },
+    });
+    expect(wf.aviso).toBe('Broker P&L / Prop Firm: sin datos del CRM — el informe está incompleto');
+    const byLabel = new Map(wf.rows.map((r) => [r.label, r.amount]));
+    expect(byLabel.get('Broker P&L')).toBeNull();
+    expect(byLabel.get('Prop Firm neto')).toBeNull();
+    expect(byLabel.get('Ganancias de inversiones')).toBe(23616.52);
+    // Los totales que dependen de la serie NO se imprimen como número.
+    expect(byLabel.get('Ingresos netos')).toBeNull();
+    expect(byLabel.get('Resultado del mes')).toBeNull();
+    expect(byLabel.get('A distribuir')).toBeNull();
+    // Lo que no depende del CRM sí.
+    expect(byLabel.get('Egresos del mes')).toBe(-30000);
+    expect(wf.resultadoConocido).toBe(false);
+    expect(wf.distribucionConocida).toBe(false);
+    // Sin controles de cuadre (darían una diferencia falsa) ni «deuda que pasa».
+    expect(wf.diferenciaIngresos).toBeNull();
+    expect(wf.warnings).toEqual([]);
+    expect(pdfMoneyOrMissing(byLabel.get('Broker P&L'))).toBe('sin datos');
+  });
+
+  it('el reparto por socio tampoco imprime $0,00 con la distribución desconocida', () => {
+    const share = partnerShareRows([{ name: 'Sergio', pct: 0.5, amount: 0 }], false);
+    expect(share.rows[0].amount).toBeNull();
+    expect(share.total).toBeNull();
+    expect(partnerShareRows([{ name: 'Sergio', pct: 0.5, amount: 100.004 }], true).total).toBe(100);
+  });
+
+  it('heredado: ingresos y resultado se conocen, la distribución no', () => {
+    const wf = buildCloseWaterfall({
+      ...base,
+      desglose: { brokerPnl: 226605.2, propFirmNetIncome: 13248.27, investmentProfits: 23616.52, other: 0 },
+      ingresosNetos: 263469.99,
+      saldo: 233469.99,
+      completeness: { incompleto: [], incompletoEstado: null, heredaIncompleto: true },
+    });
+    const byLabel = new Map(wf.rows.map((r) => [r.label, r.amount]));
+    expect(byLabel.get('Ingresos netos')).toBe(263469.99);
+    expect(byLabel.get('A distribuir')).toBeNull();
+    expect(wf.aviso).toMatch(/período anterior/);
+  });
+
+  it('completo: sin aviso, igual que antes', () => {
+    const wf = buildCloseWaterfall({
+      ...base,
+      completeness: { incompleto: [], incompletoEstado: null, heredaIncompleto: false },
+      desglose: { brokerPnl: 0, propFirmNetIncome: 0, investmentProfits: 23616.52, other: 0 },
+    });
+    expect(wf.aviso).toBeNull();
+    expect(wf.distribucionConocida).toBe(true);
   });
 });

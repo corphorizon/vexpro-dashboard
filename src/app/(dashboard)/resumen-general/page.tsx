@@ -13,7 +13,7 @@ import { PeriodSelector } from '@/components/period-selector';
 import dynamic from 'next/dynamic';
 import { usePeriod } from '@/lib/period-context';
 import { NoPeriodsState } from '@/components/no-periods-state';
-import { useData } from '@/lib/data-context';
+import { useData, type SaldoInfo } from '@/lib/data-context';
 import { features } from '@/lib/business-model';
 import { formatCurrency } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
@@ -21,6 +21,7 @@ import { downloadExcel, downloadPDF } from '@/lib/export-utils';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
+import { pendingValueLabel } from '@/lib/distribution-inputs';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { withdrawalChannelLabel } from '@/lib/withdrawal-channels';
 import { manualDepositsByChannel } from '@/lib/deposit-channels';
@@ -58,7 +59,7 @@ export default function ResumenPage() {
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, computeSaldoChain, getBrokerPnl, periods, company, loading } = useData();
+  const { getPeriodSummary, getConsolidatedSummary, computeSaldoChain, getBrokerPnl, periods, company, loading, autoSeriesStatus } = useData();
   // Una consultora no mueve fondos de clientes: sin depósitos, "Net Deposit" y
   // el P&L del broker no significan nada y se van de la pantalla (y del export).
   const { netDeposit: showNetDeposit, brokerPnl: showBrokerPnl } = features(company?.business_model);
@@ -105,13 +106,30 @@ export default function ResumenPage() {
           egresosNetos: acc.egresosNetos + e.egresosNetos,
           saldoAFavor: acc.saldoAFavor + e.saldoAFavor,
           otherIncome: acc.otherIncome + e.desglose.other,
-          propFirmNet: acc.propFirmNet + e.desglose.propFirmNetIncome,
+          propFirmNet: acc.propFirmNet + (e.desglose.propFirmNetIncome ?? 0),
           investmentProfits: acc.investmentProfits + e.desglose.investmentProfits,
+          // Un mes cuyo Prop Firm / Broker P&L del CRM no llegó contamina el
+          // total del conjunto: se muestra el estado, no la suma parcial.
+          propFirmMissing: acc.propFirmMissing || e.desglose.propFirmNetIncome === null,
+          pendingEntry: acc.pendingEntry ?? (e.incompleto.length > 0 ? e : null),
         };
       },
-      { ingresosNetos: 0, egresosNetos: 0, saldoAFavor: 0, otherIncome: 0, propFirmNet: 0, investmentProfits: 0 },
+      {
+        ingresosNetos: 0,
+        egresosNetos: 0,
+        saldoAFavor: 0,
+        otherIncome: 0,
+        propFirmNet: 0,
+        investmentProfits: 0,
+        propFirmMissing: false,
+        pendingEntry: null as SaldoInfo | null,
+      },
     );
   }, [saldoChain, mode, selectedPeriodId, selectedPeriodIds]);
+  // Incidente 2026-10-05: con Broker P&L / Prop Firm del CRM todavía en vuelo
+  // (o fallados) la cadena caía al manual 0 y esta pantalla mostraba unos
+  // ingresos plausibles y falsos. Ingresos y Balance muestran el estado.
+  const incomePendingLabel = pendingValueLabel(chainTotals.pendingEntry, autoSeriesStatus);
 
   // ─── Broker P&L, con su procedencia ─────────────────────────────────────
   // En consolidado se suman los períodos seleccionados. La procedencia del
@@ -196,6 +214,8 @@ export default function ResumenPage() {
   const totalIncome = chainTotals.ingresosNetos;
   const totalExpenses = chainTotals.egresosNetos;
   const balanceDisponible = chainTotals.saldoAFavor;
+  const incomeDisplay = incomePendingLabel ?? formatCurrency(totalIncome);
+  const balanceDisplay = incomePendingLabel ?? formatCurrency(balanceDisponible);
 
   const exportHeaders = ['Metrica', 'Valor'];
   const exportRows: (string | number)[][] = [
@@ -207,8 +227,9 @@ export default function ResumenPage() {
         ] as (string | number)[][])
       : []),
     ['Egresos Operativos', totalExpenses],
-    ['Ingresos Operativos', totalIncome],
-    ['Balance Total', balanceDisponible],
+    // Pendiente de datos del CRM ⇒ se exporta el estado, no el número falso.
+    ['Ingresos Operativos', incomePendingLabel ?? totalIncome],
+    ['Balance Total', incomePendingLabel ?? balanceDisponible],
   ];
 
   const handleExport = () => verify2FA(() => {
@@ -255,7 +276,7 @@ export default function ResumenPage() {
       />
 
       {/* Negative balance warning */}
-      {balanceDisponible < 0 && (
+      {!incomePendingLabel && balanceDisponible < 0 && (
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm font-medium">
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           {t('summary.negativeBalance', { amount: formatCurrency(balanceDisponible) })}
@@ -308,9 +329,9 @@ export default function ResumenPage() {
         {!showNetDeposit && (
           <StatCard
             label={t('summary.operatingIncome')}
-            value={formatCurrency(totalIncome)}
+            value={incomeDisplay}
             icon={TrendingUp}
-            tone="positive"
+            tone={incomePendingLabel ? 'neutral' : 'positive'}
           />
         )}
         <StatCard
@@ -322,9 +343,9 @@ export default function ResumenPage() {
         {!showNetDeposit && (
           <StatCard
             label={<>{t('summary.balance')} <InfoTip text={GLOSSARY.netoOperativo} /></>}
-            value={formatCurrency(balanceDisponible)}
+            value={balanceDisplay}
             icon={Wallet}
-            tone={balanceDisponible >= 0 ? 'positive' : 'negative'}
+            tone={incomePendingLabel ? 'neutral' : balanceDisponible >= 0 ? 'positive' : 'negative'}
           />
         )}
       </div>
@@ -338,14 +359,18 @@ export default function ResumenPage() {
             </div>
             <CardTitle>{t('summary.operatingIncome')}</CardTitle>
           </div>
-          <CardValue positive={totalIncome > 0} negative={totalIncome < 0}>
-            {formatCurrency(totalIncome)}
+          <CardValue positive={!incomePendingLabel && totalIncome > 0} negative={!incomePendingLabel && totalIncome < 0}>
+            {incomeDisplay}
           </CardValue>
           <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-            {showBrokerPnl && chainTotals.propFirmNet !== 0 && (
+            {showBrokerPnl && (chainTotals.propFirmMissing || chainTotals.propFirmNet !== 0) && (
               <div className="flex justify-between">
                 <span>Balance Prop Firm</span>
-                <span>{formatCurrency(chainTotals.propFirmNet)}</span>
+                <span>
+                  {chainTotals.propFirmMissing
+                    ? autoSeriesStatus.crmMonthly === 'loading' ? 'Cargando datos del CRM…' : t('brokerPnl.noData')
+                    : formatCurrency(chainTotals.propFirmNet)}
+                </span>
               </div>
             )}
             {chainTotals.investmentProfits !== 0 && (
@@ -384,7 +409,12 @@ export default function ResumenPage() {
                 </span>
                 <span className="text-right">
                   {brokerPnl.value === null ? (
-                    <span className="text-muted-foreground">{t('brokerPnl.noData')}</span>
+                    <span className="text-muted-foreground">
+                      {/* Mientras la serie viaja, «sin datos» sería mentira. */}
+                      {brokerPnl.source === 'none' && autoSeriesStatus.brokerPnl === 'loading'
+                        ? 'Cargando datos del CRM…'
+                        : t('brokerPnl.noData')}
+                    </span>
                   ) : (
                     formatCurrency(brokerPnl.value)
                   )}

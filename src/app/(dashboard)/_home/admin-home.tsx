@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { StatCard } from '@/components/ui/stat-card';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
+import { pendingValueLabel } from '@/lib/distribution-inputs';
 import { useData } from '@/lib/data-context';
 import { features } from '@/lib/business-model';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
@@ -41,6 +42,7 @@ export function AdminHome() {
     computeSaldoChain,
     partners,
     loading,
+    autoSeriesStatus,
   } = useData();
 
   // ── Current period resolution ─────────────────────────────────────────
@@ -229,6 +231,10 @@ export function AdminHome() {
   const operatingIncomeMonth = curChain?.ingresosNetos ?? 0;
   const expensesMonth = curChain?.egresosNetos ?? 0;
   const netMonth = curChain?.saldoAFavor ?? 0;
+  // Serie del CRM todavía en vuelo o fallada (incidente 2026-10-05): el
+  // número de la cadena es el fallback, no el dato — se muestra el estado.
+  const monthPendingLabel =
+    curChain && curChain.incompleto.length > 0 ? pendingValueLabel(curChain, autoSeriesStatus) : null;
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -280,7 +286,7 @@ export function AdminHome() {
           {showIncomeCard && (
             <StatCard
               label="Ingresos · mes"
-              value={formatCurrency(operatingIncomeMonth)}
+              value={monthPendingLabel ?? formatCurrency(operatingIncomeMonth)}
               icon={TrendingUp}
               tone="positive"
             />
@@ -297,9 +303,9 @@ export function AdminHome() {
           {showNetCard && (
             <StatCard
               label="Neto · mes"
-              value={formatCurrency(netMonth)}
+              value={monthPendingLabel ?? formatCurrency(netMonth)}
               icon={Wallet}
-              tone={netMonth >= 0 ? 'positive' : 'negative'}
+              tone={monthPendingLabel ? 'neutral' : netMonth >= 0 ? 'positive' : 'negative'}
             />
           )}
         </section>

@@ -1,6 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
+  anyAutoSeriesLoading,
   buildDistributionInputs,
+  computeCheckedChain,
+  incompleteNotice,
+  pendingValueLabel,
   type DistributionSources,
   type PeriodForInputs,
 } from './distribution-inputs';
@@ -263,5 +267,133 @@ describe('pfAutoByPeriod', () => {
   it('sin serie del CRM cae al manual aunque sea 0 — nunca inventa', () => {
     const [row] = buildDistributionInputs([abierto] as never, base as never);
     expect(row.propFirmNetIncome).toBe(0);
+  });
+});
+
+// ─── Incidente 2026-10-05 ~22:10: «cargando» NO es «cero» ─────────────────────
+// Vex Pro, septiembre 2026 ABIERTO. El «PDF mes» salió con Ingresos netos
+// $23.616,52 (solo inversiones) y Monto a distribuir $0 porque las series del
+// CRM seguían en vuelo y la cadena cayó al manual 0. Valor correcto:
+// 226.605,20 + 13.248,27 + 23.616,52 = 263.469,99.
+describe('series automáticas — completitud de la cadena', () => {
+  const sep: PeriodForInputs = { id: 'sep', year: 2026, month: 9, label: 'Sep 26', is_closed: false, reserve_pct: 0.1 };
+  const oct: PeriodForInputs = { id: 'oct', year: 2026, month: 10, label: 'Oct 26', is_closed: false, reserve_pct: 0.1 };
+  const sepSources = (over: Partial<DistributionSources> = {}): DistributionSources => ({
+    // Desde ago-2026 los manuales de Broker P&L y Prop Firm están en 0 a propósito.
+    operatingIncome: [{ period_id: 'sep', broker_pnl: 0, other: 0 }],
+    propFirmSales: [],
+    withdrawals: [],
+    expenses: [],
+    investments: [{ date: '2026-09-15', profit: 23616.52 }],
+    brokerPnlByPeriod: new Map([['sep', 226605.2]]),
+    // 13.248,27 neto (ventas − retiros aprobados).
+    pfAutoByPeriod: new Map([['sep', { sales: 20000, withdrawals: 6751.73 }]]),
+    autoSeriesStatus: { brokerPnl: 'ready', crmMonthly: 'ready' },
+    ...over,
+  });
+
+  it('con las dos series `ready` da 263.469,99 y el período sale completo', () => {
+    const inputs = buildDistributionInputs([sep], sepSources());
+    expect(inputs[0].incompleto).toEqual([]);
+    expect(inputs[0].incompletoEstado).toBeNull();
+    const r = computeCheckedChain(inputs).get('sep')!;
+    expect(r.ingresosNetos).toBe(263469.99);
+    expect(r.desglose).toEqual({
+      brokerPnl: 226605.2,
+      other: 0,
+      propFirmNetIncome: 13248.27,
+      investmentProfits: 23616.52,
+    });
+    expect(r.pendiente).toBe(false);
+    expect(r.montoDistribuir).toBeGreaterThan(0);
+    expect(incompleteNotice(r)).toBeNull();
+    expect(pendingValueLabel(r)).toBeNull();
+  });
+
+  it('con las series `loading` marca el período y NO devuelve 0 como Broker P&L', () => {
+    // Lo que veía Kevin: los mapas todavía vacíos.
+    const inputs = buildDistributionInputs(
+      [sep],
+      sepSources({
+        brokerPnlByPeriod: new Map(),
+        pfAutoByPeriod: new Map(),
+        autoSeriesStatus: { brokerPnl: 'loading', crmMonthly: 'loading' },
+      }),
+    );
+    expect(inputs[0].incompleto).toEqual(['brokerPnl', 'propFirm']);
+    expect(inputs[0].incompletoEstado).toBe('loading');
+    const r = computeCheckedChain(inputs).get('sep')!;
+    expect(r.desglose.brokerPnl).toBeNull();
+    expect(r.desglose.propFirmNetIncome).toBeNull();
+    expect(r.desglose.investmentProfits).toBe(23616.52);
+    expect(r.pendiente).toBe(true);
+    expect(pendingValueLabel(r)).toBe('Cargando datos del CRM…');
+    expect(incompleteNotice(r)).toBe('Broker P&L / Prop Firm: esperando datos del CRM — el informe está incompleto');
+  });
+
+  it('`failed` en una sola serie marca solo ese sumando y dice «sin datos del CRM»', () => {
+    const inputs = buildDistributionInputs(
+      [sep],
+      sepSources({ brokerPnlByPeriod: new Map(), autoSeriesStatus: { brokerPnl: 'failed', crmMonthly: 'ready' } }),
+    );
+    const r = computeCheckedChain(inputs).get('sep')!;
+    expect(r.incompleto).toEqual(['brokerPnl']);
+    expect(r.incompletoEstado).toBe('failed');
+    expect(r.desglose.brokerPnl).toBeNull();
+    expect(r.desglose.propFirmNetIncome).toBe(13248.27);
+    expect(pendingValueLabel(r)).toBe('Sin datos del CRM');
+    expect(incompleteNotice(r)).toBe('Broker P&L: sin datos del CRM — el informe está incompleto');
+  });
+
+  it('lo incierto se arrastra: el mes siguiente sale `heredaIncompleto`', () => {
+    const inputs = buildDistributionInputs(
+      [sep, oct],
+      sepSources({ brokerPnlByPeriod: new Map(), autoSeriesStatus: { brokerPnl: 'failed', crmMonthly: 'ready' } }),
+    );
+    const chain = computeCheckedChain(inputs);
+    // Octubre también depende del Broker P&L automático: incompleto propio.
+    expect(chain.get('oct')!.incompleto).toEqual(['brokerPnl']);
+    // Con Octubre de un modelo sin broker (no depende de nada) igual hereda.
+    const soloArrastre = computeCheckedChain([
+      { ...inputs[0] },
+      { ...inputs[1], incompleto: [], incompletoEstado: null },
+    ]);
+    expect(soloArrastre.get('oct')!.incompleto).toEqual([]);
+    expect(soloArrastre.get('oct')!.heredaIncompleto).toBe(true);
+    expect(soloArrastre.get('oct')!.pendiente).toBe(true);
+  });
+
+  it('cerrados y anteriores al corte NO se marcan aunque la serie esté cargando', () => {
+    const loading: DistributionSources['autoSeriesStatus'] = { brokerPnl: 'loading', crmMonthly: 'loading' };
+    const cerrado = { ...sep, is_closed: true };
+    const julio: PeriodForInputs = { id: 'jul', year: 2026, month: 7, label: 'Jul 26', is_closed: false, reserve_pct: 0.1 };
+    const inputs = buildDistributionInputs(
+      [cerrado, julio],
+      sepSources({
+        // Julio con prop firm manual cargado: el manual gana y no lee la serie.
+        propFirmSales: [{ period_id: 'jul', amount: 500 }],
+        withdrawals: [{ period_id: 'jul', category: 'prop_firm', amount: 100 }],
+        autoSeriesStatus: loading,
+      }),
+    );
+    expect(inputs.map((i) => i.incompleto)).toEqual([[], []]);
+  });
+
+  it('un modelo sin broker P&L no depende de las series', () => {
+    const inputs = buildDistributionInputs(
+      [sep],
+      sepSources({ businessModel: 'company', autoSeriesStatus: { brokerPnl: 'failed', crmMonthly: 'failed' } }),
+    );
+    expect(inputs[0].incompleto).toEqual([]);
+  });
+
+  it('sin `autoSeriesStatus` (llamadores viejos) se asume ready', () => {
+    const inputs = buildDistributionInputs([sep], sepSources({ autoSeriesStatus: undefined }));
+    expect(inputs[0].incompleto).toEqual([]);
+  });
+
+  it('anyAutoSeriesLoading: solo `loading` bloquea, `failed` no', () => {
+    expect(anyAutoSeriesLoading({ brokerPnl: 'ready', crmMonthly: 'loading' })).toBe(true);
+    expect(anyAutoSeriesLoading({ brokerPnl: 'failed', crmMonthly: 'ready' })).toBe(false);
   });
 });

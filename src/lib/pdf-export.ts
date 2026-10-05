@@ -4,14 +4,21 @@ import { formatNumber } from '@/lib/utils';
 import { BRAND_RGB, type RGB } from '@/lib/brand';
 import {
   pdfMoney,
+  pdfMoneyOrMissing,
+  SIN_DATOS,
   generatedOnLabel,
   buildCloseWaterfall,
   buildCloseExpenses,
   incomeSourcesLabel,
+  partnerShareRows,
+  missingSeriesShort,
+  type CloseCompleteness,
   type CloseDesglose,
   type CloseExpenseInput,
   type ClientFlow,
   type CrmInfoRow,
+  type PartnerShareRow,
+  type WaterfallResult,
 } from '@/lib/monthly-close-pdf-data';
 
 /** jspdf-autotable adds `lastAutoTable` to the doc but doesn't ship types for it. */
@@ -235,6 +242,121 @@ function pdfFooter(doc: jsPDF, brand = 'Smart Dashboard') {
       doc.text(`Página ${i} de ${pages}`, w - 14, h - 5.5, { align: 'right' });
     }
   }
+}
+
+// ─── Piezas compartidas de los informes de distribución ───────────────────────
+// «PDF mes» y «Cierre mensual» dibujan la MISMA cascada, el mismo aviso de
+// serie faltante y la misma tabla de socios. Una sola implementación: si una
+// de las dos dibujara distinto, el socio vería dos cuentas distintas del mismo
+// mes (2026-10-05).
+
+/**
+ * Banda de aviso a todo el ancho (fondo ámbar suave, borde y texto en color de
+ * atención). Para lo que NO puede pasar desapercibido: va arriba de todo.
+ */
+function pdfAlertBand(doc: jsPDF, text: string, y: number, margin = 14): number {
+  const w = doc.internal.pageSize.getWidth();
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(9);
+  const lines = doc.splitTextToSize(`! ${text}`, w - margin * 2 - 8) as string[];
+  const h = lines.length * 4.4 + 5;
+  doc.setFillColor(254, 243, 199);
+  doc.setDrawColor(...C.warning);
+  doc.setLineWidth(0.4);
+  doc.roundedRect(margin, y, w - margin * 2, h, 2, 2, 'FD');
+  doc.setTextColor(...C.warning);
+  doc.text(lines, margin + 4, y + 5.6);
+  return y + h + 5;
+}
+
+/** Tabla «Cómo se llega al resultado». Un importe `null` se imprime «sin datos». */
+function pdfWaterfallTable(doc: jsPDF, y: number, wf: WaterfallResult['rows'], margin = 14): number {
+  autoTable(doc, {
+    startY: y,
+    body: wf.map((r) => [r.kind === 'total' ? `= ${r.label}` : `     ${r.label}`, pdfMoneyOrMissing(r.amount)]),
+    theme: 'plain',
+    styles: { fontSize: 9.5, cellPadding: { top: 1.7, bottom: 1.7, left: 3, right: 3 }, textColor: C.ink },
+    columnStyles: { 0: { cellWidth: 120 }, 1: { halign: 'right' } },
+    margin: { left: margin, right: margin },
+    didParseCell: (h) => {
+      const r = wf[h.row.index];
+      if (!r || h.section !== 'body') return;
+      if (h.column.index === 1 && r.amount === null) {
+        h.cell.styles.textColor = C.warning;
+        h.cell.styles.fontStyle = 'italic';
+        if (r.kind === 'total') h.cell.styles.fillColor = C.surface;
+        return;
+      }
+      if (r.kind === 'total') {
+        h.cell.styles.fillColor = C.surface;
+        h.cell.styles.fontStyle = 'bold';
+        h.cell.styles.textColor = h.column.index === 1 && (r.amount ?? 0) < 0 ? C.negative : C.primary;
+      } else if (h.column.index === 1) {
+        h.cell.styles.textColor = r.kind === 'expense' ? C.negative : (r.amount ?? 0) < 0 ? C.negative : C.positive;
+      } else {
+        h.cell.styles.textColor = C.inkSoft;
+      }
+    },
+    didDrawCell: (h) => {
+      // Regla fina arriba de cada total: separa el subtotal de sus sumandos.
+      const r = wf[h.row.index];
+      if (h.section === 'body' && r?.kind === 'total') {
+        doc.setDrawColor(...C.border);
+        doc.setLineWidth(0.3);
+        doc.line(h.cell.x, h.cell.y, h.cell.x + h.cell.width, h.cell.y);
+      }
+    },
+  });
+  return getLastTableY(doc, y + 60, 4);
+}
+
+/** Tabla de socios con barra de participación. Monto `null` ⇒ «sin datos». */
+function pdfPartnerTable(
+  doc: jsPDF,
+  y: number,
+  rows: PartnerShareRow[],
+  total: number | null,
+  margin = 14,
+): number {
+  autoTable(doc, {
+    startY: y,
+    head: [['Socio', 'Participación', 'Monto a recibir']],
+    body: rows.map((p) => [p.name, `${(p.pct * 100).toFixed(1)}%`, pdfMoneyOrMissing(p.amount)]),
+    foot: [['Total distribuido', '100%', pdfMoneyOrMissing(total)]],
+    theme: 'striped',
+    styles: { fontSize: 10, cellPadding: 3.2 },
+    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: C.surface },
+    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
+    columnStyles: { 1: { cellWidth: 70 }, 2: { halign: 'right', fontStyle: 'bold', textColor: C.ink } },
+    margin: { left: margin, right: margin },
+    didParseCell: (h) => {
+      if (h.section === 'foot' && h.column.index === 2) h.cell.styles.halign = 'right';
+      if (h.column.index === 2 && h.cell.raw === SIN_DATOS) {
+        h.cell.styles.textColor = C.warning;
+        h.cell.styles.fontStyle = 'italic';
+      }
+    },
+    didDrawCell: (h) => {
+      // Barra de participación: rect proporcional al % del socio, a la derecha
+      // del número, sobre un riel gris del ancho disponible.
+      if (h.section !== 'body' || h.column.index !== 1) return;
+      const p = rows[h.row.index];
+      if (!p) return;
+      const x0 = h.cell.x + 20;
+      const full = h.cell.width - 24;
+      const barH = 2.6;
+      const by = h.cell.y + (h.cell.height - barH) / 2;
+      doc.setFillColor(...C.border);
+      doc.rect(x0, by, full, barH, 'F');
+      const frac = Math.max(0, Math.min(1, p.pct));
+      if (frac > 0) {
+        doc.setFillColor(...C.accent);
+        doc.rect(x0, by, full * frac, barH, 'F');
+      }
+    },
+  });
+  return getLastTableY(doc, y + 40, 8);
 }
 
 interface PdfCommissionData {
@@ -717,97 +839,136 @@ export async function generatePnlPDF(data: PdfPnlData) {
 
 // ═══════════════════════════════════════════════════════════
 // Distribución a Socios — mes individual
+//
+// REDISEÑO 2026-10-05 (incidente de las ~22:10): el «PDF mes» de Vex Pro
+// sep-2026 salió con «Ingresos Netos $23.616,52» y «Monto a Distribuir $0»
+// porque las series del CRM todavía no habían llegado y la cadena cayó al
+// manual 0 (ver distribution-inputs.ts). Además no decía de dónde salían los
+// ingresos, la fecha salía en formato del navegador, «Como se calcula» sin
+// tilde y sin desglose.
+//
+// Ahora es el mismo sistema que el Cierre mensual: período largo, «Generado
+// el …», la cascada de `buildCloseWaterfall` (la MISMA función, no una
+// segunda fórmula) con Broker P&L / Prop Firm / Inversiones / Otros, el aviso
+// de serie faltante ARRIBA y «sin datos» —nunca $0— donde falta el dato, y la
+// tabla de socios con barra de participación.
 // ═══════════════════════════════════════════════════════════
 
 export interface PdfPartnerPeriodData {
   companyName: string;
   /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
   companyLogoUrl?: string | null;
+  /** Nombre largo del período («Septiembre 2026») — ver `longPeriodLabel`. */
   periodLabel: string;
+  /**
+   * Rótulo para el nombre del archivo. Se mantiene el de siempre
+   * (`Distribucion_Socios_<label corto>.pdf`) para no romper a quien los
+   * archiva por nombre. Ausente ⇒ `periodLabel`.
+   */
+  fileLabel?: string;
+  /** `currentChain.desglose` tal cual — los automáticos `null` si no llegaron. */
+  desglose: CloseDesglose;
+  // Todos de la MISMA cadena de distribución (currentChain)
   ingresosNetos: number;
   egresosNetos: number;
+  saldo: number;
   reservaMes: number;
+  /** Fracción 0..1 del período (rótulo de la reserva). */
+  reservePct: number | null;
   deudaEntrada: number;
   montoDistribuir: number;
+  /** Completitud del período (`computeCheckedChain`). Ausente ⇒ completo. */
+  completeness?: CloseCompleteness | null;
   partners: { name: string; pct: number; amount: number }[];
 }
 
 export async function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
   const doc = new jsPDF('portrait', 'mm', 'a4');
+  const M = 14;
 
   const logoDataUrl = await loadLogoDataUrl(data.companyLogoUrl);
   let y = pdfHeader(doc, {
     logoDataUrl,
     title: 'Distribución a Socios',
     company: data.companyName,
-    right: [data.periodLabel, `Generado: ${new Date().toLocaleDateString()}`],
+    right: [data.periodLabel, generatedOnLabel()],
   });
+
+  const waterfall = buildCloseWaterfall({
+    desglose: data.desglose,
+    ingresosNetos: data.ingresosNetos,
+    egresos: data.egresosNetos,
+    saldo: data.saldo,
+    reservaMes: data.reservaMes,
+    reservePct: data.reservePct,
+    deudaEntrada: data.deudaEntrada,
+    montoDistribuir: data.montoDistribuir,
+    completeness: data.completeness,
+  });
+  const share = partnerShareRows(data.partners, waterfall.distribucionConocida);
+
+  // ─── Aviso de serie faltante: lo primero que se lee ───
+  if (waterfall.aviso) y = pdfAlertBand(doc, waterfall.aviso, y, M);
 
   // ─── KPIs ───
-  y = pdfCards(doc, y, [
-    { label: 'Ingresos Netos', value: money(data.ingresosNetos), tone: 'positive' },
-    { label: 'Egresos', value: money(data.egresosNetos), tone: 'negative' },
-    { label: 'Reserva del Mes', value: money(data.reservaMes), tone: 'ink' },
-    { label: 'Monto a Distribuir', value: money(data.montoDistribuir), tone: 'accent' },
-  ]);
+  const missing = data.completeness?.incompleto ?? [];
+  const sources = incomeSourcesLabel(data.desglose);
+  const pct = data.reservePct;
+  y = pdfCards(
+    doc,
+    y,
+    [
+      {
+        label: 'Ingresos netos',
+        value: waterfall.resultadoConocido ? money(data.ingresosNetos) : SIN_DATOS,
+        tone: !waterfall.resultadoConocido ? 'ink' : data.ingresosNetos >= 0 ? 'positive' : 'negative',
+        sub: missing.length > 0 ? `Falta ${missingSeriesShort(missing)}` : sources || 'Sin ingresos registrados',
+      },
+      { label: 'Egresos', value: money(data.egresosNetos), tone: 'negative', sub: 'Del mes' },
+      {
+        label: 'Reserva del mes',
+        value: waterfall.distribucionConocida ? money(data.reservaMes) : SIN_DATOS,
+        tone: 'ink',
+        sub: pct != null ? `${(pct * 100).toFixed(pct * 100 === Math.round(pct * 100) ? 0 : 1)}% del remanente` : '',
+      },
+      {
+        label: 'Monto a distribuir',
+        value: waterfall.distribucionConocida ? money(data.montoDistribuir) : SIN_DATOS,
+        tone: 'accent',
+        sub: `${data.partners.length} ${data.partners.length === 1 ? 'socio' : 'socios'}`,
+      },
+    ],
+    M,
+    24,
+  );
 
-  // ─── Cascada del cálculo (cómo se llega al monto a distribuir) ───
-  y = pdfSection(doc, 'Como se calcula', y + 2);
-  const cascada: [string, number, boolean?][] = [
-    ['Ingresos netos operativos', data.ingresosNetos],
-    ['(-) Egresos del mes', -data.egresosNetos],
-  ];
-  if (data.deudaEntrada > 0) cascada.push(['(-) Deuda arrastrada del mes anterior', -data.deudaEntrada, true]);
-  cascada.push(['(-) Reserva financiera del mes', -data.reservaMes]);
-  autoTable(doc, {
-    startY: y,
-    body: cascada.map(([k, v]) => [k, money(v)]),
-    foot: [['Monto a distribuir', money(data.montoDistribuir)]],
-    theme: 'plain',
-    styles: { fontSize: 9.5, cellPadding: 2.6, textColor: C.ink },
-    footStyles: { fontStyle: 'bold', fillColor: C.surface, textColor: C.primary, fontSize: 10.5 },
-    columnStyles: { 0: { cellWidth: 130 }, 1: { halign: 'right', fontStyle: 'bold' } },
-    margin: { left: 14, right: 14 },
-    didParseCell: (h) => {
-      if (h.section === 'foot' && h.column.index === 1) h.cell.styles.halign = 'right';
-      if (h.section === 'body' && h.column.index === 1) {
-        const raw = cascada[h.row.index];
-        h.cell.styles.textColor = raw[2] ? C.warning : raw[1] < 0 ? C.negative : C.positive;
-      }
-    },
-  });
-  y = getLastTableY(doc, y + 30, 10);
+  // ─── Cómo se llega al monto a distribuir ───
+  y = pdfSection(doc, 'Cómo se llega al monto a distribuir', y + 2, M);
+  y = pdfWaterfallTable(doc, y, waterfall.rows, M);
+  const pageW = doc.internal.pageSize.getWidth();
+  for (const w of waterfall.warnings) {
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(...C.warning);
+    const lines = doc.splitTextToSize(`! ${w}`, pageW - M * 2) as string[];
+    doc.text(lines, M, y + 1);
+    y += lines.length * 3.8 + 0.6;
+  }
+  y += 6;
 
   // ─── Reparto por socio ───
-  y = pdfSection(doc, 'Reparto por Socio', y);
-  autoTable(doc, {
-    startY: y,
-    head: [['Socio', 'Participación', 'Monto a recibir']],
-    body: data.partners.map((p) => [
-      p.name,
-      `${(p.pct * 100).toFixed(1)}%`,
-      money(p.amount),
-    ]),
-    foot: [[
-      'Total',
-      '100%',
-      money(data.partners.reduce((s, p) => s + p.amount, 0)),
-    ]],
-    theme: 'striped',
-    styles: { fontSize: 10, cellPadding: 3.2 },
-    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: C.surface },
-    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
-    columnStyles: { 1: { halign: 'center' }, 2: { halign: 'right', fontStyle: 'bold', textColor: C.ink } },
-    margin: { left: 14, right: 14 },
-    didParseCell: (h) => {
-      if (h.section === 'foot' && h.column.index === 1) h.cell.styles.halign = 'center';
-      if (h.section === 'foot' && h.column.index === 2) h.cell.styles.halign = 'right';
-    },
-  });
+  y = pdfSection(doc, 'Reparto por Socio', y, M);
+  if (waterfall.distribucionConocida && data.deudaEntrada > 0) {
+    doc.setFontSize(8);
+    doc.setTextColor(...C.warning);
+    doc.setFont('helvetica', 'normal');
+    doc.text(`Deuda arrastrada del mes anterior descontada: ${money(data.deudaEntrada)}`, M, y);
+    y += 5;
+  }
+  pdfPartnerTable(doc, y, share.rows, share.total, M);
 
   pdfFooter(doc);
-  doc.save(`Distribucion_Socios_${data.periodLabel.replace(/\s/g, '_')}.pdf`);
+  doc.save(`Distribucion_Socios_${(data.fileLabel ?? data.periodLabel).replace(/\s/g, '_')}.pdf`);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -819,9 +980,15 @@ export interface PdfPartnerHistoryData {
   /** URL del logo de la empresa. Opcional: sin él, el encabezado usa iniciales. */
   companyLogoUrl?: string | null;
   partnerNames: string[];
-  rows: { periodLabel: string; amounts: number[]; total: number }[];
+  /**
+   * `amounts: null` = el mes depende de una serie del CRM que no llegó: se
+   * imprime «sin datos» y NO suma a los totales (incidente 2026-10-05).
+   */
+  rows: { periodLabel: string; amounts: number[] | null; total: number | null }[];
   partnerTotals: number[];
   grandTotal: number;
+  /** Aviso a imprimir bajo la tabla (p. ej. qué meses quedaron afuera). */
+  note?: string | null;
 }
 
 export async function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
@@ -832,15 +999,17 @@ export async function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
     logoDataUrl,
     title: 'Historial de Distribuciones',
     company: data.companyName,
-    right: [`Generado: ${new Date().toLocaleDateString()}`],
+    right: [generatedOnLabel()],
   });
+  if (data.note) y = pdfAlertBand(doc, data.note, y);
 
   // ─── KPIs resumen ───
   const topPartnerIdx = data.partnerTotals.reduce((best, v, i, a) => (v > a[best] ? i : best), 0);
+  const knownRows = data.rows.filter((r) => r.amounts !== null).length;
   y = pdfCards(doc, y, [
-    { label: 'Meses distribuidos', value: String(data.rows.length), tone: 'primary' },
+    { label: 'Meses distribuidos', value: String(knownRows), tone: 'primary' },
     { label: 'Total repartido', value: money(data.grandTotal), tone: 'accent' },
-    { label: 'Promedio mensual', value: money(data.rows.length ? data.grandTotal / data.rows.length : 0), tone: 'ink' },
+    { label: 'Promedio mensual', value: money(knownRows ? data.grandTotal / knownRows : 0), tone: 'ink' },
     { label: `Mayor socio (${data.partnerNames[topPartnerIdx] ?? '—'})`, value: money(data.partnerTotals[topPartnerIdx] ?? 0), tone: 'positive' },
   ]);
 
@@ -850,8 +1019,8 @@ export async function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
     head: [['Período', ...data.partnerNames, 'Total']],
     body: data.rows.map((r) => [
       r.periodLabel,
-      ...r.amounts.map((a) => money(a)),
-      money(r.total),
+      ...(r.amounts ? r.amounts.map((a) => money(a)) : data.partnerNames.map(() => SIN_DATOS)),
+      pdfMoneyOrMissing(r.total),
     ]),
     foot: [[
       'Total',
@@ -870,6 +1039,10 @@ export async function generatePartnerHistoryPDF(data: PdfPartnerHistoryData) {
     margin: { left: 14, right: 14 },
     didParseCell: (h) => {
       if (h.section === 'foot' && h.column.index > 0) h.cell.styles.halign = 'right';
+      if (h.section === 'body' && h.cell.raw === SIN_DATOS) {
+        h.cell.styles.textColor = C.warning;
+        h.cell.styles.fontStyle = 'italic';
+      }
     },
   });
 
@@ -948,6 +1121,13 @@ export interface PdfMonthlyCloseData {
   crmInfo: CrmInfoRow[];
   /** La serie del CRM vino recortada por el techo de filas del endpoint. */
   crmInfoTruncated?: boolean;
+  /**
+   * Completitud del período (`computeCheckedChain`). Con una serie del CRM
+   * faltante el informe imprime el aviso arriba y «sin datos» —no ceros— en
+   * los renglones y totales que dependen de ella (incidente 2026-10-05).
+   * Ausente ⇒ completo.
+   */
+  completeness?: CloseCompleteness | null;
   partners: { name: string; pct: number; amount: number }[];
 }
 
@@ -1026,11 +1206,16 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
     deudaEntrada: data.deudaEntrada,
     montoDistribuir: data.montoDistribuir,
     otherLabel: billing ? 'Facturación cobrada' : undefined,
+    completeness: data.completeness,
   });
   const exp = buildCloseExpenses(data.expenses, 10);
+  const share = partnerShareRows(data.partners, waterfall.distribucionConocida);
+  const missing = data.completeness?.incompleto ?? [];
 
   // ═══ Página 1 — Resultado ═══
   let y = header();
+  // Serie del CRM faltante: el aviso va antes que cualquier número.
+  if (waterfall.aviso) y = pdfAlertBand(doc, waterfall.aviso, y, M);
 
   const sources = incomeSourcesLabel(data.desglose, billing ? 'Facturación' : 'Otros');
   const reservaSub =
@@ -1042,7 +1227,12 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
     doc,
     y,
     [
-      { label: 'Ingresos netos', value: money(data.ingresosNetos), tone: data.ingresosNetos >= 0 ? 'positive' : 'negative', sub: sources || 'Sin ingresos registrados' },
+      {
+        label: 'Ingresos netos',
+        value: waterfall.resultadoConocido ? money(data.ingresosNetos) : SIN_DATOS,
+        tone: !waterfall.resultadoConocido ? 'ink' : data.ingresosNetos >= 0 ? 'positive' : 'negative',
+        sub: missing.length > 0 ? `Falta ${missingSeriesShort(missing)}` : sources || 'Sin ingresos registrados',
+      },
       {
         label: 'Egresos',
         value: money(data.egresosNetos),
@@ -1053,13 +1243,15 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
       },
       {
         label: 'Resultado del mes',
-        value: money(data.saldo),
-        tone: data.saldo >= 0 ? 'positive' : 'negative',
-        sub: data.saldo > 0 ? 'Ingresos - egresos' : 'Mes negativo: no se distribuye',
+        value: waterfall.resultadoConocido ? money(data.saldo) : SIN_DATOS,
+        tone: !waterfall.resultadoConocido ? 'ink' : data.saldo >= 0 ? 'positive' : 'negative',
+        sub: !waterfall.resultadoConocido
+          ? 'Ingresos - egresos'
+          : data.saldo > 0 ? 'Ingresos - egresos' : 'Mes negativo: no se distribuye',
       },
       {
         label: 'A distribuir',
-        value: money(data.montoDistribuir),
+        value: waterfall.distribucionConocida ? money(data.montoDistribuir) : SIN_DATOS,
         tone: 'accent',
         sub: [reservaSub, sociosSub].filter(Boolean).join(' · '),
       },
@@ -1070,38 +1262,7 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
 
   // ─── Cómo se llega al resultado (cascada) ───
   y = pdfSection(doc, 'Cómo se llega al resultado', y + 2);
-  const wf = waterfall.rows;
-  autoTable(doc, {
-    startY: y,
-    body: wf.map((r) => [r.kind === 'total' ? `= ${r.label}` : `     ${r.label}`, money(r.amount)]),
-    theme: 'plain',
-    styles: { fontSize: 9.5, cellPadding: { top: 1.7, bottom: 1.7, left: 3, right: 3 }, textColor: C.ink },
-    columnStyles: { 0: { cellWidth: 120 }, 1: { halign: 'right' } },
-    margin: { left: M, right: M },
-    didParseCell: (h) => {
-      const r = wf[h.row.index];
-      if (!r || h.section !== 'body') return;
-      if (r.kind === 'total') {
-        h.cell.styles.fillColor = C.surface;
-        h.cell.styles.fontStyle = 'bold';
-        h.cell.styles.textColor = h.column.index === 1 && r.amount < 0 ? C.negative : C.primary;
-      } else if (h.column.index === 1) {
-        h.cell.styles.textColor = r.kind === 'expense' ? C.negative : toneOf(r.amount);
-      } else {
-        h.cell.styles.textColor = C.inkSoft;
-      }
-    },
-    didDrawCell: (h) => {
-      // Regla fina arriba de cada total: separa el subtotal de sus sumandos.
-      const r = wf[h.row.index];
-      if (h.section === 'body' && r?.kind === 'total') {
-        doc.setDrawColor(...C.border);
-        doc.setLineWidth(0.3);
-        doc.line(h.cell.x, h.cell.y, h.cell.x + h.cell.width, h.cell.y);
-      }
-    },
-  });
-  y = getLastTableY(doc, y + 60, 4);
+  y = pdfWaterfallTable(doc, y, waterfall.rows, M);
   for (const w of waterfall.warnings) y = warningLine(w, y + 1);
   if (data.cashBasisExpenses && Math.abs(exp.total - data.egresosNetos) > 0.01) {
     y = pdfNote(
@@ -1234,8 +1395,8 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   y = pdfCards(doc, y, [
     { label: 'Egresos pagados', value: money(data.egresosPagados), tone: 'positive' },
     { label: 'Egresos pendientes', value: money(data.egresosPendientes), tone: data.egresosPendientes > 0 ? 'negative' : 'ink' },
-    { label: 'Reserva del mes', value: money(data.reservaMes), tone: 'ink' },
-    { label: 'Reserva acumulada', value: money(data.reservaAcumulada), tone: 'primary' },
+    { label: 'Reserva del mes', value: waterfall.distribucionConocida ? money(data.reservaMes) : SIN_DATOS, tone: 'ink' },
+    { label: 'Reserva acumulada', value: waterfall.distribucionConocida ? money(data.reservaAcumulada) : SIN_DATOS, tone: 'primary' },
   ], M, 18);
 
   if (exp.count > 0) {
@@ -1288,52 +1449,17 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   // ─── Distribución a socios ───
   y = ensureSpace(y, 30 + data.partners.length * 8);
   y = pdfSection(doc, 'Distribución a Socios', y);
-  if (data.deudaEntrada > 0) {
+  if (waterfall.distribucionConocida && data.deudaEntrada > 0) {
     doc.setFontSize(8);
     doc.setTextColor(...C.warning);
     doc.setFont('helvetica', 'normal');
     doc.text(`Deuda arrastrada del mes anterior descontada: ${money(data.deudaEntrada)}`, M, y);
     y += 5;
   }
-  const partners = data.partners;
-  autoTable(doc, {
-    startY: y,
-    head: [['Socio', 'Participación', 'Monto a recibir']],
-    body: partners.map((p) => [p.name, `${(p.pct * 100).toFixed(1)}%`, money(p.amount)]),
-    foot: [['Total distribuido', '100%', money(data.montoDistribuir)]],
-    theme: 'striped',
-    styles: { fontSize: 10, cellPadding: 3.2 },
-    headStyles: { fillColor: C.primary, textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: C.surface },
-    footStyles: { fillColor: [234, 241, 250], textColor: C.primary, fontStyle: 'bold' },
-    columnStyles: { 1: { cellWidth: 70 }, 2: { halign: 'right', fontStyle: 'bold', textColor: C.ink } },
-    margin: { left: M, right: M },
-    didParseCell: (h) => {
-      if (h.section === 'foot' && h.column.index === 2) h.cell.styles.halign = 'right';
-    },
-    didDrawCell: (h) => {
-      // Barra de participación: rect proporcional al % del socio, a la derecha
-      // del número, sobre un riel gris del ancho disponible.
-      if (h.section !== 'body' || h.column.index !== 1) return;
-      const p = partners[h.row.index];
-      if (!p) return;
-      const x0 = h.cell.x + 20;
-      const full = h.cell.width - 24;
-      const barH = 2.6;
-      const by = h.cell.y + (h.cell.height - barH) / 2;
-      doc.setFillColor(...C.border);
-      doc.rect(x0, by, full, barH, 'F');
-      const frac = Math.max(0, Math.min(1, p.pct));
-      if (frac > 0) {
-        doc.setFillColor(...C.accent);
-        doc.rect(x0, by, full * frac, barH, 'F');
-      }
-    },
-  });
+  const afterPartners = pdfPartnerTable(doc, y, share.rows, share.total, M);
 
   if (data.crmInfo.length > 0 && !crmOnPage1) {
-    y = getLastTableY(doc, y + 40, 8);
-    y = ensureSpace(y, crmNeeded);
+    y = ensureSpace(afterPartners, crmNeeded);
     drawCrmInfo(y);
   }
 

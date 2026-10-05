@@ -15,8 +15,86 @@
 // Import-safe desde cliente y servidor: no toca React ni Supabase.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { PeriodDistInput } from './distribution';
+import { computeDistributionChain, type PeriodDistInput, type PeriodDistResult } from './distribution';
 import { features } from './business-model';
+import { BROKER_PNL_AUTO_DESDE } from './broker-pnl';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SERIES AUTOMÁTICAS QUE TODAVÍA NO LLEGARON — «cargando» NO ES «cero».
+//
+// Incidente (Kevin, 2026-10-05 ~22:10): bajó el «PDF mes» de /socios para
+// Vex Pro, septiembre 2026 (ABIERTO), y salió «Ingresos netos $23.616,52»
+// (solo inversiones) y «Monto a distribuir $0». Lo correcto era $263.469,99:
+// Broker P&L 226.605,20 + Prop Firm neto 13.248,27 + Inversiones 23.616,52.
+//
+// Causa confirmada: Broker P&L y Prop Firm automáticos llegan por DOS fetches
+// que corren en efectos propios FUERA del bootstrap (data-context:
+// /api/admin/broker-pnl-monthly y /api/admin/crm-monthly-totals). Mientras no
+// llegan —o si fallan— `brokerPnlByPeriod` / `pfAutoByPeriod` vienen vacíos y
+// este constructor caía en silencio al MANUAL, que desde ago-2026 es 0 a
+// propósito (esos renglones pasaron a automático). La pantalla y los PDF
+// mostraban un número plausible y falso durante segundos —o para siempre si
+// el fetch falló— y nada distinguía «cargando» de «es cero» (§1.2 y §1.3 de
+// docs/reglas-del-proyecto.md). El botón del PDF se podía apretar en esa
+// ventana.
+//
+// Ahora el llamador declara en qué estado está cada serie
+// (`autoSeriesStatus`) y el período que DEPENDE de una serie que no está
+// `ready` sale marcado `incompleto` — el valor numérico sigue siendo el
+// fallback (la fórmula necesita un número), pero ninguna pantalla ni PDF lo
+// puede mostrar como dato: `computeCheckedChain` lo devuelve como `null`.
+//
+// QUIÉN DEPENDE (exactamente cuándo el constructor consulta la serie):
+//   · Broker P&L: período ABIERTO, ≥ BROKER_PNL_AUTO_DESDE y con modelo que
+//     tiene broker P&L. Cerrados y anteriores al corte leen el manual
+//     congelado: esa caída sigue siendo correcta y no se marca.
+//   · Prop Firm: período ABIERTO, modelo con broker P&L, y sin manual (>0)
+//     en ventas o en retiros — el manual gana como override, así que con los
+//     dos cargados la serie no se consulta. Sin fecha de corte porque el
+//     constructor tampoco la tiene.
+//
+// DESCARTADO
+//   · Poner los dos fetches dentro del bootstrap: el bootstrap no debe caerse
+//     porque el espejo del CRM esté lento (por eso se separaron), y aun así un
+//     fallo seguiría cayendo a 0.
+//   · Hacer `brokerPnl: number | null` en PeriodDistInput: la fórmula y el
+//     congelador de cierre son número-only y los toca la plata ya
+//     distribuida; el `null` vive en la capa de presentación
+//     (`computeCheckedChain`), no en la fórmula.
+//   · Marcar también «serie lista pero sin fila del mes»: es el «sin datos»
+//     documentado en broker-pnl.ts (cae al manual heredado). No es este bug.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Estado de una serie automática traída fuera del bootstrap. */
+export type AutoSeriesStatus = 'loading' | 'ready' | 'failed';
+
+/** Las dos series que la cadena lee del CRM. */
+export interface AutoSeriesStatusMap {
+  /** /api/admin/broker-pnl-monthly */
+  brokerPnl: AutoSeriesStatus;
+  /** /api/admin/crm-monthly-totals (Prop Firm automático sale de acá). */
+  crmMonthly: AutoSeriesStatus;
+}
+
+/** Sumando de los ingresos que depende de una serie automática. */
+export type AutoSeriesKey = 'brokerPnl' | 'propFirm';
+
+/** Lo que el período sabe de sí mismo sobre las series que le faltan. */
+export interface ChainCompleteness {
+  /** Sumandos de ESTE período cuya serie no llegó. Vacío = completo. */
+  incompleto: AutoSeriesKey[];
+  /** 'loading' si alguna serie que falta todavía está cargando; si no, 'failed'. null = completo. */
+  incompletoEstado: 'loading' | 'failed' | null;
+}
+
+const READY_ALL: AutoSeriesStatusMap = { brokerPnl: 'ready', crmMonthly: 'ready' };
+
+function desdeCorteAuto(period: { year: number; month: number }): boolean {
+  return (
+    period.year * 100 + period.month >=
+    BROKER_PNL_AUTO_DESDE.year * 100 + BROKER_PNL_AUTO_DESDE.month
+  );
+}
 
 /** Lo mínimo que el constructor necesita de un período. */
 export interface PeriodForInputs {
@@ -98,6 +176,12 @@ export interface DistributionSources {
    * la cadena leía la tabla manual vacía.
    */
   pfAutoByPeriod?: ReadonlyMap<string, { sales: number; withdrawals: number }>;
+  /**
+   * Estado de los dos fetches que alimentan `brokerPnlByPeriod` y
+   * `pfAutoByPeriod`. Ausente ⇒ se asume `ready` (tests viejos, llamadores
+   * que ya traen las series resueltas). Ver la cabecera «cargando NO es cero».
+   */
+  autoSeriesStatus?: AutoSeriesStatusMap;
 }
 
 /**
@@ -106,7 +190,7 @@ export interface DistributionSources {
  * applySnapshotOverrides los preserva, así que un solo tipo sirve a los tres
  * consumidores.
  */
-export interface PeriodDistInputWithMeta extends PeriodDistInput {
+export interface PeriodDistInputWithMeta extends PeriodDistInput, ChainCompleteness {
   year: number;
   month: number;
   label: string;
@@ -204,6 +288,7 @@ export function buildDistributionInputs(
   // dejada a medias: un "Monto a Distribuir" que ninguna pantalla explica.
   const brokerPnlApplies = features(sources.businessModel).brokerPnl;
   const investmentsApply = features(sources.businessModel).investments;
+  const status = sources.autoSeriesStatus ?? READY_ALL;
 
   return periods.map(period => {
     const oi = oiIndex.get(period.id);
@@ -217,6 +302,22 @@ export function buildDistributionInputs(
     // cerrados. Ver `brokerPnlByPeriod` arriba y `src/lib/broker-pnl.ts`.
     const auto = period.is_closed ? undefined : sources.brokerPnlByPeriod?.get(period.id);
     const brokerPnlValue = auto === undefined ? (oi?.broker_pnl || 0) : auto;
+
+    // ¿Este período lee una serie que todavía no llegó (o falló)? Ver la
+    // cabecera «cargando NO es cero». Solo donde el constructor de verdad
+    // consultaría la serie: cerrados y anteriores al corte no dependen.
+    const faltan: Array<{ key: AutoSeriesKey; st: AutoSeriesStatus }> = [];
+    if (brokerPnlApplies && !period.is_closed) {
+      if (desdeCorteAuto(period) && status.brokerPnl !== 'ready') {
+        faltan.push({ key: 'brokerPnl', st: status.brokerPnl });
+      }
+      if ((pfsManual <= 0 || pfWManual <= 0) && status.crmMonthly !== 'ready') {
+        faltan.push({ key: 'propFirm', st: status.crmMonthly });
+      }
+    }
+    const incompletoEstado: ChainCompleteness['incompletoEstado'] =
+      faltan.length === 0 ? null : faltan.some((f) => f.st === 'loading') ? 'loading' : 'failed';
+
     return {
       periodId: period.id,
       year: period.year,
@@ -229,6 +330,123 @@ export function buildDistributionInputs(
       investmentProfits: investmentsApply ? (invIndex.get(period.id) || 0) : 0,
       totalExpenses: expIndex.get(period.id) || 0,
       reservePct: period.reserve_pct,
+      incompleto: faltan.map((f) => f.key),
+      incompletoEstado,
     };
   });
+}
+
+// ─── La cadena CON su estado de completitud ─────────────────────────────────
+
+/**
+ * Desglose para mostrar: los dos sumandos automáticos son `null` cuando su
+ * serie no llegó — «no lo sabemos», nunca un 0 (§1.3).
+ */
+export interface DesgloseConocido {
+  brokerPnl: number | null;
+  other: number;
+  propFirmNetIncome: number | null;
+  investmentProfits: number;
+}
+
+export interface PeriodDistResultChecked
+  extends Omit<PeriodDistResult, 'desglose'>,
+    ChainCompleteness {
+  desglose: DesgloseConocido;
+  /**
+   * Un período ANTERIOR quedó incompleto: la deuda arrastrada y la reserva
+   * que entran a este mes salen de un número que no es definitivo, así que el
+   * monto a distribuir tampoco lo es aunque este mes tenga todos sus datos.
+   * La cadena es secuencial (distribution.ts): lo incierto se arrastra.
+   */
+  heredaIncompleto: boolean;
+  /** `incompleto.length > 0 || heredaIncompleto`: ningún total de este mes es definitivo. */
+  pendiente: boolean;
+}
+
+/**
+ * `computeDistributionChain` + la marca de completitud de cada período.
+ *
+ * Es el ÚNICO lugar que convierte los insumos marcados en algo mostrable:
+ * data-context.computeSaldoChain (/resumen-general, home, /balances) y
+ * /socios llaman a esta, no a la fórmula pelada, para que ninguna pantalla
+ * pueda olvidarse del flag. La fórmula no cambia: los números son los mismos
+ * que antes; lo que cambia es que los sumandos sin serie salen `null` y el
+ * período sale `pendiente`.
+ *
+ * Inputs sin `incompleto` (snapshot, tests) ⇒ completos.
+ */
+export function computeCheckedChain(
+  inputs: ReadonlyArray<PeriodDistInput & Partial<ChainCompleteness>>,
+): Map<string, PeriodDistResultChecked> {
+  const base = computeDistributionChain([...inputs]);
+  const out = new Map<string, PeriodDistResultChecked>();
+  let arrastre = false;
+  for (const input of inputs) {
+    const r = base.get(input.periodId);
+    if (!r) continue;
+    const incompleto = input.incompleto ?? [];
+    const own = incompleto.length > 0;
+    out.set(input.periodId, {
+      ...r,
+      desglose: {
+        ...r.desglose,
+        brokerPnl: incompleto.includes('brokerPnl') ? null : r.desglose.brokerPnl,
+        propFirmNetIncome: incompleto.includes('propFirm') ? null : r.desglose.propFirmNetIncome,
+      },
+      incompleto,
+      incompletoEstado: own ? (input.incompletoEstado ?? 'loading') : null,
+      heredaIncompleto: arrastre,
+      pendiente: own || arrastre,
+    });
+    if (own) arrastre = true;
+  }
+  return out;
+}
+
+// ─── Textos (uno solo para pantallas y PDF) ─────────────────────────────────
+
+const SERIE_LABEL: Record<AutoSeriesKey, string> = {
+  brokerPnl: 'Broker P&L',
+  propFirm: 'Prop Firm',
+};
+
+/** «Cargando datos del CRM…» / «Sin datos del CRM» / null si el período es definitivo. */
+export function pendingValueLabel(
+  c: Pick<PeriodDistResultChecked, 'incompletoEstado' | 'heredaIncompleto'> | null | undefined,
+  status?: AutoSeriesStatusMap,
+): string | null {
+  if (!c) return null;
+  if (c.incompletoEstado === 'loading') return 'Cargando datos del CRM…';
+  if (c.incompletoEstado === 'failed') return 'Sin datos del CRM';
+  if (c.heredaIncompleto) {
+    const loading = status && (status.brokerPnl === 'loading' || status.crmMonthly === 'loading');
+    return loading ? 'Cargando datos del CRM…' : 'Sin datos del CRM';
+  }
+  return null;
+}
+
+/**
+ * El aviso que va ARRIBA del informe (y en el banner de la pantalla). null =
+ * nada que avisar.
+ *   «Broker P&L / Prop Firm: sin datos del CRM — el informe está incompleto»
+ */
+export function incompleteNotice(
+  c: Pick<PeriodDistResultChecked, 'incompleto' | 'incompletoEstado' | 'heredaIncompleto'> | null | undefined,
+): string | null {
+  if (!c) return null;
+  if (c.incompleto.length > 0) {
+    const series = c.incompleto.map((k) => SERIE_LABEL[k]).join(' / ');
+    const que = c.incompletoEstado === 'loading' ? 'esperando datos del CRM' : 'sin datos del CRM';
+    return `${series}: ${que} — el informe está incompleto`;
+  }
+  if (c.heredaIncompleto) {
+    return 'Un período anterior no tiene datos del CRM: la deuda arrastrada, la reserva y el monto a distribuir no son definitivos';
+  }
+  return null;
+}
+
+/** ¿Alguna serie todavía está cargando? (para deshabilitar los PDF). */
+export function anyAutoSeriesLoading(s: AutoSeriesStatusMap): boolean {
+  return s.brokerPnl === 'loading' || s.crmMonthly === 'loading';
 }

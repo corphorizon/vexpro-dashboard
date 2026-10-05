@@ -13,7 +13,12 @@ import { useData } from '@/lib/data-context';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { formatCurrency, formatPercent, round2 } from '@/lib/utils';
-import { computeDistributionChain, type PeriodDistInput } from '@/lib/distribution';
+import {
+  anyAutoSeriesLoading,
+  computeCheckedChain,
+  incompleteNotice,
+  pendingValueLabel,
+} from '@/lib/distribution-inputs';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { useConfirm } from '@/lib/use-confirm';
@@ -56,7 +61,7 @@ export default function SociosPage() {
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const isAdmin = canEdit(user);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { periods, partners, partnerDistributions, getPeriodSummary, getDistributionInputs, getSnapshotDrifts, company, refresh, crmMonthlyTotals } = useData();
+  const { periods, partners, partnerDistributions, getPeriodSummary, getDistributionInputs, getSnapshotDrifts, company, refresh, crmMonthlyTotals, autoSeriesStatus } = useData();
 
   // Esta pantalla no leía el modelo de negocio en ninguna línea, y el informe
   // de cierre que genera es el documento que reciben los socios: a una
@@ -97,8 +102,13 @@ export default function SociosPage() {
   // forecast, ya con el override de snapshot para períodos cerrados. Esta
   // pantalla tenía su propio constructor (vía getPeriodSummary), la segunda
   // copia que la auditoría 2026-08-06 marcó como riesgo de divergencia.
+  //
+  // computeCheckedChain (no la fórmula pelada): la misma cadena + la marca de
+  // «serie del CRM que todavía no llegó». Incidente 2026-10-05 ~22:10: el
+  // «PDF mes» de Vex Pro sep-2026 salió con Monto a distribuir $0 porque
+  // Broker P&L y Prop Firm seguían en vuelo y la cadena cayó al manual 0.
   const periodChain = useMemo(
-    () => computeDistributionChain(getDistributionInputs()),
+    () => computeCheckedChain(getDistributionInputs()),
     [getDistributionInputs],
   );
 
@@ -123,6 +133,29 @@ export default function SociosPage() {
   const ingresosNetos = currentChain?.ingresosNetos ?? 0;
   const egresosNetos = currentChain?.egresosNetos ?? 0;
   const saldoAFavor = currentChain?.saldoAFavor ?? 0;
+
+  // ─── Series del CRM que todavía no llegaron (incidente 2026-10-05) ───
+  // `ownPending`: los ingresos y el resultado de ESTE mes no son definitivos.
+  // `chainPending`: además, la reserva y el monto a distribuir (puede venir de
+  // un mes anterior incompleto por el arrastre). En vez del número se muestra
+  // el texto — «Cargando datos del CRM…» / «Sin datos del CRM».
+  const seriesLoading = anyAutoSeriesLoading(autoSeriesStatus);
+  const ownPending = (currentChain?.incompleto.length ?? 0) > 0;
+  const chainPending = currentChain?.pendiente ?? false;
+  const pendingLabel = pendingValueLabel(currentChain, autoSeriesStatus) ?? '—';
+  const crmNotice = mode === 'single' ? incompleteNotice(currentChain) : null;
+  const pdfDisabledTitle = 'Esperando datos del CRM…';
+  // Historial: los meses `pendiente` NO suman a los totales (sumarlos con el
+  // fallback 0 es el mismo número falso) y se dice cuántos quedaron afuera.
+  const pendingHistoryLabels = periods
+    .filter((p) => periodChain.get(p.id)?.pendiente)
+    .map((p) => p.label ?? '');
+  const pendingHistoryNote =
+    pendingHistoryLabels.length > 0
+      ? `Sin datos del CRM en ${pendingHistoryLabels.join(', ')}: ${
+          pendingHistoryLabels.length === 1 ? 'ese mes no suma' : 'esos meses no suman'
+        } a los totales.`
+      : null;
 
   const distributions = mode === 'consolidated'
     ? (() => {
@@ -341,24 +374,35 @@ export default function SociosPage() {
           {mode === 'single' && (
             <button
               onClick={() => verify2FA(async () => {
+                if (!currentPeriod || !currentChain) return;
                 const { generatePartnerPeriodPDF } = await import('@/lib/pdf-export');
-                generatePartnerPeriodPDF({
+                // Mismo desglose y misma completitud que el Cierre mensual:
+                // con una serie del CRM faltante el PDF imprime el aviso
+                // arriba y «sin datos» en vez de ceros.
+                await generatePartnerPeriodPDF({
                   companyName: company?.name ?? '',
                   companyLogoUrl: company?.logo_url ?? null,
-                  periodLabel: currentPeriod?.label ?? '',
-                  ingresosNetos: currentChain?.ingresosNetos ?? 0,
-                  egresosNetos: currentChain?.egresosNetos ?? 0,
+                  periodLabel: longPeriodLabel(currentPeriod),
+                  // El archivo conserva el nombre de siempre (label corto).
+                  fileLabel: currentPeriod.label ?? longPeriodLabel(currentPeriod),
+                  desglose: currentChain.desglose,
+                  ingresosNetos,
+                  egresosNetos,
+                  saldo: saldoAFavor,
                   reservaMes: reserveThisPeriod,
+                  reservePct: currentPeriod.reserve_pct ?? 0.1,
                   deudaEntrada: carryDebt,
                   montoDistribuir: totalToDistribute,
+                  completeness: currentChain,
                   partners: partners.map((p) => {
                     const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
                     return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
                   }),
                 });
               })}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-              title="Descargar PDF del mes"
+              disabled={seriesLoading}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-card"
+              title={seriesLoading ? pdfDisabledTitle : 'Descargar PDF del mes'}
             >
               <FileText className="w-4 h-4" />
               <span className="hidden sm:inline">PDF mes</span>
@@ -477,12 +521,12 @@ export default function SociosPage() {
                 // propFirmNetIncome), vacías desde ago-2026 porque esos
                 // renglones pasaron a automático: el PDF imprimía Broker P&L y
                 // Prop Firm en $0,00 con 263.469,99 de ingresos netos.
-                const desglose = currentChain?.desglose ?? {
-                  brokerPnl: 0,
-                  other: 0,
-                  propFirmNetIncome: 0,
-                  investmentProfits: 0,
-                };
+                //
+                // 2026-10-05 ~22:10: los dos automáticos vienen `null` si su
+                // serie del CRM no llegó; el PDF los imprime «sin datos» y pone
+                // el aviso arriba (`completeness`). Sin cadena, no hay informe.
+                if (!currentChain) return;
+                const desglose = currentChain.desglose;
 
                 const { generateMonthlyClosePDF } = await import('@/lib/pdf-export');
                 await generateMonthlyClosePDF({
@@ -511,14 +555,16 @@ export default function SociosPage() {
                   clientFlow,
                   crmInfo,
                   crmInfoTruncated: crmInfo.length > 0 && crmMonthlyTotals.truncated,
+                  completeness: currentChain,
                   partners: partners.map((p) => {
                     const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
                     return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
                   }),
                 });
               })}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-              title="Descargar informe de cierre mensual"
+              disabled={seriesLoading}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-card"
+              title={seriesLoading ? pdfDisabledTitle : 'Descargar informe de cierre mensual'}
             >
               <FileBarChart className="w-4 h-4" />
               <span className="hidden sm:inline">Cierre mensual</span>
@@ -539,6 +585,22 @@ export default function SociosPage() {
         <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="polite">
           <AlertTriangle className="w-4 h-4" />
           {errorMsg}
+        </div>
+      )}
+
+      {/* Serie del CRM faltante para este período (incidente 2026-10-05): los
+          totales que dependen de ella no se muestran como número. */}
+      {crmNotice && (
+        <div
+          className={`flex items-center gap-2 px-4 py-3 rounded-lg border text-sm font-medium ${
+            currentChain?.incompletoEstado === 'loading' || (seriesLoading && !ownPending)
+              ? 'bg-info/10 border-info/30 text-info'
+              : 'bg-warning/10 border-warning/30 text-warning'
+          }`}
+          aria-live="polite"
+        >
+          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+          <span>{crmNotice}</span>
         </div>
       )}
 
@@ -578,7 +640,7 @@ export default function SociosPage() {
           <AlertTriangle className="w-4 h-4 flex-shrink-0" />
           <span>
             {t('partners.percentageWarning', { pct: (totalPercentage * 100).toFixed(1) })}
-            {totalPercentage < 1 && totalToDistribute > 0 && (
+            {totalPercentage < 1 && !chainPending && totalToDistribute > 0 && (
               <>
                 {' '}— <strong>{formatCurrency(round2(totalToDistribute * (1 - totalPercentage)))}</strong>{' '}
                 de este período quedan <strong>sin asignar a ningún socio</strong>.
@@ -593,19 +655,26 @@ export default function SociosPage() {
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard
           label={t('partners.netIncome')}
-          value={formatCurrency(ingresosNetos)}
+          value={ownPending ? pendingLabel : formatCurrency(ingresosNetos)}
           icon={Users}
-          tone={ingresosNetos >= 0 ? 'positive' : 'negative'}
+          tone={ownPending ? 'neutral' : ingresosNetos >= 0 ? 'positive' : 'negative'}
           hint={
             currentChain
               ? [
-                  `${t('summary.brokerPnl')} ${formatCurrency(currentChain.desglose.brokerPnl)}`,
+                  // `null` = la serie del CRM no llegó: «sin datos», nunca $0.
+                  `${t('summary.brokerPnl')} ${
+                    currentChain.desglose.brokerPnl === null
+                      ? t('brokerPnl.noData')
+                      : formatCurrency(currentChain.desglose.brokerPnl)
+                  }`,
                   currentChain.desglose.other !== 0
                     ? `${t('summary.otherIncome')} ${formatCurrency(currentChain.desglose.other)}`
                     : null,
-                  currentChain.desglose.propFirmNetIncome !== 0
-                    ? `Prop Firm ${formatCurrency(currentChain.desglose.propFirmNetIncome)}`
-                    : null,
+                  currentChain.desglose.propFirmNetIncome === null
+                    ? `Prop Firm ${t('brokerPnl.noData')}`
+                    : currentChain.desglose.propFirmNetIncome !== 0
+                      ? `Prop Firm ${formatCurrency(currentChain.desglose.propFirmNetIncome)}`
+                      : null,
                   currentChain.desglose.investmentProfits !== 0
                     ? `Inversiones ${formatCurrency(currentChain.desglose.investmentProfits)}`
                     : null,
@@ -623,9 +692,9 @@ export default function SociosPage() {
         />
         <StatCard
           label={<>{t('partners.saldoFavor')} <InfoTip text={GLOSSARY.netoOperativo} /></>}
-          value={formatCurrency(saldoAFavor)}
+          value={ownPending ? pendingLabel : formatCurrency(saldoAFavor)}
           icon={Wallet}
-          tone={saldoAFavor >= 0 ? 'positive' : 'negative'}
+          tone={ownPending ? 'neutral' : saldoAFavor >= 0 ? 'positive' : 'negative'}
           hint="Ingresos Operativos − Egresos Operativos"
         />
       </div>
@@ -653,9 +722,11 @@ export default function SociosPage() {
               </button>
             )}
           </div>
-          <p className="text-2xl font-bold text-orange-600">{formatCurrency(reserveThisPeriod)}</p>
+          <p className={chainPending ? 'text-base font-semibold text-muted-foreground' : 'text-2xl font-bold text-orange-600'}>
+            {chainPending ? pendingLabel : formatCurrency(reserveThisPeriod)}
+          </p>
           <p className="text-xs text-muted-foreground mt-1">
-            {reserveThisPeriod > 0
+            {chainPending ? 'Depende de los datos del CRM' : reserveThisPeriod > 0
               ? `${(RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
               : saldoAFavor <= 0 ? 'Mes negativo — sin reserva' : 'Cubriendo deuda arrastrada'}
           </p>
@@ -663,7 +734,7 @@ export default function SociosPage() {
 
         <StatCard
           label={t('partners.reserveAccumulated')}
-          value={formatCurrency(accumulatedReserve)}
+          value={chainPending ? pendingLabel : formatCurrency(accumulatedReserve)}
           icon={PiggyBank}
           tone="warning"
           hint="Fondo acumulado hasta este período"
@@ -672,7 +743,7 @@ export default function SociosPage() {
         {carryDebt > 0 && (
           <StatCard
             label={<>Deuda Arrastrada <InfoTip text={GLOSSARY.deudaArrastrada} /></>}
-            value={formatCurrency(-carryDebt)}
+            value={currentChain?.heredaIncompleto ? pendingLabel : formatCurrency(-carryDebt)}
             icon={AlertTriangle}
             tone="negative"
             hint="Se descuenta antes de distribuir"
@@ -681,11 +752,13 @@ export default function SociosPage() {
 
         <StatCard
           label={<>{t('partners.distributableAmount')} <InfoTip text={GLOSSARY.montoDistribuir} /></>}
-          value={formatCurrency(totalToDistribute)}
+          value={chainPending ? pendingLabel : formatCurrency(totalToDistribute)}
           icon={Users}
-          tone={totalToDistribute > 0 ? 'positive' : 'neutral'}
+          tone={!chainPending && totalToDistribute > 0 ? 'positive' : 'neutral'}
           hint={
-            totalToDistribute > 0
+            chainPending
+              ? 'Se calcula cuando lleguen Broker P&L y Prop Firm'
+              : totalToDistribute > 0
               ? `${(100 - RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
               : 'Sin distribución este período'
           }
@@ -701,7 +774,7 @@ export default function SociosPage() {
             {isAdmin && (
               <button
                 onClick={handleAddPartner}
-                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md bg-[var(--color-primary)] text-white hover:opacity-90 transition-opacity flex-shrink-0"
+                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-brand-on-primary hover:opacity-90 transition-opacity flex-shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" />
                 {t('partners.addPartner')}
@@ -738,8 +811,8 @@ export default function SociosPage() {
                       </div>
                     </td>
                     <td className="py-2.5 px-3 text-right font-medium whitespace-nowrap">{formatPercent(dist.percentage)}</td>
-                    <td className={`py-2.5 px-3 text-right font-bold whitespace-nowrap ${dist.amount < 0 ? 'text-red-600' : ''}`}>
-                      {formatCurrency(dist.amount)}
+                    <td className={`py-2.5 px-3 text-right font-bold whitespace-nowrap ${chainPending ? 'text-muted-foreground font-normal' : dist.amount < 0 ? 'text-red-600' : ''}`}>
+                      {chainPending ? '—' : formatCurrency(dist.amount)}
                     </td>
                     {isAdmin && (
                       <td className="py-2.5 px-3 text-center">
@@ -778,8 +851,8 @@ export default function SociosPage() {
               <tr className="font-bold bg-muted/50">
                 <td className="py-3 px-2 sm:px-3">Total</td>
                 <td className="py-3 px-2 sm:px-3 text-right">100%</td>
-                <td className={`py-3 px-2 sm:px-3 text-right whitespace-nowrap ${totalDistributed < 0 ? 'text-red-600' : ''}`}>
-                  {formatCurrency(totalDistributed)}
+                <td className={`py-3 px-2 sm:px-3 text-right whitespace-nowrap ${chainPending ? 'text-muted-foreground font-normal' : totalDistributed < 0 ? 'text-red-600' : ''}`}>
+                  {chainPending ? pendingLabel : formatCurrency(totalDistributed)}
                 </td>
                 {isAdmin && <td />}
               </tr>
@@ -829,6 +902,10 @@ export default function SociosPage() {
                   const { generatePartnerHistoryPDF } = await import('@/lib/pdf-export');
                   const rows = periods.map((period) => {
                     const pChain = periodChain.get(period.id);
+                    // Mes con serie del CRM faltante: «sin datos», no cuenta.
+                    if (pChain?.pendiente) {
+                      return { periodLabel: period.label ?? '', amounts: null, total: null };
+                    }
                     const pDist = pChain?.montoDistribuir ?? 0;
                     const dists = partnerDistributions.filter((d) => d.period_id === period.id);
                     const amounts = partners.map((p) => {
@@ -838,18 +915,22 @@ export default function SociosPage() {
                     });
                     return { periodLabel: period.label ?? '', amounts, total: round2(amounts.reduce((s, a) => s + a, 0)) };
                   });
-                  const partnerTotals = partners.map((_, idx) => round2(rows.reduce((s, r) => s + r.amounts[idx], 0)));
-                  generatePartnerHistoryPDF({
+                  const partnerTotals = partners.map((_, idx) =>
+                    round2(rows.reduce((s, r) => s + (r.amounts ? r.amounts[idx] : 0), 0)),
+                  );
+                  await generatePartnerHistoryPDF({
                     companyName: company?.name ?? '',
                     companyLogoUrl: company?.logo_url ?? null,
                     partnerNames: partners.map((p) => p.name),
                     rows,
                     partnerTotals,
                     grandTotal: round2(partnerTotals.reduce((s, a) => s + a, 0)),
+                    note: pendingHistoryNote,
                   });
                 })}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-card text-xs font-medium hover:bg-muted transition-colors flex-shrink-0"
-                title="Descargar historial en PDF"
+                disabled={seriesLoading}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-card text-xs font-medium hover:bg-muted transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-card"
+                title={seriesLoading ? pdfDisabledTitle : 'Descargar historial en PDF'}
               >
                 <FileText className="w-3.5 h-3.5" />
                 <span className="hidden sm:inline">PDF</span>
@@ -903,13 +984,13 @@ export default function SociosPage() {
                         {partners.map(p => {
                           const d = effectiveDists.find(dd => dd.partner_id === p.id);
                           return (
-                            <td key={p.id} className="py-2.5 px-3 text-right">
-                              {formatCurrency(d?.amount || 0)}
+                            <td key={p.id} className={`py-2.5 px-3 text-right ${pChain?.pendiente ? 'text-muted-foreground' : ''}`}>
+                              {pChain?.pendiente ? '—' : formatCurrency(d?.amount || 0)}
                             </td>
                           );
                         })}
-                        <td className="py-2.5 px-3 text-right font-bold">
-                          {formatCurrency(total)}
+                        <td className={`py-2.5 px-3 text-right ${pChain?.pendiente ? 'text-muted-foreground font-normal' : 'font-bold'}`}>
+                          {pChain?.pendiente ? pendingValueLabel(pChain, autoSeriesStatus) : formatCurrency(total)}
                         </td>
                       </tr>
                     );
@@ -921,6 +1002,7 @@ export default function SociosPage() {
                     {partners.map(p => {
                       const partnerTotal = round2(periods.reduce((sum, period) => {
                         const pChain = periodChain.get(period.id);
+                        if (pChain?.pendiente) return sum;
                         const pDist = pChain?.montoDistribuir ?? 0;
                         if (pDist <= 0) return sum;
                         const saved = partnerDistributions.find(d => d.period_id === period.id && d.partner_id === p.id);
@@ -936,6 +1018,7 @@ export default function SociosPage() {
                     <td className="py-2 px-2 text-right">
                       {formatCurrency(periods.reduce((sum, period) => {
                         const pChain = periodChain.get(period.id);
+                        if (pChain?.pendiente) return sum;
                         const md = pChain?.montoDistribuir ?? 0;
                         return sum + (md > 0 ? md : 0);
                       }, 0))}
@@ -943,6 +1026,9 @@ export default function SociosPage() {
                   </tr>
                 </tfoot>
               </table>
+              {pendingHistoryNote && (
+                <p className="mt-2 text-xs text-warning">{pendingHistoryNote}</p>
+              )}
             </div>
             )}
           </div>
