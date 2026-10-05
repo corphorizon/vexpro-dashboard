@@ -31,12 +31,17 @@ import {
   calculateCommission,
   calculateSalaryFromND,
   prorateFixedSalary,
+  resolvePctDelMes,
 } from '@/lib/commission-calculator';
-import { netParaElMotor, type NetDepositSource, type ResolvedNetDeposit } from './net-deposit-input';
+import { esCeroMedido, netParaElMotor, type NetDepositSource, type ResolvedNetDeposit } from './net-deposit-input';
+import { pctEsFijoDePerfil } from './domain';
 
 /** Lo mínimo del perfil que hace falta para componer la comisión. */
 export type PerfilParaComision = {
   id: string;
+  /** Obligatorio a propósito: la regla «BDM GLOBAL no tieriza» (2026-09-16)
+      depende del rol, y un rol opcional que se olvida la apagaría en silencio. */
+  role: string;
   net_deposit_pct?: number | null;
   /** true = % fijo: los tramos por volumen no aplican (migración 128). */
   nd_pct_fixed?: boolean | null;
@@ -52,7 +57,15 @@ export type ComisionDelMes = {
   nd: number | null;
   source: NetDepositSource;
   accumulatedIn: number;
+  /** El que se aplicó de verdad: `pctOverride` si lo hay, si no el automático. */
   commissionPct: number;
+  /**
+   * El automático de este mes (tramos + nd_pct_fixed + % del perfil), calculado
+   * SIEMPRE aunque haya override. La pantalla lo muestra como placeholder del
+   * input para que quien teclea un % vea contra qué está corrigiendo — mismo
+   * criterio que el `auto` del rótulo de net deposit.
+   */
+  commissionPctAuto: number;
   division: number;
   commission: number;
   realPayment: number;
@@ -72,18 +85,35 @@ export function comisionIndividualDeBdm(params: {
   accumulatedIn: number;
   periodYear: number;
   periodMonth: number;
+  /**
+   * `commercial_monthly_results.pct_override` de ESE mes (migración 129).
+   * `null`/ausente = automático, que es lo que hacía esta función antes de
+   * existir el campo. `0` es válido: ese mes no cobra comisión.
+   */
+  pctOverride?: number | null;
 }): ComisionDelMes | null {
-  const { profile, resolved, accumulatedIn, periodYear, periodMonth } = params;
+  const { profile, resolved, accumulatedIn, periodYear, periodMonth, pctOverride } = params;
   if (profile.pnl_pct != null) return null;
 
   const nd = netParaElMotor(resolved);
   // Con salario fijo el % es el pactado y no lo mejoran los tiers: el tier de
   // volumen es la contrapartida de no tener piso. Mismo criterio que indCalcs.
-  const commissionPct = profile.fixed_salary
+  const commissionPctAuto = profile.fixed_salary
     ? (profile.net_deposit_pct ?? 0)
-    : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, profile.nd_pct_fixed ?? false);
+    // `pctEsFijoDePerfil` y no el flag pelado: la regla «BDM GLOBAL no
+    // tieriza» (2026-09-16) vive en UN registro (hr/domain.ts), no acá.
+    : calculateBdmPctFromND(nd, profile.net_deposit_pct ?? 0, pctEsFijoDePerfil(profile));
+  // El % manual del mes pisa TODO lo de arriba, incluido el piso por volumen.
+  const commissionPct = resolvePctDelMes(pctOverride, commissionPctAuto);
 
-  const calc = calculateCommission(nd, accumulatedIn, commissionPct);
+  // CERO MEDIDO (2026-09-25): ND = 0 venido del CRM paga sobre el acumulado y
+  // lo consume; cualquier otro 0 (manual, congelado, sin datos) queda con la
+  // protección de siempre. La decisión es `esCeroMedido` y se toma con el
+  // `resolved` tal como llega: en /comisiones, `indCalcs` ya reemplaza el
+  // resolved por uno con `source: 'manual'` cuando hay algo tecleado en la
+  // fila, así que un 0 tecleado nunca califica; en /rrhh no hay tecleo y el
+  // `source` es el del resolver. Por eso `tecleado` va en false acá.
+  const calc = calculateCommission(nd, accumulatedIn, commissionPct, esCeroMedido(resolved, false));
   const salary = profile.fixed_salary
     ? prorateFixedSalary(profile.salary ?? 0, profile.hire_date, periodYear, periodMonth)
     : calculateSalaryFromND(nd);
@@ -93,6 +123,7 @@ export function comisionIndividualDeBdm(params: {
     nd: resolved.value,
     source: resolved.source,
     commissionPct,
+    commissionPctAuto,
     salary,
     accumulatedIn: calc.accumulatedIn,
     division: calc.division,

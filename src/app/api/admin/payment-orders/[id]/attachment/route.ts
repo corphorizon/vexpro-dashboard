@@ -5,7 +5,11 @@ import { PAYMENT_ORDER_READ_ROLES } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { ORDER_COLUMNS, actorName, normalizeOrder, withFiles } from '@/lib/payment-orders/server';
-import { attachmentCountError, LEGACY_ATTACHMENT_ID } from '@/lib/payment-orders/types';
+import {
+  attachmentCountError,
+  LEGACY_ATTACHMENT_ID,
+  PAYMENT_ATTACHMENTS_BUCKET,
+} from '@/lib/payment-orders/types';
 import {
   ALLOWED_ATTACHMENT_EXTENSIONS,
   MAX_ATTACHMENT_SIZE,
@@ -69,7 +73,7 @@ import {
 //            bien definida cuando puede haber diez)
 // ---------------------------------------------------------------------------
 
-const BUCKET = 'payment-attachments';
+const BUCKET = PAYMENT_ATTACHMENTS_BUCKET;
 /** Vida de la URL firmada: alcanza para abrir/descargar, corta para compartir. */
 const SIGNED_TTL_SECONDS = 600;
 

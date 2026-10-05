@@ -131,6 +131,12 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
   const [vista, setVista] = useState<'cuentas' | 'meses'>('cuentas');
   const [busqueda, setBusqueda] = useState('');
   const [ocupado, setOcupado] = useState<string | null>(null);
+  // Sube en cada «Refrescar todo» que termina: el Resumen mensual carga su
+  // lista de meses una sola vez por empresa, y sin esto el mes recién
+  // generado no aparecía hasta recargar la página (dueño, 2026-09-28: «le di
+  // a refrescar y sigue igual» — las 39 filas de septiembre YA estaban en la
+  // base; la pantalla no se había enterado).
+  const [refrescoNonce, setRefrescoNonce] = useState(0);
   const [aviso, setAviso] = useState<{ tipo: 'ok' | 'error'; texto: string } | null>(null);
 
   // Modales
@@ -244,14 +250,16 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
       const json = await res.json();
       if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
       await cargar();
+      setRefrescoNonce((n) => n + 1);
       setAviso({
         tipo: 'ok',
         texto: `${json.refreshed} refrescada(s), ${json.failed} con error.` +
           (json.warnings?.length ? ` ${json.warnings.join(' · ')}` : ''),
       });
     } catch (err) {
-      // Un aborto no es un fallo: el servidor pudo haber terminado igual.
-      if (esAborto(err)) { await cargar(); setAviso({ tipo: 'error', texto: AVISO_ABORTO }); }
+      // Un aborto no es un fallo: el servidor pudo haber terminado igual —
+      // por eso también acá se re-consulta el resumen.
+      if (esAborto(err)) { await cargar(); setRefrescoNonce((n) => n + 1); setAviso({ tipo: 'error', texto: AVISO_ABORTO }); }
       else setAviso({ tipo: 'error', texto: err instanceof Error ? err.message : 'Error al refrescar' });
     } finally {
       setOcupado(null);
@@ -429,7 +437,7 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
         ))}
       </div>
 
-      {vista === 'meses' && companyId && <ResumenMensual companyId={companyId} />}
+      {vista === 'meses' && companyId && <ResumenMensual companyId={companyId} refrescoNonce={refrescoNonce} />}
 
       {vista === 'cuentas' && (
       <>

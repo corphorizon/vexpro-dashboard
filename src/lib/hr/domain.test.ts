@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { calculateBdmPctFromND } from '@/lib/commission-calculator';
 import {
+  bdmsConEquipo,
   HR_COMMERCIAL_ROLES,
   HR_LEADER_ROLES,
   ROLE_LABELS_HR,
@@ -12,7 +14,9 @@ import {
   hrRoleLabel,
   possibleHeads,
   puedeSerHeadDe,
+  tieneEquipoPropio,
   sinSalario,
+  pctEsFijoDePerfil,
 } from './domain';
 
 // Los tests ITERAN sobre el registro (no repiten la lista): agregar un rol
@@ -76,6 +80,104 @@ describe('jerarquía', () => {
     expect(possibleHeads(perfiles).map((p) => p.id)).toEqual(['a', 'b']);
     expect(possibleHeads(perfiles, { excludeId: 'b' }).map((p) => p.id)).toEqual(['a']);
   });
+
+  it('possibleHeads con incluirBdms suma los BDM (excepción Master IB)', () => {
+    const perfiles = [
+      { id: 'a', role: 'sales_manager' },
+      { id: 'ana', role: 'bdm' },
+      { id: 'glob', role: 'bdm_global' },
+      { id: 'd', role: 'closer' },
+    ];
+    // Sin el flag, el selector queda EXACTAMENTE como estaba.
+    expect(possibleHeads(perfiles).map((p) => p.id)).toEqual(['a']);
+    expect(possibleHeads(perfiles, { incluirBdms: true }).map((p) => p.id)).toEqual(['a', 'ana', 'glob']);
+    // El rol libre sigue afuera con y sin flag.
+    expect(possibleHeads(perfiles, { incluirBdms: true }).some((p) => p.id === 'd')).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EQUIPO PROPIO — y por qué un Master IB no lo es (migración 129)
+// ─────────────────────────────────────────────────────────────────────────────
+describe('tieneEquipoPropio', () => {
+  const activo = (id: string, head_id: string | null, is_master_ib = false) =>
+    ({ id, head_id, is_master_ib, status: 'active', termination_date: null });
+
+  it('un hijo activo cuenta como equipo', () => {
+    expect(tieneEquipoPropio('ana', [activo('ana', 'hugo'), activo('sub', 'ana')])).toBe(true);
+  });
+
+  it('un hijo MASTER IB NO cuenta: el BDM padre sigue siendo BDM', () => {
+    // Jose Emanuel colgando de Ana García (2026-09-06): la RPC ya le corta la
+    // subred a Ana, pero Ana conserva sus tramos de % por volumen.
+    expect(tieneEquipoPropio('ana', [activo('ana', 'hugo'), activo('master', 'ana', true)])).toBe(false);
+    // Y si además tiene un BDM propio, sí tiene equipo.
+    expect(
+      tieneEquipoPropio('ana', [activo('ana', 'hugo'), activo('master', 'ana', true), activo('sub', 'ana')]),
+    ).toBe(true);
+  });
+
+  it('un DESPEDIDO sigue contando como equipo (se le cargan ND negativos)', () => {
+    const despedido = { id: 'x', head_id: 'ana', status: 'inactive', termination_date: '2026-08-01' };
+    expect(tieneEquipoPropio('ana', [despedido])).toBe(true);
+  });
+
+  it('un inactivo SIN fecha de baja (licencia) no cuenta', () => {
+    const enPausa = { id: 'x', head_id: 'ana', status: 'inactive', termination_date: null };
+    expect(tieneEquipoPropio('ana', [enPausa])).toBe(false);
+  });
+
+  it('sin hijos, no hay equipo', () => {
+    expect(tieneEquipoPropio('ana', [activo('ana', 'hugo')])).toBe(false);
+  });
+});
+
+describe('bdmsConEquipo', () => {
+  const perfil = (
+    id: string,
+    role: string,
+    head_id: string | null,
+    is_master_ib = false,
+    status = 'active',
+    termination_date: string | null = null,
+  ) => ({ id, role, head_id, is_master_ib, status, termination_date });
+
+  const ana = perfil('ana', 'bdm', 'luka');
+  const luka = perfil('luka', 'head', null);
+  const master = perfil('master', 'bdm', 'ana', true);
+
+  it('un BDM con un MASTER IB colgado SÍ lidera grupo (al revés que tieneEquipoPropio)', () => {
+    // Las dos preguntas conviven a propósito: la de la plata ignora al master,
+    // la de la pantalla lo cuenta — es la línea que ese grupo muestra.
+    expect(bdmsConEquipo([luka, ana, master]).map((p) => p.id)).toEqual(['ana']);
+    expect(tieneEquipoPropio('ana', [luka, ana, master])).toBe(false);
+  });
+
+  it('sin ningún master configurado la lista es vacía (la regresión que importa)', () => {
+    expect(bdmsConEquipo([luka, ana])).toEqual([]);
+  });
+
+  it('un head con equipo NO entra: tiene su propio selector', () => {
+    expect(bdmsConEquipo([luka, ana, master]).some((p) => p.id === 'luka')).toBe(false);
+    expect(bdmsConEquipo([perfil('sm', 'sales_manager', null), perfil('x', 'bdm', 'sm')])).toEqual([]);
+  });
+
+  it('BDM GLOBAL con gente colgada también cuenta como líder', () => {
+    const global = perfil('glob', 'bdm_global', 'luka');
+    expect(bdmsConEquipo([global, perfil('m2', 'bdm', 'glob', true)]).map((p) => p.id)).toEqual(['glob']);
+  });
+
+  it('un hijo DESPEDIDO cuenta; uno en licencia (inactive sin fecha) no', () => {
+    const despedido = perfil('m', 'bdm', 'ana', true, 'inactive', '2026-08-01');
+    const enPausa = perfil('m', 'bdm', 'ana', true, 'inactive', null);
+    expect(bdmsConEquipo([ana, despedido]).map((p) => p.id)).toEqual(['ana']);
+    expect(bdmsConEquipo([ana, enPausa])).toEqual([]);
+  });
+
+  it('un rol desconocido colgando de un BDM igual lo hace líder de grupo', () => {
+    // La pregunta es «¿tiene gente colgada?», no «¿de qué rol?».
+    expect(bdmsConEquipo([ana, perfil('c', 'closer', 'ana')]).map((p) => p.id)).toEqual(['ana']);
+  });
 });
 
 describe('predicados de estado', () => {
@@ -99,5 +201,22 @@ describe('predicados de estado', () => {
     expect(sinSalario({})).toBe(true);
     expect(sinSalario({ salary: 1000 })).toBe(false);
     expect(sinSalario({ salary: '1500' })).toBe(false);
+  });
+});
+
+describe('pctEsFijoDePerfil — la regla «BDM GLOBAL no tieriza» (2026-09-16)', () => {
+  it('un bdm_global tiene el % fijo aunque no marque nd_pct_fixed', () => {
+    expect(pctEsFijoDePerfil({ role: 'bdm_global' })).toBe(true);
+    expect(pctEsFijoDePerfil({ role: 'bdm_global', nd_pct_fixed: false })).toBe(true);
+  });
+  it('un bdm común solo es fijo con nd_pct_fixed (regresión)', () => {
+    expect(pctEsFijoDePerfil({ role: 'bdm' })).toBe(false);
+    expect(pctEsFijoDePerfil({ role: 'bdm', nd_pct_fixed: true })).toBe(true);
+    expect(pctEsFijoDePerfil({ role: 'head', nd_pct_fixed: null })).toBe(false);
+  });
+  it('el caso que la destapó: Mariana 3% con ND $102K queda en 3%, no en el tramo del 5%', () => {
+    // Compuesto con el calculador real para fijar el efecto de punta a punta.
+    expect(calculateBdmPctFromND(102_423.92, 3, pctEsFijoDePerfil({ role: 'bdm_global' }))).toBe(3);
+    expect(calculateBdmPctFromND(102_423.92, 3, pctEsFijoDePerfil({ role: 'bdm' }))).toBe(5);
   });
 });

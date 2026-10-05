@@ -4,7 +4,13 @@ import {
   calculateSalaryFromND,
   calculateHeadSalaryFromND,
   calculateBdmPctFromND,
+  resolvePctDelMes,
+  pctPropioDelLiderDeGrupo,
+  pctPropioDeLineaDeGrupo,
+  diffNaturalDeLinea,
+  resolveDiffPctDeLinea,
   calculateHeadDifferential,
+  calculateExtraOverHeadCommission,
   calculatePnlSpecial,
   calcularPasoPnlEncadenado,
   applyTotalEarnedDebt,
@@ -47,6 +53,52 @@ describe('calculateCommission (fórmula estándar PnL normal)', () => {
     expect(mesSiguiente.commission).toBe(5_000);
   });
 
+  // ── CERO MEDIDO (2026-09-25) ──────────────────────────────────────────────
+  // Los dos tests de arriba siguen fijando el DEFAULT a propósito: un 0 cuya
+  // procedencia no se afirma es ambiguo (tecleado, congelado de la época
+  // manual, sin datos) y pagarle sobre el acumulado es el pago fantasma de la
+  // auditoría 2026-08-06. Lo nuevo es la rama `ceroMedido`: el 0 que midió el
+  // CRM ("tu red no depositó") paga sobre el acumulado y lo CONSUME.
+
+  it('cero medido — caso Yudy Otero (agosto): paga 2.533 × 3% y consume el acumulado', () => {
+    const r = calculateCommission(0, 2533, 3, true);
+    expect(r.netDepositCurrent).toBe(0);
+    expect(r.accumulatedIn).toBe(2533);
+    expect(r.division).toBe(0);
+    expect(r.commission).toBe(75.99);
+    expect(r.realPayment).toBe(75.99);
+    // El arrastre se pagó: no pasa a septiembre (no se paga dos veces).
+    expect(r.accumulatedOut).toBe(0);
+  });
+
+  it('cero medido = la fórmula general con división 0 (lo mismo que un ND ínfimo)', () => {
+    // ND 0,001 → división round2(0,0005) = 0 → base = acumulado, acumulado out = 0.
+    const casi = calculateCommission(0.001, 2533, 3);
+    const medido = calculateCommission(0, 2533, 3, true);
+    expect(medido.commission).toBe(casi.commission);
+    expect(medido.accumulatedOut).toBe(0);
+    expect(Object.is(medido.division, 0)).toBe(true); // sin -0 colado
+  });
+
+  it('cero medido con acumulado NEGATIVO cobra la deuda (sin clamp, regla 1)', () => {
+    const r = calculateCommission(0, -20_000, 5, true);
+    expect(r.commission).toBe(-1_000);
+    expect(r.realPayment).toBe(-1_000);
+    expect(r.accumulatedOut).toBe(0);
+  });
+
+  it('regresión: sin flag y con flag=false, ND=0 es EXACTAMENTE lo de antes', () => {
+    const antes = { netDepositCurrent: 0, accumulatedIn: 2533, division: 0, commission: 0, realPayment: 0, accumulatedOut: 2533 };
+    expect(calculateCommission(0, 2533, 3)).toEqual(antes);
+    expect(calculateCommission(0, 2533, 3, false)).toEqual(antes);
+  });
+
+  it('con ND ≠ 0 el flag no cambia nada (positivo, negativo, con y sin acumulado)', () => {
+    for (const [nd, acc, pct] of [[100_000, 10_000, 5], [-40_000, 0, 5], [33_333, 1_234.56, 3], [0.01, 2533, 3]] as const) {
+      expect(calculateCommission(nd, acc, pct, true)).toEqual(calculateCommission(nd, acc, pct));
+    }
+  });
+
   it('el tier de % nunca degrada un porcentaje negociado mayor', () => {
     // BDM con 7% pactado y ND $120K: el tier de la tabla dice 5%, pero el
     // acuerdo manda (auditoría 2026-08-06: cobraba 3.000 en vez de 4.200).
@@ -67,6 +119,29 @@ describe('calculateCommission (fórmula estándar PnL normal)', () => {
     expect(calculateBdmPctFromND(283_139, 4, false)).toBe(6);
     expect(calculateBdmPctFromND(283_139, 4)).toBe(6);
     expect(calculateBdmPctFromND(120_000, 7, false)).toBe(7);
+  });
+
+  it('pct_override: el % manual del mes pisa tramos, % fijo y % del perfil', () => {
+    // El mismo caso de arriba, con un 3 tecleado para ESE mes.
+    expect(resolvePctDelMes(3, calculateBdmPctFromND(283_139, 4))).toBe(3);
+    expect(resolvePctDelMes(3, calculateBdmPctFromND(283_139, 4, true))).toBe(3);
+    // Y no hace falta que sea menor: sube igual.
+    expect(resolvePctDelMes(9, calculateBdmPctFromND(10_000, 4))).toBe(9);
+  });
+
+  it('pct_override: VACÍO (null/undefined) no es CERO', () => {
+    // El 0 tecleado es una decisión: ese mes no se paga comisión.
+    expect(resolvePctDelMes(0, 6)).toBe(0);
+    expect(calculateCommission(283_139, 0, resolvePctDelMes(0, 6)).commission).toBe(0);
+    // null/undefined = no hay override: manda el automático, intacto.
+    expect(resolvePctDelMes(null, 6)).toBe(6);
+    expect(resolvePctDelMes(undefined, 6)).toBe(6);
+    // Y el automático de 0 sigue siendo 0 sin override (regresión de §1.3).
+    expect(resolvePctDelMes(null, 0)).toBe(0);
+  });
+
+  it('pct_override: un override negativo NO se clampea (es deuda, como el ND)', () => {
+    expect(resolvePctDelMes(-2, 6)).toBe(-2);
   });
 
   it('división = ND/2 y comisión = (división + acumulado) × pct', () => {
@@ -197,6 +272,197 @@ describe('calculateHeadDifferential', () => {
     // BDM1: diff (6−4)+1=3% sobre división 50k = 1500
     // BDM2: diff (6−5)+1=2% sobre división 100k = 2000
     expect(r.totalDifferential).toBe(3_500);
+  });
+
+  it('pct_linea pisa el diferencial de ESA línea y no toca las demás', () => {
+    const r = calculateHeadDifferential(7, 0, [
+      { profileId: 'b1', name: 'BDM1', netDepositCurrent: 100_000, accumulatedIn: 0, commissionPct: 4, pctLinea: 1 },
+      { profileId: 'b2', name: 'BDM2', netDepositCurrent: 100_000, accumulatedIn: 0, commissionPct: 4 },
+    ]);
+    expect(r.details[0].diffPct).toBe(1);   // pisado
+    expect(r.details[0].commission).toBe(500); // 50k × 1%
+    expect(r.details[1].diffPct).toBe(3);   // intacto
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// EL % POR LÍNEA (migración 130) — lo que cobra EL DE ARRIBA por la línea del
+// de abajo. La mitad de estos tests son de REGRESIÓN: sin `pct_linea` cargado
+// el número tiene que ser bit a bit el de antes, porque el diferencial natural
+// se mudó desde `bdmCalcs` (/comisiones) a `diffNaturalDeLinea` y una mudanza
+// que cambia un decimal no lanza ninguna excepción (§1.2).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('diffNaturalDeLinea (el diferencial de siempre, ahora con nombre)', () => {
+  /** La expresión EXACTA que vivía inline en bdmCalcs antes de la 130. */
+  const comoEstabaAntes = (refPct: number, pctPropio: number, extraPct: number) => {
+    const naturalDiff = refPct - pctPropio;
+    return naturalDiff > 0 ? naturalDiff : naturalDiff === 0 ? extraPct : 0;
+  };
+
+  it('reproduce bit a bit la expresión que vivía en bdmCalcs', () => {
+    const casos: [number, number, number][] = [
+      [7, 4, 0], [7, 4, 1], [4, 4, 1], [4, 4, 0], [5, 6, 2], [5, 6, 0],
+      [0, 0, 0], [0, 0, 3], [6, 0, 0], [2.5, 1.25, 0.5], [-1, 0, 1],
+    ];
+    for (const [ref, propio, extra] of casos) {
+      expect(diffNaturalDeLinea(ref, propio, extra)).toBe(comoEstabaAntes(ref, propio, extra));
+    }
+  });
+
+  it('§2.1 regla 7 — el diferencial del head NUNCA es negativo', () => {
+    // Head 5% con un BDM tierizado a 6%: el head cobra 0, no −1 (le restaba
+    // $1.000 al head, auditoría 2026-08-06). Y el extra NO lo rescata.
+    expect(diffNaturalDeLinea(5, 6, 0)).toBe(0);
+    expect(diffNaturalDeLinea(5, 6, 2)).toBe(0);
+  });
+
+  it('§2.1 regla 8 — extra_pct sólo con diferencial natural EXACTAMENTE 0', () => {
+    expect(diffNaturalDeLinea(4, 4, 1)).toBe(1);   // mismo % → entra el extra
+    expect(diffNaturalDeLinea(7, 4, 1)).toBe(3);   // natural > 0 → NO se suma
+  });
+
+  it('el % del master normalmente es 0 → el BDM cobra su % COMPLETO por esa línea', () => {
+    // La analogía de la 130: el Master IB dentro de un BDM es el BDM dentro de
+    // un head. Un master no tiene net_deposit_pct, así que el natural da el %
+    // entero del BDM — que es lo que económicamente ya pasaba (el BDM cobra su
+    // % sobre el total de su línea, master incluido).
+    expect(diffNaturalDeLinea(4, 0, 0)).toBe(4);
+  });
+});
+
+describe('resolveDiffPctDeLinea (la pisada por línea)', () => {
+  it('sin pisada (null/undefined) manda el diferencial natural, intacto', () => {
+    expect(resolveDiffPctDeLinea(null, 3)).toBe(3);
+    expect(resolveDiffPctDeLinea(undefined, 3)).toBe(3);
+    // Y un natural de 0 sigue siendo 0 sin pisada (regresión §1.3).
+    expect(resolveDiffPctDeLinea(null, 0)).toBe(0);
+    expect(resolveDiffPctDeLinea(undefined, 0)).toBe(0);
+  });
+
+  it('el caso del dueño: Luka cobra 1% por la línea de Ana', () => {
+    // Ana al 4% bajo un head al 4%: el natural daba 0 (o el extra_pct). Con
+    // pct_linea = 1 el head cobra 1% sin que a Ana le cambie nada.
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(4, 4, 0))).toBe(1);
+    // Sobre la MISMA base de siempre: ND 100k → división 50k → 1% = 500.
+    expect(calculateCommission(100_000, 0, resolveDiffPctDeLinea(1, diffNaturalDeLinea(4, 4, 0))).commission).toBe(500);
+  });
+
+  it('VACÍO no es CERO: 0 = el de arriba no cobra nada por esta línea', () => {
+    expect(resolveDiffPctDeLinea(0, 3)).toBe(0);
+    expect(calculateCommission(100_000, 0, resolveDiffPctDeLinea(0, 3)).commission).toBe(0);
+    // Un `pisada || natural` habría devuelto 3 acá y pagado igual, sin error.
+    expect(resolveDiffPctDeLinea(0, 3)).not.toBe(3);
+  });
+
+  it('el clamp «nunca negativo» NO se le aplica a la pisada', () => {
+    // El natural clampeaba a 0 (BDM tierizado por encima del head); la pisada
+    // manda igual: el dueño puso 1% y se cobra 1%.
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(5, 6, 0))).toBe(1);
+    // Y una pisada negativa tampoco se clampea: es un acuerdo, no un derivado
+    // (mismo criterio que pct_override).
+    expect(resolveDiffPctDeLinea(-2, 3)).toBe(-2);
+  });
+
+  it('una pisada MAYOR que el % del head se permite (el dueño manda)', () => {
+    expect(resolveDiffPctDeLinea(9, diffNaturalDeLinea(4, 4, 0))).toBe(9);
+  });
+
+  it('la pisada NO toca el % propio del de abajo', () => {
+    // El % del mes de la persona sale de su propio camino (tramos + override)
+    // y `pct_linea` no participa: son dos números distintos.
+    expect(resolvePctDelMes(null, calculateBdmPctFromND(120_000, 7))).toBe(7);
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(7, 7, 0))).toBe(1);
+  });
+});
+
+describe('pctPropioDelLiderDeGrupo (el % propio del que lidera un grupo)', () => {
+  it('un HEAD cobra su % pactado: los tramos NO lo tocan', () => {
+    // La rama de siempre, byte por byte: un ND de $283K no lo sube al 6%.
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: false, profilePct: 4, nd: 283_139 }),
+    ).toBe(4);
+    // Y el pct_override tampoco entra por esta rama (el head no tiene celda).
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: false, profilePct: 4, nd: 0, pctOverride: 9 }),
+    ).toBe(4);
+  });
+
+  it('un BDM que lidera su grupo NO pierde sus tramos', () => {
+    // El mismo número que le da su línea en el grupo de su head: si acá se
+    // leyera `net_deposit_pct` a secas, la misma persona cobraría 4% en una
+    // pantalla y 6% en la otra, sin lanzar ninguna excepción.
+    expect(pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139 }))
+      .toBe(calculateBdmPctFromND(283_139, 4));
+    expect(pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139 })).toBe(6);
+    // Bajo el piso del primer tramo manda el % del perfil.
+    expect(pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 10_000 })).toBe(4);
+  });
+
+  it('`nd_pct_fixed` apaga los tramos también para el líder (migración 128)', () => {
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, ndPctFixed: true }),
+    ).toBe(4);
+  });
+
+  it('con salario fijo no se tieriza — mismo criterio que su línea bajo el head', () => {
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, fixedSalary: true }),
+    ).toBe(4);
+  });
+
+  it('el % manual del mes pisa el automático, y 0 no es vacío (§1.3)', () => {
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, pctOverride: 3 }),
+    ).toBe(3);
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, pctOverride: 0 }),
+    ).toBe(0);
+    expect(
+      pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139, pctOverride: null }),
+    ).toBe(6);
+  });
+
+  it('es el % de REFERENCIA del diferencial de cada línea del grupo', () => {
+    // Master sin % propio bajo un BDM al 6%: el natural es el % completo del
+    // BDM (lo que ya pasaba económicamente), y `pct_linea` lo pisa si está.
+    const bdmPct = pctPropioDelLiderDeGrupo({ liderEsBdm: true, profilePct: 4, nd: 283_139 });
+    expect(diffNaturalDeLinea(bdmPct, 0, 0)).toBe(6);
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(bdmPct, 0, 0))).toBe(1);
+  });
+});
+
+describe('pctPropioDeLineaDeGrupo (el % del de abajo, con el que se saca el diferencial)', () => {
+  it('en un grupo de HEAD es la precedencia de siempre, intacta', () => {
+    const base = { grupoLideradoPorBdm: false, esSubHead: false, profilePct: 4 };
+    // BDM normal: los tramos son piso, nunca techo.
+    expect(pctPropioDeLineaDeGrupo({ ...base, nd: 283_139 })).toBe(6);
+    expect(pctPropioDeLineaDeGrupo({ ...base, nd: 10_000 })).toBe(4);
+    expect(pctPropioDeLineaDeGrupo({ ...base, nd: 120_000, profilePct: 7 })).toBe(7);
+    // Sub-head y salario fijo: su % pactado, sin tramos.
+    expect(pctPropioDeLineaDeGrupo({ ...base, esSubHead: true, nd: 283_139 })).toBe(4);
+    expect(pctPropioDeLineaDeGrupo({ ...base, fixedSalary: true, nd: 283_139 })).toBe(4);
+    // Y `nd_pct_fixed` (migración 128).
+    expect(pctPropioDeLineaDeGrupo({ ...base, ndPctFixed: true, nd: 283_139 })).toBe(4);
+  });
+
+  it('la línea de un MASTER IB no se tieriza — si no, la BDM cobra 0 por ella', () => {
+    // Un master sin % configurado y un mes de $283K: con tramos daba 6%, el
+    // diferencial natural de una BDM al 6% caía a 0 y ella no cobraba nada por
+    // la línea que el dueño dijo que cobra. No lanza ninguna excepción: paga mal.
+    const master = { grupoLideradoPorBdm: true, esSubHead: false, profilePct: 0, nd: 283_139 };
+    expect(pctPropioDeLineaDeGrupo(master)).toBe(0);
+    expect(diffNaturalDeLinea(6, pctPropioDeLineaDeGrupo(master), 0)).toBe(6);
+    // El contraste, en la misma línea con el grupo de un head: 6% tierizado.
+    expect(pctPropioDeLineaDeGrupo({ ...master, grupoLideradoPorBdm: false })).toBe(6);
+    expect(diffNaturalDeLinea(6, pctPropioDeLineaDeGrupo({ ...master, grupoLideradoPorBdm: false }), 0)).toBe(0);
+  });
+
+  it('un master CON % configurado conserva ese %, y `pct_linea` lo pisa igual', () => {
+    const conPct = pctPropioDeLineaDeGrupo({ grupoLideradoPorBdm: true, esSubHead: false, profilePct: 2, nd: 283_139 });
+    expect(conPct).toBe(2);
+    expect(diffNaturalDeLinea(6, conPct, 0)).toBe(4);
+    expect(resolveDiffPctDeLinea(1, diffNaturalDeLinea(6, conPct, 0))).toBe(1);
   });
 });
 
@@ -380,5 +646,43 @@ describe('getPreviousPeriod (orden cronológico)', () => {
       { id: 'jan26', company_id: 'c', year: 2026, month: 1, label: 'Ene 26', is_closed: false, reserve_pct: 0.1 },
     ];
     expect(getPreviousPeriod(cross, 'jan26')?.id).toBe('dec25');
+  });
+});
+
+describe('calculateExtraOverHeadCommission — protección ND=0 (2026-09-25)', () => {
+  const linea = (sumNdBdms: number, accumulatedIn: number, ceroMedido?: boolean) => ({
+    profileId: 'sub', name: 'Sub Head', hasFixedSalary: true, sumNdBdms, accumulatedIn, ceroMedido,
+  });
+
+  it('ND 0 SIN cero medido: no paga fantasma y CONSERVA el acumulado', () => {
+    // El agujero original: pagaba pct sobre el acumulado y lo borraba aunque
+    // el 0 fuera "sin cargar" — el mismo bug que la auditoría 2026-08-06 mató
+    // en calculateCommission, que acá nunca tuvo protección.
+    const r = calculateExtraOverHeadCommission(2, false, [linea(0, 5_000)]);
+    expect(r.details[0].commission).toBe(0);
+    expect(r.details[0].realPayment).toBe(0);
+    expect(r.details[0].accumulatedOut).toBe(5_000);
+  });
+
+  it('ND 0 CON cero medido (CRM): paga sobre el acumulado y lo consume', () => {
+    // Dueño, 2026-09-25: «si trae 0 y tiene acumulado debe de pagar igual».
+    const r = calculateExtraOverHeadCommission(2, false, [linea(0, 5_000, true)]);
+    expect(r.details[0].commission).toBe(100); // 5.000 × 2%
+    expect(r.details[0].realPayment).toBe(100);
+    expect(r.details[0].accumulatedOut).toBe(0);
+  });
+
+  it('con ND distinto de 0 el flag no cambia nada (regresión)', () => {
+    const sin = calculateExtraOverHeadCommission(2, false, [linea(100_000, 5_000)]);
+    const con = calculateExtraOverHeadCommission(2, false, [linea(100_000, 5_000, true)]);
+    expect(sin.details[0]).toEqual(con.details[0]);
+    expect(sin.details[0].commission).toBe(1_100); // (50.000 + 5.000) × 2%
+    expect(sin.details[0].accumulatedOut).toBe(50_000);
+  });
+
+  it('sin salario fijo y sin flag de empresa, la línea se salta igual que siempre', () => {
+    const r = calculateExtraOverHeadCommission(2, false, [{ ...linea(0, 5_000), hasFixedSalary: false }]);
+    expect(r.details).toHaveLength(0);
+    expect(r.skipped).toHaveLength(1);
   });
 });

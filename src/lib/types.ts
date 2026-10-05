@@ -107,6 +107,13 @@ export interface Expense {
   // el período entero desde el payload del cliente — si esta columna no viaja
   // en ese payload, el vínculo se pierde en el próximo guardado.
   payment_order_id?: string | null;
+  // Descripción de la(s) línea(s) de la orden que originó el egreso (dueño
+  // 2026-10-05: "que se vea en la tabla de egresos... sin ingresar a la orden").
+  // DERIVADO EN LECTURA: fetchExpenses lo arma embebiendo payment_orders(lines)
+  // vía el FK de migration-058 — NO es columna de expenses y nunca se persiste
+  // (replace_period_expenses lee claves explícitas del jsonb y lo ignora).
+  // null = egreso manual, orden sin descripciones o embed no resuelto.
+  payment_order_description?: string | null;
 
   // Traza del pago (migration-060). Misma pareja que en las órdenes de pago:
   // referencia en texto (hash, nº de operación o link) y archivo adjunto.
@@ -350,6 +357,16 @@ export interface CommercialProfile {
   // true = el % de ND es FIJO: no lo mejoran los tramos por volumen
   // (BDM_PCT_TIERS). Excepción por perfil pedida el 2026-09-03; default false.
   nd_pct_fixed?: boolean;
+  // true = Master IB (migración 129): cuelga de la línea de un BDM y su subred
+  // se corta del ND de ese BDM (mecanismo de roots de la RPC), sin que el BDM
+  // pase a contar como sub-head. Default false.
+  is_master_ib?: boolean;
+  // % que cobra EL DE ARRIBA por la LÍNEA de este perfil (migración 130):
+  // pisa el diferencial natural de esa línea sobre la misma base de siempre.
+  // `null`/ausente = la lógica de siempre; `0` es válido y significa que el de
+  // arriba no cobra nada por esta línea (§1.3). NO es el % propio de esta
+  // persona: su comisión y su acuerdo no lo miran.
+  pct_linea?: number | null;
   pnl_pct: number | null; // null = N/A
   commission_per_lot: number | null; // USD per lot, null = N/A
   salary: number | null; // monthly USD, null = N/A
@@ -398,6 +415,10 @@ export interface CommercialMonthlyResult {
   bonus: number;
   salary_paid: number;
   total_earned: number;
+  // % de comisión manual de ESE mes (migración 129). `null`/ausente =
+  // automático (tramos + nd_pct_fixed + net_deposit_pct); `0` es un valor real
+  // y significa que ese mes no se paga comisión. Solo grupo Net Deposit.
+  pct_override?: number | null;
   // Commission calculator fields
   head_id?: string | null;
   division: number;

@@ -284,7 +284,12 @@ export async function generateCommissionPDF(data: PdfCommissionData) {
 
   // ─── HEAD Own Commission Table ───
   if (data.headOwnCalc) {
-    y = pdfSection(doc, 'Comision Propia del HEAD', y + 2);
+    // El ROL REAL y no "HEAD" fijo (dueño, 2026-09-06): desde que un BDM con
+    // Master IBs puede liderar un grupo, este informe también sale con un BDM
+    // arriba, y un papel que dijera "Comision Propia del HEAD" para Ana sería
+    // el mismo tipo de dato plausible y equivocado que persigue el §1.2. Para
+    // un head la etiqueta sigue diciendo HEAD, letra por letra.
+    y = pdfSection(doc, `Comision Propia del ${data.headRole}`, y + 2);
     autoTable(doc, {
       startY: y,
       head: [['ND Mes Actual', 'Acumulado', 'Division', '%', 'Comision', 'Pago Real', 'Acc -> Sig.']],
@@ -311,11 +316,14 @@ export async function generateCommissionPDF(data: PdfCommissionData) {
   y = pdfSection(doc, `Miembros del Equipo (${data.bdms.length})`, y);
   autoTable(doc, {
     startY: y,
-    head: [['Nombre', 'Email', '% Propio', '% Diff', 'ND Mes', 'Acumulado', 'Division', 'Comision', 'Pago Real', 'Acc -> Sig.', 'Sueldo']],
+    // «% Pagado» y NO «% Diff» ni «% Propio» (dueño, 2026-09-06): el informe
+    // muestra SOLO el % por el que se le paga al head por esa línea — que con
+    // pct_linea cargado ya no es un diferencial derivado. El % propio del BDM
+    // es asunto de SU informe individual, no de este.
+    head: [['Nombre', 'Email', '% Pagado', 'ND Mes', 'Acumulado', 'Division', 'Comision', 'Pago Real', 'Acc -> Sig.', 'Sueldo']],
     body: data.bdms.map(b => [
       b.name,
       b.email,
-      `${b.pct}%`,
       `${b.diffPct}%`,
       money(b.nd),
       money(b.accIn),
@@ -337,8 +345,10 @@ export async function generateCommissionPDF(data: PdfCommissionData) {
   y = pdfSection(doc, 'Resumen de Pagos', y);
 
   const summaryRows: string[][] = [
-    ['Comision propia del HEAD', money(data.teamSummary.headOwnPayment)],
-    ['Diferencial de BDMs', money(data.teamSummary.diffTotal)],
+    [`Comision propia del ${data.headRole}`, money(data.teamSummary.headOwnPayment)],
+    // «Diferencial del equipo» y no «de BDMs»: las líneas de un grupo pueden ser
+    // BDMs (grupo de un head) o Master IBs (grupo de un BDM).
+    ['Diferencial del equipo', money(data.teamSummary.diffTotal)],
     ['Total comisiones', money(data.teamSummary.totalPayment)],
     ['Salario base', money(data.autoSalary)],
   ];
@@ -567,12 +577,17 @@ export async function generatePnlPDF(data: PdfPnlData) {
   doc.text(`${data.role}  |  ${data.email}  |  HEAD: ${data.headName}`, 14, y);
   y += 8;
 
-  // KPIs
+  // KPIs. La cuarta tarjeta es «Total a Pagar» (data.total, con la deuda
+  // arrastrada YA descontada) y NO «Pago Real» (dueño, 2026-09-11): el pago
+  // real es antes de la deuda, y con deuda el Resumen de abajo daba otra
+  // cifra — dos números grandes distintos para "lo que cobro" confunden a
+  // quien recibe el informe. La tarjeta y el TOTAL A PAGAR del Resumen dicen
+  // exactamente lo mismo.
   y = pdfCards(doc, y, [
     { label: 'PnL Mes Actual', value: money(data.pnl), tone: 'primary' },
     { label: 'Comision', value: money(data.commission), tone: 'accent' },
     { label: 'Com. por Lotes', value: money(data.lotCommissions), tone: 'ink' },
-    { label: 'Pago Real', value: money(data.realPayment), tone: data.realPayment >= 0 ? 'positive' : 'negative' },
+    { label: 'Total a Pagar', value: money(data.total), tone: data.total >= 0 ? 'positive' : 'negative' },
   ], 14, 18);
 
   // Calculation detail

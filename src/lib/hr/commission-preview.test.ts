@@ -16,7 +16,7 @@ const resuelto = (value: number | null, source: ResolvedNetDeposit['source'] = '
 });
 
 describe('comisionIndividualDeBdm', () => {
-  const bdm = { id: 'b', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
+  const bdm = { role: 'bdm', id: 'b', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
 
   it('es exactamente la fórmula del motor, sin tocarla', () => {
     const c = comisionIndividualDeBdm({
@@ -30,6 +30,41 @@ describe('comisionIndividualDeBdm', () => {
     expect(c.commission).toBe(esperado.commission);
     expect(c.realPayment).toBe(esperado.realPayment);
     expect(c.accumulatedOut).toBe(esperado.accumulatedOut);
+  });
+
+  // ── El % manual del mes (pct_override, migración 129) ──────────────────────
+  it('pct_override pisa el tramo y el automático viaja igual, para el placeholder', () => {
+    const c = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8, pctOverride: 3,
+    })!;
+    expect(c.commissionPct).toBe(3);
+    expect(c.commissionPctAuto).toBe(6); // el tramo que se pisó
+    expect(c.commission).toBe(calculateCommission(212_025.95, 1_000, 3).commission);
+  });
+
+  it('pct_override 0 = este mes no cobra comisión (y NO es "sin override")', () => {
+    const c = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8, pctOverride: 0,
+    })!;
+    expect(c.commissionPct).toBe(0);
+    expect(c.commission).toBe(0);
+    // El acumulado NO se destruye: es la regla 2 de §2.1, que el % no toca.
+    expect(c.accumulatedOut).toBe(calculateCommission(212_025.95, 1_000, 0).accumulatedOut);
+  });
+
+  it('sin pct_override (null/ausente) el resultado es idéntico al de siempre', () => {
+    const base = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8,
+    })!;
+    const conNull = comisionIndividualDeBdm({
+      profile: bdm, resolved: resuelto(212_025.95), accumulatedIn: 1_000,
+      periodYear: 2026, periodMonth: 8, pctOverride: null,
+    })!;
+    expect(conNull).toEqual(base);
+    expect(base.commissionPct).toBe(base.commissionPctAuto);
   });
 
   it('con salario fijo el % es el pactado, sin tiers', () => {
@@ -61,9 +96,56 @@ describe('comisionIndividualDeBdm', () => {
     expect(c.accumulatedOut).toBe(50_000);
   });
 
+  // ── CERO MEDIDO (2026-09-25): la procedencia decide qué hace el 0 ───────────
+  describe('ND = 0 — medido (CRM) vs ambiguo (manual / congelado / sin datos)', () => {
+    const yudy = { role: 'bdm', id: 'yudy', net_deposit_pct: 3, fixed_salary: false, salary: null, hire_date: null };
+    const crmCero = new Map([['yudy', { own: 0, total: 0 }]]);
+    const calcular = (resolved: ResolvedNetDeposit) => comisionIndividualDeBdm({
+      profile: yudy, resolved, accumulatedIn: 2533, periodYear: 2026, periodMonth: 8,
+    })!;
+
+    it('caso Yudy Otero, agosto: CRM 0 sin tecleo → 2.533 × 3% = 75,99 y Acc→Sig 0', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: AGOSTO, scope: 'structure', crm: crmCero, manual: null });
+      expect(r.source).toBe('crm');
+      const c = calcular(r);
+      expect(c.commissionPct).toBe(3);
+      expect(c.commission).toBe(75.99);
+      expect(c.realPayment).toBe(75.99);
+      expect(c.accumulatedOut).toBe(0);
+    });
+
+    it('guardar el cero medido no lo vuelve ambiguo: un 0 guardado no es override y el mes sigue leyéndose del CRM', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: AGOSTO, scope: 'structure', crm: crmCero, manual: 0 });
+      expect(r.source).toBe('crm');
+      expect(calcular(r).commission).toBe(75.99);
+    });
+
+    it('0 TECLEADO (indCalcs lo pasa con source manual) → no paga y conserva el acumulado', () => {
+      const c = calcular({ value: 0, source: 'manual', crm: null, manual: 0 });
+      expect(c.commission).toBe(0);
+      expect(c.accumulatedOut).toBe(2533);
+    });
+
+    it('0 CONGELADO (período cerrado / época manual) → no paga y conserva el acumulado', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: JULIO, scope: 'structure', crm: crmCero, manual: 0 });
+      expect(r.source).toBe('frozen');
+      const c = calcular(r);
+      expect(c.commission).toBe(0);
+      expect(c.accumulatedOut).toBe(2533);
+    });
+
+    it('SIN DATOS (CRM caído) → no paga y conserva el acumulado', () => {
+      const r = resolveNetDepositInput({ profileId: 'yudy', period: AGOSTO, scope: 'structure', crm: null, manual: null });
+      expect(r.source).toBe('none');
+      const c = calcular(r);
+      expect(c.commission).toBe(0);
+      expect(c.accumulatedOut).toBe(2533);
+    });
+  });
+
   it('un perfil de PnL no pasa por acá: devuelve null, no 0', () => {
     const c = comisionIndividualDeBdm({
-      profile: { id: 'p', pnl_pct: 30 }, resolved: resuelto(9_999),
+      profile: { role: 'bdm', id: 'p', pnl_pct: 30 }, resolved: resuelto(9_999),
       accumulatedIn: 0, periodYear: 2026, periodMonth: 8,
     });
     expect(c).toBeNull();
@@ -71,7 +153,7 @@ describe('comisionIndividualDeBdm', () => {
 
   it('prorratea el salario fijo en el mes de alta', () => {
     const c = comisionIndividualDeBdm({
-      profile: { id: 'b', net_deposit_pct: 4, fixed_salary: true, salary: 2_000, hire_date: '2026-08-12' },
+      profile: { role: 'bdm', id: 'b', net_deposit_pct: 4, fixed_salary: true, salary: 2_000, hire_date: '2026-08-12' },
       resolved: resuelto(1_000), accumulatedIn: 0, periodYear: 2026, periodMonth: 8,
     })!;
     // 31 − 12 + 1 = 20 días de 31.
@@ -135,7 +217,7 @@ describe('oráculo julio 2026 — manual vs automático', () => {
 
   it('con el manual como override y con el automático puro, el motor da lo MISMO cuando el número es el mismo', () => {
     const crm = new Map([['eric', { own: 112_056.59, total: 112_056.59 }]]);
-    const perfil = { id: 'eric', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
+    const perfil = { role: 'bdm', id: 'eric', net_deposit_pct: 4, fixed_salary: false, salary: null, hire_date: null };
     const auto = comisionIndividualDeBdm({
       profile: perfil,
       resolved: resolveNetDepositInput({ profileId: 'eric', period: AGOSTO, scope: 'structure', crm, manual: null }),

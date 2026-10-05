@@ -149,6 +149,45 @@ async function fetchAllPages<T>(
 }
 
 /**
+ * Cuántos valores entran en UN `.in()` de PostgREST sin reventar la URL.
+ *
+ * Un `.in()` viaja por GET con la lista entera en la query string. Medido el
+ * 2026-09-07: la cola llegó a 812 filas (los instantáneos con fee=5 crecieron
+ * de 167 a 758 desde agosto) → 513 user_ids en una sola URL → «fetch failed»
+ * y la pantalla entera muerta con "Error al procesar la solicitud". No es un
+ * timeout: es la petición que ni sale.
+ *
+ * 100 por tanda: los uuid pesan ~38 caracteres codificados, y las direcciones
+ * on-chain hasta ~95 — 100 × 95 ≈ 9,5 KB deja aire de sobra bajo los límites
+ * típicos de 16 KB con el resto de la query incluida.
+ */
+const IN_TANDA = 100;
+
+/**
+ * `fetchAllPages` sobre un `.in(columna, valores)` con la lista partida en
+ * tandas: cada tanda pagina completa por su cuenta y los resultados se
+ * concatenan (las tandas son disjuntas, no hay duplicados que deduplicar).
+ * Las tandas van SECUENCIALES a propósito: las seis consultas del scoring ya
+ * corren en paralelo entre sí, y multiplicar ese paralelismo por las tandas
+ * sería estampar la base con decenas de peticiones a la vez.
+ */
+async function fetchAllPagesEnTandas<T>(
+  valores: readonly string[],
+  build: (
+    tanda: string[],
+    from: number,
+    to: number,
+  ) => PromiseLike<{ data: unknown[] | null; error: { message: string } | null }>,
+): Promise<T[]> {
+  const out: T[] = [];
+  for (let i = 0; i < valores.length; i += IN_TANDA) {
+    const tanda = valores.slice(i, i + IN_TANDA);
+    out.push(...await fetchAllPages<T>((from, to) => build(tanda, from, to)));
+  }
+  return out;
+}
+
+/**
  * Método de pago legible. El `walletType` del CRM NO sirve (trampa 3 de la
  * migración 088: es 'BALANCE' en todo): el método real se infiere de
  * coin + network.
@@ -585,73 +624,72 @@ async function scoreMany(
   const userIds = [...new Set(withdrawals.map((w) => w.user_external_id).filter((x): x is string => !!x))];
   const addresses = [...new Set(withdrawals.map((w) => w.target_address).filter((x): x is string => !!x))];
 
+  // TODAS las listas van por `fetchAllPagesEnTandas`: un `.in()` con la lista
+  // entera reventó en producción el 2026-09-07 (ver la nota de IN_TANDA).
   const [users, deposits, history, reviews, sources, addressOwners] = await Promise.all([
-    userIds.length
-      ? fetchAllPages<UserSnapshotRow>((from, to) =>
-          admin
-            .from('crm_user_snapshots')
-            .select(USER_COLS)
-            .eq('company_id', companyId)
-            .in('user_external_id', userIds)
-            .range(from, to),
-        )
-      : Promise.resolve([]),
-    userIds.length
-      ? fetchAllPages<{ user_external_id: string | null; amount_paid: number | null; deposit_at: string | null }>(
-          (from, to) =>
-            admin
-              .from('crm_deposits')
-              .select('user_external_id, amount_paid, deposit_at')
-              .eq('company_id', companyId)
-              .in('user_external_id', userIds)
-              .eq('status_norm', 'completed')
-              .range(from, to),
-        )
-      : Promise.resolve([]),
-    userIds.length
-      ? fetchAllPages<{ user_external_id: string | null; requested_amount: number | null; requested_at: string | null; status_norm: string }>(
-          (from, to) =>
-            admin
-              .from('crm_withdrawals')
-              .select('user_external_id, requested_amount, requested_at, status_norm')
-              .eq('company_id', companyId)
-              .in('user_external_id', userIds)
-              .in('status_norm', ['approved', 'rejected'])
-              .range(from, to),
-        )
-      : Promise.resolve([]),
-    fetchAllPages<ReviewRow>((from, to) =>
+    fetchAllPagesEnTandas<UserSnapshotRow>(userIds, (tanda, from, to) =>
       admin
-        .from('withdrawal_reviews')
-        .select(REVIEW_COLS)
+        .from('crm_user_snapshots')
+        .select(USER_COLS)
         .eq('company_id', companyId)
-        .in('withdrawal_external_id', withdrawals.map((w) => w.external_id))
+        .in('user_external_id', tanda)
         .range(from, to),
     ),
+    fetchAllPagesEnTandas<{ user_external_id: string | null; amount_paid: number | null; deposit_at: string | null }>(
+      userIds,
+      (tanda, from, to) =>
+        admin
+          .from('crm_deposits')
+          .select('user_external_id, amount_paid, deposit_at')
+          .eq('company_id', companyId)
+          .in('user_external_id', tanda)
+          .eq('status_norm', 'completed')
+          .range(from, to),
+    ),
+    fetchAllPagesEnTandas<{ user_external_id: string | null; requested_amount: number | null; requested_at: string | null; status_norm: string }>(
+      userIds,
+      (tanda, from, to) =>
+        admin
+          .from('crm_withdrawals')
+          .select('user_external_id, requested_amount, requested_at, status_norm')
+          .eq('company_id', companyId)
+          .in('user_external_id', tanda)
+          .in('status_norm', ['approved', 'rejected'])
+          .range(from, to),
+    ),
+    fetchAllPagesEnTandas<ReviewRow>(
+      withdrawals.map((w) => w.external_id),
+      (tanda, from, to) =>
+        admin
+          .from('withdrawal_reviews')
+          .select(REVIEW_COLS)
+          .eq('company_id', companyId)
+          .in('withdrawal_external_id', tanda)
+          .range(from, to),
+    ),
     // Origen del dinero. SÍ puntúa: es la señal más fuerte del módulo.
-    userIds.length
-      ? fetchAllPages<{ user_external_id: string; in_p2p: number | null; in_ib: number | null; in_social: number | null; in_propfirm: number | null; in_trading: number | null; in_deposit: number | null; out_p2p: number | null }>(
-          (from, to) =>
-            admin
-              .from('crm_wallet_sources')
-              .select('user_external_id, in_p2p, in_ib, in_social, in_propfirm, in_trading, in_deposit, out_p2p')
-              .eq('company_id', companyId)
-              .in('user_external_id', userIds)
-              .range(from, to),
-        )
-      : Promise.resolve([]),
+    fetchAllPagesEnTandas<{ user_external_id: string; in_p2p: number | null; in_ib: number | null; in_social: number | null; in_propfirm: number | null; in_trading: number | null; in_deposit: number | null; out_p2p: number | null }>(
+      userIds,
+      (tanda, from, to) =>
+        admin
+          .from('crm_wallet_sources')
+          .select('user_external_id, in_p2p, in_ib, in_social, in_propfirm, in_trading, in_deposit, out_p2p')
+          .eq('company_id', companyId)
+          .in('user_external_id', tanda)
+          .range(from, to),
+    ),
     // Sólo para el CONTEXTO informativo: cuántos usuarios distintos comparten
     // la dirección. No puntúa (ver score.ts), pero el analista quiere verlo.
-    addresses.length
-      ? fetchAllPages<{ target_address: string | null; user_external_id: string | null }>((from, to) =>
-          admin
-            .from('crm_withdrawals')
-            .select('target_address, user_external_id')
-            .eq('company_id', companyId)
-            .in('target_address', addresses)
-            .range(from, to),
-        )
-      : Promise.resolve([]),
+    fetchAllPagesEnTandas<{ target_address: string | null; user_external_id: string | null }>(
+      addresses,
+      (tanda, from, to) =>
+        admin
+          .from('crm_withdrawals')
+          .select('target_address, user_external_id')
+          .eq('company_id', companyId)
+          .in('target_address', tanda)
+          .range(from, to),
+    ),
   ]);
 
   const userById = new Map(users.map((u) => [u.user_external_id, u]));

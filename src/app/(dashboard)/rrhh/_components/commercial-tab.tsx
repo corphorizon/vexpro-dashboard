@@ -6,7 +6,7 @@ import { Card } from '@/components/ui/card';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { formatCurrency, cn } from '@/lib/utils';
-import { deleteCommercialProfile } from '@/lib/supabase/mutations';
+import { deleteCommercialProfile, updateCommercialProfile } from '@/lib/supabase/mutations';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import {
   ChevronDown, ChevronRight, Pencil, Plus, Search, Trash2, UserCircle, UserRound,
@@ -107,6 +107,11 @@ export function CommercialTab({
   const crmNet = useMemo(() => {
     const tree = overview?.data.net?.tree;
     if (!tree) return null;
+    // CORRECCIÓN (dueño, 2026-09-06): acá se aplicaba
+    // descontarSubredesDeMasters y era la semántica equivocada — el BDM cobra
+    // su % sobre el TOTAL de su línea, master incluido, y esta pantalla tiene
+    // que mostrar el mismo insumo que /comisiones (§2.1). La discriminación
+    // del master es su PROPIA fila (es root del árbol), no una resta al padre.
     return indexarNetDelCrm(tree);
   }, [overview]);
 
@@ -156,12 +161,26 @@ export function CommercialTab({
     if (!period) return out;
     const prev = getPreviousPeriod(periods, period.id);
     const prevRows = prev ? monthlyResults.filter((r) => r.period_id === prev.id) : [];
+    // El % manual del mes (migración 129), cargado desde /comisiones. Se lee
+    // acá por el mismo motivo que el insumo: esta pantalla muestra lo que se le
+    // va a pagar a la persona, y si ignorara el override mostraría un número
+    // distinto del que /comisiones va a guardar. Se saltea la fila del líder en
+    // su propio grupo (head_id === profile_id), igual que `manualDeEstructura`.
+    const overridePorPerfil = new Map<string, number>();
+    for (const r of monthlyResults) {
+      if (r.period_id !== period.id) continue;
+      if (r.head_id && r.head_id === r.profile_id) continue;
+      if (r.pct_override === null || r.pct_override === undefined) continue;
+      const n = Number(r.pct_override);
+      if (Number.isFinite(n)) overridePorPerfil.set(r.profile_id, n);
+    }
     for (const p of profiles) {
       const resolved = insumo.get(p.id);
       if (!resolved) continue;
       const c = comisionIndividualDeBdm({
         profile: p,
         resolved,
+        pctOverride: overridePorPerfil.get(p.id) ?? null,
         accumulatedIn: getAccumulatedIn(prevRows, p.id, p.head_id ?? undefined),
         periodYear: period.year,
         periodMonth: period.month,
@@ -217,13 +236,31 @@ export function CommercialTab({
   const heads = profiles.filter((p) => p.role === 'head');
   const independentBdms = profiles.filter((p) => esBdm(p.role) && !p.head_id);
 
-  // Un equipo se muestra si matchea el líder O algún BDM bajo su estructura.
+  /**
+   * Los Master IB de un miembro (migración 129). Cuelgan de un BDM — no de un
+   * líder — así que sin esto no caían en NINGUNA tarjeta y desaparecían de la
+   * pantalla (dueño, 2026-09-06: buscó a millonariosteam2018 para editarlo y
+   * "no sale"). Se listan dentro de la tarjeta donde está su BDM, a
+   * continuación de él. Un nivel alcanza: un master no puede colgar de otro
+   * master por el formulario, y si algún día pasa, el de abajo vuelve a caer
+   * acá al buscarse por su propio BDM.
+   */
+  const mastersDe = (bdmId: string) =>
+    profiles.filter((m) => m.is_master_ib && m.head_id === bdmId);
+  const conSusMasters = (miembros: CommercialProfile[]) =>
+    miembros.flatMap((b) => [b, ...mastersDe(b.id)]);
+
+  // Un equipo se muestra si matchea el líder O algún BDM bajo su estructura
+  // (masters de esos BDM incluidos).
   const teamHasMatch = (leader: CommercialProfile) =>
     (matchesCommercial(leader, commercialQ) && pasaFiltroSalario(leader)) ||
-    profiles.some((p) => p.head_id === leader.id && matchesCommercial(p, commercialQ) && pasaFiltroSalario(p));
+    conSusMasters(profiles.filter((p) => p.head_id === leader.id))
+      .some((p) => matchesCommercial(p, commercialQ) && pasaFiltroSalario(p));
   const visibleSalesManagers = salesManagers.filter(teamHasMatch);
   const visibleHeads = heads.filter(teamHasMatch);
-  const visibleIndependentBdms = independentBdms.filter(
+  // También acá van los masters: un Master IB colgado de un BDM SIN head no
+  // cae en ninguna tarjeta de líder, así que se lista a continuación de su BDM.
+  const visibleIndependentBdms = conSusMasters(independentBdms).filter(
     (b) => matchesCommercial(b, commercialQ) && pasaFiltroSalario(b),
   );
 
@@ -236,6 +273,95 @@ export function CommercialTab({
       setDeletingId(null);
       onToast({ type: 'error', msg: err instanceof Error ? err.message : t('hr.deleteError') });
     }
+  };
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // EL % POR LÍNEA, editable en la fila (migración 130, dueño 2026-09-06)
+  //
+  // Va acá y no sólo en el formulario porque es lo que el dueño pidió con su
+  // captura: la fila de cada miembro, al lado de su «Net Dep %». El número
+  // significa «lo que cobra EL DE ARRIBA por la línea de esta persona», no el
+  // % de ella — por eso está en su fila DENTRO de la tarjeta de su líder, que
+  // es donde se lee la relación.
+  //
+  // VACÍO NO ES CERO (§1.3): el input vacío guarda `null` = diferencial
+  // natural de siempre; un `0` tecleado guarda `0` y significa que el de
+  // arriba no cobra nada por esa línea. Lo tecleado queda en un mapa local y
+  // manda sobre el perfil: `useData()` no se refresca solo tras el PATCH, así
+  // que limpiarlo mostraría el valor viejo como si el guardado no hubiera
+  // pasado. Si el guardado FALLA se revierte a lo del perfil: un input que
+  // muestra lo que no se guardó es exactamente el fallo mudo del §1.2.
+  //
+  // Escribir lo sigue decidiendo el rol (§4.1): el endpoint de perfiles ya
+  // exige HR_ROLES + módulo `hr`, el mismo que habilita el lápiz de esta fila.
+  // ───────────────────────────────────────────────────────────────────────────
+  const [pctLineaRaw, setPctLineaRaw] = useState<Map<string, string>>(new Map());
+  const [savingPctLinea, setSavingPctLinea] = useState<string | null>(null);
+
+  const pctLineaDisplay = (p: CommercialProfile): string => {
+    const raw = pctLineaRaw.get(p.id);
+    if (raw !== undefined) return raw;
+    return p.pct_linea === null || p.pct_linea === undefined ? '' : String(p.pct_linea);
+  };
+
+  const guardarPctLinea = async (p: CommercialProfile) => {
+    const raw = pctLineaRaw.get(p.id);
+    if (raw === undefined) return; // no lo tocaron
+    const txt = raw.trim();
+    const valor = txt === '' || txt === '-' ? null : Number(txt);
+    if (valor !== null && !Number.isFinite(valor)) {
+      // Basura tecleada: no se guarda nada y el campo vuelve a lo real.
+      setPctLineaRaw((prev) => { const n = new Map(prev); n.delete(p.id); return n; });
+      return;
+    }
+    const actual = p.pct_linea ?? null;
+    if (valor === actual) return; // sin cambios: ni PATCH ni toast
+    setSavingPctLinea(p.id);
+    try {
+      await updateCommercialProfile(p.id, { pct_linea: valor });
+      onToast({
+        type: 'success',
+        msg: t('hr.pctLineaSaved', { name: p.name, pct: valor === null ? t('hr.pctLineaAuto') : `${valor}%` }),
+      });
+    } catch (err) {
+      setPctLineaRaw((prev) => { const n = new Map(prev); n.delete(p.id); return n; });
+      onToast({ type: 'error', msg: err instanceof Error ? err.message : t('hr.saveError') });
+    } finally {
+      setSavingPctLinea(null);
+    }
+  };
+
+  /** La celda editable del % por línea. */
+  const pctLineaCell = (p: CommercialProfile) => {
+    const value = pctLineaDisplay(p);
+    const cargado = value.trim() !== '' && value.trim() !== '-';
+    return (
+      <span className="inline-flex items-center gap-0.5">
+        <input
+          type="number"
+          step="0.01"
+          aria-label={t('hr.pctLineaAria', { name: p.name })}
+          title={t('hr.pctLineaHint')}
+          placeholder={t('hr.pctLineaPlaceholder')}
+          value={value}
+          disabled={savingPctLinea === p.id}
+          onChange={(e) => {
+            const v = e.target.value;
+            setPctLineaRaw((prev) => { const n = new Map(prev); n.set(p.id, v); return n; });
+          }}
+          onBlur={() => { void guardarPctLinea(p); }}
+          // Enter también guarda (dueño, 2026-09-06: "¿cómo lo guardo?"). El
+          // blur ya lo hacía, pero Enter es lo que la mano teclea primero: se
+          // dispara el blur y el guardado sale por el mismo único camino.
+          onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+          className={cn(
+            'w-16 px-1 py-0.5 text-right rounded border border-border bg-background text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] disabled:opacity-60',
+            cargado && 'border-warning text-warning font-semibold',
+          )}
+        />
+        <span className="text-[10px] text-muted-foreground">%</span>
+      </span>
+    );
   };
 
   const netCrmCell = (profileId: string) => {
@@ -261,7 +387,8 @@ export function CommercialTab({
   };
 
   const renderTeamCard = (leader: CommercialProfile) => {
-    const allBdms = profiles.filter(p => p.head_id === leader.id);
+    // Miembros directos + los Master IB colgados de ellos (ver mastersDe).
+    const allBdms = conSusMasters(profiles.filter(p => p.head_id === leader.id));
     const leaderMatches = matchesCommercial(leader, commercialQ);
     // Al buscar: si el líder NO matchea, mostrar sólo los BDM que matchean.
     const bdms = (!commercialQ || leaderMatches) ? allBdms : allBdms.filter(b => matchesCommercial(b, commercialQ));
@@ -348,6 +475,10 @@ export function CommercialTab({
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netCrmCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.netDepPct')}</th>
+                  {/* El % que cobra el LÍDER por esta línea (migración 130).
+                      Al lado del Net Dep % porque es la comparación que el
+                      dueño hace al mirar la tarjeta. */}
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell" title={t('hr.pctLineaHint')}>{t('hr.pctLineaCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.salaryCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.pnl')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissionsMonth')}</th>
@@ -361,16 +492,20 @@ export function CommercialTab({
                   const tot = totalesDe(totales, bdm.id);
                   return (
                   <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm))}>
+                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm), bdm.is_master_ib && 'pl-7')}>
                       {bdm.name}
                       {esBdmGlobal(bdm.role) && (
                         <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
+                      )}
+                      {bdm.is_master_ib && (
+                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
                       )}
                       <FiredBadge profile={bdm} />
                     </td>
                     <td className="py-2.5 px-3 text-muted-foreground text-xs hidden sm:table-cell">{bdm.email}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">{netCrmCell(bdm.id)}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
+                    <td className="py-2.5 px-3 text-right hidden sm:table-cell">{pctLineaCell(bdm)}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right hidden sm:table-cell">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>
                     <td className="py-2.5 px-3 text-right tabular-nums">{comisionCell(bdm.id)}</td>
@@ -511,6 +646,10 @@ export function CommercialTab({
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
                   <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.email')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netDepPct')}</th>
+                  {/* Los Master IB de un BDM sin líder caen en esta tabla: su
+                      línea también la cobra alguien (su BDM), así que el campo
+                      tiene que estar acá también. */}
+                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('hr.pctLineaHint')}>{t('hr.pctLineaCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnlPct')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.salaryCol')}</th>
                   <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnl')}</th>
@@ -525,15 +664,19 @@ export function CommercialTab({
                   const tot = totalesDe(totales, bdm.id);
                   return (
                   <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm))}>
+                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm), bdm.is_master_ib && 'pl-7')}>
                       {bdm.name}
                       {esBdmGlobal(bdm.role) && (
                         <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
+                      )}
+                      {bdm.is_master_ib && (
+                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
                       )}
                       <FiredBadge profile={bdm} />
                     </td>
                     <td className="py-2.5 px-3 text-muted-foreground text-xs">{bdm.email}</td>
                     <td className="py-2.5 px-3 text-right">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
+                    <td className="py-2.5 px-3 text-right">{pctLineaCell(bdm)}</td>
                     <td className="py-2.5 px-3 text-right">{bdm.pnl_pct != null ? `${bdm.pnl_pct}%` : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
                     <td className="py-2.5 px-3 text-right">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>

@@ -19,6 +19,7 @@ import type {
   PaymentOrderProof,
   PaymentOrderStatus,
 } from './types';
+import type { DeletedOrderSummary } from './delete';
 
 async function request<T>(url: string, init: RequestInit = {}): Promise<T> {
   const res = await apiFetch(url, init);
@@ -77,9 +78,14 @@ export async function updatePaymentOrder(
   return order;
 }
 
-/** Solo borradores. Una orden ya enviada se anula (transición → cancelled). */
-export async function deletePaymentOrder(id: string): Promise<void> {
-  await request<{ success: boolean }>(`/api/admin/payment-orders/${id}`, { method: 'DELETE' });
+/**
+ * Borrado DEFINITIVO, en cualquier estado (2026-10-01). Si la orden estaba
+ * pagada se lleva también su egreso. Devuelve el desglose de lo que se borró
+ * —egreso, adjuntos, archivos que no se pudieron borrar— para mostrarlo: nada
+ * silencioso. Anular (transición → cancelled) sigue siendo lo habitual.
+ */
+export async function deletePaymentOrder(id: string): Promise<DeletedOrderSummary> {
+  return request<DeletedOrderSummary>(`/api/admin/payment-orders/${id}`, { method: 'DELETE' });
 }
 
 export interface TransitionOptions {

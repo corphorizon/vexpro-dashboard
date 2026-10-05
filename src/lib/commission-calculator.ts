@@ -36,18 +36,70 @@ export interface CommissionCalcResult {
 // ⚠ OJO: no "corregir" esto a MAX(0, commission) ni a arrastrar `base` en
 // meses negativos — rompería el arrastre de deuda y pagaría de más. Los tests
 // en commission-calculator.test.ts fijan este comportamiento a propósito.
+//
+// ── ND = 0: DOS reglas, y cuál aplica lo decide la PROCEDENCIA del cero ─────
+// La historia, en orden:
+//
+//   1. Auditoría 2026-08-06. El ND se tecleaba a mano y el input arrancaba en
+//      0, así que un 0 era indistinguible de «nadie lo cargó». Pagar sobre
+//      `accumulatedIn` con ese 0 convertía cada fila sin cargar en un PAGO
+//      FANTASMA. Por eso con ND=0 no se paga nada.
+//   2. El mismo día se vio el otro lado: `accumulatedOut` salía en 0 y el
+//      acumulado se DESTRUÍA (un BDM con $50.000 arrastrados los perdía por un
+//      mes sin depósitos). Fix: con ND=0 el acumulado se CONSERVA intacto
+//      (§2.1 regla 2).
+//   3. Desde agosto 2026 el ND sale del CRM automático (hr/net-deposit-input.ts,
+//      `source: 'crm'`): el rollup mide la red de la persona y un 0 de ahí es
+//      un CERO MEDIDO — «tu red no depositó», no «nadie cargó». Caso del dueño
+//      (2026-09-25): Yudy Otero, agosto, ND CRM = 0, acumulado $2.533, 3%. La
+//      regla 1 le pagó $0 y le pasó los 2.533 a septiembre; lo correcto es
+//      2.533 × 3% = $75,99 y el acumulado CONSUMIDO — «de manera general».
+//
+// Con `ceroMedido = true` y ND = 0 se aplica la fórmula general tal cual con
+// división 0: base = accumulatedIn, commission = base × pct, realPayment =
+// commission (sin clamp: un acumulado NEGATIVO es deuda y se cobra igual que
+// con cualquier otro ND), accumulatedOut = 0 — el arrastre se paga y se
+// consume, no se paga dos veces. Es exactamente lo que daría un ND de 0,001.
+//
+// El DEFAULT sigue siendo el conservador (regla 1 + 2, bit a bit), y a
+// propósito: un 0 tecleado, uno congelado de un período cerrado (la época
+// manual, donde 0 puede ser «nunca cargado») o un SIN DATOS siguen siendo
+// ambiguos, y pagarles sobre el acumulado es resucitar el pago fantasma. Quien
+// quiera el cero medido tiene que AFIRMARLO con la procedencia en la mano
+// (`esCeroMedido`, hr/net-deposit-input.ts) — §1.3: el 0 que no sabemos de
+// dónde vino no es un 0.
 // ---------------------------------------------------------------------------
 
 export function calculateCommission(
   netDepositCurrent: number,
   accumulatedIn: number,
   commissionPct: number,
+  /**
+   * true = el ND es un CERO MEDIDO (vino del CRM automático y nadie tecleó
+   * encima). Sólo cambia algo cuando `netDepositCurrent === 0`. Default false =
+   * el comportamiento conservador de la auditoría 2026-08-06. Ver arriba.
+   */
+  ceroMedido: boolean = false,
 ): Omit<CommissionCalcResult, 'profileId' | 'salary' | 'commissionPct' | 'totalEarnedDebt'> {
+  if (netDepositCurrent === 0 && ceroMedido) {
+    // Cero MEDIDO: se paga el acumulado y se consume. Explícito (y no cayendo
+    // a la rama general) para que ningún `-0` se cuele en división/acumulado.
+    const commission = round2(accumulatedIn * (commissionPct / 100));
+    return {
+      netDepositCurrent: 0,
+      accumulatedIn,
+      division: 0,
+      commission,
+      realPayment: commission,
+      accumulatedOut: 0,
+    };
+  }
+
   if (netDepositCurrent === 0) {
-    // ND=0 significa dos cosas indistinguibles: "mes sin depósitos" o "el
-    // operador todavía no cargó el ND" (el default del input es 0). Por eso
-    // acá NO se paga nada — pagar sobre accumulatedIn convertiría cada fila
-    // sin cargar en un pago fantasma.
+    // Cero AMBIGUO (tecleado, congelado o sin datos): "mes sin depósitos" o
+    // "el operador todavía no cargó el ND" (el default del input es 0). Acá NO
+    // se paga nada — pagar sobre accumulatedIn convertiría cada fila sin
+    // cargar en un pago fantasma.
     //
     // Lo que SÍ estaba mal (auditoría 2026-08-06): accumulatedOut salía en 0
     // y el acumulado arrastrado se DESTRUÍA — un BDM que venía con $50.000
@@ -282,6 +334,177 @@ export function calculateBdmPctFromND(
   return Math.max(tierPct, profilePct ?? 0);
 }
 
+/**
+ * EL % QUE MANDA ESTE MES.
+ *
+ * `commercial_monthly_results.pct_override` (migración 129, pedido del dueño el
+ * 2026-09-06) fija a mano el % de UN mes sin tocar el acuerdo del perfil: pisa
+ * los tramos por volumen, `nd_pct_fixed` y `net_deposit_pct`.
+ *
+ * ── null ≠ 0, y acá se paga la diferencia ──────────────────────────────────
+ * `null`/`undefined` = "no hay override" → manda el automático que ya venía
+ * calculado. `0` = "este mes no cobra comisión" y es un valor VÁLIDO. Un
+ * `override || automatico` habría tratado el 0 tecleado como "no hay nada
+ * cargado" y le habría pagado igual, sin lanzar ninguna excepción (§1.2/§1.3).
+ * Por eso `??` y por eso esto es una función con nombre y no un operador
+ * suelto repetido en cada pantalla: son tres los lugares que deciden este
+ * número (tab Equipos, tab Individual y el guardado) y tienen que decidirlo
+ * igual (§1.1, §2.1 "un mismo número sale del mismo camino").
+ *
+ * Un override negativo o disparatado NO se clampea acá: el % del perfil
+ * tampoco se clampea y la pantalla es la que valida lo que se teclea.
+ */
+export function resolvePctDelMes(
+  pctOverride: number | null | undefined,
+  pctAutomatico: number,
+): number {
+  return pctOverride ?? pctAutomatico;
+}
+
+/**
+ * EL % PROPIO DEL LÍDER DE UN GRUPO (tab Equipos).
+ *
+ * Un grupo lo puede liderar un head/sales_manager o —desde el pedido del dueño
+ * del 2026-09-06— un BDM con Master IBs colgados («que aparezca acá en equipo…
+ * porque ahí la quiero calcular como se calculan en equipo»). El grupo se
+ * calcula igual en los dos casos; lo único que cambia es de dónde sale el %
+ * PROPIO del líder, y por eso esa decisión vive acá y no inline en la pantalla:
+ * la toman la tabla del tab Equipos Y el guardado, y tienen que tomarla igual
+ * (§2.1: «un mismo número sale del mismo camino»).
+ *
+ *   · head / sales_manager → su `net_deposit_pct` pactado, tal cual. Sin
+ *     tramos: un líder cobra lo pactado, no lo que le dé el volumen del mes.
+ *     Es la rama de siempre y no cambia un centavo.
+ *   · BDM que lidera su grupo → se resuelve **como BDM**: tramos por volumen
+ *     (piso, nunca techo — regla 3 del §2.1), la excepción `nd_pct_fixed`
+ *     (migración 128) y el `pct_override` del mes (129). Liderar un grupo NO
+ *     le saca a Ana sus tramos: es la MISMA persona que en el grupo de Luka
+ *     cobra su % de BDM, y los dos caminos tienen que dar el mismo número —
+ *     si acá se leyera `net_deposit_pct` a secas, un mes de $283K le pagaría
+ *     al 4% en una pantalla y al 6% en la otra, sin lanzar ninguna excepción.
+ *   · `fixed_salary` apaga los tramos, exactamente como en `bdmCalcs`: es el
+ *     mismo criterio con el que se le calcula la línea bajo su propio head.
+ */
+export function pctPropioDelLiderDeGrupo(params: {
+  /** El líder del grupo es un BDM (no head ni sales_manager). */
+  liderEsBdm: boolean;
+  /** `net_deposit_pct` del perfil. */
+  profilePct: number;
+  /** ND propio del mes — sólo se usa para tierizar a un BDM. */
+  nd: number;
+  ndPctFixed?: boolean | null;
+  fixedSalary?: boolean | null;
+  /** `pct_override` del mes; `null` = automático (§1.3: 0 es una decisión). */
+  pctOverride?: number | null;
+}): number {
+  if (!params.liderEsBdm) return params.profilePct;
+  const auto = params.fixedSalary
+    ? params.profilePct
+    : calculateBdmPctFromND(params.nd, params.profilePct, params.ndPctFixed ?? false);
+  return resolvePctDelMes(params.pctOverride, auto);
+}
+
+/**
+ * EL % PROPIO DE UNA LÍNEA DEL GRUPO — el del de abajo, con el que se calcula
+ * el diferencial del de arriba.
+ *
+ * Es la precedencia que ya vivía inline en `bdmCalcs` y en el guardado del tab
+ * Equipos, extraída para que los dos la decidan igual (§2.1), MÁS una condición
+ * nueva. En orden:
+ *
+ *   · sub-HEAD o `fixed_salary` → su % pactado, sin tramos. Lo de siempre.
+ *   · línea de un grupo liderado por un BDM (un MASTER IB) → su % pactado
+ *     también, `?? 0`. **Los tramos de % por volumen son la escalera de un BDM
+ *     empleado y un master no está en ella.** Tierizarlo paga mal y en
+ *     silencio: el master no suele tener `net_deposit_pct`, así que
+ *     `calculateBdmPctFromND(283.139, 0)` le devolvía el 6% del tramo, el
+ *     diferencial natural de la BDM caía a 6 − 6 = 0 y ella cobraba NADA por
+ *     la línea que el dueño dijo explícitamente que cobra («ella sí gana un
+ *     porcentaje de millonarios team»). Con el % en 0, el natural es el %
+ *     COMPLETO del BDM, que es justo lo que la migración 130 documenta.
+ *   · BDM normal bajo un head → los tramos de siempre (piso, nunca techo).
+ *
+ * La condición nueva sólo se enciende dentro del grupo de un BDM: en un grupo
+ * de head no cambia un centavo.
+ */
+export function pctPropioDeLineaDeGrupo(params: {
+  /** El grupo lo lidera un BDM (la línea es la de un Master IB). */
+  grupoLideradoPorBdm: boolean;
+  /** El de abajo tiene equipo propio o es head/sales_manager. */
+  esSubHead: boolean;
+  profilePct: number;
+  nd: number;
+  ndPctFixed?: boolean | null;
+  fixedSalary?: boolean | null;
+}): number {
+  if (params.grupoLideradoPorBdm || params.esSubHead || params.fixedSalary) return params.profilePct;
+  return calculateBdmPctFromND(params.nd, params.profilePct, params.ndPctFixed ?? false);
+}
+
+/**
+ * EL DIFERENCIAL NATURAL DE UNA LÍNEA — lo que el de arriba cobra por el de
+ * abajo cuando nadie configuró nada.
+ *
+ * Estaba escrito inline en `bdmCalcs` (/comisiones, tab Equipos) y es donde
+ * viven DOS reglas del §2.1 que no se rompen:
+ *
+ *   · regla 7 — el diferencial del HEAD **nunca es negativo**. Si el BDM
+ *     tieriza por encima de su head, el head cobra 0 por esa línea, no paga
+ *     por el buen mes de su BDM (auditoría 2026-08-06: head al 5% con un BDM
+ *     tierizado al 6% le restaba $1.000 al head).
+ *   · regla 8 — `extra_pct` aplica **sólo** cuando el natural es exactamente
+ *     0 (mismo %). Con natural > 0 no se suma, y con natural < 0 no rescata
+ *     nada: el clamp manda.
+ *
+ * `refPct` es el % de referencia del de arriba: su `net_deposit_pct`, o
+ * `pct_sobre_bdm_global` cuando el de abajo es BDM GLOBAL. `pctPropio` es el
+ * % ya resuelto del de abajo (tramos + `nd_pct_fixed` + `pct_override` del
+ * mes) — este cálculo no lo re-deriva, lo recibe.
+ */
+export function diffNaturalDeLinea(
+  refPct: number,
+  pctPropio: number,
+  extraPct: number,
+): number {
+  const natural = refPct - pctPropio;
+  return natural > 0 ? natural : natural === 0 ? extraPct : 0;
+}
+
+/**
+ * EL % QUE COBRA EL DE ARRIBA POR ESTA LÍNEA (migración 130, pedido del dueño
+ * el 2026-09-06).
+ *
+ * `commercial_profiles.pct_linea` vive en el HIJO y significa «el % que cobra
+ * el de arriba por la línea de este perfil». Pisa el diferencial de esa línea
+ * sobre la MISMA base de siempre (división del ND + acumulado): lo único que
+ * cambia es el porcentaje. El caso: Luka cobrando 1% por la línea de Ana sin
+ * subirle el % a Ana.
+ *
+ * ── null ≠ 0, otra vez ─────────────────────────────────────────────────────
+ * `null`/`undefined` = «no hay pisada» → manda el diferencial natural. `0` =
+ * «el de arriba no cobra nada por esta línea» y es un valor VÁLIDO. Un
+ * `pisada || natural` habría tratado ese cero como campo vacío y habría
+ * pagado el diferencial igual, sin lanzar excepción (§1.2/§1.3). Por eso `??`,
+ * y por eso esto es una función con nombre —al lado de `resolvePctDelMes`, por
+ * el mismo motivo— y no un operador suelto repetido: son varios los lugares
+ * que deciden este número (la tabla del tab Equipos, el guardado, el PDF y el
+ * CSV de equipo) y tienen que decidirlo igual (§1.1, §2.1 «un mismo número
+ * sale del mismo camino»).
+ *
+ * ── El clamp NO se le aplica a la pisada ───────────────────────────────────
+ * El «nunca negativo» de la regla 7 vive dentro de `diffNaturalDeLinea`, o
+ * sea en la rama natural. Si el dueño pone 1% donde el natural daba 0, el de
+ * arriba cobra 1%: eso es el pedido, no un accidente. Y una pisada MAYOR que
+ * el % del head también se permite —es un acuerdo, no un derivado— igual que
+ * `pct_override` tampoco se clampea. Lo que valida lo tecleado es la pantalla.
+ */
+export function resolveDiffPctDeLinea(
+  pctLinea: number | null | undefined,
+  diffNatural: number,
+): number {
+  return pctLinea ?? diffNatural;
+}
+
 // ---------------------------------------------------------------------------
 // HEAD differential calculation
 //
@@ -314,10 +537,20 @@ export interface HeadDifferentialResult {
 export function calculateHeadDifferential(
   headPct: number,
   extraPct: number,
-  bdmResults: { profileId: string; name: string; netDepositCurrent: number; accumulatedIn: number; commissionPct: number }[],
+  /**
+   * `pctLinea` (migración 130) = el `commercial_profiles.pct_linea` del BDM:
+   * pisa el diferencial de ESA línea. `null`/ausente = el de siempre.
+   */
+  bdmResults: { profileId: string; name: string; netDepositCurrent: number; accumulatedIn: number; commissionPct: number; pctLinea?: number | null }[],
 ): HeadDifferentialResult {
   const details: DifferentialDetail[] = bdmResults.map((bdm) => {
-    const diffPct = (headPct - bdm.commissionPct) + extraPct;
+    // OJO: la rama natural de acá NO es la de la pantalla — suma `extraPct`
+    // siempre y no clampea el diferencial (sólo el pago real, más abajo). Se
+    // deja tal cual a propósito: sus tests fijan ese comportamiento y el
+    // camino de producción es `bdmCalcs` + `diffNaturalDeLinea` (§2.1 regla
+    // 7/8). Lo que SÍ se comparte es la precedencia de la pisada por línea,
+    // que tiene que decidirse en un solo lugar (§1.1).
+    const diffPct = resolveDiffPctDeLinea(bdm.pctLinea, (headPct - bdm.commissionPct) + extraPct);
     const division = round2(bdm.netDepositCurrent / 2);
     const commission = round2((division + bdm.accumulatedIn) * (diffPct / 100));
     const realPayment = round2(Math.max(0, commission));
@@ -546,6 +779,13 @@ export function calcularPasoPnlEncadenado(params: {
     pnlCurrent: lotCommissions,
     // Con PnL = 0 el acumulado se CONSERVA (calculateCommission lo garantiza):
     // un mes sin dato no puede borrarle el arrastre a nadie (§2.1 regla 2).
+    //
+    // NOTA (2026-09-25): el grupo Net Deposit ganó el «cero medido» —ND = 0
+    // del CRM sin tecleo encima paga sobre el acumulado y lo consume (ver la
+    // cabecera de `calculateCommission`). Acá NO se pasa a propósito: el PnL
+    // tiene su propia semántica y esta cadena del recálculo desde abril se
+    // validó con el 0 conservador. Si el dueño pide lo mismo para PnL, es una
+    // decisión aparte, con su medición, no una extensión de aquella.
     accumulatedOut: calc.accumulatedOut,
     salaryPaid: salary,
     totalEarned: finalTotalEarned,
@@ -596,6 +836,17 @@ export function calculateExtraOverHeadCommission(
     hasFixedSalary: boolean;
     sumNdBdms: number;
     accumulatedIn: number;
+    /**
+     * true = el ND en 0 de esta línea es un CERO MEDIDO (source crm, nada
+     * tecleado — lo decide `esCeroMedido` en hr/net-deposit-input.ts, el
+     * registro único). Con 0 medido la línea SÍ paga sobre el acumulado y lo
+     * consume (dueño, 2026-09-25: «si trae 0 y tiene acumulado debe de pagar
+     * igual»). Con 0 NO medido (sin cargar/manual/congelado) esta función
+     * pagaba fantasma sobre el acumulado Y lo borraba — el mismo agujero que
+     * la auditoría 2026-08-06 mató en calculateCommission, que acá nunca tuvo
+     * protección. Default false = protegido.
+     */
+    ceroMedido?: boolean;
   }[],
 ): {
   totalCommission: number;
@@ -614,6 +865,27 @@ export function calculateExtraOverHeadCommission(
         profileId: h.profileId,
         name: h.name,
         reason: 'HEAD sin salario fijo y flag apply_pct_extra_to_head_without_salary=false',
+      });
+      continue;
+    }
+
+    // ND del equipo en 0 SIN cero medido: misma protección que el ND=0 de
+    // calculateCommission — no se paga sobre el acumulado (pago fantasma) y el
+    // arrastre SE CONSERVA en vez de borrarse. Con `ceroMedido` (el 0 vino del
+    // CRM) la línea paga sobre el acumulado y lo consume, igual que el resto
+    // del motor desde el 2026-09-25.
+    if (h.sumNdBdms === 0 && !h.ceroMedido) {
+      details.push({
+        headIntermediateProfileId: h.profileId,
+        headIntermediateName: h.name,
+        hasFixedSalary: h.hasFixedSalary,
+        sumNdBdms: 0,
+        accumulatedIn: h.accumulatedIn,
+        pctApplied: pctExtraSobreHead,
+        division: 0,
+        commission: 0,
+        realPayment: 0,
+        accumulatedOut: h.accumulatedIn,
       });
       continue;
     }

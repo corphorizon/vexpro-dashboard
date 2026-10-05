@@ -45,6 +45,16 @@ export function ProfileForm({
   const [headId, setHeadId] = useState(editing?.head_id || '');
   const [ndPct, setNdPct] = useState(editing?.net_deposit_pct?.toString() || '');
   const [ndPctFixed, setNdPctFixed] = useState(!!editing?.nd_pct_fixed);
+  // Master IB (migración 129): cuelga de la línea de un BDM y su red se
+  // descuenta de ese BDM, como pasa con un head.
+  const [isMasterIb, setIsMasterIb] = useState(!!editing?.is_master_ib);
+  // % POR LÍNEA (migración 130): lo que cobra EL DE ARRIBA por la línea de
+  // este perfil. Vacío = diferencial natural de siempre; `0` = el de arriba no
+  // cobra nada por esta línea. Por eso el estado es string y NO number: un 0
+  // tecleado y un campo vacío tienen que poder distinguirse (§1.3).
+  const [pctLinea, setPctLinea] = useState(
+    editing?.pct_linea === null || editing?.pct_linea === undefined ? '' : String(editing.pct_linea),
+  );
   const [pnlPct, setPnlPct] = useState(editing?.pnl_pct?.toString() || '');
   const [commLot, setCommLot] = useState(editing?.commission_per_lot?.toString() || '');
   const [salary, setSalary] = useState(editing?.salary?.toString() || '');
@@ -73,7 +83,15 @@ export function ProfileForm({
   const [error, setError] = useState('');
 
   // Registro único: quién puede ser supervisor de quién lo decide hr/domain.ts.
-  const heads = possibleHeads(commercialProfiles, { excludeId: editing?.id });
+  //
+  // `incluirBdms` sólo con «Master IB» tildado: un master cuelga de la LÍNEA de
+  // un BDM (Jose Emanuel Hernandez Alvarez de Ana García, 2026-09-06) y el
+  // selector normal lista únicamente líderes. Sin el flag el desplegable queda
+  // exactamente como estaba.
+  const heads = possibleHeads(commercialProfiles, {
+    excludeId: editing?.id,
+    incluirBdms: isMasterIb,
+  });
   // Los campos de HEAD/Sales Manager se muestran para cualquier rol líder.
   const mostrarCamposDeLider = esLider(role);
 
@@ -107,6 +125,14 @@ export function ProfileForm({
         // Mismo criterio que pnl_special_mode: sin % cargado el flag se apaga,
         // para que no quede una excepción huérfana de un config anterior.
         nd_pct_fixed: ndPct ? ndPctFixed : false,
+        // El flag NO depende de ningún % (a diferencia de nd_pct_fixed): el
+        // master del caso real cobra por PnL Especial y no tiene net_deposit_pct.
+        is_master_ib: isMasterIb,
+        // OJO con el `? :` de los demás campos: acá NO sirve, porque '0' es
+        // falsy en JS y un 0 tecleado (el de arriba no cobra nada por esta
+        // línea) se guardaría como null (la lógica de siempre) sin lanzar
+        // ninguna excepción — el §1.2 en su forma más barata de cometer.
+        pct_linea: pctLinea.trim() === '' ? null : parseFloat(pctLinea),
         pnl_pct: pnlPct ? parseFloat(pnlPct) : null,
         // Force pnl_special_mode off when pct is empty — avoids stale flags
         // from a previous config (profile lost its pct but the flag lingered).
@@ -190,6 +216,35 @@ export function ProfileForm({
               ))}
             </select>
           </div>
+          {/* Master IB — habilita colgar el perfil de un BDM y hace que su red
+              se descuente de ese BDM (migración 129). Se muestra siempre: el
+              master del caso real cobra por PnL Especial y no tiene % de ND. */}
+          <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30">
+            <input
+              id="is-master-ib"
+              type="checkbox"
+              checked={isMasterIb}
+              onChange={(e) => {
+                setIsMasterIb(e.target.checked);
+                // Al destildar, un supervisor BDM dejaría de estar en la lista y
+                // el desplegable se vería vacío mientras el valor viejo seguía
+                // ahí para guardarse: una discrepancia muda entre lo que se ve y
+                // lo que se persiste. Se limpia.
+                if (!e.target.checked && headId) {
+                  const sigueSiendoValido = possibleHeads(commercialProfiles, { excludeId: editing?.id })
+                    .some((h) => h.id === headId);
+                  if (!sigueSiendoValido) setHeadId('');
+                }
+              }}
+              className="mt-0.5 h-4 w-4 rounded border-border"
+            />
+            <label htmlFor="is-master-ib" className="flex-1 cursor-pointer">
+              <span className="block text-sm font-medium">{t('hr.masterIb')}</span>
+              <span className="block text-[11px] text-muted-foreground mt-0.5 leading-tight">
+                {t('hr.masterIbHint')}
+              </span>
+            </label>
+          </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.ndPctPlaceholder')}</label>
             <input aria-label={t('hr.ndPctPlaceholder')} type="number" value={ndPct} onChange={e => setNdPct(e.target.value)} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
@@ -202,6 +257,24 @@ export function ProfileForm({
                 {t('hr.ndPctFixedCheckbox')}
               </label>
             )}
+          </div>
+          {/* % POR LÍNEA — lo que cobra el de ARRIBA por la línea de esta
+              persona. Se muestra siempre: aplica tanto al BDM dentro de un
+              head como al Master IB dentro de un BDM (son la misma mecánica,
+              un nivel más abajo). El mismo campo se edita en la fila de la
+              tarjeta de Fuerza Comercial. */}
+          <div>
+            <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pctLineaLabel')}</label>
+            <input
+              aria-label={t('hr.pctLineaLabel')}
+              type="number"
+              step="0.01"
+              value={pctLinea}
+              onChange={e => setPctLinea(e.target.value)}
+              placeholder={t('hr.pctLineaPlaceholder')}
+              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+            />
+            <p className="text-[11px] text-muted-foreground mt-1 leading-tight">{t('hr.pctLineaHint')}</p>
           </div>
           <div>
             <label className="block text-xs font-medium text-muted-foreground mb-1">{t('hr.pnlPctPlaceholder')}</label>

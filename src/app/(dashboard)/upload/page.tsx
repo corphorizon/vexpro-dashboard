@@ -148,7 +148,10 @@ interface WithdrawalRow { id: string; category: string; amount: number; }
 // expense_date (migration-056): 'YYYY-MM-DD' o null = sin fecha específica.
 // payment_order_id: orden de pago que originó el egreso (null = manual). Tiene
 // que viajar en el payload de guardado o el DELETE+INSERT de la RPC lo borra.
-interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; expense_date: string | null; payment_order_id: string | null; reference: string | null; attachment_bucket: string | null; attachment_path: string | null; attachment_name: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_uploaded_at: string | null; }
+// payment_order_description: SOLO display (subtítulo bajo el concepto en la
+// vista de lectura). Derivado en fetchExpenses desde la OP; no es columna de
+// expenses y la RPC de guardado lo ignora aunque viaje en el payload.
+interface ExpenseRow { id: string; concept: string; amount: number; paid: number; pending: number; is_fixed: boolean; category: string | null; expense_date: string | null; payment_order_id: string | null; payment_order_description?: string | null; reference: string | null; attachment_bucket: string | null; attachment_path: string | null; attachment_name: string | null; attachment_mime: string | null; attachment_size: number | null; attachment_uploaded_at: string | null; }
 
 // ─── Sortable row wrapper (drag-and-drop reorder) ─────────────────────────
 // Wraps each expense <tr> so it can be dragged via the leading handle
@@ -456,6 +459,7 @@ export default function UploadPage() {
         category: e.category ?? null,
         expense_date: e.expense_date ?? null,
         payment_order_id: e.payment_order_id ?? null,
+        payment_order_description: e.payment_order_description ?? null,
         // migration-060 — la RPC re-inserta el período entero desde este
         // payload: si la referencia no viaja acá, se borra sola al guardar.
         reference: e.reference ?? null,
@@ -2784,6 +2788,7 @@ export default function UploadPage() {
                         <ExpenseConcept
                           concept={exp.concept}
                           paymentOrderId={exp.payment_order_id}
+                          description={exp.payment_order_description}
                           suffix={exp.is_fixed ? (
                             <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 uppercase">
                               {t('expenses.fixedBadge')}

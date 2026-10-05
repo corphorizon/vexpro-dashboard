@@ -5,7 +5,7 @@ import { PAYMENT_ORDER_READ_ROLES } from '@/lib/roles';
 import { apiError } from '@/lib/api-error';
 import { serverAuditLog } from '@/lib/server-audit';
 import { ORDER_COLUMNS, actorName, normalizeOrder, withFiles } from '@/lib/payment-orders/server';
-import { proofCountError } from '@/lib/payment-orders/types';
+import { proofCountError, PAYMENT_PROOFS_BUCKET } from '@/lib/payment-orders/types';
 import {
   ALLOWED_PROOF_EXTENSIONS,
   MAX_PROOF_SIZE,
@@ -53,7 +53,7 @@ import {
 //            bien definida cuando puede haber cinco)
 // ---------------------------------------------------------------------------
 
-const BUCKET = 'payment-proofs';
+const BUCKET = PAYMENT_PROOFS_BUCKET;
 /** Vida de la URL firmada: alcanza para abrir/descargar, corta para compartir. */
 const SIGNED_TTL_SECONDS = 600;
 

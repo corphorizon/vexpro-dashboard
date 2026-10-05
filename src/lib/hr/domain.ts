@@ -139,6 +139,25 @@ export function esBdmGlobal(role: string): boolean {
 }
 
 /**
+ * ¿El % de net deposit de este perfil es FIJO (los tramos por volumen no lo
+ * mueven)?
+ *
+ * Dos causas, UN registro (§1.1):
+ *  · `nd_pct_fixed` — la excepción por perfil (migración 128).
+ *  · `bdm_global` — regla de rol del dueño (2026-09-16): «todo BDM GLOBAL no
+ *    se mueve de porcentajes según la tabla; lo máximo que puede ganar es lo
+ *    que tenga configurado». El caso que la destapó: Mariana Novelo (3%
+ *    pactado) tierizaba al 5% con $102K de ND y el diferencial de Luka sobre
+ *    su línea (pct_sobre_bdm_global 5 − 5) caía a 0 → cobraba el extra 0,5%
+ *    en vez del 2% pactado.
+ *
+ * Solo habla del % de comisión: los tramos de SALARIO no pasan por acá.
+ */
+export function pctEsFijoDePerfil(p: { role: string; nd_pct_fixed?: boolean | null }): boolean {
+  return esBdmGlobal(p.role) || !!p.nd_pct_fixed;
+}
+
+/**
  * ¿Puede `headRole` ser el `head_id` de alguien con `memberRole`?
  *
  * Hoy la regla es simple —lidera quien es líder— y NO se restringe por nivel a
@@ -151,12 +170,108 @@ export function puedeSerHeadDe(headRole: string, memberRole: string): boolean {
   return esLider(headRole) && (esLider(memberRole) || esBdm(memberRole));
 }
 
-/** Los perfiles que pueden aparecer en el selector "Supervisor" de un perfil. */
+/**
+ * Los perfiles que pueden aparecer en el selector "Supervisor" de un perfil.
+ *
+ * `incluirBdms` es la excepción del MASTER IB (migración 129, 2026-09-06): un
+ * master cuelga de la línea de un BDM, no de un head, así que sin esto Jose
+ * Emanuel Hernandez Alvarez no se podía colgar de Ana García —que es BDM— y la
+ * feature entera no se podía configurar. Se pide explícitamente (el formulario
+ * lo activa solo con el checkbox «Master IB» tildado) en vez de aflojar
+ * `puedeSerHeadDe` para todos: colgar un BDM común de otro BDM sigue sin
+ * tener sentido y el selector sigue sin ofrecerlo.
+ */
 export function possibleHeads<T extends { id: string; role: string }>(
   profiles: readonly T[],
-  opts?: { excludeId?: string },
+  opts?: { excludeId?: string; incluirBdms?: boolean },
 ): T[] {
-  return profiles.filter((p) => esLider(p.role) && p.id !== opts?.excludeId);
+  return profiles.filter(
+    (p) =>
+      (esLider(p.role) || (opts?.incluirBdms === true && esBdm(p.role))) &&
+      p.id !== opts?.excludeId,
+  );
+}
+
+/** Lo mínimo de un perfil para decidir si cuenta como equipo de otro. */
+export type MiembroDeEquipo = EstadoPerfil & {
+  id: string;
+  head_id: string | null;
+  /** Master IB (migración 129): cuelga de un BDM pero NO es su equipo. */
+  is_master_ib?: boolean | null;
+};
+
+/**
+ * ¿Esta persona tiene EQUIPO PROPIO a los efectos de comisiones?
+ *
+ * Es la pregunta que /comisiones hacía inline en tres lugares con la forma
+ * «¿alguien tiene mi id como head_id?», y que decide dos cosas caras: si la
+ * persona pierde los tramos de % por volumen (un sub-head cobra su % pactado,
+ * no el del tramo) y qué fila se guarda para ella bajo su head.
+ *
+ * ── Los hijos MASTER IB no cuentan (migración 129, 2026-09-06) ─────────────
+ * Colgar al Master IB Jose Emanuel de Ana García es lo que hace que la RPC le
+ * corte la subred a Ana (281.168,49 de agosto que no son suyos). Pero Ana
+ * sigue siendo una BDM: si ese hijo la convirtiera en "sub-head" perdería sus
+ * tramos y cambiaría la fila que se guarda bajo su head, y nadie pidió eso —
+ * el master es un socio con red propia, no un equipo de ventas a su cargo.
+ *
+ * MEDIDO el 2026-09-06, antes de tocar nada: ningún BDM de Vex Pro tiene hijos
+ * en `commercial_profiles` (todos los padres son head/sales_manager). Con
+ * `is_master_ib = false` en todas las filas —el default de la migración— esta
+ * función devuelve exactamente lo mismo que el `.some()` que reemplaza.
+ *
+ * Los DESPEDIDOS sí cuentan como equipo: se les siguen cargando net deposits
+ * negativos post-despido (misma regla que `appearsInCommissions`). Los
+ * inactivos sin fecha de baja (licencia) no.
+ */
+export function tieneEquipoPropio(
+  profileId: string,
+  profiles: readonly MiembroDeEquipo[],
+): boolean {
+  return profiles.some(
+    (s) =>
+      s.head_id === profileId &&
+      !s.is_master_ib &&
+      (estaActivo(s) || estaDespedido(s)),
+  );
+}
+
+/**
+ * LOS BDMs QUE LIDERAN UN GRUPO — el registro único de «BDM con gente colgada».
+ *
+ * ── Por qué existe, al lado de `tieneEquipoPropio` y no dentro ─────────────
+ * Son DOS preguntas distintas que se ven iguales y por eso van juntas acá:
+ *
+ *   · `tieneEquipoPropio` decide **plata**: si la persona pierde los tramos de
+ *     % por volumen y qué fila se guarda para ella bajo SU head. Ahí los hijos
+ *     MASTER IB NO cuentan (migración 129): Ana García sigue siendo una BDM y
+ *     conserva sus tramos, porque el master es un socio con red propia, no un
+ *     equipo de ventas a su cargo.
+ *   · `bdmsConEquipo` decide **pantalla**: a quién ofrece el selector
+ *     «Seleccionar BDM» del tab Equipos y a quién saca el tab Individual
+ *     (pedido del dueño, 2026-09-06: «si a un BDM como Ana ya se le asignó
+ *     alguien como millonariosteam… que YA NO salga en Individual, porque ahí
+ *     la quiero calcular como se calculan en equipo»). Acá los masters SÍ
+ *     cuentan: son justamente las líneas que ese grupo muestra.
+ *
+ * Unificarlas —hacer que un master convierta a Ana en sub-head— es exactamente
+ * lo que la 129 midió y evitó: le cambiaría los números sin que nadie lo pida.
+ *
+ * MEDIDO el 2026-09-06: en Vex Pro el único BDM con hijos es Ana García (un
+ * Master IB). Sin ningún master configurado esta función devuelve `[]`, el
+ * selector no aparece e Individual lista exactamente lo de siempre.
+ *
+ * Los DESPEDIDOS cuentan, igual que en `tieneEquipoPropio` (se les siguen
+ * cargando ND negativos post-despido); los inactivos sin fecha de baja no.
+ */
+export function bdmsConEquipo<T extends MiembroDeEquipo & { role: string }>(
+  profiles: readonly T[],
+): T[] {
+  return profiles.filter(
+    (p) =>
+      esBdm(p.role) &&
+      profiles.some((s) => s.head_id === p.id && (estaActivo(s) || estaDespedido(s))),
+  );
 }
 
 // ─── Predicados de estado ────────────────────────────────────────────────────

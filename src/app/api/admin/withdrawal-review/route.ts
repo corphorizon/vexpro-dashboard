@@ -30,6 +30,11 @@ import { loadQueue, type QueueFilters } from '@/lib/withdrawal-risk/query';
 import type { QueueResponse } from '@/lib/withdrawal-risk/api';
 import { bandsFor, calibrationFromParam, type RiskBand } from '@/lib/withdrawal-risk/score';
 
+// Hasta 60 s: la cola llegó a 812 filas (los instantáneos crecen ~25/día) y
+// el scoring pagina sus listas en tandas de 100 — sin techo explícito, el
+// default cortaba la función a mitad de camino.
+export const maxDuration = 60;
+
 const BANDS: readonly string[] = ['low', 'medium', 'high'];
 
 /** Una fecha mal formada se ignora en vez de filtrar por basura. */
