@@ -181,10 +181,38 @@ export async function fetchWithdrawals(companyId: string, periodIds?: string[], 
 
 // ─── Expenses ───
 
+/**
+ * Junta las descripciones de las líneas de una orden de pago en un texto
+ * mostrable ("Comisiones septiembre · Bono referidos"). `lines` llega como
+ * jsonb embebido → defensivo a propósito: cualquier forma inesperada devuelve
+ * null y la UI simplemente no muestra el subtítulo (el link a la orden sigue
+ * existiendo; esto es informativo, no plata).
+ */
+function descripcionDeOrden(lines: unknown): string | null {
+  if (!Array.isArray(lines)) return null;
+  const partes = lines
+    .map((l) =>
+      l && typeof l === 'object'
+        ? String((l as { description?: unknown }).description ?? '').trim()
+        : '',
+    )
+    .filter(Boolean);
+  return partes.length ? partes.join(' · ') : null;
+}
+
 export async function fetchExpenses(companyId: string, periodIds?: string[], opts?: QueryOpts): Promise<Expense[]> {
+  // Se embebe la orden origen (FK payment_order_id, migration-058) SOLO para
+  // derivar payment_order_description: el dueño quiere ver qué es cada egreso
+  // de OP sin abrir la orden (2026-10-05). El RLS de payment_orders permite
+  // select a miembros de la empresa (migration-054), así que el embed resuelve
+  // con el cliente del browser; si no resuelve, el egreso viaja igual sin
+  // subtítulo. Se pide únicamente `lines` — nada bancario sale de la orden.
+  // `!payment_order_id` desambigua: entre expenses y payment_orders hay DOS
+  // relaciones (esta FK y el expense_id legado en payment_orders) y PostgREST
+  // rechaza el embed sin decir cuál usar — medido 2026-10-05.
   let query = supabase
     .from('expenses')
-    .select('*')
+    .select('*, payment_orders!payment_order_id(lines)')
     .eq('company_id', companyId)
     .order('sort_order', { ascending: true })
     .limit(10_000); // PERF-02: cota defensiva (ver comentario en fetchDeposits)
@@ -200,8 +228,19 @@ export async function fetchExpenses(companyId: string, periodIds?: string[], opt
     rethrowIfAborted(opts, error);
     return [];
   }
-  // Defensive default: ensure is_fixed is always boolean even if column missing in older rows
-  return (data ?? []).map((e) => ({ ...e, is_fixed: !!e.is_fixed }));
+  // Defensive default: ensure is_fixed is always boolean even if column missing in older rows.
+  // El objeto embebido se descarta tras derivar la descripción: ningún
+  // consumidor debe ver una clave `payment_orders` colada en un Expense.
+  return (data ?? []).map((e) => {
+    const { payment_orders: orden, ...row } = e as typeof e & {
+      payment_orders?: { lines?: unknown } | null;
+    };
+    return {
+      ...row,
+      is_fixed: !!row.is_fixed,
+      payment_order_description: descripcionDeOrden(orden?.lines),
+    };
+  });
 }
 
 // ─── Expense Templates (Egresos Fijos plantillas) ───

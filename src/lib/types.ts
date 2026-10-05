@@ -107,6 +107,13 @@ export interface Expense {
   // el período entero desde el payload del cliente — si esta columna no viaja
   // en ese payload, el vínculo se pierde en el próximo guardado.
   payment_order_id?: string | null;
+  // Descripción de la(s) línea(s) de la orden que originó el egreso (dueño
+  // 2026-10-05: "que se vea en la tabla de egresos... sin ingresar a la orden").
+  // DERIVADO EN LECTURA: fetchExpenses lo arma embebiendo payment_orders(lines)
+  // vía el FK de migration-058 — NO es columna de expenses y nunca se persiste
+  // (replace_period_expenses lee claves explícitas del jsonb y lo ignora).
+  // null = egreso manual, orden sin descripciones o embed no resuelto.
+  payment_order_description?: string | null;
 
   // Traza del pago (migration-060). Misma pareja que en las órdenes de pago:
   // referencia en texto (hash, nº de operación o link) y archivo adjunto.

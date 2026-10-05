@@ -20,15 +20,33 @@ const OP_PREFIX = /^(OP-\d{4}-\d+)\s*·\s*(.*)$/;
 export function ExpenseConcept({
   concept,
   paymentOrderId,
+  description,
   suffix,
 }: {
   concept: string;
   /** id de la orden que originó el egreso; null/undefined = egreso manual. */
   paymentOrderId?: string | null;
+  /** Descripción de las líneas de la orden (payment_order_description):
+   *  se muestra como subtítulo tenue para saber qué es el egreso sin abrir
+   *  la OP (dueño, 2026-10-05). Solo aplica a egresos con orden. */
+  description?: string | null;
   /** Contenido extra a la derecha (badges, etc.). */
   suffix?: React.ReactNode;
 }) {
   const { t } = useI18n();
+
+  // Subtítulo con la descripción de la orden, debajo de la línea principal.
+  // `break-words` y no `truncate`: la descripción ES el dato que se pidió ver,
+  // recortarla en silencio sería esconderlo de nuevo.
+  const conDescripcion = (principal: React.ReactNode) =>
+    description ? (
+      <span className="flex flex-col min-w-0">
+        {principal}
+        <span className="text-xs text-muted-foreground break-words">{description}</span>
+      </span>
+    ) : (
+      principal
+    );
 
   if (!paymentOrderId) {
     return (
@@ -46,7 +64,7 @@ export function ExpenseConcept({
 
   if (match) {
     const [, orderNumber, rest] = match;
-    return (
+    return conDescripcion(
       <span className="inline-flex items-center gap-1.5">
         <span>
           <Link
@@ -61,12 +79,12 @@ export function ExpenseConcept({
           {rest ? <span> · {rest}</span> : null}
         </span>
         {suffix}
-      </span>
+      </span>,
     );
   }
 
   // Concepto renombrado: el número ya no está, pero el vínculo sigue existiendo.
-  return (
+  return conDescripcion(
     <span className="inline-flex items-center gap-1.5">
       {concept}
       <Link
@@ -79,6 +97,6 @@ export function ExpenseConcept({
         <ExternalLink className="w-3.5 h-3.5" />
       </Link>
       {suffix}
-    </span>
+    </span>,
   );
 }

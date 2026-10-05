@@ -58,7 +58,12 @@ export default function EgresosPage() {
     // Search filter
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
-      result = result.filter(e => e.concept.toLowerCase().includes(q));
+      // Busca también en la descripción de la OP: es texto visible en la
+      // tabla, y lo visible tiene que ser buscable.
+      result = result.filter(e =>
+        e.concept.toLowerCase().includes(q) ||
+        (e.payment_order_description ?? '').toLowerCase().includes(q),
+      );
     }
 
     // Sort by amount
@@ -147,7 +152,7 @@ export default function EgresosPage() {
                 const exps = showPreoperativo ? preoperativeExpenses : filteredExpenses;
                 const headers = showPreoperativo
                   ? ['#', t('expenses.concept'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')]
-                  : ['#', t('expenses.concept'), 'Categoría', t('expenses.date'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
+                  : ['#', t('expenses.concept'), 'Descripción OP', 'Categoría', t('expenses.date'), t('expenses.amount'), t('expenses.paid'), t('expenses.pending')];
                 const rows = exps.map((e, i) => {
                   if (showPreoperativo) {
                     return [i + 1, e.concept, e.amount, e.paid, e.pending] as (string | number)[];
@@ -155,7 +160,7 @@ export default function EgresosPage() {
                   const exp = e as Expense;
                   // La fecha va completa (DD/MM/AAAA) en el CSV: fuera de la
                   // tabla no hay período que dé el año por contexto.
-                  return [i + 1, exp.concept, exp.category ?? '', exp.expense_date ? formatDate(exp.expense_date) : '', exp.amount, exp.paid, exp.pending] as (string | number)[];
+                  return [i + 1, exp.concept, exp.payment_order_description ?? '', exp.category ?? '', exp.expense_date ? formatDate(exp.expense_date) : '', exp.amount, exp.paid, exp.pending] as (string | number)[];
                 });
                 downloadCSV(`egresos_${(summary?.period.label || 'export').replace(/\s/g, '_')}.csv`, headers, rows);
               })}
@@ -301,7 +306,11 @@ export default function EgresosPage() {
                       {/* Si el egreso vino de una orden de pago, el número de OP
                           es link al detalle de la orden. */}
                       <td className="py-2.5 px-3">
-                        <ExpenseConcept concept={expense.concept} paymentOrderId={expense.payment_order_id} />
+                        <ExpenseConcept
+                          concept={expense.concept}
+                          paymentOrderId={expense.payment_order_id}
+                          description={expense.payment_order_description}
+                        />
                       </td>
                       <td className="py-2.5 px-3">
                         {expense.category ? (
