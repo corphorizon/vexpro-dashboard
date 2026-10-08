@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
+import { releerHuella, verificarHuella } from '@/lib/expenses/huella-periodo-server';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/expenses
@@ -20,6 +21,34 @@ import { apiError } from '@/lib/api-error';
 // así que un body forjado no puede escribir en otra empresa. La RPC
 // replace_period_expenses omite auth_can_edit solo bajo service_role (ver
 // migración replace_period_expenses_service_role_bypass).
+//
+// GUARD DE CONCURRENCIA OPTIMISTA (2026-10-08): la RPC pisa el período entero
+// con lo que trae el body. El 2026-10-08 una pestaña con buffer viejo borró en
+// Horizon dos egresos creados minutos antes desde otra pestaña ("Pago soporte
+// hector" $3,500 y "FX Expo Argentina" $2,500) — sin error y sin log, porque
+// para ese buffer nunca habían existido. Ahora el cliente manda `baseline`: la
+// huella (count + max updated_at de las filas MANUALES, ver
+// lib/expenses/huella-periodo.ts) de las filas desde las que armó su pantalla.
+// Antes de la RPC se calcula la huella ACTUAL con el mismo helper; si difieren
+// → 409 `conflict` con los números de las dos puntas, y la RPC no corre.
+// Tras guardar se devuelve la huella nueva (`huella`) para que el cliente
+// re-sincronice su baseline sin refetch. El chequeo, el 409 y la relectura
+// viven en lib/expenses/huella-periodo-server.ts, compartidos con el op
+// `expense_order` de /api/admin/data.
+//
+// Sin `baseline` → comportamiento anterior, sin guard. Es a propósito: un
+// cliente viejo en caché (pestaña abierta antes del deploy) no manda el campo,
+// y rechazarlo le rompería TODO guardado de egresos hasta recargar. Un
+// `baseline` presente pero mal formado sí da 400: eso no es un cliente viejo,
+// y degradarlo a "guardar sin guard" sería pisar a ciegas.
+//
+// LIMITACIÓN ACEPTADA: entre el chequeo y la RPC hay una ventana (un SELECT
+// y la llamada a la RPC, del orden de los ms — el DELETE+INSERT mide ~9 ms,
+// ver arriba) en la que otra escritura puede colarse. El guard cubre el caso
+// real — pestañas con MINUTOS de desfase —, no dos guardados en el mismo
+// milisegundo. Cerrarla del todo exige mover el chequeo dentro de la RPC
+// (columna version / huella como parámetro), o sea migración y tocar la RPC;
+// se descartó por ahora (ver cabecera de lib/expenses/huella-periodo.ts).
 // ---------------------------------------------------------------------------
 
 interface ExpenseRow {
@@ -96,12 +125,21 @@ export async function POST(request: NextRequest) {
     if (auth instanceof NextResponse) return auth;
 
     const body = await request.json();
-    const { periodId, rows } = body as { periodId?: string; rows?: ExpenseRow[] };
+    const { periodId, rows, baseline: rawBaseline } = body as {
+      periodId?: string;
+      rows?: ExpenseRow[];
+      baseline?: unknown;
+    };
     if (!periodId || !Array.isArray(rows)) {
       return NextResponse.json({ error: 'periodId y rows son requeridos' }, { status: 400 });
     }
 
     const admin = createAdminClient();
+
+    // Guard de huella ANTES de la RPC (ver cabecera). null = se puede seguir.
+    const bloqueo = await verificarHuella(admin, auth.companyId, periodId, rawBaseline, 'admin/expenses');
+    if (bloqueo) return bloqueo;
+
     const { error } = await admin.rpc('replace_period_expenses', {
       p_company_id: auth.companyId, // del token, nunca del body
       p_period_id: periodId,
@@ -147,6 +185,10 @@ export async function POST(request: NextRequest) {
       })),
     });
     if (error) return apiError('admin/expenses', error, { status: 500 });
+
+    // Huella NUEVA para que el cliente re-sincronice su baseline sin refetch
+    // (null = no se pudo releer; el guardado igual ocurrió).
+    const huella = await releerHuella(admin, auth.companyId, periodId, 'admin/expenses');
 
     // Sync de plantillas de egresos fijos (best-effort, no bloquea la respuesta).
     //
@@ -198,7 +240,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true, huella });
   } catch (err) {
     return apiError('admin/expenses', err, { status: 500 });
   }

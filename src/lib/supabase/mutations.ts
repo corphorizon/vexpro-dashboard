@@ -1,5 +1,6 @@
 import { withActiveCompany, apiFetch } from '@/lib/api-fetch';
 import type { PinnedWalletRole } from '@/lib/pinned-wallet-roles';
+import { CONFLICTO_PERIODO, parsearHuella, type HuellaEgresos } from '@/lib/expenses/huella-periodo';
 
 // Todas las ESCRITURAS de datos van server-side vía /api/admin/data (dispatcher)
 // para evitar el cuelgue recurrente del auth-refresh del cliente supabase-js del
@@ -128,11 +129,56 @@ export async function upsertWithdrawals(
 //   3. A hard 20s timeout on the main save so a stuck network never
 //      locks the UI button in a "Guardando..." state.
 
+/**
+ * El servidor rechazó el guardado con 409 porque el período cambió desde que
+ * se cargó la pantalla (guard de huella, ver lib/expenses/huella-periodo.ts).
+ * Tipo propio para que el llamador lo distinga de un error de red: acá NO hay
+ * que deshacer lo tecleado ni reintentar, hay que recargar.
+ */
+export class ConflictoPeriodoError extends Error {
+  readonly actual: HuellaEgresos | null;
+  constructor(mensaje: string, actual: HuellaEgresos | null) {
+    super(mensaje);
+    this.name = 'ConflictoPeriodoError';
+    this.actual = actual;
+  }
+}
+
+/**
+ * Lee la respuesta de una escritura de egresos con guard de huella. UN solo
+ * lugar que reconoce el 409 `conflict`: lo usan upsertExpenses y
+ * updateExpenseOrder, y si cada uno lo parseara a mano tarde o temprano uno
+ * dejaría de reconocerlo y el conflicto se mostraría como un error genérico.
+ * Devuelve la huella nueva; null = el server escribió pero no pudo releerla
+ * (o es un deploy anterior que no la devuelve) — no es "período vacío".
+ */
+async function respuestaConHuella(
+  res: Response,
+  errorPorDefecto: string,
+): Promise<{ huella: HuellaEgresos | null }> {
+  const data = await res.json().catch(() => null);
+  if (res.status === 409 && data?.error === CONFLICTO_PERIODO) {
+    throw new ConflictoPeriodoError(
+      typeof data.mensaje === 'string' && data.mensaje
+        ? data.mensaje
+        : 'Este período cambió desde que se cargó esta pantalla. Recargá la página.',
+      parsearHuella(data.actual),
+    );
+  }
+  if (!res.ok) {
+    throw new Error(data?.error || `${errorPorDefecto} (${res.status})`);
+  }
+  return { huella: parsearHuella(data?.huella) };
+}
+
 export async function upsertExpenses(
   _companyId: string,
   periodId: string,
-  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null; expense_date?: string | null; payment_order_id?: string | null; reference?: string | null; attachment_bucket?: string | null; attachment_path?: string | null; attachment_name?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_uploaded_at?: string | null }[]
-): Promise<void> {
+  expenses: { concept: string; amount: number; paid: number; pending: number; is_fixed?: boolean; category?: string | null; expense_date?: string | null; payment_order_id?: string | null; reference?: string | null; attachment_bucket?: string | null; attachment_path?: string | null; attachment_name?: string | null; attachment_mime?: string | null; attachment_size?: number | null; attachment_uploaded_at?: string | null }[],
+  // Huella de las filas desde las que se armó `expenses` (2026-10-08). El
+  // server la compara con la actual y responde 409 si el período cambió.
+  baseline: HuellaEgresos,
+): Promise<{ huella: HuellaEgresos | null }> {
   // Guardado SERVER-SIDE vía /api/admin/expenses (2026-07-13). Antes esto
   // llamaba supabase.rpc() desde el browser y se colgaba >12s de forma
   // recurrente: el cliente supabase-js intenta refrescar el token de auth
@@ -170,12 +216,9 @@ export async function upsertExpenses(
 
   const res = await apiFetch('/api/admin/expenses', {
     method: 'POST',
-    body: JSON.stringify({ periodId, rows }),
+    body: JSON.stringify({ periodId, rows, baseline }),
   });
-  if (!res.ok) {
-    const data = await res.json().catch(() => null);
-    throw new Error(data?.error || `Error guardando egresos (${res.status})`);
-  }
+  return respuestaConHuella(res, 'Error guardando egresos');
 }
 
 // ─── Egresos fijos: edición "de este mes en adelante" ───
@@ -225,9 +268,20 @@ export async function applyFixedExpenseForward(params: {
 // scale we care about (~30 rows) parallel UPDATE takes ~300ms end-to-end.
 // ---------------------------------------------------------------------------
 
-export async function updateExpenseOrder(ids: string[]): Promise<void> {
-  if (ids.length === 0) return;
-  await postData('expense_order', { ids });
+// Reordenar sube updated_at de las filas (trigger), o sea mueve la huella del
+// período: viaja con el mismo guard que upsertExpenses y devuelve la huella
+// nueva para que la pantalla no quede con un baseline viejo por un cambio
+// propio (ver op expense_order en /api/admin/data).
+export async function updateExpenseOrder(
+  ids: string[],
+  guard: { periodId: string; baseline: HuellaEgresos },
+): Promise<{ huella: HuellaEgresos | null }> {
+  if (ids.length === 0) return { huella: null };
+  const res = await apiFetch('/api/admin/data', {
+    method: 'POST',
+    body: JSON.stringify({ op: 'expense_order', ids, periodId: guard.periodId, baseline: guard.baseline }),
+  });
+  return respuestaConHuella(res, 'Error guardando (expense_order)');
 }
 
 // ─── Expense Templates (CRUD) ───

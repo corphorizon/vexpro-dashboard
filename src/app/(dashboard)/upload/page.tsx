@@ -123,7 +123,9 @@ import {
   upsertPropFirmSales,
   upsertP2PTransfers,
   applyFixedExpenseForward,
+  ConflictoPeriodoError,
 } from '@/lib/supabase/mutations';
+import { huellaDeEgresosManuales, type HuellaEgresos } from '@/lib/expenses/huella-periodo';
 import { FixedForwardDialog } from '@/components/ui/fixed-forward-dialog';
 import { SELECTABLE_MOVEMENT_TYPES, inferMovementType } from '@/lib/investment-types';
 import { formatDayMonth } from '@/lib/dates';
@@ -613,6 +615,28 @@ export default function UploadPage() {
     return row?.auto ?? null;
   };
 
+  // ── Huella del período: guard anti-pisón de egresos (2026-10-08) ─────
+  // El guardado de egresos reemplaza el período entero con este buffer
+  // (replace_period_expenses, reglas §2.4). El 2026-10-08 una pestaña vieja
+  // de Horizon pisó así "Pago soporte hector" ($3,500) y "FX Expo Argentina"
+  // ($2,500), creados minutos antes desde otra pestaña — sin error ni log.
+  // Ahora cada siembra del buffer guarda también la HUELLA de las filas de
+  // las que salió (lib/expenses/huella-periodo.ts); el guardado la manda como
+  // `baseline` y el server responde 409 si el período ya no es ese.
+  //   · Buffer y huella se siembran JUNTOS, de las mismas filas: una huella
+  //     más nueva que el buffer abriría el agujero que esto cierra.
+  //   · Tras un guardado exitoso la huella se re-sincroniza con la que
+  //     devuelve el server (los guardados en cola parten de ella).
+  //   · expensesBufferPeriodRef: de qué período son las filas en pantalla.
+  //     Mientras hay guardados en vuelo el buffer no se re-siembra, así que
+  //     tras cambiar de mes puede seguir mostrando el anterior un instante.
+  //   · expenseConflictPeriodRef: período con un 409 vigente. Su buffer NO se
+  //     re-siembra para no borrar lo que el usuario tecleó; sale recargando o
+  //     cambiando de mes.
+  const expenseBaselinesRef = useRef(new Map<string, HuellaEgresos>());
+  const expensesBufferPeriodRef = useRef<string | null>(null);
+  const expenseConflictPeriodRef = useRef<string | null>(null);
+
   // Reload data when the PERIOD changes. Intentionally depends only on
   // `selectedPeriod` (and `dirtySection`). Earlier this effect also listed
   // the `loadXForPeriod` callbacks + raw `allExpenses` etc. as deps — but
@@ -639,7 +663,17 @@ export default function UploadPage() {
       // P2P transfer lives in the Retiros tab — share its dirty bucket.
       setP2PAmount(allP2PTransfers.find(p => p.period_id === selectedPeriod)?.amount || 0);
     }
-    if (!dirtySections.has('egresos')) {
+    if (!dirtySections.has('egresos') && expenseConflictPeriodRef.current !== selectedPeriod) {
+      // Siembra del buffer + su huella, de las MISMAS filas (ver arriba).
+      // Cambiar de mes deja atrás cualquier conflicto del mes anterior: al
+      // volver se re-siembra desde lo que haya y, si sigue viejo, el próximo
+      // guardado vuelve a dar 409.
+      expenseConflictPeriodRef.current = null;
+      expenseBaselinesRef.current.set(
+        selectedPeriod,
+        huellaDeEgresosManuales(allExpenses.filter(e => e.period_id === selectedPeriod)),
+      );
+      expensesBufferPeriodRef.current = selectedPeriod;
       setExpensesRaw(loadExpensesForPeriod(selectedPeriod));
     }
     if (!dirtySections.has('ingresos')) {
@@ -1157,20 +1191,36 @@ export default function UploadPage() {
         return reordered;
       });
 
-      // Persist sort_order — lightweight N-parallel UPDATE, no refresh.
+      // Persist sort_order — lightweight N-parallel UPDATE.
       // Only rows with real UUID ids (already saved in DB) go through;
       // locally-created rows that haven't been saved yet are skipped.
-      try {
-        const ids = reordered
-          .map((e) => e.id)
-          .filter((id) => /^[0-9a-f-]{36}$/i.test(id));
-        if (ids.length > 0) {
-          await updateExpenseOrder(ids);
+      //
+      // 2026-10-08: pasa por la cola de egresos con el guard de huella.
+      // Reordenar sube updated_at (trigger), o sea mueve la huella: fuera de
+      // la cola, el próximo guardado de esta misma pestaña daba un 409 falso.
+      // Y ahora SÍ refresca: al vaciarse la cola el buffer se re-siembra
+      // desde la base, y sin refresh volvería al orden viejo.
+      const periodId = selectedPeriodRef.current;
+      void enqueueExpenseWrite(periodId, async (baseline) => {
+        try {
+          const ids = reordered
+            .map((e) => e.id)
+            .filter((id) => /^[0-9a-f-]{36}$/i.test(id));
+          if (ids.length === 0) return;
+          const { huella } = await updateExpenseOrder(ids, { periodId, baseline });
+          if (huella) expenseBaselinesRef.current.set(periodId, huella);
+          await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
+            console.warn('[expenses:reorder] refresh after reorder failed');
+          });
+        } catch (err) {
+          if (err instanceof ConflictoPeriodoError) {
+            handleExpenseConflict(periodId, err);
+            return;
+          }
+          console.error('[expenses:reorder] failed to persist order:', err);
+          showError(t('upload.reorderError', { error: (err as Error).message }));
         }
-      } catch (err) {
-        console.error('[expenses:reorder] failed to persist order:', err);
-        showError(t('upload.reorderError', { error: (err as Error).message }));
-      }
+      });
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [pagedExpenses, expensesPage],
@@ -1572,15 +1622,99 @@ export default function UploadPage() {
   // Se marca 'egresos' dirty MIENTRAS guarda para que el sync-effect no
   // rehidrate la tabla desde una lectura a medio-camino; al terminar se
   // limpia el dirty, disparando un re-sync limpio desde la DB (con ids
-  // reales, reemplazando el id temporal optimista).
+  // reales, reemplazando el id temporal optimista). Desde 2026-10-08 "al
+  // terminar" es al vaciarse la cola de escrituras de egresos (ver abajo).
   const [savingExpenses, setSavingExpenses] = useState(false);
 
-  const persistExpenses = async (
+  // ── Cola de escrituras de egresos (2026-10-08) ─────────────────────────
+  // Todo lo que esta pantalla escribe sobre los egresos del período (guardar,
+  // reordenar, propagar un fijo, ocultar una plantilla) pasa por UNA cola en
+  // serie. Por qué, con el guard de huella:
+  //   · Cada escritura mueve la huella del período. Dos acciones seguidas
+  //     (marcar pagados dos egresos en un segundo) salían en paralelo con el
+  //     MISMO baseline: la segunda daba 409 por un cambio propio. En serie,
+  //     cada una lee el baseline al salir, ya actualizado por la anterior.
+  //   · El buffer NO se re-siembra hasta que la cola se vacía ('egresos'
+  //     queda dirty mientras haya algo en vuelo). Si se re-sembrara a mitad
+  //     de cola, una acción tomaría filas de esa siembra y saldría con el
+  //     baseline de un guardado posterior que esas filas no conocen — el
+  //     mismo pisón silencioso, ahora dentro de una sola pestaña.
+  //   · El período se fija al ENCOLAR, no al salir: si el usuario cambia de
+  //     mes con algo en cola, la escritura va al mes de las filas que lleva.
+  // De paso desaparece una carrera que ya existía: dos reemplazos del período
+  // en paralelo podían llegar al server en cualquier orden y el más viejo
+  // pisaba al más nuevo.
+  const expenseQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const pendingExpenseWritesRef = useRef(0);
+
+  /**
+   * Encola una escritura de egresos del período `periodId`. `job` recibe el
+   * baseline vigente AL MOMENTO DE SALIR. Devuelve null (y avisa) si el
+   * buffer en pantalla no es de ese período: armar el payload con filas de
+   * otro mes y mandarlo a este es exactamente lo que no puede pasar.
+   */
+  const enqueueExpenseWrite = (
+    periodId: string,
+    job: (baseline: HuellaEgresos) => Promise<void>,
+  ): Promise<void> | null => {
+    if (expensesBufferPeriodRef.current !== periodId) {
+      showError(t('upload.expenseBufferOtherPeriod'));
+      return null;
+    }
+    pendingExpenseWritesRef.current += 1;
+    markDirty('egresos');
+    setSavingExpenses(true);
+    const run = async () => {
+      try {
+        // Siempre existe: la siembra fija buffer, período y huella juntos, y
+        // el chequeo de arriba garantiza que el buffer es de este período.
+        const baseline = expenseBaselinesRef.current.get(periodId);
+        if (!baseline) {
+          showError(t('upload.expenseBufferOtherPeriod'));
+          return;
+        }
+        await job(baseline);
+      } finally {
+        pendingExpenseWritesRef.current -= 1;
+        if (pendingExpenseWritesRef.current === 0) {
+          setSavingExpenses(false);
+          // Cola vacía → re-sync desde la base: ids reales y huella nueva,
+          // sembrados juntos (salvo conflicto vigente, ver arriba).
+          clearDirty('egresos');
+        }
+      }
+    };
+    const p = expenseQueueRef.current.then(run);
+    // La cadena nunca queda rechazada: un job que falla no frena a los demás.
+    expenseQueueRef.current = p.catch(() => {});
+    return p;
+  };
+
+  /**
+   * 409 del guard: el período cambió desde la siembra. NO se deshace lo
+   * tecleado (el buffer queda como está, y no se re-siembra mientras dure el
+   * conflicto) y NO se informa éxito: se muestra el mensaje del server, que
+   * pide recargar.
+   */
+  const handleExpenseConflict = (periodId: string, err: ConflictoPeriodoError) => {
+    expenseConflictPeriodRef.current = periodId;
+    Sentry.captureMessage('upload.egresos: escritura bloqueada por huella del período', {
+      level: 'warning',
+      extra: {
+        periodId,
+        baseline: expenseBaselinesRef.current.get(periodId) ?? null,
+        actual: err.actual,
+      },
+    });
+    showError(err.message);
+  };
+
+  const persistExpenses = (
     nextList: ExpenseRow[],
     previousList: ExpenseRow[],
     opts: { toast: string; audit?: { action: 'create' | 'update' | 'delete'; details: string } },
-  ) => {
-    if (!company) return;
+  ): Promise<void> => {
+    if (!company) return Promise.resolve();
     // Red de seguridad central de los egresos (alta, edición, marcar pagado,
     // borrar, fijo, import): con el mes cerrado el trigger rechaza la
     // escritura, así que se deshace el optimista y no se sale a la red. Los
@@ -1588,36 +1722,48 @@ export default function UploadPage() {
     // explica el porqué en pantalla.
     if (selectedPeriodIsClosed) {
       setExpensesRaw(previousList);
-      return;
+      return Promise.resolve();
     }
-    markDirty('egresos');
-    setSavingExpenses(true);
-    try {
-      await withRowTimeout(
-        upsertExpenses(company.id, selectedPeriodRef.current, nextList),
-        t('upload.opSaveExpense'),
-      );
-      if (user && opts.audit) {
-        logAction(user.id, user.name, opts.audit.action, 'expenses', opts.audit.details);
+    const companyId = company.id;
+    const periodId = selectedPeriodRef.current;
+    const queued = enqueueExpenseWrite(periodId, async (baseline) => {
+      try {
+        const { huella } = await withRowTimeout(
+          upsertExpenses(companyId, periodId, nextList, baseline),
+          t('upload.opSaveExpense'),
+        );
+        // Re-sincroniza el baseline sin refetch: lo que sigue en la cola sale
+        // desde acá. null = el server guardó pero no pudo releer la huella;
+        // queda la anterior y el re-sync al vaciarse la cola la corrige.
+        if (huella) expenseBaselinesRef.current.set(periodId, huella);
+        if (user && opts.audit) {
+          logAction(user.id, user.name, opts.audit.action, 'expenses', opts.audit.details);
+        }
+        showSuccess(opts.toast);
+        // Techo + catch propio: el upsert ya corrió; un refresh colgado dejaba
+        // el botón en "Guardando…" para siempre (Kevin, 2026-08-10) porque el
+        // finally nunca llegaba a resetear savingExpenses.
+        await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
+          console.warn('[egresos] refresh after save failed');
+        });
+      } catch (err) {
+        if (err instanceof ConflictoPeriodoError) {
+          handleExpenseConflict(periodId, err);
+          return;
+        }
+        setExpensesRaw(previousList); // rollback al estado previo (= lo que hay en DB)
+        Sentry.captureException(err, {
+          tags: { area: 'upload.persistExpenses' },
+          extra: { periodId },
+        });
+        showError(t('upload.saveExpenseError', { error: (err as Error).message }));
       }
-      showSuccess(opts.toast);
-      // Techo + catch propio: el upsert ya corrió; un refresh colgado dejaba
-      // el botón en "Guardando…" para siempre (Kevin, 2026-08-10) porque el
-      // finally nunca llegaba a resetear savingExpenses.
-      await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
-        console.warn('[egresos] refresh after save failed');
-      });
-    } catch (err) {
-      setExpensesRaw(previousList); // rollback al estado previo (= lo que hay en DB)
-      Sentry.captureException(err, {
-        tags: { area: 'upload.persistExpenses' },
-        extra: { periodId: selectedPeriodRef.current },
-      });
-      showError(t('upload.saveExpenseError', { error: (err as Error).message }));
-    } finally {
-      setSavingExpenses(false);
-      clearDirty('egresos'); // re-sync desde DB (ids reales) o limpia tras rollback
+    });
+    if (!queued) {
+      setExpensesRaw(previousList);
+      return Promise.resolve();
     }
+    return queued;
   };
 
   // ── Import CSV/Excel de egresos (QW9) ──────────────────────────────────
@@ -1778,32 +1924,43 @@ export default function UploadPage() {
   //   'forward' → plantilla + meses futuros ya materializados.
   const applyExpenseForward = async (apply: 'this' | 'forward') => {
     if (!forwardPending || apply === 'this') return;
-    try {
-      const { updatedPeriods } = await applyFixedExpenseForward({
-        periodId: selectedPeriodRef.current,
-        oldConcept: forwardPending.oldConcept,
-        concept: forwardPending.concept,
-        amount: forwardPending.amount,
-        category: forwardPending.category,
-        apply: 'forward',
-      });
-      showSuccess(
-        updatedPeriods > 0
-          ? t('expenses.forwardSuccess', { count: String(updatedPeriods) })
-          : t('expenses.forwardSuccessNone'),
-      );
-      if (user) {
-        logAction(user.id, user.name, 'update', 'expenses',
-          `Egreso fijo "${forwardPending.oldConcept}" propagado a ${updatedPeriods} mes(es) siguientes`);
+    const pending = forwardPending;
+    // 2026-10-08: por la cola de egresos. La propagación también actualiza la
+    // fila de ESTE mes (sube su updated_at, o sea la huella del período):
+    // fuera de la cola, el próximo guardado de esta pestaña daba un 409 falso.
+    // Al vaciarse la cola el buffer y su huella se re-siembran juntos desde
+    // lo que trae el refresh. La ruta no lleva guard propio: es un UPDATE de
+    // una fila por concepto, no un reemplazo del período — no pisa filas que
+    // esta pantalla no conozca.
+    const periodId = selectedPeriodRef.current;
+    await enqueueExpenseWrite(periodId, async () => {
+      try {
+        const { updatedPeriods } = await applyFixedExpenseForward({
+          periodId,
+          oldConcept: pending.oldConcept,
+          concept: pending.concept,
+          amount: pending.amount,
+          category: pending.category,
+          apply: 'forward',
+        });
+        showSuccess(
+          updatedPeriods > 0
+            ? t('expenses.forwardSuccess', { count: String(updatedPeriods) })
+            : t('expenses.forwardSuccessNone'),
+        );
+        if (user) {
+          logAction(user.id, user.name, 'update', 'expenses',
+            `Egreso fijo "${pending.oldConcept}" propagado a ${updatedPeriods} mes(es) siguientes`);
+        }
+        // Techo + catch propio: la propagación ya corrió; un refresh caído no
+        // debe reportarse como forwardError.
+        await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
+          console.warn('[egresos] refresh after forward failed');
+        });
+      } catch (err) {
+        showError(t('expenses.forwardError', { error: (err as Error).message }));
       }
-      // Techo + catch propio: la propagación ya corrió; un refresh caído no
-      // debe reportarse como forwardError.
-      await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
-        console.warn('[egresos] refresh after forward failed');
-      });
-    } catch (err) {
-      showError(t('expenses.forwardError', { error: (err as Error).message }));
-    }
+    });
   };
 
   const toggleExpenseFixed = (id: string) => {
@@ -3006,7 +3163,18 @@ export default function UploadPage() {
           <FixedExpenseTemplatesPanel
             selectedPeriodId={selectedPeriod}
             selectedPeriodLabel={periodLabel}
-            onChanged={() => { void refreshSections(['egresos']); }}
+            // Ocultar/mostrar borra o inserta la fila fija de ESTE mes: por la
+            // cola de egresos, para que al vaciarse el buffer y su huella se
+            // re-siembren juntos. Antes solo refrescaba y el buffer seguía con
+            // la fila oculta (el próximo guardado la resucitaba); con el
+            // guard de huella, además, daba un 409 falso.
+            onChanged={() => {
+              void enqueueExpenseWrite(selectedPeriodRef.current, async () => {
+                await withRowTimeout(refreshSections(['egresos']), t('upload.opReloadData')).catch(() => {
+                  console.warn('[egresos] refresh after template change failed');
+                });
+              });
+            }}
           />
         </Card>
       )}
