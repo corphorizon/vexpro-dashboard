@@ -4,6 +4,8 @@ import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { buildPeriodCloseChecklist } from '@/lib/period-close-checklist-data';
 import { releerHuella, verificarHuella } from '@/lib/expenses/huella-periodo-server';
+import { serverAuditLog } from '@/lib/server-audit';
+import { nextDefaultAfterInternal } from '@/lib/pinned-wallet-roles';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/data — dispatcher server-side de escrituras de datos.
@@ -292,12 +294,88 @@ export async function POST(request: NextRequest) {
             { status: 400 },
           );
         }
-        const { error } = await admin.from('pinned_coinsbuy_wallets')
+        const walletId = String(body.walletId);
+        // `.select()` para saber si TOCÓ filas: una wallet ya despinneada
+        // (pestaña vieja) no debe seguir al bloque de abajo, que con un pin
+        // inexistente dejaría el default en null y un asiento falso.
+        const { data: updated, error } = await admin.from('pinned_coinsbuy_wallets')
           .update({ role: body.role })
           .eq('company_id', companyId)
-          .eq('wallet_id', body.walletId);
+          .eq('wallet_id', walletId)
+          .select('wallet_id');
         if (error) return fail(error, op);
-        return NextResponse.json({ success: true });
+        if (!updated || updated.length === 0) {
+          return NextResponse.json(
+            { success: false, error: 'La wallet no está fijada para esta empresa' },
+            { status: 404 },
+          );
+        }
+
+        // Si la wallet que acaba de volverse INTERNA es el default de
+        // Movimientos, se reasigna ACÁ, donde se escribe el rol. El 409 de
+        // /api/admin/wallet-preference no cubre este camino: AP Markets
+        // (2026-10-05) seleccionó 1804 "Expenses" siendo operativa (quedó
+        // persistida como default), la fijó y luego le cambió el rol — y el
+        // banner abrió cinco días en una wallet sin depósitos ($0 con tilde
+        // verde; la 1362 tenía 21 depósitos por $16.305,27). La guarda del
+        // cliente solo repara al recargar, y solo si entra un admin: la plata
+        // no puede depender de la corrección del navegador.
+        //
+        // Destino: la primera operativa fijada; si no hay ninguna, null (el
+        // banner cae a su fallback). No se inventa una interna. Update
+        // CONDICIONAL por si otro cambio ganó la carrera.
+        // Respuesta: `reassigned` dice si el default CAMBIÓ; `to` es el nuevo
+        // (null = quedó sin default). Nadie lo consume hoy; queda para que la
+        // UI pueda avisar sin tener que adivinar una codificación.
+        let defaultWalletReassigned = false;
+        let defaultWalletReassignedTo: string | null = null;
+        if (body.role === 'internal') {
+          const { data: company, error: cErr } = await admin
+            .from('companies')
+            .select('default_wallet_id')
+            .eq('id', companyId)
+            .maybeSingle<{ default_wallet_id: string | null }>();
+          if (cErr) return fail(cErr, op);
+          if (company?.default_wallet_id === walletId) {
+            // Lectura directa y no fetchPinnedWallets(): esa helper devuelve []
+            // ante un error de DB — acá eso pondría el default en null en
+            // silencio — y no ordena por created_at, que es lo que define
+            // "la primera operativa".
+            const { data: pins, error: pErr } = await admin
+              .from('pinned_coinsbuy_wallets')
+              .select('wallet_id, role')
+              .eq('company_id', companyId)
+              .order('created_at', { ascending: true });
+            if (pErr) return fail(pErr, op);
+            const nextDefault = nextDefaultAfterInternal(walletId, pins ?? []);
+            // `.select()` para saber si GANÓ la carrera: si otro cambio movió
+            // el default entre el select y este update, 0 filas → no se
+            // reporta ni se audita un cambio que no ocurrió.
+            const { data: changed, error: uErr } = await admin
+              .from('companies')
+              .update({ default_wallet_id: nextDefault })
+              .eq('id', companyId)
+              .eq('default_wallet_id', walletId)
+              .select('id');
+            if (uErr) return fail(uErr, op);
+            if (!changed || changed.length === 0) {
+              return NextResponse.json({ success: true, defaultWalletReassigned, defaultWalletReassignedTo });
+            }
+            defaultWalletReassigned = true;
+            defaultWalletReassignedTo = nextDefault;
+            await serverAuditLog(admin, {
+              companyId,
+              actorId: auth.userId,
+              actorName: auth.name || auth.email,
+              action: 'update',
+              module: 'companies',
+              details:
+                `default_wallet_id ${walletId} → ${nextDefault ?? 'null'}: la wallet pasó a rol interno (solo balance) ` +
+                'y no puede ser la wallet por defecto de Movimientos.',
+            });
+          }
+        }
+        return NextResponse.json({ success: true, defaultWalletReassigned, defaultWalletReassignedTo });
       }
       case 'unpin_wallet': {
         const { error } = await admin.from('pinned_coinsbuy_wallets').delete().eq('company_id', companyId).eq('wallet_id', body.walletId);

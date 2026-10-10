@@ -1,12 +1,13 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useMemo, useState, useEffect, useRef } from 'react';
 import { Card } from '@/components/ui/card';
 import { DataTable } from '@/components/ui/data-table';
 import { StatCard } from '@/components/ui/stat-card';
 import { MovimientosPeriodSelector } from '@/components/movimientos-period-selector';
 import {
   RealTimeMovementsBanner,
+  type WalletChangeSource,
   DEFAULT_WALLET_ID,
 } from '@/components/realtime-movements-banner';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
@@ -88,16 +89,36 @@ export default function MovimientosPage() {
     return periods.filter((p) => ids.includes(p.id));
   }, [mode, selectedPeriodId, selectedPeriodIds, periods]);
 
-  // Keep the Coinsbuy wallet id in page-level state so the banner AND the
-  // "Depósitos" table below both filter by the same wallet (prevents the
-  // card total ≠ table row total bug).
+  // El walletId del banner vive en la página porque el banner es controlado:
+  // la página lo inicializa y persiste los cambios 'user'. Las tablas de abajo
+  // NO lo usan — scopean a las wallets operativas (walletId '' → modo 'pinned'
+  // en persisted-movements), ver useApiCoexistence más abajo.
   //
-  // Initial value comes from the tenant's companies.default_wallet_id
-  // (migration 031). When that's null the banner's options-load effect
-  // swaps in the first API wallet via onWalletChange.
+  // Valor inicial: companies.default_wallet_id (migración 031), que puede
+  // venir del snapshot de localStorage. Lo corrigen, siempre como 'auto' (sin
+  // persistir): el efecto de abajo cuando llega el default fresco, y en el
+  // banner la guarda de arranque (nunca una interna) y el fallback a la
+  // primera wallet de la API cuando no hay default.
   const [coinsbuyWalletId, setCoinsbuyWalletId] = useState<string>(
     company?.default_wallet_id ?? DEFAULT_WALLET_ID,
   );
+
+  // El valor inicial puede venir del snapshot SWR de localStorage (hasta 24 h
+  // de antigüedad: data-context hidrata `company` desde ahí antes de pedirlo).
+  // Como el useState se evalúa UNA vez, un default corregido en la base no se
+  // veía hasta cerrar sesión: AP Markets, 2026-10-10 — la base ya decía 1362
+  // "AP MARKETS" y la pantalla seguía abriendo en 1804 "Expenses" desde el
+  // snapshot, con Depósitos en $0. Mientras nadie haya elegido a mano en el
+  // selector, se sigue al default fresco cuando llega; los cambios 'auto' del
+  // banner (guarda de arranque, fallback) no cuentan como elección.
+  // Se descartó bajar el TTL del snapshot: el problema no es la edad del
+  // snapshot sino que el estado inicial no escuchaba al dato fresco.
+  const walletPickedRef = useRef(false);
+  useEffect(() => {
+    if (walletPickedRef.current) return;
+    const fresh = company?.default_wallet_id ?? DEFAULT_WALLET_ID;
+    setCoinsbuyWalletId((prev) => (prev === fresh ? prev : fresh));
+  }, [company?.default_wallet_id]);
 
   // When the user changes wallet from the banner dropdown, persist it to
   // companies.default_wallet_id so it survives reloads. Empty string ("")
@@ -105,8 +126,13 @@ export default function MovimientosPage() {
   // setState happens immediately so the UI reacts; the API call is
   // fire-and-forget (best-effort persistence; if it fails the local change
   // still applies for this session).
-  const handleWalletChange = (next: string) => {
+  const handleWalletChange = (next: string, source: WalletChangeSource = 'user') => {
     setCoinsbuyWalletId(next);
+    // Solo un pick HUMANO persiste y apaga el seguimiento del default fresco.
+    // Un cambio 'auto' del banner es de vista: persistirlo pisaría el default
+    // de la base con uno calculado sobre un snapshot posiblemente viejo.
+    if (source !== 'user') return;
+    walletPickedRef.current = true;
     apiFetch('/api/admin/wallet-preference', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
