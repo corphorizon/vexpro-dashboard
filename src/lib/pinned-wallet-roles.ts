@@ -67,11 +67,13 @@ export function selectOperatingWallets<T extends { role?: unknown }>(rows: reado
  * interna. Mejor un $0 explicado por el texto del banner que un número de una
  * wallet elegida a ciegas.
  *
- * Es solo el ARRANQUE. Se descartó re-aplicar la regla en cada cambio de
- * selección: para fijar una wallet o cambiarle el rol hay que seleccionarla, y
- * rebotar al usuario la dejaría sin forma de gestionar una interna. Que una
- * interna no QUEDE como default lo bloquea /api/admin/wallet-preference (409) y
- * lo repara `pin_wallet_role` cuando el rol cambia a interna.
+ * Se aplica mientras nadie haya elegido a mano: un pick humano la apaga, porque
+ * para fijar una wallet o cambiarle el rol hay que seleccionarla, y rebotar al
+ * usuario la dejaría sin forma de gestionar una interna. Lo que elige la guarda
+ * es de VISTA y nunca se persiste: calculado sobre un default que puede venir
+ * del snapshot viejo de localStorage, persistirlo pisaría el correcto de la
+ * base. Que una interna no QUEDE como default lo bloquea
+ * /api/admin/wallet-preference (409) y lo repara `pin_wallet_role`.
  */
 export function resolveStartupWallet<T extends { wallet_id: string; role?: unknown }>(
   preferred: string,

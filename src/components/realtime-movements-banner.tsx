@@ -117,13 +117,24 @@ function resolveInitialWalletId(
   return '';
 }
 
+/**
+ * Quién cambió la wallet. 'user' = el selector: persiste la preferencia y apaga
+ * la guarda de arranque. 'auto' = guarda de arranque o fallback de opciones:
+ * solo vista, NUNCA se persiste — un pick calculado sobre un default que vino
+ * del snapshot viejo de localStorage pisaría el correcto de la base (AP Markets
+ * 2026-10-10: snapshot 1804 → primera operativa 1553, que no tiene depósitos →
+ * habría pisado el 1362 real, que en octubre tenía 21 por $16.305,27).
+ */
+export type WalletChangeSource = 'user' | 'auto';
+
 interface BannerProps {
   /** Optional controlled wallet id. When provided, banner becomes controlled
-   *  and propagates changes via onWalletChange. Used so the Movimientos
-   *  page can keep the banner AND the "Depósitos" table in sync (same
-   *  walletId → same totals). */
+   *  and propagates changes via onWalletChange. La página de Movimientos es la
+   *  dueña del valor (lo inicializa desde companies.default_wallet_id y
+   *  persiste los cambios 'user'); sus tablas NO lo usan — scopean a las
+   *  wallets operativas (walletId '' → modo 'pinned'). */
   walletId?: string;
-  onWalletChange?: (walletId: string) => void;
+  onWalletChange?: (walletId: string, source?: WalletChangeSource) => void;
   /** Fires after the banner finishes a live sync (user pressed "Refrescar").
    *  The parent page uses this to invalidate its own persisted-movements
    *  cache so the tables below update with the freshly synced data. */
@@ -149,8 +160,12 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
     resolveInitialWalletId(walletIdProp, company?.default_wallet_id),
   );
   const walletId = walletIdProp ?? walletIdLocal;
-  const setWalletId = (id: string) => {
-    if (onWalletChange) onWalletChange(id);
+  // Un pick humano apaga la guarda de arranque para el resto de la sesión (ver
+  // el efecto más abajo). Vive en un ref: no debe re-renderizar nada.
+  const humanPickRef = useRef(false);
+  const setWalletId = (id: string, source: WalletChangeSource = 'user') => {
+    if (source === 'user') humanPickRef.current = true;
+    if (onWalletChange) onWalletChange(id, source);
     else setWalletIdLocal(id);
   };
   // Espejo del walletId vigente para leerlo DESPUÉS de un await (el efecto que
@@ -211,20 +226,25 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   }, [isAdmin, loadPinned]);
 
   // Guarda de ARRANQUE: una wallet interna nunca es punto de partida (ver
-  // resolveStartupWallet). Corre UNA vez, cuando llegan las pins con su rol.
-  // Se descartó re-aplicarla en cada cambio de selección: para fijar o
-  // cambiarle el rol a una interna hay que seleccionarla, y rebotar al usuario
-  // la dejaría sin forma de gestionarla. Si la selección cambia, viaja por
-  // setWalletId → onWalletChange, igual que un cambio manual, así la página y
-  // sus tablas quedan en el mismo walletId.
-  const startupGuardDone = useRef(false);
+  // resolveStartupWallet). Re-evalúa cada vez que cambian la selección o las
+  // pins, PERO solo mientras nadie haya elegido a mano (humanPickRef): así
+  // sigue al default fresco cuando llega del servidor —el inicial puede venir
+  // del snapshot de localStorage— y no rebota a quien selecciona una interna
+  // para fijarla o cambiarle el rol. Se descartó la versión "una sola vez":
+  // disparaba sobre el valor del snapshot y después ignoraba el fresco.
+  //
+  // El cambio viaja como 'auto' por onWalletChange porque el banner es
+  // CONTROLADO (la página es dueña del walletId); la página lo aplica a su
+  // estado pero NO lo persiste. La higiene de la base
+  // es del servidor: 409 en wallet-preference y reparación en pin_wallet_role.
+  // Sin bucle: si `next` ya es operativa, la siguiente evaluación devuelve el
+  // mismo valor y no vuelve a llamar a setWalletId.
   useEffect(() => {
-    if (startupGuardDone.current || pinned.length === 0) return;
-    startupGuardDone.current = true;
+    if (humanPickRef.current || pinned.length === 0) return;
     const next = resolveStartupWallet(walletId, pinned);
-    if (next !== walletId) setWalletId(next);
+    if (next !== walletId) setWalletId(next, 'auto');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pinned]);
+  }, [walletId, pinned]);
 
   const togglePin = async (id: string, label: string) => {
     if (!company?.id || !id || pinBusy) return;
@@ -291,7 +311,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
           // Y la primera wallet de la API pasa por resolveStartupWallet para
           // que, si está fijada como interna, arranque en una operativa.
           if (!walletIdRef.current && options.length > 0) {
-            setWalletId(resolveStartupWallet(options[0].id, pinnedRef.current));
+            setWalletId(resolveStartupWallet(options[0].id, pinnedRef.current), 'auto');
           }
         }
       } catch {
@@ -314,7 +334,14 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   //      providers, writes through to api_transactions, and shows fresh data.
   // This way opening the page is fast and free of API quotas, and the user
   // explicitly decides when to sync.
+  // Generación de la carga: la guarda de arranque puede encadenar 2-3 wallets
+  // en un segundo (snapshot 1804 → 1553 'auto' → 1362 fresco). Si la respuesta
+  // de una wallet vieja llegara DESPUÉS de la de la vigente, la tarjeta
+  // mostraría $0 con tilde verde y el selector diría 1362 — el síntoma
+  // original, ahora transitorio. Mismo patrón que useApiTotals más abajo.
+  const cacheLoadGen = useRef(0);
   const loadFromCache = useCallback(async () => {
+    const gen = ++cacheLoadGen.current;
     setLoading(true);
     setErrorMsg(null);
     try {
@@ -324,14 +351,16 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       if (walletId) qs.set('walletId', walletId);
       const res = await apiFetch(`/api/integrations/persisted-movements?${qs.toString()}`);
       const json = await res.json();
+      if (gen !== cacheLoadGen.current) return; // ya hay una carga más nueva en vuelo
       if (!json.success) throw new Error(json.error || 'Error cargando datos persistidos');
       setDatasets(json.datasets ?? []);
       setFetchedAt(json.fetchedAt);
       setTruncatedSlugs(json.truncatedSlugs ?? []);
     } catch (err) {
+      if (gen !== cacheLoadGen.current) return;
       setErrorMsg(err instanceof Error ? err.message : 'Error de red');
     } finally {
-      setLoading(false);
+      if (gen === cacheLoadGen.current) setLoading(false);
     }
   }, [from, to, walletId]);
 
@@ -543,7 +572,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
           {isAdmin && walletOptions.length > 0 ? (
             <select
               value={walletId}
-              onChange={(e) => setWalletId(e.target.value)}
+              onChange={(e) => setWalletId(e.target.value, 'user')}
               className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 max-w-[240px]"
               aria-label="Seleccionar wallet de Coinsbuy"
             >
