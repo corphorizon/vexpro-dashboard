@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback, useMemo } from 'react';
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import Link from 'next/link';
 import { Card } from '@/components/ui/card';
 import { formatCurrency } from '@/lib/utils';
@@ -31,7 +31,7 @@ import {
   setPinnedWalletRole,
 } from '@/lib/supabase/mutations';
 import { fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
-import { selectOperatingWallets, type PinnedWalletRole } from '@/lib/pinned-wallet-roles';
+import { resolveStartupWallet, selectOperatingWallets, type PinnedWalletRole } from '@/lib/pinned-wallet-roles';
 import type { PinnedCoinsbuyWallet } from '@/lib/types';
 import type {
   ProviderDataset,
@@ -153,6 +153,15 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
     if (onWalletChange) onWalletChange(id);
     else setWalletIdLocal(id);
   };
+  // Espejo del walletId vigente para leerlo DESPUÉS de un await (el efecto que
+  // carga las wallets de la API lo necesita): el closure de ese efecto captura
+  // el valor del montaje, y para un tenant sin default eso es '' aunque la
+  // guarda de arranque ya haya elegido una operativa. Se sincroniza en un
+  // efecto y no durante el render (regla react-hooks/refs).
+  const walletIdRef = useRef(walletId);
+  useEffect(() => {
+    walletIdRef.current = walletId;
+  });
   const [walletOptions, setWalletOptions] = useState<WalletOption[]>([]);
 
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
@@ -176,6 +185,10 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   // se las llevó puestas: Retiros Totales $932.444,83 en vez de $469.650,98
   // (la Main 1079) y Net Deposit −$231.127 alimentando la distribución.
   const [pinned, setPinned] = useState<PinnedCoinsbuyWallet[]>([]);
+  const pinnedRef = useRef(pinned);
+  useEffect(() => {
+    pinnedRef.current = pinned;
+  });
   // ── Retiros de Coinsbuy POR WALLET OPERATIVA (Kevin, 2026-08-31: «en
   // retiros de coinsbuy deben sumar 2: la VexPro Main Wallet y la Vex
   // Instant, creale otra tarjeta y sube esa data»). El selector de wallet
@@ -196,6 +209,22 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
   useEffect(() => {
     if (isAdmin) void loadPinned();
   }, [isAdmin, loadPinned]);
+
+  // Guarda de ARRANQUE: una wallet interna nunca es punto de partida (ver
+  // resolveStartupWallet). Corre UNA vez, cuando llegan las pins con su rol.
+  // Se descartó re-aplicarla en cada cambio de selección: para fijar o
+  // cambiarle el rol a una interna hay que seleccionarla, y rebotar al usuario
+  // la dejaría sin forma de gestionarla. Si la selección cambia, viaja por
+  // setWalletId → onWalletChange, igual que un cambio manual, así la página y
+  // sus tablas quedan en el mismo walletId.
+  const startupGuardDone = useRef(false);
+  useEffect(() => {
+    if (startupGuardDone.current || pinned.length === 0) return;
+    startupGuardDone.current = true;
+    const next = resolveStartupWallet(walletId, pinned);
+    if (next !== walletId) setWalletId(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinned]);
 
   const togglePin = async (id: string, label: string) => {
     if (!company?.id || !id || pinBusy) return;
@@ -257,9 +286,12 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
           // setWalletId() routes through onWalletChange when controlled,
           // so the parent's state stays in sync. When uncontrolled it
           // writes to walletIdLocal.
-          const effective = walletIdProp ?? walletIdLocal;
-          if (!effective && options.length > 0) {
-            setWalletId(options[0].id);
+          // Se lee del ref, no del closure: tras el await `walletIdLocal` es
+          // el del montaje y pisaría lo que la guarda de arranque ya eligió.
+          // Y la primera wallet de la API pasa por resolveStartupWallet para
+          // que, si está fijada como interna, arranque en una operativa.
+          if (!walletIdRef.current && options.length > 0) {
+            setWalletId(resolveStartupWallet(options[0].id, pinnedRef.current));
           }
         }
       } catch {
