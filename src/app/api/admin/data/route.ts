@@ -3,6 +3,7 @@ import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
 import { buildPeriodCloseChecklist } from '@/lib/period-close-checklist-data';
+import { releerHuella, verificarHuella } from '@/lib/expenses/huella-periodo-server';
 
 // ---------------------------------------------------------------------------
 // POST /api/admin/data — dispatcher server-side de escrituras de datos.
@@ -307,6 +308,17 @@ export async function POST(request: NextRequest) {
       // ── Expense ordering + templates ──
       case 'expense_order': {
         const ids: string[] = body.ids ?? [];
+        // Guard de huella (2026-10-08, ver lib/expenses/huella-periodo.ts):
+        // reordenar sube updated_at de las filas, así que mueve la huella del
+        // período. Sin chequear y devolver la huella nueva acá, la pestaña que
+        // reordena quedaba con un baseline viejo y su próximo guardado daba un
+        // 409 falso ("el período cambió") por un cambio propio. Opcional: sin
+        // periodId/baseline (cliente viejo) se comporta como antes.
+        const periodId = typeof body.periodId === 'string' ? body.periodId : null;
+        if (periodId) {
+          const bloqueo = await verificarHuella(admin, companyId, periodId, body.baseline, `admin/data:${op}`);
+          if (bloqueo) return bloqueo;
+        }
         const results = await Promise.all(
           ids.map((id, i) => admin.from('expenses')
             .update({ sort_order: i + 1, updated_at: new Date().toISOString() })
@@ -314,7 +326,8 @@ export async function POST(request: NextRequest) {
         );
         const firstErr = results.find((r) => r.error)?.error;
         if (firstErr) return fail(firstErr, op);
-        return NextResponse.json({ success: true });
+        const huella = periodId ? await releerHuella(admin, companyId, periodId, `admin/data:${op}`) : null;
+        return NextResponse.json({ success: true, huella });
       }
       case 'expense_template_set_active': {
         const { error } = await admin.from('expense_templates').update({ active: !!body.active }).eq('id', body.id).eq('company_id', companyId);

@@ -149,6 +149,14 @@ Agregar una columna a `expenses` obliga a tocar **cuatro** lugares a la vez:
 
 Ya se perdieron así: `expense_date`, `payment_order_id`, y los adjuntos.
 
+**Guard de huella (2026-10-08, tras perder $6.000 en Horizon):** una pestaña
+vieja pisó egresos creados desde otra. Ahora `/upload` manda `baseline` (count +
+max `updated_at` de las filas **manuales**, `lib/expenses/huella-periodo.ts`) y
+el server responde **409 `conflict`** si el período cambió, sin correr la RPC.
+Toda escritura nueva sobre los egresos del período desde `/upload` tiene que
+pasar por la cola `enqueueExpenseWrite` (o da 409 falsos), y toda ruta nueva que
+reemplace el período, por `verificarHuella` (`huella-periodo-server.ts`).
+
 **Y la regla de fondo** (migración 079, tras perder $1.700 reales):
 > *"La plata no puede depender de la corrección del navegador."*
 > El filtro va **server-authoritative y simétrico** (DELETE **e** INSERT).

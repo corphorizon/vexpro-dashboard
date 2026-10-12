@@ -130,6 +130,13 @@ export interface Expense {
   attachment_mime?: string | null;
   attachment_size?: number | null;
   attachment_uploaded_at?: string | null;
+
+  // SOLO LECTURA. Lo pone la base (default now() en el INSERT de la RPC y el
+  // trigger trg_expenses_updated_at en los UPDATE); viaja porque los fetch
+  // hacen select('*'). Nunca se manda en el payload de guardado. Se usa para
+  // la huella del período (lib/expenses/huella-periodo.ts): sin él, el guard
+  // anti-pisón del 2026-10-08 no ve que otra pestaña guardó.
+  updated_at?: string | null;
 }
 
 export interface ExpenseTemplate {
