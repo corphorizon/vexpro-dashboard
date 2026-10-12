@@ -111,10 +111,22 @@ function useControlProps<T extends { id?: string; 'aria-describedby'?: string; '
   };
 }
 
-export const Input = forwardRef<HTMLInputElement, React.InputHTMLAttributes<HTMLInputElement>>(
-  function Input({ className, ...props }, ref) {
+export interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  /**
+   * 32 px en vez de 36: el input DENTRO de una fila de tabla (spec §5.6, alto
+   * 32). Agregado 2026-10-12 para las celdas editables de /comisiones: `cn` es
+   * clsx sin tailwind-merge, así que un `h-8` del llamador no pisa el `h-9` de
+   * forma fiable — el alto tiene que decidirse acá.
+   */
+  compact?: boolean;
+}
+
+export const Input = forwardRef<HTMLInputElement, InputProps>(
+  function Input({ className, compact, ...props }, ref) {
     const { borderClass, ...wired } = useControlProps(props);
-    return <input ref={ref} {...props} {...wired} className={cn(CONTROL_CLASS, 'h-9', borderClass, className)} />;
+    return (
+      <input ref={ref} {...props} {...wired} className={cn(CONTROL_CLASS, compact ? 'h-8' : 'h-9', borderClass, className)} />
+    );
   },
 );
 
