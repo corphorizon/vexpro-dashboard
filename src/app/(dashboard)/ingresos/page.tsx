@@ -15,26 +15,38 @@
 //
 // Aplica a los dos modelos de negocio: `incomeLines` está en true tanto para
 // broker como para company (src/lib/business-model.ts).
+//
+// «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md):
+//   · KpiStrip (Facturado, Cobrado, Por cobrar hero, Clientes) en vez de tres
+//     StatCard. Los KPIs miran el período entero; la tabla y su pie, lo que
+//     deja la búsqueda — y el pie lo dice con números cuando filtra.
+//   · Panel «Facturación por cliente» como en el PDF de cierre de empresa de
+//     servicios: sale de buildBilling (income-view.ts), la misma función del
+//     PDF. Quien más debe primero.
+//   · FinTable de líneas: concepto con cliente/categoría/referencia como
+//     metadato, Facturado/Cobrado/Por cobrar con <Money>, estado con
+//     «Parcial» (antes una factura cobrada a medias se veía «Por cobrar»).
+//   · Error de carga como Notice `bad` (antes un EmptyState sin color).
+//
+// Medición (colores fuera de tokens, sin contar comentarios): antes 0 paleta
+// cruda, 1 `dark:` de color, 1 `text-[11px]`, 1 `[var(--color-primary)]` y 26
+// tokens legados (`text-muted-foreground`, `bg-muted`, `bg-info/10`); después 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  AlertTriangle,
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  Check,
-  Download,
-  Search,
-  TrendingUp,
-} from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import { StatCard } from '@/components/ui/stat-card';
-import { Badge } from '@/components/ui/badge';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, Search, TrendingUp, X } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Input } from '@/components/ui/field';
+import { Notice } from '@/components/ui/notice';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
-import { PageHeader } from '@/components/ui/page-header';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
+import { actionButtonClass } from '@/components/payment-orders/action-button';
 import { PeriodSelector } from '@/components/period-selector';
 import { NoPeriodsState } from '@/components/no-periods-state';
 import { useExport2FA } from '@/components/verify-2fa-modal';
@@ -47,18 +59,29 @@ import { apiFetch } from '@/lib/api-fetch';
 import { downloadCSV } from '@/lib/csv-export';
 import { formatDate, formatDayMonth } from '@/lib/dates';
 import { computeIncomeTotals, type IncomeLine } from '@/lib/income-lines';
-import { formatCurrency, periodLabel } from '@/lib/utils';
+import { UNASSIGNED_CLIENT_KEY } from '@/lib/clients';
+import type { BillingClientRow } from '@/lib/reports/company-report';
+import { cn, periodLabel } from '@/lib/utils';
+import {
+  INCOME_STATUS_KIND,
+  billingByClient,
+  filterIncomeLines,
+  incomeLineStatus,
+  type IncomeLineStatus,
+  type SortState,
+} from './income-view';
 
-type SortState = 'default' | 'desc' | 'asc';
-
-const SortIcon = ({ state }: { state: SortState }) => {
-  if (state === 'desc') return <ArrowDown className="w-3.5 h-3.5" />;
-  if (state === 'asc') return <ArrowUp className="w-3.5 h-3.5" />;
-  return <ArrowUpDown className="w-3.5 h-3.5" />;
+const STATUS_LABEL_KEY: Record<IncomeLineStatus, string> = {
+  collected: 'income.collectedStatus',
+  partial: 'income.partialStatus',
+  pending: 'income.pendingStatus',
 };
 
-/** Un pendiente por debajo del centavo es redondeo, no una deuda. */
-const PENDING_EPSILON = 0.009;
+const SortIcon = ({ state }: { state: SortState }) => {
+  if (state === 'desc') return <ArrowDown aria-hidden className="size-[15px]" strokeWidth={1.75} />;
+  if (state === 'asc') return <ArrowUp aria-hidden className="size-[15px]" strokeWidth={1.75} />;
+  return <ArrowUpDown aria-hidden className="size-[15px]" strokeWidth={1.75} />;
+};
 
 export default function IngresosPage() {
   const { t } = useI18n();
@@ -116,13 +139,12 @@ export default function IngresosPage() {
   const lines = useMemo(() => (result?.key === requestKey ? result.lines : []), [result, requestKey]);
 
   const currency = company?.currency || 'USD';
-  const money = useCallback((n: number) => formatCurrency(n, currency), [currency]);
 
-  const periodLabels = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const p of periods) map.set(p.id, p.label || periodLabel(p.year, p.month));
-    return map;
-  }, [periods]);
+  const periodMeta = useMemo(
+    () => periods.map((p) => ({ id: p.id, year: p.year, month: p.month, label: p.label || periodLabel(p.year, p.month) })),
+    [periods],
+  );
+  const periodLabels = useMemo(() => new Map(periodMeta.map((p) => [p.id, p.label])), [periodMeta]);
 
   // El consolidado recorta al conjunto elegido; el modo simple ya vino filtrado
   // por el endpoint, pero se re-filtra igual para que una respuesta vieja en
@@ -132,33 +154,23 @@ export default function IngresosPage() {
     return lines.filter((l) => allowed.has(l.period_id));
   }, [lines, mode, selectedPeriodIds, selectedPeriodId]);
 
-  const visibleLines = useMemo(() => {
-    let result = [...scopedLines];
+  const visibleLines = useMemo(
+    () => filterIncomeLines(scopedLines, searchQuery, sortState),
+    [scopedLines, searchQuery, sortState],
+  );
 
-    const q = searchQuery.trim().toLowerCase();
-    if (q) {
-      result = result.filter(
-        (l) =>
-          l.concept.toLowerCase().includes(q) || (l.client ?? '').toLowerCase().includes(q),
-      );
-    }
-
-    if (sortState === 'desc') result.sort((a, b) => b.amount - a.amount);
-    else if (sortState === 'asc') result.sort((a, b) => a.amount - b.amount);
-
-    return result;
-  }, [scopedLines, searchQuery, sortState]);
-
-  // Las tarjetas miran el período completo; la tabla y su pie, lo filtrado.
+  // Los KPIs y la facturación por cliente miran el período completo; la tabla
+  // de líneas y su pie, lo filtrado.
   const scopedTotals = useMemo(() => computeIncomeTotals(scopedLines), [scopedLines]);
   const visibleTotals = useMemo(() => computeIncomeTotals(visibleLines), [visibleLines]);
+  const billing = useMemo(() => billingByClient(scopedLines, periodMeta), [scopedLines, periodMeta]);
+  const openLines = useMemo(
+    () => scopedLines.filter((l) => incomeLineStatus(l) !== 'collected').length,
+    [scopedLines],
+  );
 
   const cycleSortState = () => {
-    setSortState((prev) => {
-      if (prev === 'default') return 'desc';
-      if (prev === 'desc') return 'asc';
-      return 'default';
-    });
+    setSortState((prev) => (prev === 'default' ? 'desc' : prev === 'desc' ? 'asc' : 'default'));
   };
 
   const scopeLabel =
@@ -207,8 +219,149 @@ export default function IngresosPage() {
   // el sistema está trabajando.
   if (!dataLoading && periods.length === 0) return <NoPeriodsState />;
 
+  const n = (x: number) => String(x);
+  const clientName = (key: string, name: string) =>
+    key === UNASSIGNED_CLIENT_KEY || !name ? t('income.unassignedClient') : name;
+
+  const kpiItems: KpiItem[] = [
+    {
+      key: 'invoiced',
+      label: t('income.invoiced'),
+      value: scopedTotals.amount,
+      currency,
+      sub: t('income.kpiLines', { count: n(scopedLines.length) }),
+    },
+    {
+      key: 'received',
+      label: t('income.received'),
+      value: scopedTotals.received,
+      currency,
+      sub: t('income.kpiReceivedHint'),
+    },
+    {
+      // La cifra que se mira para cobrar va destacada.
+      key: 'pending',
+      label: t('income.pendingAmount'),
+      value: scopedTotals.pending,
+      currency,
+      hero: true,
+      sub: t('income.kpiPendingHint', { count: n(openLines) }),
+    },
+    {
+      key: 'clients',
+      label: t('income.kpiClients'),
+      value: billing.clientCount,
+      format: 'count',
+      sub: t('income.kpiClientsHint', { count: n(billing.withDebt) }),
+    },
+  ];
+
+  const statusBadge = (l: IncomeLine) => {
+    const s = incomeLineStatus(l);
+    return <StatusBadge kind={INCOME_STATUS_KIND[s]} label={t(STATUS_LABEL_KEY[s])} />;
+  };
+  const dateText = (l: IncomeLine) => (l.income_date ? formatDayMonth(l.income_date) : '—');
+
+  const lineColumns: FinColumn<IncomeLine>[] = [
+    // En consolidado hay varios meses mezclados: sin esta columna dos facturas
+    // iguales de meses distintos se ven como un duplicado.
+    ...(mode === 'consolidated'
+      ? [
+          {
+            key: 'period',
+            header: t('income.period'),
+            hideSm: true,
+            cell: (l: IncomeLine) => (
+              <span className="whitespace-nowrap text-text-2">{periodLabels.get(l.period_id) ?? '—'}</span>
+            ),
+          },
+        ]
+      : []),
+    {
+      key: 'concept',
+      header: t('income.concept'),
+      cell: (l) => l.concept,
+      meta: (l) => [l.category?.trim(), l.reference?.trim()].filter(Boolean).join(' · ') || null,
+      mobileMeta: (l) => (
+        <>
+          {statusBadge(l)}
+          <span>{l.client?.trim() || t('income.unassignedClient')}</span>
+          {mode === 'consolidated' && <span>{periodLabels.get(l.period_id) ?? '—'}</span>}
+        </>
+      ),
+    },
+    {
+      key: 'client',
+      header: t('income.client'),
+      hideSm: true,
+      cell: (l) =>
+        l.client?.trim() ? (
+          <span className="text-foreground">{l.client}</span>
+        ) : (
+          <span className="text-text-3">{t('income.unassignedClient')}</span>
+        ),
+    },
+    {
+      key: 'date',
+      header: t('expenses.date'),
+      hideSm: true,
+      width: '72px',
+      cell: (l) => <span className={cn(NUM_CLASS, 'text-text-2')}>{dateText(l)}</span>,
+    },
+    { key: 'status', header: t('expenses.status'), hideSm: true, cell: statusBadge },
+    { key: 'amount', header: t('income.invoiced'), kind: 'money', value: (l) => l.amount, money: { currency } },
+    {
+      key: 'received',
+      header: t('income.received'),
+      kind: 'money',
+      value: (l) => l.received,
+      money: { currency },
+      hideSm: true,
+    },
+    {
+      key: 'pending',
+      header: t('income.pendingAmount'),
+      kind: 'money',
+      value: (l) => l.pending,
+      money: { currency },
+      hideSm: true,
+    },
+  ];
+
+  const clientColumns: FinColumn<BillingClientRow>[] = [
+    {
+      key: 'client',
+      header: t('income.client'),
+      cell: (c) =>
+        c.key === UNASSIGNED_CLIENT_KEY ? (
+          <span className="text-text-3">{clientName(c.key, c.name)}</span>
+        ) : (
+          clientName(c.key, c.name)
+        ),
+      mobileMeta: (c) => {
+        const s = incomeLineStatus({ received: c.collected, pending: c.pending });
+        return <StatusBadge kind={INCOME_STATUS_KIND[s]} label={t(STATUS_LABEL_KEY[s])} />;
+      },
+    },
+    { key: 'billed', header: t('income.invoiced'), kind: 'money', value: (c) => c.billed, money: { currency }, hideSm: true },
+    {
+      key: 'collected',
+      header: t('income.received'),
+      kind: 'money',
+      value: (c) => c.collected,
+      money: { currency },
+      hideSm: true,
+    },
+    { key: 'pending', header: t('income.pendingAmount'), kind: 'money', value: (c) => c.pending, money: { currency } },
+  ];
+
+  const filtered = visibleLines.length < scopedLines.length;
+  const lineFooterLabel = filtered
+    ? t('income.footerFiltered', { shown: n(visibleLines.length), total: n(scopedLines.length) })
+    : t('income.footerTotal', { count: n(visibleLines.length) });
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
       <PageHeader
         title={t('income.title')}
@@ -218,12 +371,14 @@ export default function IngresosPage() {
           <>
             <ConsolidatedBadge count={mode === 'consolidated' ? selectedPeriodIds.length : 1} />
             <button
+              type="button"
               onClick={exportCSV}
               disabled={visibleLines.length === 0}
-              className="inline-flex items-center gap-2 h-11 px-3 rounded-lg border border-border bg-card text-base sm:text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              className={actionButtonClass('secondary')}
               title={t('common.csv')}
+              aria-label={t('common.csv')}
             >
-              <Download className="w-4 h-4" />
+              <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="hidden sm:inline">{t('common.csv')}</span>
             </button>
             <PeriodSelector />
@@ -232,67 +387,69 @@ export default function IngresosPage() {
       />
 
       {loading ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {Array.from({ length: 3 }).map((_, i) => (
-              <Skeleton key={i} className="h-24" />
-            ))}
-          </div>
+        <div className="space-y-4" aria-busy="true">
+          <Skeleton className="h-[92px]" />
+          <Skeleton className="h-48" />
           <Skeleton className="h-72" />
         </div>
       ) : failed ? (
-        <Card>
-          <EmptyState icon={AlertTriangle} title={t('income.fetchError')} />
-        </Card>
+        <Notice kind="bad" title={t('income.fetchError')} />
       ) : (
         <>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <StatCard
-              label={t('income.invoiced')}
-              value={money(scopedTotals.amount)}
-              icon={TrendingUp}
-              tone="neutral"
-            />
-            <StatCard
-              label={t('income.received')}
-              value={money(scopedTotals.received)}
-              icon={Check}
-              tone="positive"
-            />
-            {/* La cifra que se mira para cobrar va destacada. */}
-            <StatCard
-              label={t('income.pendingAmount')}
-              value={money(scopedTotals.pending)}
-              icon={AlertTriangle}
-              tone={scopedTotals.pending > PENDING_EPSILON ? 'warning' : 'neutral'}
-              emphasis
-            />
-          </div>
+          <KpiStrip items={kpiItems} />
 
-          <Card>
-            <h2 className="text-lg font-semibold mb-4">
-              {t('income.detail')} — {scopeLabel}
-            </h2>
+          {/* Facturación por cliente — la del PDF de cierre (buildBilling). */}
+          {billing.clients.length > 0 && (
+            <Panel
+              flush
+              title={t('income.byClient')}
+              hint={t('income.byClientHint', { count: n(billing.clientCount), debt: n(billing.withDebt) })}
+            >
+              <FinTable
+                caption={t('income.byClient')}
+                columns={clientColumns}
+                rows={billing.clients}
+                rowKey={(c) => c.key}
+                maxHeight="45vh"
+                footer={{
+                  label: t('income.byClientFooter', { count: n(billing.clientCount) }),
+                  values: { billed: billing.billed, collected: billing.collected, pending: billing.pending },
+                }}
+              />
+            </Panel>
+          )}
 
-            <div className="flex flex-col sm:flex-row sm:items-center gap-3 mb-4">
-              <div className="relative flex-1 sm:max-w-sm min-w-0">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
-                <input
+          <Panel flush title={t('income.detail')} hint={scopeLabel} footer={t('income.readOnlyNote')}>
+            <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+              <div className="relative flex min-w-[220px] max-w-[320px] flex-1 items-center max-sm:max-w-none">
+                <Search aria-hidden className="pointer-events-none absolute left-2.5 size-[15px] text-text-3" />
+                <Input
                   type="search"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={t('income.search')}
                   aria-label={t('income.search')}
-                  className="w-full h-11 pl-9 pr-3 rounded-lg border border-border bg-background text-base sm:text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="pl-8 pr-8"
                 />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-1.5 inline-flex size-6 items-center justify-center rounded-ui-sm text-text-3 hover:text-foreground"
+                    aria-label={t('expenses.clearSearch')}
+                  >
+                    <X aria-hidden className="size-3.5" />
+                  </button>
+                )}
               </div>
               <button
+                type="button"
                 onClick={cycleSortState}
-                className={`inline-flex items-center gap-1.5 h-11 px-3 rounded-lg border text-base sm:text-sm font-medium transition-colors ${
-                  sortState !== 'default'
-                    ? 'border-[var(--color-primary)] text-primary dark:text-accent bg-info/10'
-                    : 'border-border hover:bg-muted'
-                }`}
+                aria-pressed={sortState !== 'default'}
+                className={actionButtonClass(
+                  'secondary',
+                  sortState !== 'default' ? 'border-brand-ink bg-brand-tint text-brand-ink hover:bg-brand-tint' : undefined,
+                )}
                 title={
                   sortState === 'default'
                     ? t('expenses.sortDefault')
@@ -302,109 +459,42 @@ export default function IngresosPage() {
                 }
               >
                 <SortIcon state={sortState} />
-                {t('expenses.sortAmount')}{' '}
-                {sortState === 'desc'
-                  ? t('expenses.sortHighest')
-                  : sortState === 'asc'
-                    ? t('expenses.sortLowest')
-                    : ''}
+                {t('expenses.sortAmount')}
+                {sortState !== 'default' && (
+                  <span className="text-text-3">
+                    {sortState === 'desc' ? t('expenses.sortHighest') : t('expenses.sortLowest')}
+                  </span>
+                )}
               </button>
             </div>
 
-            <div className="overflow-auto max-h-[65vh]">
-              <table className="w-full text-sm">
-                <thead className="sticky top-0 bg-card z-10">
-                  <tr className="border-b border-border">
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium w-8">#</th>
-                    {/* En consolidado hay varios meses mezclados: sin esta
-                        columna dos facturas iguales de meses distintos se ven
-                        como un duplicado. */}
-                    {mode === 'consolidated' && (
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">
-                        {t('income.period')}
-                      </th>
-                    )}
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('income.concept')}</th>
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('income.client')}</th>
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('income.category')}</th>
-                    {/* Fecha en DD/MM — el año lo da el período — para no
-                        ensanchar la tabla en móvil. */}
-                    <th className="text-left py-2 px-2 text-muted-foreground font-medium w-16">{t('expenses.date')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('income.invoiced')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('income.received')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('income.pendingAmount')}</th>
-                    <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.status')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleLines.length === 0 && (
-                    <tr>
-                      <td colSpan={mode === 'consolidated' ? 10 : 9} className="py-8 text-center text-muted-foreground">
-                        {searchQuery ? t('income.noResults') : t('income.noIncome')}
-                      </td>
-                    </tr>
-                  )}
-                  {visibleLines.map((line, i) => (
-                    <tr key={line.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                      <td className="py-2.5 px-3 text-muted-foreground">{i + 1}</td>
-                      {mode === 'consolidated' && (
-                        <td className="py-2.5 px-3 text-muted-foreground whitespace-nowrap">
-                          {periodLabels.get(line.period_id) ?? '—'}
-                        </td>
-                      )}
-                      <td className="py-2.5 px-3">{line.concept}</td>
-                      <td className="py-2.5 px-3">
-                        {line.client?.trim() ? (
-                          line.client
-                        ) : (
-                          <span className="text-xs text-muted-foreground">{t('income.unassignedClient')}</span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {line.category ? (
-                          <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-muted text-muted-foreground border border-border">
-                            {line.category}
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
-                        {line.income_date ? formatDayMonth(line.income_date) : '—'}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-medium">{money(line.amount)}</td>
-                      <td className="py-2.5 px-3 text-right">{money(line.received)}</td>
-                      <td className="py-2.5 px-3 text-right">{money(line.pending)}</td>
-                      <td className="py-2.5 px-3 text-center">
-                        <Badge variant={line.pending <= PENDING_EPSILON ? 'success' : 'warning'}>
-                          {line.pending <= PENDING_EPSILON
-                            ? t('income.collectedStatus')
-                            : t('income.pendingStatus')}
-                        </Badge>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                <tfoot>
-                  <tr className="font-bold bg-muted/50">
-                    {/* colSpan cubre TODAS las columnas de texto (incluida
-                        Fecha): con una de menos los totales quedan corridos
-                        una columna a la izquierda. */}
-                    <td className="py-3 px-3" colSpan={mode === 'consolidated' ? 6 : 5}>
-                      TOTAL
-                    </td>
-                    <td className="py-3 px-3 text-right">{money(visibleTotals.amount)}</td>
-                    <td className="py-3 px-3 text-right">{money(visibleTotals.received)}</td>
-                    <td className="py-3 px-3 text-right">{money(visibleTotals.pending)}</td>
-                    <td></td>
-                  </tr>
-                </tfoot>
-              </table>
-            </div>
-
-            {/* La edición vive en Carga de Datos → pestaña Ingresos. */}
-            <p className="mt-4 text-xs text-muted-foreground">{t('income.readOnlyNote')}</p>
-          </Card>
+            <FinTable
+              caption={t('income.detail')}
+              columns={lineColumns}
+              rows={visibleLines}
+              rowKey={(l) => l.id}
+              maxHeight="65vh"
+              footer={
+                visibleLines.length > 0
+                  ? {
+                      label: lineFooterLabel,
+                      values: {
+                        amount: visibleTotals.amount,
+                        received: visibleTotals.received,
+                        pending: visibleTotals.pending,
+                      },
+                    }
+                  : undefined
+              }
+              empty={
+                searchQuery ? (
+                  <EmptyState compact icon={Search} title={t('income.noResults')} />
+                ) : (
+                  <EmptyState compact icon={TrendingUp} title={t('income.noIncome')} />
+                )
+              }
+            />
+          </Panel>
         </>
       )}
     </div>

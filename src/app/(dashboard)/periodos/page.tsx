@@ -1,40 +1,74 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+// ─────────────────────────────────────────────────────────────────────────────
+// /periodos — abrir, cerrar y reabrir los meses contables.
+//
+// Cerrar congela los INSUMOS de la cadena de distribución (migración 061,
+// reglas-del-proyecto.md §2.3) y bloquea la edición del mes. Reabrir exige un
+// motivo que queda en el Registro de Actividad.
+//
+// «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md):
+//   · KpiStrip de conteos (Abiertos, En curso, Cerrados) en vez de tres Card
+//     con íconos sobre fondos de color crudo.
+//   · FinTable: Período (+ «cerrado por / cuándo» como meta en móvil), Estado
+//     con StatusBadge — Abierto `pend`, En curso `info`, Cerrado neutro (antes
+//     «Abierto» era verde, el color de «completado»; ver periods-view.ts) —,
+//     Reserva %, Cerrado por, Cerrado el, y acciones de fila.
+//   · La leyenda de estados (una Card aparte) pasa al pie del panel.
+//   · Checklist de cierre como Panel con un ítem por chequeo y su kind
+//     (ok/pend/bad): ahora se ven también los chequeos que dieron 0, así
+//     «sin pendientes de X» no se confunde con «no se revisó X». Los avisos
+//     de fallo y bloqueo son Notice; el motivo de reapertura, Field.
+//   · Los textos de los diálogos estaban en castellano fijo: ahora i18n.
+//
+// Medición (colores fuera de tokens, sin contar comentarios): antes 23 clases
+// de paleta cruda (`bg-slate-100`, `text-emerald-700`, `text-amber-600`,
+// `text-white`… 9 de ellas bajo `dark:`), 7 `dark:` de color, 1
+// `text-[10px]`, 1 `[var(--color-primary)]`, 31 tokens legados
+// (`text-muted-foreground`, `bg-negative/10`, `bg-warning/10`…) y un SVG de
+// ícono armado a mano; después 1: el scrim `bg-black/45` de los modales
+// (spec §6.1, igual que /socios — no es un color con significado).
+//
+// DESCARTADO:
+//   · Botón de cerrar en rojo (`bg-negative`): cerrar no es pérdida ni error
+//     (spec §2.1); es el primario del diálogo.
+//   · Ocultar las acciones de fila hasta el hover: FinTable ya lo hace en
+//     escritorio y las deja siempre visibles en táctil.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useEffect, useMemo, useState } from 'react';
+import { Calendar, Check, Lock, Unlock, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
-import { Card } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
 import { PageHeader } from '@/components/ui/page-header';
-import { Badge } from '@/components/ui/badge';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { Field, Textarea } from '@/components/ui/field';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
-import type { Period } from '@/lib/types';
 import { useI18n } from '@/lib/i18n';
 import { updatePeriodStatus } from '@/lib/supabase/mutations';
 import { useAutoClearMessage } from '@/lib/use-auto-clear-message';
-import { Calendar, Lock, Unlock, Clock, Check } from 'lucide-react';
-
-type PeriodStatus = 'closed' | 'open' | 'in_progress';
-
-interface ManagedPeriod {
-  id: string;
-  label: string;
-  year: number;
-  month: number;
-  status: PeriodStatus;
-}
-
-const STATUS_BADGE: Record<PeriodStatus, 'success' | 'warning' | 'neutral'> = {
-  closed: 'neutral',
-  open: 'success',
-  in_progress: 'warning',
-};
-
-const STATUS_ICON: Record<PeriodStatus, typeof Lock> = {
-  closed: Lock,
-  open: Unlock,
-  in_progress: Clock,
-};
+import { formatDate } from '@/lib/dates';
+import { cn } from '@/lib/utils';
+import {
+  PERIOD_STATUSES,
+  PERIOD_STATUS_KIND,
+  buildPeriodRows,
+  checklistRows,
+  checklistSummary,
+  periodStatusCounts,
+  type ChecklistApiItem,
+  type ChecklistState,
+  type PeriodRow,
+  type PeriodStatus,
+  type PeriodWithClose,
+} from './periods-view';
 
 const STATUS_LABEL_KEY: Record<PeriodStatus, string> = {
   closed: 'periods.closed',
@@ -48,80 +82,90 @@ const STATUS_DESC_KEY: Record<PeriodStatus, string> = {
   in_progress: 'periods.inProgressDesc',
 };
 
-// `is_closed` SIEMPRE va primero. Cuando el chequeo de "mes en curso" iba
-// antes, un período del mes actual que estaba cerrado en la base se mostraba
-// como "En curso": no aparecía ni "Cerrar" ni "Reabrir", pero el trigger de la
-// migración 061 seguía rechazando toda escritura — el mes quedaba irreabrible
-// desde la UI y sólo se destrababa con SQL directo.
-// "En curso" es, por definición, el mes actual TODAVÍA abierto.
-function getStatusFromPeriod(p: Period): PeriodStatus {
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth() + 1;
-  if (p.is_closed) return 'closed';
-  if (p.year === currentYear && p.month === currentMonth) return 'in_progress';
-  return 'open';
+/** Acción de fila con texto (Cerrar / Reabrir): mismo alto que el botón-ícono. */
+const ROW_TEXT_ACTION =
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md px-2.5 text-[12.5px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+
+/** Cáscara de modal: scrim, ESC para cerrar, cabecera con título y «×». */
+function Dialog({
+  title,
+  onClose,
+  children,
+  footer,
+  labelledBy,
+}: {
+  title: React.ReactNode;
+  onClose: () => void;
+  children: React.ReactNode;
+  footer: React.ReactNode;
+  labelledBy: string;
+}) {
+  const { t } = useI18n();
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        className="flex max-h-[85vh] w-full max-w-lg flex-col rounded-ui-xl border border-border bg-card shadow-3"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+          <h2 id={labelledBy} className="text-[15px] font-semibold text-foreground">
+            {title}
+          </h2>
+          <button type="button" onClick={onClose} className={ROW_ACTION_CLASS} aria-label={t('periods.dialogCancel')}>
+            <X aria-hidden className="size-4" strokeWidth={1.75} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">{children}</div>
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">{footer}</div>
+      </div>
+    </div>
+  );
 }
 
-export default function PeríodosPage() {
+export default function PeriodosPage() {
   const { t } = useI18n();
   const { user } = useAuth();
-  const { periods: dataPeriods, refresh } = useData();
+  const { periods: dataPeriods, refresh, loading } = useData();
   const isAdmin = canEdit(user);
+  // «En curso» depende del mes de hoy: se toma una vez al montar.
+  const [now] = useState(() => new Date());
 
-  // Derive managed periods from data context (always in sync)
-  const [managedPeriods, setManagedPeriods] = useState<ManagedPeriod[]>([]);
-
-  // Keep local state in sync with data context
-  useEffect(() => {
-    setManagedPeriods(
-      dataPeriods.map(p => ({
-        id: p.id,
-        label: p.label || '',
-        year: p.year,
-        month: p.month,
-        status: getStatusFromPeriod(p),
-      }))
-    );
-  }, [dataPeriods]);
+  const rows = useMemo(() => buildPeriodRows(dataPeriods as PeriodWithClose[], now), [dataPeriods, now]);
+  const counts = useMemo(() => periodStatusCounts(rows), [rows]);
 
   const [successMsg, showSuccessRaw] = useAutoClearMessage(3000);
   const [errorMsg, showErrorRaw] = useAutoClearMessage(4500);
   const [updating, setUpdating] = useState<string | null>(null);
 
-  // Mutually-exclusive surfacing: showing a success clears any error and
-  // vice-versa, so the UI never displays both at once.
+  // Mutuamente excluyentes: un éxito limpia el error y viceversa, para que la
+  // pantalla nunca muestre los dos a la vez.
   const showSuccess = (msg: string) => { showErrorRaw(''); showSuccessRaw(msg); };
   const showError = (msg: string) => { showSuccessRaw(''); showErrorRaw(msg); };
+  const errText = (err: unknown) =>
+    t('periods.actionError', { error: err instanceof Error ? err.message : t('periods.unknownError') });
 
-  const [closeTarget, setCloseTarget] = useState<{ id: string; label: string; statusLabel: string } | null>(null);
-  const [checklist, setChecklist] = useState<{
-    items: Array<{
-      key: string;
-      /** Clave i18n (registro único en src/lib/period-close-checklist.ts). */
-      labelKey?: string;
-      /** Respaldo en castellano para un cliente/servidor viejo. */
-      label?: string;
-      count: number;
-      detail: string | null;
-      severity?: 'warning' | 'blocking';
-    }>;
-    clean: boolean;
-    /** true → la RPC va a rechazar el cierre (orden cronológico). */
-    blocked?: boolean;
-    failed?: boolean;
-  } | null>(null);
+  const [closeTarget, setCloseTarget] = useState<{ id: string; label: string } | null>(null);
+  const [checklist, setChecklist] = useState<ChecklistState | null>(null);
+  const [closing, setClosing] = useState(false);
 
   /** Etiqueta traducida del ítem, con el respaldo del servidor si la clave
    *  todavía no está en i18n. Nunca se muestra la clave cruda. */
-  const itemLabel = (i: { labelKey?: string; label?: string; key: string }) => {
+  const itemLabel = (i: Pick<ChecklistApiItem, 'labelKey' | 'label' | 'key'>) => {
     if (i.labelKey) {
       const translated = t(i.labelKey);
       if (translated !== i.labelKey) return translated;
     }
     return i.label ?? i.key;
   };
-  const [closing, setClosing] = useState(false);
 
   const confirmClose = async () => {
     if (!closeTarget) return;
@@ -130,10 +174,10 @@ export default function PeríodosPage() {
     try {
       await updatePeriodStatus(closeTarget.id, true, undefined);
       await refresh();
-      showSuccess(t('periods.statusChanged', { label: closeTarget.label, status: closeTarget.statusLabel }));
+      showSuccess(t('periods.statusChanged', { label: closeTarget.label, status: t(STATUS_LABEL_KEY.closed) }));
       setCloseTarget(null);
     } catch (err) {
-      showError(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+      showError(errText(err));
     } finally {
       setClosing(false);
       setUpdating(null);
@@ -154,335 +198,320 @@ export default function PeríodosPage() {
       showSuccess(t('periods.statusChanged', { label: reopenTarget.label, status: t(STATUS_LABEL_KEY.open) }));
       setReopenTarget(null);
     } catch (err) {
-      showError(`Error: ${err instanceof Error ? err.message : 'Error desconocido'}`);
+      showError(errText(err));
     } finally {
       setReopening(false);
       setUpdating(null);
     }
   };
 
-  const changeStatus = (id: string, newStatus: PeriodStatus) => {
-    const period = managedPeriods.find(p => p.id === id);
-    if (!period) return;
+  // Reabrir tiene su propio diálogo con campo de motivo. El window.prompt
+  // anterior era nativo, sin estilo, sin i18n y algunos navegadores lo
+  // bloquean en silencio — la reapertura se cancelaba sin explicación
+  // (auditoría 2026-08-06, QW12).
+  const openReopen = (row: PeriodRow) => {
+    setReopenTarget({ id: row.id, label: row.label });
+    setReopenReason('');
+  };
 
-    const statusLabel = t(STATUS_LABEL_KEY[newStatus]);
-
-    // Reabrir tiene su propio diálogo con campo de motivo. El window.prompt
-    // anterior era nativo, sin estilo, sin i18n y algunos navegadores lo
-    // bloquean en silencio — la reapertura se cancelaba sin explicación
-    // (auditoría 2026-08-06, QW12).
-    if (newStatus !== 'closed') {
-      setReopenTarget({ id, label: period.label });
-      setReopenReason('');
-      return;
-    }
-
-    // Cerrar abre su propio diálogo con el CHECKLIST de pendientes (P1-4 del
-    // benchmark, auditoría 2026-08-06): egresos sin comprobante, liquidez sin
-    // conciliar, órdenes aprobadas sin pagar e inversiones mixtas. Son
-    // advertencias, no bloqueos — cerrar con pendientes es legítimo, pero
-    // tiene que ser una decisión informada, no un descuido.
-    setCloseTarget({ id, label: period.label, statusLabel });
+  // Cerrar abre su propio diálogo con el CHECKLIST de pendientes (P1-4 del
+  // benchmark, auditoría 2026-08-06). Son advertencias, salvo el orden
+  // cronológico, que bloquea — cerrar con pendientes es legítimo, pero tiene
+  // que ser una decisión informada, no un descuido.
+  const openClose = (row: PeriodRow) => {
+    setCloseTarget({ id: row.id, label: row.label });
     setChecklist(null);
-    void apiFetch(`/api/admin/period-close-checklist?period_id=${id}`)
+    void apiFetch(`/api/admin/period-close-checklist?period_id=${row.id}`)
       .then((r) => r.json())
       .then((json) => {
         if (json.success) {
-          setChecklist({
-            items: json.items ?? [],
-            clean: !!json.clean,
-            blocked: !!json.blocked,
-          });
+          setChecklist({ items: json.items ?? [], clean: !!json.clean, blocked: !!json.blocked });
         } else setChecklist({ items: [], clean: true, failed: true });
       })
       // Si el checklist falla, se puede cerrar igual: es un asistente, no
-      // una barrera nueva.
+      // una barrera nueva (el bloqueo real está en la RPC).
       .catch(() => setChecklist({ items: [], clean: true, failed: true }));
   };
 
-  const closedCount = managedPeriods.filter(p => p.status === 'closed').length;
-  const openCount = managedPeriods.filter(p => p.status === 'open').length;
-  const inProgressCount = managedPeriods.filter(p => p.status === 'in_progress').length;
+  const checkRows = useMemo(() => checklistRows(checklist?.items ?? []), [checklist]);
+  const checkSummary = checklistSummary(checkRows);
+
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  const kpiItems: KpiItem[] = [
+    {
+      key: 'open',
+      label: t('periods.open'),
+      value: counts.open,
+      format: 'count',
+      hero: true,
+      sub: t('periods.kpiOpenHint'),
+    },
+    { key: 'in_progress', label: t('periods.inProgress'), value: counts.in_progress, format: 'count' },
+    { key: 'closed', label: t('periods.closed'), value: counts.closed, format: 'count' },
+  ];
+
+  // ── Columnas ──────────────────────────────────────────────────────────────
+  const statusBadge = (r: PeriodRow) => (
+    <StatusBadge kind={PERIOD_STATUS_KIND[r.status]} label={t(STATUS_LABEL_KEY[r.status])} />
+  );
+  const reserveText = (r: PeriodRow) => (r.reservePct === null ? '—' : `${r.reservePct} %`);
+  const closedAtText = (r: PeriodRow) => (r.closedAt ? formatDate(r.closedAt) : '—');
+
+  const columns: FinColumn<PeriodRow>[] = [
+    {
+      key: 'period',
+      header: t('periods.colPeriod'),
+      cell: (r) => r.label || '—',
+      meta: (r) => `${r.year}-${String(r.month).padStart(2, '0')}`,
+      mobileMeta: (r) => (
+        <>
+          {statusBadge(r)}
+          {r.status === 'closed' && (
+            <span>
+              {t('periods.closedByOn', { by: r.closedBy ?? '—', on: closedAtText(r) })}
+            </span>
+          )}
+        </>
+      ),
+    },
+    { key: 'status', header: t('common.status'), hideSm: true, cell: statusBadge },
+    {
+      key: 'reserve',
+      header: t('periods.colReserve'),
+      kind: 'number',
+      hideSm: true,
+      cell: (r) => <span className={cn(NUM_CLASS, r.reservePct === null && 'text-text-3')}>{reserveText(r)}</span>,
+    },
+    {
+      key: 'closedBy',
+      header: t('periods.colClosedBy'),
+      hideSm: true,
+      cell: (r) => <span className={r.closedBy ? 'text-text-2' : 'text-text-3'}>{r.closedBy ?? '—'}</span>,
+    },
+    {
+      key: 'closedAt',
+      header: t('periods.colClosedAt'),
+      hideSm: true,
+      width: '112px',
+      cell: (r) => <span className={cn(NUM_CLASS, r.closedAt ? 'text-text-2' : 'text-text-3')}>{closedAtText(r)}</span>,
+    },
+  ];
+
+  // Las acciones se derivan SOLO del estado: con `is_closed` evaluado
+  // primero, 'in_progress' ya significa exactamente "mes actual y abierto".
+  const rowActions = isAdmin
+    ? (r: PeriodRow) => {
+        if (updating === r.id) return <span className="px-2.5 text-[12.5px] text-text-3">{t('periods.updating')}</span>;
+        if (r.status === 'open') {
+          return (
+            <button type="button" className={ROW_TEXT_ACTION} onClick={() => openClose(r)}>
+              <Lock aria-hidden className="size-3.5" strokeWidth={1.75} />
+              {t('periods.close')}
+            </button>
+          );
+        }
+        if (r.status === 'closed') {
+          return (
+            <button type="button" className={ROW_TEXT_ACTION} onClick={() => openReopen(r)}>
+              <Unlock aria-hidden className="size-3.5" strokeWidth={1.75} />
+              {t('periods.reopen')}
+            </button>
+          );
+        }
+        return <span className="px-2.5 text-[12.5px] text-text-3">{t('periods.monthInProgress')}</span>;
+      }
+    : undefined;
+
+  const legend = (
+    <dl className="flex flex-wrap gap-x-5 gap-y-1.5">
+      {PERIOD_STATUSES.map((s) => (
+        <div key={s} className="flex items-center gap-1.5">
+          <dt>
+            <StatusBadge kind={PERIOD_STATUS_KIND[s]} label={t(STATUS_LABEL_KEY[s])} />
+          </dt>
+          <dd>{t(STATUS_DESC_KEY[s])}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+
+  const closeButtonLabel = closing
+    ? t('periods.closing')
+    : checklist?.blocked
+      ? t('periods.cannotClose')
+      : checklist && !checklist.failed && (!checklist.clean || checkSummary.bad + checkSummary.pend > 0)
+        ? t('periods.closeAnyway')
+        : t('periods.closePeriod');
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title={t('periods.title')}
-        subtitle={t('periods.subtitle')}
-        icon={Calendar}
-      />
+    <div className="space-y-4">
+      <PageHeader title={t('periods.title')} subtitle={t('periods.subtitle')} icon={Calendar} />
 
       {successMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-positive/10 text-positive text-sm font-medium" aria-live="polite">
-          <Check className="w-4 h-4" />
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-2 rounded-ui-md border border-pos/35 bg-pos-bg px-3.5 py-2.5 text-[13px] font-medium text-foreground"
+        >
+          <Check aria-hidden className="size-4 shrink-0 text-pos" strokeWidth={2} />
           {successMsg}
         </div>
       )}
-      {errorMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="assertive">
-          <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.28 7.22a.75.75 0 00-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 101.06 1.06L10 11.06l1.72 1.72a.75.75 0 101.06-1.06L11.06 10l1.72-1.72a.75.75 0 00-1.06-1.06L10 8.94 8.28 7.22z" clipRule="evenodd" /></svg>
-          {errorMsg}
+      {errorMsg && <Notice kind="bad" title={errorMsg} />}
+
+      {loading && rows.length === 0 ? (
+        <div className="space-y-4" aria-busy="true">
+          <Skeleton className="h-[92px]" />
+          <Skeleton className="h-72" />
         </div>
+      ) : (
+        <>
+          <KpiStrip items={kpiItems} />
+
+          <Panel
+            flush
+            title={t('periods.title')}
+            hint={t('periods.listHint', { count: String(rows.length) })}
+            footer={legend}
+          >
+            <FinTable
+              caption={t('periods.title')}
+              columns={columns}
+              rows={rows}
+              rowKey={(r) => r.id}
+              rowActions={rowActions}
+              maxHeight="70vh"
+              empty={t('periods.empty')}
+            />
+          </Panel>
+        </>
       )}
-
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800"><Lock className="w-5 h-5 text-slate-500" /></div>
-            <div>
-              <p className="text-sm text-muted-foreground">{t('periods.closed')}</p>
-              <p className="text-2xl font-bold">{closedCount}</p>
-            </div>
-          </div>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-emerald-50"><Unlock className="w-5 h-5 text-emerald-500" /></div>
-            <div>
-              <p className="text-sm text-muted-foreground">{t('periods.open')}</p>
-              <p className="text-2xl font-bold">{openCount}</p>
-            </div>
-          </div>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-warning/10"><Clock className="w-5 h-5 text-amber-500" /></div>
-            <div>
-              <p className="text-sm text-muted-foreground">{t('periods.inProgress')}</p>
-              <p className="text-2xl font-bold">{inProgressCount}</p>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Legend */}
-      <Card>
-        <h2 className="text-sm font-semibold mb-3">{t('periods.statuses')}</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {(['closed', 'open', 'in_progress'] as PeriodStatus[]).map((key) => (
-            <div key={key} className="flex items-start gap-2 text-sm">
-              <Badge variant={STATUS_BADGE[key]}>{t(STATUS_LABEL_KEY[key])}</Badge>
-              <span className="text-muted-foreground text-xs">{t(STATUS_DESC_KEY[key])}</span>
-            </div>
-          ))}
-        </div>
-      </Card>
-
-      {/* Periods table */}
-      <Card>
-        <div className="flex items-center gap-3 mb-4">
-          <Calendar className="w-5 h-5 text-muted-foreground" />
-          <h2 className="text-lg font-semibold">{t('periods.title')}</h2>
-        </div>
-        <DataTable
-          className="-mx-4 px-4 sm:mx-0 sm:px-0"
-          data={managedPeriods}
-          columns={[
-            {
-              header: t('periods.title'),
-              accessor: (period) => {
-                const Icon = STATUS_ICON[period.status];
-                return (
-                  <div className="flex items-center gap-2 font-medium">
-                    <Icon className="w-4 h-4 text-muted-foreground" />
-                    {period.label}
-                  </div>
-                );
-              },
-            },
-            { header: t('periods.year'), accessor: 'year', className: 'hidden sm:table-cell' },
-            { header: t('periods.month'), accessor: 'month', className: 'hidden sm:table-cell' },
-            {
-              header: t('common.status'),
-              align: 'center',
-              accessor: (period) => (
-                <Badge variant={STATUS_BADGE[period.status]}>{t(STATUS_LABEL_KEY[period.status])}</Badge>
-              ),
-            },
-            ...(isAdmin
-              ? [{
-                  header: t('common.actions'),
-                  align: 'center' as const,
-                  accessor: (period: ManagedPeriod) => {
-                    // Las acciones se derivan SOLO del estado: con `is_closed`
-                    // evaluado primero, 'in_progress' ya significa exactamente
-                    // "mes actual y abierto", así que no hace falta recalcular
-                    // el mes acá. La rama vieja `in_progress && isPastMonth`
-                    // era inalcanzable por construcción y se eliminó.
-                    const isUpdating = updating === period.id;
-                    return (
-                      <div className="flex justify-center gap-1">
-                        {isUpdating ? (
-                          <span className="text-xs text-muted-foreground">Actualizando...</span>
-                        ) : (
-                          <>
-                            {period.status === 'open' && (
-                              <button
-                                onClick={() => changeStatus(period.id, 'closed')}
-                                className="px-2.5 py-1 text-xs rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-                              >
-                                {t('periods.close')}
-                              </button>
-                            )}
-                            {period.status === 'closed' && (
-                              <button
-                                onClick={() => changeStatus(period.id, 'open')}
-                                className="px-2.5 py-1 text-xs rounded-md bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:bg-emerald-950/50 dark:text-emerald-400 dark:hover:bg-emerald-900/50 transition-colors"
-                              >
-                                {t('periods.reopen')}
-                              </button>
-                            )}
-                            {period.status === 'in_progress' && (
-                              <span className="text-xs text-muted-foreground">{t('periods.monthInProgress')}</span>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    );
-                  },
-                }]
-              : []),
-          ]}
-        />
-      </Card>
 
       {/* Diálogo de CIERRE con checklist de pendientes. */}
       {closeTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Cerrar ${closeTarget.label}`}
-            className="w-full max-w-md rounded-xl border border-border bg-card shadow-[var(--elevation-3)] p-5 space-y-4 max-h-[85vh] overflow-y-auto"
-          >
-            <h2 className="font-semibold">Cerrar {closeTarget.label}</h2>
-            <p className="text-sm text-muted-foreground">
-              Al cerrar, los totales se congelan y el mes queda bloqueado para
-              edición. Antes de confirmar, esto es lo que quedó pendiente:
-            </p>
-
-            {!checklist && <p className="text-sm text-muted-foreground">Revisando pendientes…</p>}
-
-            {checklist?.failed && (
-              <p className="text-sm text-amber-600">
-                No se pudo revisar los pendientes — podés cerrar igual.
-              </p>
-            )}
-
-            {checklist && !checklist.failed && (
-              checklist.clean ? (
-                <p className="text-sm text-positive font-medium">
-                  ✓ Sin pendientes: egresos con respaldo, liquidez conciliada,
-                  sin órdenes aprobadas por pagar ni inversiones mixtas.
-                </p>
-              ) : (
-                <ul className="space-y-2">
-                  {checklist.items.filter((i) => i.count > 0).map((i) => {
-                    // Un bloqueante no es una advertencia más: la cadena de
-                    // distribución es secuencial y la RPC va a rechazar el
-                    // cierre igual (migración 111). Se pinta distinto para que
-                    // no se lea como "otro pendiente que puedo ignorar".
-                    const blocking = i.severity === 'blocking';
-                    return (
-                      <li
-                        key={i.key}
-                        className={`rounded-lg border p-3 text-sm ${
-                          blocking
-                            ? 'border-negative/40 bg-negative/10'
-                            : 'border-warning/30 bg-warning/10'
-                        }`}
-                      >
-                        <p className="font-medium">
-                          {i.count} · {itemLabel(i)}
-                          {blocking && (
-                            <span className="ml-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-negative/15 text-negative border border-negative/30">
-                              {t('periods.blocking')}
-                            </span>
-                          )}
-                        </p>
-                        {i.detail && (
-                          <p className="text-xs text-muted-foreground mt-1 break-words">{i.detail}</p>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )
-            )}
-
-            <div className="flex justify-end gap-2 pt-1">
-              <button
-                onClick={() => setCloseTarget(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted"
-              >
-                Cancelar
-              </button>
-              <button
+        <Dialog
+          labelledBy="period-close-title"
+          title={t('periods.closeTitle', { label: closeTarget.label })}
+          onClose={() => !closing && setCloseTarget(null)}
+          footer={
+            <>
+              <ActionButton onClick={() => setCloseTarget(null)} disabled={closing}>
+                {t('periods.dialogCancel')}
+              </ActionButton>
+              <ActionButton
+                variant="primary"
                 onClick={confirmClose}
+                loading={closing}
                 // Con un bloqueante, el botón se apaga: la RPC lo rechazaría
                 // igual y "Cerrar de todos modos" prometería algo que no pasa.
-                disabled={closing || !checklist || !!checklist.blocked}
+                disabled={!checklist || !!checklist.blocked}
                 title={checklist?.blocked ? t('periods.blockedHint') : undefined}
-                className="px-4 py-2 rounded-lg bg-negative text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
               >
-                {closing
-                  ? 'Cerrando…'
-                  : checklist?.blocked
-                    ? t('periods.cannotClose')
-                    : checklist && !checklist.clean
-                      ? 'Cerrar de todos modos'
-                      : 'Cerrar período'}
-              </button>
+                {closeButtonLabel}
+              </ActionButton>
+            </>
+          }
+        >
+          <p className="text-[13px] text-text-2">{t('periods.closeIntro')}</p>
+
+          {!checklist && (
+            <div className="space-y-2" aria-busy="true">
+              <p className="text-[13px] text-text-3">{t('periods.checking')}</p>
+              <Skeleton className="h-24" />
             </div>
-          </div>
-        </div>
+          )}
+
+          {checklist?.failed && <Notice kind="pend" title={t('periods.checklistFailed')} />}
+
+          {checklist?.blocked && (
+            <Notice kind="bad" title={t('periods.cannotClose')}>
+              {t('periods.blockedHint')}
+            </Notice>
+          )}
+
+          {checklist && !checklist.failed && (
+            <Panel
+              flush
+              titleAs="h3"
+              title={t('periods.checklistTitle')}
+              hint={
+                checkSummary.bad + checkSummary.pend === 0
+                  ? t('periods.checklistClean')
+                  : t('periods.checklistHint', {
+                      pend: String(checkSummary.bad + checkSummary.pend),
+                      total: String(checkRows.length),
+                    })
+              }
+            >
+              {checkRows.length === 0 ? (
+                <p className="px-4 py-3 text-[13px] text-text-3">{t('periods.checklistEmpty')}</p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {checkRows.map((i) => (
+                    <li key={i.key} className="flex items-start gap-3 px-4 py-2.5 text-[13px]">
+                      <StatusBadge
+                        kind={i.kind}
+                        label={
+                          i.kind === 'ok'
+                            ? t('periods.checkOk')
+                            : i.kind === 'bad'
+                              ? t('periods.blocking')
+                              : t('periods.checkPending')
+                        }
+                        className="mt-px"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className={cn('font-medium', i.kind === 'ok' ? 'text-text-2' : 'text-foreground')}>
+                          {i.kind !== 'ok' && <span className={NUM_CLASS}>{i.count} · </span>}
+                          {itemLabel(i)}
+                        </p>
+                        {i.kind !== 'ok' && i.detail && (
+                          <p className="mt-0.5 break-words text-[12px] leading-4 text-text-3">{i.detail}</p>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </Panel>
+          )}
+        </Dialog>
       )}
 
-      {/* Diálogo de reapertura con motivo obligatorio (reemplaza al
-          window.prompt nativo). El motivo queda en el Registro de Actividad
-          junto a quién reabrió. */}
+      {/* Diálogo de reapertura con motivo obligatorio. El motivo queda en el
+          Registro de Actividad junto a quién reabrió. */}
       {reopenTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label={`Reabrir ${reopenTarget.label}`}
-            className="w-full max-w-md rounded-xl border border-border bg-card shadow-[var(--elevation-3)] p-5 space-y-4"
-          >
-            <h2 className="font-semibold">Reabrir {reopenTarget.label}</h2>
-            <p className="text-sm text-muted-foreground">
-              Reabrir desbloquea la edición de ese mes y puede cambiar el saldo ya
-              distribuido a los socios. El motivo queda registrado junto a tu nombre.
-            </p>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">Motivo (obligatorio)</span>
-              <textarea
-                rows={2}
-                autoFocus
-                value={reopenReason}
-                onChange={(e) => setReopenReason(e.target.value)}
-                className="w-full rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
-                placeholder="Ej.: corregir el egreso de la oficina duplicado"
-              />
-            </label>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setReopenTarget(null)}
-                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted"
-              >
-                Cancelar
-              </button>
-              <button
+        <Dialog
+          labelledBy="period-reopen-title"
+          title={t('periods.reopenTitle', { label: reopenTarget.label })}
+          onClose={() => !reopening && setReopenTarget(null)}
+          footer={
+            <>
+              <ActionButton onClick={() => setReopenTarget(null)} disabled={reopening}>
+                {t('periods.dialogCancel')}
+              </ActionButton>
+              <ActionButton
+                variant="primary"
                 onClick={confirmReopen}
-                disabled={reopening || !reopenReason.trim()}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
+                loading={reopening}
+                disabled={!reopenReason.trim()}
               >
-                {reopening ? 'Reabriendo…' : 'Reabrir período'}
-              </button>
-            </div>
-          </div>
-        </div>
+                {reopening ? t('periods.reopening') : t('periods.reopenPeriod')}
+              </ActionButton>
+            </>
+          }
+        >
+          <p className="text-[13px] text-text-2">{t('periods.reopenIntro')}</p>
+          <Field label={t('periods.reopenReason')} required hint={t('periods.reopenReasonHint')}>
+            <Textarea
+              rows={2}
+              autoFocus
+              value={reopenReason}
+              onChange={(e) => setReopenReason(e.target.value)}
+              placeholder={t('periods.reopenPlaceholder')}
+            />
+          </Field>
+        </Dialog>
       )}
     </div>
   );
