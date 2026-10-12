@@ -22,36 +22,63 @@
  *     que el usuario lo recupere entre sesiones.
  *   - Export a CSV respetando las columnas/meses visibles — útil para
  *     compartir con contabilidad.
+ *
+ * «Libro mayor» (2026-10-12)
+ *   - El `catch` que dejaba el aporte de la API en 0 («Silent — fallback es
+ *     0») ahora deja `null`: celda y total «—» en los meses derivados, KPI
+ *     sin dato y un Notice `bad`. El porqué y lo descartado están en
+ *     consolidado-model.ts, con test. Mismo arreglo que Balances.
+ *   - Tabla → `FinTable` (cabecera sticky, montos tabulares, pie con doble
+ *     raya); en móvil cada mes es una tarjeta con el resultado y, debajo,
+ *     depósito neto y monto a distribuir.
+ *   - Franja `KpiStrip` con los totales de los meses visibles (los mismos
+ *     del pie, para las columnas clave aunque estén ocultas en la tabla).
+ *   - Color = significado: depósitos y egresos ya no se pintan de verde /
+ *     rojo por ser positivos (toda la columna lo es); el resultado del mes
+ *     sí lleva signo de color (`sign`), porque ahí el signo es la noticia.
+ *   - Toggles de columnas y meses → `Chip` (activo = visible).
+ *   Medido antes/después en este archivo: 16 clases de paleta cruda
+ *   (emerald/sky/red) + 6 `dark:` + 1 `text-[10px]` → 0; 26 tokens legados
+ *   → 0. El CSV tiene las mismas columnas y valores; sólo cambia que una
+ *   celda sin dato de la API sale vacía en vez de con el manual solo.
  */
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Card } from '@/components/ui/card';
+import { ChevronDown, ChevronUp, Download, Eye, EyeOff, Table } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, type MoneyTone } from '@/components/ui/money';
+import { Chip } from '@/components/ui/chip';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { useData } from '@/lib/data-context';
 import { useAuth } from '@/lib/auth-context';
 import { blockedConsolidatedColumns } from '@/lib/business-model';
 import { hasModuleAccess } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
 import { downloadCSV } from '@/lib/csv-export';
 import { apiFetch } from '@/lib/api-fetch';
-import { computeDerivedNetDeposit, isDerivedBrokerPeriod } from '@/lib/broker-logic';
+import { isDerivedBrokerPeriod } from '@/lib/broker-logic';
 import {
-  Table,
-  Download,
-  Eye,
-  EyeOff,
-  ChevronDown,
-  ChevronUp,
-  AlertTriangle,
-} from 'lucide-react';
+  apiForMonth,
+  columnTotal,
+  csvAmount,
+  monthsMissingApi,
+  rowMoney,
+  type ApiMonthTotals,
+  type ApiTotalsState,
+  type TotalRule,
+} from './consolidado-model';
 
 // Column definition. `compute` recibe los helpers del DataProvider + el
-// período y devuelve un número. `kind` permite reutilizar formato/clase
-// (positivo = verde, negativo = rojo, neutro). `total` define cómo se
-// agrega en el pie de tabla — la mayoría es suma directa, algunos campos
-// (reserva acumulada) son el último valor visible.
+// período y devuelve un número, o `null` si no lo sabemos (mes derivado sin
+// dato de la API). `tone` decide el color con la regla de Money. `total`
+// define cómo se agrega en el pie de tabla — la mayoría es suma directa,
+// algunos campos (reserva acumulada) son el último valor visible.
 interface PeriodRowContext {
   periodId: string;
   periodLabel: string;
@@ -71,8 +98,9 @@ interface PeriodRowContext {
   // depósitos ni retiros de clientes).
   // Sumado a `summary.totalDeposits` (manual) para mostrar el monto real.
   // Antes la tabla solo leía manuales y Mayo/Junio aparecían como $0.
-  apiDeposits: number;
-  apiWithdrawals: number;
+  // `null` = la API todavía no respondió o falló: NO es 0.
+  apiDeposits: number | null;
+  apiWithdrawals: number | null;
   /**
    * ¿El mes se rige por la regla «broker derivado de la API» (Abr 2026+)?
    * Ver src/lib/broker-logic.ts. Un mes HISTÓRICO no suma la API: sus totales
@@ -81,55 +109,26 @@ interface PeriodRowContext {
   isDerived: boolean;
 }
 
-/**
- * Los tres números de depósitos/retiros/ND de una fila, por el ÚNICO camino
- * canónico (`computeDerivedNetDeposit`), respetando si el período es derivado.
- *
- * ── EL BUG (auditoría de finanzas, ítem 16) ────────────────────────────────
- * Esta tabla tenía la CUARTA reimplementación inline del Net Deposit
- * (`apiDeposits + summary.totalDeposits` para TODOS los períodos) y no miraba
- * `isDerivedBrokerPeriod`. Medido el 2026-08-31 sobre Vex Pro: marzo 2026
- * —cerrado, con sus totales cargados a mano— mostraba $1.157.152,72 acá contra
- * $1.046.382 en /balances, porque le sumaba encima las 381 filas de UniPayment
- * de 2026-03 que la API tiene persistidas ($110.770,72). El mismo mes cerrado,
- * dos números, en dos pantallas del mismo menú.
- */
-function rowMoney(c: PeriodRowContext): {
-  totalDeposits: number;
-  totalWithdrawals: number;
-  netDeposit: number;
-} {
-  const manualBroker =
-    c.summary?.withdrawals?.find((w) => w.category === 'broker')?.amount ?? 0;
-
-  if (!c.isDerived) {
-    // Meses históricos (≤ Mar 2026): manda lo cargado a mano, igual que
-    // /balances (que usa `summary.netDeposit` para estos períodos).
-    return {
-      totalDeposits: c.summary?.totalDeposits ?? 0,
-      totalWithdrawals: c.summary?.totalWithdrawals ?? 0,
-      netDeposit: c.summary?.netDeposit ?? 0,
-    };
-  }
-
-  return computeDerivedNetDeposit({
-    apiDeposits: c.apiDeposits,
-    manualDepositsTotal: c.summary?.totalDeposits ?? 0,
-    apiWithdrawals: c.apiWithdrawals,
-    manualBroker,
-  });
-}
-
 interface ColumnDef {
   key: string;
   labelKey: string;
-  compute: (ctx: PeriodRowContext) => number;
-  total: 'sum' | 'last' | 'none';
-  kind: 'pos' | 'neg' | 'neutral';
+  compute: (ctx: PeriodRowContext) => number | null;
+  total: TotalRule;
+  tone: MoneyTone;
 }
 
 const STORAGE_HIDDEN_COLS = 'fd_consolidado_hidden_cols';
 const STORAGE_HIDDEN_MONTHS = 'fd_consolidado_hidden_months';
+
+/** Columnas que dependen del aporte de la API en los meses derivados. */
+const API_COLUMNS = new Set(['totalDeposits', 'totalWithdrawals', 'netDeposit']);
+
+/** KPIs de la franja, en orden; el primero es el hero. Se filtran por modelo de negocio. */
+const KPI_COLUMNS = ['monthResult', 'operatingIncome', 'operatingExpenses', 'netDeposit', 'montoDistribuir'];
+
+/** En la tarjeta móvil: la cifra a la derecha y las dos de apoyo debajo del mes. */
+const MOBILE_PRIMARY = ['monthResult', 'netDeposit', 'montoDistribuir'];
+const MOBILE_META = ['netDeposit', 'montoDistribuir'];
 
 function loadSet(key: string): Set<string> {
   if (typeof window === 'undefined') return new Set();
@@ -151,6 +150,8 @@ function saveSet(key: string, set: Set<string>) {
     /* quota o disabled */
   }
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
 
 export default function ConsolidadoPage() {
   const {
@@ -221,21 +222,29 @@ export default function ConsolidadoPage() {
   // migración 084). Lo cargamos una sola vez
   // (al cambiar de empresa) y lo guardamos en estado para que cada fila
   // de la tabla sume API + manual.
-  const [apiMonths, setApiMonths] = useState<
-    Record<string, { deposits: number; withdrawals: number }>
-  >({});
-
-  useEffect(() => {
-    if (!company || periods.length === 0) return;
+  //
+  // El rango pedido es la clave de la respuesta: una respuesta de otra
+  // empresa / otro rango no cuenta, y mientras la del rango actual no llega
+  // el estado es «cargando» (derivado, sin setState síncrono en el efecto).
+  const apiRange = useMemo(() => {
+    if (!company || periods.length === 0) return null;
     const sorted = [...periods].sort((a, b) =>
       a.year !== b.year ? a.year - b.year : a.month - b.month,
     );
     const first = sorted[0];
     const last = sorted[sorted.length - 1];
-    const pad = (n: number) => String(n).padStart(2, '0');
     const lastDay = new Date(last.year, last.month, 0).getDate();
-    const from = `${first.year}-${pad(first.month)}-01`;
-    const to = `${last.year}-${pad(last.month)}-${pad(lastDay)}`;
+    const from = `${first.year}-${pad2(first.month)}-01`;
+    const to = `${last.year}-${pad2(last.month)}-${pad2(lastDay)}`;
+    return { key: `${company.id}:${from}:${to}`, from, to };
+  }, [company, periods]);
+
+  const [apiResult, setApiResult] = useState<
+    { key: string; ok: true; months: Record<string, ApiMonthTotals> } | { key: string; ok: false } | null
+  >(null);
+
+  useEffect(() => {
+    if (!apiRange) return;
     const controller = new AbortController();
     (async () => {
       try {
@@ -245,19 +254,31 @@ export default function ConsolidadoPage() {
         // esperando para siempre. El `signal` explícito gana sobre el interno
         // para que el cleanup del efecto siga cancelando al cambiar de empresa.
         const res = await apiFetch(
-          `/api/integrations/period-totals?from=${from}&to=${to}`,
+          `/api/integrations/period-totals?from=${apiRange.from}&to=${apiRange.to}`,
           { signal: controller.signal },
         );
         const json = await res.json();
+        if (controller.signal.aborted) return;
         if (json?.success && json.months) {
-          setApiMonths(json.months);
+          setApiResult({ key: apiRange.key, ok: true, months: json.months });
+        } else {
+          setApiResult({ key: apiRange.key, ok: false });
         }
       } catch {
-        // Silent — fallback es 0 y aún se ven los datos manuales.
+        // Ya NO es silencioso: sin el aporte de la API, los meses derivados
+        // no tienen número (consolidado-model.ts). Un abort por cambio de
+        // empresa no es un fallo.
+        if (!controller.signal.aborted) setApiResult({ key: apiRange.key, ok: false });
       }
     })();
     return () => controller.abort();
-  }, [company, periods]);
+  }, [apiRange]);
+
+  const apiState: ApiTotalsState = useMemo(() => {
+    if (!apiRange) return { status: 'ok', months: {} };
+    if (!apiResult || apiResult.key !== apiRange.key) return { status: 'loading' };
+    return apiResult.ok ? { status: 'ok', months: apiResult.months } : { status: 'failed' };
+  }, [apiRange, apiResult]);
 
   const periodContexts: PeriodRowContext[] = useMemo(() => {
     return periods.map((p) => {
@@ -276,8 +297,8 @@ export default function ConsolidadoPage() {
             saldoAFavor: saldoEntry.saldoAFavor,
           }
         : null;
-      const key = `${p.year}-${String(p.month).padStart(2, '0')}`;
-      const api = apiMonths[key] ?? { deposits: 0, withdrawals: 0 };
+      const key = `${p.year}-${pad2(p.month)}`;
+      const api = apiForMonth(apiState, key);
       return {
         periodId: p.id,
         periodLabel: p.label ?? key,
@@ -288,7 +309,7 @@ export default function ConsolidadoPage() {
         isDerived: isDerivedBrokerPeriod({ year: p.year, month: p.month }),
       };
     });
-  }, [periods, getPeriodSummary, saldoChain, apiMonths]);
+  }, [periods, getPeriodSummary, saldoChain, apiState]);
 
   // Definición de columnas. Orden = orden de aparición en la tabla.
   const columns: ColumnDef[] = useMemo(
@@ -300,21 +321,21 @@ export default function ConsolidadoPage() {
         // meses derivados (Abr 2026+), sólo manual en los históricos.
         compute: (c) => rowMoney(c).totalDeposits,
         total: 'sum',
-        kind: 'pos',
+        tone: 'auto',
       },
       {
         key: 'totalWithdrawals',
         labelKey: 'consolidated.colWithdrawals',
         compute: (c) => rowMoney(c).totalWithdrawals,
         total: 'sum',
-        kind: 'neg',
+        tone: 'auto',
       },
       {
         key: 'netDeposit',
         labelKey: 'consolidated.colNetDeposit',
         compute: (c) => rowMoney(c).netDeposit,
         total: 'sum',
-        kind: 'neutral',
+        tone: 'auto',
       },
       // ── Desglose de ingresos: VALOR VIVO, a diferencia de las columnas de
       //    abajo (auditoría 2026-08, B4).
@@ -334,35 +355,36 @@ export default function ConsolidadoPage() {
         labelKey: 'summary.brokerPnl',
         compute: (c) => c.summary?.operatingIncome?.broker_pnl ?? 0,
         total: 'sum',
-        kind: 'neutral',
+        tone: 'auto',
       },
       {
         key: 'propFirmNet',
         labelKey: 'consolidated.colPropFirmBalance',
         compute: (c) => c.summary?.propFirmNetIncome ?? 0,
         total: 'sum',
-        kind: 'neutral',
+        tone: 'auto',
       },
       {
         key: 'investmentProfits',
         labelKey: 'consolidated.colInvestmentProfits',
         compute: (c) => c.summary?.investmentProfits ?? 0,
         total: 'sum',
-        kind: 'neutral',
+        tone: 'auto',
       },
       {
         key: 'operatingIncome',
         labelKey: 'consolidated.colOperatingIncome',
         compute: (c) => c.saldoInfo?.ingresosNetos ?? 0,
         total: 'sum',
-        kind: 'pos',
+        tone: 'auto',
       },
       {
         key: 'monthResult',
         labelKey: 'consolidated.colMonthResult',
         compute: (c) => c.saldoInfo?.saldoAFavor ?? 0,
         total: 'sum',
-        kind: 'neutral',
+        // El resultado del mes es donde el signo ES la noticia.
+        tone: 'sign',
       },
       {
         key: 'operatingExpenses',
@@ -372,7 +394,7 @@ export default function ConsolidadoPage() {
         // solo si el período no está en la cadena (no debería pasar).
         compute: (c) => c.saldoInfo?.egresosNetos ?? c.summary?.totalExpenses ?? 0,
         total: 'sum',
-        kind: 'neg',
+        tone: 'auto',
       },
       {
         key: 'reservaPeriodo',
@@ -389,14 +411,14 @@ export default function ConsolidadoPage() {
           return c.saldoInfo?.reservaPeriodo ?? 0;
         },
         total: 'sum',
-        kind: 'neutral',
+        tone: 'auto',
       },
       {
         key: 'reservaAcumulada',
         labelKey: 'consolidated.colAccumulatedReserve',
         compute: (c) => c.saldoInfo?.reservaAcumulada ?? 0,
         total: 'last',
-        kind: 'neutral',
+        tone: 'auto',
       },
       {
         key: 'montoDistribuir',
@@ -405,35 +427,35 @@ export default function ConsolidadoPage() {
         // le descontaba un 10% por segunda vez.
         compute: (c) => c.saldoInfo?.montoDistribuir ?? 0,
         total: 'sum',
-        kind: 'pos',
+        tone: 'auto',
       },
       {
         key: 'p2p',
         labelKey: 'consolidated.colP2pTransfer',
         compute: (c) => c.summary?.p2pTransfer ?? 0,
         total: 'sum',
-        kind: 'neutral',
+        tone: 'auto',
       },
       {
         key: 'propFirmSales',
         labelKey: 'consolidated.colPropFirmSales',
         compute: (c) => c.summary?.propFirmSales ?? 0,
         total: 'sum',
-        kind: 'pos',
+        tone: 'auto',
       },
       {
         key: 'expensesPaid',
         labelKey: 'consolidated.colExpensesPaid',
         compute: (c) => c.summary?.totalExpensesPaid ?? 0,
         total: 'sum',
-        kind: 'neutral',
+        tone: 'auto',
       },
       {
         key: 'expensesPending',
         labelKey: 'consolidated.colExpensesPending',
         compute: (c) => c.summary?.totalExpensesPending ?? 0,
         total: 'sum',
-        kind: 'neg',
+        tone: 'auto',
       },
     ],
     [isPeriodAfterSaldoStart],
@@ -456,37 +478,32 @@ export default function ConsolidadoPage() {
     [periodContexts, hiddenMonths],
   );
 
-  // Totals row per visible column (con regla de agregación).
+  // Total por columna del modelo (con regla de agregación) sobre los meses
+  // visibles. La tabla muestra los de las columnas visibles; la franja de
+  // KPIs, los de sus columnas clave aunque estén ocultas en la tabla.
   const totals = useMemo(() => {
-    const result = new Map<string, number>();
-    for (const col of visibleColumns) {
-      if (col.total === 'none') continue;
-      if (col.total === 'sum') {
-        const sum = visiblePeriodContexts.reduce(
-          (acc, ctx) => acc + col.compute(ctx),
-          0,
-        );
-        result.set(col.key, sum);
-      } else if (col.total === 'last') {
-        const last = visiblePeriodContexts[visiblePeriodContexts.length - 1];
-        result.set(col.key, last ? col.compute(last) : 0);
-      }
+    const result = new Map<string, number | null>();
+    for (const col of modelColumns) {
+      const v = columnTotal(visiblePeriodContexts.map((ctx) => col.compute(ctx)), col.total);
+      if (v !== undefined) result.set(col.key, v);
     }
     return result;
-  }, [visibleColumns, visiblePeriodContexts]);
+  }, [modelColumns, visiblePeriodContexts]);
+
+  // ¿El aporte de la API falta en algún mes visible, para alguna columna que
+  // el modelo muestra? Si el modelo no tiene depósitos/retiros, no importa.
+  const usesApi = modelColumns.some((c) => API_COLUMNS.has(c.key));
+  const missingApiMonths = usesApi ? monthsMissingApi(visiblePeriodContexts) : 0;
 
   const handleExportCsv = () => {
     const headers = [t('consolidated.month'), ...visibleColumns.map((c) => t(c.labelKey))];
     const rows = visiblePeriodContexts.map((ctx) => [
       ctx.periodLabel,
-      ...visibleColumns.map((c) => c.compute(ctx).toFixed(2)),
+      ...visibleColumns.map((c) => csvAmount(c.compute(ctx))),
     ]);
     rows.push([
       'TOTAL',
-      ...visibleColumns.map((c) => {
-        const t = totals.get(c.key);
-        return t == null ? '' : t.toFixed(2);
-      }),
+      ...visibleColumns.map((c) => csvAmount(totals.get(c.key))),
     ]);
     const filename = `consolidado_${(company?.name ?? 'export').replace(/\s/g, '_').toLowerCase()}.csv`;
     downloadCSV(filename, headers, rows);
@@ -496,221 +513,228 @@ export default function ConsolidadoPage() {
 
   if (!canAccess) {
     return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3">
-        <p className="text-muted-foreground">{t('consolidated.noAccess')}</p>
-        <Link
-          href="/"
-          className="text-sm underline text-primary hover:text-primary/80"
-        >
+      <div className="flex min-h-[60vh] flex-col items-center justify-center gap-3">
+        <p className="text-text-2">{t('consolidated.noAccess')}</p>
+        <Link href="/" className="text-[13px] text-brand-ink underline underline-offset-2">
           {t('consolidated.backHome')}
         </Link>
       </div>
     );
   }
 
+  const monthsSub = t('consolidated.lm.monthsShown', {
+    shown: String(visiblePeriodContexts.length),
+    total: String(periodContexts.length),
+  });
+  const apiMissingBadge =
+    apiState.status === 'loading'
+      ? { kind: 'stale' as const, label: t('consolidated.lm.apiLoading') }
+      : { kind: 'bad' as const, label: t('consolidated.lm.apiMissingBadge') };
+
+  const kpis: KpiItem[] = KPI_COLUMNS.flatMap((key, i) => {
+    const col = modelColumns.find((c) => c.key === key);
+    if (!col) return [];
+    const value = totals.get(key) ?? null;
+    return [
+      {
+        key,
+        label: t(col.labelKey),
+        value,
+        format: 'money' as const,
+        tone: col.tone,
+        hero: i === 0,
+        sub: value === null && API_COLUMNS.has(key) ? undefined : monthsSub,
+        missingBadge: API_COLUMNS.has(key) ? apiMissingBadge : undefined,
+      },
+    ];
+  });
+
+  // Móvil: la cifra de la derecha es la primera visible de MOBILE_PRIMARY;
+  // el resto de las columnas se ve en escritorio (o rotando el teléfono).
+  const mobilePrimary = MOBILE_PRIMARY.find((k) => visibleColumns.some((c) => c.key === k)) ?? visibleColumns[0]?.key;
+  const mobileMetaCols = visibleColumns.filter((c) => MOBILE_META.includes(c.key) && c.key !== mobilePrimary);
+
+  const tableColumns: FinColumn<PeriodRowContext>[] = [
+    {
+      key: 'month',
+      header: t('consolidated.month'),
+      cell: (ctx) => ctx.periodLabel,
+      mobileMeta: mobileMetaCols.length
+        ? (ctx) =>
+            mobileMetaCols.map((c) => (
+              <span key={c.key} className="inline-flex items-center gap-1">
+                {t(c.labelKey)}
+                <Money value={c.compute(ctx)} tone={c.tone} nullLabel={t('ui.noData')} />
+              </span>
+            ))
+        : undefined,
+    },
+    ...visibleColumns.map<FinColumn<PeriodRowContext>>((c) => ({
+      key: c.key,
+      header: t(c.labelKey),
+      kind: 'money',
+      value: (ctx) => c.compute(ctx),
+      money: { tone: c.tone },
+      hideSm: c.key !== mobilePrimary,
+    })),
+  ];
+
+  const footerValues: Record<string, number | null> = {};
+  for (const c of visibleColumns) {
+    if (totals.has(c.key)) footerValues[c.key] = totals.get(c.key) ?? null;
+  }
+  const lastCols = visibleColumns.filter((c) => c.total === 'last');
+
+  const settingsButtonLabel = t('consolidated.columnsAndMonths');
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title={t('consolidated.title')}
         subtitle={t('consolidated.subtitle')}
         icon={Table}
         actions={
           <>
-            <button
+            <ActionButton
               onClick={() => setShowSettings((s) => !s)}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
               title={t('consolidated.toggleTitle')}
+              aria-label={settingsButtonLabel}
+              aria-expanded={showSettings}
             >
-              {showSettings ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
-              <span className="hidden sm:inline">{t('consolidated.columnsAndMonths')}</span>
-            </button>
-            <button
-              onClick={handleExportCsv}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-              title={t('consolidated.exportCsvTitle')}
-            >
-              <Download className="w-4 h-4" />
-              <span className="hidden sm:inline">{t('common.csv')}</span>
-            </button>
+              {showSettings ? (
+                <ChevronUp aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              ) : (
+                <ChevronDown aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              )}
+              <span className="max-sm:hidden">{settingsButtonLabel}</span>
+            </ActionButton>
+            <ActionButton onClick={handleExportCsv} title={t('consolidated.exportCsvTitle')} aria-label={t('common.csv')}>
+              <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="max-sm:hidden">{t('common.csv')}</span>
+            </ActionButton>
           </>
         }
       />
 
-      {/* Deriva snapshot-vs-vivo — mismo aviso que /socios */}
-      {snapshotDrifts.length > 0 && (
-        <div className="flex gap-3 rounded-lg border border-negative/30 bg-negative/5 p-4">
-          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-negative" />
-          <div className="text-sm">
-            <p className="font-medium text-negative">
-              {t('consolidated.driftTitle', {
-                count: String(driftPeriodCount),
-                periods: driftPeriodCount === 1
-                  ? t('consolidated.driftPeriodOne')
-                  : t('consolidated.driftPeriodMany'),
-              })}
-            </p>
-            <ul className="mt-1 text-xs text-muted-foreground space-y-0.5">
-              {snapshotDrifts.slice(0, 6).map((d, i) => (
-                <li key={i}>
-                  {t('consolidated.driftRow', {
-                    period: d.periodLabel,
-                    field: d.field,
-                    frozen: formatCurrency(d.frozen),
-                    live: formatCurrency(d.live),
-                  })}
-                </li>
-              ))}
-              {snapshotDrifts.length > 6 && (
-                <li>{t('consolidated.driftMore', { count: String(snapshotDrifts.length - 6) })}</li>
-              )}
-            </ul>
-            <p className="mt-1 text-xs text-muted-foreground">{t('consolidated.driftHint')}</p>
-          </div>
-        </div>
+      {kpis.length > 0 && <KpiStrip items={kpis} />}
+
+      {/* Aporte de la API sin dato: los meses derivados muestran «—» y los
+          totales que los incluyen también. Antes: catch silencioso → 0. */}
+      {apiState.status === 'failed' && missingApiMonths > 0 && (
+        <Notice kind="bad" title={t('consolidated.lm.apiFailedTitle')}>
+          {t('consolidated.lm.apiFailedBody', { count: String(missingApiMonths) })}
+        </Notice>
       )}
 
-      {/* Settings panel — columnas + meses */}
+      {/* Deriva snapshot-vs-vivo — mismo aviso que /socios */}
+      {snapshotDrifts.length > 0 && (
+        <Notice
+          kind="bad"
+          title={t('consolidated.driftTitle', {
+            count: String(driftPeriodCount),
+            periods: driftPeriodCount === 1
+              ? t('consolidated.driftPeriodOne')
+              : t('consolidated.driftPeriodMany'),
+          })}
+        >
+          <ul className="mt-1 space-y-0.5 text-[12px]">
+            {snapshotDrifts.slice(0, 6).map((d, i) => (
+              <li key={i}>
+                {t('consolidated.driftRow', {
+                  period: d.periodLabel,
+                  field: d.field,
+                  frozen: formatMoney(d.frozen),
+                  live: formatMoney(d.live),
+                })}
+              </li>
+            ))}
+            {snapshotDrifts.length > 6 && (
+              <li>{t('consolidated.driftMore', { count: String(snapshotDrifts.length - 6) })}</li>
+            )}
+          </ul>
+          <p className="mt-1 text-[12px]">{t('consolidated.driftHint')}</p>
+        </Notice>
+      )}
+
+      {/* Settings panel — columnas + meses. Chip activo = se ve. */}
       {showSettings && (
-        <Card className="p-4 space-y-4">
+        <Panel title={settingsButtonLabel} bodyClassName="space-y-4">
           <section>
-            <h3 className="text-sm font-semibold mb-2">{t('consolidated.columns')}</h3>
+            <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-[.03em] text-text-3">
+              {t('consolidated.columns')}
+            </h3>
             <div className="flex flex-wrap gap-2">
               {modelColumns.map((c) => {
                 const isHidden = hiddenCols.has(c.key);
                 return (
-                  <button
+                  <Chip
                     key={c.key}
+                    active={!isHidden}
+                    icon={isHidden ? EyeOff : Eye}
                     onClick={() => toggleCol(c.key)}
-                    className={
-                      'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ' +
-                      (isHidden
-                        ? 'border-border bg-muted text-muted-foreground hover:bg-muted/60'
-                        : 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300 hover:bg-emerald-100/60')
-                    }
                   >
-                    {isHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                     {t(c.labelKey)}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
           </section>
           <section>
-            <h3 className="text-sm font-semibold mb-2">{t('consolidated.months')}</h3>
+            <h3 className="mb-2 text-[12px] font-semibold uppercase tracking-[.03em] text-text-3">
+              {t('consolidated.months')}
+            </h3>
             <div className="flex flex-wrap gap-2">
               {periodContexts.map((ctx) => {
                 const isHidden = hiddenMonths.has(ctx.periodId);
                 return (
-                  <button
+                  <Chip
                     key={ctx.periodId}
+                    active={!isHidden}
+                    icon={isHidden ? EyeOff : Eye}
                     onClick={() => toggleMonth(ctx.periodId)}
-                    className={
-                      'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ' +
-                      (isHidden
-                        ? 'border-border bg-muted text-muted-foreground hover:bg-muted/60'
-                        : 'border-sky-200 bg-sky-50 text-sky-700 dark:border-sky-900 dark:bg-sky-950/40 dark:text-sky-300 hover:bg-sky-100/60')
-                    }
                   >
-                    {isHidden ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
                     {ctx.periodLabel}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
           </section>
-        </Card>
+        </Panel>
       )}
 
       {/* Main table */}
-      <Card className="p-0 overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm border-collapse">
-            <thead className="bg-muted/50 sticky top-0">
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium sticky left-0 bg-muted/50 z-10 border-r border-border whitespace-nowrap">
-                  {t('consolidated.month')}
-                </th>
-                {visibleColumns.map((c) => (
-                  <th
-                    key={c.key}
-                    className="text-right py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap"
-                  >
-                    {t(c.labelKey)}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {visiblePeriodContexts.length === 0 && (
-                <tr>
-                  <td
-                    colSpan={visibleColumns.length + 1}
-                    className="py-8 text-center text-muted-foreground"
-                  >
-                    {t('consolidated.noVisibleMonths')}
-                  </td>
-                </tr>
-              )}
-              {visiblePeriodContexts.map((ctx) => (
-                <tr
-                  key={ctx.periodId}
-                  className="border-b border-border/50 hover:bg-muted/50 transition-colors"
-                >
-                  <td className="py-2 px-3 font-medium sticky left-0 bg-background hover:bg-muted/50 border-r border-border whitespace-nowrap">
-                    {ctx.periodLabel}
-                  </td>
-                  {visibleColumns.map((c) => {
-                    const value = c.compute(ctx);
-                    const className =
-                      c.kind === 'pos' && value > 0
-                        ? 'text-emerald-600'
-                        : c.kind === 'neg' && value > 0
-                        ? 'text-red-600'
-                        : '';
-                    return (
-                      <td
-                        key={c.key}
-                        className={`py-2 px-3 text-right tabular-nums whitespace-nowrap ${className}`}
-                      >
-                        {formatCurrency(value)}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
-            </tbody>
-            {visiblePeriodContexts.length > 0 && (
-              <tfoot className="bg-muted/40">
-                <tr className="font-semibold border-t-2 border-border">
-                  <td className="py-2.5 px-3 sticky left-0 bg-muted/40 border-r border-border whitespace-nowrap">
-                    {t('common.total')}
-                  </td>
-                  {visibleColumns.map((c) => {
-                    const value = totals.get(c.key);
-                    return (
-                      <td
-                        key={c.key}
-                        className="py-2.5 px-3 text-right tabular-nums whitespace-nowrap"
-                      >
-                        {value == null ? '—' : formatCurrency(value)}
-                        {c.total === 'last' && (
-                          <span className="block text-[10px] font-normal text-muted-foreground">
-                            {t('consolidated.lastMonthNote')}
-                          </span>
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              </tfoot>
+      <Panel
+        flush
+        title={t('consolidated.lm.tableTitle')}
+        hint={monthsSub}
+        footer={
+          <div className="space-y-1">
+            <p>{t('consolidated.footerNote')}</p>
+            {lastCols.length > 0 && (
+              <p>
+                {lastCols.map((c) => t(c.labelKey)).join(', ')} {t('consolidated.lastMonthNote')}
+              </p>
             )}
-          </table>
-        </div>
-      </Card>
-
-      <p className="text-xs text-muted-foreground">
-        {t('consolidated.footerNote')}
-      </p>
+          </div>
+        }
+      >
+        <FinTable
+          columns={tableColumns}
+          rows={visiblePeriodContexts}
+          rowKey={(ctx) => ctx.periodId}
+          caption={t('consolidated.title')}
+          empty={t('consolidated.noVisibleMonths')}
+          maxHeight="70vh"
+          footer={
+            visiblePeriodContexts.length > 0
+              ? {
+                  label: t('consolidated.lm.totalMonths', { count: String(visiblePeriodContexts.length) }),
+                  values: footerValues,
+                }
+              : undefined
+          }
+        />
+      </Panel>
     </div>
   );
 }

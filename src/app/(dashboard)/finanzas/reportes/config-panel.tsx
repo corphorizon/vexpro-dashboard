@@ -9,6 +9,12 @@
 //
 // Saves via PUT /api/reports/config. Missing backend row → all on (handled
 // server-side in loadReportConfig).
+//
+// «Libro mayor» (2026-10-12): sólo tokens, sin tocar el guardado. `Card` →
+// superficie de panel (`rounded-ui-lg`, `shadow-1`); botón Guardar con
+// `text-white` fijo → `actionButtonClass('primary')` (`text-brand-on-primary`);
+// estado `text-emerald-600`/`text-red-600` → `pos`/`neg`. Medido: 3 clases de
+// paleta cruda → 0; 14 legados → 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
@@ -19,7 +25,7 @@ import {
   type ReportSections,
 } from '@/lib/reports/sections';
 import { ChevronDown, Save, Settings2 } from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { actionButtonClass } from '@/components/payment-orders/action-button';
 
 // Las secciones y sus etiquetas salen del registro único
 // (src/lib/reports/sections.ts): esta pantalla tenía interfaz, etiquetas y
@@ -145,28 +151,28 @@ export function ReportsConfigPanel() {
   }
 
   return (
-    <Card>
+    <section className="rounded-ui-lg border border-border bg-card p-4 shadow-1">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between text-left"
       >
         <div className="flex items-center gap-2">
-          <Settings2 className="w-5 h-5 text-muted-foreground" />
-          <span className="font-medium">Configuración de Reportes</span>
-          <span className="text-xs text-muted-foreground hidden sm:inline">
+          <Settings2 aria-hidden className="size-4 text-text-3" />
+          <span className="text-[15px] font-semibold tracking-[-0.005em]">Configuración de Reportes</span>
+          <span className="text-xs text-text-3 hidden sm:inline">
             · secciones y cadencias de los envíos automáticos
           </span>
         </div>
         <ChevronDown
-          className={`w-4 h-4 text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 text-text-3 transition-transform ${open ? 'rotate-180' : ''}`}
         />
       </button>
 
       {open && (
         <div className="mt-4 pt-4 border-t border-border space-y-5">
           {loading ? (
-            <p className="text-sm text-muted-foreground">Cargando…</p>
+            <p className="text-sm text-text-3">Cargando…</p>
           ) : (
             <>
               <section>
@@ -175,7 +181,7 @@ export function ReportsConfigPanel() {
                   {(Object.keys(SECTION_LABELS) as (keyof Sections)[]).map((k) => (
                     <label
                       key={k}
-                      className="flex items-center gap-2 text-sm p-2 rounded-md border border-border hover:bg-muted/40 cursor-pointer"
+                      className="flex items-center gap-2 text-sm p-2 rounded-md border border-border hover:bg-row-hover cursor-pointer"
                     >
                       <input
                         type="checkbox"
@@ -196,7 +202,7 @@ export function ReportsConfigPanel() {
                   {(Object.keys(CADENCE_LABELS) as (keyof Cadences)[]).map((k) => (
                     <label
                       key={k}
-                      className="flex items-center gap-2 text-sm p-2 rounded-md border border-border hover:bg-muted/40 cursor-pointer"
+                      className="flex items-center gap-2 text-sm p-2 rounded-md border border-border hover:bg-row-hover cursor-pointer"
                     >
                       <input
                         type="checkbox"
@@ -209,7 +215,7 @@ export function ReportsConfigPanel() {
                     </label>
                   ))}
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">
+                <p className="mt-2 text-xs text-text-3">
                   Apagar una cadencia detiene el envío automático para esa frecuencia. El
                   botón manual en esta página sigue funcionando.
                 </p>
@@ -217,18 +223,18 @@ export function ReportsConfigPanel() {
 
               <section>
                 <h3 className="text-sm font-medium mb-2">Destinatarios por cadencia</h3>
-                <p className="text-xs text-muted-foreground mb-3">
+                <p className="text-xs text-text-3 mb-3">
                   Por defecto todos los usuarios con acceso a Finanzas reciben cada cadencia
                   activa. Desmarca para excluir a un usuario de una cadencia específica.
                 </p>
                 {candidates.length === 0 ? (
-                  <p className="text-sm text-muted-foreground italic">
+                  <p className="text-sm text-text-3 italic">
                     Aún no hay usuarios con acceso a Finanzas.
                   </p>
                 ) : (
-                  <div className="rounded-lg border border-border overflow-x-auto">
+                  <div className="rounded-ui-md border border-border overflow-x-auto">
                     <table className="w-full text-sm">
-                      <thead className="bg-muted/50 text-xs text-muted-foreground">
+                      <thead className="bg-surface-2 text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3">
                         <tr className="border-b border-border">
                           <th className="text-left py-2.5 px-3 font-medium">Usuario</th>
                           {(Object.keys(CADENCE_LABELS) as CadenceKey[]).map((k) => (
@@ -245,10 +251,10 @@ export function ReportsConfigPanel() {
                       </thead>
                       <tbody>
                         {candidates.map((u) => (
-                          <tr key={u.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+                          <tr key={u.id} className="border-b border-border hover:bg-row-hover transition-colors">
                             <td className="px-3 py-2">
                               <div className="truncate max-w-[220px]">{u.name}</div>
-                              <div className="text-xs text-muted-foreground truncate max-w-[220px]">
+                              <div className="text-xs text-text-3 truncate max-w-[220px]">
                                 {u.email}
                               </div>
                             </td>
@@ -284,7 +290,7 @@ export function ReportsConfigPanel() {
                 <button
                   onClick={save}
                   disabled={saving}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50"
+                  className={actionButtonClass('primary')}
                 >
                   <Save className="w-4 h-4" />
                   {saving ? 'Guardando…' : 'Guardar'}
@@ -292,7 +298,7 @@ export function ReportsConfigPanel() {
                 {status && (
                   <span
                     className={`text-xs ${
-                      status.kind === 'ok' ? 'text-emerald-600' : 'text-red-600'
+                      status.kind === 'ok' ? 'text-pos' : 'text-neg'
                     }`}
                   >
                     {status.msg}
@@ -303,6 +309,6 @@ export function ReportsConfigPanel() {
           )}
         </div>
       )}
-    </Card>
+    </section>
   );
 }

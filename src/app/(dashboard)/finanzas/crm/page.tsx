@@ -33,21 +33,41 @@
 // "diferencia", y llevan la advertencia encima. La separación es visual a
 // propósito: el bug que se evita no es de código, es de que alguien las lea
 // como si fueran ingresos.
+//
+// ── «LIBRO MAYOR» (2026-10-12) ────────────────────────────────────────────
+// Botonera de métricas → `Segmented`; tablas a mano → `FinTable` (números a
+// la derecha, tabulares, tarjeta en móvil); avisos con `text-amber-600` y
+// `dark:text-amber-500` crudos → `Notice` (pend/bad/info). La diferencia
+// ≠ 0 va en `neg` (antes ámbar: no es «pendiente», es lo que no cuadra).
+// Las métricas que no suman al resultado llevan «Informativo — no suma al
+// resultado» en un `StatusBadge neutral`, leído de `feedsResult` del
+// registro (crm-monthly.ts) — incluida P2P, que se compara pero tampoco
+// suma. Las reglas de cada celda (diferencia, reversos, detail) están en
+// crm-totals-view.ts, con test. Ningún número cambió de fórmula.
+// Medido antes/después en este archivo: 7 clases de paleta cruda + 1 `dark:`
+// → 0; 23 tokens legados (`muted-foreground`, `destructive`, `bg-muted`) → 0.
+//
+// DESCARTADO: total al pie (la tabla nunca lo tuvo; ver crm-totals-view.ts)
+// y `Chip` para elegir métrica (son excluyentes: eso es un segmented).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Database, Info } from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { Database } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money } from '@/components/ui/money';
 import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { apiFetch } from '@/lib/api-fetch';
-import { formatCurrency } from '@/lib/utils';
 import { CRM_MONTHLY_COMPARED_METRICS, CRM_MONTHLY_INFO_METRICS } from '@/lib/crm-monthly';
+import { crmDiff, detailNumber, isOutsideResult, lastComputedAt, reversalsShown } from './crm-totals-view';
 
 interface Row {
   year: number;
@@ -65,8 +85,7 @@ interface Row {
   periodClosed: boolean | null;
 }
 
-/** Debajo del centavo es redondeo, no una diferencia. */
-const EPSILON = 0.009;
+const rowKey = (r: Row) => `${r.year}-${r.month}`;
 
 export default function CrmTotalsPage() {
   const { t, locale } = useI18n();
@@ -146,141 +165,203 @@ export default function CrmTotalsPage() {
   }
 
   const currency = visible[0]?.currency || company?.currency || 'USD';
-  const money = (n: number) => formatCurrency(n, currency);
   const label = (m: { labelEs: string; labelEn: string }) => (locale === 'en' ? m.labelEn : m.labelEs);
   const monthLabel = (r: Row) => r.periodLabel ?? `${r.year}-${String(r.month).padStart(2, '0')}`;
+  const muted = (text: string) => <span className="text-text-3">{text}</span>;
 
-  const lastComputed = visible.map((r) => r.computedAt).filter(Boolean).sort().pop() ?? null;
+  const lastComputed = lastComputedAt(visible);
+  const activeDef = withData.find((m) => m.key === activeMetric) ?? null;
   const activeInfoDef = infoWithData.find((m) => m.key === activeInfoMetric) ?? null;
 
+  // «Informativo — no suma al resultado»: lo decide el registro
+  // (`feedsResult`), no esta pantalla. Neutral: no es un estado de dinero.
+  const outsideBadge = <StatusBadge kind="neutral" label={t('crmTotals.lm.outsideResult')} />;
+
+  // Excluido / correcciones: «n · $x», o «—» si no hubo. El conteo va primero
+  // porque es lo que se audita; el monto es contexto.
+  const excludedCell = (r: Row, hint: string) =>
+    r.excludedCount === 0 ? (
+      muted('—')
+    ) : (
+      <span title={hint} className="whitespace-nowrap">
+        <span className="tabular-nums">{r.excludedCount}</span>
+        {' · '}
+        <Money value={r.excludedAmount} currency={currency} />
+      </span>
+    );
+
+  const columns: FinColumn<Row>[] = [
+    {
+      key: 'month',
+      header: t('crmTotals.month'),
+      cell: (r) => monthLabel(r),
+      meta: (r) => (r.periodClosed ? t('crmTotals.closed') : null),
+    },
+    {
+      key: 'auto',
+      header: t('crmTotals.auto'),
+      kind: 'money',
+      cell: (r) =>
+        r.auto === null ? (
+          muted(t('crmTotals.notComputed'))
+        ) : (
+          <Money value={r.auto} currency={currency} className="font-medium" />
+        ),
+    },
+    {
+      key: 'manual',
+      header: t('crmTotals.manual'),
+      kind: 'money',
+      cell: (r) =>
+        r.manual === null ? muted(t('crmTotals.notLoaded')) : <Money value={r.manual} currency={currency} />,
+    },
+    {
+      key: 'diff',
+      header: t('crmTotals.difference'),
+      kind: 'money',
+      cell: (r) => {
+        const d = crmDiff(r.auto, r.manual);
+        if (d.kind === 'unknown') return muted('—');
+        if (d.kind === 'match') return <Money value={0} currency={currency} className="text-text-3" />;
+        // Una diferencia no es un error (un mes abierto se mueve), pero es lo
+        // que hay que mirar: `neg` con el signo explícito.
+        return <Money value={d.value} currency={currency} signed tone="neg" className="font-medium" />;
+      },
+    },
+    {
+      key: 'txCount',
+      header: t('crmTotals.txCount'),
+      kind: 'number',
+      value: (r) => r.txCount,
+      hideSm: true,
+    },
+    {
+      key: 'excluded',
+      header: t('crmTotals.excluded'),
+      kind: 'number',
+      cell: (r) => excludedCell(r, t('crmTotals.excludedHint')),
+      hideSm: true,
+    },
+  ];
+
+  // Columnas de la tabla informativa: las fijas + las que declara la métrica
+  // en el registro (hedge fund: rendimientos y capital devuelto). La lista
+  // sale de `detailColumns`, no de acá.
+  const infoColumns: FinColumn<Row>[] = [
+    { key: 'month', header: t('crmTotals.month'), cell: (r) => monthLabel(r) },
+    {
+      key: 'amount',
+      header: t('crmInfo.amount'),
+      kind: 'money',
+      cell: (r) =>
+        r.auto === null ? (
+          muted(t('crmTotals.notComputed'))
+        ) : (
+          <Money value={r.auto} currency={currency} className="font-medium" />
+        ),
+    },
+    { key: 'txCount', header: t('crmTotals.txCount'), kind: 'number', value: (r) => r.txCount, hideSm: true },
+    {
+      key: 'corrections',
+      header: t('crmInfo.corrections'),
+      kind: 'number',
+      cell: (r) => excludedCell(r, t('crmInfo.correctionsHint')),
+      hideSm: true,
+    },
+    {
+      key: 'reversals',
+      header: t('crmInfo.reversals'),
+      kind: 'money',
+      // El reverso vive en `detail`: es contraste, no un total. `undefined`
+      // (la métrica no tiene reversos) o 0 se muestran «—», nunca $0.
+      cell: (r) => {
+        const rev = reversalsShown(r.detail);
+        return rev === null ? (
+          muted('—')
+        ) : (
+          <span title={t('crmInfo.reversalsHint')}>
+            <Money value={rev} currency={currency} />
+          </span>
+        );
+      },
+      hideSm: true,
+    },
+    ...(activeInfoDef?.detailColumns ?? []).map<FinColumn<Row>>((c) => ({
+      key: `detail-${c.key}`,
+      header: locale === 'en' ? c.labelEn : c.labelEs,
+      kind: 'money',
+      hideSm: true,
+      // `undefined` = la serie no vino en el detail (fila vieja, calculada
+      // antes de que la columna existiera) → «—». `0` es un cero real.
+      cell: (r) => {
+        const n = detailNumber(r.detail, c.key);
+        const cnt = r.detail?.[`${c.key}Count`];
+        return n === null ? (
+          muted('—')
+        ) : (
+          <span title={typeof cnt === 'number' ? `${cnt}` : undefined}>
+            <Money value={n} currency={currency} />
+          </span>
+        );
+      },
+    })),
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader title={t('crmTotals.title')} subtitle={t('crmTotals.subtitle')} />
 
-      {failed && (
-        <Card className="p-4 border-destructive/40">
-          <div className="flex items-center gap-2 text-sm text-destructive">
-            <AlertTriangle className="w-4 h-4" />
-            {t('crmTotals.loadFailed')}
-          </div>
-        </Card>
-      )}
+      {failed && <Notice kind="bad" title={t('crmTotals.loadFailed')} />}
 
-      {truncated && (
-        <Card className="p-4">
-          <div className="flex items-center gap-2 text-sm text-amber-600">
-            <AlertTriangle className="w-4 h-4" />
-            {t('crmTotals.truncated')}
-          </div>
-        </Card>
-      )}
+      {/* Recorte del endpoint: un recorte silencioso es indistinguible de
+          «no hay más meses» (reglas §1.2). */}
+      {truncated && <Notice kind="pend" title={t('crmTotals.truncated')} />}
 
-      <Card className="p-4">
-        <div className="flex items-start gap-2 text-sm text-muted-foreground">
-          <Info className="w-4 h-4 mt-0.5 shrink-0" />
-          <p>{t('crmTotals.explainer')}</p>
-        </div>
-      </Card>
+      <Notice kind="info" title={t('crmTotals.lm.explainerTitle')}>
+        {t('crmTotals.explainer')}
+      </Notice>
 
       {rows === null ? (
         <Skeleton className="h-64 w-full" />
       ) : withData.length === 0 ? (
-        <EmptyState
-          icon={Database}
-          title={t('crmTotals.emptyTitle')}
-          description={t('crmTotals.emptyDesc')}
-        />
+        <Panel>
+          <EmptyState icon={Database} title={t('crmTotals.emptyTitle')} description={t('crmTotals.emptyDesc')} />
+        </Panel>
       ) : (
-        <>
-          <div className="flex flex-wrap gap-2">
-            {withData.map((m) => (
-              <button
-                key={m.key}
-                type="button"
-                onClick={() => setMetric(m.key)}
-                className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-                  activeMetric === m.key
-                    ? 'bg-primary text-brand-on-primary border-primary'
-                    : 'bg-background hover:bg-muted border-border'
-                }`}
-              >
-                {label(m)}
-              </button>
-            ))}
-          </div>
-
-          <Card className="p-0 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">{t('crmTotals.month')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmTotals.auto')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmTotals.manual')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmTotals.difference')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmTotals.txCount')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmTotals.excluded')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((r) => {
-                    const dif =
-                      r.auto === null || r.manual === null ? null : r.auto - r.manual;
-                    return (
-                      <tr key={`${r.year}-${r.month}`} className="border-t border-border">
-                        <td className="px-4 py-2">
-                          {monthLabel(r)}
-                          {r.periodClosed ? (
-                            <Badge variant="neutral" className="ml-2">{t('crmTotals.closed')}</Badge>
-                          ) : null}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {r.auto === null ? (
-                            <span className="text-muted-foreground">{t('crmTotals.notComputed')}</span>
-                          ) : (
-                            money(r.auto)
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {r.manual === null ? (
-                            <span className="text-muted-foreground">{t('crmTotals.notLoaded')}</span>
-                          ) : (
-                            money(r.manual)
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {dif === null ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : Math.abs(dif) < EPSILON ? (
-                            <span className="text-muted-foreground">{money(0)}</span>
-                          ) : (
-                            <span className="text-amber-600">{money(dif)}</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">{r.txCount}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {r.excludedCount === 0 ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : (
-                            <span title={t('crmTotals.excludedHint')}>
-                              {r.excludedCount} · {money(r.excludedAmount)}
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          {lastComputed && (
-            <p className="text-xs text-muted-foreground">
-              {t('crmTotals.computedAt')}: {new Date(lastComputed).toLocaleString()}
-            </p>
-          )}
-        </>
+        <Panel
+          flush
+          title={activeDef ? label(activeDef) : t('crmTotals.title')}
+          hint={
+            <span className="inline-flex flex-wrap items-center gap-2">
+              {t('crmTotals.lm.monthsHint', { count: String(visible.length) })}
+              {activeDef && isOutsideResult(activeDef) && outsideBadge}
+            </span>
+          }
+          actions={
+            withData.length > 1 ? (
+              <Segmented
+                aria-label={t('crmTotals.lm.metricAria')}
+                value={activeMetric}
+                onChange={setMetric}
+                options={withData.map((m) => ({ value: m.key, label: label(m) }))}
+              />
+            ) : undefined
+          }
+          footer={
+            lastComputed ? (
+              <span>
+                {t('crmTotals.computedAt')}: {new Date(lastComputed).toLocaleString()}
+              </span>
+            ) : undefined
+          }
+        >
+          <FinTable
+            columns={columns}
+            rows={visible}
+            rowKey={rowKey}
+            caption={activeDef ? label(activeDef) : t('crmTotals.title')}
+          />
+        </Panel>
       )}
 
       {/* ── DATOS DEL CRM QUE NO CUENTAN EN EL RESULTADO ──────────────────
@@ -289,131 +370,50 @@ export default function CrmTotalsPage() {
           pie, porque el riesgo es que alguien lea el número antes de leer
           la aclaración. */}
       {rows !== null && infoWithData.length > 0 && (
-        <div className="pt-6 mt-2 border-t-2 border-dashed border-border space-y-4">
+        <section
+          aria-labelledby="crm-info-title"
+          className="mt-2 space-y-4 border-t border-dashed border-border-strong pt-6"
+        >
           <div>
-            <h2 className="text-lg font-semibold">{t('crmInfo.title')}</h2>
-            <p className="text-sm text-muted-foreground">{t('crmInfo.subtitle')}</p>
+            <h2 id="crm-info-title" className="text-[15px] font-semibold tracking-[-0.005em] text-foreground">
+              {t('crmInfo.title')}
+            </h2>
+            <p className="mt-0.5 text-[13px] text-text-2">{t('crmInfo.subtitle')}</p>
           </div>
 
-          <Card className="p-4 border-amber-500/40 bg-amber-500/5">
-            <div className="flex items-start gap-2 text-sm">
-              <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" />
-              <div className="space-y-1">
-                <p className="font-medium text-amber-700 dark:text-amber-500">
-                  {t('crmInfo.warningTitle')}
-                </p>
-                <p className="text-muted-foreground">{t('crmInfo.warningBody')}</p>
-              </div>
-            </div>
-          </Card>
+          <Notice kind="pend" title={t('crmInfo.warningTitle')}>
+            {t('crmInfo.warningBody')}
+          </Notice>
 
-          <div className="flex flex-wrap gap-2">
-            {infoWithData.map((m) => (
-              <button
-                key={m.key}
-                type="button"
-                onClick={() => setInfoMetric(m.key)}
-                className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
-                  activeInfoMetric === m.key
-                    ? 'bg-primary text-brand-on-primary border-primary'
-                    : 'bg-background hover:bg-muted border-border'
-                }`}
-              >
-                {label(m)}
-              </button>
-            ))}
-          </div>
-
-          {activeInfoDef && (
-            <p className="text-sm text-muted-foreground">
-              {locale === 'en' ? activeInfoDef.whyNotFinanceEn : activeInfoDef.whyNotFinanceEs}
-            </p>
-          )}
-
-          <Card className="p-0 overflow-hidden">
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-muted/50 text-muted-foreground">
-                  <tr>
-                    <th className="px-4 py-2 text-left font-medium">{t('crmTotals.month')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmInfo.amount')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmTotals.txCount')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmInfo.corrections')}</th>
-                    <th className="px-4 py-2 text-right font-medium">{t('crmInfo.reversals')}</th>
-                    {/* Columnas extra declaradas por la métrica (hedge fund:
-                        rendimientos y capital devuelto). La lista sale del
-                        registro, no de acá. */}
-                    {(activeInfoDef?.detailColumns ?? []).map((c) => (
-                      <th key={c.key} className="px-4 py-2 text-right font-medium">
-                        {locale === 'en' ? c.labelEn : c.labelEs}
-                      </th>
-                    ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {infoVisible.map((r) => {
-                    // El reverso vive en `detail`, no en una columna propia de
-                    // la tabla: es contraste, no un total. `undefined` (la
-                    // métrica no tiene reversos) se muestra como "—", nunca
-                    // como $0.
-                    const rev = r.detail?.reversals;
-                    const revNum = typeof rev === 'number' ? rev : null;
-                    return (
-                      <tr key={`${r.year}-${r.month}`} className="border-t border-border">
-                        <td className="px-4 py-2">{monthLabel(r)}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {r.auto === null ? (
-                            <span className="text-muted-foreground">{t('crmTotals.notComputed')}</span>
-                          ) : (
-                            money(r.auto)
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">{r.txCount}</td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {r.excludedCount === 0 ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : (
-                            <span title={t('crmInfo.correctionsHint')}>
-                              {r.excludedCount} · {money(r.excludedAmount)}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-4 py-2 text-right tabular-nums">
-                          {revNum === null || revNum === 0 ? (
-                            <span className="text-muted-foreground">—</span>
-                          ) : (
-                            <span title={t('crmInfo.reversalsHint')}>{money(revNum)}</span>
-                          )}
-                        </td>
-                        {(activeInfoDef?.detailColumns ?? []).map((c) => {
-                          // `undefined` = la serie no vino en el detail (fila
-                          // vieja, calculada antes de que la columna
-                          // existiera) → "—". `0` es un cero real.
-                          const v = r.detail?.[c.key];
-                          const n = typeof v === 'number' ? v : null;
-                          const cnt = r.detail?.[`${c.key}Count`];
-                          return (
-                            <td key={c.key} className="px-4 py-2 text-right tabular-nums">
-                              {n === null ? (
-                                <span className="text-muted-foreground">—</span>
-                              ) : (
-                                <span title={typeof cnt === 'number' ? `${cnt}` : undefined}>
-                                  {money(n)}
-                                </span>
-                              )}
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          <p className="text-xs text-muted-foreground">{t('crmInfo.footnote')}</p>
-        </div>
+          <Panel
+            flush
+            title={activeInfoDef ? label(activeInfoDef) : t('crmInfo.title')}
+            hint={outsideBadge}
+            actions={
+              infoWithData.length > 1 ? (
+                <Segmented
+                  aria-label={t('crmTotals.lm.infoMetricAria')}
+                  value={activeInfoMetric}
+                  onChange={setInfoMetric}
+                  options={infoWithData.map((m) => ({ value: m.key, label: label(m) }))}
+                />
+              ) : undefined
+            }
+            footer={t('crmInfo.footnote')}
+          >
+            {activeInfoDef && (
+              <p className="border-b border-border px-4 py-2.5 text-[13px] text-text-2">
+                {locale === 'en' ? activeInfoDef.whyNotFinanceEn : activeInfoDef.whyNotFinanceEs}
+              </p>
+            )}
+            <FinTable
+              columns={infoColumns}
+              rows={infoVisible}
+              rowKey={rowKey}
+              caption={activeInfoDef ? label(activeInfoDef) : t('crmInfo.title')}
+            />
+          </Panel>
+        </section>
       )}
     </div>
   );
