@@ -14,13 +14,29 @@
 // Explica por qué una cuenta no aparece en los meses anteriores. Sin ella, una
 // cuenta que entró en junio se lee como si hubiera rendido cero en mayo, y no
 // es lo mismo: en mayo no estaba.
+//
+// ── «LIBRO MAYOR» (2026-10-12) ─────────────────────────────────────────────
+// Sólo presentación. Las cuatro `Stat` → una franja de KPIs (PnL del mes
+// hero con color por signo); los 12 meses son `Chip` (los vacíos, apagados);
+// la tabla es una FinTable con el «parcial» como metadato del PnL y el total
+// del MES (el del resumen, no la suma de lo visible) en el pie.
+// Antes, sin mes elegido, los KPIs decían «$0.00» / «0» (`?? 0`): ahora «—».
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import { formatCurrency } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { formatFechaConexion } from '@/lib/liquidity/connection-date';
-import { MESES, mesLabel, Stat } from './ui';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS } from '@/components/ui/money';
+import { Notice } from '@/components/ui/notice';
+import { Chip } from '@/components/ui/chip';
+import { Select } from '@/components/ui/field';
+import { Skeleton } from '@/components/ui/skeleton';
+import { MESES, mesLabel } from './ui';
+import { toAmount } from './pool-view-model';
 
 interface MesResumen {
   year: number;
@@ -68,7 +84,8 @@ function esMesDeConexion(
 
 export function ResumenMensual({ companyId, refrescoNonce = 0 }: { companyId: string; refrescoNonce?: number }) {
   const [meses, setMeses] = useState<MesResumen[] | null>(null);
-  const [totales, setTotales] = useState<{ pnl: number; ops: number }>({ pnl: 0, ops: 0 });
+  // `null` = el endpoint no lo mandó: «—», no $0.00.
+  const [totales, setTotales] = useState<{ pnl: number | null; ops: number | null }>({ pnl: null, ops: null });
   const [sel, setSel] = useState<{ year: number; month: number } | null>(null);
   const [anio, setAnio] = useState<number | null>(null);
   const [filas, setFilas] = useState<FilaMes[] | null>(null);
@@ -86,7 +103,7 @@ export function ResumenMensual({ companyId, refrescoNonce = 0 }: { companyId: st
         if (!vivo) return;
         const lista: MesResumen[] = json.months ?? [];
         setMeses(lista);
-        setTotales({ pnl: json.grand_total ?? 0, ops: json.grand_operations ?? 0 });
+        setTotales({ pnl: toAmount(json.grand_total), ops: toAmount(json.grand_operations) });
         // Arranca en el más reciente, que es el que se mira.
         if (lista.length > 0) {
           setSel({ year: lista[0].year, month: lista[0].month });
@@ -150,29 +167,27 @@ export function ResumenMensual({ companyId, refrescoNonce = 0 }: { companyId: st
   }
 
   if (err) {
-    return <div className="rounded-lg bg-negative/10 text-negative p-3 text-sm">{err}</div>;
+    return <Notice kind="bad" title="No se pudo cargar el resumen mensual">{err}</Notice>;
   }
 
   if (meses === null) {
     return (
-      <div className="animate-pulse space-y-3">
-        <div className="h-9 w-80 rounded-lg bg-muted/50" />
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          {[0, 1, 2, 3].map((i) => <div key={i} className="h-20 rounded-xl bg-muted/50" />)}
-        </div>
+      <div className="space-y-3">
+        <Skeleton className="h-8 w-80" />
+        <Skeleton className="h-[92px]" />
       </div>
     );
   }
 
   if (meses.length === 0) {
     return (
-      <div className="rounded-xl border border-border bg-card p-8 text-center text-sm text-muted-foreground">
-        Todavía no hay PnL calculado. Agregá una cuenta al pool y el resumen mensual aparece solo.
-      </div>
+      <Panel>
+        <p className="py-4 text-center text-[13px] text-text-3">
+          Todavía no hay PnL calculado. Agregá una cuenta al pool y el resumen mensual aparece solo.
+        </p>
+      </Panel>
     );
   }
-
-  const tono = (n: number) => (n < 0 ? 'negative' as const : n > 0 ? 'positive' as const : 'muted' as const);
 
   // El total ya NO se marca con `is_partial`.
   //
@@ -186,183 +201,180 @@ export function ResumenMensual({ companyId, refrescoNonce = 0 }: { companyId: st
   // por el calendario, sin preguntarle a las filas. El aviso por cuenta se
   // queda donde significa algo: en la fila.
   const ahora = new Date();
-  const mesEnCurso =
-    sel !== null &&
-    sel.year === ahora.getUTCFullYear() &&
-    sel.month === ahora.getUTCMonth() + 1;
+  const esteAnio = ahora.getUTCFullYear();
+  const esteMes = ahora.getUTCMonth() + 1;
+  const mesEnCurso = sel !== null && sel.year === esteAnio && sel.month === esteMes;
+  const etiquetaMes = sel ? mesLabel(sel.year, sel.month) : 'ese mes';
+
+  // `mesActual` es null sólo si el mes elegido no está en la lista: «—», no 0.
+  const kpis: KpiItem[] = [
+    {
+      key: 'pnl',
+      label: sel ? `PnL de ${etiquetaMes}` : 'PnL del mes',
+      value: mesActual?.total ?? null,
+      hero: true,
+      tone: 'sign',
+      sub: mesEnCurso ? 'Mes en curso' : undefined,
+    },
+    {
+      key: 'ops',
+      label: 'Operaciones',
+      value: mesActual?.operations ?? null,
+      format: 'count',
+      // El volumen dice cuánto TRABAJO hizo el pool para llegar a ese
+      // resultado: dos meses con el mismo PnL no son lo mismo si uno movió
+      // 2 lotes y el otro 400.
+      sub: mesActual ? `${fmtLotes(mesActual.lots)} lotes` : undefined,
+    },
+    {
+      key: 'accounts',
+      label: 'Cuentas en el pool',
+      value: mesActual?.accounts ?? null,
+      format: 'count',
+      // "Estaban" y "operaron" son datos distintos: sin el segundo, un mes
+      // tranquilo se lee como un mes sin cuentas.
+      sub: mesActual ? `${mesActual.accounts_with_activity} con operaciones` : undefined,
+    },
+    {
+      key: 'acc',
+      label: 'Acumulado del pool',
+      value: totales.pnl,
+      tone: 'sign',
+      sub: totales.ops === null ? undefined : `${totales.ops} operaciones en total`,
+    },
+  ];
+
+  const columnas: FinColumn<FilaMes>[] = [
+    {
+      key: 'cuenta',
+      header: 'Cuenta',
+      cell: (f) => <span className={NUM_CLASS}>{f.mt5_account}</span>,
+      meta: (f) => f.mt5_email ?? undefined,
+      mobileMeta: (f) => <span className={NUM_CLASS}>Conectada {formatFechaConexion(f.connection_date)}</span>,
+    },
+    {
+      key: 'pnl',
+      header: 'PnL del mes',
+      kind: 'money',
+      value: (f) => toAmount(f.pnl),
+      money: { signed: true, tone: 'sign' },
+      // «Parcial» tiene dos motivos y el tooltip dice cuál, que es la pregunta
+      // que la palabra sola dejaba abierta.
+      meta: (f) => (f.is_partial ? (
+        <span
+          title={
+            esMesDeConexion(f, sel)
+              ? `Entró al pool el ${formatFechaConexion(f.connection_date)}: el PnL cuenta `
+                + 'desde esa fecha, no desde el 1. Si operó antes, eso no está acá.'
+              : 'El mes todavía no terminó.'
+          }
+        >
+          parcial
+        </span>
+      ) : undefined),
+      subtotal: false,
+    },
+    { key: 'ops', header: 'Ops', kind: 'number', value: (f) => f.operations_count, hideSm: true, subtotal: false },
+    {
+      // `null` es «se calculó antes de que existiera esta columna», no «operó
+      // cero lotes». Por eso va un guion y no un 0 — se arregla refrescando.
+      key: 'lotes',
+      header: 'Lotes',
+      align: 'right',
+      hideSm: true,
+      cell: (f) => (f.lots === null || f.lots === undefined
+        ? <span className="text-text-3" title="Sin calcular: refrescá la cuenta">—</span>
+        : <span className={NUM_CLASS}>{fmtLotes(f.lots)}</span>),
+    },
+    { key: 'liquidez', header: 'Equity a Liquidez', kind: 'money', value: (f) => toAmount(f.balance_liquidez), hideSm: true, subtotal: false },
+    {
+      key: 'conectada',
+      header: 'Conectada',
+      hideSm: true,
+      cell: (f) => <span className={cn(NUM_CLASS, 'text-text-2')}>{formatFechaConexion(f.connection_date)}</span>,
+    },
+  ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Año + los 12 meses */}
       <div className="flex flex-wrap items-center gap-2">
-        <select
+        <Select
+          aria-label="Año"
           value={anio ?? ''}
           onChange={(e) => cambiarAnio(Number(e.target.value))}
-          className="h-9 px-2 rounded-lg border border-border bg-card text-sm font-medium"
+          className="h-8 w-auto [@media(pointer:coarse)]:h-10"
         >
           {anios.map((y) => <option key={y} value={y}>{y}</option>)}
-        </select>
+        </Select>
 
-        <div className="flex flex-wrap gap-1">
-          {MESES.map((etiqueta, i) => {
-            const m = i + 1;
-            const dato = delAnio.get(m);
-            const activo = sel?.year === anio && sel?.month === m;
-            return (
-              <button
-                key={m}
-                disabled={!dato}
-                onClick={() => anio && setSel({ year: anio, month: m })}
-                title={dato ? undefined : 'Sin datos en este mes'}
-                className={`h-9 px-3 rounded-lg text-sm font-medium transition-colors ${
-                  activo
-                    ? 'bg-[var(--color-primary)] text-white'
-                    : dato
-                      ? 'border border-border bg-card hover:bg-muted'
-                      : 'border border-dashed border-border text-muted-foreground/40 cursor-not-allowed'
-                }`}
-              >
-                {etiqueta}
-              </button>
-            );
-          })}
-        </div>
-
-        {/* El mes EN CURSO sin datos no está «bloqueado»: nadie lo generó aún.
-            Este módulo carga a demanda por pedido del dueño (agosto 2026:
-            botón en vez de carga automática), así que hasta el primer
-            «Refrescar todo» del mes el botón sale apagado y parecía un bug
-            (dueño, 2026-09-28: «sep no me deja abrirlo, está bloqueado»).
-            El aviso lo dice en el momento, sin depender de un tooltip que un
-            botón disabled no siempre dispara. Corte de mes en UTC, como todo
-            el sistema. */}
-        {(() => {
-          const ahora = new Date();
-          const esteAnio = ahora.getUTCFullYear();
-          const esteMes = ahora.getUTCMonth() + 1;
-          if (anio === esteAnio && !delAnio.has(esteMes)) {
-            return (
-              <p className="text-xs text-warning">
-                {MESES[esteMes - 1]} aún no tiene datos: tocá «Refrescar todo» (arriba) para calcular el mes en curso.
-              </p>
-            );
-          }
-          return null;
-        })()}
+        {MESES.map((etiqueta, i) => {
+          const m = i + 1;
+          const dato = delAnio.get(m);
+          return (
+            <Chip
+              key={m}
+              active={sel?.year === anio && sel?.month === m}
+              disabled={!dato}
+              onClick={() => anio && setSel({ year: anio, month: m })}
+              title={dato ? undefined : 'Sin datos en este mes'}
+            >
+              {etiqueta}
+            </Chip>
+          );
+        })}
       </div>
+
+      {/* El mes EN CURSO sin datos no está «bloqueado»: nadie lo generó aún.
+          Este módulo carga a demanda por pedido del dueño (agosto 2026:
+          botón en vez de carga automática), así que hasta el primer
+          «Refrescar todo» del mes el botón sale apagado y parecía un bug
+          (dueño, 2026-09-28: «sep no me deja abrirlo, está bloqueado»).
+          El aviso lo dice en el momento, sin depender de un tooltip que un
+          botón disabled no siempre dispara. Corte de mes en UTC, como todo
+          el sistema. */}
+      {anio === esteAnio && !delAnio.has(esteMes) && (
+        <Notice kind="stale" title={`${MESES[esteMes - 1]} aún no tiene datos`}>
+          Tocá «Refrescar todo» (arriba) para calcular el mes en curso.
+        </Notice>
+      )}
 
       {/* Totales del mes elegido */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat
-          label={sel ? `PnL de ${mesLabel(sel.year, sel.month)}` : 'PnL del mes'}
-          value={formatCurrency(mesActual?.total ?? 0)}
-          tone={tono(mesActual?.total ?? 0)}
-          sub={mesEnCurso ? 'Mes en curso' : undefined}
-        />
-        <Stat
-          label="Operaciones"
-          value={String(mesActual?.operations ?? 0)}
-          // El volumen dice cuánto TRABAJO hizo el pool para llegar a ese
-          // resultado: dos meses con el mismo PnL no son lo mismo si uno movió
-          // 2 lotes y el otro 400.
-          sub={`${(mesActual?.lots ?? 0).toLocaleString('es', { maximumFractionDigits: 2 })} lotes`}
-        />
-        <Stat
-          label="Cuentas en el pool"
-          value={String(mesActual?.accounts ?? 0)}
-          // "Estaban" y "operaron" son datos distintos: sin el segundo, un mes
-          // tranquilo se lee como un mes sin cuentas.
-          sub={`${mesActual?.accounts_with_activity ?? 0} con operaciones`}
-        />
-        <Stat
-          label="Acumulado del pool"
-          value={formatCurrency(totales.pnl)}
-          sub={`${totales.ops} operaciones en total`}
-          tone={tono(totales.pnl)}
-        />
-      </div>
+      <KpiStrip items={kpis} />
 
       {/* Detalle por cuenta */}
-      <div className="rounded-xl border border-border bg-card overflow-x-auto">
+      <Panel title={`Detalle por cuenta · ${etiquetaMes}`} flush>
         {filas === null ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">Cargando el mes…</div>
-        ) : filas.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            Ninguna cuenta estaba en el pool en {sel ? mesLabel(sel.year, sel.month) : 'ese mes'}.
-          </div>
+          <div className="p-4"><Skeleton className="h-40" /></div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-xs uppercase tracking-wide text-muted-foreground">
-              <tr>
-                <th className="py-2 px-3 text-left font-medium">Cuenta</th>
-                <th className="py-2 px-3 text-left font-medium">Usuario</th>
-                <th className="py-2 px-3 text-right font-medium">PnL del mes</th>
-                <th className="py-2 px-3 text-right font-medium">Ops</th>
-                <th className="py-2 px-3 text-right font-medium">Lotes</th>
-                <th className="py-2 px-3 text-right font-medium">Equity a Liquidez</th>
-                <th className="py-2 px-3 text-left font-medium">Conectada</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filas.map((f) => (
-                <tr key={f.account_id} className="border-t border-border">
-                  <td className="py-2 px-3 font-medium">{f.mt5_account}</td>
-                  <td className="py-2 px-3 text-muted-foreground">{f.mt5_email ?? '—'}</td>
-                  <td className={`py-2 px-3 text-right font-semibold ${
-                    f.pnl < 0 ? 'text-negative' : f.pnl > 0 ? 'text-positive' : 'text-muted-foreground'
-                  }`}>
-                    {formatCurrency(f.pnl)}
-                    {/* «Parcial» tiene dos motivos y el tooltip dice cuál, que
-                        es la pregunta que la palabra sola dejaba abierta. */}
-                    {f.is_partial && (
-                      <span
-                        className="ml-1 text-[10px] font-normal text-muted-foreground"
-                        title={
-                          esMesDeConexion(f, sel)
-                            ? `Entró al pool el ${formatFechaConexion(f.connection_date)}: el PnL cuenta `
-                              + 'desde esa fecha, no desde el 1. Si operó antes, eso no está acá.'
-                            : 'El mes todavía no terminó.'
-                        }
-                      >
-                        parcial
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 px-3 text-right text-muted-foreground">{f.operations_count}</td>
-                  {/* `null` es «se calculó antes de que existiera esta
-                      columna», no «operó cero lotes». Por eso va un guion y no
-                      un 0 — se arregla refrescando esa cuenta. */}
-                  <td className="py-2 px-3 text-right text-muted-foreground">
-                    {f.lots === null || f.lots === undefined
-                      ? <span title="Sin calcular: refrescá la cuenta">—</span>
-                      : f.lots.toLocaleString('es', { maximumFractionDigits: 2 })}
-                  </td>
-                  <td className="py-2 px-3 text-right">{formatCurrency(f.balance_liquidez)}</td>
-                  <td className="py-2 px-3 text-xs text-muted-foreground">
-                    {formatFechaConexion(f.connection_date)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="border-t-2 border-border bg-muted/30 font-semibold">
-                <td className="py-2 px-3" colSpan={2}>Total del mes</td>
-                <td className={`py-2 px-3 text-right ${
-                  (mesActual?.total ?? 0) < 0 ? 'text-negative'
-                    : (mesActual?.total ?? 0) > 0 ? 'text-positive' : ''
-                }`}>
-                  {formatCurrency(mesActual?.total ?? 0)}
-                </td>
-                <td className="py-2 px-3 text-right">{mesActual?.operations ?? 0}</td>
-                <td className="py-2 px-3 text-right">
-                  {(mesActual?.lots ?? 0).toLocaleString('es', { maximumFractionDigits: 2 })}
-                </td>
-                <td colSpan={2} />
-              </tr>
-            </tfoot>
-          </table>
+          <FinTable
+            caption={`Detalle por cuenta, ${etiquetaMes}`}
+            columns={columnas}
+            rows={filas}
+            rowKey={(f) => f.account_id}
+            empty={`Ninguna cuenta estaba en el pool en ${etiquetaMes}.`}
+            footer={
+              filas.length > 0
+                ? {
+                    // El total es el del mes (del resumen), no la suma de lo
+                    // visible: si difieren, el número de arriba manda y el de
+                    // acá es el mismo.
+                    label: mesActual
+                      ? `Total del mes · ${mesActual.operations} ops · ${fmtLotes(mesActual.lots)} lotes`
+                      : 'Total del mes',
+                    values: { pnl: mesActual?.total ?? null },
+                  }
+                : undefined
+            }
+          />
         )}
-      </div>
+      </Panel>
     </div>
   );
+}
+
+/** Lotes con hasta 2 decimales. No es dinero: no pasa por `formatMoney`. */
+function fmtLotes(n: number | null | undefined): string {
+  if (n === null || n === undefined || !Number.isFinite(n)) return '—';
+  return n.toLocaleString('es', { maximumFractionDigits: 2 });
 }

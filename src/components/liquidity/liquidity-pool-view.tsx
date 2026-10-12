@@ -20,6 +20,26 @@
 // Por eso van en columnas separadas, con el total del pool destacado y el de
 // MT5 al lado como referencia. Mostrar sólo uno haría que el número pareciera
 // mal calculado.
+//
+// ── «LIBRO MAYOR» (2026-10-12) ─────────────────────────────────────────────
+// Sólo presentación: ningún endpoint, cálculo ni regla L1-L7 cambió.
+//   · Cuatro tarjetas `Stat` → UNA franja: Equity a Liquidez (hero) con el
+//     Balance MT5 en el sub y como KPI propio, más los conteos.
+//   · `<table>` a mano → FinTable: el equity a la conexión lleva «manual» /
+//     «aprox.» como metadato (`connectionEquityTag`), el status es un
+//     StatusBadge (activa `ok`, error `bad`, no activa neutro) y las acciones
+//     de fila aparecen al pasar (siempre en táctil). El pie suma lo que se ve y
+//     lo dice cuando hay una búsqueda activa.
+//   · Avisos ámbar con `dark:` de paleta cruda → `Notice` (pend/bad/info);
+//     formularios de los modales con `Field`; botones con la receta única
+//     (`ActionButton`, primario con `text-brand-on-primary`).
+//   · Los montos pasan por `toAmount` antes de `<Money>`: el endpoint puede
+//     mandarlos como texto y `<Money>` dibujaría «—» sobre un saldo real.
+//   · Título «Pool de Liquidez» (el del registro de módulos): «Liquidez» a
+//     secas es el otro módulo, el que este archivo pide no confundir.
+// DESCARTADO: pasar los textos a i18n en este cambio. La vista nunca usó
+// `t()` (se entra también por /superadmin, en castellano); traducirla es otro
+// trabajo y mezclarlo acá haría ilegible la revisión del rediseño.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -29,12 +49,27 @@ import {
   ArrowLeft, AlertTriangle, X,
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { formatFechaConexion } from '@/lib/liquidity/connection-date';
-import { mesLabel, Stat } from './ui';
+import { cn } from '@/lib/utils';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, NUM_CLASS } from '@/components/ui/money';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Segmented } from '@/components/ui/segmented';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton, actionButtonClass, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { mesLabel } from './ui';
 import { ResumenMensual } from './resumen-mensual';
+import {
+  connectionEquityTag, differsFromMt5, poolStatusKind, poolTotals, toAmount,
+} from './pool-view-model';
 
 // Antes acá vivía el UUID de Vex Pro escrito a mano. Se fue: la empresa la
 // elige quien mira, porque desde esta pantalla se administran varias. Un ID
@@ -228,16 +263,10 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
     );
   }, [cuentas, busqueda]);
 
+  // Los mismos totales de siempre (Σ por cuenta), ahora en `poolTotals` con test.
   const stats = useMemo(() => {
-    const t = cuentas ?? [];
-    return {
-      total: t.length,
-      activas: t.filter((c) => c.status === 'active').length,
-      inactivas: t.filter((c) => c.status !== 'active').length,
-      // El del pool es el que manda; el de MT5 va al lado como referencia.
-      pool: t.reduce((s, c) => s + (Number(c.balance_liquidez) || 0), 0),
-      mt5: t.reduce((s, c) => s + (Number(c.balance) || 0), 0),
-    };
+    const t = poolTotals(cuentas ?? []);
+    return { total: t.total, activas: t.active, inactivas: t.inactive, pool: t.pool, mt5: t.mt5 };
   }, [cuentas]);
 
   async function refrescarTodo() {
@@ -314,305 +343,284 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
     downloadCSV(`liquidez_${new Date().toISOString().slice(0, 10)}.csv`, headers, rows);
   }
 
+  const kpis: KpiItem[] = [
+    {
+      key: 'pool',
+      label: 'Equity a Liquidez (pool)',
+      value: cuentas === null ? null : stats.pool,
+      hero: true,
+      // El del pool es el que manda; el de MT5 va al lado como referencia.
+      sub: cuentas === null ? undefined : `Balance MT5: ${formatMoney(stats.mt5)}`,
+      missingBadge: cuentas === null ? { kind: 'stale', label: 'Cargando…' } : false,
+    },
+    { key: 'mt5', label: 'Balance MT5', value: cuentas === null ? null : stats.mt5, missingBadge: false },
+    { key: 'total', label: 'Cuentas', value: cuentas === null ? null : stats.total, format: 'count', missingBadge: false },
+    { key: 'active', label: 'Activas', value: cuentas === null ? null : stats.activas, format: 'count', missingBadge: false },
+    { key: 'inactive', label: 'No activas', value: cuentas === null ? null : stats.inactivas, format: 'count', missingBadge: false },
+  ];
+
+  const columnas: FinColumn<Cuenta>[] = [
+    {
+      key: 'cuenta',
+      header: 'Cuenta',
+      cell: (c) => (
+        <span className={cn(NUM_CLASS, 'inline-flex items-center gap-1.5')}>
+          {c.mt5_account}
+          {c.has_multiple_accounts_warning && (
+            <span title="El cliente tiene varias cuentas y no se detectó transferencia">
+              <AlertTriangle aria-label="Varias cuentas sin transferencia detectada" className="size-3.5 text-pend" />
+            </span>
+          )}
+        </span>
+      ),
+      // Los correos largos se cortan con el valor completo en el title: uno de
+      // 40 caracteres estiraba la tabla hasta obligar a desplazarse en
+      // horizontal para llegar a los montos, que es lo que la gente viene a mirar.
+      meta: (c) => (c.mt5_email ? <span title={c.mt5_email}>{c.mt5_email}</span> : undefined),
+      mobileMeta: (c) => (
+        <>
+          <StatusBadge kind={poolStatusKind(c.status)} label={ESTADO[c.status] ?? c.status} />
+          <span className={NUM_CLASS}>{formatFechaConexion(c.connection_date) || '—'}</span>
+        </>
+      ),
+    },
+    {
+      // Todos los grupos arrancan con `real\`, así que ese prefijo no distingue
+      // nada y sólo ocupa lugar. Se muestra el resto y el valor entero queda en el title.
+      key: 'grupo',
+      header: 'Grupo',
+      hideSm: true,
+      cell: (c) => (
+        <span className="block max-w-[150px] truncate text-text-2" title={c.mt5_group ?? undefined}>
+          {c.mt5_group ? c.mt5_group.replace(/^real\\/, '') : '—'}
+        </span>
+      ),
+    },
+    {
+      // Va pegada al equity de esa fecha: los dos datos se leen juntos
+      // —«conectada el X, con Y»— y separarlos obligaría a abrir el detalle.
+      key: 'conectada',
+      header: 'Conectada',
+      hideSm: true,
+      cell: (c) => <span className={cn(NUM_CLASS, 'text-text-2')}>{formatFechaConexion(c.connection_date) || '—'}</span>,
+    },
+    {
+      // El saldo QUE TENÍA el día que entró al pool, reconstruido desde MT5.
+      // `null` es «no se pudo calcular», que no es cero — por eso «—».
+      key: 'equityConexion',
+      header: 'Equity conexión',
+      kind: 'money',
+      hideSm: true,
+      value: (c) => toAmount(c.equity_at_connection),
+      meta: (c) => {
+        const tag = connectionEquityTag(c);
+        if (tag === 'manual') return <span title="Valor cargado a mano. El recálculo automático no lo pisa.">manual</span>;
+        // Con posiciones abiertas ese día el equity real era otro y no se puede
+        // reconstruir: se avisa en vez de presentar una aproximación como exacta.
+        if (tag === 'approx') {
+          return (
+            <span className="text-pend" title={`Había ${c.connection_open_positions} posición(es) abierta(s): es el balance, no el equity.`}>
+              aprox.
+            </span>
+          );
+        }
+        return undefined;
+      },
+      subtotal: false,
+    },
+    { key: 'balance', header: 'Balance MT5', kind: 'money', value: (c) => toAmount(c.balance), hideSm: true },
+    {
+      key: 'liquidez',
+      header: 'Equity a Liquidez',
+      kind: 'money',
+      value: (c) => toAmount(c.balance_liquidez),
+      meta: (c) => {
+        const partes = [
+          c.liquidez_manual ? 'manual' : null,
+          // Cuando difieren, el porqué no es obvio: se marca para que nadie lo
+          // lea como un error de cálculo.
+          differsFromMt5(c) ? '≠ MT5' : null,
+        ].filter(Boolean);
+        return partes.length > 0 ? <span title={c.liquidez_manual ? 'Monto cargado a mano.' : undefined}>{partes.join(' · ')}</span> : undefined;
+      },
+    },
+    {
+      key: 'status',
+      header: 'Status',
+      hideSm: true,
+      cell: (c) => <StatusBadge kind={poolStatusKind(c.status)} label={ESTADO[c.status] ?? c.status} />,
+    },
+    {
+      // Sólo el día. La hora exacta del último refresco casi nunca se necesita
+      // de un vistazo; queda en el title y en el detalle.
+      key: 'actualizado',
+      header: 'Actualizado',
+      hideSm: true,
+      cell: (c) => (
+        <span className={cn(NUM_CLASS, 'text-text-3')} title={c.last_synced_at ? formatDateTime(c.last_synced_at) : undefined}>
+          {c.last_synced_at ? formatDate(c.last_synced_at) : '—'}
+        </span>
+      ),
+    },
+  ];
+
+  const filas = filtradas;
+  const buscando = busqueda.trim() !== '' && (cuentas?.length ?? 0) !== filtradas.length;
+  const totalesFiltradas = poolTotals(filtradas);
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* El "Volver" sólo existe cuando hay a dónde volver. Entrando por el
           módulo de la empresa, el sidebar ya es la navegación: un enlace al
           panel de superadmin ahí sacaría a la persona de su propio dashboard. */}
       {backHref && (
-        <Link href={backHref} className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-          <ArrowLeft className="w-4 h-4" /> Volver
+        <Link href={backHref} className={actionButtonClass('ghost')}>
+          <ArrowLeft aria-hidden className="size-4" /> Volver
         </Link>
       )}
 
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Droplets className="w-6 h-6 text-[var(--color-secondary)]" /> Liquidez
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Cuentas MT5 que aportan al pool. El <strong>Equity a Liquidez</strong> es lo que hay que
-            reservar: si un cliente mueve plata entre cuentas propias, se cuenta una sola vez.
-          </p>
+      <PageHeader
+        title="Pool de Liquidez"
+        subtitle="Cuentas MT5 que aportan al pool. El Equity a Liquidez es lo que hay que reservar: si un cliente mueve plata entre cuentas propias, se cuenta una sola vez."
+        icon={Droplets}
+        actions={
+          <>
+            <ActionButton onClick={exportarCsv} disabled={!cuentas || cuentas.length === 0} aria-label="Exportar CSV">
+              <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="hidden sm:inline">CSV</span>
+            </ActionButton>
+            <ActionButton onClick={refrescarTodo} disabled={ocupado !== null} loading={ocupado === 'all'}>
+              {ocupado !== 'all' && <RefreshCw aria-hidden className="size-[15px]" strokeWidth={1.75} />}
+              {ocupado === 'all' ? 'Refrescando…' : 'Refrescar todo'}
+            </ActionButton>
+            <ActionButton variant="primary" onClick={() => setNuevaAbierta(true)} disabled={!companyId}>
+              <Plus aria-hidden className="size-4" /> Agregar cuenta
+            </ActionButton>
+          </>
+        }
+      />
 
-          {/* Selector de empresa. Va pegado al título y no escondido en un menú
-              porque TODOS los números de abajo dependen de él: leer «$1.2M» sin
-              ver de qué empresa es, es peor que no verlo. */}
-          <div className="mt-3 flex items-center gap-2">
-            <label htmlFor="liq-empresa" className="text-xs font-medium text-muted-foreground">
-              Empresa
-            </label>
-            <select
-              id="liq-empresa"
-              value={companyId ?? ''}
-              onChange={(e) => elegirEmpresa(e.target.value)}
-              disabled={!empresas || empresas.length === 0}
-              className="h-9 px-2 rounded-lg border border-border bg-card text-sm font-medium disabled:opacity-50 min-w-[14rem]"
-            >
-              {empresas === null && <option value="">Cargando…</option>}
-              {empresas?.length === 0 && <option value="">Sin empresas activas</option>}
-              {(empresas ?? []).map((e) => (
-                <option key={e.id} value={e.id}>
-                  {e.name}
-                  {e.has_mt5 ? ` · ${e.account_count}` : ' · sin MT5'}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            onClick={exportarCsv}
-            disabled={!cuentas || cuentas.length === 0}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted disabled:opacity-50"
+      {/* Selector de empresa. Va arriba de todo y no escondido en un menú
+          porque TODOS los números de abajo dependen de él: leer «$1.2M» sin
+          ver de qué empresa es, es peor que no verlo.
+          Las pestañas: "Cuentas" es el estado del pool HOY; "Resumen mensual"
+          es cómo rindió mes a mes. Son preguntas distintas y por eso no
+          comparten pantalla: mezclarlas obligaría a mirar un total que a veces
+          es un saldo y a veces un resultado. */}
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <Field label="Empresa" className="w-full sm:w-72">
+          <Select
+            value={companyId ?? ''}
+            onChange={(e) => elegirEmpresa(e.target.value)}
+            disabled={!empresas || empresas.length === 0}
           >
-            <Download className="w-4 h-4" /> CSV
-          </button>
-          <button
-            onClick={refrescarTodo}
-            disabled={ocupado !== null}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${ocupado === 'all' ? 'animate-spin' : ''}`} />
-            {ocupado === 'all' ? 'Refrescando…' : 'Refrescar todo'}
-          </button>
-          <button
-            onClick={() => setNuevaAbierta(true)}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-          >
-            <Plus className="w-4 h-4" /> Agregar cuenta
-          </button>
-        </div>
+            {empresas === null && <option value="">Cargando…</option>}
+            {empresas?.length === 0 && <option value="">Sin empresas activas</option>}
+            {(empresas ?? []).map((e) => (
+              <option key={e.id} value={e.id}>
+                {e.name}
+                {e.has_mt5 ? ` · ${e.account_count}` : ' · sin MT5'}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Segmented<'cuentas' | 'meses'>
+          aria-label="Vista del pool"
+          value={vista}
+          onChange={setVista}
+          options={[
+            { value: 'cuentas', label: 'Cuentas', count: cuentas?.length ?? null },
+            { value: 'meses', label: 'Resumen mensual' },
+          ]}
+        />
       </div>
 
       {aviso && (
-        <div className={`flex items-start gap-2 rounded-lg p-3 text-sm ${
-          aviso.tipo === 'error' ? 'bg-negative/10 text-negative' : 'bg-positive/10 text-positive'
-        }`}>
-          <span className="flex-1">{aviso.texto}</span>
-          <button onClick={() => setAviso(null)} aria-label="Cerrar"><X className="w-4 h-4" /></button>
-        </div>
+        <Notice
+          kind={aviso.tipo === 'error' ? 'bad' : 'info'}
+          title={aviso.texto}
+          action={
+            <button type="button" onClick={() => setAviso(null)} aria-label="Cerrar aviso" className={ROW_ACTION_CLASS}>
+              <X aria-hidden className="size-4" />
+            </button>
+          }
+        />
       )}
-      {error && (
-        <div className="rounded-lg bg-negative/10 text-negative p-3 text-sm">{error}</div>
-      )}
+      {error && <Notice kind="bad" title="No se pudo cargar el pool">{error}</Notice>}
 
       {/* Sin credencial de MT5 la pantalla no puede leer nada, y una tabla
           vacía se lee como «esta empresa no tiene cuentas» cuando lo que pasa
           es que falta configurarla. Se dice cuál es la diferencia. */}
       {empresaActual && !empresaActual.has_mt5 && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-3 text-sm">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium">{empresaActual.name} no tiene MT5 configurado</p>
-            <p className="text-xs mt-0.5">
-              No es que no tenga cuentas: sin la credencial de MT5 el módulo no puede leer balances
-              ni calcular el PnL. Cargala en Integraciones de esa empresa y volvé.
-            </p>
-          </div>
-        </div>
+        <Notice kind="pend" title={`${empresaActual.name} no tiene MT5 configurado`}>
+          No es que no tenga cuentas: sin la credencial de MT5 el módulo no puede leer balances
+          ni calcular el PnL. Cargala en Integraciones de esa empresa y volvé.
+        </Notice>
       )}
-
-      {/* Tabs. "Cuentas" es el estado del pool HOY; "Resumen mensual" es cómo
-          rindió mes a mes. Son preguntas distintas y por eso no comparten
-          pantalla: mezclarlas obligaría a mirar un total que a veces es un
-          saldo y a veces un resultado. */}
-      <div className="flex gap-1 border-b border-border">
-        {([
-          ['cuentas', 'Cuentas'],
-          ['meses', 'Resumen mensual'],
-        ] as const).map(([id, label]) => (
-          <button
-            key={id}
-            onClick={() => setVista(id)}
-            className={`px-4 h-9 text-sm font-medium border-b-2 -mb-px transition-colors ${
-              vista === id
-                ? 'border-[var(--color-primary)] text-foreground'
-                : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
 
       {vista === 'meses' && companyId && <ResumenMensual companyId={companyId} refrescoNonce={refrescoNonce} />}
 
       {vista === 'cuentas' && (
-      <>
-      {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <Stat label="Cuentas" value={String(stats.total)} />
-        <Stat label="Activas" value={String(stats.activas)} tone="positive" />
-        <Stat label="No activas" value={String(stats.inactivas)} tone="muted" />
-        <Stat
-          label="Equity a Liquidez (pool)"
-          value={formatCurrency(stats.pool)}
-          sub={`Balance MT5: ${formatCurrency(stats.mt5)}`}
-          tone="primary"
-        />
-      </div>
+        <>
+          <KpiStrip items={kpis} />
 
-      {/* Buscador */}
-      <div className="relative sm:w-80">
-        <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-        <input
-          type="text"
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          placeholder="Buscar por cuenta, usuario, grupo o nota…"
-          className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-        />
-      </div>
-
-      {/* Tabla */}
-      <div className="rounded-xl border border-border bg-card overflow-x-auto">
-        {cuentas === null ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">Cargando…</div>
-        ) : filtradas.length === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            {cuentas.length === 0
-              ? 'Todavía no hay cuentas en el pool. Agregá la primera con «Agregar cuenta».'
-              : 'Sin resultados para la búsqueda.'}
-          </div>
-        ) : (
-          <table className="w-full text-[13px]">
-            <thead>
-              <tr className="border-b border-border bg-muted/50 text-muted-foreground">
-                <th className="text-left py-2.5 px-2 font-medium">#</th>
-                <th className="text-left py-2.5 px-2 font-medium">Cuenta</th>
-                <th className="text-left py-2.5 px-2 font-medium">Usuario</th>
-                <th className="text-left py-2.5 px-2 font-medium">Grupo</th>
-                {/* Va pegada al equity de esa fecha: los dos datos se leen
-                    juntos —«conectada el X, con Y»— y separarlos obligaría a
-                    abrir el detalle para saber a qué día corresponde el monto. */}
-                <th className="text-left py-2.5 px-2 font-medium">Conectada</th>
-                <th className="text-right py-2.5 px-2 font-medium whitespace-nowrap">Equity conexión</th>
-                <th className="text-right py-2.5 px-2 font-medium">Balance MT5</th>
-                <th className="text-right py-2.5 px-2 font-medium">Equity a Liquidez</th>
-                <th className="text-left py-2.5 px-2 font-medium">Status</th>
-                <th className="text-left py-2.5 px-2 font-medium">Actualizado</th>
-                <th className="text-right py-2.5 px-3 font-medium">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filtradas.map((c, i) => (
-                <tr key={c.id} className="border-b border-border last:border-0">
-                  <td className="py-2 px-2 text-muted-foreground">{i + 1}</td>
-                  <td className="py-2 px-2 font-medium tabular-nums">
-                    {c.mt5_account}
-                    {c.has_multiple_accounts_warning && (
-                      <span title="El cliente tiene varias cuentas y no se detectó transferencia">
-                        <AlertTriangle className="inline w-3.5 h-3.5 ml-1.5 text-warning" />
-                      </span>
-                    )}
-                  </td>
-                  {/* Los correos largos se cortan con el valor completo en el
-                      title: uno de 40 caracteres estiraba la tabla hasta obligar
-                      a desplazarse en horizontal para llegar a los montos, que
-                      es lo que la gente viene a mirar. */}
-                  <td className="py-2 px-2 text-muted-foreground">
-                    <span className="block max-w-[190px] truncate" title={c.mt5_email ?? undefined}>
-                      {c.mt5_email ?? '—'}
-                    </span>
-                  </td>
-                  {/* Todos los grupos arrancan con `real\`, así que ese prefijo
-                      no distingue nada y sólo ocupa lugar. Se muestra el resto y
-                      el valor entero queda en el title. */}
-                  <td className="py-2 px-2 text-muted-foreground">
-                    <span className="block max-w-[150px] truncate" title={c.mt5_group ?? undefined}>
-                      {c.mt5_group ? c.mt5_group.replace(/^real\\/, '') : '—'}
-                    </span>
-                  </td>
-                  <td className="py-2 px-2 tabular-nums whitespace-nowrap">
-                    {formatFechaConexion(c.connection_date) || '—'}
-                  </td>
-                  {/* El saldo QUE TENÍA el día que entró al pool, reconstruido
-                      desde MT5. `null` es «no se pudo calcular», que no es cero
-                      — por eso va un guion y no un $0,00. */}
-                  <td className="py-2 px-2 text-right tabular-nums">
-                    {c.equity_at_connection === null || c.equity_at_connection === undefined
-                      ? <span className="text-muted-foreground">—</span>
-                      : formatCurrency(c.equity_at_connection)}
-                    {c.connection_values_manual && (
-                      <span
-                        className="block text-[11px] font-normal text-muted-foreground"
-                        title="Valor cargado a mano. El recálculo automático no lo pisa."
-                      >
-                        manual
-                      </span>
-                    )}
-                    {/* Con posiciones abiertas ese día el equity real era otro y
-                        no se puede reconstruir: se avisa en vez de presentar una
-                        aproximación como si fuera exacta. */}
-                    {!c.connection_values_manual
-                      && typeof c.connection_open_positions === 'number'
-                      && c.connection_open_positions > 0 && (
-                      <span
-                        className="block text-[11px] font-normal text-warning"
-                        title={`Había ${c.connection_open_positions} posición(es) abierta(s): es el balance, no el equity.`}
-                      >
-                        aprox.
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2 text-right tabular-nums">{formatCurrency(c.balance)}</td>
-                  <td className="py-2 px-2 text-right tabular-nums font-medium">
-                    {formatCurrency(c.balance_liquidez)}
-                    {c.liquidez_manual && (
-                      <span
-                        className="block text-[11px] font-normal text-muted-foreground"
-                        title="Monto cargado a mano."
-                      >
-                        manual
-                      </span>
-                    )}
-                    {/* Cuando difieren, el porqué no es obvio: se marca para
-                        que nadie lo lea como un error de cálculo. */}
-                    {Number(c.balance_liquidez) !== Number(c.balance) && (
-                      <span className="block text-[11px] font-normal text-muted-foreground">
-                        ≠ MT5
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-2 px-2">
-                    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                      c.status === 'active' ? 'bg-positive/10 text-positive'
-                        : c.status === 'error' ? 'bg-negative/10 text-negative'
-                        : 'bg-muted text-muted-foreground'
-                    }`}>
-                      {c.status === 'active' ? 'Activa' : c.status === 'error' ? 'Error' : 'No activa'}
-                    </span>
-                  </td>
-                  {/* Sólo el día. La hora exacta del último refresco casi nunca
-                      se necesita de un vistazo, y partía la celda en dos
-                      renglones; queda en el title y en el detalle. */}
-                  <td
-                    className="py-2 px-2 text-xs text-muted-foreground whitespace-nowrap"
-                    title={c.last_synced_at ? formatDateTime(c.last_synced_at) : undefined}
-                  >
-                    {c.last_synced_at ? formatDate(c.last_synced_at) : '—'}
-                  </td>
-                  <td className="py-2 px-2">
-                    <div className="flex items-center justify-end gap-1">
-                      <IconBtn title="Ver detalle" onClick={() => setDetalle(c)}><Eye className="w-4 h-4" /></IconBtn>
-                      <IconBtn title="Editar nota" onClick={() => setEditando(c)}><Pencil className="w-4 h-4" /></IconBtn>
-                      <IconBtn title="Refrescar" disabled={ocupado !== null} onClick={() => refrescarUna(c.id)}>
-                        <RefreshCw className={`w-4 h-4 ${ocupado === c.id ? 'animate-spin' : ''}`} />
-                      </IconBtn>
-                      <IconBtn title="Eliminar" danger disabled={ocupado !== null} onClick={() => eliminar(c)}>
-                        <Trash2 className="w-4 h-4" />
-                      </IconBtn>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-      </>
+          <Panel
+            title="Cuentas del pool"
+            hint="Balance MT5 = lo que el cliente tiene · Equity a Liquidez = lo que se reserva"
+            flush
+            actions={
+              <div className="relative w-full min-w-[220px] max-w-[320px] max-sm:max-w-none">
+                <Search aria-hidden className="pointer-events-none absolute left-2.5 top-1/2 size-[15px] -translate-y-1/2 text-text-3" />
+                <Input
+                  type="search"
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  placeholder="Buscar por cuenta, usuario, grupo o nota…"
+                  aria-label="Buscar cuentas"
+                  className="h-8 pl-8 [@media(pointer:coarse)]:h-10"
+                />
+              </div>
+            }
+          >
+            {cuentas === null ? (
+              <div className="p-4"><Skeleton className="h-40" /></div>
+            ) : (
+              <FinTable
+                caption="Cuentas del pool"
+                columns={columnas}
+                rows={filas}
+                rowKey={(c) => c.id}
+                empty={cuentas.length === 0
+                  ? 'Todavía no hay cuentas en el pool. Agregá la primera con «Agregar cuenta».'
+                  : 'Sin resultados para la búsqueda.'}
+                rowActions={(c) => (
+                  <>
+                    <IconBtn title="Ver detalle" onClick={() => setDetalle(c)}><Eye aria-hidden className="size-4" strokeWidth={1.75} /></IconBtn>
+                    <IconBtn title="Editar" onClick={() => setEditando(c)}><Pencil aria-hidden className="size-4" strokeWidth={1.75} /></IconBtn>
+                    <IconBtn title="Refrescar" disabled={ocupado !== null} onClick={() => refrescarUna(c.id)}>
+                      <RefreshCw aria-hidden className={cn('size-4', ocupado === c.id && 'animate-spin')} strokeWidth={1.75} />
+                    </IconBtn>
+                    <IconBtn title="Eliminar" danger disabled={ocupado !== null} onClick={() => eliminar(c)}>
+                      <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
+                    </IconBtn>
+                  </>
+                )}
+                footer={
+                  filas.length > 0
+                    ? {
+                        // Con una búsqueda activa el total es de lo que se ve, y
+                        // la etiqueta lo dice: la franja de arriba es de TODAS.
+                        label: buscando
+                          ? `Total de la búsqueda (${filas.length} de ${cuentas.length} cuentas)`
+                          : `Total (${filas.length} cuentas)`,
+                        values: { balance: totalesFiltradas.mt5, liquidez: totalesFiltradas.pool },
+                      }
+                    : undefined
+                }
+              />
+            )}
+          </Panel>
+        </>
       )}
 
       {nuevaAbierta && companyId && (
@@ -648,16 +656,19 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
 
 // ─── Piezas ────────────────────────────────────────────────────────────────
 
+const ESTADO: Record<string, string> = { active: 'Activa', error: 'Error', inactive: 'No activa' };
+
 function IconBtn({ children, title, onClick, disabled, danger }: {
   children: React.ReactNode; title: string; onClick: () => void; disabled?: boolean; danger?: boolean;
 }) {
   return (
     <button
+      type="button"
       title={title}
       aria-label={title}
       onClick={onClick}
       disabled={disabled}
-      className={`p-1.5 rounded-lg hover:bg-muted disabled:opacity-40 ${danger ? 'text-negative hover:bg-negative/10' : 'text-muted-foreground hover:text-foreground'}`}
+      className={cn(ROW_ACTION_CLASS, danger && 'hover:bg-neg-bg hover:text-neg')}
     >
       {children}
     </button>
@@ -665,12 +676,20 @@ function IconBtn({ children, title, onClick, disabled, danger }: {
 }
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
+  // Escape cierra, como en el resto de los diálogos.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:p-8">
-      <div className="w-full max-w-2xl rounded-xl border border-border bg-card shadow-lg">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-8">
+      <div role="dialog" aria-modal="true" aria-label={title} className="w-full max-w-2xl rounded-ui-xl border border-border bg-card shadow-3">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
-          <h2 className="font-semibold">{title}</h2>
-          <button onClick={onClose} aria-label="Cerrar"><X className="w-4 h-4" /></button>
+          <h2 className="text-[15px] font-semibold tracking-[-0.005em]">{title}</h2>
+          <button type="button" onClick={onClose} aria-label="Cerrar" className={ROW_ACTION_CLASS}>
+            <X aria-hidden className="size-4" />
+          </button>
         </div>
         <div className="p-4">{children}</div>
       </div>
@@ -743,58 +762,45 @@ function ModalNuevaCuenta({ companyId, onClose, onDone }: {
 
   return (
     <Modal title="Agregar cuenta al pool" onClose={onClose}>
-      <label className="block text-sm font-medium mb-1.5">Número de cuenta MT5</label>
-      <input
-        autoFocus
-        value={cuenta}
-        onChange={(e) => setCuenta(e.target.value)}
-        onKeyDown={(e) => { if (e.key === 'Enter' && !guardando) void guardar(); }}
-        placeholder="146059"
-        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-      />
-      <label className="block text-sm font-medium mt-4 mb-1.5">Fecha de conexión</label>
-      <input
-        type="date"
-        value={fecha}
-        max={hoy}
-        onChange={(e) => setFecha(e.target.value)}
-        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-      />
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        Desde cuándo esta cuenta cuenta para el pool. El PnL mes a mes se calcula a partir de acá.
-      </p>
-
-      {/* Sólo cuando la fecha es vieja: en el caso normal este texto sería
-          ruido, y avisar de algo que no está pasando enseña a ignorar avisos. */}
-      {retroactiva && (
-        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-2.5 text-xs">
-          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium">Alta retroactiva</p>
-            <p className="mt-0.5">
-              El PnL se va a calcular desde esa fecha. El <strong>balance al conectar</strong>, en
-              cambio, se guarda con el valor de HOY: MT5 no expone el balance histórico. Para
-              validar la historia mirá el PnL mes a mes, no ese campo.
-            </p>
-          </div>
-        </div>
-      )}
-
-      <p className="mt-3 text-xs text-muted-foreground">
-        El resto se completa solo: usuario, grupo, balance y equity salen de MT5. Si el cliente ya
-        tiene otra cuenta en el pool, se analiza si el dinero ya estaba contado.
-      </p>
-      {err && <p className="mt-2 text-sm text-negative">{err}</p>}
-      <div className="mt-4 flex justify-end gap-2">
-        <button onClick={onClose} className="h-9 px-3 rounded-lg border border-border text-sm">Cancelar</button>
-        <button
-          onClick={() => void guardar()}
-          disabled={guardando}
-          className="h-9 px-4 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-60"
+      <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (!guardando) void guardar(); }}>
+        <Field label="Número de cuenta MT5" required error={err ?? undefined}>
+          <Input
+            autoFocus
+            inputMode="numeric"
+            value={cuenta}
+            onChange={(e) => setCuenta(e.target.value)}
+            placeholder="146059"
+          />
+        </Field>
+        <Field
+          label="Fecha de conexión"
+          required
+          hint="Desde cuándo esta cuenta cuenta para el pool. El PnL mes a mes se calcula a partir de acá."
         >
-          {guardando ? 'Consultando MT5…' : 'Agregar'}
-        </button>
-      </div>
+          <Input type="date" value={fecha} max={hoy} onChange={(e) => setFecha(e.target.value)} />
+        </Field>
+
+        {/* Sólo cuando la fecha es vieja: en el caso normal este texto sería
+            ruido, y avisar de algo que no está pasando enseña a ignorar avisos. */}
+        {retroactiva && (
+          <Notice kind="pend" title="Alta retroactiva">
+            El PnL se va a calcular desde esa fecha. El <strong>balance al conectar</strong>, en
+            cambio, se guarda con el valor de HOY: MT5 no expone el balance histórico. Para
+            validar la historia mirá el PnL mes a mes, no ese campo.
+          </Notice>
+        )}
+
+        <p className="text-[12.5px] text-text-3">
+          El resto se completa solo: usuario, grupo, balance y equity salen de MT5. Si el cliente ya
+          tiene otra cuenta en el pool, se analiza si el dinero ya estaba contado.
+        </p>
+        <div className="flex justify-end gap-2">
+          <ActionButton onClick={onClose}>Cancelar</ActionButton>
+          <ActionButton type="submit" variant="primary" loading={guardando}>
+            {guardando ? 'Consultando MT5…' : 'Agregar'}
+          </ActionButton>
+        </div>
+      </form>
     </Modal>
   );
 }
@@ -870,104 +876,79 @@ function ModalNota({ cuenta, onClose, onDone }: {
 
   return (
     <Modal title={`Editar cuenta ${cuenta.mt5_account}`} onClose={onClose}>
-      <label className="block text-sm font-medium mb-1.5">Fecha de conexión</label>
-      <input
-        type="date"
-        value={fecha}
-        max={hoy}
-        onChange={(e) => setFecha(e.target.value)}
-        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-      />
+      <form className="space-y-4" onSubmit={(e) => { e.preventDefault(); if (!guardando) void guardar(); }}>
+        <Field label="Fecha de conexión" required>
+          <Input type="date" value={fecha} max={hoy} onChange={(e) => setFecha(e.target.value)} />
+        </Field>
 
-      {cambioFecha && (
-        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-2.5 text-xs">
-          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium">Se va a recalcular el PnL mes a mes</p>
-            <p className="mt-0.5">
-              El PnL guardado se borra y se vuelve a pedir a MT5 con la fecha nueva. Puede tardar
-              unos segundos. Si MT5 no responde, la fecha <strong>no</strong> se cambia y queda
-              todo como está.
-            </p>
-          </div>
-        </div>
-      )}
+        {cambioFecha && (
+          <Notice kind="pend" title="Se va a recalcular el PnL mes a mes">
+            El PnL guardado se borra y se vuelve a pedir a MT5 con la fecha nueva. Puede tardar
+            unos segundos. Si MT5 no responde, la fecha <strong>no</strong> se cambia y queda
+            todo como está.
+          </Notice>
+        )}
 
-      <label className="block text-sm font-medium mt-4 mb-1.5">Equity MT5 a la fecha de conexión</label>
-      <input
-        type="text"
-        inputMode="decimal"
-        value={equity}
-        onChange={(e) => setEquity(e.target.value)}
-        placeholder="Se calcula solo desde MT5"
-        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-      />
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        {cuenta.connection_values_manual
-          ? 'Cargado a mano. Vaciá el campo para que vuelva a calcularse solo desde MT5.'
-          : 'Se reconstruye desde MT5 restándole al saldo de hoy todo lo que se movió después. Escribilo sólo si tenés el número real y el calculado no sirve.'}
-      </p>
-
-      {/* Sólo cuando el calculado es una aproximación. Decirlo siempre
-          enseñaría a ignorar el aviso. */}
-      {!cuenta.connection_values_manual
-        && typeof cuenta.connection_open_positions === 'number'
-        && cuenta.connection_open_positions > 0 && (
-        <div className="mt-2 flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-2.5 text-xs">
-          <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium">
-              Había {cuenta.connection_open_positions} posición(es) abierta(s) ese día
-            </p>
-            <p className="mt-0.5">
-              El número de arriba es el <strong>balance</strong>. El equity incluía además el
-              flotante de esas posiciones, y MT5 no guarda el precio de ese momento — no se puede
-              reconstruir. Si tenés el equity real del reporte, escribilo acá.
-            </p>
-          </div>
-        </div>
-      )}
-
-      <label className="block text-sm font-medium mt-4 mb-1.5">Equity a Liquidez</label>
-      <input
-        type="text"
-        inputMode="decimal"
-        value={liquidez}
-        onChange={(e) => setLiquidez(e.target.value)}
-        placeholder="Lo decide el análisis de duplicados"
-        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-      />
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        {cuenta.liquidez_manual
-          ? 'Cargado a mano. Vaciá el campo para volver a lo que calculó el análisis de duplicados.'
-          : 'Cuánto aporta esta cuenta al pool. Sale del análisis de duplicados: si el cliente movió plata entre cuentas propias, se cuenta una sola vez. Editalo si sabés el monto real que se envió.'}
-      </p>
-
-      <label className="block text-sm font-medium mt-4 mb-1.5">Nota</label>
-      <textarea
-        value={nota}
-        onChange={(e) => setNota(e.target.value)}
-        rows={4}
-        className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-      />
-      {err && <p className="mt-2 text-sm text-negative">{err}</p>}
-      <div className="mt-4 flex justify-end gap-2">
-        <button onClick={onClose} className="h-9 px-3 rounded-lg border border-border text-sm">Cancelar</button>
-        <button
-          onClick={() => void guardar()}
-          disabled={guardando}
-          className="h-9 px-4 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-60"
+        <Field
+          label="Equity MT5 a la fecha de conexión"
+          hint={cuenta.connection_values_manual
+            ? 'Cargado a mano. Vaciá el campo para que vuelva a calcularse solo desde MT5.'
+            : 'Se reconstruye desde MT5 restándole al saldo de hoy todo lo que se movió después. Escribilo sólo si tenés el número real y el calculado no sirve.'}
         >
-          {guardando ? (cambioFecha ? 'Recalculando PnL…' : 'Guardando…') : 'Guardar'}
-        </button>
-      </div>
+          <Input
+            type="text"
+            inputMode="decimal"
+            className="tabular-nums"
+            value={equity}
+            onChange={(e) => setEquity(e.target.value)}
+            placeholder="Se calcula solo desde MT5"
+          />
+        </Field>
+
+        {/* Sólo cuando el calculado es una aproximación. Decirlo siempre
+            enseñaría a ignorar el aviso. */}
+        {connectionEquityTag(cuenta) === 'approx' && (
+          <Notice kind="pend" title={`Había ${cuenta.connection_open_positions} posición(es) abierta(s) ese día`}>
+            El número de arriba es el <strong>balance</strong>. El equity incluía además el
+            flotante de esas posiciones, y MT5 no guarda el precio de ese momento — no se puede
+            reconstruir. Si tenés el equity real del reporte, escribilo acá.
+          </Notice>
+        )}
+
+        <Field
+          label="Equity a Liquidez"
+          hint={cuenta.liquidez_manual
+            ? 'Cargado a mano. Vaciá el campo para volver a lo que calculó el análisis de duplicados.'
+            : 'Cuánto aporta esta cuenta al pool. Sale del análisis de duplicados: si el cliente movió plata entre cuentas propias, se cuenta una sola vez. Editalo si sabés el monto real que se envió.'}
+        >
+          <Input
+            type="text"
+            inputMode="decimal"
+            className="tabular-nums"
+            value={liquidez}
+            onChange={(e) => setLiquidez(e.target.value)}
+            placeholder="Lo decide el análisis de duplicados"
+          />
+        </Field>
+
+        <Field label="Nota" error={err ?? undefined}>
+          <Textarea value={nota} onChange={(e) => setNota(e.target.value)} rows={4} />
+        </Field>
+        <div className="flex justify-end gap-2">
+          <ActionButton onClick={onClose}>Cancelar</ActionButton>
+          <ActionButton type="submit" variant="primary" loading={guardando}>
+            {guardando ? (cambioFecha ? 'Recalculando PnL…' : 'Guardando…') : 'Guardar'}
+          </ActionButton>
+        </div>
+      </form>
     </Modal>
   );
 }
 
 function ModalDetalle({ cuenta, onClose }: { cuenta: Cuenta; onClose: () => void }) {
   const [meses, setMeses] = useState<MesPnl[] | null>(null);
-  const [total, setTotal] = useState(0);
+  // `null` hasta que llega: el total de un historial que no se cargó no es 0.
+  const [total, setTotal] = useState<number | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
@@ -977,7 +958,7 @@ function ModalDetalle({ cuenta, onClose }: { cuenta: Cuenta; onClose: () => void
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
         setMeses(json.months);
-        setTotal(json.total);
+        setTotal(toAmount(json.total));
       } catch (e) {
         setErr(e instanceof Error ? e.message : 'Error cargando el PnL');
         setMeses([]);
@@ -985,98 +966,80 @@ function ModalDetalle({ cuenta, onClose }: { cuenta: Cuenta; onClose: () => void
     })();
   }, [cuenta.id]);
 
+  const tag = connectionEquityTag(cuenta);
+  const columnas: FinColumn<MesPnl>[] = [
+    {
+      key: 'mes',
+      header: 'Mes',
+      cell: (m) => <span className={NUM_CLASS}>{mesLabel(m.year, m.month)}</span>,
+      meta: (m) => (m.is_partial ? 'parcial' : undefined),
+    },
+    { key: 'pnl', header: 'PnL', kind: 'money', value: (m) => toAmount(m.pnl), money: { signed: true, tone: 'sign' } },
+    { key: 'ops', header: 'Operaciones', kind: 'number', value: (m) => m.operations_count, subtotal: false },
+  ];
+
   return (
     <Modal title={`Cuenta ${cuenta.mt5_account}`} onClose={onClose}>
-      <dl className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
-        <Campo label="Usuario" value={cuenta.mt5_email ?? '—'} />
-        <Campo label="Grupo" value={cuenta.mt5_group ?? '—'} />
-        <Campo label="Status" value={cuenta.status} />
-        <Campo label="Balance MT5" value={formatCurrency(cuenta.balance)} />
-        <Campo label="Equity a Liquidez" value={formatCurrency(cuenta.balance_liquidez)} />
-        <Campo
-          label="Equity a la conexión"
-          value={
-            cuenta.equity_at_connection === null || cuenta.equity_at_connection === undefined
-              ? '—'
-              : formatCurrency(cuenta.equity_at_connection)
-              + (cuenta.connection_values_manual
-                ? ' (manual)'
-                : typeof cuenta.connection_open_positions === 'number' && cuenta.connection_open_positions > 0
-                  ? ' (aprox.)'
-                  : '')
-          }
-        />
-        <Campo label="Equity" value={formatCurrency(cuenta.equity)} />
-        <Campo label="Conectada" value={formatFechaConexion(cuenta.connection_date)} />
-        <Campo label="Actualizada" value={cuenta.last_synced_at ? formatDateTime(cuenta.last_synced_at) : '—'} />
+      <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Campo label="Usuario">{cuenta.mt5_email ?? '—'}</Campo>
+        <Campo label="Grupo">{cuenta.mt5_group ?? '—'}</Campo>
+        <Campo label="Status"><StatusBadge kind={poolStatusKind(cuenta.status)} label={ESTADO[cuenta.status] ?? cuenta.status} /></Campo>
+        <Campo label="Balance MT5"><Money value={toAmount(cuenta.balance)} /></Campo>
+        <Campo label="Equity a Liquidez"><Money value={toAmount(cuenta.balance_liquidez)} /></Campo>
+        <Campo label="Equity a la conexión">
+          <Money value={toAmount(cuenta.equity_at_connection)} />
+          {tag && <span className={cn('ml-1 text-[12px] font-normal', tag === 'approx' ? 'text-pend' : 'text-text-3')}>({tag === 'manual' ? 'manual' : 'aprox.'})</span>}
+        </Campo>
+        <Campo label="Equity"><Money value={toAmount(cuenta.equity)} /></Campo>
+        <Campo label="Conectada"><span className={NUM_CLASS}>{formatFechaConexion(cuenta.connection_date)}</span></Campo>
+        <Campo label="Actualizada"><span className={NUM_CLASS}>{cuenta.last_synced_at ? formatDateTime(cuenta.last_synced_at) : '—'}</span></Campo>
       </dl>
 
-      {Number(cuenta.balance_liquidez) !== Number(cuenta.balance) && (
-        <p className="mt-3 rounded-lg bg-muted p-2 text-xs text-muted-foreground">
-          El aporte al pool difiere del balance de MT5: parte de este dinero ya estaba contado
-          en otra cuenta del mismo cliente.
-        </p>
-      )}
-      {cuenta.has_multiple_accounts_warning && (
-        <p className="mt-2 rounded-lg bg-warning/10 p-2 text-xs text-warning">
-          El cliente tiene otra(s) cuenta(s) en el pool y no se detectó transferencia entre ellas.
-          Verificar que el dinero no esté contado dos veces.
-        </p>
-      )}
-      {cuenta.deactivated_reason && (
-        <p className="mt-2 text-xs text-muted-foreground">Desactivada: {cuenta.deactivated_reason}</p>
-      )}
-      {cuenta.sync_error && (
-        <p className="mt-2 rounded-lg bg-negative/10 p-2 text-xs text-negative">Error de sincronización: {cuenta.sync_error}</p>
-      )}
-      {cuenta.note && <p className="mt-2 text-xs text-muted-foreground">Nota: {cuenta.note}</p>}
+      <div className="mt-4 space-y-2">
+        {differsFromMt5(cuenta) && (
+          <Notice kind="info" title="El aporte al pool difiere del balance de MT5">
+            Parte de este dinero ya estaba contado en otra cuenta del mismo cliente.
+          </Notice>
+        )}
+        {cuenta.has_multiple_accounts_warning && (
+          <Notice kind="pend" title="El cliente tiene otra(s) cuenta(s) en el pool">
+            No se detectó transferencia entre ellas. Verificar que el dinero no esté contado dos veces.
+          </Notice>
+        )}
+        {cuenta.sync_error && (
+          <Notice kind="bad" title="Error de sincronización">{cuenta.sync_error}</Notice>
+        )}
+        {cuenta.deactivated_reason && (
+          <p className="text-[12.5px] text-text-2">Desactivada: {cuenta.deactivated_reason}</p>
+        )}
+        {cuenta.note && <p className="text-[12.5px] text-text-2">Nota: {cuenta.note}</p>}
+      </div>
 
-      <h3 className="mt-5 text-sm font-semibold">Historial de PnL mensual</h3>
-      {err && <p className="mt-2 text-sm text-negative">{err}</p>}
+      <h3 className="mt-5 text-[13px] font-semibold">Historial de PnL mensual</h3>
+      {err && <Notice kind="bad" title="No se pudo cargar el PnL" className="mt-2">{err}</Notice>}
       {meses === null ? (
-        <p className="mt-2 text-sm text-muted-foreground">Cargando…</p>
-      ) : meses.length === 0 ? (
-        <p className="mt-2 text-sm text-muted-foreground">Sin PnL calculado todavía.</p>
+        <Skeleton className="mt-2 h-24" />
       ) : (
-        <table className="mt-2 w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-muted-foreground">
-              <th className="text-left py-1.5 font-medium">Mes</th>
-              <th className="text-right py-1.5 font-medium">PnL</th>
-              <th className="text-right py-1.5 font-medium">Operaciones</th>
-              <th className="text-left py-1.5 pl-3 font-medium">Nota</th>
-            </tr>
-          </thead>
-          <tbody>
-            {meses.map((m) => (
-              <tr key={`${m.year}-${m.month}`} className="border-b border-border last:border-0">
-                <td className="py-1.5">{mesLabel(m.year, m.month)}</td>
-                <td className={`py-1.5 text-right tabular-nums ${m.pnl < 0 ? 'text-negative' : m.pnl > 0 ? 'text-positive' : ''}`}>
-                  {formatCurrency(m.pnl)}
-                </td>
-                <td className="py-1.5 text-right tabular-nums text-muted-foreground">{m.operations_count}</td>
-                <td className="py-1.5 pl-3 text-xs text-muted-foreground">{m.is_partial ? 'parcial' : ''}</td>
-              </tr>
-            ))}
-            <tr className="font-semibold">
-              <td className="py-2">Total</td>
-              <td className={`py-2 text-right tabular-nums ${total < 0 ? 'text-negative' : 'text-positive'}`}>
-                {formatCurrency(total)}
-              </td>
-              <td colSpan={2} />
-            </tr>
-          </tbody>
-        </table>
+        <div className="mt-2 overflow-hidden rounded-ui-md border border-border">
+          <FinTable
+            caption="Historial de PnL mensual"
+            columns={columnas}
+            rows={meses}
+            rowKey={(m) => `${m.year}-${m.month}`}
+            empty="Sin PnL calculado todavía."
+            footer={meses.length > 0 ? { label: 'Total', values: { pnl: total } } : undefined}
+          />
+        </div>
       )}
     </Modal>
   );
 }
 
-function Campo({ label, value }: { label: string; value: string }) {
+function Campo({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div>
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="font-medium">{value}</dd>
+    <div className="min-w-0">
+      <dt className="text-[12px] font-medium text-text-2">{label}</dt>
+      <dd className="truncate text-[13px] font-medium text-foreground">{children}</dd>
     </div>
   );
 }

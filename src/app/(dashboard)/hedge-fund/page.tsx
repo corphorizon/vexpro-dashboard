@@ -34,33 +34,49 @@
 // misma consulta y partirla daría dos números que pueden separarse. Las otras
 // tres se piden al abrirlas y se cachean en memoria — abrir Pagos no debería
 // costar el calendario de vencimientos.
+//
+// ── «LIBRO MAYOR» (2026-10-12) ─────────────────────────────────────────────
+// Sólo presentación; los números son los mismos de los cinco endpoints.
+//   · Ocho StatCard con íconos de color → DOS franjas de KPIs (la franja
+//     admite 5): «capital» (bajo gestión, hero · pasivo · clientes ·
+//     inversiones activas) y «flujos» (rendimientos · comisiones netas, en
+//     `neg` si la red debe · vence en 30 días · vencidas y abiertas).
+//   · DataTable → FinTable en las cinco pestañas. Días a vencer: `neg` si ya
+//     venció y sigue abierta, `pend` si vence en ≤ 30 días (`daysLeftTone`).
+//   · El aviso de espejo > 24 h es `Notice stale`; el error, `Notice bad`; el
+//     badge «N excluidos (pruebas)» es `StatusBadge neutral`.
+//   · Vencimientos: la proyección queda ROTULADA «proyección» en la columna y
+//     con un `Notice info`; las franjas 30/60/90 días son acumuladas.
+//   · Los totales de dinero sólo se muestran si todas las filas son de la
+//     misma moneda (`singleCurrency`, reglas G3).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  AlertTriangle, Banknote, CalendarClock, Download, Landmark, RefreshCw,
-  TrendingUp, Users, Wallet,
-} from 'lucide-react';
+import { Download, Landmark, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card } from '@/components/ui/card';
-import { StatCard } from '@/components/ui/stat-card';
-import { DataTable, type Column } from '@/components/ui/data-table';
-import { EmptyState } from '@/components/ui/empty-state';
-import { SectionTabs } from '@/components/ui/section-tabs';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, kpiPlainText, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, NUM_CLASS } from '@/components/ui/money';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Segmented } from '@/components/ui/segmented';
+import { Field, Input, Select } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InfoTip } from '@/components/ui/info-tip';
 import { useToasts } from '@/components/ui/toast';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
 import { formatDate, formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { moduleDisplayLabel } from '@/lib/modules';
 import { useData } from '@/lib/data-context';
 import { useReportDataFreshness } from '@/lib/data-freshness';
+import { cn } from '@/lib/utils';
+import { capitalRows, daysLeftTone, hfStatusKind, singleCurrency, sumKnown, type CapitalRow } from './hf-view';
 
 // ── Tipos de la respuesta ────────────────────────────────────────────────────
 
@@ -105,28 +121,35 @@ interface InvestmentRow {
 
 interface InvestmentsResponse {
   investments: InvestmentRow[]; totalInMirror: number; withoutProfile: number;
-  excluded: Exclusion;
+  excluded: Exclusion; invalidDueBefore?: boolean;
 }
 
 interface MonthTotal { ym: string; amount: number; count: number }
 interface ByMonth { months: MonthTotal[]; withoutDate: number; withoutDateAmount: number }
 
+type PayoutRun = {
+  payoutId: string; fundKey: string | null; program: string | null;
+  percent: number | null; status: string | null; accountsAffected: number | null;
+  totalCredited: number | null; currency: string | null; executedBy: string | null;
+  at: string | null;
+};
+type CommissionRow = {
+  commissionId: string; type: string | null; beneficiary: string | null;
+  source: string | null; fundKey: string | null; level: number | null;
+  percent: number | null; amount: number | null; currency: string | null;
+  ym: string | null; status: string | null; at: string | null;
+};
+
 interface PaymentsResponse {
   returns: {
-    runs: Array<{ payoutId: string; fundKey: string | null; program: string | null;
-      percent: number | null; status: string | null; accountsAffected: number | null;
-      totalCredited: number | null; currency: string | null; executedBy: string | null;
-      at: string | null }>;
+    runs: PayoutRun[];
     entries: Array<{ entryId: string; investmentId: string | null; userExternalId: string | null;
       fundKey: string | null; amount: number | null; currency: string | null;
       payoutId: string | null; description: string | null; at: string | null }>;
     total: number; byMonth: ByMonth;
   };
   commissions: {
-    rows: Array<{ commissionId: string; type: string | null; beneficiary: string | null;
-      source: string | null; fundKey: string | null; level: number | null;
-      percent: number | null; amount: number | null; currency: string | null;
-      ym: string | null; status: string | null; at: string | null }>;
+    rows: CommissionRow[];
     totals: CommissionTotals; byMonth: ByMonth;
   };
   capital: {
@@ -140,13 +163,18 @@ interface PaymentsResponse {
   excluded: Exclusion;
 }
 
+type MaturityMonth = {
+  ym: string; count: number; principal: number;
+  projected: { min: number; max: number } | null; withoutProjection: number;
+};
+type ActualReturn = { fundKey: string; ym: string; percent: number | null; amount: number | null };
+
 interface MaturitiesResponse {
-  months: Array<{ ym: string; count: number; principal: number;
-    projected: { min: number; max: number } | null; withoutProjection: number }>;
+  months: MaturityMonth[];
   buckets: { overdue: Bucket; in30: Bucket; in60: Bucket; in90: Bucket };
   activeWithoutEndDate: number;
   activeCount: number;
-  actualMonthlyReturns: Array<{ fundKey: string; ym: string; percent: number | null; amount: number | null }>;
+  actualMonthlyReturns: ActualReturn[];
   excluded: Exclusion;
 }
 
@@ -154,24 +182,43 @@ type Tab = 'summary' | 'programs' | 'investments' | 'payments' | 'maturities';
 
 // ── Helpers de presentación ──────────────────────────────────────────────────
 
-const money = (v: number | null | undefined, currency = 'USD') =>
-  v === null || v === undefined ? '—' : formatCurrency(v, currency);
-
 /** `null` NUNCA se dibuja como 0. Ésta es la única puerta a «—». */
 function Dash({ children, value }: { children: React.ReactNode; value: unknown }) {
-  if (value === null || value === undefined) return <span className="text-muted-foreground">—</span>;
+  if (value === null || value === undefined) return <span className="text-text-3">—</span>;
   return <>{children}</>;
 }
 
-function ExcludedBadge({ excluded, t }: { excluded: Exclusion | null; t: (k: string, p?: Record<string, string>) => string }) {
+/** Monto en su moneda (las filas del CRM traen la suya). */
+function Amount({ value, currency, tone, signed }: {
+  value: number | null | undefined; currency?: string | null; tone?: 'auto' | 'neutral'; signed?: boolean;
+}) {
+  return <Money value={value} currency={currency ?? 'USD'} tone={tone} signed={signed} className="font-medium" />;
+}
+
+function Pct({ value }: { value: number | null | undefined }) {
+  return <Dash value={value}><span className={NUM_CLASS}>{kpiPlainText(value, 'percent')}</span></Dash>;
+}
+
+function DateCell({ value }: { value: string | null | undefined }) {
+  return <Dash value={value}><span className={cn(NUM_CLASS, 'text-text-2')}>{formatDate(value ?? '')}</span></Dash>;
+}
+
+function RawStatus({ status }: { status: string | null }) {
+  if (!status) return <span className="text-text-3">—</span>;
+  return <StatusBadge kind={hfStatusKind(status)} label={status} />;
+}
+
+function ExcludedBadge({ excluded, t }: { excluded: Exclusion | null; t: T }) {
   if (!excluded || excluded.total === 0) return null;
   return (
     <span className="inline-flex items-center gap-1">
-      <Badge variant="neutral">{t('hf.excluded', { count: String(excluded.total) })}</Badge>
+      <StatusBadge kind="neutral" label={t('hf.excluded', { count: String(excluded.total) })} />
       <InfoTip text={t('hf.excludedTip')} />
     </span>
   );
 }
+
+type T = (k: string, p?: Record<string, string>) => string;
 
 // ── La pantalla ──────────────────────────────────────────────────────────────
 
@@ -297,15 +344,16 @@ export default function HedgeFundPage() {
   if (!canAccess) {
     return (
       <div className="flex items-center justify-center min-h-[40vh]">
-        <p className="text-muted-foreground text-sm">403 · Acceso restringido</p>
+        <p className="text-[13px] text-text-2">403 · Acceso restringido</p>
       </div>
     );
   }
 
   const excluded = overview?.excluded ?? null;
+  const overdueCount = overview?.overview.maturities.overdue.count ?? 0;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {ToastHost}
 
       <PageHeader
@@ -315,63 +363,65 @@ export default function HedgeFundPage() {
         actions={
           <>
             <ExcludedBadge excluded={excluded} t={t} />
-            <Button variant="secondary" onClick={sincronizar} loading={syncing}>
-              <RefreshCw className="w-4 h-4" />
+            <ActionButton onClick={sincronizar} loading={syncing}>
+              {!syncing && <RefreshCw aria-hidden className="size-[15px]" strokeWidth={1.75} />}
               {syncing ? t('hf.syncing') : t('hf.syncNow')}
-            </Button>
+            </ActionButton>
           </>
         }
       />
 
       {/* Estado del espejo. `null` = nunca se sincronizó, que NO es «viejo». */}
-      <p className="text-xs text-muted-foreground">
-        {overview?.lastSyncedAt
-          ? t('hf.lastSync', { when: formatDateTime(overview.lastSyncedAt) })
-          : overview
-            ? t('hf.neverSynced')
-            : ''}
-      </p>
+      {overview && (
+        <p className="text-[12.5px] text-text-3" suppressHydrationWarning>
+          {overview.lastSyncedAt
+            ? t('hf.lastSync', { when: formatDateTime(overview.lastSyncedAt) })
+            : t('hf.neverSynced')}
+        </p>
+      )}
 
       {overview?.stale === true && (
-        <Card className="border-warning/40 bg-warning/5">
-          <p className="text-sm text-warning flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            {t('hf.staleMirror')}
-          </p>
-        </Card>
+        <Notice kind="stale" title={t('hf.staleMirror')}>
+          {overview.lastSyncedAt ? t('hf.lastSync', { when: formatDateTime(overview.lastSyncedAt) }) : null}
+        </Notice>
       )}
 
-      {loadError && (
-        <Card className="border-negative/40 bg-negative/5">
-          <p className="text-sm text-negative flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 shrink-0" />
-            {loadError}
-          </p>
-        </Card>
-      )}
+      {loadError && <Notice kind="bad" title={t('hf.lm.loadError')}>{loadError}</Notice>}
 
-      <SectionTabs<Tab>
-        label={t('hf.title')}
-        value={tab}
-        onChange={setTab}
-        tabs={[
-          { value: 'summary', label: t('hf.tab.summary'), count: null },
-          { value: 'programs', label: t('hf.tab.programs'), count: fondos.length },
-          { value: 'investments', label: t('hf.tab.investments'), count: overview?.overview.activeInvestments ?? null },
-          { value: 'payments', label: t('hf.tab.payments'), count: null },
-          {
-            value: 'maturities',
-            label: t('hf.tab.maturities'),
-            count: overview?.overview.maturities.in30.count ?? null,
-            tone: (overview?.overview.maturities.overdue.count ?? 0) > 0 ? 'negative' : 'default',
-          },
-        ]}
-      />
+      <div className="max-w-full overflow-x-auto">
+        <Segmented<Tab>
+          aria-label={t('hf.title')}
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'summary', label: t('hf.tab.summary') },
+            { value: 'programs', label: t('hf.tab.programs'), count: overview ? fondos.length : null },
+            { value: 'investments', label: t('hf.tab.investments'), count: overview?.overview.activeInvestments ?? null },
+            { value: 'payments', label: t('hf.tab.payments') },
+            {
+              value: 'maturities',
+              // Vencidas y abiertas: el único conteo de las pestañas que pide
+              // acción ya. Va en `neg` y con texto, no sólo color.
+              label: overdueCount > 0 ? (
+                <span className="inline-flex items-center gap-1.5">
+                  {t('hf.tab.maturities')}
+                  <span className={cn(NUM_CLASS, 'text-neg')}>{t('hf.lm.overdueTab', { count: String(overdueCount) })}</span>
+                </span>
+              ) : t('hf.tab.maturities'),
+              count: overview?.overview.maturities.in30.count ?? null,
+            },
+          ]}
+        />
+      </div>
 
       {!overview && !loadError && <Skeleton className="h-40" />}
 
       {overview && tab === 'summary' && <Resumen data={overview} t={t} />}
-      {overview && tab === 'programs' && <Programas funds={fondos} t={t} onPick={(k) => { setFundFilter(k); setTab('investments'); }} />}
+      {overview && tab === 'programs' && (
+        <Panel title={t('hf.tab.programs')} hint={t('hf.lm.programsHint')} flush>
+          <TablaProgramas funds={fondos} t={t} onPick={(k) => { setFundFilter(k); setTab('investments'); }} />
+        </Panel>
+      )}
       {tab === 'investments' && (
         <Inversiones
           data={investments} funds={fondos} statuses={estados} t={t}
@@ -386,143 +436,142 @@ export default function HedgeFundPage() {
   );
 }
 
-type T = (k: string, p?: Record<string, string>) => string;
-
 // ── Resumen ──────────────────────────────────────────────────────────────────
 
 function Resumen({ data, t }: { data: OverviewResponse; t: T }) {
   const o = data.overview;
+  const capital: KpiItem[] = [
+    { key: 'aum', label: t('hf.aum'), value: o.aum, hero: true, sub: t('hf.aumHint') },
+    {
+      key: 'liability',
+      label: t('hf.liability'),
+      value: o.clientLiability,
+      sub: t('hf.liabilityHint', { principal: formatMoney(o.liabilityPrincipal), returns: formatMoney(o.liabilityCreditedReturns) }),
+    },
+    { key: 'clients', label: t('hf.clients'), value: o.clients, format: 'count' },
+    {
+      key: 'active',
+      label: t('hf.activeInvestments'),
+      value: o.activeInvestments,
+      format: 'count',
+      sub: t('hf.lm.ofTotal', { total: String(o.totalInvestments) }),
+    },
+  ];
+  const flows: KpiItem[] = [
+    { key: 'returns', label: t('hf.creditedReturns'), value: o.creditedReturns, sub: t('hf.creditedReturnsHint') },
+    {
+      key: 'commissions',
+      label: t('hf.netCommissions'),
+      value: o.commissions.net,
+      // Un neto negativo es DEUDA de la red, no un cero: `auto` lo pinta `neg`.
+      tone: 'auto',
+      sub: t('hf.netCommissionsHint', { paid: formatMoney(o.commissions.paid), reversed: formatMoney(o.commissions.reversed) }),
+    },
+    {
+      key: 'in30',
+      label: t('hf.maturing30'),
+      value: o.maturities.in30.principal,
+      sub: t('hf.maturingHint', { count: String(o.maturities.in30.count) }),
+    },
+    {
+      key: 'overdue',
+      label: t('hf.overdue'),
+      value: o.maturities.overdue.principal,
+      tone: o.maturities.overdue.count > 0 ? 'neg' : 'neutral',
+      sub: t('hf.maturingHint', { count: String(o.maturities.overdue.count) }),
+    },
+  ];
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard
-          label={t('hf.aum')} value={money(o.aum)} hint={t('hf.aumHint')}
-          icon={Landmark} tone="primary" emphasis
-        />
-        <StatCard
-          label={t('hf.liability')} value={money(o.clientLiability)}
-          hint={t('hf.liabilityHint', {
-            principal: money(o.liabilityPrincipal),
-            returns: money(o.liabilityCreditedReturns),
-          })}
-          icon={Wallet} tone="warning"
-        />
-        <StatCard label={t('hf.clients')} value={o.clients} icon={Users} />
-        <StatCard label={t('hf.activeInvestments')} value={o.activeInvestments} icon={TrendingUp} />
-        <StatCard
-          label={t('hf.creditedReturns')} value={money(o.creditedReturns)}
-          hint={t('hf.creditedReturnsHint')} icon={Banknote} tone="positive"
-        />
-        <StatCard
-          label={t('hf.netCommissions')} value={money(o.commissions.net)}
-          hint={t('hf.netCommissionsHint', {
-            paid: money(o.commissions.paid),
-            reversed: money(o.commissions.reversed),
-          })}
-          icon={Banknote}
-          // Un neto negativo es DEUDA de la red, no un cero. Se colorea.
-          tone={o.commissions.net < 0 ? 'negative' : 'neutral'}
-        />
-        <StatCard
-          label={t('hf.maturing30')} value={money(o.maturities.in30.principal)}
-          hint={t('hf.maturingHint', { count: String(o.maturities.in30.count) })}
-          icon={CalendarClock} tone="info"
-        />
-        <StatCard
-          label={t('hf.overdue')} value={money(o.maturities.overdue.principal)}
-          hint={t('hf.maturingHint', { count: String(o.maturities.overdue.count) })}
-          icon={AlertTriangle}
-          tone={o.maturities.overdue.count > 0 ? 'negative' : 'neutral'}
-        />
-      </div>
-
-      <Card>
-        <h2 className="font-semibold mb-4">{t('hf.byProgram')}</h2>
+    <div className="space-y-4">
+      <KpiStrip items={capital} />
+      <KpiStrip items={flows} />
+      <Panel title={t('hf.byProgram')} flush>
         <TablaProgramas funds={data.funds} t={t} />
-      </Card>
+      </Panel>
     </div>
   );
 }
 
 // ── Programas ────────────────────────────────────────────────────────────────
 
+function FundStatus({ f, t }: { f: FundSummary; t: T }) {
+  return (
+    <span className="flex flex-wrap items-center gap-1">
+      <RawStatus status={f.status} />
+      {/* Los cinco fondos de Vex Pro están deshabilitados y la empresa SÍ
+          ofrece el producto: se muestra con badge, no se esconde. */}
+      {f.enabled === false && <StatusBadge kind="pend" label={t('hf.disabled')} />}
+    </span>
+  );
+}
+
 function TablaProgramas({ funds, t, onPick }: { funds: FundSummary[]; t: T; onPick?: (k: string) => void }) {
-  const cols: Column<FundSummary>[] = [
+  const cols: FinColumn<FundSummary>[] = [
     {
+      key: 'program',
       header: t('hf.colProgram'),
-      accessor: (f) => (
-        <button
-          type="button"
-          onClick={() => onPick?.(f.fundKey)}
-          className={onPick ? 'text-left hover:underline' : 'text-left cursor-default'}
-          disabled={!onPick}
-        >
-          <span className="font-medium">{f.name ?? f.fundKey}</span>
-          <span className="block text-xs text-muted-foreground">{f.fundKey}</span>
+      cell: (f) => (onPick ? (
+        <button type="button" onClick={() => onPick(f.fundKey)} className="text-left font-medium hover:underline">
+          {f.name ?? f.fundKey}
         </button>
-      ),
+      ) : (
+        <span className="font-medium">{f.name ?? f.fundKey}</span>
+      )),
+      meta: (f) => <span className="font-mono text-[12px]">{f.fundKey}</span>,
+      mobileMeta: (f) => <FundStatus f={f} t={t} />,
+    },
+    { key: 'status', header: t('hf.colStatus'), cell: (f) => <FundStatus f={f} t={t} />, hideSm: true },
+    { key: 'risk', header: t('hf.colRisk'), cell: (f) => f.risk ?? <Dash value={null}>{null}</Dash>, hideSm: true },
+    {
+      key: 'min', header: t('hf.colMinInvestment'), kind: 'money', value: (f) => f.minInvestment,
+      cell: (f) => <Amount value={f.minInvestment} currency={f.currency} />, hideSm: true, subtotal: false,
     },
     {
-      header: t('hf.colStatus'),
-      accessor: (f) => (
-        <span className="flex flex-wrap items-center gap-1">
-          <Badge variant={f.status === 'OPEN' ? 'success' : 'neutral'}>{f.status ?? '—'}</Badge>
-          {/* Los cinco fondos de Vex Pro están deshabilitados y la empresa SÍ
-              ofrece el producto: se muestra con badge, no se esconde. */}
-          {f.enabled === false && <Badge variant="warning">{t('hf.disabled')}</Badge>}
-        </span>
-      ),
-    },
-    { header: t('hf.colRisk'), accessor: (f) => f.risk ?? '—' },
-    { header: t('hf.colMinInvestment'), align: 'right', accessor: (f) => money(f.minInvestment, f.currency ?? 'USD') },
-    {
-      header: t('hf.colHolding'), align: 'right',
-      accessor: (f) => <Dash value={f.holdingMonths}>{t('hf.months', { count: String(f.holdingMonths) })}</Dash>,
+      key: 'holding', header: t('hf.colHolding'), align: 'right', hideSm: true,
+      cell: (f) => <Dash value={f.holdingMonths}><span className={NUM_CLASS}>{t('hf.months', { count: String(f.holdingMonths) })}</span></Dash>,
     },
     {
-      header: t('hf.colExpectedReturn'),
       // El texto CRUDO del CRM: es lo que el cliente firmó. El rango parseado
       // sólo se usa para proyectar, nunca para reescribir esta celda.
-      accessor: (f) => <Dash value={f.expectedReturnRaw}>{f.expectedReturnRaw}</Dash>,
+      key: 'expected', header: t('hf.colExpectedReturn'), hideSm: true,
+      cell: (f) => <Dash value={f.expectedReturnRaw}>{f.expectedReturnRaw}</Dash>,
     },
-    { header: t('hf.colApproval'), accessor: (f) => f.approvalMode ?? '—' },
+    { key: 'approval', header: t('hf.colApproval'), cell: (f) => f.approvalMode ?? <Dash value={null}>{null}</Dash>, hideSm: true },
     {
-      header: t('hf.colProfitsLocked'),
-      accessor: (f) => <Dash value={f.profitsLocked}>{f.profitsLocked ? '✓' : '—'}</Dash>,
+      key: 'locked', header: t('hf.colProfitsLocked'), hideSm: true,
+      cell: (f) => <Dash value={f.profitsLocked}>{f.profitsLocked ? '✓' : '—'}</Dash>,
     },
-    { header: t('hf.colAum'), align: 'right', accessor: (f) => money(f.aum, f.currency ?? 'USD') },
-    { header: t('hf.colClients'), align: 'right', accessor: (f) => f.clients },
     {
-      header: t('hf.colAvgTicket'), align: 'right',
+      key: 'aum', header: t('hf.colAum'), kind: 'money', value: (f) => f.aum,
+      cell: (f) => <Amount value={f.aum} currency={f.currency} />, subtotal: false,
+    },
+    { key: 'clients', header: t('hf.colClients'), kind: 'number', value: (f) => f.clients, hideSm: true },
+    {
       // `null` cuando no hay ninguna inversión activa: un 0 diría «el ticket es
       // cero», que es otra afirmación.
-      accessor: (f) => <Dash value={f.averageTicket}>{money(f.averageTicket, f.currency ?? 'USD')}</Dash>,
+      key: 'ticket', header: t('hf.colAvgTicket'), kind: 'money', value: (f) => f.averageTicket,
+      cell: (f) => <Amount value={f.averageTicket} currency={f.currency} />, hideSm: true, subtotal: false,
     },
     {
-      header: t('hf.colLastPayout'), align: 'right',
-      accessor: (f) => (
+      key: 'lastPayout', header: t('hf.colLastPayout'), align: 'right', hideSm: true,
+      cell: (f) => (
         <Dash value={f.lastPayoutAt}>
-          {formatDate(f.lastPayoutAt ?? '')}
+          <span className={cn(NUM_CLASS, 'block text-text-2')}>{formatDate(f.lastPayoutAt ?? '')}</span>
           {f.lastPayoutPercent !== null && (
-            <span className="block text-xs text-muted-foreground">{f.lastPayoutPercent}%</span>
+            <span className={cn(NUM_CLASS, 'block text-[12px] text-text-3')}>{kpiPlainText(f.lastPayoutPercent, 'percent')}</span>
           )}
         </Dash>
       ),
     },
   ];
   return (
-    <DataTable
-      columns={cols} data={funds} density="compact" zebra
-      empty={<EmptyState compact icon={Landmark} title={t('hf.noData')} />}
+    <FinTable
+      caption={t('hf.byProgram')}
+      columns={cols}
+      rows={funds}
+      rowKey={(f) => f.fundKey}
+      empty={t('hf.noData')}
     />
-  );
-}
-
-function Programas({ funds, t, onPick }: { funds: FundSummary[]; t: T; onPick: (k: string) => void }) {
-  return (
-    <Card>
-      <TablaProgramas funds={funds} t={t} onPick={onPick} />
-    </Card>
   );
 }
 
@@ -536,6 +585,7 @@ function Inversiones(props: {
 }) {
   const { data, funds, statuses, t } = props;
   const rows = data?.investments ?? [];
+  const currency = singleCurrency(rows);
 
   const exportar = () => {
     downloadCSV(
@@ -550,121 +600,161 @@ function Inversiones(props: {
     );
   };
 
-  const cols: Column<InvestmentRow>[] = [
-    { header: t('hf.colRef'), accessor: (r) => r.ref ?? r.investmentId.slice(0, 8) },
+  const cols: FinColumn<InvestmentRow>[] = [
     {
+      key: 'client',
       header: t('hf.colClient'),
-      accessor: (r) => (
-        // Un perfil que no cruzó NO borra la fila ni la disfraza: se muestra el
-        // id crudo para que el cruce roto se pueda ver y arreglar.
-        <Dash value={r.client}>
-          <span className="font-medium">{r.client?.name ?? r.client?.username ?? r.userExternalId}</span>
-          <span className="block text-xs text-muted-foreground">{r.client?.email ?? ''}</span>
-        </Dash>
-      ),
-    },
-    { header: t('hf.colProgram'), accessor: (r) => r.program ?? r.fundKey ?? '—' },
-    { header: t('hf.colPrincipal'), align: 'right', accessor: (r) => money(r.principal, r.currency ?? 'USD') },
-    { header: t('hf.colBalance'), align: 'right', accessor: (r) => money(r.balance, r.currency ?? 'USD') },
-    { header: t('hf.colStart'), accessor: (r) => <Dash value={r.startDate}>{formatDate(r.startDate ?? '')}</Dash> },
-    { header: t('hf.colEnd'), accessor: (r) => <Dash value={r.endDate}>{formatDate(r.endDate ?? '')}</Dash> },
-    {
-      header: t('hf.colDaysLeft'), align: 'right',
-      // Negativo = ya venció y sigue abierta. Se colorea; no se esconde.
-      accessor: (r) => (
-        <Dash value={r.daysLeft}>
-          <span className={r.daysLeft !== null && r.daysLeft < 0 ? 'text-negative font-medium' : ''}>
-            {r.daysLeft}
-          </span>
-        </Dash>
+      // Un perfil que no cruzó NO borra la fila ni la disfraza: se muestra el
+      // id crudo para que el cruce roto se pueda ver y arreglar.
+      cell: (r) => (r.client
+        ? <span className="font-medium">{r.client.name ?? r.client.username ?? r.userExternalId}</span>
+        : <span className="font-mono text-[12px]">{r.userExternalId ?? '—'}</span>),
+      meta: (r) => (r.client
+        ? r.client.email ?? undefined
+        : <StatusBadge kind="pend" label={t('hf.lm.noProfile')} />),
+      mobileMeta: (r) => (
+        <>
+          <RawStatus status={r.status} />
+          <DaysLeft value={r.daysLeft} t={t} />
+        </>
       ),
     },
     {
-      header: t('hf.colStatus'),
-      accessor: (r) => <Badge variant={r.status === 'ACTIVE' ? 'success' : 'neutral'}>{r.status ?? '—'}</Badge>,
+      key: 'ref', header: t('hf.colRef'), hideSm: true,
+      cell: (r) => <span className="font-mono text-[12px] text-text-2">{r.ref ?? r.investmentId.slice(0, 8)}</span>,
+    },
+    { key: 'program', header: t('hf.colProgram'), cell: (r) => r.program ?? r.fundKey ?? '—', hideSm: true },
+    {
+      key: 'principal', header: t('hf.colPrincipal'), kind: 'money', value: (r) => r.principal,
+      cell: (r) => <Amount value={r.principal} currency={r.currency} />, hideSm: true,
+      money: { currency: currency ?? 'USD' },
     },
     {
-      header: t('hf.colCertificate'),
-      accessor: (r) => <Dash value={r.certificate}>{r.certificate?.number}</Dash>,
+      key: 'balance', header: t('hf.colBalance'), kind: 'money', value: (r) => r.balance,
+      cell: (r) => <Amount value={r.balance} currency={r.currency} />,
+      money: { currency: currency ?? 'USD' },
+    },
+    { key: 'start', header: t('hf.colStart'), cell: (r) => <DateCell value={r.startDate} />, hideSm: true },
+    { key: 'end', header: t('hf.colEnd'), cell: (r) => <DateCell value={r.endDate} />, hideSm: true },
+    {
+      key: 'days', header: t('hf.colDaysLeft'), align: 'right', hideSm: true,
+      // Negativo = ya venció y sigue abierta (`neg`); ≤ 30 = vence pronto (`pend`).
+      cell: (r) => <DaysLeft value={r.daysLeft} t={t} />,
+    },
+    { key: 'status', header: t('hf.colStatus'), cell: (r) => <RawStatus status={r.status} />, hideSm: true },
+    {
+      key: 'cert', header: t('hf.colCertificate'), hideSm: true,
+      cell: (r) => <Dash value={r.certificate}><span className="font-mono text-[12px]">{r.certificate?.number}</span></Dash>,
     },
   ];
 
+  const filtered = data !== null && rows.length < data.totalInMirror;
+
   return (
-    <Card className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <label className="text-xs">
-          <span className="block text-muted-foreground mb-1">{t('hf.filterFund')}</span>
-          <select
-            value={props.fundFilter} onChange={(e) => props.setFundFilter(e.target.value)}
-            className="h-8 rounded-md border border-border bg-card px-2 text-xs"
-          >
+    <Panel
+      title={t('hf.tab.investments')}
+      hint={data ? t('hf.lm.investmentsHint', { shown: String(rows.length), total: String(data.totalInMirror) }) : undefined}
+      actions={
+        <>
+          <ExcludedBadge excluded={data?.excluded ?? null} t={t} />
+          <ActionButton onClick={exportar} disabled={rows.length === 0}>
+            <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+            {t('hf.exportCsv')}
+          </ActionButton>
+        </>
+      }
+      flush
+      footer={filtered ? t('hf.lm.filteredFooter', { shown: String(rows.length), total: String(data!.totalInMirror) }) : undefined}
+    >
+      <div className="flex flex-wrap items-end gap-3 border-b border-border px-4 py-3">
+        <Field label={t('hf.filterFund')} className="w-full sm:w-52">
+          <Select value={props.fundFilter} onChange={(e) => props.setFundFilter(e.target.value)}>
             <option value="">{t('hf.filterAll')}</option>
             {funds.map((f) => <option key={f.fundKey} value={f.fundKey}>{f.name ?? f.fundKey}</option>)}
-          </select>
-        </label>
-        <label className="text-xs">
-          <span className="block text-muted-foreground mb-1">{t('hf.filterStatus')}</span>
-          <select
-            value={props.statusFilter} onChange={(e) => props.setStatusFilter(e.target.value)}
-            className="h-8 rounded-md border border-border bg-card px-2 text-xs"
-          >
+          </Select>
+        </Field>
+        <Field label={t('hf.filterStatus')} className="w-full sm:w-44">
+          <Select value={props.statusFilter} onChange={(e) => props.setStatusFilter(e.target.value)}>
             <option value="">{t('hf.filterAll')}</option>
             {statuses.map((s) => <option key={s} value={s}>{s}</option>)}
-          </select>
-        </label>
-        <label className="text-xs">
-          <span className="block text-muted-foreground mb-1">{t('hf.filterDueBefore')}</span>
-          <input
-            type="date" value={props.dueBefore} onChange={(e) => props.setDueBefore(e.target.value)}
-            className="h-8 rounded-md border border-border bg-card px-2 text-xs"
-          />
-        </label>
-        <div className="ml-auto flex items-center gap-2">
-          <ExcludedBadge excluded={data?.excluded ?? null} t={t} />
-          <Button variant="secondary" size="sm" onClick={exportar} disabled={rows.length === 0}>
-            <Download className="w-3.5 h-3.5" />
-            {t('hf.exportCsv')}
-          </Button>
-        </div>
+          </Select>
+        </Field>
+        <Field
+          label={t('hf.filterDueBefore')}
+          className="w-full sm:w-44"
+          error={data?.invalidDueBefore ? t('hf.lm.invalidDate') : undefined}
+        >
+          <Input type="date" value={props.dueBefore} onChange={(e) => props.setDueBefore(e.target.value)} />
+        </Field>
       </div>
 
       {/* Un cruce que no encontró perfil se CUENTA y se dice. */}
       {(data?.withoutProfile ?? 0) > 0 && (
-        <p className="text-xs text-warning">
-          {data!.withoutProfile} / {rows.length} · sin perfil del CRM
-        </p>
+        <div className="border-b border-border px-4 py-3">
+          <Notice kind="pend" title={t('hf.lm.withoutProfile', { count: String(data!.withoutProfile), total: String(rows.length) })}>
+            {t('hf.lm.withoutProfileBody')}
+          </Notice>
+        </div>
       )}
 
       {data === null ? (
-        <Skeleton className="h-40" />
+        <div className="p-4"><Skeleton className="h-40" /></div>
       ) : (
-        <DataTable
-          columns={cols} data={rows} density="compact" zebra stickyHeader
-          empty={<EmptyState compact icon={Users} title={t('hf.noInvestments')} />}
+        <FinTable
+          caption={t('hf.tab.investments')}
+          columns={cols}
+          rows={rows}
+          rowKey={(r) => r.investmentId}
+          empty={t('hf.noInvestments')}
+          footer={
+            rows.length > 0
+              ? currency
+                ? {
+                    label: t('hf.lm.totalRows', { count: String(rows.length) }),
+                    values: { principal: sumKnown(rows.map((r) => r.principal)), balance: sumKnown(rows.map((r) => r.balance)) },
+                  }
+                : { label: t('hf.lm.mixedCurrencies') }
+              : undefined
+          }
         />
       )}
-    </Card>
+    </Panel>
+  );
+}
+
+function DaysLeft({ value, t }: { value: number | null; t: T }) {
+  const tone = daysLeftTone(value);
+  if (value === null) return <span className="text-text-3">—</span>;
+  return (
+    <span
+      className={cn(NUM_CLASS, tone === 'neg' && 'font-medium text-neg', tone === 'pend' && 'font-medium text-pend')}
+      title={tone === 'neg' ? t('hf.lm.overdueTip') : tone === 'pend' ? t('hf.lm.soonTip') : undefined}
+    >
+      {t('hf.lm.days', { count: String(value) })}
+    </span>
   );
 }
 
 // ── Pagos ────────────────────────────────────────────────────────────────────
 
-function TotalesPorMes({ data }: { data: ByMonth }) {
+/** Totales por mes en el pie del panel. Un importe sin fecha NO se cuelga de un mes inventado: se dice aparte. */
+function TotalesPorMes({ data, t }: { data: ByMonth; t: T }) {
   if (data.months.length === 0 && data.withoutDate === 0) return null;
   return (
-    <div className="mt-3 flex flex-wrap gap-2 text-xs">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+      <span>{t('hf.lm.byMonth')}</span>
       {data.months.map((m) => (
-        <span key={m.ym} className="rounded-md border border-border px-2 py-1">
-          <span className="text-muted-foreground">{m.ym}</span>{' '}
-          <span className="tabular-nums font-medium">{money(m.amount)}</span>{' '}
-          <span className="text-muted-foreground">({m.count})</span>
+        <span key={m.ym} className={NUM_CLASS}>
+          {m.ym}{' '}
+          <Money value={m.amount} className="font-medium text-foreground" />{' '}
+          <span>({m.count})</span>
         </span>
       ))}
-      {/* Un importe sin fecha NO se cuelga de un mes inventado: se dice aparte. */}
       {data.withoutDate > 0 && (
-        <span className="rounded-md border border-warning/40 text-warning px-2 py-1">
-          {data.withoutDate} sin fecha · {money(data.withoutDateAmount)}
-        </span>
+        <StatusBadge
+          kind="pend"
+          label={t('hf.lm.withoutDate', { count: String(data.withoutDate), amount: formatMoney(data.withoutDateAmount) })}
+        />
       )}
     </div>
   );
@@ -672,109 +762,138 @@ function TotalesPorMes({ data }: { data: ByMonth }) {
 
 function Pagos({ data, t }: { data: PaymentsResponse | null; t: T }) {
   if (!data) return <Skeleton className="h-60" />;
+
+  const runCols: FinColumn<PayoutRun>[] = [
+    {
+      // El programa primero: la etiqueta del total del pie cae en esta columna.
+      key: 'program', header: t('hf.colProgram'), cell: (r) => r.program ?? r.fundKey ?? '—',
+      mobileMeta: (r) => (
+        <>
+          <DateCell value={r.at} />
+          <RawStatus status={r.status} />
+        </>
+      ),
+    },
+    { key: 'date', header: t('hf.colDate'), cell: (r) => <DateCell value={r.at} />, hideSm: true },
+    { key: 'percent', header: t('hf.colPercent'), align: 'right', cell: (r) => <Pct value={r.percent} />, hideSm: true },
+    { key: 'accounts', header: t('hf.colAccounts'), kind: 'number', value: (r) => r.accountsAffected, hideSm: true },
+    {
+      key: 'amount', header: t('hf.colAmount'), kind: 'money', value: (r) => r.totalCredited,
+      cell: (r) => <Amount value={r.totalCredited} currency={r.currency} />, subtotal: false,
+    },
+    { key: 'status', header: t('hf.colStatus'), cell: (r) => <RawStatus status={r.status} />, hideSm: true },
+  ];
+
+  const commissionCols: FinColumn<CommissionRow>[] = [
+    {
+      key: 'beneficiary', header: t('hf.colBeneficiary'), cell: (r) => r.beneficiary ?? '—',
+      meta: (r) => [r.type, r.source].filter(Boolean).join(' · ') || undefined,
+      mobileMeta: (r) => <DateCell value={r.at} />,
+    },
+    { key: 'date', header: t('hf.colDate'), cell: (r) => <DateCell value={r.at} />, hideSm: true },
+    { key: 'level', header: t('hf.colLevel'), kind: 'number', value: (r) => r.level, hideSm: true },
+    { key: 'percent', header: t('hf.colPercent'), align: 'right', cell: (r) => <Pct value={r.percent} />, hideSm: true },
+    { key: 'month', header: t('hf.colMonth'), cell: (r) => <span className={NUM_CLASS}>{r.ym ?? '—'}</span>, hideSm: true },
+    {
+      // Sin clamp a 0: un reverso es negativo y se ve en `neg` (§2.1 #1).
+      key: 'amount', header: t('hf.colAmount'), kind: 'money', value: (r) => r.amount,
+      cell: (r) => <Amount value={r.amount} currency={r.currency} tone="auto" />, subtotal: false,
+    },
+  ];
+
+  const capRows = capitalRows(data.capital);
+  const capitalCols: FinColumn<CapitalRow>[] = [
+    {
+      key: 'kind', header: t('hf.colType'),
+      cell: (r) => (r.kind === 'request' ? t('hf.lm.capitalRequest') : t('hf.lm.capitalTermination')),
+      meta: (r) => r.fundKey ?? undefined,
+      mobileMeta: (r) => <DateCell value={r.at} />,
+    },
+    { key: 'date', header: t('hf.colDate'), cell: (r) => <DateCell value={r.at} />, hideSm: true },
+    {
+      key: 'amount', header: t('hf.colAmount'), kind: 'money', value: (r) => r.amount,
+      cell: (r) => <Amount value={r.amount} currency={r.currency} />, subtotal: false,
+    },
+    { key: 'status', header: t('hf.colStatus'), cell: (r) => <RawStatus status={r.status} />, hideSm: true },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* (a) Rendimientos */}
-      <Card>
-        <header className="mb-3">
-          <h2 className="font-semibold">{t('hf.payoutsBlock')}</h2>
-          <p className="text-xs text-muted-foreground">{t('hf.payoutsBlockHint')}</p>
-        </header>
-        <DataTable
-          density="compact" zebra
-          data={data.returns.runs}
-          empty={<EmptyState compact icon={Banknote} title={t('hf.noPayouts')} />}
-          columns={[
-            { header: t('hf.colDate'), accessor: (r) => <Dash value={r.at}>{formatDate(r.at ?? '')}</Dash> },
-            { header: t('hf.colProgram'), accessor: (r) => r.program ?? r.fundKey ?? '—' },
-            { header: t('hf.colPercent'), align: 'right', accessor: (r) => <Dash value={r.percent}>{r.percent}%</Dash> },
-            { header: t('hf.colAccounts'), align: 'right', accessor: (r) => <Dash value={r.accountsAffected}>{r.accountsAffected}</Dash> },
-            { header: t('hf.colAmount'), align: 'right', accessor: (r) => money(r.totalCredited, r.currency ?? 'USD') },
-            { header: t('hf.colStatus'), accessor: (r) => r.status ?? '—' },
-          ]}
+      <Panel
+        title={t('hf.payoutsBlock')}
+        hint={t('hf.payoutsBlockHint')}
+        flush
+        footer={<TotalesPorMes data={data.returns.byMonth} t={t} />}
+      >
+        <FinTable
+          caption={t('hf.payoutsBlock')}
+          columns={runCols}
+          rows={data.returns.runs}
+          rowKey={(r) => r.payoutId}
+          empty={t('hf.noPayouts')}
+          footer={
+            data.returns.runs.length > 0 || data.returns.total !== 0
+              ? { label: t('hf.lm.returnsTotal', { count: String(data.returns.entries.length) }), values: { amount: data.returns.total } }
+              : undefined
+          }
         />
-        <TotalesPorMes data={data.returns.byMonth} />
-      </Card>
+      </Panel>
 
       {/* (b) Comisiones — con los reversos a la vista */}
-      <Card>
-        <header className="mb-3">
-          <h2 className="font-semibold">{t('hf.commissionsBlock')}</h2>
-          <p className="text-xs text-muted-foreground">{t('hf.commissionsBlockHint')}</p>
-        </header>
-        <div className="grid grid-cols-3 gap-3 mb-3 text-sm">
-          <div><span className="block text-xs text-muted-foreground">{t('hf.colAmount')}</span>{money(data.commissions.totals.paid)}</div>
-          <div>
-            <span className="block text-xs text-muted-foreground">reversos ({data.commissions.totals.reversedCount})</span>
-            <span className="text-negative">{money(data.commissions.totals.reversed)}</span>
-          </div>
-          <div>
-            <span className="block text-xs text-muted-foreground">neto</span>
-            {/* Sin clamp a 0: un neto negativo ES deuda de la red (§2.1 #1). */}
-            <span className={data.commissions.totals.net < 0 ? 'text-negative font-medium' : 'font-medium'}>
-              {money(data.commissions.totals.net)}
-            </span>
-          </div>
-        </div>
-        <DataTable
-          density="compact" zebra
-          data={data.commissions.rows}
-          empty={<EmptyState compact icon={Banknote} title={t('hf.noCommissions')} />}
-          columns={[
-            { header: t('hf.colDate'), accessor: (r) => <Dash value={r.at}>{formatDate(r.at ?? '')}</Dash> },
-            { header: t('hf.colType'), accessor: (r) => r.type ?? '—' },
-            { header: t('hf.colBeneficiary'), accessor: (r) => r.beneficiary ?? '—' },
-            { header: t('hf.colSource'), accessor: (r) => r.source ?? '—' },
-            { header: t('hf.colLevel'), align: 'right', accessor: (r) => <Dash value={r.level}>{r.level}</Dash> },
-            { header: t('hf.colPercent'), align: 'right', accessor: (r) => <Dash value={r.percent}>{r.percent}%</Dash> },
-            {
-              header: t('hf.colAmount'), align: 'right',
-              accessor: (r) => (
-                <span className={(r.amount ?? 0) < 0 ? 'text-negative' : ''}>{money(r.amount, r.currency ?? 'USD')}</span>
-              ),
-            },
-            { header: t('hf.colMonth'), accessor: (r) => r.ym ?? '—' },
+      <Panel
+        title={t('hf.commissionsBlock')}
+        hint={t('hf.commissionsBlockHint')}
+        flush
+        footer={<TotalesPorMes data={data.commissions.byMonth} t={t} />}
+      >
+        <FinTable
+          caption={t('hf.commissionsBlock')}
+          columns={commissionCols}
+          rows={data.commissions.rows}
+          rowKey={(r) => r.commissionId}
+          empty={t('hf.noCommissions')}
+          footerRows={[
+            { label: t('hf.lm.commissionsPaid', { count: String(data.commissions.totals.count) }), values: { amount: data.commissions.totals.paid } },
+            { label: t('hf.lm.commissionsReversed', { count: String(data.commissions.totals.reversedCount) }), values: { amount: -data.commissions.totals.reversed } },
           ]}
+          // Sin clamp a 0: un neto negativo ES deuda de la red (§2.1 #1).
+          footer={{ label: t('hf.lm.commissionsNet'), values: { amount: data.commissions.totals.net } }}
         />
-        <TotalesPorMes data={data.commissions.byMonth} />
-      </Card>
+      </Panel>
 
       {/* (c) Capital devuelto y solicitudes */}
-      <Card>
-        <header className="mb-3">
-          <h2 className="font-semibold">{t('hf.capitalBlock')}</h2>
-          <p className="text-xs text-muted-foreground">{t('hf.capitalBlockHint')}</p>
-        </header>
-        <DataTable
-          density="compact" zebra
-          data={[
-            ...data.capital.requests.map((r) => ({
-              id: r.requestId, kind: 'request' as const, at: r.at,
-              fundKey: r.fundKey, amount: r.amount, currency: r.currency, status: r.status,
-            })),
-            ...data.capital.terminations.map((r) => ({
-              id: r.entryId, kind: 'termination' as const, at: r.at,
-              fundKey: r.fundKey, amount: r.amount, currency: r.currency, status: 'TERMINATION',
-            })),
-          ]}
-          empty={<EmptyState compact icon={Wallet} title={t('hf.noCapitalReturns')} />}
-          columns={[
-            { header: t('hf.colDate'), accessor: (r) => <Dash value={r.at}>{formatDate(r.at ?? '')}</Dash> },
-            { header: t('hf.colType'), accessor: (r) => r.kind },
-            { header: t('hf.colProgram'), accessor: (r) => r.fundKey ?? '—' },
-            { header: t('hf.colAmount'), align: 'right', accessor: (r) => money(r.amount, r.currency ?? 'USD') },
-            { header: t('hf.colStatus'), accessor: (r) => r.status ?? '—' },
-          ]}
+      <Panel
+        title={t('hf.capitalBlock')}
+        hint={t('hf.capitalBlockHint')}
+        flush
+        footer={<TotalesPorMes data={data.capital.byMonth} t={t} />}
+      >
+        <FinTable
+          caption={t('hf.capitalBlock')}
+          columns={capitalCols}
+          rows={capRows}
+          rowKey={(r) => `${r.kind}:${r.id}`}
+          empty={t('hf.noCapitalReturns')}
+          footer={
+            capRows.length > 0
+              ? {
+                  // El total es de los asientos TERMINATION (capital que ya
+                  // salió); las solicitudes todavía no son plata devuelta.
+                  label: t('hf.lm.capitalTotal', { count: String(data.capital.terminations.length) }),
+                  values: { amount: data.capital.total },
+                }
+              : undefined
+          }
         />
-        <TotalesPorMes data={data.capital.byMonth} />
-      </Card>
+      </Panel>
 
       {/* Un tipo de asiento que no cae en ninguno de los tres bloques APARECE.
           Callarlo lo haría desaparecer del módulo sin dejar rastro. */}
       {data.otherLedgerTypes.length > 0 && (
-        <p className="text-xs text-warning">
-          Otros tipos de asiento en el libro: {data.otherLedgerTypes.join(', ')}
-        </p>
+        <Notice kind="pend" title={t('hf.lm.otherLedgerTypes', { types: data.otherLedgerTypes.join(', ') })}>
+          {t('hf.lm.otherLedgerTypesBody')}
+        </Notice>
       )}
     </div>
   );
@@ -784,74 +903,96 @@ function Pagos({ data, t }: { data: PaymentsResponse | null; t: T }) {
 
 function Vencimientos({ data, t }: { data: MaturitiesResponse | null; t: T }) {
   if (!data) return <Skeleton className="h-60" />;
+  const b = data.buckets;
+  const buckets: KpiItem[] = [
+    {
+      key: 'overdue', label: t('hf.overdue'), value: b.overdue.principal,
+      tone: b.overdue.count > 0 ? 'neg' : 'neutral',
+      sub: t('hf.maturingHint', { count: String(b.overdue.count) }),
+    },
+    { key: 'in30', label: t('hf.maturing30'), value: b.in30.principal, hero: true, sub: t('hf.maturingHint', { count: String(b.in30.count) }) },
+    { key: 'in60', label: t('hf.lm.maturing60'), value: b.in60.principal, sub: t('hf.lm.cumulativeHint', { count: String(b.in60.count) }) },
+    { key: 'in90', label: t('hf.lm.maturing90'), value: b.in90.principal, sub: t('hf.lm.cumulativeHint', { count: String(b.in90.count) }) },
+  ];
+
+  const monthCols: FinColumn<MaturityMonth>[] = [
+    { key: 'ym', header: t('hf.colMonth'), cell: (m) => <span className={cn(NUM_CLASS, 'font-medium')}>{m.ym}</span> },
+    { key: 'count', header: t('hf.colCount'), kind: 'number', value: (m) => m.count, hideSm: true },
+    { key: 'principal', header: t('hf.colPrincipal'), kind: 'money', value: (m) => m.principal },
+    {
+      key: 'projected',
+      header: t('hf.lm.colProjection'),
+      align: 'right',
+      // `null` = ninguna inversión del mes se pudo proyectar. «—», nunca 0: un
+      // 0 se leería como «ese mes no rinde nada».
+      cell: (m) => (
+        <Dash value={m.projected}>
+          <span className={cn(NUM_CLASS, 'text-text-2')}>
+            <Money value={m.projected?.min} tone="neutral" /> – <Money value={m.projected?.max} tone="neutral" />
+          </span>
+          {m.withoutProjection > 0 && (
+            <span className="block text-[12px] text-pend">
+              {t('hf.projectionMissing', { count: String(m.withoutProjection) })}
+            </span>
+          )}
+        </Dash>
+      ),
+      hideSm: true,
+    },
+  ];
+
+  const actualCols: FinColumn<ActualReturn>[] = [
+    { key: 'ym', header: t('hf.colMonth'), cell: (r) => <span className={NUM_CLASS}>{r.ym}</span> },
+    { key: 'fund', header: t('hf.colProgram'), cell: (r) => r.fundKey },
+    { key: 'percent', header: t('hf.colPercent'), align: 'right', cell: (r) => <Pct value={r.percent} /> },
+    { key: 'amount', header: t('hf.colAmount'), kind: 'money', value: (r) => r.amount, subtotal: false },
+  ];
+
+  const principalTotal = sumKnown(data.months.map((m) => m.principal));
+
   return (
-    <Card className="space-y-4">
-      <header>
-        <h2 className="font-semibold">{t('hf.maturitiesTitle')}</h2>
-        <p className="text-xs text-warning flex items-center gap-1.5 mt-1">
-          <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
-          {t('hf.projectionWarning')}
-        </p>
-      </header>
+    <div className="space-y-4">
+      <KpiStrip items={buckets} />
+
+      <Notice kind="info" title={t('hf.projectionWarning')} />
 
       {/* Capital activo SIN fecha de fin: no entra a ningún mes, así que hay
           que decirlo o desaparece del calendario en silencio. */}
       {data.activeWithoutEndDate > 0 && (
-        <p className="text-xs text-warning">
-          {data.activeWithoutEndDate} / {data.activeCount} · sin fecha de vencimiento
-        </p>
+        <Notice
+          kind="pend"
+          title={t('hf.lm.withoutEndDate', { count: String(data.activeWithoutEndDate), total: String(data.activeCount) })}
+        >
+          {t('hf.lm.withoutEndDateBody')}
+        </Notice>
       )}
 
-      <DataTable
-        density="compact" zebra
-        data={data.months}
-        empty={<EmptyState compact icon={CalendarClock} title={t('hf.noMaturities')} />}
-        columns={[
-          { header: t('hf.colMonth'), accessor: (m) => m.ym },
-          { header: t('hf.colCount'), align: 'right', accessor: (m) => m.count },
-          { header: t('hf.colPrincipal'), align: 'right', accessor: (m) => money(m.principal) },
-          {
-            header: t('hf.colProjected'), align: 'right',
-            // `null` = ninguna inversión del mes se pudo proyectar. «—», nunca
-            // 0: un 0 se leería como «ese mes no rinde nada».
-            accessor: (m) => (
-              <Dash value={m.projected}>
-                <span className="tabular-nums">
-                  {money(m.projected?.min)} – {money(m.projected?.max)}
-                </span>
-                {m.withoutProjection > 0 && (
-                  <span className="block text-[11px] text-warning">
-                    {t('hf.projectionMissing', { count: String(m.withoutProjection) })}
-                  </span>
-                )}
-              </Dash>
-            ),
-          },
-        ]}
-      />
+      <Panel title={t('hf.maturitiesTitle')} hint={t('hf.lm.maturitiesHint')} flush>
+        <FinTable
+          caption={t('hf.maturitiesTitle')}
+          columns={monthCols}
+          rows={data.months}
+          rowKey={(m) => m.ym}
+          empty={t('hf.noMaturities')}
+          footer={
+            data.months.length > 0
+              ? { label: t('hf.lm.maturitiesTotal', { count: String(data.months.reduce((s, m) => s + m.count, 0)) }), values: { principal: principalTotal } }
+              : undefined
+          }
+        />
+      </Panel>
 
       {/* El rendimiento REAL del mes, cuando el CRM lo tenga. Hoy la colección
           está vacía en las dos empresas: se dice «sin datos», no 0%. */}
-      <div>
-        <h3 className="text-sm font-medium mb-2">
-          {t('hf.colProjected')} vs. real
-          <InfoTip className="ml-1.5" text={t('hf.projectionWarning')} />
-        </h3>
-        {data.actualMonthlyReturns.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('hf.noData')}</p>
-        ) : (
-          <DataTable
-            density="compact"
-            data={data.actualMonthlyReturns}
-            columns={[
-              { header: t('hf.colMonth'), accessor: (r) => r.ym },
-              { header: t('hf.colProgram'), accessor: (r) => r.fundKey },
-              { header: t('hf.colPercent'), align: 'right', accessor: (r) => <Dash value={r.percent}>{r.percent}%</Dash> },
-              { header: t('hf.colAmount'), align: 'right', accessor: (r) => <Dash value={r.amount}>{money(r.amount)}</Dash> },
-            ]}
-          />
-        )}
-      </div>
-    </Card>
+      <Panel title={t('hf.lm.actualTitle')} hint={t('hf.lm.actualHint')} flush>
+        <FinTable
+          caption={t('hf.lm.actualTitle')}
+          columns={actualCols}
+          rows={data.actualMonthlyReturns}
+          rowKey={(r) => `${r.fundKey}:${r.ym}`}
+          empty={t('hf.noData')}
+        />
+      </Panel>
+    </div>
   );
 }
