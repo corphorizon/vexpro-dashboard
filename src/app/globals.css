@@ -30,9 +30,51 @@
   /* Blanco o negro según la luminancia del relleno: el texto sobre el primario
      no siempre puede ser blanco (marcas pastel). */
   --brand-on-primary: var(--brand-primary-fg-light, #FFFFFF);
-  /* Superficies SIEMPRE oscuras (sidebar), que no siguen el tema: se declara
-     solo acá y .dark no la pisa a propósito. */
-  --brand-on-dark-surface: var(--brand-primary-dark, #506582);
+
+  /* ── Color de marca y sidebar oscuro (2026-10-12, spec §10) ──
+     Pedido de Kevin: «se ve muy plano… que el menú del lado tenga un color
+     oscuro». TODO sale de la marca de la empresa activa (brand-color.ts →
+     theme-apply.ts); los respaldos son la marca del producto (#1E3A5F /
+     #3B82F6) y brand-color.test.ts los recalcula.
+     La marca va en ESTRUCTURA (navegación, encabezados, acentos, selección);
+     el color de los DATOS sigue siendo pos/neg/pend/info/stale. Un número
+     nunca se pinta con un token de esta sección. */
+  /* Tinte de superficie (ítem/chip activo, cuadro de ícono): tono del acento,
+     `brand-ink` encima ≥ 4,5:1. Antes era fijo (#E9EEF5 / #18263B). */
+  --brand-tint: var(--brand-tint-light, #E7EEFA);
+  /* Lavado muy suave: cabecera de tabla, cabecera de panel destacado. */
+  --brand-wash: var(--brand-wash-light, #F5F8FD);
+
+  /* Sidebar: SIEMPRE oscuro, en los dos temas — se declara sólo acá y .dark no
+     lo pisa a propósito. Fondo = primario oscurecido hacia casi-negro (≥ 14:1
+     contra blanco); texto, apagado y acento medidos contra ese fondo. */
+  --sidebar-bg: var(--brand-sidebar-bg, #122137);
+  --sidebar-fg: var(--brand-sidebar-fg, #F1F2F3);
+  --sidebar-muted: var(--brand-sidebar-muted, #B3B8BF);
+  --sidebar-hover: var(--brand-sidebar-hover, #233145);
+  --sidebar-border: var(--brand-sidebar-border, #334053);
+  --sidebar-accent: var(--brand-sidebar-accent, #3F85F6);
+  --sidebar-active-bg: var(--brand-sidebar-active-bg, #1C3865);
+  /* Placa clara para un logo a color sin versión blanca. */
+  --sidebar-plate: #FFFFFF;
+  /* Ícono de cada grupo del menú (brand-color.ts NAV_GROUP_HUES). Finanzas
+     lleva el acento de la marca; los demás, tonos fijos ≥ 3:1 sobre cualquier
+     fondo de sidebar. Nunca verde/rojo/ámbar: un grupo no es una ganancia. */
+  --nav-finance: var(--sidebar-accent);
+  --nav-hr: #C4B5FD;
+  --nav-risk: #5EEAD4;
+  --nav-config: #CBD5E1;
+
+  /* Series de gráficos SIN significado (departamentos, categorías): escala de
+     la marca y después tonos fijos. Las series con significado (ingresos,
+     retiros, aprobadas…) siguen en pos/neg/pend/info. */
+  --chart-1: var(--accent);
+  --chart-2: var(--brand-ink);
+  --chart-3: color-mix(in srgb, var(--accent) 55%, var(--card));
+  --chart-4: color-mix(in srgb, var(--brand-ink) 50%, var(--card));
+  --chart-5: #8B5CF6;
+  --chart-6: #0891B2;
+  --chart-7: #808DA1;
 
   /* ── Superficies y texto ── */
   --background: #F8FAFC;
@@ -74,13 +116,12 @@
   --control-border: #8A94A3;
   --text-2: #465264;
   --text-3: var(--muted-foreground);   /* alias: ver nota «text-3» abajo */
-  --brand-tint: #E9EEF5;
-  --pos: #047857;   --pos-bg: #E6F4EE;
-  --neg: #B42318;   --neg-bg: #FCEBE9;
-  --pend: #A15C07;  --pend-bg: #FCF1DF;
+  --pos: #047857;   --pos-bg: #D7F0E4;
+  --neg: #B42318;   --neg-bg: #FADCD8;
+  --pend: #A15C07;  --pend-bg: #FCEED8;
   /* --info está arriba (ya era token): ver nota «info» abajo. */
-  --info-bg: #E8EFFC;
-  --stale: #6B5FA8; --stale-bg: #EFEDF8;
+  --info-bg: #DCE7FC;
+  --stale: #6B5FA8; --stale-bg: #EBE8F8;
   --row-hover: #F3F5F8;
   --row-selected: #EEF3FB;
   --group-row: #F7F8FA;
@@ -127,12 +168,13 @@
   --control-border: #5E6B82;
   --text-2: #AAB4C5;
   /* --text-3 sigue siendo var(--muted-foreground): flipa solo. */
-  --brand-tint: #18263B;
-  --pos: #3CCB8F;   --pos-bg: #0F2A20;
-  --neg: #F97066;   --neg-bg: #331614;
-  --pend: #F2B13A;  --pend-bg: #30230B;
-  --info-bg: #132443;
-  --stale: #B3A6F0; --stale-bg: #221E3A;
+  --brand-tint: var(--brand-tint-dark, #172848);
+  --brand-wash: var(--brand-wash-dark, #23334E);
+  --pos: #3CCB8F;   --pos-bg: #113524;
+  --neg: #F97066;   --neg-bg: #421B18;
+  --pend: #F2B13A;  --pend-bg: #3D2C0C;
+  --info-bg: #18305C;
+  --stale: #B3A6F0; --stale-bg: #2C2550;
   --row-hover: #151D2C;
   --row-selected: #16233A;
   --group-row: #0E141F;
@@ -180,8 +222,11 @@
    · --border y --accent existen con otro valor/uso: no se tocan.
    · --brand-ink ya existe y DERIVA de la marca de cada empresa
      (brand-color.ts) — es mejor que el navy fijo de la maqueta. --brand-tint
-     todavía es fijo (#E9EEF5 / #18263B): derivarlo de la marca está anotado
-     como pendiente en la doc.
+     también deriva de la marca desde el 2026-10-12 (era #E9EEF5 / #18263B
+     fijo; ver «Color de marca» arriba y spec §10).
+   · *-bg de los significados: algo más saturados que la maqueta desde el
+     2026-10-12 (pedido «más color»); el texto encima sigue ≥ 4,5:1 y el test
+     lo recalcula.
    · Radios: las utilidades se llaman rounded-ui-{sm,md,lg,xl} porque
      rounded-r-md YA es de Tailwind (radio del lado derecho).
    · --row-h: 36px; 44px con puntero grueso (táctil) — el mínimo de toque.
@@ -225,6 +270,19 @@
   --color-text-2: var(--text-2);
   --color-text-3: var(--text-3);
   --color-brand-tint: var(--brand-tint);
+  --color-brand-wash: var(--brand-wash);
+  --color-sidebar-bg: var(--sidebar-bg);
+  --color-sidebar-fg: var(--sidebar-fg);
+  --color-sidebar-muted: var(--sidebar-muted);
+  --color-sidebar-hover: var(--sidebar-hover);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-active-bg: var(--sidebar-active-bg);
+  --color-sidebar-plate: var(--sidebar-plate);
+  --color-nav-finance: var(--nav-finance);
+  --color-nav-hr: var(--nav-hr);
+  --color-nav-risk: var(--nav-risk);
+  --color-nav-config: var(--nav-config);
   --color-pos: var(--pos);
   --color-pos-bg: var(--pos-bg);
   --color-neg: var(--neg);
@@ -283,11 +341,20 @@ body {
 ::-webkit-scrollbar-thumb { background: #CBD5E1; border-radius: 3px; }
 .dark ::-webkit-scrollbar-thumb { background: #475569; }
 
-/* Sidebar scrollbar (always-dark slate palette regardless of theme) */
+/* Scrollbar fino (listas de notificaciones). */
 .custom-scrollbar::-webkit-scrollbar { width: 4px; }
 .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-.custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 2px; }
-.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #475569; }
+.custom-scrollbar::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 2px; }
+.custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--control-border); }
+
+/* ── Superficie oscura de marca (sidebar, columna del login) ──
+   El anillo de foco global es `--accent`, medido contra superficies del
+   tema; sobre el fondo oscuro de marca un acento rojo/navy no llega a 3:1.
+   Adentro se usa el acento del sidebar (≥ 4,5:1 sobre --sidebar-bg). */
+[data-surface="brand-dark"] :where(button, [role="button"], a, select, summary, [tabindex], input, textarea):focus-visible {
+  outline-color: var(--sidebar-accent);
+}
+[data-surface="brand-dark"] ::-webkit-scrollbar-thumb { background: var(--sidebar-border); }
 
 /* ─── Motion primitives (respetan prefers-reduced-motion) ─── */
 @keyframes vex-fade-in {

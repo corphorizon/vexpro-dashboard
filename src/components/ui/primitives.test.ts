@@ -109,7 +109,7 @@ describe('<Segmented>', () => {
     expect(out.match(/aria-pressed="true"/g)).toHaveLength(1);
     expect(out.match(/aria-pressed="false"/g)).toHaveLength(1);
     expect(out).toContain('h-[26px]');
-    expect(out).toContain('bg-card font-semibold text-foreground shadow-1');
+    expect(out).toContain('bg-card font-semibold text-brand-ink shadow-[inset_0_-2px_0_0_var(--brand-ink),var(--shadow-1)]');
   });
   it('un conteo null no se muestra como 0', () => {
     const out = html(createElement(Segmented<'all' | 'in'>, props));

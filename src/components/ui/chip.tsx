@@ -44,7 +44,7 @@ export const Chip = forwardRef<HTMLButtonElement, ChipProps>(function Chip(
         'disabled:cursor-not-allowed disabled:opacity-50',
         active
           ? 'border-solid border-brand-ink bg-brand-tint font-semibold text-brand-ink'
-          : 'border-dashed border-border-strong bg-card font-medium text-text-2 hover:text-foreground',
+          : 'border-dashed border-border-strong bg-card font-medium text-text-2 hover:border-brand-ink hover:text-brand-ink',
         className,
       )}
     >

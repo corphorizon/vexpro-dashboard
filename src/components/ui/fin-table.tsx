@@ -440,8 +440,11 @@ export function FinTable<R>({
                   scope="col"
                   style={c.width ? { width: c.width } : undefined}
                   className={cn(
-                    'sticky top-0 z-[1] h-[34px] whitespace-nowrap border-b border-border-strong bg-card px-3 first:pl-4 last:pr-4',
-                    'text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3',
+                    // Cabecera con el lavado de marca (spec §10): opaco, así el
+                    // sticky tapa las filas. text-2 y no text-3: sobre el lavado
+                    // el terciario queda al borde de AA.
+                    'sticky top-0 z-[1] h-[34px] whitespace-nowrap border-b border-border-strong bg-brand-wash px-3 first:pl-4 last:pr-4',
+                    'text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-2',
                     alignClass(c),
                   )}
                 >
@@ -449,7 +452,7 @@ export function FinTable<R>({
                 </th>
               ))}
               {rowActions && (
-                <th scope="col" className="sticky top-0 z-[1] h-[34px] border-b border-border-strong bg-card pr-4">
+                <th scope="col" className="sticky top-0 z-[1] h-[34px] border-b border-border-strong bg-brand-wash pr-4">
                   <span className="sr-only">{t('ui.table.actions')}</span>
                 </th>
               )}

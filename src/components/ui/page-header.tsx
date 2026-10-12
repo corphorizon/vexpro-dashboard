@@ -16,6 +16,11 @@ import { cn } from '@/lib/utils';
 // + `text-primary dark:text-accent`; ahora sólo tokens (`brand-tint` /
 // `brand-ink`, que flipan solos con el tema).
 //
+// Color de marca (2026-10-12, spec §10, «se ve muy plano»): el cuadro del
+// ícono pasa de tinte a RELLENO de marca (`bg-primary` + `brand-on-primary`,
+// los dos derivados con contraste en brand-color.ts). Es el ancla de color de
+// cada pantalla; el título sigue en `foreground`.
+//
 // Descartado: sacar el `icon` (la spec no lo dibuja). Lo pasan varias
 // pantallas; quitarlo es un cambio de API que no le toca a la shell.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -35,8 +40,8 @@ export function PageHeader({ title, subtitle, actions, icon: Icon, className }: 
     <div className={cn('flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between', className)}>
       <div className="flex min-w-0 items-start gap-3">
         {Icon && (
-          <div className="mt-0.5 hidden rounded-ui-md bg-brand-tint p-1.5 text-brand-ink sm:block" aria-hidden="true">
-            <Icon className="h-5 w-5" />
+          <div className="hidden size-9 shrink-0 items-center justify-center rounded-ui-md bg-primary text-brand-on-primary shadow-1 sm:flex" aria-hidden="true">
+            <Icon className="h-[18px] w-[18px]" />
           </div>
         )}
         <div className="min-w-0">

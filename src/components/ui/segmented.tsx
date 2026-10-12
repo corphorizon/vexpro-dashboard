@@ -21,6 +21,10 @@ import { NUM_CLASS } from './money';
 // Medidas: botones 26 de alto, 12.5/500 `text-2`, carril con borde y
 // padding 2. Conteo opcional en `text-3`.
 //
+// Color de marca (2026-10-12, spec §10): el activo sigue siendo superficie +
+// sombra + 600 (forma y peso), y además su texto va en `brand-ink` con un
+// filete inferior de marca — la selección es estructura, no dato.
+//
 // DESCARTADO: role="radiogroup"/"radio" — exige manejar flechas y roving
 // tabindex; la spec eligió `aria-pressed`.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -70,7 +74,7 @@ export function Segmented<V extends string>({
             className={cn(
               'inline-flex h-[26px] items-center gap-1.5 whitespace-nowrap rounded-ui-sm px-2.5 text-[12.5px] disabled:cursor-not-allowed disabled:opacity-50',
               active
-                ? 'bg-card font-semibold text-foreground shadow-1'
+                ? 'bg-card font-semibold text-brand-ink shadow-[inset_0_-2px_0_0_var(--brand-ink),var(--shadow-1)]'
                 : 'font-medium text-text-2 hover:text-foreground',
             )}
           >
