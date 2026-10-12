@@ -328,7 +328,13 @@ export default function ReportesPage() {
     downloadCSV(`reporte_${from}_${to}.csv`, headers, rows);
   });
 
-  const exportsReady = isCompanyModel ? !!data && !!companyReport : !!data;
+  // Facturación que no se pudo leer viaja como 0 en `CompanyReport`: el
+  // CSV/PDF diría «no facturamos nada», que es el número plausible y falso
+  // (§1.2). Mientras falle, no se exporta ni se envía (2026-10-12).
+  const exportsBlockedTitle = isCompanyModel && billingFailed
+    ? 'No se pudo leer la facturación: el reporte saldría con facturación en 0. Recargá e intentá de nuevo.'
+    : undefined;
+  const exportsReady = isCompanyModel ? !!data && !!companyReport && !billingFailed : !!data;
 
   const handleExportPDF = () =>
     verify2FA(() => {
@@ -393,16 +399,16 @@ export default function ReportesPage() {
         subtitle={t('reports.subtitle')}
         actions={
           <>
-            <ActionButton onClick={handleExportCSV} disabled={!exportsReady} aria-label={t('common.csv')}>
+            <ActionButton onClick={handleExportCSV} disabled={!exportsReady} title={exportsBlockedTitle} aria-label={t('common.csv')}>
               <FileSpreadsheet aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="max-sm:hidden">{t('common.csv')}</span>
             </ActionButton>
-            <ActionButton onClick={handleExportPDF} disabled={!exportsReady} aria-label="PDF">
+            <ActionButton onClick={handleExportPDF} disabled={!exportsReady} title={exportsBlockedTitle} aria-label="PDF">
               <FileText aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="max-sm:hidden">PDF</span>
             </ActionButton>
             {isAdmin && (
-              <ActionButton variant="primary" onClick={() => setSendOpen(true)}>
+              <ActionButton variant="primary" onClick={() => setSendOpen(true)} disabled={!!exportsBlockedTitle} title={exportsBlockedTitle}>
                 <Send aria-hidden className="size-[15px]" strokeWidth={1.75} />
                 {t('reports.send')}
               </ActionButton>
