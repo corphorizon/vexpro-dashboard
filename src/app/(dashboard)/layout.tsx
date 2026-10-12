@@ -2,86 +2,35 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
 import { Sidebar } from '@/components/sidebar';
-import { CompanyLogo } from '@/components/company-logo';
+import { Topbar } from '@/components/topbar';
 import { TruncatedDataBanner } from '@/components/truncated-data-banner';
 import { ViewingAsBanner } from '@/components/viewing-as-banner';
 import { ModuleRouteGuard } from '@/components/module-route-guard';
-import { NotificationBell } from '@/components/notifications/notification-bell';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { PeriodProvider } from '@/lib/period-context';
 import { DataProvider } from '@/lib/data-context';
+import { DataFreshnessProvider } from '@/lib/data-freshness';
 import { useAuth } from '@/lib/auth-context';
-import { useData } from '@/lib/data-context';
-import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
 import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
-import { Menu, Globe, Sun, Moon, UserCircle } from 'lucide-react';
 
-function MobileTopBar({ onMenuToggle }: { onMenuToggle: () => void }) {
-  const { user } = useAuth();
-  const { company } = useData();
-  const { resolvedTheme, setTheme } = useTheme();
-  const { locale, setLocale } = useI18n();
-
-  return (
-    <header className="lg:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 border-b border-slate-800 text-slate-200 shadow-sm">
-      <div className="flex items-center justify-between px-4 h-14">
-        {/* Left: hamburger + logo */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={onMenuToggle}
-            className="p-2 -ml-2 rounded-lg text-slate-300 hover:bg-slate-800 hover:text-white transition-colors"
-            aria-label="Toggle menu"
-          >
-            <Menu className="w-5 h-5" />
-          </button>
-          <Link href="/" className="flex items-center gap-2">
-            <CompanyLogo
-              name={company?.name || 'Horizon'}
-              logoUrl={company?.logo_url}
-              colorPrimary={company?.color_primary}
-              className="w-7 h-7"
-              initialsClassName="text-[10px]"
-            />
-            <span className="font-semibold text-sm truncate max-w-[140px]">
-              {company?.name || 'Dashboard'}
-            </span>
-          </Link>
-        </div>
-
-        {/* Right: utilities */}
-        <div className="flex items-center gap-1">
-          <NotificationBell variant="topbar" />
-          <button
-            onClick={() => setLocale(locale === 'es' ? 'en' : 'es')}
-            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-            aria-label="Change language"
-          >
-            <Globe className="w-5 h-5" />
-          </button>
-          <button
-            onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-            aria-label="Toggle theme"
-          >
-            {resolvedTheme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
-          </button>
-          <Link
-            href="/perfil"
-            className="p-2 rounded-lg text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-            aria-label="Profile"
-          >
-            <UserCircle className="w-5 h-5" />
-          </Link>
-        </div>
-      </div>
-    </header>
-  );
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Shell del dashboard «Libro mayor» (docs/diseno-libro-mayor.md §6, Fase 4
+// 2026-10-12): sidebar que sigue el tema + topbar sticky + contenido de
+// 1360 px máx.
+//
+// Antes: `MobileTopBar` fija (siempre slate-900) sólo en < 1024 px y nada
+// arriba en escritorio; contenido `max-w-7xl` (1280) con padding 16/24/32.
+// Ahora una sola topbar para todos los anchos; el corte del drawer pasa a
+// 960 px (spec §6.3) y el padding es 24 24 64 (16 16 48 en < 640).
+//
+// La topbar y el banner «Viendo como» comparten UN contenedor sticky: los
+// dos eran `sticky top-0` y se pisaban.
+// ─────────────────────────────────────────────────────────────────────────────
 
 const SIDEBAR_COLLAPSED_KEY = 'fd_sidebar_collapsed';
+const SIDEBAR_ID = 'app-sidebar';
 
 function DashboardContent({ children }: { children: React.ReactNode }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -98,6 +47,16 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     } catch { /* SSR/privacidad: sin localStorage se queda expandido */ }
   }, []);
 
+  // Si la ventana crece por encima del corte con el drawer abierto, el drawer
+  // deja de existir: cerrarlo, o al volver a achicar aparecería abierto y con
+  // el foco atrapado.
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 960px)');
+    const onChange = () => { if (mq.matches) setMobileMenuOpen(false); };
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+
   const toggleSidebarCollapsed = useCallback(() => {
     setSidebarCollapsed(prev => {
       const next = !prev;
@@ -108,12 +67,15 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const closeMobileMenu = useCallback(() => setMobileMenuOpen(false), []);
+  const toggleMobileMenu = useCallback(() => setMobileMenuOpen(prev => !prev), []);
+
   return (
     <div className="flex h-full">
-      <MobileTopBar onMenuToggle={() => setMobileMenuOpen(prev => !prev)} />
       <Sidebar
+        id={SIDEBAR_ID}
         mobileOpen={mobileMenuOpen}
-        onClose={() => setMobileMenuOpen(false)}
+        onClose={closeMobileMenu}
         collapsed={sidebarCollapsed}
         onToggleCollapse={toggleSidebarCollapsed}
       />
@@ -123,13 +85,20 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
           overflow de este main y estira el documento. El síntoma era una
           segunda barra de scroll: al bajar, el shell entero subía y dejaba
           cientos de píxeles en blanco bajo la barra lateral. */}
-      <main className="relative flex-1 min-w-0 overflow-auto pt-14 lg:pt-0 transition-[width,padding] duration-200">
-        <ViewingAsBanner />
+      <main className="relative flex-1 min-w-0 overflow-auto">
+        <div className="sticky top-[env(safe-area-inset-top,0px)] z-30">
+          <Topbar
+            onMenuToggle={toggleMobileMenu}
+            menuOpen={mobileMenuOpen}
+            sidebarId={SIDEBAR_ID}
+          />
+          <ViewingAsBanner />
+        </div>
         {/* Un total corto y creíble es peor que un error: si /api/bootstrap
             recortó algún slice por su techo de filas, hay que decirlo donde
             sea que se mire el número (§1.2). */}
         <TruncatedDataBanner />
-        <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+        <div className="mx-auto w-full max-w-[1360px] px-4 pt-4 pb-12 sm:px-6 sm:pt-6 sm:pb-16">
           <ErrorBoundary>
             <ModuleRouteGuard>{children}</ModuleRouteGuard>
           </ErrorBoundary>
@@ -225,7 +194,9 @@ export default function DashboardLayout({
   return (
     <DataProvider>
       <PeriodProvider>
-        <DashboardContent>{children}</DashboardContent>
+        <DataFreshnessProvider>
+          <DashboardContent>{children}</DashboardContent>
+        </DataFreshnessProvider>
       </PeriodProvider>
     </DataProvider>
   );

@@ -59,7 +59,10 @@ export function NotificationBell({
     };
   }, [open]);
 
-  const label = t('notif.open');
+  // El número del badge es aria-hidden: el conteo viaja en el nombre del botón.
+  const label = unread > 0
+    ? `${t('notif.open')} (${t('notif.unread', { count: String(unread) })})`
+    : t('notif.open');
   const badge = unread > 9 ? '9+' : String(unread);
 
   const renderItem = (n: AppNotification) => {
@@ -143,23 +146,26 @@ export function NotificationBell({
         aria-expanded={open}
         aria-controls={open ? panelId : undefined}
         className={cn(
-          'relative flex items-center justify-center rounded-lg transition-all',
-          'text-slate-400 hover:bg-slate-800 hover:text-white',
-          open && 'bg-slate-800 text-white',
-          // 44px de blanco táctil en móvil; en el rail el alto lo fija el sidebar.
+          'relative flex items-center justify-center rounded-ui-md transition-colors motion-reduce:transition-none',
+          // Sigue el tema (2026-10-12, Fase 4): la campana vive ahora en la
+          // topbar, que es clara u oscura según el tema. Antes era slate fijo
+          // porque estaba en el sidebar siempre oscuro.
+          'text-text-2 hover:bg-surface-2 hover:text-foreground',
+          open && 'bg-surface-2 text-foreground',
+          // ≥ 40 px de blanco táctil; en el rail el alto lo fija el sidebar.
           variant === 'topbar'
-            ? 'min-w-[44px] min-h-[44px]'
+            ? 'w-10 h-10'
             : collapsed
               ? 'w-9 h-9'
               : 'w-full gap-2 px-3 py-2 min-h-[44px] text-sm font-medium',
         )}
       >
-        <Bell className={cn(variant === 'topbar' || collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
+        <Bell aria-hidden="true" className={cn(variant === 'topbar' ? 'w-[18px] h-[18px]' : collapsed ? 'w-5 h-5' : 'w-4 h-4')} />
         {variant === 'sidebar' && !collapsed && <span>{t('notif.title')}</span>}
         {unread > 0 && (
           <span
-            className="absolute top-0.5 right-0.5 min-w-[16px] h-4 px-1 rounded-full text-[10px] font-bold leading-4 text-white text-center"
-            style={{ background: 'var(--color-negative)' }}
+            aria-hidden="true"
+            className="absolute top-0 right-0 min-w-[18px] h-[18px] px-1 rounded-full bg-neg text-background text-[11.5px] font-semibold leading-[18px] text-center tabular-nums"
           >
             {badge}
           </span>
@@ -173,7 +179,11 @@ export function NotificationBell({
           aria-label={t('notif.title')}
           className={cn(
             'absolute z-50 w-[min(20rem,calc(100vw-2rem))] rounded-xl border border-border bg-card text-card-foreground shadow-[var(--elevation-3)] overflow-hidden',
-            variant === 'topbar' ? 'top-full right-0 mt-2' : 'bottom-full left-0 mb-2',
+            // < 640: a lo ancho bajo la topbar (su backdrop-filter la vuelve el
+            // contenedor de los `fixed`); anclado al botón se salía por la izquierda.
+            variant === 'topbar'
+              ? 'top-full right-0 mt-2 max-sm:fixed max-sm:inset-x-4 max-sm:top-15 max-sm:mt-0 max-sm:w-auto'
+              : 'bottom-full left-0 mb-2',
           )}
         >
           <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border">

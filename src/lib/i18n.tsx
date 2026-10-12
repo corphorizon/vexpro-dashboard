@@ -936,6 +936,26 @@ const translations: Record<Locale, TranslationDict> = {
     'assistant.tool.finanzas': 'finance',
     'nav.forecast': 'Cash Forecast',
     'nav.crmTotals': 'CRM Totals',
+    // Shell «Libro mayor» (Fase 4): sidebar + topbar.
+    'nav.groupGeneral': 'General',
+    'shell.mainNav': 'Main navigation',
+    'shell.openMenu': 'Open menu',
+    'shell.closeMenu': 'Close menu',
+    'shell.breadcrumb': 'You are here',
+    'shell.updated': 'Updated {when}',
+    'shell.staleHint': 'This data is more than 24 h old',
+    'shell.justNow': 'just now',
+    'shell.minutesAgo': '{n} min ago',
+    'shell.hoursAgo': '{n} h ago',
+    'shell.daysAgo': '{n} d ago',
+    'shell.prevPeriod': 'Previous period',
+    'shell.nextPeriod': 'Next period',
+    'shell.choosePeriod': 'Choose period',
+    'shell.themeToLight': 'Switch to light mode',
+    'shell.themeToDark': 'Switch to dark mode',
+    'shell.language': 'Change language',
+    'shell.switchCompany': 'Switch company',
+    'shell.pending': '{count} pending',
 
     // /finanzas/crm — automatic monthly totals from the CRM, side by side
     // with what was typed by hand. They are NEVER added together: same money.
@@ -3526,6 +3546,26 @@ const translations: Record<Locale, TranslationDict> = {
     'assistant.tool.finanzas': 'finanzas',
     'nav.forecast': 'Forecast de Caja',
     'nav.crmTotals': 'Totales del CRM',
+    // Shell «Libro mayor» (Fase 4): sidebar + topbar.
+    'nav.groupGeneral': 'General',
+    'shell.mainNav': 'Navegación principal',
+    'shell.openMenu': 'Abrir menú',
+    'shell.closeMenu': 'Cerrar menú',
+    'shell.breadcrumb': 'Estás en',
+    'shell.updated': 'Actualizado {when}',
+    'shell.staleHint': 'Este dato tiene más de 24 h',
+    'shell.justNow': 'hace instantes',
+    'shell.minutesAgo': 'hace {n} min',
+    'shell.hoursAgo': 'hace {n} h',
+    'shell.daysAgo': 'hace {n} d',
+    'shell.prevPeriod': 'Período anterior',
+    'shell.nextPeriod': 'Período siguiente',
+    'shell.choosePeriod': 'Elegir período',
+    'shell.themeToLight': 'Cambiar a modo claro',
+    'shell.themeToDark': 'Cambiar a modo oscuro',
+    'shell.language': 'Cambiar idioma',
+    'shell.switchCompany': 'Cambiar de empresa',
+    'shell.pending': '{count} pendientes',
 
     // /finanzas/crm — los totales mensuales que salen solos del CRM, al lado
     // de lo cargado a mano. NUNCA se suman: es el mismo dinero.

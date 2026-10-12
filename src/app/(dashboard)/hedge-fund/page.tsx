@@ -60,6 +60,7 @@ import { formatDate, formatDateTime } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { moduleDisplayLabel } from '@/lib/modules';
 import { useData } from '@/lib/data-context';
+import { useReportDataFreshness } from '@/lib/data-freshness';
 
 // ── Tipos de la respuesta ────────────────────────────────────────────────────
 
@@ -182,6 +183,8 @@ export default function HedgeFundPage() {
 
   const [tab, setTab] = useState<Tab>('summary');
   const [overview, setOverview] = useState<OverviewResponse | null>(null);
+  // Frescura de la topbar: el `synced_at` más reciente del espejo del CRM.
+  useReportDataFreshness('hedge-fund:mirror', overview?.lastSyncedAt ?? null);
   const [investments, setInvestments] = useState<InvestmentsResponse | null>(null);
   const [payments, setPayments] = useState<PaymentsResponse | null>(null);
   const [maturities, setMaturities] = useState<MaturitiesResponse | null>(null);

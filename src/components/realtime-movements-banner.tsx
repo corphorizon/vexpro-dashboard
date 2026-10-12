@@ -33,6 +33,7 @@ import {
 import { fetchPinnedCoinsbuyWallets } from '@/lib/supabase/queries';
 import { selectOperatingWallets, type PinnedWalletRole } from '@/lib/pinned-wallet-roles';
 import type { PinnedCoinsbuyWallet } from '@/lib/types';
+import { useReportDataFreshness } from '@/lib/data-freshness';
 import type {
   ProviderDataset,
   ProviderSlug,
@@ -157,6 +158,10 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
 
   const [datasets, setDatasets] = useState<ProviderDataset[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  // La topbar muestra «Actualizado hace X» con ESTA marca: es el
+  // `last_synced_at` real de api_sync_log (o la hora de la llamada en vivo
+  // tras «Refrescar»). `null` = nunca sincronizó → la topbar no muestra nada.
+  useReportDataFreshness('movements:api', fetchedAt);
   // Proveedores cuyo dataset vino RECORTADO por el techo de paginación del
   // endpoint. Hasta el 2026-08-31 ese corte sólo dejaba un console.warn del
   // lado del servidor y la tarjeta mostraba un total corto con cara de total
