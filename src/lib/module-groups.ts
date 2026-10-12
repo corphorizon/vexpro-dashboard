@@ -273,3 +273,100 @@ export function getAccessibleNavEntries(
   if (!user) return [];
   return NAV_ENTRIES.filter((e) => hasModuleAccess(user, e.module, activeModules, businessModel));
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Menú desplegable (2026-10-12, pedido del dueño: «el menú debe ser
+// desplegable»). Lógica PURA del acordeón del sidebar; vive acá y no en el
+// componente para poder probarla en el entorno node de vitest.
+//
+// POR QUÉ: Finanzas tiene 17 ítems y con rótulos fijos obligaba a scrollear
+// para llegar a Risk o Configuración.
+//
+// Reglas:
+//   · varios grupos abiertos a la vez (no es un acordeón exclusivo);
+//   · el grupo de la ruta activa arranca abierto y se vuelve a abrir al
+//     navegar hacia él; los demás vuelven como el usuario los dejó (storage
+//     por usuario Y empresa: un superadmin «viendo como» otra empresa tiene
+//     otros grupos habilitados);
+//   · un grupo con un solo ítem accesible no colapsa: esconder el único
+//     destino detrás de un clic extra sería puro costo;
+//   · el contador de pendientes de un grupo CERRADO se suma junto al rótulo:
+//     plegar no puede esconder un pendiente (fallo que no da error).
+//
+// Storage ilegible (JSON roto, tipo equivocado, claves desconocidas, storage
+// bloqueado): se ignora y se arranca con sólo el activo abierto. «No hay
+// nada guardado» (`null`) es distinto de «el usuario cerró todo» (`[]`).
+//
+// Descartado: acordeón exclusivo (obliga a cerrar uno para ver otro y pierde
+// el contexto); guardar el estado en el servidor (es una preferencia de
+// pantalla, no un dato de la empresa); impedir cerrar el grupo activo (si el
+// usuario lo cierra a mano, lo decidió él).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const GROUP_KEYS: readonly string[] = NAV_GROUPS.map((g) => g.key);
+
+export function navOpenStorageKey(userId: string, companyId: string | null | undefined): string {
+  return `nav-open-groups:${userId}:${companyId ?? 'none'}`;
+}
+
+/** Lo guardado, o `null` si no hay nada utilizable (ausente, roto, storage bloqueado). */
+export function readOpenGroups(
+  storage: Pick<Storage, 'getItem'> | null | undefined,
+  key: string,
+): ModuleGroupKey[] | null {
+  try {
+    const raw = storage?.getItem(key);
+    if (raw == null) return null;
+    const parsed: unknown = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return null;
+    return parsed.filter((k): k is ModuleGroupKey => typeof k === 'string' && GROUP_KEYS.includes(k));
+  } catch {
+    return null;
+  }
+}
+
+/** Devuelve `false` si no se pudo guardar (storage lleno o bloqueado): nunca lanza. */
+export function writeOpenGroups(
+  storage: Pick<Storage, 'setItem'> | null | undefined,
+  key: string,
+  open: Iterable<ModuleGroupKey>,
+): boolean {
+  try {
+    if (!storage) return false;
+    storage.setItem(key, JSON.stringify([...open]));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Grupos abiertos al arrancar: lo guardado (si hay) + SIEMPRE el grupo de la
+ * ruta activa. Sin nada guardado, sólo el activo.
+ */
+export function initialOpenGroups(
+  stored: readonly ModuleGroupKey[] | null,
+  activeGroup: ModuleGroupKey | null,
+): Set<ModuleGroupKey> {
+  const open = new Set<ModuleGroupKey>(stored ?? []);
+  if (activeGroup) open.add(activeGroup);
+  return open;
+}
+
+/** Suma de los contadores > 0 de las entradas de un grupo. 0 = nada que mostrar. */
+export function groupPendingTotal(
+  entries: readonly Pick<NavEntry, 'pendingKey'>[],
+  counts: Partial<Record<PendingCounterKey, number>> | undefined,
+): number {
+  let total = 0;
+  for (const e of entries) {
+    const n = e.pendingKey ? counts?.[e.pendingKey] : undefined;
+    if (typeof n === 'number' && Number.isFinite(n) && n > 0) total += n;
+  }
+  return total;
+}
+
+/** Un grupo se pliega sólo si tiene más de un ítem accesible. */
+export function isGroupCollapsible(visibleEntryCount: number): boolean {
+  return visibleEntryCount > 1;
+}

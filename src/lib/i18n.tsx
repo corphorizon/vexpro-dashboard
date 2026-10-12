@@ -635,6 +635,8 @@ const translations: Record<Locale, TranslationDict> = {
     'nav.logout': 'Sign Out',
     'nav.collapse': 'Collapse menu',
     'nav.expand': 'Expand menu',
+    'nav.collapseAll': 'Collapse all sections',
+    'nav.expandAll': 'Expand all sections',
 
     // Resumen
     'summary.title': 'General Summary',
@@ -3440,6 +3442,8 @@ const translations: Record<Locale, TranslationDict> = {
     'nav.logout': 'Cerrar Sesión',
     'nav.collapse': 'Contraer menú',
     'nav.expand': 'Expandir menú',
+    'nav.collapseAll': 'Contraer todas las secciones',
+    'nav.expandAll': 'Expandir todas las secciones',
 
     // Resumen
     'summary.title': 'Resumen General',
