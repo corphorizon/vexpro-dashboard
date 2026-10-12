@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { provisionalPeriodLabel } from '@/lib/pdf-provisional';
 import {
   Users, Download, Plus, Pencil, Trash2, X, Check, ChevronDown, FileText, FileBarChart,
 } from 'lucide-react';
@@ -435,6 +436,8 @@ export default function SociosPage() {
       deudaEntrada: carryDebt,
       montoDistribuir: totalToDistribute,
       completeness: currentChain,
+      // Mes abierto: el CRM todavía puede mover el número (pdf-provisional.ts).
+      provisional: !currentPeriod.is_closed,
       partners: partners.map((p) => {
         const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
         return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
@@ -588,6 +591,8 @@ export default function SociosPage() {
       crmInfo,
       crmInfoTruncated: crmInfo.length > 0 && crmMonthlyTotals.truncated,
       completeness: currentChain,
+      // Mes abierto: el CRM todavía puede mover el número (pdf-provisional.ts).
+      provisional: !currentPeriod.is_closed,
       partners: partners.map((p) => {
         const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
         return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
@@ -601,7 +606,7 @@ export default function SociosPage() {
       const pChain = periodChain.get(period.id);
       // Mes con serie del CRM faltante: «sin datos», no cuenta.
       if (pChain?.pendiente) {
-        return { periodLabel: period.label ?? '', amounts: null, total: null };
+        return { periodLabel: provisionalPeriodLabel(period.label ?? '', period.is_closed), amounts: null, total: null };
       }
       const pDist = pChain?.montoDistribuir ?? 0;
       const dists = partnerDistributions.filter((d) => d.period_id === period.id);
@@ -610,7 +615,7 @@ export default function SociosPage() {
         const pct = saved?.percentage ?? p.percentage;
         return pDist > 0 ? round2(pDist * pct) : 0;
       });
-      return { periodLabel: period.label ?? '', amounts, total: round2(amounts.reduce((s, a) => s + a, 0)) };
+      return { periodLabel: provisionalPeriodLabel(period.label ?? '', period.is_closed), amounts, total: round2(amounts.reduce((s, a) => s + a, 0)) };
     });
     const partnerTotals = partners.map((_, idx) =>
       round2(rows.reduce((s, r) => s + (r.amounts ? r.amounts[idx] : 0), 0)),

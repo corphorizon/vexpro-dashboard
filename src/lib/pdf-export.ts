@@ -1,4 +1,5 @@
-import jsPDF from 'jspdf';
+import jsPDF, { GState } from 'jspdf';
+import { PROVISIONAL_NOTE, PROVISIONAL_WATERMARK, provisionalFileName } from './pdf-provisional';
 import autoTable from 'jspdf-autotable';
 import { formatNumber } from '@/lib/utils';
 import { BRAND_RGB, type RGB } from '@/lib/brand';
@@ -254,6 +255,25 @@ function pdfFooter(doc: jsPDF, brand = 'Smart Dashboard') {
  * Banda de aviso a todo el ancho (fondo ámbar suave, borde y texto en color de
  * atención). Para lo que NO puede pasar desapercibido: va arriba de todo.
  */
+/**
+ * Marca de agua «PROVISIONAL» en todas las páginas (mes abierto, ver
+ * pdf-provisional.ts). Se aplica al final, con las páginas ya armadas.
+ */
+function pdfProvisionalWatermark(doc: jsPDF) {
+  const w = doc.internal.pageSize.getWidth();
+  const h = doc.internal.pageSize.getHeight();
+  for (let i = 1; i <= doc.getNumberOfPages(); i++) {
+    doc.setPage(i);
+    doc.saveGraphicsState();
+    doc.setGState(new GState({ opacity: 0.09 }));
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(Math.min(w, h) / 3.2);
+    doc.setTextColor(...C.warning);
+    doc.text(PROVISIONAL_WATERMARK, w / 2, h / 2, { align: 'center', baseline: 'middle', angle: 30 });
+    doc.restoreGraphicsState();
+  }
+}
+
 function pdfAlertBand(doc: jsPDF, text: string, y: number, margin = 14): number {
   const w = doc.internal.pageSize.getWidth();
   doc.setFont('helvetica', 'bold');
@@ -880,6 +900,8 @@ export interface PdfPartnerPeriodData {
   /** Completitud del período (`computeCheckedChain`). Ausente ⇒ completo. */
   completeness?: CloseCompleteness | null;
   partners: { name: string; pct: number; amount: number }[];
+  /** Período abierto: marca de agua, aviso arriba y sufijo en el archivo. */
+  provisional?: boolean;
 }
 
 export async function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
@@ -891,8 +913,9 @@ export async function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
     logoDataUrl,
     title: 'Distribución a Socios',
     company: data.companyName,
-    right: [data.periodLabel, generatedOnLabel()],
+    right: [data.provisional ? `${data.periodLabel} · PROVISIONAL` : data.periodLabel, generatedOnLabel()],
   });
+  if (data.provisional) y = pdfAlertBand(doc, PROVISIONAL_NOTE, y, M);
 
   const waterfall = buildCloseWaterfall({
     desglose: data.desglose,
@@ -968,7 +991,8 @@ export async function generatePartnerPeriodPDF(data: PdfPartnerPeriodData) {
   pdfPartnerTable(doc, y, share.rows, share.total, M);
 
   pdfFooter(doc);
-  doc.save(`Distribucion_Socios_${(data.fileLabel ?? data.periodLabel).replace(/\s/g, '_')}.pdf`);
+  if (data.provisional) pdfProvisionalWatermark(doc);
+  doc.save(provisionalFileName(`Distribucion_Socios_${(data.fileLabel ?? data.periodLabel).replace(/\s/g, '_')}.pdf`, !!data.provisional));
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1111,6 +1135,8 @@ export interface PdfMonthlyCloseData {
   montoDistribuir: number;
   /** Egresos del período (todas las filas), para el top y su estado. */
   expenses: CloseExpenseInput[];
+  /** Período abierto: marca de agua, aviso arriba y sufijo en el archivo. */
+  provisional?: boolean;
   egresosPagados: number;
   egresosPendientes: number;
   /** El modelo resta egresos en base caja (features().cashBasisExpenses). */
@@ -1144,7 +1170,7 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
       logoDataUrl,
       title: 'Informe de Cierre Mensual',
       company: data.companyName,
-      right: [data.periodLabel, generated],
+      right: [data.provisional ? `${data.periodLabel} · PROVISIONAL` : data.periodLabel, generated],
     });
   /** Salto de página si lo que sigue no entra (deja lugar al pie). */
   const ensureSpace = (y: number, needed: number): number => {
@@ -1214,6 +1240,7 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
 
   // ═══ Página 1 — Resultado ═══
   let y = header();
+  if (data.provisional) y = pdfAlertBand(doc, PROVISIONAL_NOTE, y, M);
   // Serie del CRM faltante: el aviso va antes que cualquier número.
   if (waterfall.aviso) y = pdfAlertBand(doc, waterfall.aviso, y, M);
 
@@ -1464,7 +1491,8 @@ export async function generateMonthlyClosePDF(data: PdfMonthlyCloseData) {
   }
 
   pdfFooter(doc);
-  doc.save(`Cierre_Mensual_${data.periodLabel.replace(/\s/g, '_')}.pdf`);
+  if (data.provisional) pdfProvisionalWatermark(doc);
+  doc.save(provisionalFileName(`Cierre_Mensual_${data.periodLabel.replace(/\s/g, '_')}.pdf`, !!data.provisional));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
