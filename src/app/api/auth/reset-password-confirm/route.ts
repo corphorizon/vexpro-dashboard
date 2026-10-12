@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { clearAttempts } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
+import { PASSWORD_MIN_LENGTH } from '@/lib/auth-form';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/reset-password-confirm
@@ -31,9 +32,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (typeof newPassword !== 'string' || newPassword.length < 8) {
+    // Mismo mínimo que muestra la pantalla (/reset-password): una sola constante.
+    if (typeof newPassword !== 'string' || newPassword.length < PASSWORD_MIN_LENGTH) {
       return NextResponse.json(
-        { success: false, error: 'La contraseña debe tener al menos 8 caracteres' },
+        { success: false, error: `La contraseña debe tener al menos ${PASSWORD_MIN_LENGTH} caracteres` },
         { status: 400 },
       );
     }

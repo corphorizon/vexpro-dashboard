@@ -1,8 +1,33 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useId, useRef } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import { ShieldCheck, Loader2, X } from 'lucide-react';
+import { ShieldCheck, X } from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
+import { OTP_LENGTH } from '@/lib/auth-form';
+import { Field } from '@/components/ui/field';
+import { Notice } from '@/components/ui/notice';
+import { AuthIcon, ICON_BUTTON_CLASS } from '@/components/auth/auth-shell';
+import { AuthSubmit, OtpInput } from '@/components/auth/auth-controls';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verify2FAModal — pide el código TOTP antes de una exportación
+// (/api/auth/verify-pin). Lo usan 13 pantallas vía `useExport2FA`.
+//
+// Rediseño «Libro mayor» (2026-10-12): mismo input de código que login/setup
+// (`OtpInput`: `inputmode="numeric"`, `autocomplete="one-time-code"`, 24 px
+// tabular), `rounded-ui-xl` + `shadow-3` (modales, spec §2.2), scrim de la
+// spec (`rgb(0 0 0/.45)`, igual que el drawer del sidebar).
+// Antes: sin `role="dialog"` ni nombre accesible, el input sin label (sólo
+// placeholder «000000»), la X sin `aria-label`, sin Escape, textos sin tildes
+// («Verificacion», «codigo»). Ahora: diálogo modal con título, Escape cierra,
+// Tab no se escapa del diálogo y el foco vuelve a quien lo abrió.
+// Lógica sin cambios: 6 dígitos → POST verify-pin → onVerified / error.
+//
+// DESCARTADO: `<dialog>` nativo con showModal() — el resto de los modales del
+// repo (confirm-dialog) usan este patrón; mezclar dos dispara diferencias de
+// foco y de scroll entre pantallas.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Verify2FAModalProps {
   open: boolean;
@@ -11,18 +36,58 @@ interface Verify2FAModalProps {
 }
 
 export function Verify2FAModal({ open, onVerified, onClose }: Verify2FAModalProps) {
+  if (!open) return null;
+  return <Verify2FADialog onVerified={onVerified} onClose={onClose} />;
+}
+
+function Verify2FADialog({ onVerified, onClose }: Omit<Verify2FAModalProps, 'open'>) {
+  const { t } = useI18n();
+  const titleId = useId();
+  const cardRef = useRef<HTMLDivElement>(null);
   const [token, setToken] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  if (!open) return null;
+  const handleClose = useCallback(() => {
+    setToken('');
+    setError('');
+    onClose();
+  }, [onClose]);
+
+  // Escape cierra; Tab queda dentro del diálogo; al cerrar, el foco vuelve.
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') handleClose();
+      if (e.key === 'Tab' && cardRef.current) {
+        const focusables = cardRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input, [tabindex]:not([tabindex="-1"])',
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      opener?.focus?.();
+    };
+  }, [handleClose]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
 
-    if (token.length !== 6) {
-      setError('El codigo debe tener 6 digitos');
+    if (token.length !== OTP_LENGTH) {
+      setError(t('auth.2fa.length'));
       return;
     }
 
@@ -40,82 +105,48 @@ export function Verify2FAModal({ open, onVerified, onClose }: Verify2FAModalProp
         setError('');
         onVerified();
       } else {
-        setError(data.error || 'Codigo incorrecto');
+        setError(data.error || t('auth.2fa.wrong'));
         setToken('');
       }
     } catch {
-      setError('Error de conexion');
+      setError(t('auth.error.connection'));
     } finally {
       setLoading(false);
     }
   };
 
-  const handleClose = () => {
-    setToken('');
-    setError('');
-    onClose();
-  };
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
-      <div className="bg-card border border-border rounded-xl p-6 shadow-xl w-full max-w-sm mx-4">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-5">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+      <div
+        ref={cardRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        className="w-full max-w-sm rounded-ui-xl border border-border bg-card p-5 text-foreground shadow-3 vex-pop-in"
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-info/10">
-              <ShieldCheck className="w-5 h-5 text-blue-500" />
-            </div>
+            <AuthIcon tone="info"><ShieldCheck aria-hidden className="size-5" /></AuthIcon>
             <div>
-              <h3 className="text-base font-semibold">Verificacion 2FA</h3>
-              <p className="text-xs text-muted-foreground">Ingresa el codigo de tu app</p>
+              <h2 id={titleId} className="text-[15px] font-semibold tracking-[-0.005em]">{t('auth.verify.title')}</h2>
+              <p className="text-[12.5px] text-text-2">{t('auth.verify.subtitle')}</p>
             </div>
           </div>
-          <button
-            onClick={handleClose}
-            className="p-1.5 rounded-lg hover:bg-muted transition-colors"
-          >
-            <X className="w-4 h-4" />
+          <button type="button" onClick={handleClose} aria-label={t('auth.verify.close')} className={ICON_BUTTON_CLASS}>
+            <X aria-hidden className="size-4" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <input
-              type="text"
-              inputMode="numeric"
-              maxLength={6}
-              value={token}
-              onChange={(e) => setToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              placeholder="000000"
-              required
-              autoFocus
-              className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-            />
-            <p className="text-xs text-muted-foreground mt-1.5 text-center">
-              Codigo de Google Authenticator / Authy
-            </p>
-          </div>
+          <Field label={t('auth.2fa.code')} hint={t('auth.verify.hint')}>
+            <OtpInput value={token} onChange={setToken} required autoFocus aria-invalid={error ? true : undefined} />
+          </Field>
 
-          {error && (
-            <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert">
-              {error}
-            </div>
-          )}
+          {error && <Notice kind="bad" title={error} />}
 
-          <button
-            type="submit"
-            disabled={token.length !== 6 || loading}
-            className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
-          >
-            {loading ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" />
-                Verificando...
-              </>
-            ) : (
-              'Verificar y descargar'
-            )}
-          </button>
+          <AuthSubmit loading={loading} loadingLabel={t('auth.2fa.verifying')} disabled={token.length !== OTP_LENGTH}>
+            {t('auth.verify.submit')}
+          </AuthSubmit>
         </form>
       </div>
     </div>

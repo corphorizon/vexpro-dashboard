@@ -3,16 +3,38 @@
 import { useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Eye, EyeOff, Loader2, ShieldCheck } from 'lucide-react';
-import { AuthBrand } from '@/components/auth-brand';
+import { ArrowLeft, ShieldCheck } from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
+import { OTP_LENGTH } from '@/lib/auth-form';
+import { Field } from '@/components/ui/field';
+import { Notice } from '@/components/ui/notice';
+import { AuthIcon, AuthShell } from '@/components/auth/auth-shell';
+import {
+  AUTH_LINK_CLASS,
+  AUTH_PRIMARY_CLASS,
+  AuthInput,
+  AuthSubmit,
+  OtpInput,
+  PasswordInput,
+} from '@/components/auth/auth-controls';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /reset-2fa — email + contraseña → código por email → 2FA desactivado.
+//
+// Rediseño «Libro mayor» (2026-10-12): sólo presentación y textos por i18n
+// (antes estaba entero en inglés fijo). La lógica es la de antes: el paso del
+// código se muestra exista o no la cuenta (no filtra qué emails existen) y
+// los errores del servidor se muestran tal cual. Antes los errores no tenían
+// `role="alert"`; ahora el `Notice` lo pone.
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function Reset2FAPage() {
+  const { t } = useI18n();
   const router = useRouter();
 
   const [step, setStep] = useState<'credentials' | 'code' | 'success'>('credentials');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
   const [code, setCode] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -28,11 +50,11 @@ export default function Reset2FAPage() {
         body: JSON.stringify({ email, password }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Error');
+      if (!res.ok || !data.success) throw new Error(data.error || t('auth.error.generic'));
       // Regardless of whether the account exists, proceed to the code step.
       setStep('code');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong');
+      setError(err instanceof Error ? err.message : t('auth.error.generic'));
     } finally {
       setLoading(false);
     }
@@ -41,8 +63,8 @@ export default function Reset2FAPage() {
   const handleConfirm = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (code.length !== 6) {
-      setError('Enter the 6-digit code');
+    if (code.length !== OTP_LENGTH) {
+      setError(t('auth.2fa.length'));
       return;
     }
     setLoading(true);
@@ -53,146 +75,100 @@ export default function Reset2FAPage() {
         body: JSON.stringify({ email, code }),
       });
       const data = await res.json();
-      if (!res.ok || !data.success) throw new Error(data.error || 'Invalid code');
+      if (!res.ok || !data.success) throw new Error(data.error || t('auth.2fa.invalid'));
       setStep('success');
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Invalid code');
+      setError(err instanceof Error ? err.message : t('auth.2fa.invalid'));
       setCode('');
     } finally {
       setLoading(false);
     }
   };
 
+  if (step === 'success') {
+    return (
+      <AuthShell
+        icon={<AuthIcon tone="pos"><ShieldCheck aria-hidden className="size-5" /></AuthIcon>}
+        title={t('auth.reset2fa.doneTitle')}
+        subtitle={t('auth.reset2fa.doneBody')}
+      >
+        <button type="button" onClick={() => router.push('/login')} className={AUTH_PRIMARY_CLASS}>
+          {t('auth.goToLogin')}
+        </button>
+      </AuthShell>
+    );
+  }
+
+  if (step === 'code') {
+    return (
+      <AuthShell
+        title={t('auth.reset2fa.codeTitle')}
+        subtitle={t('auth.reset2fa.codeBody', { email })}
+        footer={
+          <button
+            type="button"
+            onClick={() => { setStep('credentials'); setCode(''); setError(null); }}
+            className={AUTH_LINK_CLASS}
+          >
+            <ArrowLeft aria-hidden className="size-4" />
+            {t('auth.back')}
+          </button>
+        }
+      >
+        <form onSubmit={handleConfirm} className="space-y-4">
+          <Field label={t('auth.2fa.code')} id="code">
+            <OtpInput value={code} onChange={setCode} required autoFocus aria-invalid={error ? true : undefined} />
+          </Field>
+          {error && <Notice kind="bad" title={error} />}
+          <AuthSubmit loading={loading} loadingLabel={t('auth.2fa.verifying')} disabled={code.length !== OTP_LENGTH}>
+            {t('auth.reset2fa.confirm')}
+          </AuthSubmit>
+        </form>
+      </AuthShell>
+    );
+  }
+
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md">
-        <AuthBrand />
-
-        <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-          {step === 'credentials' && (
-            <>
-              <h2 className="text-lg font-semibold mb-2">Reset two-factor authentication</h2>
-              <p className="text-sm text-muted-foreground mb-6">
-                Enter your email and password. We will send a 6-digit code to your email to confirm your identity.
-              </p>
-              <form onSubmit={handleRequest} className="space-y-4">
-                <div>
-                  <label htmlFor="email" className="block text-sm font-medium mb-1.5">Email</label>
-                  <input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    required
-                    autoFocus
-                    autoComplete="email"
-                    className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="password" className="block text-sm font-medium mb-1.5">Password</label>
-                  <div className="relative">
-                    <input
-                      id="password"
-                      type={showPassword ? 'text' : 'password'}
-                      value={password}
-                      onChange={e => setPassword(e.target.value)}
-                      required
-                      autoComplete="current-password"
-                      className="w-full pr-11 px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(v => !v)}
-                      className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground rounded-r-lg"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
-                {error && (
-                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm">
-                    {error}
-                  </div>
-                )}
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Sending…</> : 'Send code'}
-                </button>
-                <button type="button" onClick={() => router.push('/login')} className="w-full flex items-center gap-2 justify-center text-sm text-muted-foreground hover:text-foreground">
-                  <ArrowLeft className="w-4 h-4" />
-                  Back to sign in
-                </button>
-              </form>
-            </>
-          )}
-
-          {step === 'code' && (
-            <>
-              <h2 className="text-lg font-semibold mb-2">Enter the verification code</h2>
-              <p className="text-sm text-muted-foreground mb-6">
-                If an account exists for <span className="font-medium">{email}</span>, a 6-digit code has been emailed. It expires in 15 minutes.
-              </p>
-              <form onSubmit={handleConfirm} className="space-y-4">
-                <div>
-                  <label htmlFor="code" className="block text-sm font-medium mb-1.5">Verification code</label>
-                  <input
-                    id="code"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={code}
-                    onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
-                    required
-                    autoFocus
-                    autoComplete="one-time-code"
-                    className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                  />
-                </div>
-                {error && (
-                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm">
-                    {error}
-                  </div>
-                )}
-                <button
-                  type="submit"
-                  disabled={code.length !== 6 || loading}
-                  className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
-                >
-                  {loading ? <><Loader2 className="w-4 h-4 animate-spin" />Verifying…</> : 'Verify and reset 2FA'}
-                </button>
-                <button type="button" onClick={() => { setStep('credentials'); setCode(''); setError(null); }} className="w-full flex items-center gap-2 justify-center text-sm text-muted-foreground hover:text-foreground">
-                  <ArrowLeft className="w-4 h-4" />
-                  Back
-                </button>
-              </form>
-            </>
-          )}
-
-          {step === 'success' && (
-            <div className="space-y-4 text-center">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-500 mb-2">
-                <ShieldCheck className="w-8 h-8 text-white" />
-              </div>
-              <h2 className="text-lg font-semibold">Two-factor reset</h2>
-              <p className="text-sm text-muted-foreground">
-                Two-factor authentication has been disabled on your account. Sign in and follow the instructions to configure a new authenticator.
-              </p>
-              <button
-                onClick={() => router.push('/login')}
-                className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
-              >
-                Go to sign in
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
+    <AuthShell
+      title={t('auth.reset2fa.title')}
+      subtitle={t('auth.reset2fa.subtitle')}
+      footer={
+        <button type="button" onClick={() => router.push('/login')} className={AUTH_LINK_CLASS}>
+          <ArrowLeft aria-hidden className="size-4" />
+          {t('auth.backToLogin')}
+        </button>
+      }
+    >
+      <form onSubmit={handleRequest} className="space-y-4">
+        <Field label={t('auth.email')} id="email">
+          <AuthInput
+            type="email"
+            name="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder={t('auth.emailPlaceholder')}
+            required
+            autoFocus
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            inputMode="email"
+          />
+        </Field>
+        <Field label={t('auth.password')} id="password">
+          <PasswordInput
+            name="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            required
+            autoComplete="current-password"
+          />
+        </Field>
+        {error && <Notice kind="bad" title={error} />}
+        <AuthSubmit loading={loading} loadingLabel={t('auth.recovery.sending')}>
+          {t('auth.reset2fa.send')}
+        </AuthSubmit>
+      </form>
+    </AuthShell>
   );
 }

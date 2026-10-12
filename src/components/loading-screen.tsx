@@ -1,13 +1,47 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { AlertCircle, RotateCw } from 'lucide-react';
+import { AuthBrand } from '@/components/auth-brand';
+import { AUTH_PRIMARY_BASE_CLASS, AUTH_SECONDARY_CLASS } from '@/components/auth/auth-controls';
+import { useI18n } from '@/lib/i18n';
+import { cn } from '@/lib/utils';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pantalla de arranque y de error de carga («Libro mayor», 2026-10-12).
+//
+// La muestra DataProvider (src/lib/data-context.tsx) mientras baja los datos
+// iniciales y, si fallan o vencen, `LoadingError`. También puede aparecer en
+// navegación de superadmin (sin empresa todavía): por eso el logo es el de
+// Smart Dashboard y no el de la empresa.
+//
+// POR QUÉ:
+//   · La barra era un degradado `--color-secondary → --color-primary` de
+//     140×3 px sobre un fondo `secondary` al 15 %: dos colores de marca como
+//     decoración (spec §2.1: el color es significado). Ahora: pista
+//     `surface-sunk`, relleno `accent` (el mismo color del foco), 160×2 px.
+//   · Los textos («Está tardando más de lo normal…», «Reintentar ahora») eran
+//     español fijo; ahora i18n. El botón era 12 px sin alto mínimo: ahora es el
+//     secundario de 40 px.
+//   · `role="progressbar"` sin valor: ahora `role="status"` en el contenedor
+//     con texto «Cargando» (sr-only si no hay mensaje) — una barra
+//     indeterminada no tiene `aria-valuenow` que anunciar.
+//   · Sigue el tema: superficie `bg-background`, logo blanco/negro por tema.
+//
+// La regla de cuándo aparece la pista lenta no cambia: `slowHintAfterMs`
+// (LOAD_SLOW_HINT_MS en config.ts, 5 s) y sólo si hay `onRetry` aparece el botón.
+//
+// DESCARTADO: barra determinada con %. DataProvider no sabe cuántas consultas
+// faltan de forma fiable; un porcentaje inventado sería un número plausible y
+// falso — justo el tipo de fallo que el repo persigue.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface LoadingScreenProps {
   message?: string;
   /**
    * Optional retry callback. When provided AND the loader has been visible
    * for more than `slowHintAfterMs` (default 5000ms), a "Está tardando…"
-   * hint + a "Reintentar ahora" button are rendered below the spinner.
+   * hint + a "Reintentar ahora" button are rendered below the bar.
    *
    * Without this, a slow Supabase response or a stalled fetch leaves the
    * user staring at the splash with no way out until the DataProvider's
@@ -20,66 +54,50 @@ interface LoadingScreenProps {
    * default 60s timeout felt indistinguishable from a hang.
    */
   slowHintAfterMs?: number;
+  /** Forzar la pista lenta (tests / vista de muestra). */
+  initialSlow?: boolean;
 }
 
-/**
- * Branded full-screen loading state.
- *
- * Renders a neutral "Smart Dashboard" mark — this screen can show for
- * superadmin navigation (no tenant context yet) or during the initial
- * data load, so using a tenant logo here would be wrong.
- */
+/** Barra fina indeterminada: pista `surface-sunk`, relleno `accent`. */
+export function ProgressBar({ className }: { className?: string }) {
+  return (
+    <div aria-hidden="true" className={cn('relative h-0.5 w-40 overflow-hidden rounded-full bg-surface-sunk', className)}>
+      <div className="absolute inset-y-0 left-0 w-1/2 rounded-full bg-accent animate-[vex-bar-slide_1.4s_ease-in-out_infinite] motion-reduce:w-full motion-reduce:animate-none motion-reduce:opacity-60" />
+    </div>
+  );
+}
+
 export function LoadingScreen({
   message,
   onRetry,
   slowHintAfterMs = 5000,
+  initialSlow = false,
 }: LoadingScreenProps) {
-  const [slow, setSlow] = useState(false);
+  const { t } = useI18n();
+  const [slow, setSlow] = useState(initialSlow);
 
   useEffect(() => {
-    const t = setTimeout(() => setSlow(true), slowHintAfterMs);
-    return () => clearTimeout(t);
+    const id = setTimeout(() => setSlow(true), slowHintAfterMs);
+    return () => clearTimeout(id);
   }, [slowHintAfterMs]);
 
   return (
-    <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
-      <div className="flex flex-col items-center gap-6">
-        <div className="vex-logo-pulse">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/smart-dashboard-dark.png"
-            alt="Smart Dashboard"
-            width={96}
-            height={96}
-            className="block dark:hidden h-24 w-24 object-contain mx-auto"
-          />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/smart-dashboard-white.png"
-            alt="Smart Dashboard"
-            width={96}
-            height={96}
-            className="hidden dark:block h-24 w-24 object-contain mx-auto"
-          />
-        </div>
-        <div className="vex-bar-track" role="progressbar" aria-label="Cargando">
-          <div className="vex-bar-fill" />
-        </div>
-        {message && (
-          <p className="text-xs text-muted-foreground">{message}</p>
+    <div className="flex h-full min-h-[60vh] w-full items-center justify-center bg-background px-6 vex-fade-in">
+      <div role="status" className="flex max-w-xs flex-col items-center gap-5 text-center">
+        <AuthBrand className="size-20" />
+        <ProgressBar />
+        {message ? (
+          <p className="text-[13px] leading-5 text-text-2">{message}</p>
+        ) : (
+          <span className="sr-only">{t('loading.aria')}</span>
         )}
         {slow && (
-          <div className="mt-2 flex flex-col items-center gap-2 text-center max-w-xs">
-            <p className="text-xs text-muted-foreground">
-              Está tardando más de lo normal. Verifica tu conexión.
-            </p>
+          <div className="flex flex-col items-center gap-3">
+            <p className="text-[13px] leading-5 text-text-2">{t('loading.slow')}</p>
             {onRetry && (
-              <button
-                type="button"
-                onClick={onRetry}
-                className="rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted transition-colors"
-              >
-                Reintentar ahora
+              <button type="button" onClick={onRetry} className={AUTH_SECONDARY_CLASS}>
+                <RotateCw aria-hidden className="size-4" />
+                {t('loading.retryNow')}
               </button>
             )}
           </div>
@@ -95,41 +113,25 @@ interface LoadingErrorProps {
 }
 
 /**
- * Branded error screen shown when initial data load fails or times out.
+ * Error de la carga inicial (falló o venció). El mensaje es el que armó
+ * DataProvider (qué falló); el título dice que no hay datos — no se muestra
+ * el dashboard en cero.
  */
 export function LoadingError({ message, onRetry }: LoadingErrorProps) {
+  const { t } = useI18n();
   return (
-    <div className="flex h-full min-h-[60vh] w-full items-center justify-center px-6 vex-fade-in">
-      <div className="flex flex-col items-center gap-5 text-center max-w-md">
-        <div className="opacity-80">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/smart-dashboard-dark.png"
-            alt="Smart Dashboard"
-            width={80}
-            height={80}
-            className="block dark:hidden h-20 w-20 object-contain mx-auto"
-          />
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src="/smart-dashboard-white.png"
-            alt="Smart Dashboard"
-            width={80}
-            height={80}
-            className="hidden dark:block h-20 w-20 object-contain mx-auto"
-          />
-        </div>
+    <div className="flex h-full min-h-[60vh] w-full items-center justify-center bg-background px-6 vex-fade-in">
+      <div role="alert" className="flex w-full max-w-sm flex-col items-center gap-5 text-center">
+        <AuthBrand className="size-16" />
         <div className="space-y-1">
-          <p className="text-sm font-medium text-negative">
-            No pudimos cargar los datos
+          <p className="flex items-center justify-center gap-1.5 text-[15px] font-semibold text-neg">
+            <AlertCircle aria-hidden className="size-4 shrink-0" />
+            {t('loading.errorTitle')}
           </p>
-          <p className="text-xs text-muted-foreground">{message}</p>
+          <p className="text-[13px] leading-5 text-text-2">{message}</p>
         </div>
-        <button
-          onClick={onRetry}
-          className="rounded-md bg-primary px-4 py-2 text-sm font-medium text-brand-on-primary hover:bg-primary/90 transition-colors"
-        >
-          Reintentar
+        <button type="button" onClick={onRetry} className={cn(AUTH_PRIMARY_BASE_CLASS, 'min-w-40')}>
+          {t('loading.retry')}
         </button>
       </div>
     </div>

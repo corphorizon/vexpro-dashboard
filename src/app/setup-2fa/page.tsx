@@ -5,9 +5,33 @@ import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
-import Image from 'next/image';
-import { AuthBrand } from '@/components/auth-brand';
-import { ShieldCheck, ArrowRight, Copy, Check, Loader2 } from 'lucide-react';
+import { OTP_LENGTH } from '@/lib/auth-form';
+import { ArrowLeft, ArrowRight, Check, Copy, Loader2, ShieldCheck } from 'lucide-react';
+import { Field } from '@/components/ui/field';
+import { Notice } from '@/components/ui/notice';
+import { Panel } from '@/components/ui/panel';
+import { AuthIcon, AuthShell } from '@/components/auth/auth-shell';
+import {
+  AUTH_LINK_CLASS,
+  AUTH_PRIMARY_CLASS,
+  AUTH_QUIET_LINK_CLASS,
+  AUTH_SECONDARY_CLASS,
+  AuthSubmit,
+  OtpInput,
+} from '@/components/auth/auth-controls';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /setup-2fa — alta de TOTP: generar secreto + QR → verificar el primer código.
+//
+// Rediseño «Libro mayor» (2026-10-12): sólo presentación. El QR va dentro de
+// un `Panel` («Paso 1 de 2»), la clave manual en mono 12 px con botón copiar
+// que anuncia «Copiada» (antes sólo cambiaba el ícono, sin texto). El QR que
+// genera /api/auth/setup-2fa ya trae fondo blanco y margen de 2 módulos, así
+// que en oscuro se escanea igual sin pintar un `bg-white` a mano.
+// La lógica es la de antes: redirige a /login sin usuario y a / si ya tiene
+// 2FA; el secreto pendiente lo lee el servidor (no se manda desde el cliente);
+// «Omitir» sólo si no es obligatorio (`force_2fa_setup`).
+// ─────────────────────────────────────────────────────────────────────────────
 
 export default function Setup2FAPage() {
   const { t } = useI18n();
@@ -22,19 +46,6 @@ export default function Setup2FAPage() {
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
-    if (!user) {
-      router.replace('/login');
-      return;
-    }
-    if (user.twofa_enabled) {
-      router.replace('/');
-      return;
-    }
-    // Generate TOTP secret and QR code
-    generateSecret();
-  }, [user, router]);
-
   const generateSecret = async () => {
     try {
       const res = await apiFetch('/api/auth/setup-2fa', {
@@ -48,12 +59,26 @@ export default function Setup2FAPage() {
         setQrCode(data.qrCode);
         setStep('scan');
       } else {
-        setError(data.error || 'Error generando código QR');
+        setError(data.error || t('auth.setup.qrError'));
       }
     } catch {
-      setError('Error de conexión');
+      setError(t('auth.error.connection'));
     }
   };
+
+  useEffect(() => {
+    if (!user) {
+      router.replace('/login');
+      return;
+    }
+    if (user.twofa_enabled) {
+      router.replace('/');
+      return;
+    }
+    // Generate TOTP secret and QR code
+    generateSecret();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mismo disparo que antes: sólo al cambiar el usuario
+  }, [user, router]);
 
   const handleCopySecret = async () => {
     try {
@@ -61,7 +86,7 @@ export default function Setup2FAPage() {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Fallback
+      // Sin permiso de portapapeles: la clave sigue seleccionable (select-all).
     }
   };
 
@@ -69,8 +94,8 @@ export default function Setup2FAPage() {
     e.preventDefault();
     setError('');
 
-    if (token.length !== 6) {
-      setError('El código debe tener 6 dígitos');
+    if (token.length !== OTP_LENGTH) {
+      setError(t('auth.2fa.length'));
       return;
     }
 
@@ -89,11 +114,11 @@ export default function Setup2FAPage() {
         if (refreshUser) await refreshUser();
         setStep('success');
       } else {
-        setError(data.error || 'Código incorrecto');
+        setError(data.error || t('auth.2fa.wrong'));
         setToken('');
       }
     } catch {
-      setError('Error de conexión');
+      setError(t('auth.error.connection'));
     } finally {
       setLoading(false);
     }
@@ -109,206 +134,141 @@ export default function Setup2FAPage() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-muted-foreground">Redirigiendo...</div>
-      </div>
+      <AuthShell title={t('auth.setup.redirecting')}>
+        <Loader2 aria-hidden className="size-6 animate-spin text-text-3 motion-reduce:animate-none" />
+      </AuthShell>
     );
   }
 
   // Success screen
   if (step === 'success') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <div className="w-full max-w-md">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-500 mb-4">
-              <ShieldCheck className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold">{t('profile.twofaEnabled')}</h1>
-            <p className="text-muted-foreground text-sm mt-1">Tu cuenta está protegida con autenticación de dos factores</p>
-          </div>
-
-          <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-            <div className="space-y-4">
-              <div className="px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-800 dark:text-emerald-400 text-sm">
-                A partir de ahora, cada vez que inicies sesión necesitarás un código de tu app de autenticación.
-              </div>
-
-              <div className="px-4 py-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-800 dark:text-amber-400 text-sm">
-                <strong>Importante:</strong> No elimines la cuenta del dashboard en tu aplicación de autenticación. Si la pierdes, contacta al administrador de tu empresa.
-              </div>
-
-              <button
-                onClick={handleContinue}
-                className="w-full flex items-center justify-center gap-2 py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
-              >
-                Continuar al Dashboard
-                <ArrowRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
+      <AuthShell
+        icon={<AuthIcon tone="pos"><ShieldCheck aria-hidden className="size-5" /></AuthIcon>}
+        title={t('auth.setup.doneTitle')}
+        subtitle={t('auth.setup.doneBody')}
+      >
+        <div className="space-y-3">
+          <Notice kind="info" title={t('auth.setup.doneInfo')} />
+          <Notice kind="pend" title={t('auth.setup.doneWarnTitle')}>
+            {t('auth.setup.doneWarn')}
+          </Notice>
+          <button type="button" onClick={handleContinue} className={AUTH_PRIMARY_CLASS}>
+            {t('auth.setup.continue')}
+            <ArrowRight aria-hidden className="size-4" />
+          </button>
         </div>
-      </div>
+      </AuthShell>
     );
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <AuthBrand />
-          <p className="text-muted-foreground text-sm mt-1">Configuración de seguridad</p>
-        </div>
+    <AuthShell
+      width="wide"
+      icon={<AuthIcon tone="info"><ShieldCheck aria-hidden className="size-5" /></AuthIcon>}
+      title={t('auth.setup.title')}
+      subtitle={t('auth.setup.subtitle')}
+      footer={<p className="text-[12.5px] text-text-3">{t('auth.setup.footer')}</p>}
+    >
+      {step === 'loading' && (
+        error ? (
+          <Notice kind="bad" title={error} />
+        ) : (
+          <p role="status" className="flex items-center gap-2 text-[13px] text-text-2">
+            <Loader2 aria-hidden className="size-4 animate-spin motion-reduce:animate-none" />
+            {t('auth.setup.loading')}
+          </p>
+        )
+      )}
 
-        <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-          <div className="flex items-center gap-3 mb-6">
-            <div className="p-2 rounded-lg bg-info/10">
-              <ShieldCheck className="w-5 h-5 text-blue-500" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold">Autenticación de dos factores</h2>
-              <p className="text-xs text-muted-foreground">Google Authenticator / Authy</p>
-            </div>
-          </div>
-
-          {step === 'loading' && (
-            <div className="flex items-center justify-center py-12">
-              <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-            </div>
-          )}
-
-          {step === 'scan' && (
-            <div className="space-y-5">
-              {/* Step 1: Instructions */}
-              <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
-                <strong>Paso 1:</strong> Abre tu app de autenticación (Google Authenticator, Authy, etc.) y escanea este código QR.
+      {step === 'scan' && (
+        <div className="space-y-4">
+          <Panel title={t('auth.setup.step1')} titleAs="h2">
+            <p className="text-[13px] leading-5 text-text-2">{t('auth.setup.step1Body')}</p>
+            {qrCode && (
+              <div className="mt-4 flex justify-center">
+                {/* data: URL generado por el servidor; next/image no aporta nada acá. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={qrCode}
+                  alt={t('auth.setup.qrAlt')}
+                  width={200}
+                  height={200}
+                  className="block size-[200px] rounded-ui-md border border-border"
+                />
               </div>
-
-              {/* QR Code */}
-              {qrCode && (
-                <div className="flex justify-center">
-                  <div className="p-4 bg-white rounded-xl border border-border shadow-sm">
-                    <img
-                      src={qrCode}
-                      alt="Código QR para autenticación"
-                      width={200}
-                      height={200}
-                      className="block"
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Manual secret */}
-              <div className="space-y-2">
-                <p className="text-xs text-muted-foreground text-center">
-                  ¿No puedes escanear? Ingresa este código manualmente:
-                </p>
-                <div className="flex items-center gap-2 justify-center">
-                  <code className="px-3 py-2 rounded-lg bg-muted border border-border text-sm font-mono tracking-wider select-all">
-                    {secret}
-                  </code>
-                  <button
-                    onClick={handleCopySecret}
-                    className="p-2 rounded-lg border border-border hover:bg-muted transition-colors"
-                    title="Copiar"
-                  >
-                    {copied ? (
-                      <Check className="w-4 h-4 text-emerald-500" />
-                    ) : (
-                      <Copy className="w-4 h-4 text-muted-foreground" />
-                    )}
-                  </button>
-                </div>
-              </div>
-
-              {/* Continue to verify */}
-              <button
-                onClick={() => { setStep('verify'); setToken(''); setError(''); }}
-                className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
-              >
-                Ya escaneé el código
-              </button>
-
-              {!user?.force_2fa_setup && (
-                <div className="text-center">
-                  <button
-                    onClick={handleSkip}
-                    className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    Omitir por ahora
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
-
-          {step === 'verify' && (
-            <div className="space-y-5">
-              {/* Step 2: Verify */}
-              <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
-                <strong>Paso 2:</strong> Ingresa el código de 6 dígitos que aparece en tu aplicación de autenticación.
-              </div>
-
-              <form onSubmit={handleVerify} className="space-y-4">
-                <div>
-                  <label htmlFor="totp-code" className="block text-sm font-medium mb-1.5">
-                    Código de verificación
-                  </label>
-                  <input
-                    id="totp-code"
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={token}
-                    onChange={(e) => setToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
-                    required
-                    autoFocus
-                    className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1.5">
-                    El código cambia cada 30 segundos
-                  </p>
-                </div>
-
-                {error && (
-                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert" aria-live="assertive">
-                    {error}
-                  </div>
-                )}
-
-                <button
-                  type="submit"
-                  disabled={token.length !== 6 || loading}
-                  className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
+            )}
+            <div className="mt-4 border-t border-border pt-4">
+              <p className="text-[12.5px] text-text-2">{t('auth.setup.manual')}</p>
+              <div className="mt-2 flex items-stretch gap-2">
+                <code
+                  className="flex min-h-10 min-w-0 flex-1 select-all items-center break-all rounded-ui-md border border-border bg-surface-2 px-3 font-mono text-[12px] tracking-wider text-foreground"
                 >
-                  {loading ? (
+                  {secret}
+                </code>
+                <button
+                  type="button"
+                  onClick={handleCopySecret}
+                  className={AUTH_SECONDARY_CLASS}
+                  aria-live="polite"
+                >
+                  {copied ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Verificando...
+                      <Check aria-hidden className="size-4 text-pos" />
+                      {t('auth.setup.copied')}
                     </>
                   ) : (
-                    'Verificar y activar'
+                    <>
+                      <Copy aria-hidden className="size-4" />
+                      {t('auth.setup.copy')}
+                    </>
                   )}
                 </button>
-              </form>
+              </div>
+            </div>
+          </Panel>
 
-              <button
-                onClick={() => { setStep('scan'); setError(''); }}
-                className="w-full text-center text-sm text-primary dark:text-accent hover:underline"
-              >
-                Volver al código QR
+          <button
+            type="button"
+            onClick={() => { setStep('verify'); setToken(''); setError(''); }}
+            className={AUTH_PRIMARY_CLASS}
+          >
+            {t('auth.setup.scanned')}
+          </button>
+
+          {!user?.force_2fa_setup && (
+            <div className="text-center">
+              <button type="button" onClick={handleSkip} className={AUTH_QUIET_LINK_CLASS}>
+                {t('auth.setup.skip')}
               </button>
             </div>
           )}
         </div>
+      )}
 
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          Puedes cambiar esta configuración en cualquier momento desde tu perfil.
-        </p>
-      </div>
-    </div>
+      {step === 'verify' && (
+        <div className="space-y-4">
+          <Panel title={t('auth.setup.step2')} titleAs="h2">
+            <form onSubmit={handleVerify} className="space-y-4">
+              <Field label={t('auth.2fa.code')} hint={t('auth.2fa.codeHint')} id="totp-code">
+                <OtpInput value={token} onChange={setToken} required autoFocus aria-invalid={error ? true : undefined} />
+              </Field>
+              {error && <Notice kind="bad" title={error} />}
+              <AuthSubmit loading={loading} loadingLabel={t('auth.2fa.verifying')} disabled={token.length !== OTP_LENGTH}>
+                {t('auth.setup.verify')}
+              </AuthSubmit>
+            </form>
+          </Panel>
+          <button
+            type="button"
+            onClick={() => { setStep('scan'); setError(''); }}
+            className={AUTH_LINK_CLASS}
+          >
+            <ArrowLeft aria-hidden className="size-4" />
+            {t('auth.setup.backToQr')}
+          </button>
+        </div>
+      )}
+    </AuthShell>
   );
 }

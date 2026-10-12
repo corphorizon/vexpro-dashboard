@@ -3,9 +3,20 @@
 import { useState, Suspense, useEffect } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Eye, EyeOff, ShieldCheck, ArrowLeft, Loader2 } from 'lucide-react';
-import { AuthBrand } from '@/components/auth-brand';
+import { ArrowLeft, Loader2, ShieldCheck } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
+import { useI18n } from '@/lib/i18n';
+import { PASSWORD_MIN_LENGTH, passwordError, passwordRequirements } from '@/lib/auth-form';
+import { Field } from '@/components/ui/field';
+import { Notice } from '@/components/ui/notice';
+import { AuthIcon, AuthShell } from '@/components/auth/auth-shell';
+import {
+  AUTH_LINK_CLASS,
+  AUTH_PRIMARY_CLASS,
+  AuthSubmit,
+  PasswordInput,
+  PasswordRequirements,
+} from '@/components/auth/auth-controls';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /reset-password — handles TWO flows with the same UI:
@@ -22,13 +33,28 @@ import { createClient } from '@/lib/supabase/client';
 //
 // The page picks the flow automatically: if the hash contains access_token we
 // run the invite path; otherwise we look for ?token= and run the custom one.
+//
+// Rediseño «Libro mayor» (2026-10-12): sólo presentación. Los requisitos se
+// muestran como lista con check (`pos` cumplido / `text-3` pendiente) y salen
+// de auth-form.ts — el mismo `PASSWORD_MIN_LENGTH` que valida el servidor.
+// La validación al enviar es la de antes (largo → coincidencia, en ese orden).
 // ─────────────────────────────────────────────────────────────────────────────
 
 const supabase = createClient();
 
 type Mode = 'custom-reset' | 'supabase-invite' | 'invalid' | 'pending';
 
+function PendingScreen() {
+  const { t } = useI18n();
+  return (
+    <AuthShell title={t('auth.reset.checking')}>
+      <Loader2 aria-hidden className="size-6 animate-spin text-text-3 motion-reduce:animate-none" />
+    </AuthShell>
+  );
+}
+
 function ResetPasswordInner() {
+  const { t } = useI18n();
   const router = useRouter();
   const searchParams = useSearchParams();
   const customToken = searchParams.get('token') || '';
@@ -95,12 +121,13 @@ function ResetPasswordInner() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    if (password.length < 8) {
-      setError('La contraseña debe tener al menos 8 caracteres.');
+    const invalid = passwordError(password, confirm);
+    if (invalid === 'tooShort') {
+      setError(t('auth.reset.tooShort', { min: String(PASSWORD_MIN_LENGTH) }));
       return;
     }
-    if (password !== confirm) {
-      setError('Las contraseñas no coinciden.');
+    if (invalid === 'mismatch') {
+      setError(t('auth.reset.mismatch'));
       return;
     }
     setLoading(true);
@@ -117,7 +144,7 @@ function ResetPasswordInner() {
         });
         const data = await res.json();
         if (!res.ok || !data.success) {
-          throw new Error(data.error || 'No fue posible actualizar la contraseña');
+          throw new Error(data.error || t('auth.reset.updateFailed'));
         }
         // Sign the user out on the custom flow so they log in fresh with the
         // new password. In the invite flow the session is valid — we let the
@@ -125,39 +152,28 @@ function ResetPasswordInner() {
         setSuccess(true);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Algo salió mal');
+      setError(err instanceof Error ? err.message : t('auth.error.generic'));
     } finally {
       setLoading(false);
     }
   };
 
+  const backToLogin = (
+    <button type="button" onClick={() => router.push('/login')} className={AUTH_LINK_CLASS}>
+      <ArrowLeft aria-hidden className="size-4" />
+      {t('auth.backToLogin')}
+    </button>
+  );
+
   // ── Loading while resolving which flow to use ────────────────────────
-  if (mode === 'pending') {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="w-8 h-8 animate-spin text-muted-foreground" />
-      </div>
-    );
-  }
+  if (mode === 'pending') return <PendingScreen />;
 
   // ── Invalid / expired ────────────────────────────────────────────────
   if (mode === 'invalid') {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <div className="w-full max-w-md text-center">
-          <AuthBrand />
-          <h1 className="text-xl font-bold mb-2">Enlace inválido</h1>
-          <p className="text-sm text-muted-foreground mb-6">
-            {error ?? 'El enlace está incompleto o expirado. Solicita uno nuevo.'}
-          </p>
-          <button
-            onClick={() => router.push('/login')}
-            className="text-sm text-primary dark:text-accent hover:underline"
-          >
-            ← Volver al inicio de sesión
-          </button>
-        </div>
-      </div>
+      <AuthShell title={t('auth.reset.invalidTitle')} footer={backToLogin}>
+        <Notice kind="bad" title={error ?? t('auth.reset.invalidBody')} />
+      </AuthShell>
     );
   }
 
@@ -165,31 +181,15 @@ function ResetPasswordInner() {
   if (success) {
     const canGoHome = mode === 'supabase-invite';
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background px-4">
-        <div className="w-full max-w-md">
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-500 mb-4">
-              <ShieldCheck className="w-8 h-8 text-white" />
-            </div>
-            <h1 className="text-2xl font-bold">
-              {canGoHome ? 'Cuenta activada' : 'Contraseña actualizada'}
-            </h1>
-            <p className="text-muted-foreground text-sm mt-1">
-              {canGoHome
-                ? 'Tu contraseña está lista. Ya puedes usar el dashboard.'
-                : 'Ahora puedes iniciar sesión con tu nueva contraseña.'}
-            </p>
-          </div>
-          <div className="bg-card border border-border rounded-xl p-6 shadow-sm text-center">
-            <button
-              onClick={() => router.push(canGoHome ? '/' : '/login')}
-              className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
-            >
-              {canGoHome ? 'Ir al dashboard' : 'Ir a iniciar sesión'}
-            </button>
-          </div>
-        </div>
-      </div>
+      <AuthShell
+        icon={<AuthIcon tone="pos"><ShieldCheck aria-hidden className="size-5" /></AuthIcon>}
+        title={canGoHome ? t('auth.reset.activatedTitle') : t('auth.reset.updatedTitle')}
+        subtitle={canGoHome ? t('auth.reset.activatedBody') : t('auth.reset.updatedBody')}
+      >
+        <button type="button" onClick={() => router.push(canGoHome ? '/' : '/login')} className={AUTH_PRIMARY_CLASS}>
+          {canGoHome ? t('auth.reset.goDashboard') : t('auth.goToLogin')}
+        </button>
+      </AuthShell>
     );
   }
 
@@ -203,101 +203,68 @@ function ResetPasswordInner() {
   const isCustomSetup = mode === 'custom-reset' && setupMode;
 
   const title = isInvite
-    ? (inviteType === 'recovery' ? 'Define tu nueva contraseña' : 'Bienvenido — define tu contraseña')
+    ? (inviteType === 'recovery' ? t('auth.reset.titleRecovery') : t('auth.reset.titleInvite'))
     : isCustomSetup
-      ? 'Bienvenido — crea tu contraseña'
-      : 'Restablece tu contraseña';
+      ? t('auth.reset.titleSetup')
+      : t('auth.reset.titleReset');
   const subtitle = isInvite
-    ? 'Elige una contraseña para tu cuenta. Después entras directo al dashboard.'
+    ? t('auth.reset.subInvite')
     : isCustomSetup
-      ? 'Crea una contraseña para activar tu cuenta. Después podrás iniciar sesión.'
-      : 'Elige una nueva contraseña. Si tu cuenta estaba bloqueada, se desbloquea aquí.';
+      ? t('auth.reset.subSetup')
+      : t('auth.reset.subReset');
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md">
-        <AuthBrand />
+    <AuthShell title={title} subtitle={subtitle} footer={backToLogin}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <Field label={t('auth.reset.newPassword')} id="password">
+          <PasswordInput
+            name="new-password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            visible={show}
+            onVisibleChange={setShow}
+            minLength={PASSWORD_MIN_LENGTH}
+            required
+            autoFocus
+            autoComplete="new-password"
+            aria-describedby="password-reqs"
+          />
+        </Field>
 
-        <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-          <h2 className="text-lg font-semibold mb-2">{title}</h2>
-          <p className="text-sm text-muted-foreground mb-6">{subtitle}</p>
+        <Field label={t('auth.reset.confirm')} id="confirm">
+          <PasswordInput
+            name="confirm-password"
+            value={confirm}
+            onChange={e => setConfirm(e.target.value)}
+            visible={show}
+            onVisibleChange={setShow}
+            hideToggle
+            minLength={PASSWORD_MIN_LENGTH}
+            required
+            autoComplete="new-password"
+          />
+        </Field>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label htmlFor="password" className="block text-sm font-medium mb-1.5">Nueva contraseña</label>
-              <div className="relative">
-                <input
-                  id="password"
-                  type={show ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => setPassword(e.target.value)}
-                  minLength={8}
-                  required
-                  autoFocus
-                  autoComplete="new-password"
-                  className="w-full pr-11 px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShow(v => !v)}
-                  aria-label={show ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                  className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground rounded-r-lg"
-                >
-                  {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">Mínimo 8 caracteres.</p>
-            </div>
-
-            <div>
-              <label htmlFor="confirm" className="block text-sm font-medium mb-1.5">Confirmar contraseña</label>
-              <input
-                id="confirm"
-                type={show ? 'text' : 'password'}
-                value={confirm}
-                onChange={e => setConfirm(e.target.value)}
-                minLength={8}
-                required
-                autoComplete="new-password"
-                className="w-full px-3 py-2.5 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-              />
-            </div>
-
-            {error && (
-              <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert" aria-live="assertive">
-                {error}
-              </div>
-            )}
-
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center justify-center gap-2"
-            >
-              {loading
-                ? <><Loader2 className="w-4 h-4 animate-spin" />Guardando…</>
-                : (isInvite || isCustomSetup ? 'Activar cuenta' : 'Actualizar contraseña')}
-            </button>
-          </form>
-
-          <div className="mt-4 text-center">
-            <button
-              onClick={() => router.push('/login')}
-              className="flex items-center gap-2 mx-auto text-sm text-muted-foreground hover:text-foreground"
-            >
-              <ArrowLeft className="w-4 h-4" />
-              Volver al inicio de sesión
-            </button>
-          </div>
+        {/* Sin fondo `surface-2`: `text-3` (pendiente) da 4,28:1 sobre él, no
+            pasa AA; sobre la superficie da 4,76. */}
+        <div>
+          <p className="mb-1 text-[12px] font-medium text-text-2">{t('auth.pw.requirements')}</p>
+          <PasswordRequirements id="password-reqs" items={passwordRequirements(password, confirm)} />
         </div>
-      </div>
-    </div>
+
+        {error && <Notice kind="bad" title={error} />}
+
+        <AuthSubmit loading={loading} loadingLabel={t('auth.reset.saving')}>
+          {isInvite || isCustomSetup ? t('auth.reset.activate') : t('auth.reset.update')}
+        </AuthSubmit>
+      </form>
+    </AuthShell>
   );
 }
 
 export default function ResetPasswordPage() {
   return (
-    <Suspense fallback={<div className="min-h-screen flex items-center justify-center bg-background"><Loader2 className="w-8 h-8 animate-spin text-muted-foreground" /></div>}>
+    <Suspense fallback={<PendingScreen />}>
       <ResetPasswordInner />
     </Suspense>
   );
