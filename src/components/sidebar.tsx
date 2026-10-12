@@ -1,235 +1,160 @@
 'use client';
 
-import { moduleDisplayLabel } from '@/lib/modules';
-
-import { useState } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
+import { ChevronLeft, ChevronRight, ChevronsUpDown, Globe, LogOut, UserCircle } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-fetch';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
-import { NotificationBell } from '@/components/notifications/notification-bell';
-import { getAccessibleGroups, getAccessibleItems } from '@/lib/module-groups';
-import { useTheme } from '@/lib/theme-context';
 import { useI18n } from '@/lib/i18n';
+import { moduleDisplayLabel } from '@/lib/modules';
+import { BUSINESS_MODEL_LABELS, normalizeBusinessModel } from '@/lib/business-model';
+import { clearActiveCompanyId } from '@/lib/active-company';
 import {
-  LayoutDashboard,
-  BarChart3,
-  ArrowLeftRight,
-  Receipt,
-  Droplets,
-  TrendingUp,
-  Users as UsersIcon,
-  Upload,
-  Settings,
-  LogOut,
-  CalendarDays,
-  UserCog,
-  ClipboardList,
-  Sun,
-  Moon,
-  UserCircle,
-  Globe,
-  ChevronDown,
-  DollarSign,
-  Wallet,
-  Calculator,
-  ShieldCheck,
-  ShieldAlert,
-  Activity,
-  FileSearch,
-  Briefcase,
-  FileText,
-  FileSignature,
-  Table,
-  Circle,
-  ChevronLeft,
-  ChevronRight,
-  ScrollText,
-  Contact,
-  Database,
-  Sparkles,
-  Landmark,
-} from 'lucide-react';
+  NAV_ENTRIES,
+  NAV_GROUPS,
+  findNavEntry,
+  type NavEntry,
+  type PendingCounterKey,
+} from '@/lib/module-groups';
 
-// ─── Types ───
+// ─────────────────────────────────────────────────────────────────────────────
+// Sidebar «Libro mayor» (docs/diseno-libro-mayor.md §6.1, Fase 4 2026-10-12).
+//
+// POR QUÉ se rehízo:
+//   · Era SIEMPRE oscura (`bg-slate-900`) con 28 colores de paleta cruda y un
+//     `#60A5FA` fijo para el ícono de la sección activa. Ahora sigue el tema:
+//     superficie (`bg-card` hasta la fase 3), borde `border`, sólo tokens.
+//   · Tenía su propia lista (`NAV_STRUCTURE`) y además un modo «plano» que se
+//     dibujaba desde OTRA lista (`MODULE_GROUPS`) donde faltaban Forecast y
+//     Registro: un usuario de un solo grupo no veía Forecast. Ahora todo sale
+//     de `NAV_ENTRIES` (src/lib/module-groups.ts) y el modo plano desaparece:
+//     con grupos de rótulo fijo (sin acordeones) un usuario de un solo grupo
+//     ya ve exactamente su grupo — el modo plano existía para sacarle los
+//     acordeones.
+//   · El activo se decide por el href MÁS LARGO que contiene la ruta
+//     (`findNavEntry`): antes `/rrhh/dashboard` iluminaba también `/rrhh`.
+//
+// Descartado:
+//   · Mantener las secciones plegables: la spec define rótulos de grupo fijos
+//     y el plegado escondía dónde estaba uno (la sección se abría sólo si
+//     contenía la página activa).
+//   · Mostrar el logo ancho de la empresa arriba: en 232 px se veía chico y
+//     en el rail contraído era un cuadrado en blanco. La spec pide el isotipo
+//     (o iniciales) a 30×30 sobre `brand` + nombre + modelo · moneda.
+//
+// Contadores de pendientes: `pendingCounts` es el hueco preparado. Hoy NADIE
+// lo llena porque la app no tiene esos números en ningún contexto compartido
+// (órdenes de pago y retiros se leen dentro de su pantalla). Se dibuja sólo
+// un número > 0 que llegue; nunca un cero o un número inventado.
+//
+// Rail contraído (sólo ≥ 960 px): íconos con tooltip nativo (`title`) y
+// `aria-label`. Móvil (< 960 px): drawer de 272 px con scrim; Escape cierra,
+// el foco queda atrapado adentro mientras está abierto y vuelve al botón que
+// lo abrió al cerrar.
+// ─────────────────────────────────────────────────────────────────────────────
 
-interface NavLink {
-  href: string;
-  i18nKey: string;
-  icon: React.ComponentType<{ className?: string }>;
-  module: string;
-}
+/** El drawer y el rail se separan acá (spec §6.3: 960). */
+const DRAWER_QUERY = '(max-width: 959.98px)';
 
-interface NavSection {
-  type: 'section';
-  i18nKey: string;
-  icon: React.ComponentType<{ className?: string }>;
-  children: NavLink[];
-}
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-interface NavItem {
-  type: 'link';
-  href: string;
-  i18nKey: string;
-  icon: React.ComponentType<{ className?: string }>;
-  module: string;
-}
-
-type NavEntry = NavItem | NavSection;
-
-const NAV_STRUCTURE: NavEntry[] = [
-  // Home — adaptive dashboard (different view per role; see src/app/(dashboard)/page.tsx)
-  { type: 'link', href: '/', i18nKey: 'nav.home', icon: LayoutDashboard, module: 'summary' },
-
-  // Finanzas (collapsible)
-  {
-    type: 'section',
-    i18nKey: 'nav.finance',
-    icon: DollarSign,
-    children: [
-      { href: '/resumen-general', i18nKey: 'nav.generalSummary', icon: BarChart3, module: 'summary' },
-      { href: '/movimientos', i18nKey: 'nav.movements', icon: ArrowLeftRight, module: 'movements' },
-      { href: '/egresos', i18nKey: 'nav.expenses', icon: Receipt, module: 'expenses' },
-      // Consulta de ingresos operativos — el espejo de Egresos; la carga sigue
-      // viviendo en "Carga de Datos".
-      { href: '/ingresos', i18nKey: 'nav.income', icon: TrendingUp, module: 'income' },
-      { href: '/liquidez', i18nKey: 'nav.liquidity', icon: Droplets, module: 'liquidity' },
-      { href: '/liquidez-pool', i18nKey: 'nav.liquidityPool', icon: Droplets, module: 'liquidity_pool' },
-      { href: '/inversiones', i18nKey: 'nav.investments', icon: TrendingUp, module: 'investments' },
-      // El producto de inversión que el broker le vende a SUS clientes,
-      // espejado del CRM. No confundir con 'investments', que es la cartera
-      // propia cargada a mano — ver el comentario de `hedge_fund` en
-      // modules.ts. Se ve sólo en el modelo `broker`.
-      { href: '/hedge-fund', i18nKey: 'nav.hedgeFund', icon: Landmark, module: 'hedge_fund' },
-      { href: '/balances', i18nKey: 'nav.balances', icon: Wallet, module: 'balances' },
-      { href: '/socios', i18nKey: 'nav.partners', icon: Briefcase, module: 'partners' },
-      { href: '/clientes', i18nKey: 'nav.clients', icon: Contact, module: 'clients' },
-      { href: '/ordenes-pago', i18nKey: 'nav.paymentOrders', icon: FileSignature, module: 'payment_orders' },
-      { href: '/upload', i18nKey: 'nav.upload', icon: Upload, module: 'upload' },
-      { href: '/periodos', i18nKey: 'nav.periods', icon: CalendarDays, module: 'periods' },
-      { href: '/finanzas/reportes', i18nKey: 'nav.reports', icon: FileText, module: 'reports' },
-      // Kevin 2026-06-06: tabla mes-a-mes con todos los indicadores,
-      // columnas y meses ocultables, totales al pie. Misma puerta de
-      // módulo que reports (ambos son vistas ejecutivas).
-      { href: '/finanzas/consolidado', i18nKey: 'nav.consolidado', icon: Table, module: 'reports' },
-      // Forecast (tanda 5 de la auditoría): la única vista forward-looking.
-      { href: '/finanzas/forecast', i18nKey: 'nav.forecast', icon: TrendingUp, module: 'reports' },
-      // Los totales que ya salen solos del CRM (P2P, ventas y retiros de prop
-      // firm), al lado de lo cargado a mano. Puerta 'income': es información
-      // de ingresos, y quien la mira es quien carga los ingresos.
-      { href: '/finanzas/crm', i18nKey: 'nav.crmTotals', icon: Database, module: 'income' },
-    ],
-  },
-
-  // Recursos Humanos (collapsible)
-  {
-    type: 'section',
-    i18nKey: 'nav.hr',
-    icon: UserCog,
-    children: [
-      // HR dashboard (formerly the app home) now sits inside the HR group.
-      { href: '/rrhh/dashboard', i18nKey: 'nav.hrDashboard', icon: LayoutDashboard, module: 'hr' },
-      { href: '/rrhh', i18nKey: 'nav.hrManagement', icon: UsersIcon, module: 'hr' },
-      { href: '/comisiones', i18nKey: 'nav.commissions', icon: Calculator, module: 'commissions' },
-    ],
-  },
-
-  // Risk Management (collapsible)
-  {
-    type: 'section',
-    i18nKey: 'nav.risk',
-    icon: ShieldCheck,
-    children: [
-      // Landing page for risk-only roles (support). Listed first so the
-      // flat-menu mode puts it at the top.
-      { href: '/risk/dashboard', i18nKey: 'nav.riskDashboard', icon: LayoutDashboard, module: 'risk' },
-      { href: '/risk/retiros-propfirm', i18nKey: 'nav.riskWithdrawals', icon: FileSearch, module: 'risk' },
-      // La cola de retiros del CRM. Reemplaza al viejo retiros-wallet, que se
-      // ELIMINÓ en la auditoría 2026-08-06 (QW10) por ser 100% mock — se
-      // reconstruyó desde cero contra el espejo real del CRM (migración 088).
-      { href: '/risk/retiros', i18nKey: 'nav.riskWithdrawalQueue', icon: ShieldAlert, module: 'risk' },
-      { href: '/risk/exposicion', i18nKey: 'nav.riskExposure', icon: Activity, module: 'risk' },
-    ],
-  },
-
-  // Usuarios — top-level now that the "Configuraciones" group is gone.
-  // Auditoría is no longer in the tenant sidebar; it's only reachable from
-  // the superadmin panel (per-company tab).
-  { type: 'link', href: '/usuarios', i18nKey: 'nav.users', icon: UsersIcon, module: 'users' },
-  // Registro de Actividad — arriba de todo lo que audita, no dentro de un
-  // grupo: aplica a los movimientos de TODOS los modulos, no de uno.
-  { type: 'link', href: '/logs', i18nKey: 'nav.logs', icon: ScrollText, module: 'logs' },
-  // Asistente IA — transversal como el Registro de Actividad: responde de
-  // finanzas, RRHH y riesgo a la vez, así que meterlo dentro de un grupo
-  // sugeriría un alcance que no tiene.
-  { type: 'link', href: '/asistente', i18nKey: 'nav.assistant', icon: Sparkles, module: 'assistant' },
-];
-
-// Mapa href → icono, derivado de NAV_STRUCTURE. Lo usa el modo flat (los
-// items de module-groups no traen icono) cuando el sidebar está contraído:
-// en el rail solo hay iconos, así que cada destino necesita uno.
-const ICON_BY_HREF: Record<string, React.ComponentType<{ className?: string }>> = (() => {
-  const map: Record<string, React.ComponentType<{ className?: string }>> = {};
-  for (const entry of NAV_STRUCTURE) {
-    if (entry.type === 'link') {
-      map[entry.href] = entry.icon;
-    } else {
-      for (const child of entry.children) map[child.href] = child.icon;
-    }
-  }
-  return map;
-})();
-
-/** Hasta dos iniciales del nombre — avatar del footer en modo contraído. */
-function userInitials(name: string): string {
-  return name
+/** Hasta dos iniciales — avatar del pie y marca de la empresa sin isotipo. */
+function initialsOf(name: string | null | undefined): string {
+  return (name ?? '')
     .trim()
     .split(/\s+/)
     .slice(0, 2)
-    .map(part => part.charAt(0).toUpperCase())
+    .map((part) => part.charAt(0).toUpperCase())
     .join('') || '?';
 }
 
 interface SidebarProps {
   mobileOpen?: boolean;
   onClose?: () => void;
-  /** Rail solo-iconos (desktop). El estado vive en el layout. */
+  /** Rail sólo-íconos (≥ 960 px). El estado vive en el layout. */
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  /**
+   * Pendientes por contador. Ausente o sin la clave = no se sabe → no se
+   * dibuja nada (ver cabecera).
+   */
+  pendingCounts?: Partial<Record<PendingCounterKey, number>>;
+  /** id del <aside>, para el `aria-controls` del botón de menú. */
+  id?: string;
 }
 
-export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onToggleCollapse }: SidebarProps) {
+export function Sidebar({
+  mobileOpen = false,
+  onClose,
+  collapsed = false,
+  onToggleCollapse,
+  pendingCounts,
+  id = 'app-sidebar',
+}: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { user, logout } = useAuth();
   const { company } = useData();
-  const { resolvedTheme, setTheme } = useTheme();
   const { locale, setLocale, t } = useI18n();
+  const asideRef = useRef<HTMLElement>(null);
+  // `onClose` por ref: si el layout pasa una flecha nueva en cada render, el
+  // effect del drawer se re-ejecutaría y le robaría el foco al usuario.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  }, [onClose]);
 
-  // Auto-open sections that contain the active page
-  const getInitialOpen = () => {
-    const open: Record<string, boolean> = {};
-    for (const entry of NAV_STRUCTURE) {
-      if (entry.type === 'section') {
-        const hasActive = entry.children.some(c => pathname === c.href || pathname.startsWith(c.href + '/'));
-        open[entry.i18nKey] = hasActive;
-      }
-    }
-    return open;
-  };
-
-  const [openSections, setOpenSections] = useState<Record<string, boolean>>(getInitialOpen);
-
-  // El rail contraído es SOLO desktop: cuando el drawer móvil está abierto
-  // mostramos siempre el menú completo (no regresamos el comportamiento móvil).
+  // El rail contraído es SÓLO de escritorio: con el drawer móvil abierto se
+  // muestra siempre el menú completo.
   const isCollapsed = collapsed && !mobileOpen;
   const collapseLabel = isCollapsed ? t('nav.expand') : t('nav.collapse');
+  const activeHref = findNavEntry(pathname)?.href ?? null;
 
-  const toggleSection = (key: string) => {
-    setOpenSections(prev => ({ ...prev, [key]: !prev[key] }));
-  };
+  // ── Drawer móvil: foco atrapado + Escape ──────────────────────────────────
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const aside = asideRef.current;
+    if (!aside) return;
+    const isDrawer = () => window.matchMedia(DRAWER_QUERY).matches;
+    if (!isDrawer()) return;
+
+    const opener = document.activeElement as HTMLElement | null;
+    const focusables = () =>
+      Array.from(aside.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+    focusables()[0]?.focus();
+
+    const onKey = (e: KeyboardEvent) => {
+      if (!isDrawer()) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current?.();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const list = focusables();
+      if (list.length === 0) return;
+      const first = list[0];
+      const last = list[list.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey && (active === first || !aside.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !aside.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      // Devolver el foco a quien abrió el drawer (el botón de menú).
+      if (opener && document.contains(opener)) opener.focus();
+    };
+  }, [mobileOpen]);
 
   const handleLogout = () => {
     logout();
@@ -240,448 +165,283 @@ export function Sidebar({ mobileOpen = false, onClose, collapsed = false, onTogg
     onClose?.();
   };
 
-  // ── Flat-menu detection ────────────────────────────────────────────────
-  // When a non-admin user has access to exactly ONE module group (Finanzas,
-  // RRHH, Risk, or Config), render a simplified sidebar: no collapsibles,
-  // a group heading at the top, and the group's items listed directly.
-  // Admin and superadmin always see the full collapsible structure.
-  const accessibleGroups = getAccessibleGroups(user, company?.active_modules, company?.business_model);
-  const useFlatMenu =
-    user !== null &&
-    !user.is_superadmin &&
-    user.effective_role !== 'admin' &&
-    accessibleGroups.length === 1;
-  const flatGroup = useFlatMenu ? accessibleGroups[0] : null;
-  const flatItems = flatGroup
-    ? getAccessibleItems(user, flatGroup, company?.active_modules, company?.business_model)
-    : [];
+  // Superadmin «viendo como»: cambiar de empresa = volver al panel limpiando
+  // el puntero (mismo camino único que el banner «Viendo como»). Un usuario
+  // normal pertenece a una sola empresa: no hay selector que mostrar.
+  const canSwitchCompany = Boolean(user?.is_superadmin && company);
+  const handleSwitchCompany = () => {
+    clearActiveCompanyId();
+    onClose?.();
+    router.push('/superadmin');
+  };
 
-  const renderLink = (item: NavLink, indent = false) => {
-    // Sidebar respects BOTH the user's allowed_modules AND the tenant's
-    // active_modules — a deactivated module never shows, even to admins.
-    // Superadmins bypass (handled inside hasModuleAccess) — salvo lo que el
-    // modelo de negocio de la empresa no contempla, que no se muestra a nadie.
-    if (!hasModuleAccess(user, item.module, company?.active_modules, company?.business_model)) return null;
-    // Match exacto O prefijo de ruta hija — así /movimientos/desglose/[slug]
-    // mantiene iluminado el leaf "Movimientos" (antes solo se iluminaba la
-    // sección y el usuario perdía la ubicación). Guard: '/' solo exacto.
-    const isActive =
-      pathname === item.href ||
-      (item.href !== '/' && pathname.startsWith(item.href + '/'));
-    const Icon = item.icon;
-    const label = moduleDisplayLabel(item.module, t(item.i18nKey), company);
+  const toggleLanguage = () => {
+    const next = locale === 'es' ? 'en' : 'es';
+    setLocale(next);
+    // Persistir la preferencia para que los EMAILS salgan en el idioma del
+    // usuario (fase 7). Fire-and-forget: si falla, localStorage sigue mandando.
+    apiFetch('/api/user/language', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ language: next }),
+    }).catch(() => {});
+  };
 
-    // Rail contraído: solo icono, centrado, con `title` nativo como tooltip.
-    if (isCollapsed) {
-      return (
-        <Link
-          key={item.href}
-          href={item.href}
-          onClick={handleNavClick}
-          title={label}
-          aria-label={label}
-          className={cn(
-            'group flex items-center justify-center h-10 rounded-lg transition-all',
-            isActive
-              ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
-              : 'text-slate-300 hover:bg-slate-800 hover:text-white',
-          )}
-        >
-          <Icon className={cn(
-            'w-5 h-5 shrink-0 transition-colors',
-            isActive ? 'text-white' : 'text-slate-400 group-hover:text-white',
-          )} />
-        </Link>
-      );
-    }
+  // Lectura la decide el módulo: TODA entrada pasa por hasModuleAccess
+  // (usuario + empresa + modelo de negocio; superadmin incluido para lo que
+  // el modelo no contempla).
+  const canSee = (e: NavEntry) =>
+    hasModuleAccess(user, e.module, company?.active_modules, company?.business_model);
+
+  const ungrouped = NAV_ENTRIES.filter((e) => e.group === null && canSee(e));
+  const groups = NAV_GROUPS.map((g) => ({
+    group: g,
+    entries: NAV_ENTRIES.filter((e) => e.group === g.key && canSee(e)),
+  })).filter((g) => g.entries.length > 0);
+
+  const renderLink = (e: NavEntry) => {
+    const isActive = e.href === activeHref;
+    const Icon = e.icon;
+    const label = moduleDisplayLabel(e.module, t(e.i18nKey), company);
+    const rawCount = e.pendingKey ? pendingCounts?.[e.pendingKey] : undefined;
+    const count = typeof rawCount === 'number' && rawCount > 0 ? rawCount : null;
+    const countText = count === null ? null : count > 99 ? '99+' : String(count);
+    const countLabel = count === null ? undefined : t('shell.pending', { count: String(count) });
 
     return (
-      <Link
-        key={item.href}
-        href={item.href}
-        onClick={handleNavClick}
-        className={cn(
-          'group flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all',
-          indent && 'ml-3 pl-3 border-l border-slate-700/60',
-          isActive
-            ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
-            : 'text-slate-300 hover:bg-slate-800 hover:text-white'
-        )}
-      >
-        <Icon className={cn(
-          'w-4 h-4 shrink-0 transition-colors',
-          isActive ? 'text-white' : 'text-slate-400 group-hover:text-white'
-        )} />
-        <span className="truncate">{label}</span>
-      </Link>
+      <li key={e.href}>
+        <Link
+          href={e.href}
+          onClick={handleNavClick}
+          aria-current={isActive ? 'page' : undefined}
+          title={isCollapsed ? (countLabel ? `${label} · ${countLabel}` : label) : undefined}
+          aria-label={isCollapsed ? (countLabel ? `${label}, ${countLabel}` : label) : undefined}
+          className={cn(
+            'group relative flex items-center rounded-ui-md text-[13.5px] font-medium transition-colors motion-reduce:transition-none',
+            isCollapsed
+              ? 'mx-auto h-10 w-10 justify-center'
+              : 'h-8.5 gap-2.5 px-2.5 pointer-coarse:h-11',
+            isActive
+              ? 'bg-brand-tint font-semibold text-brand-ink before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-brand-ink'
+              : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+          )}
+        >
+          <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+          {!isCollapsed && <span className="min-w-0 flex-1 truncate">{label}</span>}
+          {countText !== null && (
+            <span
+              aria-label={isCollapsed ? undefined : countLabel}
+              className={cn(
+                'rounded-full bg-pend-bg px-1.5 text-center text-[11.5px] font-semibold leading-5 text-pend tabular-nums',
+                isCollapsed ? 'absolute -right-1 -top-1 min-w-5' : 'min-w-5',
+              )}
+            >
+              {countText}
+            </span>
+          )}
+        </Link>
+      </li>
     );
   };
 
+  const modelLabel = company
+    ? BUSINESS_MODEL_LABELS[normalizeBusinessModel(company.business_model)][locale]
+    : null;
+  const companySub = [modelLabel, company?.currency].filter(Boolean).join(' · ');
+  const roleLabel = user ? (ROLE_LABELS[user.role] || user.role) : '';
+
+  const iconButton = cn(
+    'flex h-10 w-10 shrink-0 items-center justify-center rounded-ui-md text-text-2 transition-colors motion-reduce:transition-none',
+    'hover:bg-surface-2 hover:text-foreground',
+  );
+
   return (
     <>
-      {/* Backdrop for mobile */}
+      {/* Scrim del drawer móvil */}
       {mobileOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 lg:hidden"
+          className="fixed inset-0 z-40 bg-black/45 min-[960px]:hidden"
           onClick={onClose}
+          aria-hidden="true"
         />
       )}
 
-      {/*
-        Sidebar: always-dark slate palette regardless of theme. Works with
-        both the light and dark content areas because the sidebar reads as
-        a distinct surface. White logo + slate icons + primary color for
-        active states.
-      */}
       <aside
+        id={id}
+        ref={asideRef}
+        role={mobileOpen ? 'dialog' : undefined}
+        aria-modal={mobileOpen ? true : undefined}
+        aria-label={mobileOpen ? t('shell.mainNav') : undefined}
         className={cn(
-          'flex flex-col min-h-screen bg-slate-900 border-r border-slate-800 text-slate-200',
-          'hidden lg:flex transition-[width,padding] duration-200',
-          isCollapsed ? 'w-16' : 'w-64',
-          mobileOpen && '!flex fixed inset-y-0 left-0 z-50 shadow-2xl'
+          'h-full shrink-0 flex-col border-r border-border bg-card text-foreground',
+          'hidden min-[960px]:flex transition-[width] duration-200 motion-reduce:transition-none',
+          isCollapsed ? 'w-16' : 'w-58',
+          mobileOpen && 'max-[959.98px]:fixed max-[959.98px]:inset-y-0 max-[959.98px]:left-0 max-[959.98px]:z-50 max-[959.98px]:flex max-[959.98px]:w-68 max-[959.98px]:shadow-3',
         )}
       >
-        {/* Logo — tenant-branded. Big, centered, no text. When no logo
-            is configured we fall back to the company name as typography
-            so the header doesn't look broken.
-            Prefer logo_url_white (designed for dark backgrounds) and fall
-            back to logo_url when the tenant hasn't uploaded a white version.
-
-            Contraído usa el isotipo (logo_icon_url, migración 072): el logo
-            ancho metido en 64px se veía como un cuadrado en blanco. */}
-        <div className={cn(
-          'border-b border-slate-800',
-          isCollapsed ? 'px-2 py-4 flex flex-col items-center gap-2' : 'px-4 py-6 flex items-center gap-3',
-        )}>
+        {/* ── Empresa ── */}
+        <div
+          className={cn(
+            'flex shrink-0 items-center border-b border-border',
+            isCollapsed ? 'flex-col gap-1 px-2 py-3' : 'gap-2.5 px-3.5 py-3',
+          )}
+        >
           <Link
             href="/"
             onClick={handleNavClick}
-            className={cn(
-              'flex items-center min-w-0',
-              isCollapsed ? 'justify-center' : 'flex-1 justify-start',
-            )}
-            aria-label={company?.name || 'Inicio'}
-            title={isCollapsed ? (company?.name || 'Inicio') : undefined}
+            className={cn('flex min-w-0 items-center gap-2.5 rounded-ui-md', !isCollapsed && 'flex-1')}
+            aria-label={company?.name || t('nav.home')}
+            title={isCollapsed ? company?.name : undefined}
           >
-            {isCollapsed ? (
-              company?.logo_icon_url ? (
-                // Isotipo: sin fondo blanco: el archivo trae su propio fondo
-                // (o transparencia) y un cuadrado blanco detrás lo tapaba.
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={company.logo_icon_url}
-                  alt={company?.name ?? ''}
-                  className="w-10 h-10 object-contain"
-                  onError={(e) => {
-                    const el = e.currentTarget;
-                    el.style.display = 'none';
-                  }}
-                />
-              ) : (
-                // Sin isotipo se mantiene el comportamiento de siempre: la
-                // inicial sobre el primario, con la variante que se ve sobre
-                // el slate del sidebar (que es oscuro en los dos temas).
-                <span
-                  className="w-10 h-10 rounded-lg flex items-center justify-center text-sm font-semibold text-white"
-                  style={{ backgroundColor: 'var(--brand-on-dark-surface)' }}
-                  aria-hidden="true"
-                >
-                  {(company?.name || 'D').trim().charAt(0).toUpperCase()}
-                </span>
-              )
-            ) : (company?.logo_url_white || company?.logo_url) ? (
-              // Native <img> on purpose — tenant logos come from arbitrary
-              // URLs and we don't want to force every domain into the
-              // Next.js image allow-list.
-              // Alto generoso + ancho completo de la columna: antes el
-              // max-w-[180px] achicaba cualquier logo horizontal a ~36px.
+            {company?.logo_icon_url ? (
+              // Isotipo de la empresa (migración 072). <img> nativo: los logos
+              // vienen de URLs arbitrarias y no van al allow-list de next/image.
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={company?.logo_url_white || company?.logo_url || ''}
-                alt={company?.name ?? ''}
-                className="h-16 w-full object-contain object-left"
-                onError={(e) => {
-                  // Fail gracefully: swap for name text if the URL 404s.
-                  const el = e.currentTarget;
-                  el.style.display = 'none';
-                  const parent = el.parentElement;
-                  if (parent) {
-                    parent.innerHTML = `<span class="text-white font-semibold text-lg truncate max-w-[180px]">${(company?.name || 'Dashboard').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!))}</span>`;
-                  }
-                }}
+                src={company.logo_icon_url}
+                alt=""
+                className="h-7.5 w-7.5 shrink-0 rounded-lg object-contain"
               />
             ) : (
-              <span className="text-white font-semibold text-lg truncate max-w-[180px]">
-                {company?.name || 'Dashboard'}
+              <span
+                aria-hidden="true"
+                className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-lg bg-primary text-[12px] font-semibold text-brand-on-primary"
+              >
+                {initialsOf(company?.name)}
+              </span>
+            )}
+            {!isCollapsed && (
+              <span className="min-w-0">
+                <span className="block truncate text-[13px] font-semibold leading-tight">
+                  {company?.name ?? ''}
+                </span>
+                {companySub && (
+                  <span className="block truncate text-[12px] leading-tight text-text-3">{companySub}</span>
+                )}
               </span>
             )}
           </Link>
-
-          {/* Contraer / expandir — solo desktop (el drawer móvil no lo usa).
-              Expandido: a la derecha del logo. Contraído: debajo de la marca
-              compacta, centrado, para que quepa en los 64px del rail. */}
-          {onToggleCollapse && (
+          {canSwitchCompany && (
             <button
               type="button"
-              onClick={onToggleCollapse}
-              aria-label={collapseLabel}
-              title={collapseLabel}
-              aria-expanded={!isCollapsed}
-              className={cn(
-                'hidden lg:flex shrink-0 items-center justify-center rounded-lg',
-                'text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
-                isCollapsed ? 'w-9 h-9' : 'w-7 h-7',
-              )}
+              onClick={handleSwitchCompany}
+              aria-label={t('shell.switchCompany')}
+              title={t('shell.switchCompany')}
+              className={iconButton}
             >
-              {isCollapsed
-                ? <ChevronRight className="w-4 h-4" />
-                : <ChevronLeft className="w-4 h-4" />}
+              <ChevronsUpDown className="h-4 w-4" aria-hidden="true" />
             </button>
           )}
         </div>
 
-        {/* Flat-menu heading (single-group users) — shows the group name
-            above the links so the user knows which area they're in. */}
-        {useFlatMenu && flatGroup && !isCollapsed && (
-          <div className="px-5 pt-4 pb-2">
-            <p className="text-[10px] uppercase tracking-[0.15em] text-slate-400">
-              {flatGroup.labelEs}
-            </p>
-          </div>
-        )}
-
-        {/* Navigation */}
-        <nav className={cn(
-          'flex-1 space-y-1 overflow-y-auto custom-scrollbar',
-          isCollapsed ? 'p-2' : 'p-3',
-        )}>
-          {/* Flat mode: direct list of accessible items, no collapsibles,
-              slightly roomier padding for easier clicking. */}
-          {useFlatMenu && flatGroup ? (
-            flatItems.map((item) => {
-              const isActive = pathname === item.href;
-              // Contraído: mismos items y mismo orden, solo que como iconos.
-              if (isCollapsed) {
-                const FlatIcon = ICON_BY_HREF[item.href] ?? Circle;
-                return (
-                  <Link
-                    key={item.href}
-                    href={item.href}
-                    onClick={handleNavClick}
-                    title={moduleDisplayLabel(item.module, item.labelEs, company)}
-                    aria-label={moduleDisplayLabel(item.module, item.labelEs, company)}
-                    className={cn(
-                      'group flex items-center justify-center h-10 rounded-lg transition-all',
-                      isActive
-                        ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
-                        : 'text-slate-300 hover:bg-slate-800 hover:text-white',
-                    )}
-                  >
-                    <FlatIcon className={cn(
-                      'w-5 h-5 shrink-0 transition-colors',
-                      isActive ? 'text-white' : 'text-slate-400 group-hover:text-white',
-                    )} />
-                  </Link>
-                );
-              }
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={handleNavClick}
-                  className={cn(
-                    'flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all',
-                    isActive
-                      ? 'bg-[var(--brand-on-dark-surface)] text-white shadow-sm'
-                      : 'text-slate-300 hover:bg-slate-800 hover:text-white',
-                  )}
-                >
-                  <span className="truncate">{moduleDisplayLabel(item.module, item.labelEs, company)}</span>
-                </Link>
-              );
-            })
-          ) : (
-          NAV_STRUCTURE.map((entry) => {
-            if (entry.type === 'link') {
-              return renderLink(entry as NavLink);
-            }
-
-            const section = entry as NavSection;
-            const visibleChildren = section.children.filter(c =>
-              hasModuleAccess(user, c.module, company?.active_modules, company?.business_model),
-            );
-            if (visibleChildren.length === 0) return null;
-
-            // Rail contraído: sin fila de sección (no hay sitio para el label
-            // ni el chevron). Aplanamos y mostramos los hijos accesibles como
-            // iconos, así todo destino sigue a un clic. Sin fly-out.
-            if (isCollapsed) {
-              return (
-                <div
-                  key={section.i18nKey}
-                  className="space-y-1 pt-1 mt-1 border-t border-slate-800/70 first:border-t-0 first:mt-0 first:pt-0"
-                >
-                  {visibleChildren.map(child => renderLink(child))}
-                </div>
-              );
-            }
-
-            const isOpen = openSections[section.i18nKey] ?? false;
-            const hasActiveChild = visibleChildren.some(c => pathname === c.href || pathname.startsWith(c.href + '/'));
-            const SectionIcon = section.icon;
-
+        {/* ── Navegación ── */}
+        <nav
+          aria-label={t('shell.mainNav')}
+          className={cn('flex-1 overflow-y-auto', isCollapsed ? 'px-2 py-2' : 'px-2.5 py-2')}
+        >
+          {ungrouped.length > 0 && <ul className="space-y-0.5">{ungrouped.map(renderLink)}</ul>}
+          {groups.map(({ group, entries }) => {
+            const headingId = `${id}-group-${group.key}`;
             return (
-              <div key={section.i18nKey} className="pt-0.5">
-                <button
-                  onClick={() => toggleSection(section.i18nKey)}
-                  className={cn(
-                    'flex items-center justify-between w-full px-3 py-2 rounded-lg text-sm font-semibold transition-all',
-                    hasActiveChild
-                      ? 'text-white bg-slate-800/50'
-                      : 'text-slate-400 hover:bg-slate-800 hover:text-white'
-                  )}
-                >
-                  <span className="flex items-center gap-3">
-                    {/* El sidebar es SIEMPRE oscuro (slate-900) en ambos temas:
-                        navy acá era invisible — acento claro fijo. */}
-                    <SectionIcon className={cn(
-                      'w-4 h-4 shrink-0',
-                      hasActiveChild ? 'text-[#60A5FA]' : ''
-                    )} />
-                    <span className="uppercase tracking-wide text-[11px]">{t(section.i18nKey)}</span>
-                  </span>
-                  <ChevronDown
-                    className={cn(
-                      'w-3.5 h-3.5 transition-transform duration-200',
-                      isOpen && 'rotate-180'
-                    )}
-                  />
-                </button>
-                {isOpen && (
-                  <div className="mt-1 space-y-0.5">
-                    {visibleChildren.map(child => renderLink(child, true))}
-                  </div>
+              <div
+                key={group.key}
+                className={cn(isCollapsed ? 'mt-2 border-t border-border pt-2' : 'mt-3')}
+              >
+                {!isCollapsed && (
+                  <p
+                    id={headingId}
+                    className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-text-3"
+                  >
+                    {t(group.i18nKey)}
+                  </p>
                 )}
+                <ul
+                  className="space-y-0.5"
+                  aria-labelledby={isCollapsed ? undefined : headingId}
+                  aria-label={isCollapsed ? t(group.i18nKey) : undefined}
+                >
+                  {entries.map(renderLink)}
+                </ul>
               </div>
             );
-          })
-          )}
+          })}
         </nav>
 
-        {/* Footer */}
-        <div className={cn('border-t border-slate-800 space-y-2', isCollapsed ? 'p-2' : 'p-3')}>
-          {/* User info — contraído: solo las iniciales del usuario. */}
-          {user && isCollapsed && (
-            <div
-              className="mx-auto w-9 h-9 rounded-full bg-slate-800 text-slate-200 flex items-center justify-center text-[11px] font-semibold"
-              title={`${user.name} · ${ROLE_LABELS[user.role] || user.role}`}
+        {/* ── Pie: persona + utilidades ── */}
+        <div className={cn('shrink-0 border-t border-border', isCollapsed ? 'px-2 py-2' : 'px-3 py-2.5')}>
+          {user && (
+            <Link
+              href="/perfil"
+              onClick={handleNavClick}
+              aria-current={pathname === '/perfil' ? 'page' : undefined}
+              title={isCollapsed ? `${user.name} · ${roleLabel}` : t('nav.profile')}
+              aria-label={isCollapsed ? `${t('nav.profile')}: ${user.name}` : undefined}
+              className={cn(
+                'flex items-center rounded-ui-md transition-colors hover:bg-surface-2 motion-reduce:transition-none',
+                isCollapsed ? 'mx-auto h-10 w-10 justify-center' : 'gap-2.5 px-1.5 py-1.5',
+              )}
             >
-              {userInitials(user.name)}
-            </div>
-          )}
-          {user && !isCollapsed && (
-            <div className="px-3 pb-2 text-center">
-              <p className="text-xs font-medium text-slate-200 truncate">{user.name}</p>
-              <p className="text-[10px] text-slate-500 uppercase tracking-wider mt-0.5">
-                {ROLE_LABELS[user.role] || user.role}
-              </p>
-            </div>
+              <span
+                aria-hidden="true"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[12px] font-semibold text-text-2"
+              >
+                {initialsOf(user.name)}
+              </span>
+              {!isCollapsed && (
+                <span className="min-w-0">
+                  <span className="block truncate text-[13px] font-semibold leading-tight">{user.name}</span>
+                  <span className="block truncate text-[12px] leading-tight text-text-3">{roleLabel}</span>
+                </span>
+              )}
+            </Link>
           )}
 
-          {/* Notificaciones — en desktop no hay header, así que la campanita
-              vive acá; el panel se abre hacia arriba porque el bloque está
-              pegado al pie de la pantalla. */}
-          <div className={cn(isCollapsed && 'flex justify-center')}>
-            <NotificationBell variant="sidebar" collapsed={isCollapsed} />
-          </div>
-
-          {/* Perfil */}
-          <Link
-            href="/perfil"
-            onClick={handleNavClick}
-            title={isCollapsed ? t('nav.profile') : undefined}
-            aria-label={t('nav.profile')}
-            className={cn(
-              // Centrado en ambos estados: el resto del footer (avatar,
-              // nombre, tema/idioma) ya va centrado y estos dos quedaban
-              // pegados a la izquierda, rompiendo el eje del bloque.
-              'group flex items-center justify-center rounded-lg text-sm font-medium transition-all',
-              isCollapsed ? 'h-10' : 'gap-2 px-3 py-2',
-              pathname === '/perfil'
-                ? 'bg-[var(--brand-on-dark-surface)] text-white'
-                : 'text-slate-300 hover:bg-slate-800 hover:text-white'
+          <div className={cn('mt-1.5 flex items-center', isCollapsed ? 'flex-col gap-1' : 'gap-1')}>
+            {!isCollapsed && (
+              <Link
+                href="/perfil"
+                onClick={handleNavClick}
+                aria-label={t('nav.profile')}
+                title={t('nav.profile')}
+                className={iconButton}
+              >
+                <UserCircle className="h-4 w-4" aria-hidden="true" />
+              </Link>
             )}
-          >
-            <UserCircle className={cn(
-              'text-slate-400 group-hover:text-white transition-colors',
-              isCollapsed ? 'w-5 h-5' : 'w-4 h-4',
-            )} />
-            {!isCollapsed && <span>{t('nav.profile')}</span>}
-          </Link>
-
-          {/* Theme + Language toggles — contraído se apilan en vertical y
-              pierden el texto, conservando los aria-label. */}
-          <div className={cn(
-            'pt-2 mt-2 border-t border-slate-800',
-            isCollapsed
-              ? 'flex flex-col items-center gap-1'
-              : 'flex items-center justify-center gap-1',
-          )}>
             <button
-              onClick={() => setTheme(resolvedTheme === 'dark' ? 'light' : 'dark')}
-              aria-label={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className={cn(
-                'flex items-center rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
-                isCollapsed ? 'justify-center w-9 h-9' : 'gap-1.5 px-2.5 py-1.5',
-              )}
+              type="button"
+              onClick={toggleLanguage}
+              aria-label={t('shell.language')}
+              title={t('shell.language')}
+              className={cn(iconButton, 'gap-1 text-[12px] font-semibold', !isCollapsed && 'w-auto px-2.5')}
             >
-              {resolvedTheme === 'dark' ? <Sun className="w-3.5 h-3.5" /> : <Moon className="w-3.5 h-3.5" />}
-              {!isCollapsed && (resolvedTheme === 'dark' ? 'Light' : 'Dark')}
+              <Globe className="h-4 w-4" aria-hidden="true" />
+              {!isCollapsed && <span>{locale === 'es' ? 'EN' : 'ES'}</span>}
             </button>
-            {!isCollapsed && <span className="text-slate-700">|</span>}
+            {onToggleCollapse && (
+              <button
+                type="button"
+                onClick={onToggleCollapse}
+                aria-label={collapseLabel}
+                title={collapseLabel}
+                aria-expanded={!isCollapsed}
+                aria-controls={id}
+                className={cn(iconButton, 'max-[959.98px]:hidden')}
+              >
+                {isCollapsed
+                  ? <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  : <ChevronLeft className="h-4 w-4" aria-hidden="true" />}
+              </button>
+            )}
+            {/* Cerrar sesión — SIEMPRE el último control (pedido de Kevin). */}
             <button
-              onClick={() => {
-                const next = locale === 'es' ? 'en' : 'es';
-                setLocale(next);
-                // Persistir la preferencia para que los EMAILS salgan en el
-                // idioma del usuario (fase 7). Fire-and-forget: si falla, el
-                // localStorage local sigue mandando en la UI.
-                apiFetch('/api/user/language', {
-                  method: 'PATCH',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ language: next }),
-                }).catch(() => {});
-              }}
-              aria-label="Change language"
-              title="Change language"
-              className={cn(
-                'flex items-center rounded-lg text-[11px] font-medium text-slate-400 hover:bg-slate-800 hover:text-white transition-all',
-                isCollapsed ? 'justify-center w-9 h-9' : 'gap-1.5 px-2.5 py-1.5',
-              )}
-            >
-              <Globe className="w-3.5 h-3.5" />
-              {!isCollapsed && (locale === 'es' ? 'EN' : 'ES')}
-            </button>
-          </div>
-
-          {/* Cerrar sesión — SIEMPRE el último control del sidebar
-              (pedido de Kevin: nada debajo). */}
-          <div className="pt-2 mt-2 border-t border-slate-800">
-            <button
+              type="button"
               onClick={handleLogout}
               aria-label={t('nav.logout')}
-              title={isCollapsed ? t('nav.logout') : undefined}
-              className={cn(
-                'group flex items-center justify-center w-full rounded-lg text-sm font-medium text-slate-300 hover:bg-red-900/30 hover:text-red-200 transition-all',
-                isCollapsed ? 'h-10' : 'gap-2 px-3 py-2',
-              )}
+              title={t('nav.logout')}
+              className={cn(iconButton, 'hover:bg-neg-bg hover:text-neg', !isCollapsed && 'ml-auto')}
             >
-              <LogOut className={cn(
-                'text-slate-400 group-hover:text-red-200 transition-colors',
-                isCollapsed ? 'w-5 h-5' : 'w-4 h-4',
-              )} />
-              {!isCollapsed && <span>{t('nav.logout')}</span>}
+              <LogOut className="h-4 w-4" aria-hidden="true" />
             </button>
           </div>
         </div>

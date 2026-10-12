@@ -1,42 +1,55 @@
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// PageHeader — shared layout for the top of every dashboard page.
+// PageHeader — la cabecera de cada pantalla del dashboard.
 //
-// Pattern: title + optional subtitle on the left, optional action slot on
-// the right. Stacks on mobile, side-by-side on sm+ screens. Uses the
-// `space-y-6` flow of the page container so consumers don't need to worry
-// about bottom margin.
+// «Libro mayor» (docs/diseno-libro-mayor.md §3 y §6.3, Fase 4 2026-10-12):
+//   · h1 22/28 (20 en < 640), peso 650, tracking −0.015em.
+//   · Bajada 13.5 `text-text-2`.
+//   · Acciones a la derecha, alineadas ABAJO (con la bajada, no con el
+//     título) y envolviendo. **Un solo botón primario por vista**: si hay
+//     dos acciones principales, una de ellas no lo es.
+//
+// La API NO cambió (title, subtitle, actions, icon, className): la usan ~50
+// pantallas y cada una se migra en su propio cambio (fase 5). Antes era
+// `text-2xl font-bold` (24/700) con el ícono en `bg-[var(--color-primary)]/10`
+// + `text-primary dark:text-accent`; ahora sólo tokens (`brand-tint` /
+// `brand-ink`, que flipan solos con el tema).
+//
+// Descartado: sacar el `icon` (la spec no lo dibuja). Lo pasan varias
+// pantallas; quitarlo es un cambio de API que no le toca a la shell.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface PageHeaderProps {
   title: string;
   subtitle?: string;
-  /** Optional right-side slot: buttons, selectors, badges. */
+  /** Slot derecho: botones, selectores, badges. Un solo primario. */
   actions?: React.ReactNode;
-  /** Optional icon rendered to the left of the title. */
+  /** Ícono opcional a la izquierda del título. */
   icon?: React.ComponentType<{ className?: string }>;
   className?: string;
 }
 
 export function PageHeader({ title, subtitle, actions, icon: Icon, className }: PageHeaderProps) {
   return (
-    <div className={cn('flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3', className)}>
-      <div className="flex items-start gap-3 min-w-0">
+    <div className={cn('flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between', className)}>
+      <div className="flex min-w-0 items-start gap-3">
         {Icon && (
-          <div className="hidden sm:block p-2 rounded-lg bg-[var(--color-primary)]/10 mt-0.5">
-            <Icon className="w-5 h-5 text-primary dark:text-accent" />
+          <div className="mt-0.5 hidden rounded-ui-md bg-brand-tint p-1.5 text-brand-ink sm:block" aria-hidden="true">
+            <Icon className="h-5 w-5" />
           </div>
         )}
         <div className="min-w-0">
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">{title}</h1>
+          <h1 className="text-[20px] font-[650] leading-7 tracking-[-0.015em] text-foreground sm:text-[22px]">
+            {title}
+          </h1>
           {subtitle && (
-            <p className="text-sm text-muted-foreground mt-1">{subtitle}</p>
+            <p className="mt-0.5 text-[13.5px] text-text-2">{subtitle}</p>
           )}
         </div>
       </div>
       {actions && (
-        <div className="flex items-center gap-2 flex-wrap">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           {actions}
         </div>
       )}

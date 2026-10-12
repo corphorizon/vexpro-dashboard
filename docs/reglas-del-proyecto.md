@@ -263,6 +263,11 @@ merece. Aprobar o rechazar lo firma una persona.
    al cliente. Secretos redactados antes de salir.
 5. **Auditoría** — `serverAuditLog()` en las escrituras sensibles.
 6. **Cliente** — `apiFetch()` y `useModuleAccess('<key>')`.
+   Pantalla nueva → **una** fila en `NAV_ENTRIES` (`src/lib/module-groups.ts`):
+   de ahí salen el sidebar, las migas de la topbar, el dispatcher de la home y
+   los accesos rápidos. Y su prefijo en `src/lib/route-modules.ts` (guardián).
+   `module-groups.test.ts` falla si un módulo queda sin entrada o si el
+   guardián y el menú deciden módulos distintos para el mismo href.
 7. **i18n** — la clave nueva va en **`en` y `es`**.
 8. **Test** — extraé la decisión a una función pura y testeala, con **la mitad de
    los casos negativos**, e iterando sobre el registro único (así agregar un rol
