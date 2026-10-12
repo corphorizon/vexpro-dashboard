@@ -1,12 +1,59 @@
 'use client';
 
-import { useState } from 'react';
+// ─────────────────────────────────────────────────────────────────────────────
+// /perfil — datos propios, contraseña y 2FA.
+//
+// «Libro mayor» (2026-10-12): tres Panel (borde 1 px, cabecera 15/600 + hint),
+// campos con Field/Input (borde `control-border` 3:1), estado de 2FA con
+// StatusBadge (mismo mapa que /usuarios: users-view.ts `twofaKind`), avisos
+// con Notice y SuccessNote, botones ActionButton (los primarios eran
+// `bg-[var(--color-primary)] text-white`; el de desactivar, `bg-red-600`).
+// Sale la paleta cruda (azul, ámbar, esmeralda, gris, rojo) y sus `dark:`.
+// Un solo primario visible por vez: los disparadores de cada panel son
+// secundarios; el primario es el «guardar / verificar» del formulario abierto.
+//
+// NO cambió: endpoints (/api/auth/setup-2fa), payloads, ni las funciones de
+// useAuth (`updateUser`, `changePassword`, `refreshUser`).
+//
+// Fallos que no daban error (profile-view.ts, con test):
+//   · «Guardado» del nombre aparecía sin esperar a `updateUser` (que además
+//     se traga los errores). Ahora se espera y se confirma contra el nombre
+//     de la sesión; si no quedó, se dice.
+//   · Si generar el QR de 2FA fallaba, el paso 1 quedaba vacío y sin aviso
+//     (el error sólo se dibujaba en el paso 2) con «Ya lo escaneé»
+//     habilitado. Ahora se avisa y no se puede avanzar sin secreto.
+//   · Copiar el código manual fallaba en silencio (catch vacío): se avisa.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { Field, Input } from '@/components/ui/field';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { SuccessNote } from '@/components/success-note';
 import { useAuth, ROLE_LABELS } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
-import { UserCircle, Lock, ShieldCheck, Eye, EyeOff, Check, X, Copy, Loader2 } from 'lucide-react';
+import { UserCircle, Eye, EyeOff, Check, X, Copy, Loader2 } from 'lucide-react';
+import { twofaKind } from '../usuarios/users-view';
+import { canContinueToVerify, nameSaveOutcome, sanitizePin } from './profile-view';
+
+/** Valor de sólo lectura con la forma de un control (no editable, copiable). */
+function ReadOnlyValue({ label, value, hint }: { label: string; value: string; hint: string }) {
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="text-[12.5px] font-medium text-text-2">{label}</span>
+      <div className="flex min-h-9 items-center break-all rounded-ui-md border border-border bg-surface-2 px-2.5 text-[13px] text-text-2">
+        {value}
+      </div>
+      <p className="text-[12px] leading-4 text-text-3">{hint}</p>
+    </div>
+  );
+}
+
+const PIN_INPUT_CLASS = 'max-w-[220px] text-center font-mono tracking-[0.5em] text-[18px]!';
 
 export default function PerfilPage() {
   const { t } = useI18n();
@@ -15,7 +62,9 @@ export default function PerfilPage() {
   // Name editing
   const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(user?.name || '');
-  const [nameSaved, setNameSaved] = useState(false);
+  const [nameSaving, setNameSaving] = useState(false);
+  // Nombre pedido en el último guardado; se compara contra la sesión.
+  const [nameExpected, setNameExpected] = useState<string | null>(null);
 
   // Password change
   const [showPasswordForm, setShowPasswordForm] = useState(false);
@@ -36,6 +85,7 @@ export default function PerfilPage() {
   const [totpStep, setTotpStep] = useState<'scan' | 'verify'>('scan');
   const [totpLoading, setTotpLoading] = useState(false);
   const [totpCopied, setTotpCopied] = useState(false);
+  const [totpCopyFailed, setTotpCopyFailed] = useState(false);
   const [pinError, setPinError] = useState('');
   const [pinSuccess, setPinSuccess] = useState(false);
 
@@ -45,14 +95,28 @@ export default function PerfilPage() {
   const [deactivateError, setDeactivateError] = useState('');
   const [deactivateLoading, setDeactivateLoading] = useState(false);
 
+  const nameOutcome = nameSaveOutcome(nameExpected, user?.name);
+
+  // «Guardado» se va solo a los 2 s; «no se pudo confirmar» queda hasta el
+  // próximo intento.
+  useEffect(() => {
+    if (nameOutcome !== 'saved') return;
+    const id = setTimeout(() => setNameExpected(null), 2000);
+    return () => clearTimeout(id);
+  }, [nameOutcome]);
+
   if (!user) return null;
 
-  const handleSaveName = () => {
-    if (!name.trim()) return;
-    updateUser(user.id, { name: name.trim() });
+  const handleSaveName = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setNameSaving(true);
+    setNameExpected(null);
+    // Misma llamada que antes; ahora se ESPERA antes de decir «Guardado».
+    await updateUser(user.id, { name: trimmed });
+    setNameSaving(false);
     setEditingName(false);
-    setNameSaved(true);
-    setTimeout(() => setNameSaved(false), 2000);
+    setNameExpected(trimmed);
   };
 
   const handleCancelName = () => {
@@ -94,12 +158,22 @@ export default function PerfilPage() {
     }
   };
 
+  const cancelPasswordForm = () => {
+    setShowPasswordForm(false);
+    setPasswordError('');
+    setCurrentPassword('');
+    setNewPassword('');
+    setConfirmPassword('');
+  };
+
   // Generate TOTP secret and QR code for setup
   const handleStartTotpSetup = async () => {
     setShowTotpSetup(true);
     setTotpStep('scan');
     setTotpToken('');
     setPinError('');
+    setTotpSecret('');
+    setTotpQrCode('');
     setTotpLoading(true);
 
     try {
@@ -113,10 +187,10 @@ export default function PerfilPage() {
         setTotpSecret(data.secret);
         setTotpQrCode(data.qrCode);
       } else {
-        setPinError(data.error || 'Error generando QR');
+        setPinError(data.error || t('lmAdm.profile.qrError'));
       }
     } catch {
-      setPinError('Error de conexión');
+      setPinError(t('lmAdm.profile.connError'));
     } finally {
       setTotpLoading(false);
     }
@@ -127,7 +201,7 @@ export default function PerfilPage() {
     setPinError('');
 
     if (totpToken.length !== 6) {
-      setPinError('El código debe tener 6 dígitos');
+      setPinError(t('lmAdm.profile.pinLength'));
       return;
     }
 
@@ -147,22 +221,26 @@ export default function PerfilPage() {
         setTotpToken('');
         setTimeout(() => setPinSuccess(false), 3000);
       } else {
-        setPinError(data.error || 'Código incorrecto');
+        setPinError(data.error || t('lmAdm.profile.wrongCode'));
         setTotpToken('');
       }
     } catch {
-      setPinError('Error de conexión');
+      setPinError(t('lmAdm.profile.connError'));
     } finally {
       setTotpLoading(false);
     }
   };
 
   const handleCopyTotpSecret = async () => {
+    setTotpCopyFailed(false);
     try {
       await navigator.clipboard.writeText(totpSecret);
       setTotpCopied(true);
       setTimeout(() => setTotpCopied(false), 2000);
-    } catch { /* ignore */ }
+    } catch {
+      // Antes: catch vacío — el botón no hacía nada y nadie sabía por qué.
+      setTotpCopyFailed(true);
+    }
   };
 
   const handleDisable2FA = () => {
@@ -176,7 +254,7 @@ export default function PerfilPage() {
     setDeactivateError('');
 
     if (deactivatePin.length !== 6) {
-      setDeactivateError('El código debe tener 6 dígitos');
+      setDeactivateError(t('lmAdm.profile.pinLength'));
       return;
     }
 
@@ -189,7 +267,7 @@ export default function PerfilPage() {
       });
       const data = await res.json();
       if (!data.success) {
-        setDeactivateError(data.error || 'Código incorrecto');
+        setDeactivateError(data.error || t('lmAdm.profile.wrongCode'));
         setDeactivatePin('');
         return;
       }
@@ -199,7 +277,7 @@ export default function PerfilPage() {
       setPinSuccess(true);
       setTimeout(() => setPinSuccess(false), 3000);
     } catch {
-      setDeactivateError('Error de conexión');
+      setDeactivateError(t('lmAdm.profile.connError'));
     } finally {
       setDeactivateLoading(false);
     }
@@ -211,411 +289,350 @@ export default function PerfilPage() {
     setDeactivateError('');
   };
 
+  const visibilityLabel = t('lmAdm.profile.toggleVisibility');
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title={t('profile.title')}
         subtitle={t('profile.subtitle')}
         icon={UserCircle}
       />
 
-      {/* Profile Info Card */}
-      <Card>
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 rounded-lg bg-info/10">
-            <UserCircle className="w-5 h-5 text-blue-500" />
-          </div>
-          <h2 className="text-lg font-semibold">{t('profile.personalInfo')}</h2>
-        </div>
-
-        <div className="space-y-5">
+      {/* Datos personales */}
+      <Panel title={t('profile.personalInfo')}>
+        <div className="grid gap-4 md:grid-cols-2">
           {/* Name field - editable */}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">{t('profile.name')}</label>
+          <div className="md:col-span-2">
             {editingName ? (
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  autoFocus
-                  className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                />
-                <button
-                  onClick={handleSaveName}
-                  disabled={!name.trim()}
-                  className="p-2 rounded-lg bg-[var(--color-primary)] text-white hover:opacity-90 disabled:opacity-50 transition-opacity"
-                  title={t('common.save')}
-                  aria-label={t('common.save')}
-                >
-                  <Check className="w-4 h-4" />
-                </button>
-                <button
-                  onClick={handleCancelName}
-                  className="p-2 rounded-lg border border-border hover:bg-muted transition-colors"
-                  title={t('common.cancel')}
-                  aria-label={t('common.cancel')}
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
+              <Field label={t('profile.name')}>
+                <div className="flex items-center gap-2">
+                  <Input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') { e.preventDefault(); void handleSaveName(); }
+                      if (e.key === 'Escape') handleCancelName();
+                    }}
+                    autoComplete="name"
+                    autoFocus
+                    className="max-w-sm"
+                  />
+                  <ActionButton
+                    variant="primary"
+                    onClick={() => void handleSaveName()}
+                    disabled={!name.trim()}
+                    loading={nameSaving}
+                  >
+                    {!nameSaving && <Check aria-hidden className="size-[15px]" strokeWidth={1.75} />}
+                    {t('common.save')}
+                  </ActionButton>
+                  <button
+                    type="button"
+                    onClick={handleCancelName}
+                    className={ROW_ACTION_CLASS}
+                    title={t('common.cancel')}
+                    aria-label={t('common.cancel')}
+                  >
+                    <X aria-hidden className="size-4" strokeWidth={1.75} />
+                  </button>
+                </div>
+              </Field>
             ) : (
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-2 text-sm">{user.name}</span>
-                <button
-                  onClick={() => { setName(user.name); setEditingName(true); }}
-                  className="text-xs text-primary dark:text-accent hover:underline"
-                >
-                  {t('profile.edit')}
-                </button>
-                {nameSaved && (
-                  <span className="text-xs text-emerald-600">{t('common.saved')}</span>
-                )}
+              <div className="flex flex-col gap-1">
+                <span className="text-[12.5px] font-medium text-text-2">{t('profile.name')}</span>
+                <div className="flex min-h-9 flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="text-[14px] font-medium text-foreground">{user.name}</span>
+                  <ActionButton variant="ghost" onClick={() => { setName(user.name); setEditingName(true); }}>
+                    {t('profile.edit')}
+                  </ActionButton>
+                  {nameOutcome === 'saved' && (
+                    <span role="status" className="inline-flex items-center gap-1 text-[12.5px] font-medium text-pos">
+                      <Check aria-hidden className="size-3.5" strokeWidth={2} />
+                      {t('common.saved')}
+                    </span>
+                  )}
+                </div>
               </div>
+            )}
+            {nameOutcome === 'unconfirmed' && nameExpected != null && (
+              <Notice kind="bad" title={t('lmAdm.profile.nameUnconfirmedTitle')} className="mt-3">
+                {t('lmAdm.profile.nameUnconfirmedBody', { name: user.name })}
+              </Notice>
             )}
           </div>
 
           {/* Email - read only */}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">{t('profile.email')}</label>
-            <div className="px-3 py-2 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
-              {user.email}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">{t('profile.emailReadonly')}</p>
-          </div>
+          <ReadOnlyValue label={t('profile.email')} value={user.email} hint={t('profile.emailReadonly')} />
 
           {/* Role - read only */}
-          <div>
-            <label className="block text-sm font-medium mb-1.5">{t('profile.role')}</label>
-            <div className="px-3 py-2 rounded-lg bg-muted/50 border border-border text-sm text-muted-foreground">
-              {ROLE_LABELS[user.role] || user.role}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">{t('profile.roleReadonly')}</p>
-          </div>
+          <ReadOnlyValue
+            label={t('profile.role')}
+            value={ROLE_LABELS[user.role] || user.role}
+            hint={t('profile.roleReadonly')}
+          />
         </div>
-      </Card>
+      </Panel>
 
-      {/* Password Card */}
-      <Card>
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 rounded-lg bg-warning/10">
-            <Lock className="w-5 h-5 text-amber-500" />
-          </div>
-          <div className="flex-1">
-            <h2 className="text-lg font-semibold">{t('profile.changePassword')}</h2>
-            <p className="text-xs text-muted-foreground">{t('profile.passwordSubtitle')}</p>
-          </div>
-        </div>
+      {/* Contraseña */}
+      <Panel title={t('profile.changePassword')} hint={t('profile.passwordSubtitle')}>
+        <div className="space-y-4">
+          {passwordSuccess && <SuccessNote>{t('profile.passwordSuccess')}</SuccessNote>}
 
-        {passwordSuccess && (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-800 dark:text-emerald-400 text-sm" aria-live="polite">
-            {t('profile.passwordSuccess')}
-          </div>
-        )}
-
-        {!showPasswordForm ? (
-          <button
-            onClick={() => setShowPasswordForm(true)}
-            className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-          >
-            {t('profile.changePassword')}
-          </button>
-        ) : (
-          <form onSubmit={handleChangePassword} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-1.5">{t('profile.currentPassword')}</label>
-              <div className="relative">
-                <input
-                  type={showCurrentPw ? 'text' : 'password'}
-                  value={currentPassword}
-                  onChange={(e) => setCurrentPassword(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowCurrentPw(!showCurrentPw)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  aria-label="Toggle visibility"
-                >
-                  {showCurrentPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1.5">{t('profile.newPassword')}</label>
-              <div className="relative">
-                <input
-                  type={showNewPw ? 'text' : 'password'}
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                  minLength={6}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowNewPw(!showNewPw)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                  aria-label="Toggle visibility"
-                >
-                  {showNewPw ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                </button>
-              </div>
-              <p className="text-xs text-muted-foreground mt-1">{t('profile.passwordMinLength')}</p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium mb-1.5">{t('profile.confirmPassword')}</label>
-              <input
-                type="password"
-                value={confirmPassword}
-                onChange={(e) => setConfirmPassword(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-              />
-            </div>
-
-            {passwordError && (
-              <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert" aria-live="assertive">
-                {passwordError}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={passwordLoading}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {passwordLoading ? t('common.saving') : t('profile.savePassword')}
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowPasswordForm(false);
-                  setPasswordError('');
-                  setCurrentPassword('');
-                  setNewPassword('');
-                  setConfirmPassword('');
-                }}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-            </div>
-          </form>
-        )}
-      </Card>
-
-      {/* 2FA Card */}
-      <Card>
-        <div className="flex items-center gap-3 mb-6">
-          <div className="p-2 rounded-lg bg-positive/10">
-            <ShieldCheck className="w-5 h-5 text-emerald-500" />
-          </div>
-          <div className="flex-1">
-            <h2 className="text-lg font-semibold">{t('profile.twofa')}</h2>
-            <p className="text-xs text-muted-foreground">{t('profile.twofaSubtitle')}</p>
-          </div>
-        </div>
-
-        {pinSuccess && (
-          <div className="mb-4 px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-800 dark:text-emerald-400 text-sm" aria-live="polite">
-            {t('profile.pinSuccess')}
-          </div>
-        )}
-
-        {/* Current status */}
-        <div className="mb-4 flex items-center gap-3">
-          <span className="text-sm font-medium">{t('profile.twofaStatus')}</span>
-          {user.twofa_enabled ? (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-positive/10 text-positive border border-positive/30">
-              <span className="w-2 h-2 rounded-full bg-emerald-500" />
-              {t('profile.twofaActivated')}
-            </span>
+          {!showPasswordForm ? (
+            <ActionButton onClick={() => setShowPasswordForm(true)}>
+              {t('profile.changePassword')}
+            </ActionButton>
           ) : (
-            <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700">
-              <span className="w-2 h-2 rounded-full bg-gray-400" />
-              {t('profile.twofaDeactivated')}
-            </span>
+            <form onSubmit={handleChangePassword} className="max-w-md space-y-4">
+              <Field label={t('profile.currentPassword')} required>
+                <div className="relative">
+                  <Input
+                    type={showCurrentPw ? 'text' : 'password'}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    autoComplete="current-password"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCurrentPw(!showCurrentPw)}
+                    className="absolute right-0.5 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-ui-md text-text-3 hover:text-foreground"
+                    aria-label={visibilityLabel}
+                    aria-pressed={showCurrentPw}
+                  >
+                    {showCurrentPw ? <EyeOff aria-hidden className="size-4" /> : <Eye aria-hidden className="size-4" />}
+                  </button>
+                </div>
+              </Field>
+
+              <Field label={t('profile.newPassword')} hint={t('profile.passwordMinLength')} required>
+                <div className="relative">
+                  <Input
+                    type={showNewPw ? 'text' : 'password'}
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    minLength={6}
+                    autoComplete="new-password"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowNewPw(!showNewPw)}
+                    className="absolute right-0.5 top-1/2 inline-flex size-8 -translate-y-1/2 items-center justify-center rounded-ui-md text-text-3 hover:text-foreground"
+                    aria-label={visibilityLabel}
+                    aria-pressed={showNewPw}
+                  >
+                    {showNewPw ? <EyeOff aria-hidden className="size-4" /> : <Eye aria-hidden className="size-4" />}
+                  </button>
+                </div>
+              </Field>
+
+              <Field label={t('profile.confirmPassword')} required>
+                <Input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </Field>
+
+              {passwordError && <Notice kind="bad" title={passwordError} />}
+
+              <div className="flex flex-wrap gap-2">
+                <ActionButton type="submit" variant="primary" loading={passwordLoading}>
+                  {passwordLoading ? t('common.saving') : t('profile.savePassword')}
+                </ActionButton>
+                <ActionButton onClick={cancelPasswordForm}>
+                  {t('common.cancel')}
+                </ActionButton>
+              </div>
+            </form>
           )}
         </div>
+      </Panel>
 
-        {user.twofa_enabled ? (
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Tu cuenta está protegida con autenticación de dos factores mediante tu app de autenticación.
-            </p>
+      {/* 2FA */}
+      <Panel
+        title={t('profile.twofa')}
+        hint={t('profile.twofaSubtitle')}
+        actions={
+          <StatusBadge
+            kind={twofaKind(user.twofa_enabled)}
+            label={user.twofa_enabled ? t('profile.twofaActivated') : t('profile.twofaDeactivated')}
+          />
+        }
+      >
+        <div className="space-y-4">
+          {pinSuccess && <SuccessNote>{t('profile.pinSuccess')}</SuccessNote>}
 
-            <button
-              onClick={handleDisable2FA}
-              className="px-4 py-2 rounded-lg border border-negative/30 text-negative text-sm font-medium hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
-            >
-              Desactivar 2FA
-            </button>
+          {user.twofa_enabled ? (
+            <>
+              <p className="text-[13px] text-text-2">{t('lmAdm.profile.twofaOnBody')}</p>
 
-            {/* Deactivation form */}
-            {showDeactivateForm && (
-              <form onSubmit={handleConfirmDeactivate} className="mt-2 p-4 rounded-lg border border-negative/30 bg-red-50/30 dark:bg-red-950/20 space-y-4">
-                <p className="text-sm font-medium text-negative">
-                  Ingresa el código de tu app de autenticación para confirmar:
-                </p>
-                <div>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={deactivatePin}
-                    onChange={(e) => setDeactivatePin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
-                    required
-                    autoFocus
-                    className="w-full max-w-xs px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-red-300 dark:focus:ring-red-700"
-                  />
-                </div>
+              {!showDeactivateForm && (
+                <ActionButton variant="danger" onClick={handleDisable2FA}>
+                  {t('profile.deactivate2fa')}
+                </ActionButton>
+              )}
 
-                {deactivateError && (
-                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert">
-                    {deactivateError}
+              {/* Deactivation form */}
+              {showDeactivateForm && (
+                <form onSubmit={handleConfirmDeactivate} className="space-y-4 rounded-ui-md border border-neg/35 p-4">
+                  <Field label={t('lmAdm.profile.deactivatePrompt')} required>
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={deactivatePin}
+                      onChange={(e) => setDeactivatePin(sanitizePin(e.target.value))}
+                      placeholder="000000"
+                      autoFocus
+                      className={PIN_INPUT_CLASS}
+                    />
+                  </Field>
+
+                  {deactivateError && <Notice kind="bad" title={deactivateError} />}
+
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton
+                      type="submit"
+                      variant="danger"
+                      disabled={deactivatePin.length !== 6}
+                      loading={deactivateLoading}
+                    >
+                      {t('profile.confirmDeactivation')}
+                    </ActionButton>
+                    <ActionButton onClick={handleCancelDeactivate}>
+                      {t('common.cancel')}
+                    </ActionButton>
                   </div>
-                )}
+                </form>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="text-[13px] text-text-2">{t('lmAdm.profile.twofaOffBody')}</p>
 
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={deactivatePin.length !== 6 || deactivateLoading}
-                    className="px-4 py-2 rounded-lg bg-red-600 text-white text-sm font-medium hover:bg-red-700 transition-colors disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {deactivateLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                    Confirmar desactivación
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleCancelDeactivate}
-                    className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-                  >
-                    {t('common.cancel')}
-                  </button>
+              {!showTotpSetup && (
+                <ActionButton variant="primary" onClick={() => void handleStartTotpSetup()}>
+                  {t('profile.activate2fa')}
+                </ActionButton>
+              )}
+            </>
+          )}
+
+          {/* TOTP Setup Flow */}
+          {showTotpSetup && (
+            <div className="space-y-4 rounded-ui-md border border-border bg-surface-2 p-4">
+              {totpLoading && !totpQrCode ? (
+                <div className="flex items-center justify-center py-8" role="status" aria-label={t('common.loading')}>
+                  <Loader2 aria-hidden className="size-6 animate-spin text-text-3" />
                 </div>
-              </form>
-            )}
-          </div>
-        ) : (
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              Protege tu cuenta activando la autenticación de dos factores con Google Authenticator, Authy u otra app compatible.
-            </p>
+              ) : totpStep === 'scan' ? (
+                <>
+                  {/* Antes el error de generar sólo se dibujaba en el paso 2. */}
+                  {pinError ? (
+                    <Notice kind="bad" title={t('lmAdm.profile.qrFailedTitle')}>
+                      {pinError}
+                    </Notice>
+                  ) : (
+                    <Notice kind="info" title={t('lmAdm.profile.step1')} />
+                  )}
 
-            {!showTotpSetup && (
-              <button
-                onClick={handleStartTotpSetup}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-              >
-                Activar 2FA
-              </button>
-            )}
-          </div>
-        )}
-
-        {/* TOTP Setup Flow */}
-        {showTotpSetup && (
-          <div className="mt-4 p-4 rounded-lg border border-border bg-muted/30 space-y-4">
-            {totpLoading && !totpQrCode ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
-              </div>
-            ) : totpStep === 'scan' ? (
-              <>
-                <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
-                  <strong>Paso 1:</strong> Escanea este código QR con tu app de autenticación.
-                </div>
-
-                {totpQrCode && (
-                  <div className="flex justify-center">
-                    <div className="p-3 bg-white rounded-xl border border-border shadow-sm">
-                      <img src={totpQrCode} alt="QR Code" width={180} height={180} className="block" />
+                  {totpQrCode && (
+                    <div className="flex justify-center">
+                      {/* Blanco fijo a propósito: el QR necesita fondo claro
+                          para leerse, también en tema oscuro. */}
+                      <div className="rounded-ui-lg border border-border bg-white p-3 shadow-1">
+                        <img src={totpQrCode} alt={t('lmAdm.profile.qrAlt')} width={180} height={180} className="block" />
+                      </div>
                     </div>
+                  )}
+
+                  {totpSecret && (
+                    <div className="space-y-1.5 text-center">
+                      <p className="text-[12px] text-text-3">{t('lmAdm.profile.manualCode')}</p>
+                      <div className="flex flex-wrap items-center justify-center gap-1">
+                        <code className="select-all break-all rounded-ui-md border border-border bg-card px-2.5 py-1.5 font-mono text-[12px] tracking-wider text-foreground">
+                          {totpSecret}
+                        </code>
+                        <button
+                          type="button"
+                          onClick={() => void handleCopyTotpSecret()}
+                          className={ROW_ACTION_CLASS}
+                          title={t('lmAdm.profile.copy')}
+                          aria-label={t('lmAdm.profile.copy')}
+                        >
+                          {totpCopied
+                            ? <Check aria-hidden className="size-4 text-pos" strokeWidth={2} />
+                            : <Copy aria-hidden className="size-4" strokeWidth={1.75} />}
+                        </button>
+                      </div>
+                      {totpCopied && <p role="status" className="text-[12px] text-pos">{t('lmAdm.profile.copied')}</p>}
+                      {totpCopyFailed && <p role="alert" className="text-[12px] text-neg">{t('lmAdm.profile.copyFailed')}</p>}
+                    </div>
+                  )}
+
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton
+                      variant="primary"
+                      disabled={!canContinueToVerify(totpSecret, pinError)}
+                      onClick={() => { setTotpStep('verify'); setTotpToken(''); setPinError(''); }}
+                    >
+                      {t('lmAdm.profile.scanned')}
+                    </ActionButton>
+                    {pinError && (
+                      <ActionButton onClick={() => void handleStartTotpSetup()}>
+                        {t('lmAdm.retry')}
+                      </ActionButton>
+                    )}
+                    <ActionButton onClick={() => { setShowTotpSetup(false); setPinError(''); }}>
+                      {t('common.cancel')}
+                    </ActionButton>
                   </div>
-                )}
+                </>
+              ) : (
+                <form onSubmit={handleVerifyTotp} className="space-y-4">
+                  <Notice kind="info" title={t('lmAdm.profile.step2')} />
 
-                <div className="space-y-1.5">
-                  <p className="text-xs text-muted-foreground text-center">Código manual:</p>
-                  <div className="flex items-center gap-2 justify-center">
-                    <code className="px-2.5 py-1.5 rounded-lg bg-muted border border-border text-xs font-mono tracking-wider select-all">
-                      {totpSecret}
-                    </code>
-                    <button onClick={handleCopyTotpSecret} className="p-1.5 rounded border border-border hover:bg-muted transition-colors" title="Copiar">
-                      {totpCopied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5 text-muted-foreground" />}
-                    </button>
+                  <Field label={t('lmAdm.profile.codeLabel')} hint={t('lmAdm.profile.codeChanges')} required>
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      value={totpToken}
+                      onChange={(e) => setTotpToken(sanitizePin(e.target.value))}
+                      placeholder="000000"
+                      autoFocus
+                      className={PIN_INPUT_CLASS}
+                    />
+                  </Field>
+
+                  {pinError && <Notice kind="bad" title={pinError} />}
+
+                  <div className="flex flex-wrap gap-2">
+                    <ActionButton
+                      type="submit"
+                      variant="primary"
+                      disabled={totpToken.length !== 6}
+                      loading={totpLoading}
+                    >
+                      {t('lmAdm.profile.verifyActivate')}
+                    </ActionButton>
+                    <ActionButton onClick={() => { setTotpStep('scan'); setPinError(''); }}>
+                      {t('lmAdm.profile.backToQr')}
+                    </ActionButton>
                   </div>
-                </div>
-
-                <div className="flex gap-2">
-                  <button
-                    onClick={() => { setTotpStep('verify'); setTotpToken(''); setPinError(''); }}
-                    className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-                  >
-                    Ya lo escaneé
-                  </button>
-                  <button
-                    onClick={() => { setShowTotpSetup(false); setPinError(''); }}
-                    className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-                  >
-                    {t('common.cancel')}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <form onSubmit={handleVerifyTotp} className="space-y-4">
-                <div className="px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-800 dark:text-blue-400 text-sm">
-                  <strong>Paso 2:</strong> Ingresa el código de 6 dígitos de tu app.
-                </div>
-
-                <div>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={6}
-                    value={totpToken}
-                    onChange={(e) => setTotpToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="000000"
-                    required
-                    autoFocus
-                    className="w-full max-w-xs px-3 py-2.5 rounded-lg border border-border bg-background text-sm text-center tracking-[0.5em] font-mono text-lg focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                  />
-                  <p className="text-xs text-muted-foreground mt-1">El código cambia cada 30 segundos</p>
-                </div>
-
-                {pinError && (
-                  <div className="px-3 py-2 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm" role="alert">
-                    {pinError}
-                  </div>
-                )}
-
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={totpToken.length !== 6 || totpLoading}
-                    className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 flex items-center gap-2"
-                  >
-                    {totpLoading && <Loader2 className="w-4 h-4 animate-spin" />}
-                    Verificar y activar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setTotpStep('scan'); setPinError(''); }}
-                    className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-                  >
-                    Volver al QR
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        )}
-      </Card>
+                </form>
+              )}
+            </div>
+          )}
+        </div>
+      </Panel>
     </div>
   );
 }

@@ -1,19 +1,63 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+// ─────────────────────────────────────────────────────────────────────────────
+// /usuarios — alta, edición, módulos, reseteo de contraseña / 2FA y baja.
+//
+// «Libro mayor» (2026-10-12): Panel + FinTable (en < 720 px cada usuario es
+// una tarjeta: nombre + email, y debajo rol / 2FA / activación; acciones a la
+// derecha), formularios con Field (borde `control-border` 3:1, label visible),
+// estados con StatusBadge (users-view.ts decide el color, con test) y
+// botones ActionButton (el primario era `bg-[var(--color-primary)]
+// text-white`: blanco fijo). Sale toda la paleta cruda (violeta, esmeralda,
+// ámbar, índigo, rojo) y sus `dark:`.
+//
+// NO cambió: permisos, roles, invitaciones, 2FA, borrado ni llamadas a la API
+// (mismos endpoints, mismos payloads, mismas funciones de useAuth).
+//
+// Fallos que no daban error, corregidos en la pantalla:
+//   · Resetear contraseña: si el servidor rechazaba el cambio, `resetPassword`
+//     devolvía false y el modal… no decía nada. Ahora lo dice.
+//   · Lista de usuarios vacía: `fetchAllUsers` (lib) devuelve [] si la API
+//     falla y la tabla decía «Usuarios (0)». Con alguien mirando la pantalla
+//     una lista vacía es imposible: se avisa y el conteo es «—».
+//   · Roles personalizados: el catch vacío dejaba el selector sin ellos sin
+//     avisar. Ahora se avisa (salvo 403: un no-admin no los puede leer).
+//   · Reenviar invitación: `alert()` del navegador → aviso en la pantalla.
+//
+// DESCARTADO: la barra de pestañas con una sola pestaña («Usuarios»). La de
+// Roles está oculta (ver nota abajo) y una pestaña sola no comunica nada; el
+// estado y la rama de RolesPanel quedan para reactivarla.
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth, ROLE_LABELS, ROLE_DESCRIPTIONS, ROLE_DEFAULT_MODULES, MODULE_LABELS, roleCanWrite, type User } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { RolesPanel } from '@/components/settings/roles-panel';
 import { useI18n } from '@/lib/i18n';
 import { apiFetch } from '@/lib/api-fetch';
-// Shield icon removed with the Roles tab — keep ShieldOff for the 2FA badge.
-import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff, AlertTriangle, Eye } from 'lucide-react';
+import { useConfirm } from '@/lib/use-confirm';
+import { cn } from '@/lib/utils';
+import { Users, Plus, Pencil, Trash2, X, KeyRound, ShieldOff, Eye, Send } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { Field, Input, Select } from '@/components/ui/field';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ModuleForbidden } from '@/components/module-route-guard';
+import { SuccessNote } from '@/components/success-note';
 // Single source of truth for the module catalog — same list and order the
 // superadmin form uses, so /usuarios and /superadmin/users stay in sync.
 import { ALL_MODULES } from '@/app/superadmin/companies/_form';
+import {
+  parseCustomRoles,
+  pendingActivationKind,
+  splitModules,
+  twofaKind,
+  usersListSuspect,
+  type CustomRolesState,
+} from './users-view';
 
 const ALL_ROLES: Array<User['role']> = ['admin', 'socio', 'auditor', 'soporte', 'hr', 'invitado'];
 
@@ -39,13 +83,56 @@ const emptyForm: UserForm = {
   allowed_modules: ROLE_DEFAULT_MODULES['socio'],
 };
 
+/** Modal «Libro mayor» (mismo esqueleto que /periodos): scrim, `rounded-ui-xl`, `shadow-3`. */
+function Dialog({
+  title,
+  onClose,
+  closeLabel,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  closeLabel: string;
+  children: React.ReactNode;
+}) {
+  const id = 'usr-dialog-title';
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={id}
+        className="flex max-h-[85vh] w-full max-w-sm flex-col rounded-ui-xl border border-border bg-card shadow-3"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <h2 id={id} className="text-[15px] font-semibold text-foreground">{title}</h2>
+          <button type="button" onClick={onClose} className={ROW_ACTION_CLASS} aria-label={closeLabel}>
+            <X aria-hidden className="size-4" strokeWidth={1.75} />
+          </button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
 export default function UsuariosPage() {
   const { t } = useI18n();
   const { user, users, createUser, updateUser, deleteUser, resetPassword } = useAuth();
   const canAccess = useModuleAccess('users');
+  const { confirm, Modal: ConfirmModal } = useConfirm();
   // Two tabs inside /usuarios: the user list (default) and custom roles
   // (moved here from the old /configuraciones page).
-  const [activeTab, setActiveTab] = useState<'users' | 'roles'>('users');
+  //
+  // NOTE: The Roles tab is temporarily HIDDEN because the backing logic is
+  // half-built: the custom_roles table and RolesPanel UI exist and can
+  // create/edit rows, but hasModuleAccess() in auth-context.tsx only
+  // recognises the 6 BUILT_IN_ROLES — custom roles don't grant module
+  // permissions yet. Re-enable this tab once the permission resolver wires up
+  // `effective_role`. Keeping the RolesPanel import and the 'roles' branch
+  // below so nothing rots while the feature is paused.
+  // TODO: Custom roles UI — pendiente wirear con hasModuleAccess antes de activar.
+  const [activeTab] = useState<'users' | 'roles'>('users');
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<UserForm>(emptyForm);
@@ -53,18 +140,22 @@ export default function UsuariosPage() {
   // early-return `if (!canAccess)`, lo que disparaba react-hooks/rules-of-hooks
   // en CI 2026-06-06). Los hooks deben declararse antes de cualquier exit.
   const [resendingId, setResendingId] = useState<string | null>(null);
+  const [inviteMsg, setInviteMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   const [resetPwUser, setResetPwUser] = useState<User | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
+  const [resetPwError, setResetPwError] = useState(false);
+  const [resetPwSaving, setResetPwSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [reset2faUser, setReset2faUser] = useState<User | null>(null);
   const [reset2faLoading, setReset2faLoading] = useState(false);
   const [reset2faError, setReset2faError] = useState<string | null>(null);
   const [customRoles, setCustomRoles] = useState<CustomRoleOption[]>([]);
+  const [customRolesState, setCustomRolesState] = useState<CustomRolesState>('loading');
 
-  // Ref al Card del form de creación/edición. Cuando un admin hace click
+  // Ref al panel del form de creación/edición. Cuando un admin hace click
   // en "Editar" desde una fila al fondo de la tabla, el form se monta
   // arriba de la lista — sin este scroll, el cambio era invisible y
   // parecía que el botón no hacía nada.
@@ -72,7 +163,7 @@ export default function UsuariosPage() {
 
   useEffect(() => {
     if (showForm) {
-      // requestAnimationFrame asegura que el Card ya esté en el DOM
+      // requestAnimationFrame asegura que el panel ya esté en el DOM
       // (mountado por el conditional render) antes de scrollear.
       requestAnimationFrame(() => {
         formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -80,20 +171,25 @@ export default function UsuariosPage() {
     }
   }, [showForm]);
 
-  useEffect(() => {
-    // Fetch per-company custom roles — admin can assign them alongside built-ins.
+  // Fetch per-company custom roles — admin can assign them alongside built-ins.
+  // Sigue siendo no fatal, pero una falla se avisa (users-view.ts).
+  const loadCustomRoles = useCallback(() => {
     apiFetch('/api/admin/custom-roles')
-      .then(r => r.json())
-      .then(data => { if (data.success) setCustomRoles(data.roles); })
-      .catch(() => { /* non-fatal */ });
+      .then(async (r) => {
+        const json = await r.json().catch(() => null);
+        const parsed = parseCustomRoles<CustomRoleOption>(r.status, r.ok, json);
+        setCustomRoles(parsed.roles);
+        setCustomRolesState(parsed.state);
+      })
+      .catch(() => setCustomRolesState('error'));
   }, []);
 
+  useEffect(() => {
+    loadCustomRoles();
+  }, [loadCustomRoles]);
+
   if (!canAccess) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">{t('common.noAccess')}</p>
-      </div>
-    );
+    return <ModuleForbidden moduleKey="users" />;
   }
 
   const handleCreate = () => {
@@ -111,6 +207,12 @@ export default function UsuariosPage() {
       allowed_modules: [...u.allowed_modules],
     });
     setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditingId(null);
+    setFormError(null);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -148,7 +250,7 @@ export default function UsuariosPage() {
       setEditingId(null);
       setForm(emptyForm);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Error al guardar usuario');
+      setFormError(err instanceof Error ? err.message : t('lmAdm.users.saveError'));
     } finally {
       setSaving(false);
     }
@@ -157,7 +259,10 @@ export default function UsuariosPage() {
   const handleResetPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!resetPwUser || !newPassword) return;
+    setResetPwError(false);
+    setResetPwSaving(true);
     const ok = await resetPassword(resetPwUser.email, newPassword);
+    setResetPwSaving(false);
     if (ok) {
       setResetSuccess(true);
       setTimeout(() => {
@@ -165,6 +270,9 @@ export default function UsuariosPage() {
         setNewPassword('');
         setResetSuccess(false);
       }, 2000);
+    } else {
+      // Antes: nada. El modal quedaba abierto sin decir que falló.
+      setResetPwError(true);
     }
   };
 
@@ -173,7 +281,7 @@ export default function UsuariosPage() {
       await deleteUser(id);
       setDeleteConfirm(null);
     } catch (err) {
-      setFormError(err instanceof Error ? err.message : 'Error eliminando usuario');
+      setFormError(err instanceof Error ? err.message : t('lmAdm.users.deleteError'));
       setDeleteConfirm(null);
     }
   };
@@ -182,24 +290,30 @@ export default function UsuariosPage() {
   // Solo aplica a usuarios con must_change_password=true (todavía no
   // activaron su cuenta) y que no son admin. El useState se declara
   // arriba con los demás (rules-of-hooks).
-  const handleResendInvite = async (u: User) => {
-    if (!confirm(`Reenviar invitación a ${u.email}?`)) return;
+  const doResendInvite = async (u: User) => {
     setResendingId(u.id);
+    setInviteMsg(null);
     try {
       const res = await apiFetch(`/api/admin/users/${u.id}/resend-invite`, {
         method: 'POST',
       });
       const json = await res.json();
       if (!res.ok || !json.success) {
-        alert(json.error || 'Error reenviando invitación');
+        setInviteMsg({ ok: false, text: json.error || t('lmAdm.users.resendError') });
         return;
       }
-      alert(`Invitación reenviada a ${u.email}`);
+      setInviteMsg({ ok: true, text: t('lmAdm.users.resendOk', { email: u.email }) });
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error de red');
+      setInviteMsg({ ok: false, text: err instanceof Error ? err.message : t('lmAdm.users.networkError') });
     } finally {
       setResendingId(null);
     }
+  };
+
+  const handleResendInvite = (u: User) => {
+    confirm(t('lmAdm.users.resendConfirm', { email: u.email }), () => void doResendInvite(u), {
+      confirmLabel: t('users.resendInvite'),
+    });
   };
 
   const handleReset2fa = async () => {
@@ -214,13 +328,13 @@ export default function UsuariosPage() {
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
-        throw new Error(data.error || 'Error reseteando 2FA');
+        throw new Error(data.error || t('lmAdm.users.reset2faError'));
       }
       // Reflect new state in the local list so the UI updates immediately
       updateUser(reset2faUser.id, { twofa_enabled: false });
       setReset2faUser(null);
     } catch (err) {
-      setReset2faError(err instanceof Error ? err.message : 'Error reseteando 2FA');
+      setReset2faError(err instanceof Error ? err.message : t('lmAdm.users.reset2faError'));
     } finally {
       setReset2faLoading(false);
     }
@@ -235,453 +349,411 @@ export default function UsuariosPage() {
     }));
   };
 
+  const formCustom = customRoles.find(c => c.name === form.role);
+  const formEffectiveRole = formCustom?.base_role ?? form.role;
+  const formWrites = roleCanWrite(formEffectiveRole);
+  const checkedModules = ALL_MODULES.filter((m) => form.allowed_modules.includes(m.key)).length;
+
+  const listSuspect = usersListSuspect(users, Boolean(user));
+
+  const moduleName = (mod: string) => MODULE_LABELS[mod] || mod;
+
+  const columns: FinColumn<User>[] = [
+    {
+      key: 'name',
+      header: t('users.name'),
+      cell: (u) => u.name,
+      meta: (u) => u.email,
+      mobileMeta: (u) => (
+        <>
+          <StatusBadge kind="neutral" label={ROLE_LABELS[u.role] || u.role} />
+          <StatusBadge kind={twofaKind(u.twofa_enabled)} label={`2FA · ${u.twofa_enabled ? t('lmAdm.users.twofaOn') : t('lmAdm.users.twofaOff')}`} />
+          {u.must_change_password && <StatusBadge kind={pendingActivationKind()} label={t('users.pendingActivation')} />}
+        </>
+      ),
+    },
+    {
+      key: 'role',
+      header: t('users.role'),
+      hideSm: true,
+      // El rol no es dinero ni estado del flujo: gris (antes admin en verde).
+      cell: (u) => <StatusBadge kind="neutral" label={ROLE_LABELS[u.role] || u.role} />,
+    },
+    {
+      key: 'modules',
+      header: t('users.modules'),
+      hideSm: true,
+      cell: (u) => {
+        const { shown, hidden } = splitModules(u.allowed_modules);
+        return (
+          <div className="flex flex-wrap gap-1 py-1.5">
+            {shown.map((mod) => (
+              <span key={mod} className="rounded-ui-sm bg-surface-2 px-1.5 py-0.5 text-[12px] text-text-2">
+                {moduleName(mod)}
+              </span>
+            ))}
+            {hidden.length > 0 && (
+              <span
+                className="rounded-ui-sm border border-border-strong px-1.5 py-0.5 text-[12px] tabular-nums text-text-2"
+                title={hidden.map(moduleName).join(', ')}
+              >
+                +{hidden.length}
+              </span>
+            )}
+          </div>
+        );
+      },
+    },
+    {
+      key: 'twofa',
+      header: '2FA',
+      hideSm: true,
+      cell: (u) => (
+        <div className="flex flex-wrap items-center gap-1">
+          <StatusBadge kind={twofaKind(u.twofa_enabled)} label={u.twofa_enabled ? t('lmAdm.users.twofaOn') : t('lmAdm.users.twofaOff')} />
+          {u.must_change_password && <StatusBadge kind={pendingActivationKind()} label={t('users.pendingActivation')} />}
+        </div>
+      ),
+    },
+    {
+      key: 'actions',
+      header: <span className="sr-only">{t('common.actions')}</span>,
+      align: 'right',
+      cardSide: 'right',
+      cell: (u) =>
+        // Para usuarios con role='admin', el admin de empresa no puede
+        // gestionarlos — solo el superadmin. Mostramos un guion en vez de
+        // los botones.
+        u.role === 'admin' ? (
+          <span className="text-[12.5px] text-text-3" title={t('lmAdm.users.adminOnlySuperadmin')}>—</span>
+        ) : (
+          <div className="flex flex-wrap items-center justify-end gap-0.5">
+            {/* Reenviar invitación: solo si todavía no creó su contraseña. */}
+            {u.must_change_password && (
+              <button
+                type="button"
+                onClick={() => handleResendInvite(u)}
+                disabled={resendingId === u.id}
+                className={ROW_ACTION_CLASS}
+                title={t('users.resendInvite')}
+                aria-label={t('users.resendInvite')}
+                aria-busy={resendingId === u.id || undefined}
+              >
+                <Send aria-hidden className={cn('size-4', resendingId === u.id && 'animate-pulse')} strokeWidth={1.75} />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => handleEdit(u)}
+              className={ROW_ACTION_CLASS}
+              title={t('common.edit')}
+              aria-label={t('common.edit')}
+            >
+              <Pencil aria-hidden className="size-4" strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              onClick={() => { setResetPwUser(u); setNewPassword(''); setResetSuccess(false); setResetPwError(false); }}
+              className={ROW_ACTION_CLASS}
+              title={t('lmAdm.users.resetPw')}
+              aria-label={t('lmAdm.users.resetPw')}
+            >
+              <KeyRound aria-hidden className="size-4" strokeWidth={1.75} />
+            </button>
+            {u.twofa_enabled && (
+              <button
+                type="button"
+                onClick={() => { setReset2faUser(u); setReset2faError(null); }}
+                className={ROW_ACTION_CLASS}
+                title={t('lmAdm.users.reset2fa')}
+                aria-label={t('lmAdm.users.reset2fa')}
+              >
+                <ShieldOff aria-hidden className="size-4" strokeWidth={1.75} />
+              </button>
+            )}
+            {u.id !== user?.id && (
+              deleteConfirm === u.id ? (
+                <span className="flex flex-wrap items-center justify-end gap-1 pl-1">
+                  <ActionButton variant="danger" onClick={() => void handleDelete(u.id)}>
+                    {t('users.confirm')}
+                  </ActionButton>
+                  <ActionButton variant="ghost" onClick={() => setDeleteConfirm(null)}>
+                    {t('common.cancel')}
+                  </ActionButton>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirm(u.id)}
+                  className={cn(ROW_ACTION_CLASS, 'hover:text-neg')}
+                  title={t('common.delete')}
+                  aria-label={t('common.delete')}
+                >
+                  <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
+                </button>
+              )
+            )}
+          </div>
+        ),
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
+      {ConfirmModal}
       <PageHeader
         title={t('users.title')}
         subtitle={t('users.subtitle')}
         icon={Users}
         actions={
           activeTab === 'users' ? (
-            <button
-              onClick={handleCreate}
-              className="inline-flex items-center gap-2 h-9 px-4 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-            >
-              <Plus className="w-4 h-4" />
+            <ActionButton variant="primary" onClick={handleCreate}>
+              <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} />
               {t('users.create')}
-            </button>
+            </ActionButton>
           ) : undefined
         }
       />
 
-      {/* Tabs — Usuarios + Roles
-          NOTE: The Roles tab is temporarily HIDDEN because the backing
-          logic is half-built: the custom_roles table and RolesPanel UI
-          exist and can create/edit rows, but hasModuleAccess() in
-          auth-context.tsx only recognises the 6 BUILT_IN_ROLES — custom
-          roles don't grant module permissions yet. Re-enable this tab
-          once the permission resolver wires up `effective_role`.
-          Keeping the RolesPanel import and the setActiveTab('roles')
-          branch below so nothing rots while the feature is paused.
-          TODO: Custom roles UI — pendiente wirear con hasModuleAccess
-          antes de activar. */}
-      <div className="flex border-b border-border overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('users')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'users'
-              ? 'border-[var(--color-primary)] text-primary dark:text-accent'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Users className="w-4 h-4" /> Usuarios
-        </button>
-      </div>
-
       {/* Roles tab body still wired for future re-enable — never shown today. */}
       {activeTab === 'roles' && <RolesPanel />}
 
-      {/* Form — envuelto en div para anclar el ref de scroll-into-view
-          (Card no expone forwardRef). */}
+      {inviteMsg && (inviteMsg.ok
+        ? <SuccessNote>{inviteMsg.text}</SuccessNote>
+        : <Notice kind="bad" title={inviteMsg.text} />)}
+
+      {/* Form — envuelto en div para anclar el ref de scroll-into-view. */}
       {activeTab === 'users' && showForm && (
-        <div ref={formCardRef}>
-        <Card>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold">
-              {editingId ? t('users.edit') : t('users.create')}
-            </h2>
-            <button onClick={() => { setShowForm(false); setEditingId(null); }} className="p-1 hover:bg-muted rounded" aria-label={t('common.cancel')}>
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-          {!editingId && (
-            <p className="text-xs text-muted-foreground mb-3">
-              Al enviar la invitación, el usuario recibirá un correo con un link para crear su contraseña. El enlace expira en 24 horas.
-            </p>
-          )}
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">{t('users.name')}</label>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
-                  required
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">{t('users.email')}</label>
-                <input
-                  type="email"
-                  value={form.email}
-                  onChange={(e) => setForm(prev => ({ ...prev, email: e.target.value }))}
-                  required
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                />
-              </div>
-              {/* Sin campo Contraseña — el flujo nuevo manda invitación
-                  por email. El usuario crea su propia contraseña en
-                  /reset-password?token=...&mode=setup tras click en el
-                  link. Aviso al admin debajo del título del form. */}
-              <div>
-                <label className="block text-sm font-medium mb-1">{t('users.role')}</label>
-                <select
-                  value={form.role}
-                  onChange={(e) => {
-                    const newRole = e.target.value;
-                    const custom = customRoles.find(c => c.name === newRole);
-                    if (custom) {
-                      setForm(prev => ({
-                        ...prev,
-                        role: newRole as User['role'],
-                        allowed_modules: custom.default_modules,
-                      }));
-                    } else {
-                      setForm(prev => ({
-                        ...prev,
-                        role: newRole as User['role'],
-                        allowed_modules: ROLE_DEFAULT_MODULES[newRole] || [],
-                      }));
-                    }
-                  }}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+        <div ref={formCardRef} className="scroll-mt-4">
+          <Panel
+            title={editingId ? t('users.edit') : t('users.create')}
+            hint={!editingId ? t('lmAdm.users.inviteHint') : undefined}
+            actions={
+              <button type="button" onClick={closeForm} className={ROW_ACTION_CLASS} aria-label={t('common.cancel')}>
+                <X aria-hidden className="size-4" strokeWidth={1.75} />
+              </button>
+            }
+          >
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Field label={t('users.name')} required>
+                  <Input
+                    type="text"
+                    value={form.name}
+                    onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
+                    autoComplete="name"
+                  />
+                </Field>
+                <Field label={t('users.email')} required>
+                  <Input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => setForm(prev => ({ ...prev, email: e.target.value }))}
+                    autoComplete="email"
+                  />
+                </Field>
+                {/* Sin campo Contraseña — el flujo nuevo manda invitación
+                    por email. El usuario crea su propia contraseña en
+                    /reset-password?token=...&mode=setup tras click en el
+                    link. Aviso al admin en el hint del panel. */}
+                <Field
+                  label={t('users.role')}
+                  hint={formCustom?.description
+                    ?? ROLE_DESCRIPTIONS[form.role]
+                    ?? t('lmAdm.users.customRoleFallback')}
                 >
-                  <optgroup label="Roles del sistema">
-                    {/* `admin` se excluye: solo el superadmin puede crear
-                        usuarios con rol admin (vía /superadmin/users). El
-                        endpoint /api/admin/create-user también lo bloquea
-                        server-side con 403, esto es defensa en profundidad. */}
-                    {ALL_ROLES.filter(role => role !== 'admin').map(role => (
-                      <option key={role} value={role}>{ROLE_LABELS[role]}</option>
-                    ))}
-                  </optgroup>
-                  {customRoles.length > 0 && (
-                    <optgroup label="Roles personalizados">
-                      {customRoles.map(c => (
-                        <option key={c.id} value={c.name}>{c.name}</option>
+                  <Select
+                    value={form.role}
+                    onChange={(e) => {
+                      const newRole = e.target.value;
+                      const custom = customRoles.find(c => c.name === newRole);
+                      if (custom) {
+                        setForm(prev => ({
+                          ...prev,
+                          role: newRole as User['role'],
+                          allowed_modules: custom.default_modules,
+                        }));
+                      } else {
+                        setForm(prev => ({
+                          ...prev,
+                          role: newRole as User['role'],
+                          allowed_modules: ROLE_DEFAULT_MODULES[newRole] || [],
+                        }));
+                      }
+                    }}
+                  >
+                    <optgroup label={t('lmAdm.users.systemRoles')}>
+                      {/* `admin` se excluye: solo el superadmin puede crear
+                          usuarios con rol admin (vía /superadmin/users). El
+                          endpoint /api/admin/create-user también lo bloquea
+                          server-side con 403, esto es defensa en profundidad. */}
+                      {ALL_ROLES.filter(role => role !== 'admin').map(role => (
+                        <option key={role} value={role}>{ROLE_LABELS[role]}</option>
                       ))}
                     </optgroup>
-                  )}
-                </select>
-                <p className="text-xs text-muted-foreground mt-1">
-                  {customRoles.find(c => c.name === form.role)?.description
-                    ?? ROLE_DESCRIPTIONS[form.role]
-                    ?? 'Rol personalizado — capacidades heredadas del rol base.'}
-                </p>
+                    {customRoles.length > 0 && (
+                      <optgroup label={t('lmAdm.users.customRoles')}>
+                        {customRoles.map(c => (
+                          <option key={c.id} value={c.name}>{c.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                  </Select>
+                </Field>
               </div>
-            </div>
 
-            {/* Banner de rol solo-lectura. roleCanWrite refleja ADMIN_ROLES
-                del server: admin / auditor / hr pueden escribir; el resto
-                (socio, soporte, invitado, y custom roles basados en ellos)
-                solo VEN. Sin esto el usuario marcaba todos los módulos y
-                creía haber dado permisos completos — Kevin 2026-06-24. */}
-            {(() => {
-              const custom = customRoles.find(c => c.name === form.role);
-              const effectiveRole = custom?.base_role ?? form.role;
-              if (roleCanWrite(effectiveRole)) return null;
-              return (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-800 dark:text-amber-300 text-sm">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-                  <span>
-                    <strong>{ROLE_LABELS[effectiveRole] ?? form.role}</strong> es un rol de
-                    {' '}<strong>solo lectura</strong>. Podrá <strong>ver</strong> los módulos
-                    marcados abajo y descargar reportes, pero <strong>no podrá agregar,
-                    editar ni eliminar</strong> nada. Para que pueda hacer cambios elige el
-                    rol <strong>Admin</strong> (acceso total), <strong>Auditor</strong> (agregar/editar)
-                    o <strong>HR</strong> (gestión de Recursos Humanos).
+              {customRolesState === 'error' && (
+                <Notice
+                  kind="pend"
+                  title={t('lmAdm.users.customRolesErrorTitle')}
+                  action={
+                    <ActionButton
+                      variant="secondary"
+                      onClick={() => { setCustomRolesState('loading'); loadCustomRoles(); }}
+                    >
+                      {t('lmAdm.retry')}
+                    </ActionButton>
+                  }
+                >
+                  {t('lmAdm.users.customRolesErrorBody')}
+                </Notice>
+              )}
+
+              {/* Banner de rol solo-lectura. roleCanWrite refleja ADMIN_ROLES
+                  del server: admin / auditor / hr pueden escribir; el resto
+                  (socio, soporte, invitado, y custom roles basados en ellos)
+                  solo VEN. Sin esto el usuario marcaba todos los módulos y
+                  creía haber dado permisos completos — Kevin 2026-06-24. */}
+              {!formWrites && (
+                <Notice
+                  kind="pend"
+                  title={t('lmAdm.users.readOnlyTitle', { role: ROLE_LABELS[formEffectiveRole] ?? form.role })}
+                >
+                  {t('lmAdm.users.readOnlyBody')}
+                </Notice>
+              )}
+
+              <fieldset>
+                <legend className="text-[12.5px] font-medium text-text-2">
+                  {t('users.modules')}{' '}
+                  <span className="font-normal tabular-nums text-text-3">
+                    · {t('lmAdm.users.modulesCount', { n: String(checkedModules), total: String(ALL_MODULES.length) })}
                   </span>
+                </legend>
+                <p className="mt-1 flex items-center gap-1.5 text-[12px] text-text-3">
+                  <Eye aria-hidden className="size-3.5 shrink-0" strokeWidth={1.75} />
+                  {formWrites ? t('lmAdm.users.modulesHintWrite') : t('lmAdm.users.modulesHintRead')}
+                </p>
+                <div className="mt-2 grid grid-cols-1 gap-x-4 gap-y-2 rounded-ui-md border border-border p-3 min-[420px]:grid-cols-2 sm:grid-cols-3">
+                  {ALL_MODULES.map((m) => (
+                    <label key={m.key} className="flex min-w-0 cursor-pointer items-center gap-2 text-[13px] text-foreground [@media(pointer:coarse)]:min-h-10">
+                      <input
+                        type="checkbox"
+                        checked={form.allowed_modules.includes(m.key)}
+                        onChange={() => toggleModule(m.key)}
+                        className="size-4 shrink-0 rounded-ui-sm border-control-border accent-primary"
+                      />
+                      <span className="min-w-0 truncate">{m.label}</span>
+                    </label>
+                  ))}
                 </div>
-              );
-            })()}
+              </fieldset>
 
-            <div>
-              <label className="block text-sm font-medium mb-2">{t('users.modules')}</label>
-              {(() => {
-                const custom = customRoles.find(c => c.name === form.role);
-                const effectiveRole = custom?.base_role ?? form.role;
-                const writes = roleCanWrite(effectiveRole);
-                return (
-                  <p className="flex items-center gap-1.5 text-xs text-muted-foreground mb-2">
-                    <Eye className="w-3.5 h-3.5 flex-shrink-0" />
-                    {writes
-                      ? 'Controla a qué módulos tiene acceso este usuario.'
-                      : 'Estos módulos controlan únicamente QUÉ VE este usuario — no otorgan permisos de edición.'}
-                  </p>
-                );
-              })()}
-              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 rounded-lg border border-border">
-                {ALL_MODULES.map((m) => (
-                  <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={form.allowed_modules.includes(m.key)}
-                      onChange={() => toggleModule(m.key)}
-                      className="rounded border-border"
-                    />
-                    <span>{m.label}</span>
-                  </label>
-                ))}
+              {formError && <Notice kind="bad" title={formError} />}
+
+              <div className="flex flex-wrap gap-2">
+                <ActionButton type="submit" variant="primary" loading={saving}>
+                  {saving ? t('common.saving') : (editingId ? t('users.save') : t('users.sendInvite'))}
+                </ActionButton>
+                <ActionButton onClick={closeForm}>
+                  {t('common.cancel')}
+                </ActionButton>
               </div>
-            </div>
-
-            {formError && (
-              <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
-                {formError}
-              </div>
-            )}
-
-            <div className="flex gap-2">
-              <button
-                type="submit"
-                disabled={saving}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {saving ? 'Guardando...' : (editingId ? t('users.save') : t('users.sendInvite'))}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowForm(false); setEditingId(null); setFormError(null); }}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('common.cancel')}
-              </button>
-            </div>
-          </form>
-        </Card>
+            </form>
+          </Panel>
         </div>
       )}
 
       {/* Users Table */}
       {activeTab === 'users' && (
-      <Card>
-        <div className="flex items-center gap-3 mb-4">
-          <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
-            <Users className="w-5 h-5 text-violet-500" />
-          </div>
-          <h2 className="text-lg font-semibold">{t('users.registered')} ({users.length})</h2>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.name')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.email')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.role')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('users.modules')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">2FA</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                  <td className="py-2.5 px-3 font-medium">{u.name}</td>
-                  <td className="py-2.5 px-3 text-muted-foreground">{u.email}</td>
-                  <td className="py-2.5 px-3">
-                    <Badge variant={u.role === 'admin' ? 'success' : 'neutral'}>
-                      {ROLE_LABELS[u.role] || u.role}
-                    </Badge>
-                  </td>
-                  <td className="py-2.5 px-3">
-                    <div className="flex flex-wrap gap-1">
-                      {u.allowed_modules.slice(0, 4).map(mod => (
-                        <span key={mod} className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          {MODULE_LABELS[mod] || mod}
-                        </span>
-                      ))}
-                      {u.allowed_modules.length > 4 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
-                          +{u.allowed_modules.length - 4}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-3">
-                    <span className={u.twofa_enabled
-                      ? 'inline-flex px-2 py-0.5 rounded-full text-[10px] bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
-                      : 'inline-flex px-2 py-0.5 rounded-full text-[10px] bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                    }>
-                      {u.twofa_enabled ? 'Activo' : 'No activo'}
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right">
-                    {/* Para usuarios con role='admin', el admin de empresa
-                        no puede gestionarlos — solo el superadmin. Mostramos
-                        un guion en vez de los botones. */}
-                    {u.role === 'admin' ? (
-                      <span className="text-xs text-muted-foreground" title="Solo el superadmin gestiona admins">—</span>
-                    ) : (
-                    <div className="flex items-center justify-end gap-1">
-                      {/* Reenviar invitación: solo si todavía no creó su contraseña. */}
-                      {u.must_change_password && (
-                        <button
-                          onClick={() => handleResendInvite(u)}
-                          disabled={resendingId === u.id}
-                          className="px-2 py-1 text-[11px] rounded border border-blue-300 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/40 disabled:opacity-50"
-                          title={t('users.resendInvite')}
-                          aria-label={t('users.resendInvite')}
-                        >
-                          {resendingId === u.id ? '…' : 'Reenviar'}
-                        </button>
-                      )}
-                      <button
-                        onClick={() => handleEdit(u)}
-                        className="p-1.5 rounded hover:bg-muted transition-colors"
-                        title={t('common.edit')}
-                        aria-label={t('common.edit')}
-                      >
-                        <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                      </button>
-                      <button
-                        onClick={() => { setResetPwUser(u); setNewPassword(''); setResetSuccess(false); }}
-                        className="p-1.5 rounded hover:bg-amber-50 dark:hover:bg-amber-950/50 transition-colors"
-                        title="Resetear contraseña"
-                        aria-label="Resetear contraseña"
-                      >
-                        <KeyRound className="w-3.5 h-3.5 text-amber-500" />
-                      </button>
-                      {u.twofa_enabled && (
-                        <button
-                          onClick={() => { setReset2faUser(u); setReset2faError(null); }}
-                          className="p-1.5 rounded hover:bg-indigo-50 dark:hover:bg-indigo-950/50 transition-colors"
-                          title="Resetear 2FA"
-                          aria-label="Resetear 2FA"
-                        >
-                          <ShieldOff className="w-3.5 h-3.5 text-indigo-500" />
-                        </button>
-                      )}
-                      {u.id !== user?.id && (
-                        deleteConfirm === u.id ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleDelete(u.id)}
-                              className="px-2 py-1 text-xs rounded bg-red-500 text-white hover:bg-red-600"
-                            >
-                              {t('users.confirm')}
-                            </button>
-                            <button
-                              onClick={() => setDeleteConfirm(null)}
-                              className="px-2 py-1 text-xs rounded border border-border hover:bg-muted"
-                            >
-                              {t('common.cancel')}
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setDeleteConfirm(u.id)}
-                            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
-                            title={t('common.delete')}
-                            aria-label={t('common.delete')}
-                          >
-                            <Trash2 className="w-3.5 h-3.5 text-red-400" />
-                          </button>
-                        )
-                      )}
-                    </div>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </Card>
+        <>
+          {listSuspect && (
+            <Notice kind="pend" title={t('lmAdm.users.listUnknownTitle')}>
+              {t('lmAdm.users.listUnknownBody')}
+            </Notice>
+          )}
+          {/* Error de borrado: si el form está cerrado, el aviso va acá. */}
+          {formError && !showForm && <Notice kind="bad" title={formError} />}
+          <Panel
+            title={t('users.registered')}
+            hint={<span className="tabular-nums">{listSuspect ? '—' : users.length}</span>}
+            flush
+          >
+            <FinTable
+              columns={columns}
+              rows={users}
+              rowKey={(u) => u.id}
+              caption={t('users.registered')}
+              empty={listSuspect ? t('lmAdm.users.listUnknownCell') : undefined}
+            />
+          </Panel>
+        </>
       )}
 
       {/* Reset Password Modal */}
       {resetPwUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-card border border-border rounded-xl p-6 shadow-lg w-full max-w-sm mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Resetear Contraseña</h2>
-              <button onClick={() => setResetPwUser(null)} className="p-1 hover:bg-muted rounded">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            {resetSuccess ? (
-              <div className="px-4 py-3 rounded-lg bg-positive/10 border border-positive/30 text-positive text-sm">
-                Contraseña actualizada correctamente para {resetPwUser.name}.
+        <Dialog title={t('lmAdm.users.resetPw')} onClose={() => setResetPwUser(null)} closeLabel={t('common.close')}>
+          {resetSuccess ? (
+            <SuccessNote>{t('lmAdm.users.resetPwOk', { name: resetPwUser.name })}</SuccessNote>
+          ) : (
+            <form onSubmit={handleResetPassword} className="space-y-4">
+              <p className="text-[13px] text-text-2">
+                {t('lmAdm.users.resetPwFor', { name: resetPwUser.name, email: resetPwUser.email })}
+              </p>
+              <Field label={t('lmAdm.users.newPassword')} hint={t('lmAdm.users.minChars')} required>
+                <Input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  minLength={6}
+                  autoComplete="new-password"
+                  autoFocus
+                />
+              </Field>
+              {resetPwError && (
+                <Notice kind="bad" title={t('lmAdm.users.resetPwFailedTitle')}>
+                  {t('lmAdm.users.resetPwFailedBody')}
+                </Notice>
+              )}
+              <div className="flex justify-end gap-2">
+                <ActionButton onClick={() => setResetPwUser(null)}>
+                  {t('common.cancel')}
+                </ActionButton>
+                <ActionButton type="submit" variant="primary" loading={resetPwSaving}>
+                  {t('common.save')}
+                </ActionButton>
               </div>
-            ) : (
-              <form onSubmit={handleResetPassword} className="space-y-4">
-                <p className="text-sm text-muted-foreground">
-                  Nueva contraseña para <span className="font-medium text-foreground">{resetPwUser.name}</span> ({resetPwUser.email})
-                </p>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Nueva contraseña</label>
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(e) => setNewPassword(e.target.value)}
-                    required
-                    minLength={6}
-                    className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                    placeholder="Mínimo 6 caracteres"
-                    autoFocus
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    type="submit"
-                    className="flex-1 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity"
-                  >
-                    Guardar
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setResetPwUser(null)}
-                    className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </form>
-            )}
-          </div>
-        </div>
+            </form>
+          )}
+        </Dialog>
       )}
 
       {/* Reset 2FA confirmation modal */}
       {reset2faUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
-          <div className="bg-card border border-border rounded-xl p-6 shadow-lg w-full max-w-sm mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold">Resetear 2FA</h2>
-              <button onClick={() => setReset2faUser(null)} className="p-1 hover:bg-muted rounded" aria-label="Cerrar">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <p className="text-sm text-muted-foreground mb-4">
-              Se desactivará la autenticación de dos factores para{' '}
-              <span className="font-medium text-foreground">{reset2faUser.name}</span> ({reset2faUser.email}).
-              El usuario deberá volver a configurar su aplicación de autenticación.
-            </p>
-            {reset2faError && (
-              <div className="px-3 py-2 mb-4 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm">
-                {reset2faError}
-              </div>
-            )}
-            <div className="flex gap-2">
-              <button
-                onClick={handleReset2fa}
-                disabled={reset2faLoading}
-                className="flex-1 px-4 py-2 rounded-lg bg-indigo-500 text-white text-sm font-medium hover:bg-indigo-600 transition-colors disabled:opacity-50"
-              >
-                {reset2faLoading ? 'Reseteando…' : 'Resetear 2FA'}
-              </button>
-              <button
-                onClick={() => setReset2faUser(null)}
-                disabled={reset2faLoading}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                Cancelar
-              </button>
-            </div>
+        <Dialog title={t('lmAdm.users.reset2fa')} onClose={() => setReset2faUser(null)} closeLabel={t('common.close')}>
+          <p className="text-[13px] text-text-2">
+            {t('lmAdm.users.reset2faBody', { name: reset2faUser.name, email: reset2faUser.email })}
+          </p>
+          {reset2faError && <Notice kind="bad" title={reset2faError} />}
+          <div className="flex justify-end gap-2">
+            <ActionButton onClick={() => setReset2faUser(null)} disabled={reset2faLoading}>
+              {t('common.cancel')}
+            </ActionButton>
+            <ActionButton variant="danger" onClick={() => void handleReset2fa()} loading={reset2faLoading}>
+              {reset2faLoading ? t('lmAdm.users.reset2faLoading') : t('lmAdm.users.reset2fa')}
+            </ActionButton>
           </div>
-        </div>
+        </Dialog>
       )}
     </div>
   );
