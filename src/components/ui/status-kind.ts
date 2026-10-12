@@ -13,10 +13,10 @@
 //
 // Órdenes de pago respeta la decisión ya tomada en `VARIANT`: aprobada = ok,
 // igual que pagada, porque la orden aprobada ya autoriza la salida de fondos
-// (`isAuthorized()` en payment-orders/types.ts); la etiqueta desambigua. Si se
-// quiere aprobada = info (spec §5.5: «pos = pagado/completado»), se cambia
-// ACÁ y en `VARIANT` a la vez — o mejor, `VARIANT` pasa a leer de acá cuando
-// esa pantalla migre (fase 5) y se borra.
+// (`isAuthorized()` en payment-orders/types.ts); la etiqueta desambigua.
+// Desde la migración de esa pantalla (2026-10-12) `VARIANT` ya no existe:
+// components/payment-orders/status-badge.tsx lee de acá (lo fija
+// payment-orders/status-badge.test.ts) y anulada pasó a `bad`.
 //
 // REGLAS (docs/diseno-libro-mayor.md §2.1 y §5.5):
 //   ok      = completado / cobrado / pagado / al día        → pos
@@ -24,7 +24,7 @@
 //   bad     = rechazado / error / no cobrado                → neg
 //   info    = paso intermedio que no requiere acción        → info
 //   stale   = dato viejo que sigue sumando                  → stale
-//   neutral = terminal sin significado de dinero (borrador, anulada)
+//   neutral = sin significado de dinero (borrador)
 //
 // Los mapas están tipados contra los tipos canónicos de cada dominio
 // (`Record<PaymentOrderStatus, …>`): si mañana aparece un estado nuevo, `tsc`
@@ -62,7 +62,10 @@ const PAYMENT_ORDER: Record<PaymentOrderStatus, StatusKind> = {
   approved: 'ok', // ya autoriza la salida de fondos (isAuthorized) — ver cabecera
   paid: 'ok',
   rejected: 'bad',
-  cancelled: 'neutral',
+  // Anulada = bad (2026-10-12, migración de Órdenes de pago): la orden NO se
+  // va a pagar — para quien la esperaba es una noticia de dinero igual que
+  // «rechazada», no un estado neutro. Antes 'neutral' (heredado de `VARIANT`).
+  cancelled: 'bad',
 };
 
 const EXPENSE: Record<ExpenseStatus, StatusKind> = {

@@ -5,13 +5,37 @@
 //
 // Dos cosas mandan en esta pantalla:
 //   1. La máquina de estados (canTransition) decide qué botones EXISTEN.
-//   2. La segregación de funciones decide cuáles de esos están HABILITADOS:
-//      solo un admin aprueba, y nunca quien creó la orden. El botón se muestra
-//      deshabilitado con el motivo en vez de desaparecer — que el creador vea
-//      que el control existe es parte del control.
+//   2. Preparar ≠ decidir (`canDo`, roles.ts): quien prepara envía, retira a
+//      borrador y anula su borrador; aprobar, rechazar y pagar exigen finanzas
+//      — la MISMA regla que aplica el servidor en /transition.
 //
 // El historial no es decorativo: es la evidencia de tesorería (quién autorizó
-// qué, cuándo y con qué referencia), por eso va completo y en orden.
+// qué, cuándo y con qué referencia), por eso va completo y en orden
+// (timeline.ts, con test).
+//
+// «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md):
+//   · Cabecera: Nº en mono, badge (color de `statusKind`, registro único) y el
+//     total grande con <Money> — el número que se viene a mirar.
+//   · UN solo botón primario por estado (spec §5.1): la transición que hace
+//     avanzar la orden (enviar → aprobar → pagar; en rechazada, volver a
+//     borrador). Antes, en «pendiente», Aprobar era primario y Rechazar
+//     destructivo relleno: dos rellenos de color compitiendo por el mismo clic.
+//     Rechazar queda `danger` (tinte `neg`), Anular y Volver a borrador `ghost`.
+//   · Línea de tiempo en un Panel: punto con el color del kind (rechazada y
+//     anulada en `neg`), quién y cuándo, y en una orden viva los pasos que
+//     faltan en gris.
+//   · Líneas en FinTable con subtotal / comisiones / total en el pie (la
+//     «doble raya» sólo en el total).
+//   · Diálogos con Field / Input / Textarea: sin la receta de input copiada.
+//
+// Medición (colores fuera de tokens en este archivo): antes 1 paleta cruda
+// (`bg-black/50`), 2 `var(--…)` en className, 40 tokens legados
+// (`text-muted-foreground`, `bg-positive`, `text-negative`…) y 5 usos de la
+// receta `INPUT`; después 0.
+//
+// DESCARTADO: mover las transiciones a un menú «···». Son la razón de ser de
+// la pantalla para quien aprueba o paga; esconderlas detrás de un clic más
+// esconde el control (que el creador VEA el botón es parte del control).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -23,28 +47,30 @@ import {
   CheckCheck,
   Download,
   FileText,
-  History,
-  Landmark,
   Paperclip,
   Pencil,
+  RotateCcw,
   Send,
   Upload,
   Wallet,
   X,
 } from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Panel } from '@/components/ui/panel';
+import { Field, Input, Textarea } from '@/components/ui/field';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, NUM_CLASS, moneyText } from '@/components/ui/money';
+import { STATUS_BADGE_CLASSES } from '@/components/ui/status-badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { DataTable } from '@/components/ui/data-table';
 import { useToasts } from '@/components/ui/toast';
 import { StatusBadge } from '@/components/payment-orders/status-badge';
+import { ActionButton, actionButtonClass, type ActionVariant } from '@/components/payment-orders/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { paymentOrderTransitionNeedsFinance, roleCanPreparePaymentOrder, roleCanWriteFinance } from '@/lib/roles';
 import { useData } from '@/lib/data-context';
-import { cn, formatCurrency } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { formatDate, formatDateTime, todayUtcISO } from '@/lib/dates';
 import {
   canTransition,
@@ -68,11 +94,10 @@ import {
   uploadPaymentProofs,
   type TransitionOptions,
 } from '@/lib/payment-orders/api';
-import {
-  PickedFileList,
-  SavedFileList,
-} from '@/components/payment-orders/order-files';
+import { PickedFileList, SavedFileList } from '@/components/payment-orders/order-files';
 import { ATTACHMENT_ACCEPT, MAX_ATTACHMENT_SIZE } from '@/lib/payment-orders/attachment-files';
+import { normCurrency } from '../orders-view';
+import { buildTimeline, upcomingSteps, type TimelineEvent, type UpcomingStep } from './timeline';
 
 type Dialog =
   | null
@@ -98,9 +123,14 @@ const MAX_PROOFS_STR = String(MAX_PAYMENT_PROOFS);
 const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_SIZE;
 const MAX_ATTACHMENTS_STR = String(MAX_PAYMENT_ATTACHMENTS);
 
+/**
+ * Qué transición es la PRIMARIA en cada estado: la primera de esta lista que
+ * el usuario puede hacer. Es el «siguiente paso» del camino feliz; en
+ * rechazada, volver a borrador. Una sola por pantalla (spec §5.1).
+ */
+const PRIMARY_PREFERENCE: readonly PaymentOrderStatus[] = ['pending', 'approved', 'paid', 'draft'];
 
-const INPUT =
-  'w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm placeholder:text-muted-foreground';
+type LineRow = PaymentOrderLine & { idx: number };
 
 export default function OrdenPagoDetallePage() {
   const { t } = useI18n();
@@ -133,11 +163,9 @@ export default function OrdenPagoDetallePage() {
     if (id) load();
   }, [id, load]);
 
-  const money = useCallback(
-    (n: number) =>
-      formatCurrency(n ?? 0, order?.currency === 'USDT' ? 'USD' : order?.currency || company?.currency || 'USD'),
-    [order?.currency, company?.currency],
-  );
+  /** Moneda de los montos de ESTA orden (USDT se muestra como USD). */
+  const currency = normCurrency(order?.currency, normCurrency(company?.currency));
+  const money = useCallback((n: number) => moneyText(Number(n) || 0, { currency }), [currency]);
 
   // ── Permisos ──────────────────────────────────────────────────────────────
   // Aprobación abierta (decisión Kevin 2026-08-05): cualquier usuario con
@@ -351,14 +379,14 @@ export default function OrdenPagoDetallePage() {
     }
   }
 
-  const timeline = useMemo(() => (order ? buildTimeline(order, t) : []), [order, t]);
+  const timeline = useMemo(() => (order ? buildTimeline(order) : []), [order]);
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <Skeleton className="h-4 w-32" />
-        <Skeleton className="h-12 w-72" />
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <Skeleton className="h-16 w-72" />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
           <Skeleton className="h-96 lg:col-span-2" />
           <Skeleton className="h-64" />
         </div>
@@ -368,184 +396,213 @@ export default function OrdenPagoDetallePage() {
 
   if (!order) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <BackLink label={t('payOrders.backToList')} />
-        <Card>
+        <Panel>
           <EmptyState
             icon={FileText}
             title={t('payOrders.notFoundTitle')}
             description={t('payOrders.notFoundDesc')}
             action={
-              <Link href="/ordenes-pago">
-                <Button variant="primary">{t('payOrders.backToList')}</Button>
+              <Link href="/ordenes-pago" className={actionButtonClass('primary')}>
+                {t('payOrders.backToList')}
               </Link>
             }
           />
-        </Card>
+        </Panel>
       </div>
     );
   }
 
   const crypto = order.payment_method === 'crypto';
+  const can = (to: PaymentOrderStatus) =>
+    canDo(order.status, to) && canTransition(order.status, to) && to !== order.status;
+  const primaryTo = PRIMARY_PREFERENCE.find(can) ?? null;
+  const variantFor = (to: PaymentOrderStatus, fallback: ActionVariant): ActionVariant =>
+    to === primaryTo ? 'primary' : fallback;
+  const upcoming = upcomingSteps(order.status);
+
+  // Dos líneas idénticas (mismo concepto e importe) son legítimas: la clave de
+  // fila es la posición, no el contenido.
+  const lineRows: LineRow[] = (order.lines ?? []).map((l, idx) => ({ ...l, idx }));
+  const lineColumns: FinColumn<LineRow>[] = [
+    {
+      key: 'description',
+      header: t('payOrders.lineDescription'),
+      cell: (l) => <span className="whitespace-normal">{l.description || '—'}</span>,
+    },
+    {
+      key: 'unitValue',
+      header: t('payOrders.lineUnitValue'),
+      kind: 'money',
+      value: (l) => l.unitValue,
+      subtotal: false,
+      hideSm: true,
+      money: { currency },
+      cell: (l) => <Money value={l.unitValue} currency={currency} className="text-text-2" />,
+    },
+    {
+      key: 'quantity',
+      header: t('payOrders.lineQuantity'),
+      kind: 'number',
+      value: (l) => l.quantity,
+      subtotal: false,
+      hideSm: true,
+      // La cantidad admite decimales (1.5 horas): no pasa por el formateador
+      // de enteros de la columna `number`.
+      cell: (l) => <span className={cn(NUM_CLASS, 'text-text-2')}>{l.quantity}</span>,
+    },
+    {
+      key: 'amount',
+      header: t('payOrders.lineAmount'),
+      kind: 'money',
+      value: (l) => l.amount,
+      money: { currency },
+    },
+  ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {ToastHost}
       <BackLink label={t('payOrders.backToList')} />
 
       {/* ── Cabecera ─────────────────────────────────────────────────────── */}
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
         <div className="min-w-0">
-          <div className="flex items-center gap-3 flex-wrap">
-            <h1 className="text-2xl sm:text-3xl font-bold font-mono tracking-tight">{order.order_number}</h1>
+          <div className="flex flex-wrap items-center gap-2.5">
+            <h1 className="font-mono text-[20px] font-[650] leading-7 tracking-[-0.015em] text-foreground sm:text-[22px]">
+              {order.order_number}
+            </h1>
             <StatusBadge status={order.status} />
           </div>
-          <p className="text-sm text-muted-foreground mt-1">
+          <p className="mt-0.5 text-[13.5px] text-text-2">
             {t('payOrders.headerLine', {
               beneficiary: order.beneficiary_name || '—',
               date: formatDate(order.issue_date),
             })}
           </p>
+          <Money
+            value={order.total}
+            currency={currency}
+            nullLabel={t('ui.noData')}
+            className="mt-2 block text-[24px] font-semibold leading-[30px] tracking-[-0.02em] text-foreground sm:text-[26px]"
+          />
         </div>
 
-        <div className="flex items-center gap-2 flex-wrap">
-          <Button variant="secondary" onClick={downloadPdf} loading={pdfBusy}>
-            <Download className="w-4 h-4" />
+        <div className="flex flex-wrap items-center gap-2">
+          <ActionButton onClick={downloadPdf} loading={pdfBusy}>
+            <Download aria-hidden className="size-4" />
             {t('payOrders.downloadPdf')}
-          </Button>
+          </ActionButton>
 
           {canPrepare && isEditable(order.status) && (
-            <Link href={`/ordenes-pago/${order.id}/editar`}>
-              <Button variant="secondary">
-                <Pencil className="w-4 h-4" />
-                {t('payOrders.edit')}
-              </Button>
+            <Link href={`/ordenes-pago/${order.id}/editar`} className={actionButtonClass('secondary')}>
+              <Pencil aria-hidden className="size-4" />
+              {t('payOrders.edit')}
             </Link>
           )}
 
-          {canDo(order.status, 'pending') && canTransition(order.status, 'pending') && (
-            <Button variant="primary" onClick={() => setDialog('submit')}>
-              <Send className="w-4 h-4" />
+          {can('pending') && (
+            <ActionButton variant={variantFor('pending', 'secondary')} onClick={() => setDialog('submit')}>
+              <Send aria-hidden className="size-4" />
               {t('payOrders.submit')}
-            </Button>
+            </ActionButton>
           )}
 
-          {canDo(order.status, 'approved') && canTransition(order.status, 'approved') && (
-            <Button variant="primary" onClick={() => setDialog('approve')}>
-              <CheckCheck className="w-4 h-4" />
+          {can('approved') && (
+            <ActionButton variant={variantFor('approved', 'secondary')} onClick={() => setDialog('approve')}>
+              <CheckCheck aria-hidden className="size-4" />
               {t('payOrders.approve')}
-            </Button>
+            </ActionButton>
           )}
 
-          {canDo(order.status, 'rejected') && canTransition(order.status, 'rejected') && (
-            <Button variant="destructive" onClick={() => setDialog('reject')}>
-              <X className="w-4 h-4" />
+          {can('rejected') && (
+            <ActionButton variant="danger" onClick={() => setDialog('reject')}>
+              <X aria-hidden className="size-4" />
               {t('payOrders.reject')}
-            </Button>
+            </ActionButton>
           )}
 
-          {canDo(order.status, 'paid') && canTransition(order.status, 'paid') && (
-            <Button variant="primary" onClick={() => setDialog('pay')}>
-              <Wallet className="w-4 h-4" />
+          {can('paid') && (
+            <ActionButton variant={variantFor('paid', 'secondary')} onClick={() => setDialog('pay')}>
+              <Wallet aria-hidden className="size-4" />
               {t('payOrders.markPaid')}
-            </Button>
+            </ActionButton>
           )}
 
-          {canDo(order.status, 'draft') && canTransition(order.status, 'draft') && order.status !== 'draft' && (
-            <Button variant="ghost" onClick={() => setDialog('reopen')}>
+          {can('draft') && (
+            <ActionButton variant={variantFor('draft', 'ghost')} onClick={() => setDialog('reopen')}>
+              <RotateCcw aria-hidden className="size-4" />
               {t('payOrders.reopen')}
-            </Button>
+            </ActionButton>
           )}
 
-          {canDo(order.status, 'cancelled') && canTransition(order.status, 'cancelled') && (
-            <Button variant="ghost" onClick={() => setDialog('cancel')}>
-              <Ban className="w-4 h-4" />
+          {can('cancelled') && (
+            <ActionButton variant="ghost" onClick={() => setDialog('cancel')}>
+              <Ban aria-hidden className="size-4" />
               {t('payOrders.void')}
-            </Button>
+            </ActionButton>
           )}
         </div>
       </div>
 
       {isCreator && order.status === 'pending' && (
-        <p className="text-xs text-muted-foreground">{t('payOrders.selfApproveNotice')}</p>
+        <p className="text-[12.5px] text-text-3">{t('payOrders.selfApproveNotice')}</p>
       )}
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-        <div className="lg:col-span-2 space-y-6">
-          {/* ── Datos de la orden ─────────────────────────────────────── */}
-          <Card className="space-y-4">
-            <h2 className="text-base font-semibold">{t('payOrders.sectionOrder')}</h2>
-            <dl className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <ReadField label={t('payOrders.issueDate')} value={formatDate(order.issue_date)} />
-              <ReadField
-                label={t('payOrders.paymentDate')}
-                value={order.payment_date ? formatDate(order.payment_date) : '—'}
-              />
-              <ReadField label={t('payOrders.currency')} value={order.currency} />
-              <ReadField
-                label={t('payOrders.docLanguage')}
-                value={order.locale === 'en' ? 'English' : 'Español'}
-              />
-            </dl>
-          </Card>
-
-          {/* ── Beneficiario ──────────────────────────────────────────── */}
-          <Card className="space-y-4">
-            <h2 className="text-base font-semibold">{t('payOrders.sectionBeneficiary')}</h2>
-            <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <ReadField label={t('payOrders.benName')} value={order.beneficiary_name || '—'} strong />
-              <ReadField label={t('payOrders.benTaxId')} value={order.beneficiary_tax_id || '—'} />
-              <ReadField label={t('payOrders.benEmail')} value={order.beneficiary_email || '—'} />
-              <ReadField label={t('payOrders.benCountry')} value={order.beneficiary_country || '—'} />
-            </dl>
-          </Card>
-
-          {/* ── Detalle ───────────────────────────────────────────────── */}
-          <Card className="space-y-4">
-            <h2 className="text-base font-semibold">{t('payOrders.sectionLines')}</h2>
-            <DataTable<PaymentOrderLine>
-              data={order.lines ?? []}
-              density="compact"
-              columns={[
-                { header: t('payOrders.lineDescription'), accessor: (l) => l.description || '—' },
-                {
-                  header: t('payOrders.lineUnitValue'),
-                  align: 'right',
-                  accessor: (l) => <span className="tabular-nums">{money(l.unitValue)}</span>,
-                },
-                {
-                  header: t('payOrders.lineQuantity'),
-                  align: 'right',
-                  accessor: (l) => <span className="tabular-nums">{l.quantity}</span>,
-                },
-                {
-                  header: t('payOrders.lineAmount'),
-                  align: 'right',
-                  accessor: (l) => <span className="font-medium tabular-nums">{money(l.amount)}</span>,
-                },
+      <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-3">
+        <div className="min-w-0 space-y-4 lg:col-span-2">
+          {/* ── Detalle (líneas) ──────────────────────────────────────── */}
+          <Panel
+            title={t('payOrders.sectionLines')}
+            hint={t('payOrders.linesHint', { n: String(order.lines?.length ?? 0) })}
+            flush
+          >
+            <FinTable<LineRow>
+              caption={t('payOrders.sectionLines')}
+              columns={lineColumns}
+              rows={lineRows}
+              rowKey={(l) => String(l.idx)}
+              empty={t('payOrders.noLines')}
+              footerRows={[
+                { label: t('payOrders.subtotal'), values: { amount: order.subtotal } },
+                { label: t('payOrders.fees'), values: { amount: order.fees } },
               ]}
-              empty={<EmptyState compact title={t('payOrders.noLines')} />}
+              footer={{ label: t('payOrders.total'), values: { amount: order.total } }}
             />
-            <div className="border-t border-border pt-4 space-y-2">
-              <TotalRow label={t('payOrders.subtotal')} value={money(order.subtotal)} />
-              <TotalRow label={t('payOrders.fees')} value={money(order.fees)} />
-              <div className="flex items-center justify-between sm:justify-end sm:gap-8 border-t border-border pt-3">
-                <span className="text-sm font-semibold uppercase tracking-wide">{t('payOrders.total')}</span>
-                <span className="text-2xl sm:text-3xl font-bold tabular-nums sm:w-48 sm:text-right">
-                  {money(order.total)}
-                </span>
-              </div>
-            </div>
-          </Card>
+          </Panel>
+
+          {/* ── Beneficiario + datos de la orden ──────────────────────── */}
+          <div className="grid grid-cols-1 gap-4 min-[1100px]:grid-cols-2">
+            <Panel title={t('payOrders.sectionBeneficiary')}>
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <ReadField label={t('payOrders.benName')} value={order.beneficiary_name || '—'} strong />
+                <ReadField label={t('payOrders.benTaxId')} value={order.beneficiary_tax_id || '—'} />
+                <ReadField label={t('payOrders.benEmail')} value={order.beneficiary_email || '—'} breakAll />
+                <ReadField label={t('payOrders.benCountry')} value={order.beneficiary_country || '—'} />
+              </dl>
+            </Panel>
+            <Panel title={t('payOrders.sectionOrder')}>
+              <dl className="grid grid-cols-2 gap-3">
+                <ReadField label={t('payOrders.issueDate')} value={formatDate(order.issue_date)} num />
+                <ReadField
+                  label={t('payOrders.paymentDate')}
+                  value={order.payment_date ? formatDate(order.payment_date) : '—'}
+                  num
+                />
+                <ReadField label={t('payOrders.currency')} value={order.currency} />
+                <ReadField label={t('payOrders.docLanguage')} value={order.locale === 'en' ? 'English' : 'Español'} />
+              </dl>
+            </Panel>
+          </div>
 
           {/* ── Medio de pago ─────────────────────────────────────────── */}
-          <Card className="space-y-4">
-            <h2 className="text-base font-semibold flex items-center gap-2">
-              {crypto ? <Wallet className="w-4 h-4 text-muted-foreground" /> : <Landmark className="w-4 h-4 text-muted-foreground" />}
-              {t('payOrders.sectionMethod')}
-            </h2>
+          <Panel
+            title={t('payOrders.sectionMethod')}
+            hint={crypto ? t('payOrders.methodCryptoFull') : t('payOrders.methodBankFull')}
+          >
             {crypto ? (
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <ReadField label={t('payOrders.network')} value={order.crypto_network || '—'} />
                 <ReadField label={t('payOrders.memo')} value={order.crypto_memo || '—'} mono />
                 <div className="sm:col-span-2">
@@ -553,7 +610,7 @@ export default function OrdenPagoDetallePage() {
                 </div>
               </dl>
             ) : (
-              <dl className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <ReadField label={t('payOrders.bankName')} value={order.bank_name || '—'} />
                 <ReadField label={t('payOrders.accountHolder')} value={order.bank_account_holder || '—'} />
                 <ReadField label={t('payOrders.accountNumber')} value={order.bank_account_number || '—'} mono breakAll />
@@ -561,112 +618,46 @@ export default function OrdenPagoDetallePage() {
                 <ReadField label={t('payOrders.accountType')} value={order.bank_account_type || '—'} />
               </dl>
             )}
-          </Card>
-
-          {/* ── Comprobantes de pago (opcionales, hasta 5) ────────────── */}
-          {/* Metadato operativo: se pueden agregar o quitar aun con la orden
-              pagada. Solo desaparece en una orden anulada. */}
-          {order.status !== 'cancelled' && (proofs.length > 0 || order.status === 'paid') && (
-            <Card className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold flex items-center gap-2">
-                  <Paperclip className="w-4 h-4 text-muted-foreground" />
-                  {t('payOrders.proofSection')}
-                </h2>
-                {proofs.length > 0 && (
-                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                    {t('payOrders.proofCount', { n: String(proofs.length), max: MAX_PROOFS_STR })}
-                  </span>
-                )}
-              </div>
-
-              {/* `multiple`: se pueden elegir varios de una. El input se limpia
-                  siempre para poder volver a elegir el mismo archivo. */}
-              <input
-                ref={proofInputRef}
-                type="file"
-                multiple
-                accept={PROOF_ACCEPT}
-                className="sr-only"
-                onChange={(e) => {
-                  const picked = Array.from(e.target.files ?? []);
-                  e.target.value = '';
-                  void onProofsPicked(picked);
-                }}
-              />
-
-              {proofs.length > 0 ? (
-                <SavedFileList
-                  files={proofs}
-                  texts={{
-                    fallbackName: t('payOrders.proofSection'),
-                    uploadedAt: (date) =>
-                      t('payOrders.proofUploaded', { date: formatDateTime(date) }),
-                    view: t('payOrders.proofView'),
-                    viewAria: (name) => t('payOrders.proofViewItemAria', { name }),
-                    download: t('payOrders.proofDownload'),
-                    downloadAria: (name) => t('payOrders.proofDownloadAria', { name }),
-                    remove: t('payOrders.proofRemove'),
-                    removeAria: (name) => t('payOrders.proofRemoveItemAria', { name }),
-                  }}
-                  hrefFor={(f) => paymentProofUrl(order.id, f.id)}
-                  downloadHrefFor={(f) => paymentProofUrl(order.id, f.id, { download: true })}
-                  disabled={proofBusy}
-                  onRemove={(f) => {
-                    setProofToRemove(f as PaymentOrderProof);
-                    setDialog('removeProof');
-                  }}
-                />
-              ) : (
-                <p className="text-sm text-muted-foreground">{t('payOrders.proofNone')}</p>
-              )}
-
-              <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                <Button
-                  aria-label={t('payOrders.proofAddAria')}
-                  loading={proofBusy}
-                  disabled={proofsFull}
-                  onClick={() => proofInputRef.current?.click()}
-                >
-                  <Upload className="w-4 h-4" />
-                  {proofs.length === 0 ? t('payOrders.proofAttach') : t('payOrders.proofAdd')}
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  {proofsFull
-                    ? t('payOrders.proofMaxReached', { max: MAX_PROOFS_STR })
-                    : t('payOrders.proofHintMulti', { max: MAX_PROOFS_STR })}
-                </span>
-              </div>
-            </Card>
-          )}
+          </Panel>
 
           {/* ── Concepto ──────────────────────────────────────────────── */}
-          <Card className="space-y-3">
-            <h2 className="text-base font-semibold">{t('payOrders.sectionNotes')}</h2>
-            <p className="text-sm whitespace-pre-line text-muted-foreground">{order.notes || '—'}</p>
-          </Card>
+          <Panel title={t('payOrders.sectionNotes')}>
+            <p className="whitespace-pre-line text-[13px] text-text-2">{order.notes || '—'}</p>
+          </Panel>
 
-          {/* ── Documento de respaldo (opcional) ──────────────────────── */}
+          {/* ── Documentos de respaldo (opcionales, hasta 10) ─────────── */}
           {/* Compañero del concepto: la factura / contrato / cotización que
               justifica el pago. Va acá y no al lado del comprobante para que
               los dos adjuntos no se confundan nunca. */}
           {(attachments.length > 0 || order.status !== 'cancelled') && (
-            <Card className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="text-base font-semibold flex items-center gap-2">
-                  <FileText className="w-4 h-4 text-muted-foreground" />
-                  {t('payOrders.attachSection')}
-                </h2>
-                {attachments.length > 0 && (
-                  <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                    {t('payOrders.attachCount', {
-                      n: String(attachments.length),
-                      max: MAX_ATTACHMENTS_STR,
-                    })}
-                  </span>
-                )}
-              </div>
-
+            <Panel
+              title={t('payOrders.attachSection')}
+              hint={
+                <span className={NUM_CLASS}>
+                  {t('payOrders.fileCounter', { n: String(attachments.length), max: MAX_ATTACHMENTS_STR })}
+                </span>
+              }
+              actions={
+                order.status !== 'cancelled' ? (
+                  <ActionButton
+                    aria-label={t('payOrders.attachAddAria')}
+                    loading={attachBusy}
+                    disabled={attachmentsFull}
+                    onClick={() => attachInputRef.current?.click()}
+                  >
+                    <FileText aria-hidden className="size-4" />
+                    {attachments.length === 0 ? t('payOrders.attachAttach') : t('payOrders.attachAdd')}
+                  </ActionButton>
+                ) : undefined
+              }
+              footer={
+                order.status !== 'cancelled'
+                  ? attachmentsFull
+                    ? t('payOrders.attachMaxReached', { max: MAX_ATTACHMENTS_STR })
+                    : t('payOrders.attachHintMulti', { max: MAX_ATTACHMENTS_STR })
+                  : undefined
+              }
+            >
               {/* `multiple`: se pueden elegir varios de una. El input se limpia
                   siempre para poder volver a elegir el mismo archivo. */}
               <input
@@ -675,6 +666,8 @@ export default function OrdenPagoDetallePage() {
                 multiple
                 accept={ATTACHMENT_ACCEPT}
                 className="sr-only"
+                tabIndex={-1}
+                aria-hidden
                 onChange={(e) => {
                   const picked = Array.from(e.target.files ?? []);
                   e.target.value = '';
@@ -687,8 +680,7 @@ export default function OrdenPagoDetallePage() {
                   files={attachments}
                   texts={{
                     fallbackName: t('payOrders.attachSection'),
-                    uploadedAt: (date) =>
-                      t('payOrders.attachUploaded', { date: formatDateTime(date) }),
+                    uploadedAt: (date) => t('payOrders.attachUploaded', { date: formatDateTime(date) }),
                     view: t('payOrders.attachView'),
                     viewAria: (name) => t('payOrders.attachViewItemAria', { name }),
                     download: t('payOrders.attachDownload'),
@@ -711,84 +703,93 @@ export default function OrdenPagoDetallePage() {
                   }
                 />
               ) : (
-                <p className="text-sm text-muted-foreground">{t('payOrders.attachNone')}</p>
+                <p className="text-[13px] text-text-3">{t('payOrders.attachNone')}</p>
               )}
+            </Panel>
+          )}
 
-              {order.status !== 'cancelled' && (
-                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-                  <Button
-                    variant="secondary"
-                    aria-label={t('payOrders.attachAddAria')}
-                    loading={attachBusy}
-                    disabled={attachmentsFull}
-                    onClick={() => attachInputRef.current?.click()}
-                  >
-                    <FileText className="w-4 h-4" />
-                    {attachments.length === 0
-                      ? t('payOrders.attachAttach')
-                      : t('payOrders.attachAdd')}
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    {attachmentsFull
-                      ? t('payOrders.attachMaxReached', { max: MAX_ATTACHMENTS_STR })
-                      : t('payOrders.attachHintMulti', { max: MAX_ATTACHMENTS_STR })}
-                  </span>
-                </div>
+          {/* ── Comprobantes de pago (opcionales, hasta 10) ───────────── */}
+          {/* Metadato operativo: se pueden agregar o quitar aun con la orden
+              pagada. Solo desaparece en una orden anulada. */}
+          {order.status !== 'cancelled' && (proofs.length > 0 || order.status === 'paid') && (
+            <Panel
+              title={
+                <span className="inline-flex items-center gap-1.5">
+                  <Paperclip aria-hidden className="size-4 text-text-3" />
+                  {t('payOrders.proofSection')}
+                </span>
+              }
+              hint={
+                <span className={NUM_CLASS}>
+                  {t('payOrders.fileCounter', { n: String(proofs.length), max: MAX_PROOFS_STR })}
+                </span>
+              }
+              actions={
+                <ActionButton
+                  aria-label={t('payOrders.proofAddAria')}
+                  loading={proofBusy}
+                  disabled={proofsFull}
+                  onClick={() => proofInputRef.current?.click()}
+                >
+                  <Upload aria-hidden className="size-4" />
+                  {proofs.length === 0 ? t('payOrders.proofAttach') : t('payOrders.proofAdd')}
+                </ActionButton>
+              }
+              footer={
+                proofsFull
+                  ? t('payOrders.proofMaxReached', { max: MAX_PROOFS_STR })
+                  : t('payOrders.proofHintMulti', { max: MAX_PROOFS_STR })
+              }
+            >
+              {/* `multiple`: se pueden elegir varios de una. El input se limpia
+                  siempre para poder volver a elegir el mismo archivo. */}
+              <input
+                ref={proofInputRef}
+                type="file"
+                multiple
+                accept={PROOF_ACCEPT}
+                className="sr-only"
+                tabIndex={-1}
+                aria-hidden
+                onChange={(e) => {
+                  const picked = Array.from(e.target.files ?? []);
+                  e.target.value = '';
+                  void onProofsPicked(picked);
+                }}
+              />
+
+              {proofs.length > 0 ? (
+                <SavedFileList
+                  files={proofs}
+                  texts={{
+                    fallbackName: t('payOrders.proofSection'),
+                    uploadedAt: (date) => t('payOrders.proofUploaded', { date: formatDateTime(date) }),
+                    view: t('payOrders.proofView'),
+                    viewAria: (name) => t('payOrders.proofViewItemAria', { name }),
+                    download: t('payOrders.proofDownload'),
+                    downloadAria: (name) => t('payOrders.proofDownloadAria', { name }),
+                    remove: t('payOrders.proofRemove'),
+                    removeAria: (name) => t('payOrders.proofRemoveItemAria', { name }),
+                  }}
+                  hrefFor={(f) => paymentProofUrl(order.id, f.id)}
+                  downloadHrefFor={(f) => paymentProofUrl(order.id, f.id, { download: true })}
+                  disabled={proofBusy}
+                  onRemove={(f) => {
+                    setProofToRemove(f as PaymentOrderProof);
+                    setDialog('removeProof');
+                  }}
+                />
+              ) : (
+                <p className="text-[13px] text-text-3">{t('payOrders.proofNone')}</p>
               )}
-            </Card>
+            </Panel>
           )}
         </div>
 
-        {/* ── Historial ───────────────────────────────────────────────── */}
-        <Card className="space-y-4 lg:sticky lg:top-4">
-          <h2 className="text-base font-semibold flex items-center gap-2">
-            <History className="w-4 h-4 text-muted-foreground" />
-            {t('payOrders.timeline')}
-          </h2>
-          <ol className="space-y-4">
-            {timeline.map((ev, i) => (
-              <li key={i} className="relative pl-6">
-                <span
-                  className={cn(
-                    'absolute left-0 top-1.5 w-2.5 h-2.5 rounded-full',
-                    ev.tone === 'positive' && 'bg-positive',
-                    ev.tone === 'negative' && 'bg-negative',
-                    ev.tone === 'warning' && 'bg-warning',
-                    ev.tone === 'neutral' && 'bg-muted-foreground/50',
-                  )}
-                  aria-hidden
-                />
-                {i < timeline.length - 1 && (
-                  <span className="absolute left-[4.5px] top-5 bottom-[-1rem] w-px bg-border" aria-hidden />
-                )}
-                <p className="text-sm font-medium leading-snug">{ev.title}</p>
-                {ev.when && <p className="text-xs text-muted-foreground mt-0.5">{ev.when}</p>}
-                {ev.detail && (
-                  <p className="text-xs text-muted-foreground mt-1 break-words">{ev.detail}</p>
-                )}
-                {ev.reference && (
-                  <p className="text-xs text-muted-foreground mt-1 min-w-0">
-                    <span className="block">{t('payOrders.tlReferenceLabel')}</span>
-                    {/* break-all: un hash o una URL de explorer no tienen
-                        espacios, así que sin esto desbordan la tarjeta. */}
-                    {isUrl(ev.reference) ? (
-                      <a
-                        href={ev.reference}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-info hover:underline break-all"
-                      >
-                        {ev.reference}
-                      </a>
-                    ) : (
-                      <span className="break-all font-mono">{ev.reference}</span>
-                    )}
-                  </p>
-                )}
-              </li>
-            ))}
-          </ol>
-        </Card>
+        {/* ── Línea de tiempo ─────────────────────────────────────────── */}
+        <Panel title={t('payOrders.timeline')} hint={t('payOrders.tlHint')} className="lg:sticky lg:top-4">
+          <Timeline events={timeline} upcoming={upcoming} />
+        </Panel>
       </div>
 
       {/* ── Diálogos de transición ───────────────────────────────────────── */}
@@ -833,7 +834,6 @@ export default function OrdenPagoDetallePage() {
           label={t('payOrders.reason')}
           confirmLabel={t('payOrders.reject')}
           errorLabel={t('payOrders.errReason')}
-          tone="danger"
           busy={busy}
           onClose={() => setDialog(null)}
           onConfirm={(reason) => runTransition('rejected', { reason })}
@@ -847,7 +847,6 @@ export default function OrdenPagoDetallePage() {
           label={t('payOrders.reason')}
           confirmLabel={t('payOrders.void')}
           errorLabel={t('payOrders.errReason')}
-          tone="danger"
           busy={busy}
           onClose={() => setDialog(null)}
           onConfirm={(reason) => runTransition('cancelled', { reason })}
@@ -892,17 +891,7 @@ export default function OrdenPagoDetallePage() {
   );
 }
 
-// ── Historial ───────────────────────────────────────────────────────────────
-
-interface TimelineEvent {
-  title: string;
-  when?: string;
-  detail?: string;
-  /** Referencia de pago: se renderiza aparte porque puede ser una URL
-   *  (link clickeable) y suele ser larga (necesita corte de palabra). */
-  reference?: string;
-  tone: 'positive' | 'negative' | 'warning' | 'neutral';
-}
+// ── Línea de tiempo ─────────────────────────────────────────────────────────
 
 /** ¿La referencia es un link? Kevin a veces pega el hash y a veces la URL del
  *  explorer; cuando es URL conviene que se pueda abrir de un clic. Solo
@@ -916,53 +905,88 @@ function isUrl(value: string): boolean {
   }
 }
 
-function buildTimeline(o: PaymentOrder, t: (k: string, p?: Record<string, string>) => string): TimelineEvent[] {
-  const events: TimelineEvent[] = [];
-  const who = (name: string | null) => name || t('payOrders.unknownUser');
+const EVENT_TITLE_KEY: Record<TimelineEvent['kind'], string> = {
+  created: 'payOrders.tlCreated',
+  submitted: 'payOrders.tlSubmitted',
+  approved: 'payOrders.tlApproved',
+  rejected: 'payOrders.tlRejected',
+  paid: 'payOrders.tlPaid',
+  cancelled: 'payOrders.tlCancelled',
+  expense: 'payOrders.tlExpense',
+};
 
-  events.push({
-    title: t('payOrders.tlCreated', { who: who(o.created_by_name) }),
-    when: o.created_at ? formatDateTime(o.created_at) : undefined,
-    tone: 'neutral',
-  });
-  if (o.submitted_at) {
-    events.push({ title: t('payOrders.tlSubmitted'), when: formatDateTime(o.submitted_at), tone: 'warning' });
-  }
-  if (o.approved_at) {
-    events.push({
-      title: t('payOrders.tlApproved', { who: who(o.approved_by_name) }),
-      when: formatDateTime(o.approved_at),
-      tone: 'positive',
-    });
-  }
-  if (o.rejected_at) {
-    events.push({
-      title: t('payOrders.tlRejected', { who: who(o.rejected_by_name) }),
-      when: formatDateTime(o.rejected_at),
-      detail: o.rejection_reason ? t('payOrders.tlReason', { reason: o.rejection_reason }) : undefined,
-      tone: 'negative',
-    });
-  }
-  if (o.paid_at) {
-    events.push({
-      title: t('payOrders.tlPaid', { who: who(o.paid_by_name) }),
-      when: formatDateTime(o.paid_at),
-      reference: o.payment_reference || undefined,
-      tone: 'positive',
-    });
-  }
-  if (o.cancelled_at) {
-    events.push({
-      title: t('payOrders.tlCancelled', { who: who(o.cancelled_by_name) }),
-      when: formatDateTime(o.cancelled_at),
-      detail: o.cancellation_reason ? t('payOrders.tlReason', { reason: o.cancellation_reason }) : undefined,
-      tone: 'negative',
-    });
-  }
-  if (o.expense_id) {
-    events.push({ title: t('payOrders.tlExpense'), tone: 'neutral' });
-  }
-  return events;
+const NEXT_KEY: Record<UpcomingStep, string> = {
+  submitted: 'payOrders.tlNextSubmitted',
+  approved: 'payOrders.tlNextApproved',
+  paid: 'payOrders.tlNextPaid',
+};
+
+function Timeline({ events, upcoming }: { events: TimelineEvent[]; upcoming: UpcomingStep[] }) {
+  const { t } = useI18n();
+  const total = events.length + upcoming.length;
+  return (
+    <ol className="space-y-0">
+      {events.map((ev, i) => (
+        <li key={`${ev.kind}-${i}`} className="relative pb-4 pl-7 last:pb-0" data-kind={ev.kind} data-tone={ev.tone}>
+          {/* Punto con halo: el par texto/fondo del badge del mismo kind
+              (STATUS_BADGE_CLASSES) — sin una segunda tabla de colores. */}
+          <span
+            aria-hidden
+            className={cn(
+              'absolute left-0 top-0.5 inline-flex size-4 items-center justify-center rounded-full',
+              STATUS_BADGE_CLASSES[ev.tone],
+            )}
+          >
+            <span className="size-1.5 rounded-full bg-current" />
+          </span>
+          {i < total - 1 && <span aria-hidden className="absolute bottom-0 left-[7.5px] top-5 w-px bg-border" />}
+          <p className={cn('text-[13px] font-medium leading-5', ev.tone === 'bad' ? 'text-neg' : 'text-foreground')}>
+            {/* «Enviada» y «egreso» no tienen {who}: el reemplazo no hace nada. */}
+            {t(EVENT_TITLE_KEY[ev.kind], { who: ev.actor ?? t('payOrders.unknownUser') })}
+          </p>
+          {ev.at && <p className={cn(NUM_CLASS, 'text-[12px] text-text-3')}>{formatDateTime(ev.at)}</p>}
+          {ev.selfApproved && <p className="mt-0.5 text-[12px] text-text-3">{t('payOrders.tlSelfApproved')}</p>}
+          {ev.reason && (
+            <p className="mt-1 break-words text-[12px] text-text-2">{t('payOrders.tlReason', { reason: ev.reason })}</p>
+          )}
+          {ev.reference && (
+            <p className="mt-1 min-w-0 text-[12px] text-text-2">
+              <span className="block text-text-3">{t('payOrders.tlReferenceLabel')}</span>
+              {/* break-all: un hash o una URL de explorer no tienen espacios,
+                  así que sin esto desbordan el panel. */}
+              {isUrl(ev.reference) ? (
+                <a
+                  href={ev.reference}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="break-all text-info hover:underline"
+                >
+                  {ev.reference}
+                </a>
+              ) : (
+                <span className="break-all font-mono">{ev.reference}</span>
+              )}
+            </p>
+          )}
+        </li>
+      ))}
+      {upcoming.map((step, j) => (
+        <li key={`next-${step}`} className="relative pb-4 pl-7 last:pb-0" data-kind={`next-${step}`}>
+          <span
+            aria-hidden
+            className="absolute left-[3px] top-[5px] size-2.5 rounded-full border border-dashed border-border-strong bg-card"
+          />
+          {events.length + j < total - 1 && (
+            <span aria-hidden className="absolute bottom-0 left-[7.5px] top-5 w-px border-l border-dashed border-border" />
+          )}
+          <p className="text-[13px] leading-5 text-text-3">
+            <span className="sr-only">{t('payOrders.tlNextTitle')}: </span>
+            {t(NEXT_KEY[step])}
+          </p>
+        </li>
+      ))}
+    </ol>
+  );
 }
 
 // ── Piezas de presentación ──────────────────────────────────────────────────
@@ -971,9 +995,9 @@ function BackLink({ label }: { label: string }) {
   return (
     <Link
       href="/ordenes-pago"
-      className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+      className="inline-flex items-center gap-1.5 text-[13px] text-text-2 hover:text-foreground"
     >
-      <ArrowLeft className="w-4 h-4" />
+      <ArrowLeft aria-hidden className="size-4" />
       {label}
     </Link>
   );
@@ -985,22 +1009,25 @@ function ReadField({
   mono,
   strong,
   breakAll,
+  num,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   strong?: boolean;
   breakAll?: boolean;
+  num?: boolean;
 }) {
   return (
-    <div>
-      <dt className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</dt>
+    <div className="min-w-0">
+      <dt className="text-[12px] font-medium text-text-3">{label}</dt>
       <dd
         className={cn(
-          'mt-1 text-sm',
-          mono && 'font-mono',
+          'mt-0.5 text-[13px] text-foreground',
+          mono && 'font-mono text-[12px]',
           strong && 'font-semibold',
           breakAll && 'break-all',
+          num && NUM_CLASS,
         )}
       >
         {value}
@@ -1009,23 +1036,13 @@ function ReadField({
   );
 }
 
-function TotalRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex items-center justify-between sm:justify-end sm:gap-8">
-      <span className="text-sm text-muted-foreground">{label}</span>
-      <span className="text-sm font-medium tabular-nums sm:w-48 sm:text-right">{value}</span>
-    </div>
-  );
-}
-
-/** Modal chico para transiciones que exigen un motivo escrito. */
+/** Modal chico para transiciones que exigen un motivo escrito (rechazar, anular). */
 function ReasonDialog({
   title,
   description,
   label,
   confirmLabel,
   errorLabel,
-  tone,
   busy,
   onConfirm,
   onClose,
@@ -1035,7 +1052,6 @@ function ReasonDialog({
   label: string;
   confirmLabel: string;
   errorLabel: string;
-  tone: 'default' | 'danger';
   busy: boolean;
   onConfirm: (reason: string) => void;
   onClose: () => void;
@@ -1046,13 +1062,9 @@ function ReasonDialog({
 
   return (
     <Modal title={title} onClose={busy ? () => {} : onClose}>
-      <p className="text-sm text-muted-foreground">{description}</p>
-      <label className="block">
-        <span className="block text-sm font-medium mb-1.5">
-          {label}
-          <span className="text-negative"> *</span>
-        </span>
-        <textarea
+      <p className="text-[13px] text-text-2">{description}</p>
+      <Field label={label} required error={error || undefined}>
+        <Textarea
           autoFocus
           rows={3}
           value={reason}
@@ -1060,16 +1072,15 @@ function ReasonDialog({
             setReason(e.target.value);
             setError('');
           }}
-          className={cn(INPUT, 'resize-y', error && 'border-negative')}
+          className="resize-y"
         />
-        {error && <span className="block text-xs text-negative mt-1">{error}</span>}
-      </label>
-      <div className="flex justify-end gap-3 pt-2">
-        <Button onClick={onClose} disabled={busy}>
+      </Field>
+      <div className="flex justify-end gap-2 pt-2">
+        <ActionButton onClick={onClose} disabled={busy}>
           {t('payOrders.cancel')}
-        </Button>
-        <Button
-          variant={tone === 'danger' ? 'destructive' : 'primary'}
+        </ActionButton>
+        <ActionButton
+          variant="danger"
           loading={busy}
           onClick={() => {
             if (!reason.trim()) {
@@ -1080,13 +1091,13 @@ function ReasonDialog({
           }}
         >
           {confirmLabel}
-        </Button>
+        </ActionButton>
       </div>
     </Modal>
   );
 }
 
-/** Modal de "marcar como pagada": referencia + fecha + egreso del período. */
+/** Modal de "marcar como pagada": referencia + fecha + comprobantes + egreso del período. */
 function PayDialog({
   busy,
   defaultDate,
@@ -1108,6 +1119,7 @@ function PayDialog({
 }) {
   const { t } = useI18n();
   const { allExpenses } = useData();
+  const proofInputRef = useRef<HTMLInputElement>(null);
   const [reference, setReference] = useState('');
   const [date, setDate] = useState(defaultDate);
   const [createExpense, setCreateExpense] = useState(true);
@@ -1131,14 +1143,10 @@ function PayDialog({
 
   return (
     <Modal title={t('payOrders.payTitle')} onClose={busy ? () => {} : onClose}>
-      <p className="text-sm text-muted-foreground">{t('payOrders.payDesc')}</p>
+      <p className="text-[13px] text-text-2">{t('payOrders.payDesc')}</p>
 
-      <label className="block">
-        <span className="block text-sm font-medium mb-1.5">
-          {t('payOrders.payReference')}
-          <span className="text-negative"> *</span>
-        </span>
-        <input
+      <Field label={t('payOrders.payReference')} required error={error || undefined}>
+        <Input
           autoFocus
           value={reference}
           onChange={(e) => {
@@ -1147,36 +1155,32 @@ function PayDialog({
           }}
           spellCheck={false}
           placeholder={t('payOrders.payReferencePlaceholder')}
-          className={cn(INPUT, 'font-mono', error && 'border-negative')}
+          className="font-mono"
         />
-        {error && <span className="block text-xs text-negative mt-1">{error}</span>}
-      </label>
+      </Field>
 
-      <label className="block">
-        <span className="block text-sm font-medium mb-1.5">{t('payOrders.payDate')}</span>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={INPUT} />
-      </label>
+      <Field label={t('payOrders.payDate')}>
+        <Input type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+      </Field>
 
       {/* Comprobantes: OPCIONALES, hasta MAX_PAYMENT_PROOFS. Se suben después
           de registrar el pago, así que si falla la subida el pago igual queda
           asentado. */}
       <div className="space-y-1.5">
         <div className="flex items-center justify-between gap-3">
-          <span className="block text-sm font-medium">{t('payOrders.proofField')}</span>
-          {proofFiles.length > 0 && (
-            <span className="text-xs text-muted-foreground tabular-nums">
-              {t('payOrders.proofCount', {
-                n: String(proofFiles.length),
-                max: String(MAX_PAYMENT_PROOFS),
-              })}
-            </span>
-          )}
+          <span className="text-[12.5px] font-medium text-text-2">{t('payOrders.proofField')}</span>
+          <span className={cn(NUM_CLASS, 'text-[12px] text-text-3')}>
+            {t('payOrders.fileCounter', { n: String(proofFiles.length), max: MAX_PROOFS_STR })}
+          </span>
         </div>
         <input
+          ref={proofInputRef}
           type="file"
           multiple
           accept={PROOF_ACCEPT}
-          disabled={proofsLeft <= 0}
+          className="sr-only"
+          tabIndex={-1}
+          aria-hidden
           onChange={(e) => {
             const picked = Array.from(e.target.files ?? []);
             e.target.value = ''; // permite volver a elegir el mismo archivo
@@ -1186,74 +1190,70 @@ function PayDialog({
               return;
             }
             if (picked.length > proofsLeft) {
-              setFileError(t('payOrders.proofTooMany', { max: String(MAX_PAYMENT_PROOFS) }));
+              setFileError(t('payOrders.proofTooMany', { max: MAX_PROOFS_STR }));
               return;
             }
             setFileError('');
             setProofFiles((prev) => [...prev, ...picked]);
           }}
-          className={cn(
-            INPUT,
-            'file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-3 file:py-1 file:text-sm file:text-foreground',
-            fileError && 'border-negative',
-          )}
         />
+        <ActionButton disabled={proofsLeft <= 0} onClick={() => proofInputRef.current?.click()}>
+          <Upload aria-hidden className="size-4" />
+          {proofFiles.length === 0 ? t('payOrders.proofAttach') : t('payOrders.proofAdd')}
+        </ActionButton>
         <PickedFileList
           files={proofFiles}
           onRemove={(i) => setProofFiles((prev) => prev.filter((_, j) => j !== i))}
           removeAria={(name) => t('payOrders.proofUnselectAria', { name })}
         />
         {fileError ? (
-          <span className="block text-xs text-negative">{fileError}</span>
+          <p role="alert" className="text-[12px] text-neg">
+            {fileError}
+          </p>
         ) : (
-          <span className="block text-xs text-muted-foreground">
+          <p className="text-[12px] text-text-3">
             {proofsLeft <= 0
-              ? t('payOrders.proofMaxReached', { max: String(MAX_PAYMENT_PROOFS) })
-              : t('payOrders.proofHintMulti', { max: String(MAX_PAYMENT_PROOFS) })}
-          </span>
+              ? t('payOrders.proofMaxReached', { max: MAX_PROOFS_STR })
+              : t('payOrders.proofHintMulti', { max: MAX_PROOFS_STR })}
+          </p>
         )}
       </div>
 
-      <label className="flex items-start gap-2.5 cursor-pointer">
+      <label className="flex cursor-pointer items-start gap-2.5">
         <input
           type="checkbox"
           checked={createExpense}
           onChange={(e) => setCreateExpense(e.target.checked)}
-          className="mt-0.5 w-4 h-4 rounded border-border accent-[var(--color-primary)]"
+          className="mt-0.5 size-4 rounded-ui-sm border-control-border accent-primary"
         />
         <span>
-          <span className="block text-sm font-medium">{t('payOrders.payCreateExpense')}</span>
-          <span className="block text-xs text-muted-foreground">{t('payOrders.payCreateExpenseHint')}</span>
+          <span className="block text-[13px] font-medium text-foreground">{t('payOrders.payCreateExpense')}</span>
+          <span className="block text-[12px] text-text-3">{t('payOrders.payCreateExpenseHint')}</span>
         </span>
       </label>
 
       {/* La categoría solo tiene sentido si el egreso se va a crear. */}
       {createExpense && (
-        <label className="block">
-          <span className="block text-sm font-medium mb-1.5">{t('payOrders.payExpenseCategory')}</span>
-          <input
+        <Field label={t('payOrders.payExpenseCategory')} hint={t('payOrders.payExpenseCategoryHint')}>
+          <Input
             list="payorder-expense-categories"
             value={expenseCategory}
             onChange={(e) => setExpenseCategory(e.target.value)}
             placeholder={t('payOrders.payExpenseCategoryPlaceholder')}
-            className={INPUT}
           />
-          <datalist id="payorder-expense-categories">
-            {categoryOptions.map((c) => (
-              <option key={c} value={c} />
-            ))}
-          </datalist>
-          <span className="block text-xs text-muted-foreground mt-1">
-            {t('payOrders.payExpenseCategoryHint')}
-          </span>
-        </label>
+        </Field>
       )}
+      <datalist id="payorder-expense-categories">
+        {categoryOptions.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
 
-      <div className="flex justify-end gap-3 pt-2">
-        <Button onClick={onClose} disabled={busy}>
+      <div className="flex justify-end gap-2 pt-2">
+        <ActionButton onClick={onClose} disabled={busy}>
           {t('payOrders.cancel')}
-        </Button>
-        <Button
+        </ActionButton>
+        <ActionButton
           variant="primary"
           loading={busy}
           onClick={() => {
@@ -1273,7 +1273,7 @@ function PayDialog({
           }}
         >
           {t('payOrders.markPaid')}
-        </Button>
+        </ActionButton>
       </div>
     </Modal>
   );
@@ -1290,18 +1290,19 @@ function Modal({ title, children, onClose }: { title: string; children: React.Re
   }, [onClose]);
 
   return (
+    // Scrim de la spec (§6.1): negro al 45 %, el mismo en los dos temas.
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(0_0_0/0.45)] p-4"
       role="dialog"
       aria-modal="true"
       aria-label={title}
       onClick={onClose}
     >
       <div
-        className="bg-card rounded-xl shadow-[var(--elevation-3)] p-6 max-w-md w-full space-y-4 vex-pop-in max-h-[90vh] overflow-y-auto"
+        className="vex-pop-in max-h-[90vh] w-full max-w-md space-y-4 overflow-y-auto rounded-ui-xl border border-border bg-card p-5 shadow-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-lg font-semibold">{title}</h3>
+        <h3 className="text-[15px] font-semibold tracking-[-0.005em] text-foreground">{title}</h3>
         {children}
       </div>
     </div>

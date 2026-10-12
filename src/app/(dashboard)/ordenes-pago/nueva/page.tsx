@@ -9,12 +9,12 @@ import { useI18n } from '@/lib/i18n';
 export default function NuevaOrdenPagoPage() {
   const { t } = useI18n();
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Link
         href="/ordenes-pago"
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        className="inline-flex items-center gap-1.5 text-[13px] text-text-2 hover:text-foreground"
       >
-        <ArrowLeft className="w-4 h-4" />
+        <ArrowLeft aria-hidden className="size-4" />
         {t('payOrders.backToList')}
       </Link>
 

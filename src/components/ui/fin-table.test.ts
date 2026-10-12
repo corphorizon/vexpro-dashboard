@@ -140,6 +140,30 @@ describe('<FinTable>', () => {
     expect(out).toContain('$999.99');
   });
 
+  it('filas de pie previas al total (subtotal, comisiones): sin doble raya, el total la lleva una sola vez y va último', () => {
+    const out = html(
+      createElement(FinTable<Row>, {
+        columns: COLS,
+        rows: ROWS,
+        rowKey: (r) => r.id,
+        footerRows: [
+          { label: 'Subtotal', values: { amount: 170.75 } },
+          { label: 'Comisiones', values: { amount: 4.25 } },
+        ],
+        footer: { label: 'Total a pagar', values: { amount: 175 } },
+      }),
+    );
+    const foot = out.slice(out.indexOf('<tfoot'), out.indexOf('</tfoot>'));
+    expect(foot.match(/data-foot="sub"/g)).toHaveLength(2);
+    expect(foot.match(/data-foot="total"/g)).toHaveLength(1);
+    expect(foot.match(/inset_0_1\.5px_0_0_var\(--foreground\)/g)).toHaveLength(COLS.length);
+    expect(foot.indexOf('Subtotal')).toBeLessThan(foot.indexOf('Comisiones'));
+    expect(foot.indexOf('Comisiones')).toBeLessThan(foot.indexOf('Total a pagar'));
+    expect(foot).toContain('$170.75');
+    expect(foot).toContain('$4.25');
+    expect(foot).toContain('$175.00');
+  });
+
   it('tarjeta < 720 px: thead oculto, fila grid de 2 columnas, hideSm oculto', () => {
     const out = html(createElement(FinTable<Row>, { columns: COLS, rows: ROWS, rowKey: (r) => r.id }));
     expect(out).toContain('<thead class="max-[720px]:hidden"');
