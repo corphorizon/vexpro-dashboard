@@ -4,8 +4,11 @@
 //   GET  → cuentas del pool (filtro opcional ?status=active|inactive|error|all)
 //   POST → agrega una cuenta: lee MT5, analiza duplicados y calcula el PnL.
 //
-// Sólo superadmin: un pool de liquidez es información de plataforma, no de una
-// empresa. Por eso `verifySuperadminAuth()` y no el guard de módulos.
+// El GET lo leen también los miembros de empresas `liquidity_provider` con el
+// módulo visible (verifyLiquidityPoolRead, 2026-10-12): el pool ES el negocio
+// de la proveedora y su pantalla /liquidez-pool moría con 403 en cuanto entró
+// un usuario real. El POST (y todo lo que escribe) sigue siendo superadmin:
+// un pool de liquidez se ADMINISTRA a nivel plataforma.
 //
 // ── EL POST ES DONDE PASA TODO ─────────────────────────────────────────────
 // Agregar una cuenta dispara cuatro cosas en orden, y el orden importa:
@@ -22,7 +25,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySuperadminAuth } from '@/lib/api-auth';
+import { verifySuperadminAuth, verifyLiquidityPoolRead } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 import { leerCuentaEnSesion, type Mt5AccountInfo } from '@/lib/liquidity/mt5-account';
@@ -35,7 +38,7 @@ export const maxDuration = 120;
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifySuperadminAuth();
+    const auth = await verifyLiquidityPoolRead();
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();

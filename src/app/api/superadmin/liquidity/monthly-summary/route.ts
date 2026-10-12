@@ -26,7 +26,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextRequest, NextResponse } from 'next/server';
-import { verifySuperadminAuth } from '@/lib/api-auth';
+// Lectura abierta a miembros de empresas liquidity_provider (2026-10-12):
+// ver verifyLiquidityPoolRead en api-auth. Las mutaciones siguen superadmin.
+import { verifyLiquidityPoolRead } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { fetchAllRows } from '@/lib/supabase/fetch-all-rows';
 import { apiError } from '@/lib/api-error';
@@ -63,7 +65,7 @@ const redondear = (n: number) => Math.round(n * 100) / 100;
 
 export async function GET(request: NextRequest) {
   try {
-    const auth = await verifySuperadminAuth();
+    const auth = await verifyLiquidityPoolRead();
     if (auth instanceof NextResponse) return auth;
 
     const sp = request.nextUrl.searchParams;

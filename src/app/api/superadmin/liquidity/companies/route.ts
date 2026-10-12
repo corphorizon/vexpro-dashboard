@@ -15,7 +15,9 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { NextResponse } from 'next/server';
-import { verifySuperadminAuth } from '@/lib/api-auth';
+// Lectura abierta a miembros de empresas liquidity_provider (2026-10-12):
+// ver verifyLiquidityPoolRead en api-auth. Las mutaciones siguen superadmin.
+import { verifyLiquidityPoolRead } from '@/lib/api-auth';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { apiError } from '@/lib/api-error';
 
@@ -34,7 +36,7 @@ export interface LiquidityCompany {
 
 export async function GET() {
   try {
-    const auth = await verifySuperadminAuth();
+    const auth = await verifyLiquidityPoolRead();
     if (auth instanceof NextResponse) return auth;
 
     const admin = createAdminClient();

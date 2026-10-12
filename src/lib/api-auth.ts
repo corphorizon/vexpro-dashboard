@@ -436,6 +436,103 @@ export async function verifySuperadminAuth(): Promise<SuperadminAuthInfo | NextR
 }
 
 /**
+ * Lectura del Pool de Liquidez (2026-10-12): superadmin, o miembro de una
+ * empresa con modelo `liquidity_provider` y el módulo `liquidity_pool`
+ * visible para él.
+ *
+ * El pool es cross-tenant A PROPÓSITO: la empresa proveedora (modelo
+ * `liquidity_provider`, hoy Exura Liquidez) ES el negocio del pool, y su
+ * pantalla informativa lista cuentas de las empresas a las que provee —
+ * decisión tomada al mergear el modelo (2026-09, "Exura Liquidez
+ * informativa: pool + inversiones"). Los endpoints habían quedado
+ * solo-superadmin y la pantalla tenant murió con 403 en cuanto entró el
+ * primer usuario real (un Socio de Exura).
+ *
+ * SOLO LECTURA: las mutaciones del pool (agregar cuenta, editar, refrescar,
+ * borrar) siguen siendo de superadmin. Este helper NO debe usarse en un
+ * POST/PATCH/DELETE.
+ */
+export async function verifyLiquidityPoolRead(): Promise<
+  { userId: string; name: string; email: string; isSuperadmin: boolean } | NextResponse
+> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+    error,
+  } = await supabase.auth.getUser();
+  if (error || !user) {
+    return NextResponse.json({ success: false, error: 'No autenticado' }, { status: 401 });
+  }
+
+  // Superadmin: acceso completo, como siempre.
+  const { data: pu } = await supabase
+    .from('platform_users')
+    .select('id, name, email, twofa_enabled')
+    .eq('user_id', user.id)
+    .maybeSingle();
+  if (pu) {
+    const sealGate = await enforceTwofaSeal(user.id, pu.twofa_enabled);
+    if (sealGate) return sealGate;
+    return {
+      userId: user.id,
+      name: pu.name ?? '',
+      email: pu.email ?? user.email ?? '',
+      isSuperadmin: true,
+    };
+  }
+
+  // Miembro de empresa: solo si SU empresa es proveedora de liquidez y el
+  // módulo le es visible (rol + allowed_modules + modelo, vía enforceModules).
+  const { data: profile } = await supabase
+    .from('company_users')
+    .select('company_id, role, name, email, allowed_modules, twofa_enabled')
+    .eq('user_id', user.id)
+    .single();
+  if (!profile) {
+    return NextResponse.json(
+      { success: false, error: 'Usuario sin empresa asignada' },
+      { status: 403 },
+    );
+  }
+  const sealGate = await enforceTwofaSeal(user.id, profile.twofa_enabled);
+  if (sealGate) return sealGate;
+
+  const { data: comp } = await supabase
+    .from('companies')
+    .select('business_model')
+    .eq('id', profile.company_id)
+    .maybeSingle();
+  if (comp?.business_model !== 'liquidity_provider') {
+    return NextResponse.json(
+      {
+        success: false,
+        error: 'Acceso restringido — el pool solo es visible para empresas proveedoras de liquidez',
+      },
+      { status: 403 },
+    );
+  }
+
+  const gate = await enforceModules(
+    supabase,
+    profile.company_id,
+    {
+      role: profile.role,
+      isSuperadmin: false,
+      allowedModules: Array.isArray(profile.allowed_modules) ? profile.allowed_modules : null,
+    },
+    { modules: ['liquidity_pool'] },
+  );
+  if (gate) return gate;
+
+  return {
+    userId: user.id,
+    name: profile.name ?? '',
+    email: profile.email ?? user.email ?? '',
+    isSuperadmin: false,
+  };
+}
+
+/**
  * Verify the caller is authenticated and belongs to a company — any role.
  * Use for read-only endpoints that all company members can access
  * (e.g. movements, balances).

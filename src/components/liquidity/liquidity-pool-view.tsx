@@ -158,7 +158,19 @@ interface MesPnl {
   is_partial: boolean;
 }
 
-export function LiquidityPoolView({ backHref }: { backHref?: string }) {
+export function LiquidityPoolView({
+  backHref,
+  readOnly = false,
+}: {
+  backHref?: string;
+  /**
+   * true = usuario de empresa proveedora (2026-10-12): ve el pool pero las
+   * mutaciones (agregar, editar, refrescar, borrar) son de superadmin — el
+   * server las rechaza con 403, así que acá ni se ofrecen. No es cosmético:
+   * un botón que siempre falla es peor que no tener el botón.
+   */
+  readOnly?: boolean;
+}) {
   const [empresas, setEmpresas] = useState<Empresa[] | null>(null);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [cuentas, setCuentas] = useState<Cuenta[] | null>(null);
@@ -489,13 +501,17 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
               <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="hidden sm:inline">CSV</span>
             </ActionButton>
-            <ActionButton onClick={refrescarTodo} disabled={ocupado !== null} loading={ocupado === 'all'}>
-              {ocupado !== 'all' && <RefreshCw aria-hidden className="size-[15px]" strokeWidth={1.75} />}
-              {ocupado === 'all' ? 'Refrescando…' : 'Refrescar todo'}
-            </ActionButton>
-            <ActionButton variant="primary" onClick={() => setNuevaAbierta(true)} disabled={!companyId}>
-              <Plus aria-hidden className="size-4" /> Agregar cuenta
-            </ActionButton>
+            {!readOnly && (
+              <>
+                <ActionButton onClick={refrescarTodo} disabled={ocupado !== null} loading={ocupado === 'all'}>
+                  {ocupado !== 'all' && <RefreshCw aria-hidden className="size-[15px]" strokeWidth={1.75} />}
+                  {ocupado === 'all' ? 'Refrescando…' : 'Refrescar todo'}
+                </ActionButton>
+                <ActionButton variant="primary" onClick={() => setNuevaAbierta(true)} disabled={!companyId}>
+                  <Plus aria-hidden className="size-4" /> Agregar cuenta
+                </ActionButton>
+              </>
+            )}
           </>
         }
       />
@@ -591,18 +607,24 @@ export function LiquidityPoolView({ backHref }: { backHref?: string }) {
                 rows={filas}
                 rowKey={(c) => c.id}
                 empty={cuentas.length === 0
-                  ? 'Todavía no hay cuentas en el pool. Agregá la primera con «Agregar cuenta».'
+                  ? (readOnly
+                      ? 'Todavía no hay cuentas en el pool.'
+                      : 'Todavía no hay cuentas en el pool. Agregá la primera con «Agregar cuenta».')
                   : 'Sin resultados para la búsqueda.'}
                 rowActions={(c) => (
                   <>
                     <IconBtn title="Ver detalle" onClick={() => setDetalle(c)}><Eye aria-hidden className="size-4" strokeWidth={1.75} /></IconBtn>
-                    <IconBtn title="Editar" onClick={() => setEditando(c)}><Pencil aria-hidden className="size-4" strokeWidth={1.75} /></IconBtn>
-                    <IconBtn title="Refrescar" disabled={ocupado !== null} onClick={() => refrescarUna(c.id)}>
-                      <RefreshCw aria-hidden className={cn('size-4', ocupado === c.id && 'animate-spin')} strokeWidth={1.75} />
-                    </IconBtn>
-                    <IconBtn title="Eliminar" danger disabled={ocupado !== null} onClick={() => eliminar(c)}>
-                      <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
-                    </IconBtn>
+                    {!readOnly && (
+                      <>
+                        <IconBtn title="Editar" onClick={() => setEditando(c)}><Pencil aria-hidden className="size-4" strokeWidth={1.75} /></IconBtn>
+                        <IconBtn title="Refrescar" disabled={ocupado !== null} onClick={() => refrescarUna(c.id)}>
+                          <RefreshCw aria-hidden className={cn('size-4', ocupado === c.id && 'animate-spin')} strokeWidth={1.75} />
+                        </IconBtn>
+                        <IconBtn title="Eliminar" danger disabled={ocupado !== null} onClick={() => eliminar(c)}>
+                          <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
+                        </IconBtn>
+                      </>
+                    )}
                   </>
                 )}
                 footer={

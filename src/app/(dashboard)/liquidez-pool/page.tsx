@@ -12,7 +12,13 @@
 // lee cuentas MT5 y calcula el aporte al pool.
 
 import { LiquidityPoolView } from '@/components/liquidity/liquidity-pool-view';
+import { useAuth } from '@/lib/auth-context';
 
 export default function LiquidezPoolPage() {
-  return <LiquidityPoolView />;
+  // Dentro del tenant, el pool es informativo para los miembros de la empresa
+  // proveedora (2026-10-12): las mutaciones son de superadmin y el server las
+  // rechaza, así que la vista ni las ofrece. El superadmin "viendo como"
+  // conserva sus botones.
+  const { user } = useAuth();
+  return <LiquidityPoolView readOnly={!user?.is_superadmin} />;
 }
