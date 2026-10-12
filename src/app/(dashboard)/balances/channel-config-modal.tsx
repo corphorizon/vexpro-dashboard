@@ -25,10 +25,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlertTriangle,
   Eye,
   EyeOff,
-  Lock,
   Pencil,
   Plus,
   Save,
@@ -39,7 +37,12 @@ import type { ResolvedChannel, ChannelConfigRow } from '@/lib/channel-configs';
 import { apiFetch } from '@/lib/api-fetch';
 import { resolveChannels } from '@/lib/channel-configs';
 import { canRenameChannel } from '@/lib/api-channels';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
+import { cn } from '@/lib/utils';
+import { Field, Input, Select } from '@/components/ui/field';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { NUM_CLASS } from '@/components/ui/money';
 import { useI18n } from '@/lib/i18n';
 import {
   DEFAULT_LOCATION_TYPE,
@@ -68,8 +71,18 @@ interface Props {
   getValue: (channelKey: string) => number;
 }
 
-const INPUT =
-  'h-11 sm:h-9 px-3 text-base sm:text-sm rounded-lg border border-border bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-accent/30';
+// «Libro mayor» (2026-10-12): controles con `Field/Input/Select` (borde
+// `control-border` 3:1 y label siempre visible — antes el nombre y el saldo
+// inicial tenían sólo placeholder, que desaparece al escribir), avisos con
+// `Notice`, estados con `StatusBadge` (el «API» era azul 700 de la
+// paleta cruda con variante oscura a mano) y «Oculto · no suma» en texto, no sólo el
+// ojo tachado. Sólo presentación: alta, deuda, on-chain y reparto no cambiaron.
+const BTN =
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+const ICON_BTN =
+  'inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:size-10';
+const ROW_BTN =
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground disabled:opacity-50 [@media(pointer:coarse)]:size-10';
 
 export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props) {
   const { t, locale } = useI18n();
@@ -293,248 +306,232 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
       onClick={onClose}
     >
       <div
-        className="bg-background border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="channel-config-title"
+        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-ui-xl border border-border bg-card shadow-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-background">
-          <div>
-            <h2 className="text-lg font-semibold">{t('balances.cfgTitle')}</h2>
-            <p className="text-xs text-muted-foreground">{t('balances.cfgHint')}</p>
+        <div className="sticky top-0 z-[1] flex items-center justify-between gap-3 border-b border-border bg-card px-5 py-4">
+          <div className="min-w-0">
+            <h2 id="channel-config-title" className="text-[15px] font-semibold text-foreground">
+              {t('balances.cfgTitle')}
+            </h2>
+            <p className="text-[12.5px] text-text-3">{t('balances.cfgHint')}</p>
           </div>
-          <button
-            onClick={onClose}
-            className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-md hover:bg-muted"
-            aria-label={t('common.close')}
-          >
-            <X className="w-4 h-4" />
+          <button type="button" onClick={onClose} className={ICON_BTN} aria-label={t('common.close')}>
+            <X aria-hidden className="size-4" />
           </button>
         </div>
 
-        <div className="p-5 space-y-5">
-          {status && (
-            <div
-              className={`flex items-start gap-2 p-3 rounded-md text-xs border ${
-                status.kind === 'ok'
-                  ? 'bg-positive/10 border-positive/30 text-positive'
-                  : 'bg-negative/10 border-negative/30 text-negative'
-              }`}
-            >
-              {status.kind === 'err' && <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />}
-              <span>{status.msg}</span>
-            </div>
-          )}
+        <div className="space-y-5 p-5">
+          {status &&
+            (status.kind === 'err' ? (
+              <Notice kind="bad" title={status.msg} />
+            ) : (
+              <p role="status" className="text-[13px] font-medium text-pos">
+                {status.msg}
+              </p>
+            ))}
 
           {loading ? (
-            <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+            <p className="text-[13px] text-text-3">{t('common.loading')}</p>
           ) : (
             <>
               <section className="space-y-2">
-                <h3 className="text-sm font-medium">{t('balances.cfgChannels')}</h3>
-                {resolved.map((ch) => {
-                  // Quién se puede renombrar sale del registro único
-                  // (src/lib/api-channels.ts). Acá había una copia literal de
-                  // la del servidor con DOS canales, cuando ya había cuatro
-                  // automáticos: FairPay y Pay-Pros se ofrecían renombrables y
-                  // el servidor —que tenía la MISMA lista vieja— los aceptaba
-                  // (2026-08-31, auditoría de finanzas, ítem 14).
-                  // Sigue incluyendo manual + custom + los `auto` DERIVADOS
-                  // (liquidez / inversiones), cuyo nombre es nuestro.
-                  const canRename = canRenameChannel(ch.key, ch.isCustom);
-                  const isApi = !canRename;
-                  const editing = editingLabelFor === ch.key;
-                  const busy = saving === ch.key;
-                  const row = rowByKey.get(ch.key);
-                  const debtRow =
-                    row && isDebt(normalizeLocationType(row.location_type)) ? row : null;
-                  return (
-                    <div
-                      key={ch.key}
-                      className={`flex items-center gap-3 p-3 rounded-lg border ${
-                        ch.isVisible ? 'border-border' : 'border-border border-dashed bg-muted/20'
-                      }`}
-                    >
-                      {/* Visibility toggle */}
-                      <button
-                        onClick={() => toggleVisible(ch)}
-                        disabled={busy}
-                        className={`shrink-0 p-1.5 rounded-md border ${
-                          ch.isVisible
-                            ? 'border-positive/40 text-positive bg-positive/10'
-                            : 'border-muted text-muted-foreground'
-                        } disabled:opacity-50`}
-                        aria-label={ch.isVisible ? t('balances.cfgHide') : t('balances.cfgShow')}
-                        title={ch.isVisible ? t('balances.cfgVisibleTitle') : t('balances.cfgHiddenTitle')}
+                <h3 className="text-[13.5px] font-semibold text-foreground">{t('balances.cfgChannels')}</h3>
+                <ul className="divide-y divide-border rounded-ui-md border border-border">
+                  {resolved.map((ch) => {
+                    // Quién se puede renombrar sale del registro único
+                    // (src/lib/api-channels.ts). Acá había una copia literal de
+                    // la del servidor con DOS canales, cuando ya había cuatro
+                    // automáticos: FairPay y Pay-Pros se ofrecían renombrables y
+                    // el servidor —que tenía la MISMA lista vieja— los aceptaba
+                    // (2026-08-31, auditoría de finanzas, ítem 14).
+                    // Sigue incluyendo manual + custom + los `auto` DERIVADOS
+                    // (liquidez / inversiones), cuyo nombre es nuestro.
+                    const canRename = canRenameChannel(ch.key, ch.isCustom);
+                    const isApi = !canRename;
+                    const editing = editingLabelFor === ch.key;
+                    const busy = saving === ch.key;
+                    const row = rowByKey.get(ch.key);
+                    const debtRow =
+                      row && isDebt(normalizeLocationType(row.location_type)) ? row : null;
+                    return (
+                      <li
+                        key={ch.key}
+                        className={cn('flex items-center gap-3 px-3 py-2.5', !ch.isVisible && 'bg-surface-2')}
                       >
-                        {ch.isVisible ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
-                      </button>
+                        {/* Visibility toggle */}
+                        <button
+                          type="button"
+                          onClick={() => toggleVisible(ch)}
+                          disabled={busy}
+                          aria-pressed={ch.isVisible}
+                          className={cn(ICON_BTN, 'shrink-0', !ch.isVisible && 'border-dashed text-text-3')}
+                          aria-label={ch.isVisible ? t('balances.cfgHide') : t('balances.cfgShow')}
+                          title={ch.isVisible ? t('balances.cfgVisibleTitle') : t('balances.cfgHiddenTitle')}
+                        >
+                          {ch.isVisible ? (
+                            <Eye aria-hidden className="size-4" strokeWidth={1.75} />
+                          ) : (
+                            <EyeOff aria-hidden className="size-4" strokeWidth={1.75} />
+                          )}
+                        </button>
 
-                      <div className="flex-1 min-w-0">
-                        {editing ? (
-                          <div className="flex items-center gap-2">
-                            <input
-                              value={labelDraft}
-                              onChange={(e) => setLabelDraft(e.target.value)}
-                              className={`${INPUT} flex-1 min-w-0`}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter') {
-                                  e.preventDefault();
-                                  void saveLabel(ch);
-                                }
-                                if (e.key === 'Escape') {
+                        <div className="min-w-0 flex-1">
+                          {editing ? (
+                            <div className="flex items-center gap-2">
+                              <Input
+                                value={labelDraft}
+                                onChange={(e) => setLabelDraft(e.target.value)}
+                                aria-label={t('balances.cfgRename')}
+                                className="min-w-0 flex-1"
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    void saveLabel(ch);
+                                  }
+                                  if (e.key === 'Escape') {
+                                    setEditingLabelFor(null);
+                                    setLabelDraft('');
+                                  }
+                                }}
+                                autoFocus
+                              />
+                              <button
+                                type="button"
+                                onClick={() => saveLabel(ch)}
+                                disabled={busy}
+                                className={ROW_BTN}
+                                aria-label={t('balances.cfgSaveName')}
+                              >
+                                <Save aria-hidden className="size-4" strokeWidth={1.75} />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
                                   setEditingLabelFor(null);
                                   setLabelDraft('');
-                                }
-                              }}
-                              autoFocus
-                            />
-                            <button
-                              onClick={() => saveLabel(ch)}
-                              disabled={busy}
-                              className="p-1 text-positive hover:bg-positive/10 rounded"
-                              aria-label={t('balances.cfgSaveName')}
-                            >
-                              <Save className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                setEditingLabelFor(null);
-                                setLabelDraft('');
-                              }}
-                              className="p-1 text-muted-foreground hover:bg-muted rounded"
-                              aria-label={t('common.cancel')}
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        ) : (
-                          <>
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <p className="font-medium truncate">{ch.label}</p>
-                              {isApi && (
-                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-info/10 text-blue-700 dark:text-blue-300 border border-info/30">
-                                  <Lock className="w-2.5 h-2.5" /> API
-                                </span>
-                              )}
-                              {ch.isBuiltin && !isApi && (
-                                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-muted text-muted-foreground border border-border">
-                                  {t('balances.cfgBuiltin')}
-                                </span>
-                              )}
-                              {ch.isCustom && (
-                                <span className="px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-accent/10 text-accent border border-accent/30">
-                                  {t('balances.cfgCustom')}
-                                </span>
-                              )}
+                                }}
+                                className={ROW_BTN}
+                                aria-label={t('common.cancel')}
+                              >
+                                <X aria-hidden className="size-4" />
+                              </button>
                             </div>
-                            {debtRow ? (
-                              // Una deuda: rótulo + acreedor + monto en rojo. Sin
-                              // esto se leía como «Balance actual: $10.000», igual
-                              // que una wallet con plata.
-                              <p className="text-xs text-muted-foreground truncate">
-                                <span className="font-medium text-negative">
-                                  {t('cash.debtPrefix')} · {formatCurrency(getValue(ch.key))}
-                                </span>
-                                {debtRow.holder ? ` · ${debtRow.holder}` : ''}
-                              </p>
-                            ) : (
-                              <p className="text-xs text-muted-foreground truncate">
-                                {ch.description} · {t('balances.cfgCurrentBalance')}{' '}
-                                <span className="font-medium">{formatCurrency(getValue(ch.key))}</span>
-                              </p>
-                            )}
-                          </>
-                        )}
-                      </div>
-
-                      {!editing && (
-                        <div className="flex items-center gap-1 shrink-0">
-                          {canRename && (
-                            <button
-                              onClick={() => {
-                                setEditingLabelFor(ch.key);
-                                setLabelDraft(ch.label);
-                              }}
-                              disabled={busy}
-                              className="p-1.5 text-accent hover:bg-accent/10 rounded disabled:opacity-50"
-                              title={t('balances.cfgRename')}
-                              aria-label={t('balances.cfgRename')}
-                            >
-                              <Pencil className="w-3.5 h-3.5" />
-                            </button>
-                          )}
-                          {ch.isCustom && (
-                            <button
-                              onClick={() => deleteCustom(ch)}
-                              disabled={busy}
-                              className="p-1.5 text-negative hover:bg-negative/10 rounded disabled:opacity-50"
-                              title={t('balances.cfgDeleteChannel')}
-                              aria-label={t('balances.cfgDeleteChannel')}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                          ) : (
+                            <>
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                <p className="truncate text-[13px] font-medium text-foreground">{ch.label}</p>
+                                {isApi && <StatusBadge kind="info" label="API" />}
+                                {ch.isBuiltin && !isApi && (
+                                  <StatusBadge kind="neutral" label={t('balances.cfgBuiltin')} />
+                                )}
+                                {ch.isCustom && <StatusBadge kind="neutral" label={t('balances.cfgCustom')} />}
+                                {/* Oculto = fuera del total: se dice con texto,
+                                    no sólo con el ícono tachado. */}
+                                {!ch.isVisible && <StatusBadge kind="neutral" label={t('balances.cfgHiddenBadge')} />}
+                              </div>
+                              {debtRow ? (
+                                // Una deuda: rótulo + acreedor + monto con color
+                                // de pasivo. Sin esto se leía como «Balance actual:
+                                // $10.000», igual que una wallet con plata.
+                                <p className="truncate text-[12px] text-text-3">
+                                  <span className="font-medium text-neg">
+                                    {t('cash.debtPrefix')} · {formatMoney(getValue(ch.key))}
+                                  </span>
+                                  {debtRow.holder ? ` · ${debtRow.holder}` : ''}
+                                </p>
+                              ) : (
+                                <p className="truncate text-[12px] text-text-3">
+                                  {ch.description} · {t('balances.cfgCurrentBalance')}{' '}
+                                  <span className={cn(NUM_CLASS, 'font-medium text-text-2')}>
+                                    {formatMoney(getValue(ch.key))}
+                                  </span>
+                                </p>
+                              )}
+                            </>
                           )}
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+
+                        {!editing && (
+                          <div className="flex shrink-0 items-center gap-1">
+                            {canRename && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingLabelFor(ch.key);
+                                  setLabelDraft(ch.label);
+                                }}
+                                disabled={busy}
+                                className={ROW_BTN}
+                                title={t('balances.cfgRename')}
+                                aria-label={`${t('balances.cfgRename')} — ${ch.label}`}
+                              >
+                                <Pencil aria-hidden className="size-4" strokeWidth={1.75} />
+                              </button>
+                            )}
+                            {ch.isCustom && (
+                              <button
+                                type="button"
+                                onClick={() => deleteCustom(ch)}
+                                disabled={busy}
+                                className={cn(ROW_BTN, 'hover:text-neg')}
+                                title={t('balances.cfgDeleteChannel')}
+                                aria-label={`${t('balances.cfgDeleteChannel')} — ${ch.label}`}
+                              >
+                                <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
               </section>
 
               {/* Alta de una ubicación nueva, con todo lo que la define */}
-              <section className="pt-3 border-t border-border space-y-3">
-                <h3 className="text-sm font-medium">{t('balances.cfgAddLocation')}</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <input
-                    value={newChannelName}
-                    onChange={(e) => setNewChannelName(e.target.value)}
-                    placeholder={t('balances.cfgNamePlaceholder')}
-                    className={INPUT}
-                    aria-label={t('balances.cfgNamePlaceholder')}
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    min={newIsDebt ? 0 : undefined}
-                    value={newChannelBalance}
-                    onChange={(e) => setNewChannelBalance(e.target.value)}
-                    placeholder={newIsDebt ? t('balances.cfgLoanAmount') : t('balances.cfgInitialBalance')}
-                    className={`${INPUT} text-right`}
-                    aria-label={newIsDebt ? t('balances.cfgLoanAmount') : t('balances.cfgInitialBalance')}
-                  />
-                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                    {t('cash.locationType')}
-                    <select
-                      value={newType}
-                      onChange={(e) => setNewType(e.target.value as LocationType)}
-                      className={INPUT}
-                    >
+              <section className="space-y-3 border-t border-border pt-4">
+                <h3 className="text-[13.5px] font-semibold text-foreground">{t('balances.cfgAddLocation')}</h3>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field label={t('balances.cfgNamePlaceholder')} required>
+                    <Input value={newChannelName} onChange={(e) => setNewChannelName(e.target.value)} />
+                  </Field>
+                  <Field label={newIsDebt ? t('balances.cfgLoanAmount') : t('balances.cfgInitialBalance')}>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      min={newIsDebt ? 0 : undefined}
+                      inputMode="decimal"
+                      value={newChannelBalance}
+                      onChange={(e) => setNewChannelBalance(e.target.value)}
+                      className="text-right tabular-nums"
+                    />
+                  </Field>
+                  <Field label={t('cash.locationType')}>
+                    <Select value={newType} onChange={(e) => setNewType(e.target.value as LocationType)}>
                       {LOCATION_TYPES.map((type) => (
                         <option key={type} value={type}>
                           {LOCATION_TYPE_LABELS[type][lang]}
                         </option>
                       ))}
-                    </select>
-                  </label>
-                  <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                    {t('cash.holder')}
-                    <input
+                    </Select>
+                  </Field>
+                  <Field label={t('cash.holder')} required={requiresHolder(newType)}>
+                    <Input
                       value={newHolder}
                       onChange={(e) => setNewHolder(e.target.value)}
-                      placeholder={
-                        newIsDebt ? t('cash.debtHolderPlaceholder') : t('cash.holderPlaceholder')
-                      }
-                      required={requiresHolder(newType)}
-                      aria-required={requiresHolder(newType)}
-                      className={INPUT}
+                      placeholder={newIsDebt ? t('cash.debtHolderPlaceholder') : t('cash.holderPlaceholder')}
                     />
-                  </label>
+                  </Field>
                 </div>
 
                 {newIsDebt && (
-                  <p className="flex items-start gap-2 p-3 rounded-md text-xs border border-negative/30 bg-negative/5 text-muted-foreground">
-                    <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5 text-negative" />
-                    <span>{t('balances.cfgDebtHelp')}</span>
-                  </p>
+                  <Notice kind="info" title={LOCATION_TYPE_LABELS.debt[lang]}>
+                    {t('balances.cfgDebtHelp')}
+                  </Notice>
                 )}
 
                 <UnitSharesEditor units={units} value={newShares} onChange={setNewShares} />
@@ -543,27 +540,24 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
                     Con una dirección cargada, la ubicación deja de cargarse a
                     mano: el saldo lo pone el cron leyendo la cadena. */}
                 {newType === 'wallet' && (
-                  <div className="pt-3 border-t border-border">
-                    <OnchainWalletsEditor
-                      value={newOnchain}
-                      onChange={setNewOnchain}
-                      disabled={creating}
-                    />
+                  <div className="border-t border-border pt-3">
+                    <OnchainWalletsEditor value={newOnchain} onChange={setNewOnchain} disabled={creating} />
                   </div>
                 )}
 
-                <div className="flex items-center justify-between gap-3">
-                  <p className="text-xs text-muted-foreground">{t('balances.cfgAddHint')}</p>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-[12px] text-text-3">{t('balances.cfgAddHint')}</p>
                   <button
+                    type="button"
                     onClick={createCustom}
                     disabled={
                       creating ||
                       !newChannelName.trim() ||
                       (requiresHolder(newType) && !newHolder.trim())
                     }
-                    className="inline-flex items-center justify-center gap-1.5 min-h-11 sm:min-h-9 px-4 rounded-md bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 shrink-0"
+                    className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-ui-md bg-primary px-4 text-[13px] font-medium text-brand-on-primary hover:bg-primary/90 disabled:opacity-50 [@media(pointer:coarse)]:h-10"
                   >
-                    <Plus className="w-4 h-4" />
+                    <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} />
                     {creating ? t('balances.cfgAdding') : t('balances.cfgAdd')}
                   </button>
                 </div>
@@ -572,11 +566,8 @@ export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props
           )}
         </div>
 
-        <div className="p-5 border-t border-border sticky bottom-0 bg-background flex justify-end">
-          <button
-            onClick={onClose}
-            className="min-h-11 sm:min-h-9 px-4 rounded-lg border border-border text-sm hover:bg-muted"
-          >
+        <div className="sticky bottom-0 flex justify-end border-t border-border bg-card px-5 py-3">
+          <button type="button" onClick={onClose} className={BTN}>
             {t('common.close')}
           </button>
         </div>

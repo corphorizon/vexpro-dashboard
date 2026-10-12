@@ -110,6 +110,25 @@ export interface FinTableProps<R> {
 
 const ACTIONS_KEY = '__actions__';
 
+// Tarjeta móvil: las acciones van en la FILA 1, 3.ª columna — a la derecha del
+// monto, en la misma línea.
+//
+// POR QUÉ (2026-10-12, Balances): antes la celda de acciones entraba a
+// `cardLayout` como una columna «derecha» más y caía en la fila siguiente al
+// monto: una línea entera para un «···». Medido en /_design a 375 px: cada
+// tarjeta crecía ~28 px (de 2 a 3 líneas) sólo por eso.
+// DESCARTADO: superponer acciones y monto en la misma celda de grilla (se
+// pisan con montos largos) y ocultar las acciones en móvil (en táctil no hay
+// hover: serían inaccesibles).
+const ACTIONS_CARD_STYLE: React.CSSProperties = { gridColumn: 3, gridRow: 1 };
+
+/** ¿El render de acciones dibuja algo? null/false/'' o un array vacío no. */
+export function hasNodeContent(node: React.ReactNode): boolean {
+  if (node == null || node === false || node === true || node === '') return false;
+  if (Array.isArray(node)) return node.some(hasNodeContent);
+  return true;
+}
+
 function cardStyle(p: CardPlacement | undefined): React.CSSProperties | undefined {
   // gridColumn/gridRow no afectan a una celda `table-cell` (escritorio): sólo
   // actúan cuando la fila es grid (< 720 px).
@@ -142,7 +161,9 @@ export function FinTable<R>({
   const layoutCols = rowActions
     ? [...columns, { key: ACTIONS_KEY, kind: 'text' as const, cardSide: 'right' as const }]
     : columns;
-  const layout = cardLayout(layoutCols);
+  // Las acciones NO entran al reparto de filas de la tarjeta: van en una
+  // tercera columna de la fila 1, al lado del monto (ver ACTIONS_CARD_STYLE).
+  const layout = cardLayout(columns);
 
   const isNumeric = (c: FinColumn<R>) => c.kind === 'money' || c.kind === 'number';
   const alignOf = (c: FinColumn<R>) => c.align ?? (isNumeric(c) ? 'right' : 'left');
@@ -163,7 +184,11 @@ export function FinTable<R>({
     'max-[720px]:block max-[720px]:min-w-0',
   );
   const bodyTr = cn(
-    'max-[720px]:grid max-[720px]:grid-cols-[minmax(0,1fr)_auto] max-[720px]:items-center max-[720px]:gap-x-3 max-[720px]:gap-y-0.5',
+    'max-[720px]:grid max-[720px]:items-center max-[720px]:gap-x-3 max-[720px]:gap-y-0.5',
+    // Con acciones, la tarjeta tiene una 3.ª columna angosta para ellas.
+    rowActions
+      ? 'max-[720px]:grid-cols-[minmax(0,1fr)_auto_auto]'
+      : 'max-[720px]:grid-cols-[minmax(0,1fr)_auto]',
     'max-[720px]:border-b max-[720px]:border-border max-[720px]:px-4 max-[720px]:py-3',
   );
 
@@ -193,6 +218,8 @@ export function FinTable<R>({
     const key = rowKey(row);
     const selected = selectedKey != null && key === selectedKey;
     const clickable = Boolean(onRowClick);
+    const actions = rowActions ? rowActions(row) : null;
+    const hasActions = hasNodeContent(actions);
     return (
       <tr
         key={key}
@@ -254,8 +281,14 @@ export function FinTable<R>({
         })}
         {rowActions && (
           <td
-            style={cardStyle(layout[ACTIONS_KEY])}
-            className={cn(tdBase, rowH, 'w-px whitespace-nowrap text-right')}
+            style={ACTIONS_CARD_STYLE}
+            className={cn(
+              tdBase,
+              rowH,
+              'w-px whitespace-nowrap text-right',
+              // Sin acciones para esta fila: en la tarjeta no queda una celda vacía.
+              !hasActions && 'max-[720px]:hidden',
+            )}
             onClick={(e) => e.stopPropagation()}
           >
             <div
@@ -265,7 +298,7 @@ export function FinTable<R>({
                 '[@media(pointer:coarse)]:opacity-100',
               )}
             >
-              {rowActions(row)}
+              {actions}
             </div>
           </td>
         )}

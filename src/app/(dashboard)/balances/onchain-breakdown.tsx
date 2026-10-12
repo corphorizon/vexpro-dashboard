@@ -19,7 +19,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
 import { ONCHAIN_NETWORK_LABELS, isOnchainNetwork } from '@/lib/cash-locations';
 import type { OnchainSnapshotMeta } from '@/lib/types';
 
@@ -72,12 +72,12 @@ export function OnchainBreakdown({ meta, share = 1 }: Props) {
   if (usdtTotal > DUST) {
     rows.push(
       <div key="usdt" className="flex items-baseline justify-between gap-3">
-        <span className="text-muted-foreground">
+        <span className="text-text-3">
           USDT
           {/* Sub-desglose solo cuando el token vive en más de una cadena: con
               una sola red repetiría el mismo número dos veces. */}
           {usdtByNetwork.length > 1 && (
-            <span className="ml-1 text-[11px]">
+            <span className="ml-1 text-[12px]">
               (
               {usdtByNetwork
                 .map((n) => `${networkLabel(n.network)} ${formatAmount(Number(n.usdt) * share, locale)}`)
@@ -86,7 +86,7 @@ export function OnchainBreakdown({ meta, share = 1 }: Props) {
             </span>
           )}
         </span>
-        <span className="tabular-nums">{formatAmount(usdtTotal * share, locale)}</span>
+        <span className="tabular-nums slashed-zero whitespace-nowrap text-foreground">{formatAmount(usdtTotal * share, locale)}</span>
       </div>,
     );
   }
@@ -94,18 +94,18 @@ export function OnchainBreakdown({ meta, share = 1 }: Props) {
   for (const [symbol, native] of nativeBySymbol) {
     rows.push(
       <div key={symbol} className="flex items-baseline justify-between gap-3">
-        <span className="text-muted-foreground">
+        <span className="text-text-3">
           {symbol}
           {native.priceUsd !== null && (
-            <span className="ml-1 text-[11px]">
-              {t('onchain.atPrice', { price: formatCurrency(native.priceUsd) })}
+            <span className="ml-1 text-[12px]">
+              {t('onchain.atPrice', { price: formatMoney(native.priceUsd) })}
             </span>
           )}
         </span>
-        <span className="tabular-nums">
+        <span className="tabular-nums slashed-zero whitespace-nowrap text-foreground">
           {formatAmount(native.amount * share, locale)}
-          <span className="ml-2 text-muted-foreground">
-            ≈ {formatCurrency(native.valueUsd * share)}
+          <span className="ml-2 text-text-3">
+            ≈ {formatMoney(native.valueUsd * share)}
           </span>
         </span>
       </div>,
@@ -117,11 +117,11 @@ export function OnchainBreakdown({ meta, share = 1 }: Props) {
   const readAt = meta.readAt ? new Date(meta.readAt) : null;
 
   return (
-    <div className="mt-2 pl-6 space-y-0.5 text-xs">
+    <div className="mt-1.5 space-y-0.5 text-[12.5px]">
       {rows}
       {readAt && (
         <p
-          className="text-[11px] text-muted-foreground pt-0.5"
+          className="text-[12px] text-text-3 pt-0.5"
           title={meta.priceAt ? t('onchain.priceAt', { at: meta.priceAt }) : undefined}
         >
           {t('onchain.readAt', { at: readAt.toLocaleString(locale === 'en' ? 'en-US' : 'es-AR') })}

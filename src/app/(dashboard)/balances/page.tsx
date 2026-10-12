@@ -2,8 +2,13 @@
 
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { todayUtcISO } from '@/lib/dates';
-import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Money, moneyText, NUM_CLASS } from '@/components/ui/money';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Input, Select } from '@/components/ui/field';
 import { features } from '@/lib/business-model';
 import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
@@ -11,7 +16,8 @@ import { usePeriod } from '@/lib/period-context';
 import { useAuth, canAdd, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
+import { cn } from '@/lib/utils';
 import {
   pinCoinsbuyWallet,
   unpinCoinsbuyWallet,
@@ -30,17 +36,7 @@ import {
 } from '@/lib/channel-configs';
 import { ChannelConfigModal } from './channel-config-modal';
 import { ChannelBalancesCard } from './channel-balances-card';
-import {
-  Wallet,
-  RefreshCw,
-  Edit2,
-  X,
-  AlertTriangle,
-  ToggleLeft,
-  ToggleRight,
-  Pin,
-  PinOff,
-} from 'lucide-react';
+import { Wallet, RefreshCw, Edit2, X, Pin, PinOff, FileDown, Settings2 } from 'lucide-react';
 import { isAutoLedger } from '@/lib/channel-ledger';
 import {
   isStaleBalance,
@@ -72,6 +68,16 @@ import { isDebt, normalizeLocationType, signedBalance, tallyCash } from '@/lib/c
 // es todayUtcISO en lib/dates.ts; una copia local es la lista duplicada de
 // siempre (§1.1).
 const todayISO = todayUtcISO;
+
+// Botones «Libro mayor» (spec §5.1): secundario 32 de alto, ícono 32×32; en
+// puntero grueso suben a 40 (área táctil). Clases locales hasta que `Button`
+// migre (fase 4/5): el legado pinta `text-white` y `rounded-lg`.
+const BTN =
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+const ICON_BTN =
+  'inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:size-10';
+const ROW_BTN =
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground [@media(pointer:coarse)]:size-10';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Page
@@ -216,6 +222,8 @@ export default function BalancesPage() {
       saldoFinal: number;
       /** El mes es derivado (Abr 26+) pero NO tenemos sus totales de API. */
       apiMissing: boolean;
+      /** Período cerrado (insumos congelados) — badge Abierto/Cerrado. */
+      isClosed: boolean;
     }> = [];
 
     for (const p of periods) {
@@ -299,6 +307,7 @@ export default function BalancesPage() {
         saldoInicial,
         saldoFinal: acumulado,
         apiMissing,
+        isClosed: Boolean(p.is_closed),
       });
     }
     return rows;
@@ -803,10 +812,19 @@ export default function BalancesPage() {
     };
   };
 
-  /** Canales cuyo saldo se está mostrando degradado (API caída). */
-  const degradedChannels = visibleChannels
-    .filter((ch) => resolveChannel(ch.key).degraded)
-    .map((ch) => ch.label);
+  // Los canales con saldo degradado (API caída), viejos o sin dato los cuenta
+  // y los nombra la tarjeta, con el monto que siguen sumando
+  // (balances-view.ts → freshnessSummary). Acá sólo se resuelve la fuente.
+
+  /**
+   * Canales ocultos desde «Configurar»: NO suman al total. Se pasan por nombre
+   * para que el pie de la tabla lo diga — una exclusión silenciosa es
+   * indistinguible de «no hay más» (reglas §1.2).
+   */
+  const hiddenChannels = useMemo(
+    () => resolvedChannels.filter((c) => !c.isVisible).map((c) => c.label),
+    [resolvedChannels],
+  );
 
   /**
    * Desglose que el cron dejó guardado con el snapshot (migración 085).
@@ -867,267 +885,328 @@ export default function BalancesPage() {
   // arma tarjetas y tablas vacías sobre un chain sin filas.
   if (!loading && periods.length === 0) return <NoPeriodsState />;
 
+  // ─── Resultado mensual (FinTable densa) ───
+  // Columnas con signo: lo que entra (+) y lo que sale (−) se leen sin pensar.
+  // Sólo «Resultado» lleva color (tono `sign`): es la columna donde el signo ES
+  // la noticia (spec §2.1). «A distribuir» dejó de ser naranja — no significaba
+  // nada que el gris no diga.
+  type MonthRow = (typeof balanceChain)[number];
+  const monthColumns: FinColumn<MonthRow>[] = [
+    {
+      key: 'period',
+      header: t('balances.period'),
+      cell: (r) => r.label,
+      meta: (r) => (
+        <span className="inline-flex flex-wrap items-center gap-1.5 py-0.5">
+          <StatusBadge
+            kind={r.isClosed ? 'neutral' : 'pend'}
+            label={r.isClosed ? t('balances.statusClosed') : t('balances.statusOpen')}
+          />
+          {/* El mes derivado sin totales de la API se muestra con lo manual,
+              pero MARCADO: es el número equivocado con cara de número bueno. */}
+          {r.apiMissing && <StatusBadge kind="pend" label={t('balances.apiMissingBadge')} />}
+        </span>
+      ),
+      // En tarjeta (< 720 px) las columnas de detalle se ocultan; sus cifras
+      // van acá, bajo el mes, para no perder nada.
+      mobileMeta: (r) => (
+        <span className={cn(NUM_CLASS, 'whitespace-normal')}>
+          {inflowLabel} {moneyText(r.netDeposit, { signed: true })} · {t('balances.colExpenses')}{' '}
+          {moneyText(-r.egresos, { signed: true })} · {t('balances.colDistribute')}{' '}
+          {moneyText(-r.montoDistribuir, { signed: true })}
+        </span>
+      ),
+    },
+    {
+      key: 'inflow',
+      header: inflowLabel,
+      kind: 'money',
+      value: (r) => r.netDeposit,
+      money: { signed: true, tone: 'neutral' },
+      hideSm: true,
+    },
+    {
+      key: 'expenses',
+      header: t('balances.colExpenses'),
+      kind: 'money',
+      value: (r) => -r.egresos,
+      money: { signed: true, tone: 'neutral' },
+      hideSm: true,
+    },
+    {
+      key: 'distribute',
+      header: t('balances.colDistribute'),
+      kind: 'money',
+      value: (r) => -r.montoDistribuir,
+      money: { signed: true, tone: 'neutral' },
+      hideSm: true,
+    },
+    {
+      key: 'result',
+      header: t('balances.colResult'),
+      kind: 'money',
+      value: (r) => r.balanceMes,
+      money: { signed: true, tone: 'sign' },
+    },
+    {
+      key: 'accumulated',
+      header: t('balances.accumulated'),
+      kind: 'money',
+      value: (r) => r.saldoFinal,
+    },
+  ];
+
   return (
-    <div className="space-y-6">
-      {/* Header — filters are in-card (see each Card below). */}
+    <div className="space-y-4">
+      {/* La fecha de corte manda sobre todos los saldos por canal. El cron
+          escribe un snapshot diario a las 00:00 UTC, así que cualquier día
+          pasado se puede consultar. No es el período de la topbar: es el día
+          del saldo. */}
       <PageHeader
         title={t('balances.title')}
         subtitle={t('balances.subtitle')}
         icon={Wallet}
+        actions={
+          <>
+            <div className="w-[156px]">
+              <Input
+                type="date"
+                value={selectedDate}
+                onChange={(e) => setSelectedDate(e.target.value)}
+                aria-label={t('balances.snapshotDate')}
+                className="h-8 [@media(pointer:coarse)]:h-10"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={loadSnapshots}
+              disabled={loadingSnap}
+              className={ICON_BTN}
+              title={t('balances.reload')}
+              aria-label={t('balances.reload')}
+            >
+              <RefreshCw aria-hidden className={cn('size-[15px]', loadingSnap && 'animate-spin')} strokeWidth={1.75} />
+            </button>
+            <button
+              type="button"
+              onClick={exportChannelsPdf}
+              disabled={visibleChannels.length === 0}
+              className={BTN}
+              title={t('ledger.exportPdf')}
+            >
+              <FileDown aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              PDF
+            </button>
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setShowChannelConfig(true)}
+                className={BTN}
+                title={t('balances.configureChannels')}
+              >
+                <Settings2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                <span className="max-sm:sr-only">{t('balances.configure')}</span>
+              </button>
+            )}
+          </>
+        }
       />
 
       {okMsg && (
-        <div className="p-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-700 dark:text-emerald-300 text-sm">
+        <p role="status" className="text-[13px] font-medium text-pos">
           {okMsg}
-        </div>
+        </p>
       )}
-      {errMsg && (
-        <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
-          {errMsg}
-        </div>
-      )}
-
-      {/* Dato degradado — ítem 13 de la auditoría de finanzas.
-          Un $0 no puede ser el estado de error: cuando una API no contesta se
-          muestra el mejor dato disponible (el libro) Y se dice que pasó. Sin
-          este aviso, el saldo de Coinsbuy caía a $0,00 y el Net Deposit de un
-          mes derivado se desplomaba, las dos cosas en silencio. */}
-      {(degradedChannels.length > 0 || apiTotalsFailed) && (
-        <div
-          role="status"
-          className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm"
-        >
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <div className="space-y-1">
-            <p className="font-medium">{t('balances.degradedTitle')}</p>
-            {degradedChannels.length > 0 && (
-              <p>
-                {t('balances.degradedChannels', { channels: degradedChannels.join(', ') })}
-              </p>
-            )}
-            {apiTotalsFailed && <p>{t('balances.degradedPeriodTotals')}</p>}
-          </div>
-        </div>
-      )}
+      {errMsg && <Notice kind="bad" title={errMsg} />}
 
       {/* ═══════════ BALANCES POR CANAL ═══════════
           Va primero porque es la pregunta que el módulo responde antes que
-          ninguna otra: cuánto se puede usar hoy y cuánto está afuera. */}
+          ninguna otra: cuánto se puede usar hoy y cuánto está afuera.
+          Dato degradado (ítem 13 de la auditoría de finanzas): un $0 no puede
+          ser el estado de error. Cuando una API no contesta se muestra el
+          mejor dato disponible (el libro) Y se dice — ahora con el monto que
+          sigue sumando: lo hace la tarjeta (banner `stale`). */}
       <ChannelBalancesCard
         channels={visibleChannels}
+        hiddenChannels={hiddenChannels}
         configRows={channelConfigRows}
         getValue={getChannelValue}
         onChanged={loadChannelConfigs}
         canManage={isAdmin}
         selectedDate={selectedDate}
-        onSelectedDate={setSelectedDate}
-        reloading={loadingSnap}
-        onReload={loadSnapshots}
-        onExportPdf={exportChannelsPdf}
-        onConfigure={() => setShowChannelConfig(true)}
         getSnapshotMeta={getSnapshotMeta}
         getBalanceMeta={getChannelMeta}
         extraActions={(key) =>
           key === 'coinsbuy' && isAdmin ? (
             <button
+              type="button"
               onClick={() => setShowCoinsbuyModal(true)}
-              className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-accent hover:bg-accent/10"
+              className={ROW_BTN}
               aria-label={t('balances.editWallets')}
               title={t('balances.chooseCoinsbuyWallets')}
             >
-              <Edit2 className="w-4 h-4" />
+              <Edit2 aria-hidden className="size-4" strokeWidth={1.75} />
             </button>
           ) : null
         }
         extraRows={(key) =>
           key === 'coinsbuy' && pinnedWallets.length > 0 ? (
-            <div className="ml-6 mt-2 space-y-1">
-              {pinnedWallets.map((pw) => {
-                const wData = wallets.find((wl) => wl.id === pw.wallet_id);
-                return (
-                  <div
-                    key={pw.wallet_id}
-                    className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-border/50 bg-positive/5"
-                  >
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <Wallet className="w-3.5 h-3.5 text-positive shrink-0" />
+            <div className="mt-1">
+              <p className="text-[12px] text-text-3">{t('balances.pinnedTitle')}</p>
+              <ul className="mt-1.5 divide-y divide-border rounded-ui-md border border-border">
+                {pinnedWallets.map((pw) => {
+                  const wData = wallets.find((wl) => wl.id === pw.wallet_id);
+                  return (
+                    <li key={pw.wallet_id} className="flex items-center justify-between gap-3 px-3 py-2">
                       <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {pw.wallet_label}
+                        <p className="flex min-w-0 items-center gap-2 text-[13px] font-medium text-foreground">
+                          <span className="truncate">{pw.wallet_label}</span>
                           {/* Qué significa el pin de esta wallet: la interna
                               suma acá pero NO en /movimientos (migr. 084). */}
-                          <span
-                            className={`ml-2 align-middle text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded ${
-                              pw.role === 'internal'
-                                ? 'bg-muted text-muted-foreground'
-                                : 'bg-positive/10 text-positive'
-                            }`}
+                          <StatusBadge
+                            kind={pw.role === 'internal' ? 'neutral' : 'info'}
+                            label={pw.role === 'internal' ? 'interna' : 'operativa'}
                             title={
                               pw.role === 'internal'
                                 ? 'Interna: suma al balance, no cuenta como depósitos ni retiros de clientes'
                                 : 'Operativa: suma al balance y cuenta como depósitos y retiros de clientes'
                             }
-                          >
-                            {pw.role === 'internal' ? 'interna' : 'operativa'}
-                          </span>
+                          />
                         </p>
-                        <p className="text-[10px] text-muted-foreground">
+                        <p className="text-[12px] text-text-3">
                           {wData?.currencyCode ?? 'USDT'} · Wallet #{pw.wallet_id}
                         </p>
                       </div>
-                    </div>
-                    <span className="font-semibold text-sm tabular-nums">
-                      {formatCurrency(getPinnedWalletBalance(pw.wallet_id))}
-                    </span>
-                  </div>
-                );
-              })}
+                      {/* Sin respuesta de la API la wallet no tiene saldo
+                          conocido: «—», no $0.00 (reglas §1.3). El total del
+                          canal no cambia: cae al libro (pickLiveOrStored). */}
+                      <Money
+                        value={wData ? wData.balanceConfirmed : null}
+                        nullLabel={t('ui.noData')}
+                        className="text-[13px] font-medium"
+                      />
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           ) : null
         }
       />
 
-      {/* ═══════════ SECTION A: RESUMEN DEL MES ═══════════ */}
-      <Card>
-        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-4">
-          <div className="flex items-center gap-3">
-            <div className="p-2 rounded-lg bg-info/10">
-              <Wallet className="w-5 h-5 text-blue-500" />
-            </div>
-            <div>
-              <h2 className="text-lg font-semibold">{t('balances.monthSummary')}</h2>
-              <p className="text-xs text-muted-foreground">
-                {t('balances.formulaHint')}
-              </p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            {/* Month selector — in-card. Replaces the top-right date picker.
-                Each option label includes how that month closed so the user
-                sees historical values at a glance. */}
+      {/* ═══════════ RESULTADO MENSUAL ═══════════ */}
+      <Panel
+        title={t('balances.monthlyTitle')}
+        hint={monthResultHint}
+        flush
+        actions={
+          <>
+            {/* Mes elegido — cada opción dice cómo cerró ese mes. */}
             {balanceChain.length > 0 && (
-              <select
-                value={balanceMonthPeriodId || selectedPeriodId || ''}
-                onChange={(e) => setBalanceMonthPeriodId(e.target.value)}
-                className="h-9 px-3 text-base sm:text-sm rounded-lg border border-border bg-card flex-1 min-w-0 sm:flex-none sm:min-w-[200px] max-w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                aria-label={t('balances.selectMonth')}
-              >
-                {balanceChain.map((r) => (
-                  <option key={r.periodId} value={r.periodId}>
-                    {r.label} — {formatCurrency(r.saldoFinal)}
-                  </option>
-                ))}
-              </select>
+              <div className="w-[220px] max-sm:w-full">
+                <Select
+                  value={balanceMonthPeriodId || selectedPeriodId || ''}
+                  onChange={(e) => setBalanceMonthPeriodId(e.target.value)}
+                  aria-label={t('balances.selectMonth')}
+                  className="h-8 [@media(pointer:coarse)]:h-10"
+                >
+                  {balanceChain.map((r) => (
+                    <option key={r.periodId} value={r.periodId}>
+                      {r.label} — {formatMoney(r.saldoFinal)}
+                    </option>
+                  ))}
+                </Select>
+              </div>
             )}
-            {/* Refrescar API totals — re-reads api_transactions so Abr 26
-                (or whatever the current month is) picks up fresh data. */}
+            {/* Refrescar los totales de la API — relee api_transactions para
+                que el mes en curso tome los datos frescos. */}
             <button
+              type="button"
               onClick={loadApiMonthly}
               disabled={apiTotalsLoading}
-              className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
+              className={ICON_BTN}
               title={t('balances.refreshApi')}
               aria-label={t('balances.refreshApi')}
             >
-              <RefreshCw className={`w-4 h-4 ${apiTotalsLoading ? 'animate-spin' : ''}`} />
+              <RefreshCw
+                aria-hidden
+                className={cn('size-[15px]', apiTotalsLoading && 'animate-spin')}
+                strokeWidth={1.75}
+              />
             </button>
+          </>
+        }
+        footer={
+          currentBalanceRow ? (
+            <div className="space-y-1">
+              {sixMonthWindow.length < balanceChain.length && (
+                <p>
+                  {t('balances.monthlyShowing', {
+                    shown: String(sixMonthWindow.length),
+                    total: String(balanceChain.length),
+                    label: currentBalanceRow.label,
+                  })}
+                </p>
+              )}
+              <p>
+                {t('balances.monthlySources', {
+                  inflow: inflowLabel,
+                  inflowHint,
+                  expensesHint: t('balances.fromExpenses'),
+                  partnersHint: t('balances.fromPartners'),
+                })}
+              </p>
+            </div>
+          ) : undefined
+        }
+      >
+        {/* Sin los totales de la API, los meses derivados (Abr 2026+) caen a lo
+            cargado a mano — y ese número alimenta el Monto a Distribuir. Se
+            muestra el mejor dato Y se avisa (auditoría de finanzas, ítem 13). */}
+        {apiTotalsFailed && (
+          <div className="border-b border-border p-4">
+            <Notice kind="pend" title={t('balances.degradedTitle')}>
+              {t('balances.degradedPeriodTotals')}
+            </Notice>
           </div>
-        </div>
+        )}
 
         {currentBalanceRow ? (
           <>
-            <div className="text-center py-6 mb-4 bg-muted/30 rounded-lg">
-              <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
+            <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 border-b border-border px-4 py-3">
+              <span className="text-[12px] font-medium text-text-2">
                 {t('balances.balanceMonth')} · {currentBalanceRow.label}
-              </p>
-              <p className={`text-3xl sm:text-4xl font-bold tabular-nums ${currentBalanceRow.balanceMes >= 0 ? 'text-positive' : 'text-negative'}`}>
-                {formatCurrency(currentBalanceRow.balanceMes)}
-              </p>
-              <p className="text-xs text-muted-foreground mt-2">
-                {monthResultHint} ({t('balances.monthAccumulated')} <span className="font-medium text-foreground">{formatCurrency(currentBalanceRow.saldoFinal)}</span>)
-              </p>
+              </span>
+              <Money
+                value={currentBalanceRow.balanceMes}
+                signed
+                tone="sign"
+                className="text-[22px] font-semibold leading-7 tracking-[-0.02em]"
+              />
+              <span className="text-[12.5px] text-text-3">
+                {t('balances.previousMonthBalance')}{' '}
+                <Money value={currentBalanceRow.saldoInicial} className="font-medium" />
+              </span>
+              <span className="text-[12.5px] text-text-3">
+                {t('balances.accumulated')} <Money value={currentBalanceRow.saldoFinal} className="font-medium" />
+              </span>
             </div>
-
-            {/* Breakdown of where each number comes from */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-              <div className="p-3 rounded-lg border border-border">
-                <p className="text-xs text-muted-foreground">{inflowLabel}</p>
-                <p className="text-lg font-semibold text-positive">
-                  +{formatCurrency(currentBalanceRow.netDeposit)}
-                </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">
-                  {inflowHint}
-                  {currentBalanceRow.apiMissing && (
-                    <span className="ml-1 px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning border border-warning/30">
-                      {t('balances.apiMissingBadge')}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div className="p-3 rounded-lg border border-border">
-                <p className="text-xs text-muted-foreground">{t('balances.operatingExpenses')}</p>
-                <p className="text-lg font-semibold text-negative">
-                  −{formatCurrency(currentBalanceRow.egresos)}
-                </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{t('balances.fromExpenses')}</p>
-              </div>
-              <div className="p-3 rounded-lg border border-border">
-                <p className="text-xs text-muted-foreground">{t('balances.amountToDistribute')}</p>
-                <p className="text-lg font-semibold text-orange-600 dark:text-orange-400">
-                  −{formatCurrency(currentBalanceRow.montoDistribuir)}
-                </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{t('balances.fromPartners')}</p>
-              </div>
-              <div className="p-3 rounded-lg border border-border bg-blue-50/50 dark:bg-blue-950/20">
-                <p className="text-xs text-muted-foreground">{t('balances.previousMonthBalance')}</p>
-                <p className="text-lg font-semibold">
-                  {formatCurrency(currentBalanceRow.saldoInicial)}
-                </p>
-                <p className="text-[10px] text-muted-foreground mt-0.5">{t('balances.carryOver')}</p>
-              </div>
-            </div>
-
-            {/* History of all months */}
-            <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-              <table className="w-full text-sm min-w-[640px]">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('balances.period')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{inflowLabel}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.operatingExpenses')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.amountToDistribute')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.balanceMonth')}</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('balances.accumulated')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {sixMonthWindow.map((row) => {
-                    const isSelected = row.periodId === currentBalanceRow?.periodId;
-                    return (
-                      <tr
-                        key={row.periodId}
-                        className={`border-b border-border/50 transition-colors ${isSelected ? 'bg-blue-50/40 dark:bg-blue-950/20 font-medium' : 'hover:bg-muted/50'}`}
-                      >
-                        <td className="py-2.5 px-3 font-medium">{row.label}</td>
-                        <td className="py-2.5 px-3 text-right text-positive">{formatCurrency(row.netDeposit)}</td>
-                        <td className="py-2.5 px-3 text-right text-negative">{formatCurrency(row.egresos)}</td>
-                        <td className="py-2.5 px-3 text-right text-orange-600 dark:text-orange-400">{formatCurrency(row.montoDistribuir)}</td>
-                        <td className={`py-2.5 px-3 text-right font-medium ${row.balanceMes >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.balanceMes)}</td>
-                        <td className={`py-2.5 px-3 text-right font-bold ${row.saldoFinal >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{formatCurrency(row.saldoFinal)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <FinTable<MonthRow>
+              caption={t('balances.monthlyTitle')}
+              columns={monthColumns}
+              rows={sixMonthWindow}
+              rowKey={(r) => r.periodId}
+              selectedKey={currentBalanceRow.periodId}
+              onRowClick={(r) => setBalanceMonthPeriodId(r.periodId)}
+            />
           </>
         ) : (
-          <p className="text-center text-muted-foreground py-8">{t('balances.noData')}</p>
+          <p className="py-8 text-center text-[13px] text-text-3">{t('balances.noData')}</p>
         )}
-      </Card>
+      </Panel>
 
       {/* Modal: channel visibility / rename / add custom (admin only).
-          Opens from the "Configurar" button in the Balances por Canal
-          card header. */}
+          Opens from the "Configurar" button in the page header. */}
       {isAdmin && (
         <ChannelConfigModal
           open={showChannelConfig}
@@ -1149,151 +1228,166 @@ export default function BalancesPage() {
           onClick={() => setShowCoinsbuyModal(false)}
         >
           <div
-            className="bg-card border border-border rounded-xl shadow-lg w-full max-w-2xl max-h-[85vh] flex flex-col"
-            onClick={e => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="coinsbuy-wallets-title"
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col rounded-ui-xl border border-border bg-card shadow-3"
+            onClick={(e) => e.stopPropagation()}
           >
             {/* Header */}
-            <div className="flex items-center justify-between p-5 border-b border-border">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="p-2 rounded-lg bg-positive/10 shrink-0">
-                  <Wallet className="w-5 h-5 text-emerald-500" />
+            <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <div className="shrink-0 rounded-ui-md bg-brand-tint p-1.5 text-brand-ink" aria-hidden>
+                  <Wallet className="size-5" />
                 </div>
                 <div className="min-w-0">
-                  <h2 className="text-lg font-semibold">{t('balances.coinsbuyWallets')}</h2>
-                  <p className="text-xs text-muted-foreground">
+                  <h2 id="coinsbuy-wallets-title" className="text-[15px] font-semibold text-foreground">
+                    {t('balances.coinsbuyWallets')}
+                  </h2>
+                  <p className="text-[12.5px] text-text-3">
                     {t('balances.coinsbuyWalletsHint')}
-                    {walletsIsMock && <span className="ml-1 text-amber-500">(Mock)</span>}
+                    {walletsIsMock && <span className="ml-1 font-medium text-pend">(Mock)</span>}
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2">
                 {walletsFetchedAt && (
-                  <span className="text-[10px] text-muted-foreground hidden sm:inline">
+                  <span className="hidden text-[12px] text-text-3 sm:inline">
                     Sync: {new Date(walletsFetchedAt).toLocaleTimeString('es-ES')}
                   </span>
                 )}
                 <button
+                  type="button"
                   onClick={fetchWallets}
                   disabled={walletsLoading}
-                  className="p-2 rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
+                  className={ICON_BTN}
                   title={t('balances.refreshWallets')}
+                  aria-label={t('balances.refreshWallets')}
                 >
-                  <RefreshCw className={`w-4 h-4 ${walletsLoading ? 'animate-spin' : ''}`} />
+                  <RefreshCw
+                    aria-hidden
+                    className={cn('size-[15px]', walletsLoading && 'animate-spin')}
+                    strokeWidth={1.75}
+                  />
                 </button>
                 <button
+                  type="button"
                   onClick={() => setShowCoinsbuyModal(false)}
-                  className="p-2 rounded-lg hover:bg-muted"
+                  className={ROW_BTN}
                   aria-label={t('common.close')}
                 >
-                  <X className="w-4 h-4" />
+                  <X aria-hidden className="size-4" />
                 </button>
               </div>
             </div>
 
             {/* Body */}
-            <div className="p-5 overflow-y-auto flex-1">
+            <div className="flex-1 overflow-y-auto p-5">
               {walletsError && (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm mb-3">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>
-                    {walletsError}
-                    {walletsFetchedAt && t('balances.staleData', { time: new Date(walletsFetchedAt).toLocaleString('es-ES') })}
-                  </span>
-                </div>
+                <Notice kind="bad" title={walletsError} className="mb-3">
+                  {walletsFetchedAt
+                    ? t('balances.staleData', { time: new Date(walletsFetchedAt).toLocaleString('es-ES') })
+                    : null}
+                </Notice>
               )}
 
-              <p className="text-xs text-muted-foreground mb-3">
-                {t('balances.pinHint')}
-              </p>
+              <p className="mb-3 text-[12.5px] text-text-3">{t('balances.pinHint')}</p>
 
               {wallets.length > 0 ? (
-                <div className="space-y-2">
+                <ul className="divide-y divide-border rounded-ui-md border border-border">
                   {wallets.map((w) => {
+                    const pinned = isPinned(w.id);
                     return (
-                      <div
-                        key={w.id}
-                        className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border hover:bg-muted/30 transition-colors"
-                      >
-                        <div className="flex items-center gap-3 min-w-0 flex-1">
-                          <div className="min-w-0">
-                            <p className="font-medium truncate">{w.label}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {w.currencyCode}
-                              {w.balancePending > 0 && (
-                                <span className="ml-2 text-amber-500">
-                                  {t('expenses.pending')}: {w.balancePending.toLocaleString('en-US', { minimumFractionDigits: 2 })}
-                                </span>
-                              )}
-                            </p>
-                          </div>
+                      <li key={w.id} className="flex flex-wrap items-center justify-between gap-3 px-3 py-2.5">
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-[13px] font-medium text-foreground">{w.label}</p>
+                          <p className="text-[12px] text-text-3">
+                            {w.currencyCode}
+                            {w.balancePending > 0 && (
+                              <span className="ml-2 text-pend">
+                                {/* Cantidad en la moneda de la wallet (cripto), no USD:
+                                    no pasa por formatMoney (spec §8). */}
+                                {t('expenses.pending')}:{' '}
+                                {w.balancePending.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                              </span>
+                            )}
+                          </p>
                         </div>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-sm tabular-nums">
-                            {w.balanceConfirmed.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 8 })} {w.currencyCode}
+                          <span className={cn(NUM_CLASS, 'text-[13px] font-medium text-foreground')}>
+                            {w.balanceConfirmed.toLocaleString('en-US', {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 8,
+                            })}{' '}
+                            {w.currencyCode}
                           </span>
-                          {isPinned(w.id) ? (
+                          {pinned ? (
                             <>
                               {/* Rol de la wallet fijada: Operativa cuenta como
                                   depósitos/retiros de clientes; Interna solo
                                   suma al balance (migración 084). */}
-                              <select
-                                value={
-                                  pinnedWallets.find((p) => p.wallet_id === w.id)?.role ??
-                                  'operating'
-                                }
-                                onChange={(e) =>
-                                  handleSetRole(w.id, e.target.value as PinnedWalletRole)
-                                }
-                                className="h-8 px-2 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                                aria-label="Rol de la wallet fijada"
-                                title="Operativa: cuenta como depósitos y retiros de clientes. Interna: solo suma al balance (ahorro, egresos)."
-                              >
-                                <option value="operating">Operativa</option>
-                                <option value="internal">Interna (solo balance)</option>
-                              </select>
+                              <div className="w-[170px]">
+                                <Select
+                                  value={pinnedWallets.find((p) => p.wallet_id === w.id)?.role ?? 'operating'}
+                                  onChange={(e) => handleSetRole(w.id, e.target.value as PinnedWalletRole)}
+                                  aria-label="Rol de la wallet fijada"
+                                  title="Operativa: cuenta como depósitos y retiros de clientes. Interna: solo suma al balance (ahorro, egresos)."
+                                  className="h-8 [@media(pointer:coarse)]:h-10"
+                                >
+                                  <option value="operating">Operativa</option>
+                                  <option value="internal">Interna (solo balance)</option>
+                                </Select>
+                              </div>
                               <button
+                                type="button"
                                 onClick={() => handleUnpin(w.id)}
-                                className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded"
+                                aria-pressed="true"
+                                className={cn(ROW_BTN, 'text-brand-ink')}
                                 title={t('balances.unpinTitle')}
+                                aria-label={`${t('balances.unpinTitle')} — ${w.label}`}
                               >
-                                <PinOff className="w-4 h-4" />
+                                <PinOff aria-hidden className="size-4" strokeWidth={1.75} />
                               </button>
                             </>
                           ) : (
                             <button
+                              type="button"
                               onClick={() => handlePin(w.id, w.label)}
-                              className="p-2 sm:p-1 text-muted-foreground hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded"
+                              aria-pressed="false"
+                              className={ROW_BTN}
                               title={t('balances.pinTitle')}
+                              aria-label={`${t('balances.pinTitle')} — ${w.label}`}
                             >
-                              <Pin className="w-4 h-4" />
+                              <Pin aria-hidden className="size-4" strokeWidth={1.75} />
                             </button>
                           )}
                         </div>
-                      </div>
+                      </li>
                     );
                   })}
-                </div>
+                </ul>
               ) : walletsLoading ? (
-                <p className="text-center text-muted-foreground py-8">{t('balances.loadingWallets')}</p>
+                <p className="py-8 text-center text-[13px] text-text-3">{t('balances.loadingWallets')}</p>
               ) : (
-                <p className="text-center text-muted-foreground py-8">{t('balances.noActiveWallets')}</p>
+                <p className="py-8 text-center text-[13px] text-text-3">{t('balances.noActiveWallets')}</p>
               )}
             </div>
 
             {/* Footer totals */}
             {wallets.length > 0 && (
-              <div className="p-4 border-t border-border flex items-center justify-between">
+              <div className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  <p className="text-[12px] font-semibold uppercase tracking-[.03em] text-text-3">
                     {t('balances.pinnedWallets')}
                   </p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
+                  <p className="text-[12px] text-text-3">
                     {t('balances.pinnedCount', { count: String(pinnedWallets.length) })}
                   </p>
                 </div>
                 <button
+                  type="button"
                   onClick={() => setShowCoinsbuyModal(false)}
-                  className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
+                  className="inline-flex h-8 items-center rounded-ui-md bg-primary px-4 text-[13px] font-medium text-brand-on-primary hover:bg-primary/90 [@media(pointer:coarse)]:h-10"
                 >
                   {t('balances.done')}
                 </button>

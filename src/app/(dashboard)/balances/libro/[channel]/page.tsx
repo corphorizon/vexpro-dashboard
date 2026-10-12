@@ -17,7 +17,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { AlertTriangle, ArrowLeft, BookOpen, Plus, Pencil, Trash2, FileDown, Lock } from 'lucide-react';
+import { ArrowLeft, BookOpen, Plus, Pencil, Trash2, FileDown, Lock } from 'lucide-react';
 import { useAuth, canAdd } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
@@ -36,6 +36,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
+import { Notice } from '@/components/ui/notice';
 import { StatCard } from '@/components/ui/stat-card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToasts } from '@/components/ui/toast';
@@ -202,29 +203,19 @@ export default function ChannelLedgerPage() {
     <div className="space-y-6">
       {ToastHost}
 
+      {/* Recorte del libro: un saldo corrido calculado sobre filas que faltan
+          es un número plausible y equivocado (reglas §1.2). Banner `bad`
+          («Libro mayor», 2026-10-12): antes era ámbar 800 de la paleta
+          cruda, con su variante oscura a mano. */}
       {(truncated.entries || truncated.opening) && (
-        <div
-          role="alert"
-          className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200"
+        <Notice
+          kind="bad"
+          title={truncated.opening ? 'Saldo de arranque incompleto.' : 'Asientos incompletos.'}
         >
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>
-            {truncated.opening ? (
-              <>
-                <strong className="font-semibold">Saldo de arranque incompleto.</strong>{' '}
-                No se pudo leer toda la historia anterior al rango: el saldo inicial y
-                el saldo corrido de TODAS las filas de abajo están equivocados. Elegí
-                un rango que empiece más tarde o pedí ayuda al equipo técnico.
-              </>
-            ) : (
-              <>
-                <strong className="font-semibold">Asientos incompletos.</strong> Se
-                alcanzó el máximo de filas que se pueden leer de una vez: faltan
-                asientos del rango y los totales están cortos. Achicá el rango.
-              </>
-            )}
-          </span>
-        </div>
+          {truncated.opening
+            ? 'No se pudo leer toda la historia anterior al rango: el saldo inicial y el saldo corrido de TODAS las filas de abajo están equivocados. Elegí un rango que empiece más tarde o pedí ayuda al equipo técnico.'
+            : 'Se alcanzó el máximo de filas que se pueden leer de una vez: faltan asientos del rango y los totales están cortos. Achicá el rango.'}
+        </Notice>
       )}
 
       <PageHeader

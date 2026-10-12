@@ -2,21 +2,49 @@
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ChannelBalancesCard — "Balances por Canal": cuánto hay, dónde está y de quién
-// es, en una sola tarjeta.
+// es. Desde 2026-10-12 en el sistema «Libro mayor» (docs/diseno-libro-mayor.md):
+// franja de KPIs → banners de estado del dato → barra de distribución → tabla
+// «Saldo por canal» → detalle por canal.
 //
-// Antes eran dos que mostraban los mismos saldos con distinta cara ("Balances
-// por Canal" y "Dónde está el dinero"): el mismo número en dos lugares invita a
-// que uno de los dos quede desactualizado y a que nadie sepa cuál mirar.
-//
-// De la vieja quedaron la fecha de corte, el saldo en vivo de las pasarelas, el
-// PDF, el modal de configuración y el libro de cada canal. De la nueva, el tipo
-// de lugar, el holder, el agrupado por unidad de negocio, el resumen
-// Disponible/Prestado/Total/Fondo, archivar/eliminar y las unidades.
+// Antes eran dos tarjetas que mostraban los mismos saldos con distinta cara
+// ("Balances por Canal" y "Dónde está el dinero"): el mismo número en dos
+// lugares invita a que uno de los dos quede desactualizado.
 //
 // DEUDA (2026-10-05): un lugar `debt` es un préstamo RECIBIDO. Su saldo se
-// muestra en rojo con «Deuda ·», suma a la tarjeta «Deuda con terceros» y
-// resta del Total, que pasa a llamarse «Total neto» mientras haya deuda. Los
-// números salen de `summarize` — esta tarjeta no decide ningún signo.
+// muestra con signo − en la tabla, suma al KPI «Deuda con terceros» y resta del
+// Total, que pasa a llamarse «Total neto» mientras haya deuda. Los números
+// salen de `summarize` — esta tarjeta no decide ningún signo.
+//
+// REDISEÑO (2026-10-12) — por qué cada pieza:
+//   · Cinco tarjetas de KPI con borde y fondo de color (verde Disponible,
+//     naranja Prestado, rojo Deuda) → UNA `KpiStrip`. El verde decía «positivo»
+//     de un saldo que siempre es positivo: color sin significado (spec §2.1).
+//     Total neto es el hero porque es la respuesta del módulo.
+//   · El badge «viejo»/«dato degradado» iba por fila, pero nadie sumaba cuánta
+//     plata vieja entraba al total. Ahora hay un banner `stale` con nombres y
+//     monto, y otro `pend` para los canales SIN DATO, que antes se pintaban
+//     «$0.00» igual que una wallet vacía (reglas §1.3) — ahora «—».
+//   · Los canales ocultos desde «Configurar» salían del total sin decirlo. El
+//     pie dice «N canales sumados, M excluidos» y los nombra (reglas §1.2).
+//   · «Por unidad de negocio» (lista de tarjetas) + «Por tipo» (7 tarjetitas)
+//     eran dos vistas del mismo dato en dos formatos → UNA tabla con
+//     segmentado «Por tipo / Por unidad»; los subtotales salen de la fila de
+//     grupo (antes la suma por tipo y la por unidad eran dos bloques más).
+//   · Sub-filas (wallets fijadas de Coinsbuy, desglose on-chain por moneda)
+//     no caben en una fila de tabla: van al panel «Detalle por canal», con los
+//     mismos datos.
+//   · La clasificación de una ubicación se editaba desplegando un formulario
+//     dentro de la fila; ahora se despliega debajo de la tabla (mismos campos,
+//     mismo guardado).
+//
+// La clasificación de filas (grupo, fuente, frescura, % del líquido, conteo)
+// es pura y está testeada: balances-view.ts.
+//
+// DESCARTADO:
+//   · Calcular el total del pie sumando las filas: el total es `summary.total`
+//     (tallyCash), la misma fórmula del PDF y de /api/balances/total-consolidado.
+//   · Mostrar los ocultos en la tabla, atenuados: parecerían sumar. Se nombran
+//     en el pie y se muestran desde «Configurar».
 //
 // No inventa saldos: usa el `getValue` de la pantalla, así que la fecha elegida
 // arriba manda sobre todo lo que se ve acá.
@@ -24,39 +52,20 @@
 
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import {
-  Archive,
-  ArrowRightLeft,
-  BookOpen,
-  Building2,
-  Calendar,
-  Check,
-  FileDown,
-  HandCoins,
-  Pencil,
-  Plug,
-  RefreshCw,
-  Settings2,
-  Trash2,
-  Wallet,
-  X,
-} from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { Archive, ArrowRightLeft, BookOpen, Building2, Check, Settings2, Trash2, X } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney, MONEY_LOCALE } from '@/lib/money';
 import { hasLedger, isAutoLedger } from '@/lib/channel-ledger';
-import { balanceAgeInDays, type ReportChannelSource } from '@/lib/channel-balance-source';
+import { balanceAgeInDays } from '@/lib/channel-balance-source';
 import type { ChannelConfigRow, ResolvedChannel } from '@/lib/channel-configs';
 import {
   DEFAULT_LOCATION_TYPE,
   LOCATION_TYPES,
   LOCATION_TYPE_LABELS,
-  groupByType,
   groupByUnit,
   isAutomatic,
   isDebt,
-  isLiquid,
   isOnchain,
   normalizeLocationType,
   parseOnchainWallets,
@@ -72,14 +81,39 @@ import {
 import type { OnchainSnapshotMeta } from '@/lib/types';
 import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { DistributionBar } from '@/components/ui/distribution-bar';
+import { Segmented } from '@/components/ui/segmented';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS } from '@/components/ui/money';
+import { Field, Input, Select } from '@/components/ui/field';
+import { relativeAge } from '@/components/ui/relative-age';
+import { cn } from '@/lib/utils';
 import { BusinessUnitsModal } from './business-units-modal';
 import { UnitSharesEditor } from './unit-shares-editor';
 import { OnchainWalletsEditor } from './onchain-wallets-editor';
 import { OnchainBreakdown } from './onchain-breakdown';
+import {
+  buildChannelRow,
+  countChannels,
+  distributionInputs,
+  freshnessSummary,
+  liquidSharePct,
+  sortByGroup,
+  type BalanceMeta,
+  type ChannelGroupKey,
+  type ChannelRow,
+  type ChannelSourceKind,
+} from './balances-view';
 
 interface Props {
   /** Canales visibles ya resueltos por la pantalla (built-ins + custom). */
   channels: ResolvedChannel[];
+  /** Nombres de los canales ocultos desde «Configurar»: no suman, y el pie lo dice. */
+  hiddenChannels: string[];
   /** Filas crudas de channel_configs — de acá salen tipo, unidad y holder. */
   configRows: ChannelConfigRow[];
   /** Saldo de cada canal a la fecha elegida, tal como lo calcula la pantalla. */
@@ -88,12 +122,7 @@ interface Props {
   onChanged: () => void;
   canManage: boolean;
   selectedDate: string;
-  onSelectedDate: (date: string) => void;
-  reloading: boolean;
-  onReload: () => void;
-  onExportPdf: () => void;
-  onConfigure: () => void;
-  /** Sub-filas propias de un canal (wallets fijadas de Coinsbuy). */
+  /** Sub-filas propias de un canal (wallets fijadas de Coinsbuy) → panel «Detalle». */
   extraRows?: (channelKey: string) => ReactNode;
   /** Acciones propias de un canal (elegir wallets de Coinsbuy). */
   extraActions?: (channelKey: string) => ReactNode;
@@ -108,12 +137,7 @@ interface Props {
    * (auditoría de finanzas, ítems 13 y 23). Lo calcula la pantalla, que es
    * quien tiene las fuentes; acá sólo se muestra.
    */
-  getBalanceMeta?: (channelKey: string) => {
-    source: ReportChannelSource;
-    asOf: string | null;
-    degraded: boolean;
-    stale: boolean;
-  };
+  getBalanceMeta?: (channelKey: string) => BalanceMeta;
 }
 
 interface Draft {
@@ -123,23 +147,41 @@ interface Draft {
   onchain: OnchainWallet[];
 }
 
-const INPUT =
-  'h-11 sm:h-9 px-3 text-base sm:text-sm rounded-lg border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-accent/30';
-const ICON_BTN =
-  'min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg';
+type View = 'type' | 'unit';
+
+/** Grupo «sin unidad» de la vista por unidad (FinTable agrupa por string). */
+const NO_UNIT = '__none__';
+
+const GROUP_LABEL_KEY: Record<ChannelGroupKey, string> = {
+  gateway: 'balances.groupGateway',
+  wallet: 'balances.groupWallet',
+  bank: 'balances.groupBank',
+  lent: 'balances.groupLent',
+  debt: 'balances.groupDebt',
+};
+
+const SOURCE_LABEL_KEY: Record<ChannelSourceKind, string> = {
+  api: 'balances.srcApi',
+  onchain: 'balances.srcOnchain',
+  manual: 'balances.srcManual',
+  computed: 'balances.srcComputed',
+};
+
+/** Botón-ícono de acción de fila (spec §5.1): 32×32, 40 en táctil. */
+const ROW_BTN =
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground disabled:opacity-40 [@media(pointer:coarse)]:size-10';
+/** Botón secundario (spec §5.1). */
+const BTN =
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:h-10';
 
 export function ChannelBalancesCard({
   channels,
+  hiddenChannels,
   configRows,
   getValue,
   onChanged,
   canManage,
   selectedDate,
-  onSelectedDate,
-  reloading,
-  onReload,
-  onExportPdf,
-  onConfigure,
   extraRows,
   extraActions,
   getSnapshotMeta,
@@ -150,10 +192,14 @@ export function ChannelBalancesCard({
 
   const [units, setUnits] = useState<BusinessUnit[]>([]);
   const [showUnits, setShowUnits] = useState(false);
+  const [view, setView] = useState<View>('type');
   const [editingKey, setEditingKey] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<{ kind: 'ok' | 'err'; msg: string } | null>(null);
+  // «Ahora» se toma una vez al montar (como KpiStrip): «hace X» no cambia de
+  // render en render ni difiere entre server y cliente.
+  const [now] = useState(() => Date.now());
 
   const loadUnits = useCallback(async () => {
     try {
@@ -211,11 +257,31 @@ export function ChannelBalancesCard({
     });
   }, [channels, configRows, getValue, sharesByKey]);
 
+  const locByKey = useMemo(() => new Map(locations.map((l) => [l.channel_key, l])), [locations]);
   const summary = useMemo(() => summarize(locations, units), [locations, units]);
   // Declarado justo después de `summary` y antes de cualquier uso en el JSX.
   const hasDebt = summary.owed !== 0;
   const byUnit = useMemo(() => groupByUnit(locations, units), [locations, units]);
-  const byType = useMemo(() => groupByType(locations), [locations]);
+  const unitById = useMemo(() => new Map(units.map((u) => [u.id, u])), [units]);
+
+  // Una fila por canal (vista por tipo): de acá salen los banners, la barra,
+  // el conteo del pie y el detalle. La vista por unidad reparte las MISMAS
+  // ubicaciones entre sus unidades dueñas.
+  const typeRows: ChannelRow[] = useMemo(
+    () => sortByGroup(locations.map((loc) => buildChannelRow(loc, getBalanceMeta?.(loc.channel_key)))),
+    [locations, getBalanceMeta],
+  );
+  const unitRows: ChannelRow[] = useMemo(
+    () =>
+      byUnit.flatMap((g) =>
+        g.locations.map((loc) => buildChannelRow(loc, getBalanceMeta?.(loc.channel_key), g.unit?.id ?? NO_UNIT)),
+      ),
+    [byUnit, getBalanceMeta],
+  );
+  const rows = view === 'unit' ? unitRows : typeRows;
+  const count = useMemo(() => countChannels(typeRows, hiddenChannels.length), [typeRows, hiddenChannels.length]);
+  const fresh = useMemo(() => freshnessSummary(typeRows), [typeRows]);
+  const distItems = useMemo(() => distributionInputs(typeRows), [typeRows]);
 
   // Una ubicación compartida aparece en cada unidad dueña, pero editarla,
   // archivarla o borrarla afecta a todas por igual: los botones van una sola
@@ -224,7 +290,7 @@ export function ChannelBalancesCard({
     const map = new Map<string, string>();
     for (const group of byUnit) {
       for (const loc of group.locations) {
-        if (!map.has(loc.channel_key)) map.set(loc.channel_key, group.unit?.id ?? '');
+        if (!map.has(loc.channel_key)) map.set(loc.channel_key, group.unit?.id ?? NO_UNIT);
       }
     }
     return map;
@@ -364,465 +430,489 @@ export function ChannelBalancesCard({
   };
 
   const typeLabel = (type: LocationType) => LOCATION_TYPE_LABELS[type][lang];
+  const plural = (n: number, one: string, many: string) =>
+    n === 1 ? t(one) : t(many, { n: String(n) });
+  const pctFmt = new Intl.NumberFormat(MONEY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+  /** «hace 3 min» para un instante, «actualizado hace N días» para una fecha de libro. */
+  const ageText = (asOf: string | null): string | null => {
+    if (!asOf) return null;
+    if (asOf.length > 10) {
+      const age = relativeAge(asOf, now);
+      return age ? t(age.key, { n: String(age.n) }) : null;
+    }
+    const days = balanceAgeInDays(asOf, selectedDate);
+    if (days === null) return null;
+    return days === 0 ? t('balances.updatedToday') : t('balances.updatedDaysAgo', { days: String(days) });
+  };
+
+  const sourceChip = (r: ChannelRow) => {
+    const loc = locByKey.get(r.channelKey);
+    const addresses =
+      r.source === 'onchain' && loc
+        ? parseOnchainWallets(loc.onchain_wallets)
+            .map((w) => `${w.network}: ${w.address}`)
+            .join('\n')
+        : undefined;
+    return (
+      <span
+        className={cn(
+          'inline-flex h-[18px] items-center rounded-ui-sm border px-1.5 text-[10.5px] font-semibold uppercase leading-none tracking-[.03em]',
+          r.source === 'api' ? 'border-info/40 text-info' : 'border-border-strong text-text-2',
+        )}
+        title={r.source === 'computed' ? t('balances.srcComputedHint') : addresses}
+      >
+        {t(SOURCE_LABEL_KEY[r.source])}
+      </span>
+    );
+  };
+
+  const freshnessCell = (r: ChannelRow) => {
+    const age = ageText(r.asOf);
+    switch (r.freshness) {
+      case 'live':
+        return <StatusBadge kind="ok" label={t('balances.live')} title={age ?? undefined} />;
+      case 'stale':
+        return <StatusBadge kind="stale" label={age ?? t('balances.staleBadge')} title={t('balances.staleHint')} />;
+      case 'degraded':
+        return <StatusBadge kind="stale" label={t('balances.degradedBadge')} title={age ?? undefined} />;
+      case 'missing':
+        return <StatusBadge kind="pend" label={t('balances.noDataBadge')} />;
+      default:
+        return (
+          <span className="text-[12.5px] text-text-2">
+            {r.source === 'computed' ? t('balances.updatedToday') : (age ?? '—')}
+          </span>
+        );
+    }
+  };
+
+  const shareCell = (r: ChannelRow) => {
+    const pct = liquidSharePct(r, summary.liquid);
+    if (pct === null) {
+      return (
+        <span className="text-text-3" title={r.liquid ? undefined : t('balances.notLiquid')}>
+          —
+        </span>
+      );
+    }
+    const width = Math.max(0, Math.min(100, pct));
+    return (
+      <span className="inline-flex items-center justify-end gap-2">
+        <span aria-hidden className="block h-1.5 w-16 overflow-hidden rounded-full bg-surface-sunk">
+          <span className="block h-full rounded-full bg-brand-ink/75" style={{ width: `${width}%` }} />
+        </span>
+        <span className={cn(NUM_CLASS, 'w-12 text-right text-text-2')}>{pctFmt.format(pct)} %</span>
+      </span>
+    );
+  };
+
+  const columns: FinColumn<ChannelRow>[] = [
+    {
+      key: 'channel',
+      header: t('balances.colChannel'),
+      cell: (r) => r.label,
+      meta: (r) => {
+        const parts = [typeLabel(r.type)];
+        if (r.holder) parts.push(r.holder);
+        if (r.share < 0.9999) {
+          parts.push(
+            t('cash.sharedLocation', {
+              percent: (r.share * 100).toFixed((r.share * 100) % 1 === 0 ? 0 : 2),
+              total: formatMoney(r.fullBalance),
+            }),
+          );
+        }
+        return parts.join(' · ');
+      },
+      // En tarjeta (< 720 px) la fuente y la frescura van bajo el nombre.
+      mobileMeta: (r) => (
+        <>
+          {sourceChip(r)}
+          {freshnessCell(r)}
+        </>
+      ),
+    },
+    { key: 'source', header: t('balances.colSource'), cell: sourceChip, hideSm: true, width: '96px' },
+    { key: 'updated', header: t('balances.colUpdated'), cell: freshnessCell, hideSm: true, width: '150px' },
+    {
+      key: 'balance',
+      header: t('balances.colBalance'),
+      kind: 'money',
+      value: (r) => r.signed,
+      money: {
+        stale: (r) =>
+          r.freshness === 'stale' || r.freshness === 'degraded'
+            ? (ageText(r.asOf) ?? t('balances.staleBadge'))
+            : undefined,
+      },
+    },
+    { key: 'share', header: t('balances.colShare'), kind: 'number', cell: shareCell, hideSm: true, width: '140px' },
+  ];
+
+  const rowActions = (r: ChannelRow) => {
+    const loc = locByKey.get(r.channelKey);
+    if (!loc) return null;
+    const isPrimary = view === 'type' || primaryGroupOf.get(r.channelKey) === r.unitKey;
+    const nodes: ReactNode[] = [];
+    if (hasLedger(r.channelKey)) {
+      nodes.push(
+        <Link
+          key="book"
+          href={`/balances/libro/${encodeURIComponent(r.channelKey)}`}
+          className={ROW_BTN}
+          title={t('ledger.openBook')}
+          aria-label={`${t('ledger.openBook')} — ${r.label}`}
+        >
+          <BookOpen aria-hidden className="size-4" strokeWidth={1.75} />
+        </Link>,
+      );
+    }
+    if (isPrimary) {
+      const extra = extraActions?.(r.channelKey);
+      if (extra) nodes.push(<span key="extra" className="contents">{extra}</span>);
+    }
+    if (isPrimary && canManage) {
+      nodes.push(
+        <button
+          key="edit"
+          type="button"
+          onClick={() => startEdit(loc)}
+          disabled={editingKey === r.channelKey}
+          className={ROW_BTN}
+          title={t('cash.editLocation')}
+          aria-label={`${t('cash.editLocation')} — ${r.label}`}
+        >
+          <Settings2 aria-hidden className="size-4" strokeWidth={1.75} />
+        </button>,
+        <button
+          key="archive"
+          type="button"
+          onClick={() => setArchived(loc, loc.is_visible)}
+          disabled={saving}
+          className={ROW_BTN}
+          title={loc.is_visible ? t('cash.archive') : t('cash.unarchive')}
+          aria-label={`${loc.is_visible ? t('cash.archive') : t('cash.unarchive')} — ${r.label}`}
+        >
+          <Archive aria-hidden className="size-4" strokeWidth={1.75} />
+        </button>,
+      );
+      if (loc.is_custom) {
+        nodes.push(
+          <button
+            key="delete"
+            type="button"
+            onClick={() => removeLocation(loc)}
+            disabled={saving}
+            className={cn(ROW_BTN, 'hover:text-neg')}
+            title={t('cash.deleteLocation')}
+            aria-label={`${t('cash.deleteLocation')} — ${r.label}`}
+          >
+            <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
+          </button>,
+        );
+      }
+    }
+    return nodes.length > 0 ? nodes : null;
+  };
+
+  const groupLabel = (key: string): ReactNode => {
+    if (view === 'type') return t(GROUP_LABEL_KEY[key as ChannelGroupKey] ?? key);
+    const unit = key === NO_UNIT ? null : unitById.get(key) ?? null;
+    return (
+      <span className="inline-flex flex-wrap items-center gap-2">
+        <span>{unit ? unit.name : t('cash.noUnit')}</span>
+        <StatusBadge
+          kind={unit && !unit.counts_to_fund ? 'neutral' : 'info'}
+          label={unit && !unit.counts_to_fund ? t('cash.apartFromFund') : t('cash.inFund')}
+        />
+        {/* El libro consolidado existía pero solo se llegaba haciendo click en
+            el nombre de la unidad: nadie lo encontraba. */}
+        {unit && (
+          <Link
+            href={`/balances/unidad/${encodeURIComponent(unit.id)}`}
+            className="inline-flex items-center gap-1 font-medium text-brand-ink hover:underline"
+            title={t('unitLedger.openBook')}
+          >
+            <ArrowRightLeft aria-hidden className="size-3.5" />
+            {t('cash.viewMovements')}
+          </Link>
+        )}
+      </span>
+    );
+  };
+
+  const kpis: KpiItem[] = [
+    {
+      key: 'total',
+      label: hasDebt ? t('cash.totalNet') : t('balances.totalConsolidated'),
+      value: summary.total,
+      format: 'money',
+      hero: true,
+      sub:
+        count.missing > 0
+          ? plural(count.missing, 'balances.kpiMissingOne', 'balances.kpiMissingMany')
+          : hasDebt
+            ? t('cash.totalNetHint')
+            : t('cash.totalHint'),
+    },
+    { key: 'liquid', label: t('cash.available'), value: summary.liquid, format: 'money', sub: t('cash.availableHint') },
+    { key: 'lent', label: t('cash.lent'), value: summary.lent, format: 'money', sub: t('cash.lentHint') },
+    // La Deuda sólo aparece si hay: un KPI en $0 para todas las empresas que
+    // nunca pidieron prestado sería ruido. Va NEGATIVA: es un pasivo (neg).
+    ...(hasDebt
+      ? [
+          {
+            key: 'owed',
+            label: (
+              <span className="inline-flex items-center gap-1">
+                {t('cash.owed')} <InfoTip text={GLOSSARY.deudaConTerceros} />
+              </span>
+            ),
+            value: -summary.owed,
+            format: 'money' as const,
+            sub: t('cash.owedHint'),
+          },
+        ]
+      : []),
+    {
+      key: 'fund',
+      label: t('cash.fund'),
+      value: summary.fund,
+      format: 'money',
+      sub: `${t('cash.outsideFund')}: ${formatMoney(summary.outsideFund)}`,
+    },
+  ];
+
+  const editingLoc = editingKey ? locByKey.get(editingKey) ?? null : null;
+  const reviewLink = (
+    <a href="#saldo-por-canal" className="text-brand-ink underline underline-offset-2">
+      {t('balances.review')}
+    </a>
+  );
+
+  // Detalle por canal: lo que antes eran sub-filas (wallets fijadas de
+  // Coinsbuy, desglose on-chain por moneda). Mismo orden que la tabla.
+  const details = typeRows
+    .map((r) => {
+      const loc = locByKey.get(r.channelKey);
+      const onchainMeta = loc && isOnchain(loc) ? getSnapshotMeta?.(r.channelKey) ?? null : null;
+      const extra = extraRows?.(r.channelKey) ?? null;
+      if (!onchainMeta && !extra) return null;
+      return (
+        <div key={r.channelKey} className="min-w-0">
+          <p className="text-[13px] font-semibold text-foreground">{r.label}</p>
+          {onchainMeta && <OnchainBreakdown meta={onchainMeta} />}
+          {extra}
+        </div>
+      );
+    })
+    .filter(Boolean);
+
+  const footerNotes: ReactNode[] = [];
+  if (hiddenChannels.length > 0) {
+    footerNotes.push(<p key="hidden">{t('balances.hiddenNote', { names: hiddenChannels.join(', ') })}</p>);
+  }
+  if (summary.lent !== 0) footerNotes.push(<p key="lent">{t('cash.lentNotice')}</p>);
+  if (hasDebt) footerNotes.push(<p key="owed">{t('cash.owedNotice')}</p>);
 
   return (
-    <Card>
-      <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-3 mb-4">
-        <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-accent/10">
-            <Plug className="w-5 h-5 text-accent" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">{t('balances.byChannel')}</h2>
-            <p className="text-xs text-muted-foreground">{t('cash.subtitle')}</p>
-          </div>
-        </div>
+    <>
+      {status &&
+        (status.kind === 'err' ? (
+          <Notice kind="bad" title={status.msg} />
+        ) : (
+          <p role="status" className="text-[13px] font-medium text-pos">
+            {status.msg}
+          </p>
+        ))}
 
-        {/* Fecha de corte: manda sobre todos los saldos de la tarjeta. El cron
-            escribe un snapshot diario a las 00:00 UTC, así que cualquier día
-            pasado se puede consultar. */}
-        <div className="flex flex-wrap items-center gap-2">
-          <Calendar className="w-4 h-4 text-muted-foreground" />
-          <input
-            type="date"
-            value={selectedDate}
-            onChange={(e) => onSelectedDate(e.target.value)}
-            className={INPUT}
-            aria-label={t('balances.snapshotDate')}
-          />
-          <button
-            onClick={onReload}
-            disabled={reloading}
-            className={`${ICON_BTN} border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50`}
-            title={t('balances.reload')}
-            aria-label={t('balances.reload')}
-          >
-            <RefreshCw className={`w-4 h-4 ${reloading ? 'animate-spin' : ''}`} />
-          </button>
-          <button
-            onClick={onExportPdf}
-            disabled={channels.length === 0}
-            className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors disabled:opacity-50"
-            title={t('ledger.exportPdf')}
-          >
-            <FileDown className="w-4 h-4" />
-            <span className="hidden sm:inline">PDF</span>
-          </button>
-          {canManage && (
-            <>
-              <button
-                onClick={onConfigure}
-                className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors"
-                title={t('balances.configureChannels')}
-              >
-                <Settings2 className="w-4 h-4" />
-                <span className="hidden sm:inline">{t('balances.configure')}</span>
-              </button>
-              <button
-                onClick={() => setShowUnits(true)}
-                className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-sm rounded-lg border border-border bg-card hover:bg-muted transition-colors"
-              >
-                <Building2 className="w-4 h-4" />
-                {t('cash.manageUnits')}
-              </button>
-            </>
+      <KpiStrip items={kpis} />
+
+      {/* Estado del dato: lo viejo SIGUE sumando (stale), lo que no tiene dato
+          NO suma (pend). Siempre con nombres y cifra (spec §5.5). */}
+      {(fresh.outdated.labels.length > 0 || fresh.missing.labels.length > 0) && (
+        <div className="space-y-2">
+          {fresh.outdated.labels.length > 0 && (
+            <Notice
+              kind="stale"
+              title={plural(fresh.outdated.labels.length, 'balances.outdatedTitleOne', 'balances.outdatedTitleMany')}
+              action={reviewLink}
+            >
+              {t('balances.outdatedBody', {
+                names: fresh.outdated.labels.join(', '),
+                amount: formatMoney(fresh.outdated.amount),
+              })}
+            </Notice>
+          )}
+          {fresh.missing.labels.length > 0 && (
+            <Notice
+              kind="pend"
+              title={plural(fresh.missing.labels.length, 'balances.missingTitleOne', 'balances.missingTitleMany')}
+              action={reviewLink}
+            >
+              {t('balances.missingBody', { names: fresh.missing.labels.join(', ') })}
+            </Notice>
           )}
         </div>
-      </div>
-
-      {status && (
-        <div
-          className={`mb-4 p-3 rounded-lg text-sm border ${
-            status.kind === 'ok'
-              ? 'bg-positive/10 border-positive/30 text-positive'
-              : 'bg-negative/10 border-negative/30 text-negative'
-          }`}
-        >
-          {status.msg}
-        </div>
       )}
 
-      {/* Resumen. Disponible y Prestado van primero y separados a propósito:
-          confundirlos es creer que hay caja para pagar algo que no está. La
-          Deuda solo aparece si hay: una tarjeta en $0 para todas las empresas
-          que nunca pidieron prestado sería ruido. */}
-      <div
-        className={`grid grid-cols-1 sm:grid-cols-2 gap-3 ${
-          hasDebt ? 'lg:grid-cols-5' : 'lg:grid-cols-4'
-        }`}
-      >
-        <div className="p-4 rounded-lg border border-positive/30 bg-positive/5">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('cash.available')}</p>
-          <p className="text-2xl font-bold text-positive tabular-nums">{formatCurrency(summary.liquid)}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{t('cash.availableHint')}</p>
-        </div>
-        <div className="p-4 rounded-lg border border-warning/30 bg-warning/5">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('cash.lent')}</p>
-          <p className="text-2xl font-bold text-warning tabular-nums">{formatCurrency(summary.lent)}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">{t('cash.lentHint')}</p>
-        </div>
-        {hasDebt && (
-          <div className="p-4 rounded-lg border border-negative/30 bg-negative/5">
-            <p className="flex items-center gap-1 text-xs text-muted-foreground uppercase tracking-wide">
-              {t('cash.owed')} <InfoTip text={GLOSSARY.deudaConTerceros} />
+      {channels.length === 0 ? (
+        <Panel title={t('balances.tableTitle')}>
+          <p className="py-4 text-center text-[13px] text-text-2">
+            {t('balances.noVisibleChannelsPre')} <strong>{t('balances.configure')}</strong>{' '}
+            {t('balances.noVisibleChannelsPost')}
+          </p>
+          {hiddenChannels.length > 0 && (
+            <p className="text-center text-[12.5px] text-text-3">
+              {t('balances.hiddenNote', { names: hiddenChannels.join(', ') })}
             </p>
-            <p className="text-2xl font-bold text-negative tabular-nums">{formatCurrency(summary.owed)}</p>
-            <p className="text-[10px] text-muted-foreground mt-0.5">{t('cash.owedHint')}</p>
-          </div>
-        )}
-        <div className="p-4 rounded-lg border border-border">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">
-            {hasDebt ? t('cash.totalNet') : t('balances.totalConsolidated')}
-          </p>
-          <p className="text-2xl font-bold tabular-nums">{formatCurrency(summary.total)}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
-            {hasDebt ? t('cash.totalNetHint') : t('cash.totalHint')}
-          </p>
-        </div>
-        <div className="p-4 rounded-lg border border-border bg-muted/30">
-          <p className="text-xs text-muted-foreground uppercase tracking-wide">{t('cash.fund')}</p>
-          <p className="text-2xl font-bold tabular-nums">{formatCurrency(summary.fund)}</p>
-          <p className="text-[10px] text-muted-foreground mt-0.5">
-            {t('cash.outsideFund')}: {formatCurrency(summary.outsideFund)}
-          </p>
-        </div>
-      </div>
+          )}
+        </Panel>
+      ) : (
+        <>
+          <Panel title={t('balances.distTitle')} hint={t('balances.distHint')} flush>
+            <DistributionBar items={distItems} />
+          </Panel>
 
-      {summary.lent !== 0 && (
-        <p className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
-          <HandCoins className="w-4 h-4 shrink-0 text-warning" />
-          <span>{t('cash.lentNotice')}</span>
-        </p>
-      )}
-      {hasDebt && (
-        <p className="mt-2 flex items-start gap-2 text-xs text-muted-foreground">
-          <HandCoins className="w-4 h-4 shrink-0 text-negative" />
-          <span>{t('cash.owedNotice')}</span>
-        </p>
-      )}
-
-      {channels.length === 0 && (
-        <p className="text-sm text-muted-foreground py-6 text-center">
-          {t('balances.noVisibleChannelsPre')} <strong>{t('balances.configure')}</strong>{' '}
-          {t('balances.noVisibleChannelsPost')}
-        </p>
-      )}
-
-      {/* Ubicaciones agrupadas por unidad de negocio */}
-      <div className="mt-6 space-y-4">
-        {channels.length > 0 && (
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            {t('cash.byUnit')}
-          </h3>
-        )}
-
-        {byUnit.map((group) => (
-          <div key={group.unit?.id ?? 'unassigned'} className="rounded-lg border border-border overflow-hidden">
-            <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-muted/40">
-              <div className="flex items-center gap-2 min-w-0">
-                <Building2 className="w-4 h-4 text-muted-foreground shrink-0" />
-                <p className="font-medium truncate">{group.unit ? group.unit.name : t('cash.noUnit')}</p>
-                <span
-                  className={`shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium border ${
-                    group.unit && !group.unit.counts_to_fund
-                      ? 'bg-muted text-muted-foreground border-border'
-                      : 'bg-positive/10 text-positive border-positive/30'
-                  }`}
-                >
-                  {group.unit && !group.unit.counts_to_fund ? t('cash.apartFromFund') : t('cash.inFund')}
-                </span>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <span className="font-semibold tabular-nums">{formatCurrency(group.total)}</span>
-                {/* El libro consolidado existía pero solo se llegaba haciendo
-                    click en el nombre de la unidad: nadie lo encontraba. */}
-                {group.unit && (
-                  <Link
-                    href={`/balances/unidad/${encodeURIComponent(group.unit.id)}`}
-                    className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border bg-card hover:bg-muted transition-colors"
-                    title={t('unitLedger.openBook')}
-                  >
-                    <ArrowRightLeft className="w-3.5 h-3.5" />
-                    {t('cash.viewMovements')}
-                  </Link>
+          <Panel
+            id="saldo-por-canal"
+            className="scroll-mt-20"
+            title={t('balances.tableTitle')}
+            hint={t('balances.tableHint', { date: selectedDate })}
+            flush
+            actions={
+              <>
+                <Segmented<View>
+                  aria-label={t('balances.viewLabel')}
+                  value={view}
+                  onChange={setView}
+                  options={[
+                    { value: 'type', label: t('balances.viewByType') },
+                    { value: 'unit', label: t('balances.viewByUnit'), count: units.length || null },
+                  ]}
+                />
+                {canManage && (
+                  <button type="button" onClick={() => setShowUnits(true)} className={BTN}>
+                    <Building2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                    <span className="max-sm:sr-only">{t('cash.manageUnits')}</span>
+                  </button>
                 )}
-              </div>
-            </div>
+              </>
+            }
+            footer={footerNotes.length > 0 ? <div className="space-y-1">{footerNotes}</div> : undefined}
+          >
+            <FinTable<ChannelRow>
+              caption={t('balances.tableTitle')}
+              columns={columns}
+              rows={rows}
+              rowKey={(r) => r.rowKey}
+              groupBy={(r) => (view === 'unit' ? r.unitKey : r.group)}
+              groupLabel={groupLabel}
+              selectedKey={
+                editingKey
+                  ? view === 'type'
+                    ? editingKey
+                    : `${primaryGroupOf.get(editingKey) ?? NO_UNIT}:${editingKey}`
+                  : null
+              }
+              rowActions={rowActions}
+              footer={{
+                label: (
+                  <span>
+                    {hasDebt ? t('cash.totalNet') : t('balances.totalConsolidated')}
+                    <span className="ml-2 text-[12px] font-medium text-text-3">
+                      {t('balances.footerCount', {
+                        summed: String(count.summed),
+                        excluded: String(count.excluded),
+                      })}
+                    </span>
+                  </span>
+                ),
+                values: { balance: summary.total },
+              }}
+            />
 
-            <div className="divide-y divide-border">
-              {group.locations.map((loc) => {
-                const editing = editingKey === loc.channel_key;
-                // Una wallet on-chain es tan automática como una pasarela: su
-                // saldo lo pone el cron desde la cadena, así que tampoco se
-                // edita a mano. `isAutomatic` mira el TIPO y `isOnchain` la
-                // FILA — son dos preguntas distintas sobre la misma ubicación.
-                const onchain = isOnchain(loc);
-                const automatic = isAutomatic(loc.location_type) || onchain;
-                const onchainMeta = onchain ? getSnapshotMeta?.(loc.channel_key) ?? null : null;
-                // El saldo de un canal con libro no se sobreescribe a mano: se
-                // carga un asiento. Dos vías serían dos fuentes de verdad para
-                // el mismo número — y desde 2026-08-31 NO queda ninguna otra
-                // vía: el editor de saldo suelto y su endpoint se borraron
-                // (ver la cabecera de este archivo).
-                const isPrimary = primaryGroupOf.get(loc.channel_key) === (group.unit?.id ?? '');
-                const partial = loc.share < 0.9999;
-                // De cuándo es este saldo. `otros` ($14.493, último asiento del
-                // 05/08) se pintaba con el mismo peso visual que Coinsbuy en
-                // vivo: un saldo quieto de hace semanas leído como el de hoy.
-                const meta = getBalanceMeta?.(loc.channel_key);
-                const ageDays = meta ? balanceAgeInDays(meta.asOf, selectedDate) : null;
-                return (
-                  <div key={`${group.unit?.id ?? 'none'}-${loc.channel_key}`} className="p-3">
-                    <div className="flex items-center justify-between gap-3">
-                      <div className="flex items-center gap-2 min-w-0 flex-1">
-                        <Wallet className="w-4 h-4 text-muted-foreground shrink-0" />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-2 min-w-0">
-                            <p className="font-medium truncate">{loc.label}</p>
-                            {onchain && (
-                              <span
-                                className="shrink-0 px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-accent/10 text-accent border border-accent/30"
-                                title={parseOnchainWallets(loc.onchain_wallets)
-                                  .map((w) => `${w.network}: ${w.address}`)
-                                  .join('\n')}
-                              >
-                                {t('onchain.badge')}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-xs text-muted-foreground truncate">
-                            {typeLabel(loc.location_type)}
-                            {loc.holder ? ` · ${loc.holder}` : ''}
-                            {automatic ? ` · ${t('cash.autoSynced')}` : ''}
-                            {partial
-                              ? ` · ${t('cash.sharedLocation', {
-                                  percent: (loc.share * 100).toFixed(loc.share * 100 % 1 === 0 ? 0 : 2),
-                                  total: formatCurrency(loc.fullBalance),
-                                })}`
-                              : ''}
-                          </p>
-                          {/* Antigüedad del saldo + aviso de dato degradado.
-                              Un canal en vivo no muestra nada: su saldo es de
-                              este segundo y agregarle un cartel sería ruido. */}
-                          {meta && (meta.stale || meta.degraded || meta.source === 'missing') && (
-                            <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[10px]">
-                              {meta.degraded && (
-                                <span className="px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning border border-warning/30">
-                                  {t('balances.degradedBadge')}
-                                </span>
-                              )}
-                              {meta.source === 'missing' ? (
-                                <span className="px-1.5 py-0.5 rounded-full font-medium bg-muted text-muted-foreground border border-border">
-                                  {t('balances.noDataBadge')}
-                                </span>
-                              ) : (
-                                meta.stale && (
-                                  <span
-                                    className="px-1.5 py-0.5 rounded-full font-medium bg-warning/15 text-warning border border-warning/30"
-                                    title={t('balances.staleHint')}
-                                  >
-                                    {t('balances.staleBadge')}
-                                  </span>
-                                )
-                              )}
-                              {ageDays !== null && (
-                                <span className="text-muted-foreground">
-                                  {ageDays === 0
-                                    ? t('balances.updatedToday')
-                                    : t('balances.updatedDaysAgo', { days: String(ageDays) })}
-                                  {meta.asOf ? ` · ${meta.asOf.slice(0, 10)}` : ''}
-                                </span>
-                              )}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1 shrink-0">
-                        <span
-                          className={`font-semibold tabular-nums ${
-                            isDebt(loc.location_type)
-                              ? 'text-negative'
-                              : isLiquid(loc.location_type)
-                                ? ''
-                                : 'text-warning'
-                          }`}
-                        >
-                          {/* Una deuda se muestra con su monto en positivo y el
-                              rótulo: «−$10.000» a secas se leería como una
-                              wallet en rojo, no como plata que se debe. */}
-                          {isDebt(loc.location_type)
-                            ? `${t('cash.debtPrefix')} · ${formatCurrency(loc.balance)}`
-                            : formatCurrency(loc.balance)}
-                        </span>
-                        {hasLedger(loc.channel_key) && (
-                          <Link
-                            href={`/balances/libro/${encodeURIComponent(loc.channel_key)}`}
-                            className={`${ICON_BTN} text-accent hover:bg-accent/10`}
-                            title={t('ledger.openBook')}
-                            aria-label={`${t('ledger.openBook')} — ${loc.label}`}
-                          >
-                            <BookOpen className="w-4 h-4" />
-                          </Link>
-                        )}
-                            {isPrimary && extraActions?.(loc.channel_key)}
-                            {isPrimary && canManage && !editing && (
-                              <button
-                                onClick={() => startEdit(loc)}
-                                className={`${ICON_BTN} text-accent hover:bg-accent/10`}
-                                title={t('cash.editLocation')}
-                                aria-label={`${t('cash.editLocation')} — ${loc.label}`}
-                              >
-                                <Settings2 className="w-4 h-4" />
-                              </button>
-                            )}
-                            {isPrimary && canManage && (
-                              <button
-                                type="button"
-                                onClick={() => setArchived(loc, loc.is_visible)}
-                                disabled={saving}
-                                className={`${ICON_BTN} text-muted-foreground hover:bg-muted disabled:opacity-40`}
-                                title={loc.is_visible ? t('cash.archive') : t('cash.unarchive')}
-                                aria-label={`${loc.is_visible ? t('cash.archive') : t('cash.unarchive')} — ${loc.label}`}
-                              >
-                                <Archive className="w-4 h-4" />
-                              </button>
-                            )}
-                            {isPrimary && canManage && loc.is_custom && (
-                              <button
-                                type="button"
-                                onClick={() => removeLocation(loc)}
-                                disabled={saving}
-                                className={`${ICON_BTN} text-negative hover:bg-negative/10 disabled:opacity-40`}
-                                title={t('cash.deleteLocation')}
-                                aria-label={`${t('cash.deleteLocation')} — ${loc.label}`}
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </button>
-                            )}
-                      </div>
-                    </div>
-
-                    {/* Cuánto hay en cada moneda — del snapshot, no de la cadena. */}
-                    {onchainMeta && <OnchainBreakdown meta={onchainMeta} share={loc.share} />}
-
-                    {isPrimary && extraRows?.(loc.channel_key)}
-
-                    {editing && draft && (
-                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                          {t('cash.locationType')}
-                          <select
-                            value={draft.location_type}
-                            onChange={(e) =>
-                              setDraft({ ...draft, location_type: e.target.value as LocationType })
-                            }
-                            className={INPUT}
-                          >
-                            {LOCATION_TYPES.map((type) => (
-                              <option key={type} value={type}>
-                                {typeLabel(type)}
-                              </option>
-                            ))}
-                          </select>
-                        </label>
-                        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
-                          {t('cash.holder')}
-                          <input
-                            value={draft.holder}
-                            onChange={(e) => setDraft({ ...draft, holder: e.target.value })}
-                            placeholder={
-                              isDebt(draft.location_type)
-                                ? t('cash.debtHolderPlaceholder')
-                                : t('cash.holderPlaceholder')
-                            }
-                            required={requiresHolder(draft.location_type)}
-                            aria-required={requiresHolder(draft.location_type)}
-                            className={INPUT}
-                          />
-                        </label>
-                        <div className="sm:col-span-2">
-                          <UnitSharesEditor
-                            units={units}
-                            value={draft.shares}
-                            onChange={(shares) => setDraft({ ...draft, shares })}
-                          />
-                        </div>
-                        {/* Solo para wallets: una cuenta bancaria o un préstamo
-                            no tienen dirección en una blockchain. */}
-                        {draft.location_type === 'wallet' && (
-                          <div className="sm:col-span-2 pt-2 border-t border-border">
-                            <OnchainWalletsEditor
-                              value={draft.onchain}
-                              onChange={(onchain) => setDraft({ ...draft, onchain })}
-                              disabled={saving}
-                            />
-                          </div>
-                        )}
-                        <div className="sm:col-span-2 flex items-center justify-between gap-2">
-                          <p className="text-[11px] text-muted-foreground">
-                            {automatic
-                              ? t('cash.autoBalanceNote')
-                              : isDebt(draft.location_type)
-                                ? t('balances.cfgDebtHelp')
-                                : t('cash.manualBalanceNote')}
-                          </p>
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => saveEdit(loc)}
-                              disabled={saving}
-                              className={`${ICON_BTN} text-positive hover:bg-positive/10 disabled:opacity-40`}
-                              aria-label={t('common.save')}
-                            >
-                              {saving ? (
-                                <RefreshCw className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <Check className="w-4 h-4" />
-                              )}
-                            </button>
-                            <button
-                              onClick={cancelEdit}
-                              className={`${ICON_BTN} text-muted-foreground hover:bg-muted`}
-                              aria-label={t('common.cancel')}
-                            >
-                              <X className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+            {editingLoc && draft && (
+              <div className="border-t border-border p-4">
+                <h3 className="mb-3 text-[13.5px] font-semibold text-foreground">
+                  {t('balances.editTitle', { name: editingLoc.label })}
+                </h3>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Field label={t('cash.locationType')}>
+                    <Select
+                      value={draft.location_type}
+                      onChange={(e) => setDraft({ ...draft, location_type: e.target.value as LocationType })}
+                    >
+                      {LOCATION_TYPES.map((type) => (
+                        <option key={type} value={type}>
+                          {typeLabel(type)}
+                        </option>
+                      ))}
+                    </Select>
+                  </Field>
+                  <Field label={t('cash.holder')} required={requiresHolder(draft.location_type)}>
+                    <Input
+                      value={draft.holder}
+                      onChange={(e) => setDraft({ ...draft, holder: e.target.value })}
+                      placeholder={
+                        isDebt(draft.location_type) ? t('cash.debtHolderPlaceholder') : t('cash.holderPlaceholder')
+                      }
+                    />
+                  </Field>
+                  <div className="sm:col-span-2">
+                    <UnitSharesEditor
+                      units={units}
+                      value={draft.shares}
+                      onChange={(shares) => setDraft({ ...draft, shares })}
+                    />
                   </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Desglose por tipo */}
-      {byType.length > 0 && (
-        <div className="mt-6">
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-2">
-            {t('cash.byType')}
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-2">
-            {byType.map((row) => (
-              <div key={row.type} className="p-3 rounded-lg border border-border">
-                <p className="text-xs text-muted-foreground truncate">{typeLabel(row.type)}</p>
-                <p
-                  className={`text-base font-semibold tabular-nums ${
-                    isDebt(row.type) ? 'text-negative' : isLiquid(row.type) ? '' : 'text-warning'
-                  }`}
-                >
-                  {formatCurrency(row.total)}
-                </p>
-                <p className="text-[10px] text-muted-foreground">
-                  {t('cash.locationCount', { count: String(row.count) })}
-                </p>
+                  {/* Solo para wallets: una cuenta bancaria o un préstamo no
+                      tienen dirección en una blockchain. */}
+                  {draft.location_type === 'wallet' && (
+                    <div className="border-t border-border pt-2 sm:col-span-2">
+                      <OnchainWalletsEditor
+                        value={draft.onchain}
+                        onChange={(onchain) => setDraft({ ...draft, onchain })}
+                        disabled={saving}
+                      />
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
+                    <p className="text-[12px] text-text-3">
+                      {isAutomatic(editingLoc.location_type) || isOnchain(editingLoc)
+                        ? t('cash.autoBalanceNote')
+                        : isDebt(draft.location_type)
+                          ? t('balances.cfgDebtHelp')
+                          : t('cash.manualBalanceNote')}
+                    </p>
+                    <div className="flex items-center gap-2">
+                      <button type="button" onClick={cancelEdit} className={BTN}>
+                        <X aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                        {t('common.cancel')}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => saveEdit(editingLoc)}
+                        disabled={saving}
+                        className={BTN}
+                      >
+                        <Check aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                        {t('common.save')}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
-            ))}
-          </div>
-        </div>
+            )}
+          </Panel>
+
+          {details.length > 0 && (
+            <Panel title={t('balances.detailTitle')} hint={t('balances.detailHint')}>
+              <div className="grid gap-x-8 gap-y-5 min-[1100px]:grid-cols-2">{details}</div>
+            </Panel>
+          )}
+        </>
       )}
 
       {canManage && (
@@ -837,6 +927,6 @@ export function ChannelBalancesCard({
           }}
         />
       )}
-    </Card>
+    </>
   );
 }
