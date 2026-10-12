@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildBrandPalette } from '@/lib/brand-color';
+import { buildBrandPalette, buildSidebarPalette } from '@/lib/brand-color';
 import {
   DEFAULT_PRIMARY,
   DEFAULT_SECONDARY,
@@ -57,17 +57,11 @@ describe('checkColor', () => {
 });
 
 describe('sidebarPreview', () => {
-  it('el ítem activo es el relleno oscuro de la paleta con su texto', () => {
-    const p = buildBrandPalette(DEFAULT_PRIMARY);
-    const s = sidebarPreview(p, buildBrandPalette(DEFAULT_SECONDARY));
-    expect(s.activeBg).toBe(p.dark);
-    expect(s.activeFg).toBe(p.fgDark);
-  });
-  it('el fondo es más oscuro que el activo y el texto se elige por contraste', () => {
-    for (const hex of [DEFAULT_PRIMARY, '#F2B13A', '#ffffff', '#000000']) {
-      const s = sidebarPreview(buildBrandPalette(hex), buildBrandPalette(DEFAULT_SECONDARY));
-      expect(s.bg).not.toBe(s.activeBg);
-      expect(['#FFFFFF', '#000000']).toContain(s.fg);
+  it('usa la MISMA fórmula que el sidebar real (buildSidebarPalette)', () => {
+    for (const [pri, sec] of [[DEFAULT_PRIMARY, DEFAULT_SECONDARY], ['#cf2738', '#ffffff'], ['#db0000', '#000000']]) {
+      const s = sidebarPreview(buildBrandPalette(pri), buildBrandPalette(sec));
+      const real = buildSidebarPalette(buildBrandPalette(pri).base, buildBrandPalette(sec).base);
+      expect(s).toMatchObject({ bg: real.bg, fg: real.fg, activeBg: real.activeBg, bar: real.accent });
     }
   });
   it('barContrast devuelve un número finito ≥ 1', () => {

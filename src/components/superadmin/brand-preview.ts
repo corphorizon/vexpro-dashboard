@@ -29,10 +29,9 @@
 //     error. Se avisa con el color resultante y se deja guardar.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { buildBrandPalette, contrastRatio, mix, readableTextOn, rgbToHex, type BrandPalette } from '@/lib/brand-color';
+import { buildBrandPalette, buildSidebarPalette, contrastRatio, type BrandPalette } from '@/lib/brand-color';
 import { hexToRgb, relativeLuminance } from '@/lib/brand';
 
-const BLACK: [number, number, number] = [0, 0, 0];
 
 /** Defaults del alta (companies/new y el POST de /api/superadmin/companies). */
 export const DEFAULT_PRIMARY = '#1E3A5F';
@@ -101,17 +100,18 @@ export interface SidebarPreview {
  * buildBrandPalette; los textos se eligen por contraste (readableTextOn).
  */
 export function sidebarPreview(primary: BrandPalette, secondary: BrandPalette): SidebarPreview {
-  const activeRgb = hexToRgb(primary.dark);
-  const bgRgb = mix(activeRgb, BLACK, 0.55);
-  const fgRgb = readableTextOn(bgRgb);
+  // La MISMA fórmula que pinta el sidebar real (buildSidebarPalette en
+  // brand-color.ts). Antes había una aproximación propia acá: dos fórmulas del
+  // mismo color se separan en silencio y la vista previa mentía.
+  const s = buildSidebarPalette(primary.base, secondary.base);
   return {
-    bg: rgbToHex(bgRgb),
-    fg: rgbToHex(fgRgb),
-    muted: rgbToHex(mix(fgRgb, bgRgb, 0.35)),
-    border: rgbToHex(mix(fgRgb, bgRgb, 0.85)),
-    activeBg: primary.dark,
-    activeFg: primary.fgDark,
-    bar: secondary.inkDark,
+    bg: s.bg,
+    fg: s.fg,
+    muted: s.muted,
+    border: s.border,
+    activeBg: s.activeBg,
+    activeFg: s.fg,
+    bar: s.accent,
   };
 }
 
