@@ -1,23 +1,46 @@
 'use client';
 
 import { useState, useRef, useMemo, useEffect, useCallback } from 'react';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { Field, Input } from '@/components/ui/field';
+import { Money } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { cn } from '@/lib/utils';
+import {
+  PAGE_SIZE,
+  PaginationControls,
+  ClosedBadge,
+  btnClass,
+  INPUT_MOBILE,
+  INPUT_NUM,
+  ROW_BTN,
+  ROW_BTN_DANGER,
+  SUGGEST_ITEM,
+  SUGGEST_LIST,
+  TABLE,
+  TD,
+  TFOOT_TD,
+  TH,
+} from './_components/upload-ui';
+import { DepositsPanel } from './_components/deposits-panel';
+import { WithdrawalsPanel } from './_components/withdrawals-panel';
+import { OperatingIncomePanel } from './_components/operating-income-panel';
+import { MovementsLedger } from './_components/movements-ledger';
+import { MovementFilters } from './_components/movement-filters';
+import { SaveBar } from './_components/save-bar';
 import { ExpenseReference } from '@/components/ui/expense-reference';
 import { ExpenseAttachmentInput, type ExpenseAttachment } from '@/components/ui/expense-attachment-input';
 import { ExpenseConcept } from '@/components/ui/expense-concept';
 import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
-import { formatCurrency } from '@/lib/utils';
 import { formatMoney } from '@/lib/money';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
-import {
-  ALL_WITHDRAWAL_CATEGORIES,
-  withdrawalCategoryLabel,
-} from '@/lib/withdrawal-categories';
 import { ALL_DEPOSIT_CHANNELS } from '@/lib/deposit-channels';
 import type { LiquidityMovement, Investment } from '@/lib/types';
-import { Plus, Trash2, Edit2, Check, X, FileSpreadsheet, FileUp, Save, ArrowUpDown, Download, ChevronLeft, ChevronRight, GripVertical, Lock as LockIcon, Upload } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, GripVertical, Upload } from 'lucide-react';
 import {
   DndContext,
   closestCenter,
@@ -36,52 +59,34 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-// ─── Pagination ──────────────────────────────────────────────────────────
-// Shared cap across all three data-entry tables (Egresos, Liquidez, Inv.).
-const PAGE_SIZE = 25;
-
-function PaginationControls({
-  page, totalPages, totalItems, onChange,
-}: {
-  page: number;
-  totalPages: number;
-  totalItems: number;
-  onChange: (next: number) => void;
-}) {
-  const { t } = useI18n();
-  // Hidden for small datasets — the spec says "25 or fewer → single page".
-  if (totalItems <= PAGE_SIZE) return null;
-  const from = page * PAGE_SIZE + 1;
-  const to = Math.min((page + 1) * PAGE_SIZE, totalItems);
-  return (
-    <div className="flex items-center justify-between mt-3 text-sm">
-      <span className="text-muted-foreground">
-        {t('upload.pageRange', { from: String(from), to: String(to), total: String(totalItems) })}
-      </span>
-      <div className="flex items-center gap-1">
-        <button
-          onClick={() => onChange(Math.max(0, page - 1))}
-          disabled={page === 0}
-          className="p-2 sm:p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-          aria-label={t('upload.prevPage')}
-        >
-          <ChevronLeft className="w-4 h-4" />
-        </button>
-        <span className="px-2 tabular-nums">
-          {t('upload.pageOf', { page: String(page + 1), total: String(totalPages) })}
-        </span>
-        <button
-          onClick={() => onChange(Math.min(totalPages - 1, page + 1))}
-          disabled={page >= totalPages - 1}
-          className="p-2 sm:p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-          aria-label={t('upload.nextPage')}
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
-      </div>
-    </div>
-  );
-}
+// ─── Migración «Libro mayor» (2026-10-12) — SÓLO presentación ─────────────
+// POR QUÉ: era la pantalla más grande del repo (3.913 líneas, 54 useState)
+// y la de más color sin significado: 82 clases de paleta cruda, 23 `dark:` de
+// color, 13 `text-[10px]/[11px]`, 125 tokens legados (`text-muted-foreground`,
+// `text-positive`…), y el total de Depósitos en azul / Retiros en rojo.
+// Medido con grep antes del cambio; después: 0 / 0 / 0 / 0 en código.
+//
+// QUÉ SE MOVIÓ (a `_components/`, piezas sin estado ni efectos que reciben
+// callbacks con el MISMO código que tenía el JSX):
+//   deposits-panel · withdrawals-panel (+ withdrawals-view.ts, el pie de
+//   Retiros como función pura con test) · operating-income-panel ·
+//   movements-ledger (Liquidez e Inversiones eran la misma tabla copiada) ·
+//   movement-filters · save-bar · upload-ui (paginación, botones, badges).
+// QUÉ NO SE MOVIÓ: TODO el estado, los efectos, la siembra de buffers y de la
+// huella de egresos, `persistExpenses` / la cola `enqueueExpenseWrite`, el
+// autosave, `saveAll` y los payloads (reglas §2.4 — los cuatro lugares por
+// columna: este archivo sigue siendo el único que hidrata el estado).
+// Y la pestaña Egresos se quedó acá, restilizada en el lugar: dnd-kit crea
+// cada <tr> (`useSortable`), la fila en edición reemplaza todas sus celdas y
+// el alta tiene dos autocompletados atados a refs de la página. Extraerla era
+// pasar ~30 props por la pestaña con el guard de huella: el riesgo no pagaba
+// las líneas que ahorraba.
+//
+// DESCARTADO: un aviso persistente del 409 de huella. Hoy el conflicto se
+// marca en un ref (`expenseConflictPeriodRef`) y se informa con un toast; un
+// <Notice> necesitaría un estado nuevo que se prenda y se apague en los mismos
+// puntos que el ref, o sea tocar el manejo del guardado. Queda para un cambio
+// propio.
 import { logAction } from '@/lib/audit-log';
 import { useI18n } from '@/lib/i18n';
 import { useModuleAccess } from '@/lib/use-module-access';
@@ -192,17 +197,19 @@ function SortableExpenseRow({
   };
 
   return (
-    <tr ref={setNodeRef} style={style} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
+    <tr ref={setNodeRef} style={style} className={cn('hover:bg-row-hover', isDragging && 'bg-card shadow-2')}>
       <td
-        className={`py-2.5 px-2 text-muted-foreground ${
-          disabled ? 'opacity-30 cursor-not-allowed' : 'cursor-grab active:cursor-grabbing'
-        } touch-none select-none`}
+        className={cn(
+          TD,
+          'w-8 touch-none select-none text-text-3',
+          disabled ? 'cursor-not-allowed opacity-30' : 'cursor-grab active:cursor-grabbing',
+        )}
         {...(disabled ? {} : attributes)}
         {...(disabled ? {} : listeners)}
         aria-label={disabled ? 'Termina de editar para mover' : 'Arrastrar para reordenar'}
         title={disabled ? 'Termina de editar para mover' : 'Arrastrar para reordenar'}
       >
-        <GripVertical className="w-4 h-4" />
+        <GripVertical aria-hidden className="size-4" />
       </td>
       {children}
     </tr>
@@ -262,40 +269,6 @@ function saveToStorage<T>(key: string, value: T) {
   }
 }
 
-/** Small "Guardado hace Xs" indicator. Re-renders itself every 10 s so
- *  the label stays fresh without the parent owning a clock. Drops out
- *  silently after 5 min — at that point the user already moved on. */
-function SavedRecentlyBadge({ at }: { at: Date }) {
-  const { t } = useI18n();
-  // secs se calcula DENTRO del effect (no en render): la regla react-compiler
-  // prohíbe llamar funciones impuras como Date.now() durante el render.
-  // `atMs` es estable (getTime es puro), así el effect corre una sola vez.
-  const atMs = at.getTime();
-  const [secs, setSecs] = useState(0);
-  useEffect(() => {
-    const update = () => setSecs(Math.floor((Date.now() - atMs) / 1000));
-    update();
-    const id = setInterval(update, 10_000);
-    return () => clearInterval(id);
-  }, [atMs]);
-  if (secs > 300) return null; // > 5 min — stop bragging.
-  const label =
-    secs < 5
-      ? t('common.saved')
-      : secs < 60
-        ? t('upload.savedSecondsAgo', { secs: String(secs) })
-        : t('upload.savedMinutesAgo', { mins: String(Math.floor(secs / 60)) });
-  return (
-    <span
-      className="inline-flex items-center gap-1.5 text-xs font-medium text-positive whitespace-nowrap"
-      aria-live="polite"
-      title={t('upload.lastSavedTitle')}
-    >
-      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-      {label}
-    </span>
-  );
-}
 
 export default function UploadPage() {
   const { t } = useI18n();
@@ -2386,12 +2359,8 @@ export default function UploadPage() {
   }, [filteredInvestments, invBalanceMap]);
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold">{t('upload.title')}</h1>
-        <p className="text-muted-foreground text-sm mt-1">{t('upload.subtitle')}</p>
-      </div>
+    <div className="space-y-4">
+      <PageHeader title={t('upload.title')} subtitle={t('upload.subtitle')} />
 
       {/* Feedback lives in the floating ToastHost at bottom-right. Rendered
           at the end of this component so it sits above everything else. */}
@@ -2400,450 +2369,154 @@ export default function UploadPage() {
           de la base rechaza cualquier escritura; el autosave y el botón de
           guardar quedan apagados. */}
       {selectedPeriodIsClosed && (
-        <div className="flex gap-3 rounded-lg border border-warning/40 bg-warning/10 p-4">
-          <LockIcon className="w-4 h-4 mt-0.5 shrink-0 text-amber-600" aria-hidden />
-          <p className="text-sm">
-            <strong>{periodLabel}</strong> está <strong>cerrado</strong>: sus totales quedaron
-            congelados y no admite cambios.{' '}
-            {/* El remedio se ofrece sólo a quien puede aplicarlo. Con el modelo
-                `liquidity_provider` (que sí carga inversiones pero no tiene el
-                módulo Períodos) este enlace mandaba a un 403: un consejo que no
-                se puede seguir es peor que ninguno. */}
-            {canManagePeriods && (
-              <>
-                Para corregir algo, reabrí el período en{' '}
-                <Link href="/periodos" className="underline font-medium">Períodos</Link> (queda
-                registrado con motivo) o cargá el movimiento en el período abierto.
-              </>
-            )}
-          </p>
-        </div>
+        <Notice kind="info" title={t('upload.ledger.closedTitle', { period: periodLabel })}>
+          {t('upload.ledger.closedBody')}
+          {/* El remedio se ofrece sólo a quien puede aplicarlo. Con el modelo
+              `liquidity_provider` (que sí carga inversiones pero no tiene el
+              módulo Períodos) este enlace mandaba a un 403: un consejo que no
+              se puede seguir es peor que ninguno. */}
+          {canManagePeriods && (
+            <>
+              {' '}
+              {t('upload.ledger.closedFixBefore')}{' '}
+              <Link href="/periodos" className="font-medium text-foreground underline">
+                {t('upload.ledger.periodsLink')}
+              </Link>{' '}
+              {t('upload.ledger.closedFixAfter')}
+            </>
+          )}
+        </Notice>
       )}
 
-      {/* Section tabs */}
-      <div className="flex gap-1 border-b border-border pb-0 overflow-x-auto">
-        {allowedSections.map(s => (
-          <button
-            key={s}
-            onClick={() => setSection(s)}
-            className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors whitespace-nowrap ${
-              section === s
-                ? 'bg-card border border-border border-b-card text-foreground -mb-px'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {t(SECTION_KEYS[s])}
-          </button>
-        ))}
+      {/* Pestañas: el registro (`uploadSections`) decide cuáles y en qué orden. */}
+      <div className="overflow-x-auto pb-0.5">
+        <Segmented
+          aria-label={t('upload.ledger.sectionsAria')}
+          value={section}
+          onChange={(s) => setSection(s)}
+          options={allowedSections.map((s) => ({ value: s, label: t(SECTION_KEYS[s]) }))}
+        />
       </div>
 
       {/* DEPOSITOS */}
       {section === 'depositos' && (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('upload.deposits')} — {periodLabel}</h2>
-          <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[480px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.channel')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium w-48">{t('upload.amountUsd')}</th>
-                {userCanAdd && <th className="w-20"></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {deposits.map(d => (
-                <tr key={d.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                  <td className="py-2.5 px-3 font-medium">{CHANNEL_LABELS[d.channel]}</td>
-                  <td className="py-2.5 px-3 text-right">
-                    {userCanAdd ? (
-                      <input
-                        type="number"
-                        step="0.01"
-                        value={d.amount || ''}
-                        disabled={savingDepositIds.has(d.id) || selectedPeriodIsClosed}
-                        onChange={(e) => setDeposits(prev => prev.map(dd => dd.id === d.id ? { ...dd, amount: parseFloat(e.target.value) || 0 } : dd))}
-                        className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-progress"
-                        placeholder="0.00"
-                      />
-                    ) : (
-                      <span className="font-medium">{formatCurrency(d.amount)}</span>
-                    )}
-                  </td>
-                  {userCanAdd && (
-                    <td className="py-2.5 px-3 text-center">
-                      <button
-                        onClick={() => updateDeposit(d.id, d.amount)}
-                        disabled={savingDepositIds.has(d.id) || selectedPeriodIsClosed}
-                        className="p-2 sm:p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
-                        title={savingDepositIds.has(d.id) ? t('common.saving') : t('common.save')}
-                        aria-busy={savingDepositIds.has(d.id)}
-                      >
-                        <Save className={`w-4 h-4 ${savingDepositIds.has(d.id) ? 'animate-pulse' : ''}`} />
-                      </button>
-                    </td>
-                  )}
-                </tr>
-              ))}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold bg-muted/50">
-                <td className="py-3 px-3">{t('common.total')}</td>
-                <td className="py-3 px-3 text-right text-blue-600">{formatCurrency(deposits.reduce((s, d) => s + d.amount, 0))}</td>
-                {userCanAdd && <td></td>}
-              </tr>
-            </tfoot>
-          </table>
-          </div>
-
-          {/* Ventas Prop Firm — separate field, not summed into total */}
-          <div className="mt-4 pt-4 border-t border-border">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-sm font-medium">{t('movements.propFirmSales')}</label>
-                <p className="text-xs text-muted-foreground">{t('upload.notInDepositsTotal')}</p>
-                {crmHint('propfirm_sales') !== null && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t('upload.crmHint')}: {formatCurrency(crmHint('propfirm_sales') as number)}
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {userCanAdd ? (
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={propFirmAmount || ''}
-                    disabled={selectedPeriodIsClosed}
-                    onChange={(e) => setPropFirmAmount(parseFloat(e.target.value) || 0)}
-                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                    placeholder="0.00"
-                  />
-                ) : (
-                  <span className="font-medium">{formatCurrency(propFirmAmount)}</span>
-                )}
-              </div>
-            </div>
-          </div>
-        </Card>
+        <DepositsPanel
+          rows={deposits}
+          periodLabel={periodLabel}
+          closed={selectedPeriodIsClosed}
+          editable={userCanAdd}
+          savingIds={savingDepositIds}
+          onAmountChange={(id, raw) =>
+            setDeposits(prev => prev.map(dd => dd.id === id ? { ...dd, amount: parseFloat(raw) || 0 } : dd))
+          }
+          onSaveRow={(id, amount) => updateDeposit(id, amount)}
+          propFirm={{
+            amount: propFirmAmount,
+            crmHint: crmHint('propfirm_sales'),
+            onChange: (raw) => setPropFirmAmount(parseFloat(raw) || 0),
+          }}
+        />
       )}
 
       {/* RETIROS */}
       {section === 'retiros' && (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('upload.withdrawals')} — {periodLabel}</h2>
-          <div className="overflow-x-auto">
-          <table className="w-full text-sm min-w-[480px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium w-48">{t('upload.amountUsd')}</th>
-                {userCanAdd && <th className="w-20"></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {withdrawals.map(w => {
-                const isBrokerAutoRow =
-                  w.category === 'broker' && brokerIsDerived;
-                // La fila de IB muestra el valor EFECTIVO (el automático del
-                // espejo cuando no hay carga manual), que es EXACTAMENTE el que
-                // se le resta al broker derivado. Las dos puntas van juntas o el
-                // total del pie se desfasa por el mismo importe.
-                const isIbAutoRow =
-                  w.category === 'ib_commissions' && ibEffective.source === 'api';
-                const displayAmount = isBrokerAutoRow
-                  ? derivedBrokerAmount
-                  : isIbAutoRow
-                    ? ibEffective.value
-                    : w.amount;
-                return (
-                  <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className="py-2.5 px-3 font-medium">
-                      {withdrawalCategoryLabel(w.category, t)}
-                      {(isBrokerAutoRow || isIbAutoRow) && (
-                        <span className="ml-2 text-[10px] text-positive uppercase tracking-wide">
-                          auto
-                        </span>
-                      )}
-                    </td>
-                    <td className="py-2.5 px-3 text-right">
-                      {userCanAdd ? (
-                        <div className="flex flex-col items-end gap-1">
-                          <input
-                            type="number"
-                            step="0.01"
-                            value={w.amount || ''}
-                            disabled={savingWithdrawalIds.has(w.id) || selectedPeriodIsClosed}
-                            onChange={(e) => setWithdrawals(prev => prev.map(ww => ww.id === w.id ? { ...ww, amount: parseFloat(e.target.value) || 0 } : ww))}
-                            className="w-full text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-progress"
-                            placeholder="0.00"
-                          />
-                          {/* When broker row is in derived-logic period, show
-                              the API-derived amount as info BESIDE the manual
-                              input. Both coexist: the final broker total in
-                              /movimientos = derived + this manual input. */}
-                          {isBrokerAutoRow && (
-                            <span className="text-[10px] text-muted-foreground">
-                              + API {formatCurrency(derivedBrokerAmount)} (auto)
-                            </span>
-                          )}
-                          {isIbAutoRow && (
-                            <span className="text-[10px] text-muted-foreground">
-                              {t('upload.ibFromCrm', {
-                                amount: formatCurrency(ibEffective.value),
-                              })}
-                            </span>
-                          )}
-                        </div>
-                      ) : (
-                        <span className="font-medium">{formatCurrency(w.amount)}</span>
-                      )}
-                    </td>
-                    {userCanAdd && (
-                      <td className="py-2.5 px-3 text-center">
-                        <button
-                          onClick={() => updateWithdrawal(w.id, w.amount)}
-                          disabled={savingWithdrawalIds.has(w.id) || selectedPeriodIsClosed}
-                          className="p-2 sm:p-1.5 rounded-lg text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 transition-colors disabled:opacity-50 disabled:cursor-progress"
-                          title={savingWithdrawalIds.has(w.id) ? t('common.saving') : t('common.save')}
-                          aria-busy={savingWithdrawalIds.has(w.id)}
-                        >
-                          <Save className={`w-4 h-4 ${savingWithdrawalIds.has(w.id) ? 'animate-pulse' : ''}`} />
-                        </button>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold bg-muted/50">
-                <td className="py-3 px-3">{t('common.total')}</td>
-                <td className="py-3 px-3 text-right text-red-600">
-                  {formatCurrency(
-                    // Total includes the manual amount entered in THIS form
-                    // for every row. The API-derived broker amount is NOT
-                    // added here because it's an auto-calculation shown for
-                    // reference — the Movimientos page adds it at render
-                    // time so both sources remain visible separately.
-                    // El IB entra por su valor EFECTIVO, el mismo que se le
-                    // restó al broker derivado. Con las dos puntas alineadas el
-                    // total es idéntico al de antes de cablear el automático:
-                    // lo que cambió es el REPARTO entre Broker e IB, no la suma.
-                    withdrawals.reduce(
-                      (s, w) =>
-                        s +
-                        (w.category === 'ib_commissions' ? ibEffective.value : w.amount),
-                      0,
-                    ) + (brokerIsDerived ? derivedBrokerAmount : 0)
-                  )}
-                </td>
-                {userCanAdd && <td></td>}
-              </tr>
-              {brokerIsDerived && (
-                <tr>
-                  <td
-                    colSpan={userCanAdd ? 3 : 2}
-                    className="py-2 px-3 text-[11px] text-muted-foreground italic"
-                  >
-                    {t('upload.brokerCoexistNote')}
-                  </td>
-                </tr>
-              )}
-              {/* La cabecera que explica de dónde salió el IB. Un número que
-                  aparece solo, sin que nadie lo haya tecleado, necesita decir de
-                  dónde vino y qué NO cambia por su culpa. */}
-              {ibEffective.source === 'api' && (
-                <tr>
-                  <td
-                    colSpan={userCanAdd ? 3 : 2}
-                    className="py-2 px-3 text-[11px] text-muted-foreground italic"
-                  >
-                    {t('upload.ibSplitNote')}
-                  </td>
-                </tr>
-              )}
-            </tfoot>
-          </table>
-          </div>
-
-          {/* Transferencias P2P — separate field, not summed into total */}
-          <div className="mt-4 pt-4 border-t border-border">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-sm font-medium">{t('upload.p2pTransfers')}</label>
-                <p className="text-xs text-muted-foreground">{t('upload.notInWithdrawalsTotal')}</p>
-                {crmHint('p2p_transfers') !== null && (
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t('upload.crmHint')}: {formatCurrency(crmHint('p2p_transfers') as number)}
-                  </p>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                {userCanAdd ? (
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={p2pAmount || ''}
-                    disabled={selectedPeriodIsClosed}
-                    onChange={(e) => setP2PAmount(parseFloat(e.target.value) || 0)}
-                    className="w-48 text-right px-3 py-1.5 rounded border border-border bg-background focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                    placeholder="0.00"
-                  />
-                ) : (
-                  <span className="font-medium">{formatCurrency(p2pAmount)}</span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* ─── Retiros adicionales manuales ─────────────────────────── */}
-          {/* Free-form entries that coexist with what the APIs report.
-              Stored with a non-null `description` in the withdrawals table
-              so they can be listed separately from the 4 fixed aggregates. */}
-          <div className="mt-6 pt-5 border-t border-border">
-            <div className="flex items-center justify-between mb-3">
-              <div>
-                <h3 className="text-sm font-semibold">{t('upload.extraWithdrawalsTitle')}</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  {t('upload.extraWithdrawalsDesc')}
-                </p>
-              </div>
-            </div>
-
-            {/* Add form */}
-            {userCanAdd && (
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-2 mb-3">
-                <select
-                  value={newExtraWithdrawal.category}
-                  onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, category: e.target.value as typeof p.category }))}
-                  className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                >
-                  {/* Del registro único: eran cuatro <option> escritas a mano,
-                      con el mismo orden que /movimientos tenía en otra lista. */}
-                  {ALL_WITHDRAWAL_CATEGORIES.map((cat) => (
-                    <option key={cat} value={cat}>
-                      {withdrawalCategoryLabel(cat, t)}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="text"
-                  value={newExtraWithdrawal.description}
-                  onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, description: e.target.value }))}
-                  placeholder={t('upload.withdrawalDescPlaceholder')}
-                  className="md:col-span-2 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  type="number"
-                  step="0.01"
-                  value={newExtraWithdrawal.amount}
-                  onChange={(e) => setNewExtraWithdrawal(p => ({ ...p, amount: e.target.value }))}
-                  placeholder={t('upload.amountPlaceholder')}
-                  className="text-right px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    const amt = parseFloat(newExtraWithdrawal.amount) || 0;
-                    if (!newExtraWithdrawal.description.trim() || amt <= 0) return;
-                    setWithdrawalExtras(prev => [...prev, {
-                      id: `extra-${Date.now()}`,
-                      category: newExtraWithdrawal.category,
-                      amount: amt,
-                      description: newExtraWithdrawal.description.trim(),
-                    }]);
-                    setNewExtraWithdrawal({ category: 'broker', amount: '', description: '' });
-                  }}
-                  disabled={!newExtraWithdrawal.description.trim() || !(parseFloat(newExtraWithdrawal.amount) > 0)}
-                  className="px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity flex items-center justify-center gap-1.5"
-                >
-                  <Plus className="w-4 h-4" /> {t('common.add')}
-                </button>
-              </div>
-            )}
-
-            {/* List of extras */}
-            {withdrawalExtras.length === 0 ? (
-              <p className="text-center text-xs text-muted-foreground py-4">
-                {userCanAdd ? t('upload.extraWithdrawalsEmptyAdd') : t('upload.extraWithdrawalsEmpty')}
-              </p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border">
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.description')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.amount')}</th>
-                      {userCanAdd && <th className="w-16 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('audit.action')}</th>}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {withdrawalExtras.map((w) => (
-                      <tr key={w.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                        <td className="py-2.5 px-3">
-                          <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                            {withdrawalCategoryLabel(w.category, t)}
-                          </span>
-                        </td>
-                        <td className="py-2.5 px-3">{w.description}</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-red-600">{formatCurrency(w.amount)}</td>
-                        {userCanAdd && (
-                          <td className="py-2.5 px-3 text-center">
-                            <button
-                              onClick={() => setWithdrawalExtras(prev => prev.filter(x => x.id !== w.id))}
-                              className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded"
-                              title={t('common.delete')}
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </td>
-                        )}
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="font-bold bg-muted/50">
-                      <td colSpan={2} className="py-3 px-3">{t('upload.totalExtras')}</td>
-                      <td className="py-3 px-3 text-right text-red-600">
-                        {formatCurrency(withdrawalExtras.reduce((s, w) => s + w.amount, 0))}
-                      </td>
-                      {userCanAdd && <td></td>}
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </div>
-        </Card>
+        <WithdrawalsPanel
+          rows={withdrawals}
+          periodLabel={periodLabel}
+          closed={selectedPeriodIsClosed}
+          editable={userCanAdd}
+          savingIds={savingWithdrawalIds}
+          auto={{ brokerIsDerived, derivedBrokerAmount, ibEffective }}
+          onAmountChange={(id, raw) =>
+            setWithdrawals(prev => prev.map(ww => ww.id === id ? { ...ww, amount: parseFloat(raw) || 0 } : ww))
+          }
+          onSaveRow={(id, amount) => updateWithdrawal(id, amount)}
+          p2p={{
+            amount: p2pAmount,
+            crmHint: crmHint('p2p_transfers'),
+            onChange: (raw) => setP2PAmount(parseFloat(raw) || 0),
+          }}
+          extras={withdrawalExtras}
+          newExtra={newExtraWithdrawal}
+          setNewExtra={setNewExtraWithdrawal}
+          onAddExtra={() => {
+            const amt = parseFloat(newExtraWithdrawal.amount) || 0;
+            if (!newExtraWithdrawal.description.trim() || amt <= 0) return;
+            setWithdrawalExtras(prev => [...prev, {
+              id: `extra-${Date.now()}`,
+              category: newExtraWithdrawal.category,
+              amount: amt,
+              description: newExtraWithdrawal.description.trim(),
+            }]);
+            setNewExtraWithdrawal({ category: 'broker', amount: '', description: '' });
+          }}
+          onRemoveExtra={(id) => setWithdrawalExtras(prev => prev.filter(x => x.id !== id))}
+        />
       )}
 
-      {/* EGRESOS */}
+      {/* EGRESOS — se queda en este archivo: cada <tr> lo crea useSortable
+          (dnd-kit), la fila en edición reemplaza todas sus celdas y el alta
+          tiene dos autocompletados atados a refs y estado de la página.
+          Extraerlo era mover ~30 props de la pestaña con el guard de huella;
+          ver el reporte de la migración. Sólo cambió la presentación. */}
       {section === 'egresos' && (
-        <Card>
-          <h2 className="text-base sm:text-lg font-semibold mb-4">{t('summary.operatingExpenses')} — {periodLabel}</h2>
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
+        <Panel
+          title={t('summary.operatingExpenses')}
+          hint={periodLabel}
+          flush
+          actions={
+            <>
+              {selectedPeriodIsClosed && <ClosedBadge />}
+              {userCanAdd && (
+                <button
+                  type="button"
+                  onClick={() => { setImportOpen(true); setImportResult(null); }}
+                  className={btnClass('secondary')}
+                >
+                  <Upload aria-hidden className="size-3.5" />
+                  Importar Excel/CSV
+                </button>
+              )}
+            </>
+          }
+          footer={
+            expenses.length > PAGE_SIZE ? (
+              <PaginationControls
+                page={expensesPage}
+                totalPages={expensesTotalPages}
+                totalItems={expenses.length}
+                onChange={setExpensesPage}
+              />
+            ) : undefined
+          }
+        >
+          <div className="overflow-x-auto">
           <DndContext
             sensors={dndSensors}
             collisionDetection={closestCenter}
             onDragEnd={handleExpenseDragEnd}
           >
-          <table className="w-full text-sm min-w-[560px]">
+          <table className={cn(TABLE, 'min-w-[880px]')}>
+            <caption className="sr-only">{t('summary.operatingExpenses')}</caption>
             <thead>
-              <tr className="border-b border-border">
-                <th className="w-8 py-2.5 px-2" aria-label={t('upload.reorder')}></th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">#</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.category')}</th>
+              <tr>
+                <th className={cn(TH, 'w-8')} aria-label={t('upload.reorder')}></th>
+                <th className={cn(TH, 'w-10 text-left')}>#</th>
+                <th className={cn(TH, 'text-left')}>{t('upload.concept')}</th>
+                <th className={cn(TH, 'text-left')}>{t('upload.category')}</th>
                 {/* Fecha opcional (migration-056), DD/MM — el año lo da el
-                    período. La tabla ya scrollea en móvil (overflow-x-auto). */}
-                <th className="text-left py-2 px-2 text-muted-foreground font-medium w-16">{t('expenses.date')}</th>
-                <th className="text-left py-2 px-2 text-muted-foreground font-medium">Referencia</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('common.amount')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.paid')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('expenses.pending')}</th>
-                <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.status')}</th>
-                {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
+                    período. La tabla scrollea en móvil (overflow-x-auto). */}
+                <th className={cn(TH, 'w-24 text-left')}>{t('expenses.date')}</th>
+                <th className={cn(TH, 'text-left')}>Referencia</th>
+                <th className={cn(TH, 'text-right')}>{t('common.amount')}</th>
+                <th className={cn(TH, 'text-right')}>{t('expenses.paid')}</th>
+                <th className={cn(TH, 'text-right')}>{t('expenses.pending')}</th>
+                <th className={cn(TH, 'text-center')}>{t('common.status')}</th>
+                {(userCanEdit || userCanDelete) && (
+                  <th className={cn(TH, 'w-28 text-right')}>
+                    <span className="sr-only">{t('common.actions')}</span>
+                  </th>
+                )}
               </tr>
             </thead>
             <SortableContext
@@ -2852,7 +2525,7 @@ export default function UploadPage() {
             >
             <tbody>
               {expenses.length === 0 && (
-                <tr><td colSpan={11} className="py-8 text-center text-muted-foreground">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
+                <tr><td colSpan={11} className="px-4 py-8 text-center text-[13px] text-text-3">No hay egresos registrados. {userCanAdd && 'Agrega uno abajo.'}</td></tr>
               )}
               {pagedExpenses.map((exp, i) => (
                 <SortableExpenseRow
@@ -2862,33 +2535,34 @@ export default function UploadPage() {
                 >
                   {editingExpenseId === exp.id ? (
                     <>
-                      <td className="py-2.5 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
-                      <td className="py-2.5 px-3">
-                        <input aria-label={t('upload.expenseConceptAria')} value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" />
-                        <label className="flex items-center gap-1.5 mt-1 text-[11px] text-muted-foreground cursor-pointer">
-                          <input type="checkbox" aria-label={t('expenses.fixed')} checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="w-3 h-3" />
+                      <td className={cn(TD, 'tabular-nums text-text-3')}>{expensesPage * PAGE_SIZE + i + 1}</td>
+                      <td className={TD}>
+                        <Input aria-label={t('upload.expenseConceptAria')} value={editExpense.concept} onChange={e => setEditExpense(p => ({ ...p, concept: e.target.value }))} className={INPUT_MOBILE} />
+                        <label className="mt-1 flex cursor-pointer items-center gap-1.5 text-[12px] text-text-3">
+                          <input type="checkbox" aria-label={t('expenses.fixed')} checked={editExpense.is_fixed} onChange={e => setEditExpense(p => ({ ...p, is_fixed: e.target.checked }))} className="size-3.5" />
                           {t('expenses.fixed')} ({t('expenses.fixedHint')})
                         </label>
                       </td>
-                      <td className="py-2.5 px-3">
+                      <td className={TD}>
                         <div className="relative">
-                          <input
+                          <Input
+                            aria-label={t('upload.category')}
                             value={editExpense.category}
                             onChange={e => { setEditExpense(p => ({ ...p, category: e.target.value })); setShowEditCategoryDropdown(true); }}
                             onFocus={() => setShowEditCategoryDropdown(true)}
                             onBlur={() => setTimeout(() => setShowEditCategoryDropdown(false), 200)}
                             placeholder={t('upload.category')}
-                            className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm"
+                            className={INPUT_MOBILE}
                             autoComplete="off"
                           />
                           {showEditCategoryDropdown && filteredCategoriesEdit.length > 0 && (
-                            <div className="absolute z-30 top-full left-0 right-0 mt-1 max-h-40 overflow-auto bg-card border border-border rounded-lg shadow-lg">
+                            <div className={cn(SUGGEST_LIST, 'z-30 max-h-40')}>
                               {filteredCategoriesEdit.map(c => (
                                 <button
                                   key={c}
                                   type="button"
                                   onMouseDown={(e) => { e.preventDefault(); setEditExpense(p => ({ ...p, category: c })); setShowEditCategoryDropdown(false); }}
-                                  className="w-full text-left px-2 py-1.5 text-xs hover:bg-muted transition-colors"
+                                  className={SUGGEST_ITEM}
                                 >
                                   {c}
                                 </button>
@@ -2897,23 +2571,23 @@ export default function UploadPage() {
                           )}
                         </div>
                       </td>
-                      <td className="py-2 px-2">
-                        <input
+                      <td className={TD}>
+                        <Input
                           type="date"
                           aria-label={t('expenses.dateAria')}
                           value={editExpense.expense_date}
                           onChange={e => setEditExpense(p => ({ ...p, expense_date: e.target.value }))}
-                          className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
+                          className={cn(INPUT_MOBILE, 'px-1.5')}
                         />
                       </td>
                       {/* Referencia del pago: hash, nº de operación o link. */}
-                      <td className="py-2 px-2">
-                        <input
+                      <td className={TD}>
+                        <Input
                           aria-label="Referencia del egreso"
                           placeholder="hash o link"
                           value={editExpense.reference}
                           onChange={e => setEditExpense(p => ({ ...p, reference: e.target.value }))}
-                          className="w-full px-1.5 py-1 rounded border border-border text-base sm:text-xs bg-background"
+                          className={INPUT_MOBILE}
                         />
                         {/* Un comprobante heredado de una orden de pago no se
                             reemplaza desde acá: la fuente es la orden. */}
@@ -2924,49 +2598,45 @@ export default function UploadPage() {
                           onChange={a => setEditExpense(p => ({ ...p, attachment: a }))}
                         />
                       </td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                      <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('expenses.pending')} value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                      <td></td>
-                      <td className="py-2.5 px-3 text-center">
-                        <div className="flex justify-center gap-1">
-                          <button onClick={saveEditExpense} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
-                          <button onClick={() => setEditingExpenseId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
+                      <td className={TD}><Input type="number" step="0.01" aria-label={t('upload.expenseAmountAria')} value={editExpense.amount} onChange={e => setEditExpense(p => ({ ...p, amount: e.target.value }))} className={INPUT_NUM} /></td>
+                      <td className={TD}><Input type="number" step="0.01" aria-label={t('expenses.paid')} value={editExpense.paid} onChange={e => setEditExpense(p => ({ ...p, paid: e.target.value }))} className={INPUT_NUM} /></td>
+                      <td className={TD}><Input type="number" step="0.01" aria-label={t('expenses.pending')} value={editExpense.pending} onChange={e => setEditExpense(p => ({ ...p, pending: e.target.value }))} className={INPUT_NUM} /></td>
+                      <td className={TD}></td>
+                      <td className={cn(TD, 'text-right')}>
+                        <div className="inline-flex gap-1">
+                          <button type="button" onClick={saveEditExpense} disabled={selectedPeriodIsClosed} className={ROW_BTN} aria-label={t('common.save')}><Check aria-hidden className="size-4" /></button>
+                          <button type="button" onClick={() => setEditingExpenseId(null)} className={ROW_BTN} aria-label={t('common.cancel')}><X aria-hidden className="size-4" /></button>
                         </div>
                       </td>
                     </>
                   ) : (
                     <>
-                      <td className="py-2.5 px-3 text-muted-foreground">{expensesPage * PAGE_SIZE + i + 1}</td>
+                      <td className={cn(TD, 'tabular-nums text-text-3')}>{expensesPage * PAGE_SIZE + i + 1}</td>
                       {/* Solo en la vista de lectura: si el egreso salió de una
                           orden de pago, el número de OP linkea a su detalle.
                           Dentro del modo edición el concepto es un <input> y
                           no lleva link. */}
-                      <td className="py-2.5 px-3">
+                      <td className={TD}>
                         <ExpenseConcept
                           concept={exp.concept}
                           paymentOrderId={exp.payment_order_id}
                           description={exp.payment_order_description}
                           suffix={exp.is_fixed ? (
-                            <span className="px-1.5 py-0.5 rounded-full text-[9px] font-bold bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800 uppercase">
-                              {t('expenses.fixedBadge')}
-                            </span>
+                            <StatusBadge kind="neutral" label={t('expenses.fixedBadge')} />
                           ) : null}
                         />
                       </td>
-                      <td className="py-2.5 px-3">
+                      <td className={TD}>
                         {exp.category ? (
-                          <span className="inline-flex px-2 py-0.5 rounded-full text-[11px] font-medium bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                            {exp.category}
-                          </span>
+                          <span className="text-text-2">{exp.category}</span>
                         ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
+                          <span className="text-text-3">—</span>
                         )}
                       </td>
-                      <td className="py-2 px-2 text-xs tabular-nums text-muted-foreground whitespace-nowrap">
+                      <td className={cn(TD, 'whitespace-nowrap tabular-nums text-text-3')}>
                         {exp.expense_date ? formatDayMonth(exp.expense_date) : '—'}
                       </td>
-                      <td className="py-2 px-2 max-w-[160px]">
+                      <td className={cn(TD, 'max-w-[160px]')}>
                         <ExpenseReference
                           expenseId={exp.id}
                           reference={exp.reference}
@@ -2974,25 +2644,27 @@ export default function UploadPage() {
                           hasAttachment={!!exp.attachment_path}
                         />
                       </td>
-                      <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(exp.amount)}</td>
-                      <td className="py-2.5 px-3 text-right">{formatCurrency(exp.paid)}</td>
-                      <td className="py-2.5 px-3 text-right">{formatCurrency(exp.pending)}</td>
-                      <td className="py-2.5 px-3 text-center">
-                        <Badge variant={exp.pending === 0 ? 'success' : 'warning'}>
-                          {exp.pending === 0 ? t('upload.paidStatus') : t('upload.pendingStatus')}
-                        </Badge>
+                      <td className={cn(TD, 'text-right')}><Money value={exp.amount} className="font-medium" /></td>
+                      <td className={cn(TD, 'text-right')}><Money value={exp.paid} /></td>
+                      <td className={cn(TD, 'text-right')}><Money value={exp.pending} /></td>
+                      <td className={cn(TD, 'text-center')}>
+                        <StatusBadge
+                          domain="expense"
+                          status={exp.pending === 0 ? 'pagado' : 'pendiente'}
+                          label={exp.pending === 0 ? t('upload.paidStatus') : t('upload.pendingStatus')}
+                        />
                       </td>
                       {(userCanEdit || userCanDelete) && (
-                        <td className="py-2.5 px-3 text-center">
-                          <div className="flex justify-center gap-1">
+                        <td className={cn(TD, 'text-right')}>
+                          <div className="inline-flex gap-1">
                             {userCanEdit && exp.pending > 0 && (
-                              <button onClick={() => markExpensePaid(exp.id)} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" title={t('upload.markPaid')} aria-label={t('upload.markPaidAria', { concept: exp.concept })}><Check className="w-3.5 h-3.5" /></button>
+                              <button type="button" onClick={() => markExpensePaid(exp.id)} disabled={selectedPeriodIsClosed} className={ROW_BTN} title={t('upload.markPaid')} aria-label={t('upload.markPaidAria', { concept: exp.concept })}><Check aria-hidden className="size-3.5" /></button>
                             )}
                             {userCanEdit && (
-                              <button onClick={() => startEditExpense(exp)} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
+                              <button type="button" onClick={() => startEditExpense(exp)} disabled={selectedPeriodIsClosed} className={ROW_BTN} title={t('common.edit')} aria-label={t('common.edit')}><Edit2 aria-hidden className="size-3.5" /></button>
                             )}
                             {userCanDelete && (
-                              <button onClick={() => deleteExpense(exp.id)} disabled={selectedPeriodIsClosed} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded disabled:opacity-40 disabled:cursor-not-allowed" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
+                              <button type="button" onClick={() => deleteExpense(exp.id)} disabled={selectedPeriodIsClosed} className={ROW_BTN_DANGER} title={t('common.delete')} aria-label={t('common.delete')}><Trash2 aria-hidden className="size-3.5" /></button>
                             )}
                           </div>
                         </td>
@@ -3005,12 +2677,12 @@ export default function UploadPage() {
             </SortableContext>
             {expenses.length > 0 && (
               <tfoot>
-                <tr className="font-bold bg-muted/50">
-                  <td className="py-3 px-3" colSpan={6}>{t('common.total')}</td>
-                  <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.amount, 0))}</td>
-                  <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.paid, 0))}</td>
-                  <td className="py-2.5 px-3 text-right">{formatCurrency(expenses.reduce((s, e) => s + e.pending, 0))}</td>
-                  <td colSpan={2}></td>
+                <tr>
+                  <td className={TFOOT_TD} colSpan={6}>{t('common.total')}</td>
+                  <td className={cn(TFOOT_TD, 'text-right')}><Money value={expenses.reduce((s, e) => s + e.amount, 0)} /></td>
+                  <td className={cn(TFOOT_TD, 'text-right')}><Money value={expenses.reduce((s, e) => s + e.paid, 0)} /></td>
+                  <td className={cn(TFOOT_TD, 'text-right')}><Money value={expenses.reduce((s, e) => s + e.pending, 0)} /></td>
+                  <td className={TFOOT_TD} colSpan={2}></td>
                 </tr>
               </tfoot>
             )}
@@ -3018,139 +2690,131 @@ export default function UploadPage() {
           </DndContext>
           </div>
 
-          <PaginationControls
-            page={expensesPage}
-            totalPages={expensesTotalPages}
-            totalItems={expenses.length}
-            onChange={setExpensesPage}
-          />
-
           {/* Add expense form */}
           {userCanAdd && (
-            <div className="mt-4 pt-4 border-t border-border">
-              <div className="flex items-center justify-between mb-3">
-                <h3 className="text-sm font-semibold flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addExpense')}</h3>
-                <button
-                  onClick={() => { setImportOpen(true); setImportResult(null); }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted transition-colors"
-                >
-                  <Upload className="w-3.5 h-3.5" />
-                  Importar Excel/CSV
-                </button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-8 gap-3">
-                <div className="md:col-span-2 relative">
-                  <input
-                    ref={conceptInputRef}
-                    value={newExpense.concept}
-                    onChange={e => { setNewExpense(p => ({ ...p, concept: e.target.value })); setShowConceptDropdown(true); }}
-                    onFocus={() => setShowConceptDropdown(true)}
-                    onBlur={() => setTimeout(() => setShowConceptDropdown(false), 200)}
-                    placeholder={t('upload.conceptPlaceholder')}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                    autoComplete="off"
-                  />
-                  {showConceptDropdown && filteredConcepts.length > 0 && (
-                    <div className="absolute z-20 top-full left-0 right-0 mt-1 max-h-48 overflow-auto bg-card border border-border rounded-lg shadow-lg">
-                      {filteredConcepts.map(c => (
-                        <button
-                          key={c}
-                          type="button"
-                          onMouseDown={(e) => { e.preventDefault(); setNewExpense(p => ({ ...p, concept: c })); setShowConceptDropdown(false); }}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors"
-                        >
-                          {c}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <div className="relative">
-                  <input
-                    value={newExpense.category}
-                    onChange={e => { setNewExpense(p => ({ ...p, category: e.target.value })); setShowCategoryDropdown(true); }}
-                    onFocus={() => setShowCategoryDropdown(true)}
-                    onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 200)}
-                    placeholder={t('upload.category')}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                    autoComplete="off"
-                  />
-                  {showCategoryDropdown && filteredCategoriesNew.length > 0 && (
-                    <div className="absolute z-20 top-full left-0 right-0 mt-1 max-h-48 overflow-auto bg-card border border-border rounded-lg shadow-lg">
-                      {filteredCategoriesNew.map(c => (
-                        <button
-                          key={c}
-                          type="button"
-                          onMouseDown={(e) => { e.preventDefault(); setNewExpense(p => ({ ...p, category: c })); setShowCategoryDropdown(false); }}
-                          className="w-full text-left px-3 py-2 text-sm hover:bg-muted transition-colors"
-                        >
-                          {c}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {newExpense.category && !filteredCategoriesNew.some(c => c.toLowerCase() === newExpense.category.toLowerCase()) && (
-                    <p className="text-[11px] text-muted-foreground mt-1 px-1">{t('upload.newCategoryHint')}</p>
-                  )}
-                </div>
+            <div className="border-t border-border p-4">
+              <h3 className="mb-3 flex items-center gap-2 text-[13.5px] font-semibold text-foreground"><Plus aria-hidden className="size-4" /> {t('upload.addExpense')}</h3>
+              <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-8">
+                <Field label={t('upload.concept')} className="md:col-span-2">
+                  <div className="relative">
+                    <Input
+                      ref={conceptInputRef}
+                      value={newExpense.concept}
+                      onChange={e => { setNewExpense(p => ({ ...p, concept: e.target.value })); setShowConceptDropdown(true); }}
+                      onFocus={() => setShowConceptDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowConceptDropdown(false), 200)}
+                      placeholder={t('upload.conceptPlaceholder')}
+                      className={INPUT_MOBILE}
+                      autoComplete="off"
+                    />
+                    {showConceptDropdown && filteredConcepts.length > 0 && (
+                      <div className={cn(SUGGEST_LIST, 'z-20 max-h-48')}>
+                        {filteredConcepts.map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            onMouseDown={(e) => { e.preventDefault(); setNewExpense(p => ({ ...p, concept: c })); setShowConceptDropdown(false); }}
+                            className={SUGGEST_ITEM}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Field>
+                <Field label={t('upload.category')} hint={newExpense.category && !filteredCategoriesNew.some(c => c.toLowerCase() === newExpense.category.toLowerCase()) ? t('upload.newCategoryHint') : undefined}>
+                  <div className="relative">
+                    <Input
+                      value={newExpense.category}
+                      onChange={e => { setNewExpense(p => ({ ...p, category: e.target.value })); setShowCategoryDropdown(true); }}
+                      onFocus={() => setShowCategoryDropdown(true)}
+                      onBlur={() => setTimeout(() => setShowCategoryDropdown(false), 200)}
+                      placeholder={t('upload.category')}
+                      className={INPUT_MOBILE}
+                      autoComplete="off"
+                    />
+                    {showCategoryDropdown && filteredCategoriesNew.length > 0 && (
+                      <div className={cn(SUGGEST_LIST, 'z-20 max-h-48')}>
+                        {filteredCategoriesNew.map(c => (
+                          <button
+                            key={c}
+                            type="button"
+                            onMouseDown={(e) => { e.preventDefault(); setNewExpense(p => ({ ...p, category: c })); setShowCategoryDropdown(false); }}
+                            className={SUGGEST_ITEM}
+                          >
+                            {c}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </Field>
                 {/* Fecha opcional del egreso — vacía = sin día específico. */}
-                <input
-                  type="date"
-                  aria-label={t('expenses.dateAria')}
-                  title={t('expenses.dateHint')}
-                  value={newExpense.expense_date}
-                  onChange={e => setNewExpense(p => ({ ...p, expense_date: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
+                <Field label={t('expenses.date')}>
+                  <Input
+                    type="date"
+                    aria-label={t('expenses.dateAria')}
+                    title={t('expenses.dateHint')}
+                    value={newExpense.expense_date}
+                    onChange={e => setNewExpense(p => ({ ...p, expense_date: e.target.value }))}
+                    className={INPUT_MOBILE}
+                  />
+                </Field>
                 {/* Referencia del pago — opcional. Los egresos que nacen de una
                     orden la heredan sola; este campo es para los manuales. */}
-                <div>
-                  <input
+                <Field label="Referencia">
+                  <Input
                     aria-label="Referencia del egreso"
                     title="Hash de la transacción, nº de operación o link al comprobante"
                     value={newExpense.reference}
                     onChange={e => setNewExpense(p => ({ ...p, reference: e.target.value }))}
                     placeholder="Referencia"
-                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
+                    className={INPUT_MOBILE}
                   />
                   <ExpenseAttachmentInput
                     className="mt-1"
                     value={newExpense.attachment}
                     onChange={a => setNewExpense(p => ({ ...p, attachment: a }))}
                   />
-                </div>
-                <input
-                  type="number" step="0.01"
-                  value={newExpense.amount}
-                  onChange={e => setNewExpense(p => ({ ...p, amount: e.target.value }))}
-                  placeholder={t('upload.amountPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  type="number" step="0.01"
-                  value={newExpense.paid}
-                  onChange={e => setNewExpense(p => ({ ...p, paid: e.target.value }))}
-                  placeholder={t('upload.paidPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                />
+                </Field>
+                <Field label={t('common.amount')}>
+                  <Input
+                    type="number" step="0.01"
+                    value={newExpense.amount}
+                    onChange={e => setNewExpense(p => ({ ...p, amount: e.target.value }))}
+                    placeholder={t('upload.amountPlaceholder')}
+                    className={INPUT_NUM}
+                  />
+                </Field>
+                <Field label={t('expenses.paid')}>
+                  <Input
+                    type="number" step="0.01"
+                    value={newExpense.paid}
+                    onChange={e => setNewExpense(p => ({ ...p, paid: e.target.value }))}
+                    placeholder={t('upload.paidPlaceholder')}
+                    className={INPUT_NUM}
+                  />
+                </Field>
                 <button
+                  type="button"
                   onClick={addExpense}
                   disabled={!newExpense.concept || !newExpense.amount || savingExpenses || selectedPeriodIsClosed}
-                  className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
+                  className={btnClass('secondary', 'md:mt-[22px]')}
                 >
                   {savingExpenses ? t('common.saving') : t('common.add')}
                 </button>
               </div>
-              <label className="flex items-center gap-2 mt-3 text-sm cursor-pointer">
+              <label className="mt-3 flex cursor-pointer items-center gap-2 text-[13px]">
                 <input
                   type="checkbox"
                   checked={newExpense.is_fixed}
                   onChange={e => setNewExpense(p => ({ ...p, is_fixed: e.target.checked }))}
-                  className="w-4 h-4"
+                  className="size-4"
                 />
                 <span>
-                  <strong>{t('expenses.fixed')}</strong>
-                  <span className="text-muted-foreground"> — {t('expenses.fixedHint')}</span>
+                  <strong className="font-semibold">{t('expenses.fixed')}</strong>
+                  <span className="text-text-2"> — {t('expenses.fixedHint')}</span>
                 </span>
               </label>
             </div>
@@ -3161,6 +2825,7 @@ export default function UploadPage() {
               egresos + plantillas + overrides para reflejar el nuevo estado.
               Solo re-sincroniza si la sección no está sucia (el sync effect
               respeta dirtySections). */}
+          <div className="px-4 pb-4">
           <FixedExpenseTemplatesPanel
             selectedPeriodId={selectedPeriod}
             selectedPeriodLabel={periodLabel}
@@ -3177,7 +2842,8 @@ export default function UploadPage() {
               });
             }}
           />
-        </Card>
+          </div>
+        </Panel>
       )}
 
       {/* INGRESOS OPERATIVOS */}
@@ -3198,45 +2864,52 @@ export default function UploadPage() {
         // de la cadena canónica. Sumar acá un `broker_pnl` que ya nadie edita
         // mostraría un total que no coincide con ninguna otra pantalla.
         const totalIngresos = income.other + propFirmNet;
+        // ── El Broker P&L YA NO SE TECLEA ────────────────────────────
+        // Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo
+        // manual". El campo estaba acá y agosto 2026 de Vex Pro tenía
+        // $671.000 escritos contra los $386.665,54 que da el cierre
+        // diario del CRM: $284.334,46 de diferencia sobre un número que
+        // entra a la base distribuible de los socios.
+        // Ahora sale de `crm_daily_pnl` (ver src/lib/broker-pnl.ts) y se
+        // muestra en /resumen-general diciendo de dónde salió.
+        // El VALOR VIEJO NO SE BORRA de `operating_income.broker_pnl`:
+        // es el que conservan los nueve períodos ya cerrados, que son
+        // inmutables. Sacar el input es sacar la forma de PISARLO.
         return (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('upload.operatingIncome')} — {periodLabel}</h2>
-          <div className="space-y-4">
-            {/* ── El Broker P&L YA NO SE TECLEA ────────────────────────────
-                Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo
-                manual". El campo estaba acá y agosto 2026 de Vex Pro tenía
-                $671.000 escritos contra los $386.665,54 que da el cierre
-                diario del CRM: $284.334,46 de diferencia sobre un número que
-                entra a la base distribuible de los socios.
-                Ahora sale de `crm_daily_pnl` (ver src/lib/broker-pnl.ts) y se
-                muestra en /resumen-general diciendo de dónde salió.
-                El VALOR VIEJO NO SE BORRA de `operating_income.broker_pnl`:
-                es el que conservan los nueve períodos ya cerrados, que son
-                inmutables. Sacar el input es sacar la forma de PISARLO. */}
-            <div className="grid grid-cols-1 gap-4">
-              {/* "Otros ingresos" con detalle cargado es un campo DERIVADO: el
-                  servidor lo sobreescribe con la suma de lo cobrado en cada
-                  guardado del detalle, así que editarlo a mano se perdería. */}
-              <div>
-                <label className="text-sm text-muted-foreground mb-1 block">{t('upload.other')}</label>
-                {userCanAdd && incomeLines.length === 0 ? (
-                  <input
-                    type="number" step="0.01"
-                    value={income.other || ''}
-                    disabled={selectedPeriodIsClosed}
-                    onChange={e => setIncome(p => ({ ...p, other: parseFloat(e.target.value) || 0 }))}
-                    className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                    placeholder="0.00"
-                  />
-                ) : (
-                  <p className="text-lg font-bold">{formatCurrency(incomeLines.length > 0 ? incomeTotals.received : income.other)}</p>
-                )}
-                {incomeLines.length > 0 && (
-                  <p className="text-[11px] text-muted-foreground mt-1">{t('income.otherFromDetail')}</p>
-                )}
-              </div>
-            </div>
-
+          <OperatingIncomePanel
+            periodLabel={periodLabel}
+            closed={selectedPeriodIsClosed}
+            editable={userCanAdd}
+            other={{
+              editable: userCanAdd && incomeLines.length === 0,
+              value: income.other,
+              display: incomeLines.length > 0 ? incomeTotals.received : income.other,
+              fromDetail: incomeLines.length > 0,
+              onChange: (raw) => setIncome(p => ({ ...p, other: parseFloat(raw) || 0 })),
+            }}
+            propFirm={{
+              show: showBrokerPnl,
+              sales: propFirmAmount,
+              withdrawal: propFirmWithdrawal,
+              net: propFirmNet,
+              onSalesChange: (raw) => {
+                setPropFirmAmount(parseFloat(raw) || 0);
+                markDirty('ingresos');
+              },
+              onWithdrawalChange: (raw) => {
+                const v = parseFloat(raw) || 0;
+                // setWithdrawals also marks 'retiros' dirty internally;
+                // we override to 'ingresos' below so the unsaved-banner
+                // shows in this tab where the user is actually working.
+                setWithdrawals(prev => prev.map(w =>
+                  w.category === 'prop_firm' ? { ...w, amount: v } : w,
+                ));
+                markDirty('ingresos');
+              },
+            }}
+            total={totalIngresos}
+            onSave={saveIncome}
+          >
             <IncomeLinesSection
               income={incomeLinesState}
               userCanAdd={userCanAdd}
@@ -3244,493 +2917,141 @@ export default function UploadPage() {
               userCanDelete={userCanDelete}
               periodIsClosed={selectedPeriodIsClosed}
             />
-
-            {/* Prop Firm — manual entry while the Orion CRM endpoint is not
-                yet live. Net flows into Total Ingresos below. Mirror of the
-                same fields visible in Depósitos (ventas) and Retiros
-                (retiros), wired to the same state. */}
-            {showBrokerPnl && (
-            <div className="pt-3 border-t border-border">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-sm font-semibold">Prop Firm</h3>
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/50 px-2 py-0.5 rounded">
-                  {t('upload.manualPendingCrm')}
-                </span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('movements.propFirmSales')}</label>
-                  {userCanAdd ? (
-                    <input
-                      type="number" step="0.01"
-                      value={propFirmAmount || ''}
-                      disabled={selectedPeriodIsClosed}
-                      onChange={e => {
-                        setPropFirmAmount(parseFloat(e.target.value) || 0);
-                        markDirty('ingresos');
-                      }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                      placeholder="0.00"
-                    />
-                  ) : (
-                    <p className="text-lg font-bold">{formatCurrency(propFirmAmount)}</p>
-                  )}
-                </div>
-                <div>
-                  <label className="text-sm text-muted-foreground mb-1 block">{t('movements.propFirmWithdrawals')}</label>
-                  {userCanAdd ? (
-                    <input
-                      type="number" step="0.01"
-                      value={propFirmWithdrawal || ''}
-                      disabled={selectedPeriodIsClosed}
-                      onChange={e => {
-                        const v = parseFloat(e.target.value) || 0;
-                        // setWithdrawals also marks 'retiros' dirty internally;
-                        // we override to 'ingresos' below so the unsaved-banner
-                        // shows in this tab where the user is actually working.
-                        setWithdrawals(prev => prev.map(w =>
-                          w.category === 'prop_firm' ? { ...w, amount: v } : w,
-                        ));
-                        markDirty('ingresos');
-                      }}
-                      className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
-                      placeholder="0.00"
-                    />
-                  ) : (
-                    <p className="text-lg font-bold">{formatCurrency(propFirmWithdrawal)}</p>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center justify-end mt-2 text-sm">
-                <span className="text-muted-foreground mr-2">{t('upload.propFirmResult')}:</span>
-                <span className={`font-semibold ${propFirmNet < 0 ? 'text-negative' : ''}`}>
-                  {formatCurrency(propFirmNet)}
-                </span>
-              </div>
-            </div>
-            )}
-
-            <div className="flex items-center justify-between pt-4 border-t border-border">
-              <div>
-                <p className="text-sm text-muted-foreground">{t('upload.totalIncome')}</p>
-                <p className="text-xl font-bold">{formatCurrency(totalIngresos)}</p>
-                <p className="text-[11px] text-muted-foreground mt-0.5">
-                  {t('upload.totalIncomeFormula')}
-                </p>
-              </div>
-              {userCanAdd && (
-                <button
-                  onClick={saveIncome}
-                  disabled={selectedPeriodIsClosed}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  <Save className="w-4 h-4" />
-                  {t('upload.saveIncomeBtn')}
-                </button>
-              )}
-            </div>
-          </div>
-        </Card>
+          </OperatingIncomePanel>
         );
       })()}
 
       {/* LIQUIDEZ */}
       {section === 'liquidez' && (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('upload.liquidity')}</h2>
-
-          {/* Filter bar */}
-          <div className="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b border-border">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterFrom')}</label>
-              <input
-                type="date"
-                value={liqDateFrom}
-                onChange={e => setLiqDateFrom(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterTo')}</label>
-              <input
-                type="date"
-                value={liqDateTo}
-                onChange={e => setLiqDateTo(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.period')}</label>
-              <select
-                value={liqPeriodFilter}
-                onChange={e => setLiqPeriodFilter(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-              >
-                <option value="todos">{t('common.all')}</option>
-                {periods.map(p => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <button
-              onClick={() => setLiqSortAsc(prev => !prev)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded border border-border text-sm hover:bg-muted transition-colors"
-              title={liqSortAsc ? t('upload.dateSortAsc') : t('upload.dateSortDesc')}
-            >
-              <ArrowUpDown className="w-3.5 h-3.5" />
-              {liqSortAsc ? t('upload.dateSortAsc') : t('upload.dateSortDesc')}
-            </button>
-            {(liqDateFrom || liqDateTo || liqPeriodFilter !== 'todos') && (
-              <button
-                onClick={() => { setLiqDateFrom(''); setLiqDateTo(''); setLiqPeriodFilter('todos'); }}
-                className="px-3 py-1.5 rounded border border-border text-sm text-muted-foreground hover:bg-muted transition-colors"
-              >
-                {t('audit.clearFilters')}
-              </button>
-            )}
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.userEmail')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.mtAccount')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.deposit')}>+</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.withdrawal')}>−</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
-                  {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredLiquidity.length === 0 && (
-                  <tr><td colSpan={7} className="py-8 text-center text-muted-foreground">{t('upload.noLiquidity')}</td></tr>
-                )}
-                {pagedLiquidity.map(row => (
-                  <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    {editingLiqId === row.id ? (
-                      <>
-                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editLiq.date} onChange={e => setEditLiq(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('audit.filterUser')} value={editLiq.user_email} onChange={e => setEditLiq(p => ({ ...p, user_email: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('upload.mtAccountAria')} value={editLiq.mt_account} onChange={e => setEditLiq(p => ({ ...p, mt_account: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editLiq.deposit} onChange={e => setEditLiq(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editLiq.withdrawal} onChange={e => setEditLiq(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
-                        <td className="py-2.5 px-3 text-center">
-                          <div className="flex justify-center gap-1">
-                            <button onClick={saveEditLiq} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
-                            <button onClick={() => setEditingLiqId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
-                          </div>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="py-2.5 px-3">{row.date}</td>
-                        <td className="py-2.5 px-3 text-muted-foreground">{row.user_email || '—'}</td>
-                        <td className="py-2.5 px-3 text-muted-foreground">{row.mt_account || '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-emerald-600">{row.deposit > 0 ? formatCurrency(row.deposit) : '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-red-600">{row.withdrawal > 0 ? formatCurrency(row.withdrawal) : '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(liqBalanceMap.get(row.id) ?? 0)}</td>
-                        {(userCanEdit || userCanDelete) && (
-                          <td className="py-2.5 px-3 text-center">
-                            <div className="flex justify-center gap-1">
-                              {userCanEdit && (
-                                <button onClick={() => startEditLiq(row)} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
-                              )}
-                              {userCanDelete && (
-                                <button onClick={() => deleteLiqRow(row.id)} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
-                              )}
-                            </div>
-                          </td>
-                        )}
-                      </>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-              {filteredLiquidity.length > 0 && (
-                <tfoot>
-                  <tr className="font-bold bg-muted/50">
-                    <td className="py-3 px-3" colSpan={3}>{t('upload.totals')}</td>
-                    <td className="py-3 px-3 text-right text-emerald-600">{formatCurrency(liqTotalDeposits)}</td>
-                    <td className="py-3 px-3 text-right text-red-600">{formatCurrency(liqTotalWithdrawals)}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(liqCurrentBalance)}</td>
-                    {(userCanEdit || userCanDelete) && <td></td>}
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-
-          <PaginationControls
-            page={liquidityPage}
-            totalPages={liquidityTotalPages}
-            totalItems={filteredLiquidity.length}
-            onChange={setLiquidityPage}
-          />
-
-          {/* Add liquidity form */}
-          {userCanAdd && (
-            <div className="mt-4 pt-4 border-t border-border">
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addMovement')}</h3>
-              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
-                <input
-                  type="date"
-                  value={newLiq.date}
-                  onChange={e => setNewLiq(p => ({ ...p, date: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  value={newLiq.user_email}
-                  onChange={e => setNewLiq(p => ({ ...p, user_email: e.target.value }))}
-                  placeholder={t('upload.emailPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  value={newLiq.mt_account}
-                  onChange={e => setNewLiq(p => ({ ...p, mt_account: e.target.value }))}
-                  placeholder={t('upload.mtAccountPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  type="number" step="0.01"
-                  value={newLiq.deposit}
-                  onChange={e => setNewLiq(p => ({ ...p, deposit: e.target.value }))}
-                  placeholder={t('upload.depositPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  type="number" step="0.01"
-                  value={newLiq.withdrawal}
-                  onChange={e => setNewLiq(p => ({ ...p, withdrawal: e.target.value }))}
-                  placeholder={t('upload.withdrawalPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <button
-                  onClick={addLiquidityRow}
-                  disabled={!newLiq.date || !newLiq.user_email || savingLiq}
-                  className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
-                >
-                  {savingLiq ? t('common.saving') : t('common.add')}
-                </button>
-              </div>
-            </div>
-          )}
-        </Card>
+        <MovementsLedger
+          title={t('upload.liquidity')}
+          caption={t('upload.liquidity')}
+          emptyText={t('upload.noLiquidity')}
+          filters={
+            <MovementFilters
+              dateFrom={liqDateFrom}
+              dateTo={liqDateTo}
+              periodFilter={liqPeriodFilter}
+              sortAsc={liqSortAsc}
+              periods={periods}
+              onDateFrom={setLiqDateFrom}
+              onDateTo={setLiqDateTo}
+              onPeriodFilter={setLiqPeriodFilter}
+              onToggleSort={() => setLiqSortAsc(prev => !prev)}
+              onClear={() => { setLiqDateFrom(''); setLiqDateTo(''); setLiqPeriodFilter('todos'); }}
+            />
+          }
+          rows={pagedLiquidity}
+          totalItems={filteredLiquidity.length}
+          page={liquidityPage}
+          totalPages={liquidityTotalPages}
+          onPageChange={setLiquidityPage}
+          fields={[
+            { key: 'date', header: t('upload.date'), kind: 'date', read: (r: LiquidityMovement) => r.date },
+            { key: 'user_email', header: t('upload.userEmail'), kind: 'text', read: (r: LiquidityMovement) => r.user_email },
+            { key: 'mt_account', header: t('upload.mtAccount'), kind: 'text', read: (r: LiquidityMovement) => r.mt_account, hideSm: true },
+            { key: 'deposit', header: t('upload.deposit'), kind: 'flow', read: (r: LiquidityMovement) => r.deposit },
+            { key: 'withdrawal', header: t('upload.withdrawal'), kind: 'flow', read: (r: LiquidityMovement) => r.withdrawal },
+          ]}
+          balanceOf={(r) => liqBalanceMap.get(r.id) ?? 0}
+          totals={{ deposit: liqTotalDeposits, withdrawal: liqTotalWithdrawals, balance: liqCurrentBalance }}
+          canEdit={userCanEdit}
+          canDelete={userCanDelete}
+          canAdd={userCanAdd}
+          editingId={editingLiqId}
+          edit={editLiq}
+          setEdit={setEditLiq}
+          onStartEdit={startEditLiq}
+          onSaveEdit={saveEditLiq}
+          onCancelEdit={() => setEditingLiqId(null)}
+          onDelete={deleteLiqRow}
+          newFields={[
+            { key: 'date', label: t('upload.date'), kind: 'date' },
+            { key: 'user_email', label: t('upload.userEmail'), kind: 'text', placeholder: t('upload.emailPlaceholder') },
+            { key: 'mt_account', label: t('upload.mtAccount'), kind: 'text', placeholder: t('upload.mtAccountPlaceholder') },
+            { key: 'deposit', label: t('upload.deposit'), kind: 'number', placeholder: t('upload.depositPlaceholder') },
+            { key: 'withdrawal', label: t('upload.withdrawal'), kind: 'number', placeholder: t('upload.withdrawalPlaceholder') },
+          ]}
+          newValue={newLiq}
+          setNew={setNewLiq}
+          onAdd={addLiquidityRow}
+          addDisabled={!newLiq.date || !newLiq.user_email || savingLiq}
+          saving={savingLiq}
+        />
       )}
 
       {/* INVERSIONES */}
       {section === 'inversiones' && (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('upload.investments')}</h2>
-
-          {/* Filter bar */}
-          <div className="flex flex-wrap items-end gap-3 mb-4 pb-4 border-b border-border">
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterFrom')}</label>
-              <input
-                type="date"
-                value={invDateFrom}
-                onChange={e => setInvDateFrom(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.filterTo')}</label>
-              <input
-                type="date"
-                value={invDateTo}
-                onChange={e => setInvDateTo(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-              />
-            </div>
-            <div>
-              <label className="text-xs text-muted-foreground mb-1 block">{t('upload.period')}</label>
-              <select
-                value={invPeriodFilter}
-                onChange={e => setInvPeriodFilter(e.target.value)}
-                className="px-3 py-1.5 rounded border border-border text-base sm:text-sm bg-background focus:outline-none focus:ring-2 focus:ring-accent"
-              >
-                <option value="todos">{t('common.all')}</option>
-                {periods.map(p => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </select>
-            </div>
-            <button
-              onClick={() => setInvSortAsc(prev => !prev)}
-              className="flex items-center gap-1 px-3 py-1.5 rounded border border-border text-sm hover:bg-muted transition-colors"
-              title={invSortAsc ? t('upload.dateSortAsc') : t('upload.dateSortDesc')}
-            >
-              <ArrowUpDown className="w-3.5 h-3.5" />
-              {invSortAsc ? t('upload.dateSortAsc') : t('upload.dateSortDesc')}
-            </button>
-            {(invDateFrom || invDateTo || invPeriodFilter !== 'todos') && (
-              <button
-                onClick={() => { setInvDateFrom(''); setInvDateTo(''); setInvPeriodFilter('todos'); }}
-                className="px-3 py-1.5 rounded border border-border text-sm text-muted-foreground hover:bg-muted transition-colors"
-              >
-                {t('audit.clearFilters')}
-              </button>
-            )}
-          </div>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.date')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.concept')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('upload.responsible')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.deposit')}>+</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('upload.withdrawal')}>−</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.profit')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('upload.balance')}</th>
-                  {(userCanEdit || userCanDelete) && <th className="w-24 text-center py-2.5 px-3 text-muted-foreground font-medium">{t('common.actions')}</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {filteredInvestments.length === 0 && (
-                  <tr><td colSpan={8} className="py-8 text-center text-muted-foreground">{t('upload.noInvestments')}</td></tr>
-                )}
-                {pagedInvestments.map(row => (
-                  <tr key={row.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    {editingInvId === row.id ? (
-                      <>
-                        <td className="py-2.5 px-3"><input type="date" aria-label={t('upload.date')} value={editInv.date} onChange={e => setEditInv(p => ({ ...p, date: e.target.value }))} className="px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('upload.concept')} value={editInv.concept} onChange={e => setEditInv(p => ({ ...p, concept: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input aria-label={t('upload.responsible')} value={editInv.responsible} onChange={e => setEditInv(p => ({ ...p, responsible: e.target.value }))} className="w-full px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.deposit')} value={editInv.deposit} onChange={e => setEditInv(p => ({ ...p, deposit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.withdrawal')} value={editInv.withdrawal} onChange={e => setEditInv(p => ({ ...p, withdrawal: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3"><input type="number" step="0.01" aria-label={t('upload.profit')} value={editInv.profit} onChange={e => setEditInv(p => ({ ...p, profit: e.target.value }))} className="w-full text-right px-2 py-1 rounded border border-border text-base sm:text-sm" /></td>
-                        <td className="py-2.5 px-3 text-right text-muted-foreground">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
-                        <td className="py-2.5 px-3 text-center">
-                          <div className="flex justify-center gap-1">
-                            <button onClick={saveEditInv} className="p-2 sm:p-1 text-emerald-600 hover:bg-emerald-50 dark:hover:bg-emerald-950/50 rounded" aria-label={t('common.save')}><Check className="w-4 h-4" /></button>
-                            <button onClick={() => setEditingInvId(null)} className="p-2 sm:p-1 text-muted-foreground hover:bg-muted rounded" aria-label={t('common.cancel')}><X className="w-4 h-4" /></button>
-                          </div>
-                        </td>
-                      </>
-                    ) : (
-                      <>
-                        <td className="py-2.5 px-3">{row.date}</td>
-                        <td className="py-2.5 px-3 text-muted-foreground">{row.concept || '—'}</td>
-                        <td className="py-2.5 px-3 text-muted-foreground">{row.responsible || '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-emerald-600">{row.deposit > 0 ? formatCurrency(row.deposit) : '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-red-600">{row.withdrawal > 0 ? formatCurrency(row.withdrawal) : '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-medium text-blue-600">{row.profit > 0 ? formatCurrency(row.profit) : '—'}</td>
-                        <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(invBalanceMap.get(row.id) ?? 0)}</td>
-                        {(userCanEdit || userCanDelete) && (
-                          <td className="py-2.5 px-3 text-center">
-                            <div className="flex justify-center gap-1">
-                              {userCanEdit && (
-                                <button onClick={() => startEditInv(row)} className="p-2 sm:p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded" title={t('common.edit')} aria-label={t('common.edit')}><Edit2 className="w-3.5 h-3.5" /></button>
-                              )}
-                              {userCanDelete && (
-                                <button onClick={() => deleteInvRow(row.id)} className="p-2 sm:p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded" title={t('common.delete')} aria-label={t('common.delete')}><Trash2 className="w-3.5 h-3.5" /></button>
-                              )}
-                            </div>
-                          </td>
-                        )}
-                      </>
-                    )}
-                  </tr>
-                ))}
-              </tbody>
-              {filteredInvestments.length > 0 && (
-                <tfoot>
-                  <tr className="font-bold bg-muted/50">
-                    <td className="py-3 px-3" colSpan={3}>{t('upload.totals')}</td>
-                    <td className="py-3 px-3 text-right text-emerald-600">{formatCurrency(invTotalDeposits)}</td>
-                    <td className="py-3 px-3 text-right text-red-600">{formatCurrency(invTotalWithdrawals)}</td>
-                    <td className="py-3 px-3 text-right text-blue-600">{formatCurrency(invTotalProfit)}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(invCurrentBalance)}</td>
-                    {(userCanEdit || userCanDelete) && <td></td>}
-                  </tr>
-                </tfoot>
-              )}
-            </table>
-          </div>
-
-          <PaginationControls
-            page={investmentsPage}
-            totalPages={investmentsTotalPages}
-            totalItems={filteredInvestments.length}
-            onChange={setInvestmentsPage}
-          />
-
-          {/* Add investment form */}
-          {userCanAdd && (
-            <div className="mt-4 pt-4 border-t border-border">
-              <h3 className="text-sm font-semibold mb-3 flex items-center gap-2"><Plus className="w-4 h-4" /> {t('upload.addMovement')}</h3>
-              <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
-                <input
-                  type="date"
-                  value={newInv.date}
-                  onChange={e => setNewInv(p => ({ ...p, date: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  value={newInv.concept}
-                  onChange={e => setNewInv(p => ({ ...p, concept: e.target.value }))}
-                  placeholder={t('upload.conceptPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  value={newInv.responsible}
-                  onChange={e => setNewInv(p => ({ ...p, responsible: e.target.value }))}
-                  placeholder={t('upload.responsiblePlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                {/* Tipo de movimiento (migración 062): separa devolución de
-                    capital de cobro de ganancias, que antes iban revueltas en
-                    la misma columna de retiros. */}
-                <select
-                  aria-label="Tipo de movimiento"
-                  value={newInv.movement_type}
-                  onChange={e => setNewInv(p => ({ ...p, movement_type: e.target.value }))}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                >
-                  <option value="">Tipo (automático)</option>
-                  {SELECTABLE_MOVEMENT_TYPES.map(mt => (
-                    <option key={mt.key} value={mt.key} title={mt.description}>
-                      {mt.labelEs}
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number" step="0.01"
-                  value={newInv.deposit}
-                  onChange={e => setNewInv(p => ({ ...p, deposit: e.target.value }))}
-                  placeholder={t('upload.depositPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  type="number" step="0.01"
-                  value={newInv.withdrawal}
-                  onChange={e => setNewInv(p => ({ ...p, withdrawal: e.target.value }))}
-                  placeholder={t('upload.withdrawalPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <input
-                  type="number" step="0.01"
-                  value={newInv.profit}
-                  onChange={e => setNewInv(p => ({ ...p, profit: e.target.value }))}
-                  placeholder={t('upload.profitPlaceholder')}
-                  className="w-full px-3 py-2 rounded-lg border border-border text-base sm:text-sm text-right focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <button
-                  onClick={addInvestmentRow}
-                  disabled={!newInv.date || savingInv}
-                  className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium disabled:opacity-50 hover:opacity-90 transition-opacity"
-                >
-                  {savingInv ? t('common.saving') : t('common.add')}
-                </button>
-              </div>
-            </div>
-          )}
-        </Card>
+        <MovementsLedger
+          title={t('upload.investments')}
+          caption={t('upload.investments')}
+          emptyText={t('upload.noInvestments')}
+          filters={
+            <MovementFilters
+              dateFrom={invDateFrom}
+              dateTo={invDateTo}
+              periodFilter={invPeriodFilter}
+              sortAsc={invSortAsc}
+              periods={periods}
+              onDateFrom={setInvDateFrom}
+              onDateTo={setInvDateTo}
+              onPeriodFilter={setInvPeriodFilter}
+              onToggleSort={() => setInvSortAsc(prev => !prev)}
+              onClear={() => { setInvDateFrom(''); setInvDateTo(''); setInvPeriodFilter('todos'); }}
+            />
+          }
+          rows={pagedInvestments}
+          totalItems={filteredInvestments.length}
+          page={investmentsPage}
+          totalPages={investmentsTotalPages}
+          onPageChange={setInvestmentsPage}
+          fields={[
+            { key: 'date', header: t('upload.date'), kind: 'date', read: (r: Investment) => r.date },
+            { key: 'concept', header: t('upload.concept'), kind: 'text', read: (r: Investment) => r.concept },
+            { key: 'responsible', header: t('upload.responsible'), kind: 'text', read: (r: Investment) => r.responsible, hideSm: true },
+            { key: 'deposit', header: t('upload.deposit'), kind: 'flow', read: (r: Investment) => r.deposit },
+            { key: 'withdrawal', header: t('upload.withdrawal'), kind: 'flow', read: (r: Investment) => r.withdrawal },
+            { key: 'profit', header: t('upload.profit'), kind: 'flow', read: (r: Investment) => r.profit },
+          ]}
+          balanceOf={(r) => invBalanceMap.get(r.id) ?? 0}
+          totals={{ deposit: invTotalDeposits, withdrawal: invTotalWithdrawals, profit: invTotalProfit, balance: invCurrentBalance }}
+          canEdit={userCanEdit}
+          canDelete={userCanDelete}
+          canAdd={userCanAdd}
+          editingId={editingInvId}
+          edit={editInv}
+          setEdit={setEditInv}
+          onStartEdit={startEditInv}
+          onSaveEdit={saveEditInv}
+          onCancelEdit={() => setEditingInvId(null)}
+          onDelete={deleteInvRow}
+          newFields={[
+            { key: 'date', label: t('upload.date'), kind: 'date' },
+            { key: 'concept', label: t('upload.concept'), kind: 'text', placeholder: t('upload.conceptPlaceholder') },
+            { key: 'responsible', label: t('upload.responsible'), kind: 'text', placeholder: t('upload.responsiblePlaceholder') },
+            // Tipo de movimiento (migración 062): separa devolución de
+            // capital de cobro de ganancias, que antes iban revueltas en
+            // la misma columna de retiros.
+            {
+              key: 'movement_type',
+              label: 'Tipo',
+              kind: 'select',
+              ariaLabel: 'Tipo de movimiento',
+              options: [
+                { value: '', label: 'Tipo (automático)' },
+                ...SELECTABLE_MOVEMENT_TYPES.map(mt => ({ value: mt.key, label: mt.labelEs, title: mt.description })),
+              ],
+            },
+            { key: 'deposit', label: t('upload.deposit'), kind: 'number', placeholder: t('upload.depositPlaceholder') },
+            { key: 'withdrawal', label: t('upload.withdrawal'), kind: 'number', placeholder: t('upload.withdrawalPlaceholder') },
+            { key: 'profit', label: t('upload.profit'), kind: 'number', placeholder: t('upload.profitPlaceholder') },
+          ]}
+          newValue={newInv}
+          setNew={setNewInv}
+          onAdd={addInvestmentRow}
+          addDisabled={!newInv.date || savingInv}
+          saving={savingInv}
+        />
       )}
 
       {/* DOCUMENTOS */}
@@ -3743,54 +3064,17 @@ export default function UploadPage() {
           expense-attachments. */}
 
       {/* Bottom bar: Period selector + Save All */}
-      <div className="sticky bottom-0 z-10 -mx-4 sm:-mx-6 lg:-mx-8 px-4 sm:px-6 lg:px-8 py-3 sm:py-4 bg-background/95 backdrop-blur border-t border-border flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 sm:gap-4">
-        <div className="flex items-center gap-2 sm:gap-3">
-          <label className="text-xs sm:text-sm font-medium text-muted-foreground whitespace-nowrap">{t('upload.period')}:</label>
-          <select
-            value={selectedPeriod}
-            onChange={(e) => setSelectedPeriod(e.target.value)}
-            className="flex-1 sm:flex-none px-2 sm:px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm font-medium focus:outline-none focus:ring-2 focus:ring-accent"
-          >
-            {periods.map(p => (
-              <option key={p.id} value={p.id}>{p.label} {p.is_closed ? t('upload.closedPeriod') : ''}</option>
-            ))}
-          </select>
-        </div>
-        {userCanAdd && section !== 'liquidez' && section !== 'inversiones' && (
-          <div className="flex items-center gap-3">
-            {savingAll ? (
-              <span
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-sky-700 dark:text-sky-400 whitespace-nowrap"
-                aria-live="polite"
-                title={t('upload.autosaving')}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
-                {t('common.saving')}
-              </span>
-            ) : dirtySections.has(section) ? (
-              <span
-                className="inline-flex items-center gap-1.5 text-xs font-medium text-warning whitespace-nowrap"
-                aria-live="polite"
-                title={t('upload.unsavedAutosaveHint')}
-              >
-                <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse" />
-                {t('upload.savingIn3s')}
-              </span>
-            ) : lastSavedAt ? (
-              <SavedRecentlyBadge at={lastSavedAt} />
-            ) : null}
-            <button
-              onClick={saveAll}
-              disabled={savingAll || selectedPeriodIsClosed}
-              className="flex items-center justify-center gap-2 px-4 sm:px-6 py-2.5 rounded-lg bg-emerald-600 text-white text-sm font-semibold hover:bg-emerald-700 disabled:opacity-50 transition-colors shadow-sm"
-              title={t('upload.saveNowTitle')}
-            >
-              <Save className="w-4 h-4" />
-              {savingAll ? t('common.saving') : t('upload.saveNow')}
-            </button>
-          </div>
-        )}
-      </div>
+      <SaveBar
+        periods={periods}
+        selectedPeriod={selectedPeriod}
+        onPeriodChange={(id) => setSelectedPeriod(id)}
+        showSave={userCanAdd && section !== 'liquidez' && section !== 'inversiones'}
+        savingAll={savingAll}
+        dirty={dirtySections.has(section)}
+        lastSavedAt={lastSavedAt}
+        closed={selectedPeriodIsClosed}
+        onSave={saveAll}
+      />
 
       {ConfirmModal}
 
@@ -3812,12 +3096,12 @@ export default function UploadPage() {
             role="dialog"
             aria-modal="true"
             aria-label="Importar egresos"
-            className="w-full max-w-lg rounded-xl border border-border bg-card shadow-[var(--elevation-3)] p-5 space-y-4 max-h-[85vh] overflow-y-auto"
+            className="max-h-[85vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-ui-xl border border-border bg-card p-5 shadow-3"
           >
-            <h2 className="font-semibold">Importar egresos — {periodLabel}</h2>
-            <p className="text-sm text-muted-foreground">
+            <h2 className="text-[15px] font-semibold text-foreground">Importar egresos — {periodLabel}</h2>
+            <p className="text-[13px] text-text-2">
               Excel (.xlsx) o CSV con encabezados en la primera fila. Columnas:{' '}
-              <strong>Concepto</strong> y <strong>Monto</strong> obligatorias;
+              <strong className="text-foreground">Concepto</strong> y <strong className="text-foreground">Monto</strong> obligatorias;
               Categoría, Fecha, Pagado, Pendiente y Referencia opcionales.
               Nada se guarda hasta que confirmes.
             </p>
@@ -3832,37 +3116,41 @@ export default function UploadPage() {
                 if (f) void handleImportFile(f);
                 e.target.value = '';
               }}
-              className="block w-full text-sm file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-[var(--color-primary)] file:text-white file:text-sm file:font-medium hover:file:opacity-90"
+              className="block w-full text-[13px] text-text-2 file:mr-3 file:h-8 file:rounded-ui-md file:border file:border-solid file:border-border-strong file:bg-card file:px-3 file:text-[13px] file:font-medium file:text-foreground hover:file:bg-surface-2"
             />
 
-            {importing && <p className="text-sm text-muted-foreground">Leyendo archivo…</p>}
+            {importing && <p className="text-[13px] text-text-3">Leyendo archivo…</p>}
 
             {importResult && (
               <div className="space-y-3">
-                <p className="text-sm">
-                  <strong className="text-positive">{importResult.rows.length}</strong>{' '}
+                <p className="text-[13px] text-foreground">
+                  <strong className="tabular-nums">{importResult.rows.length}</strong>{' '}
                   {importResult.rows.length === 1 ? 'fila lista' : 'filas listas'} ·{' '}
-                  <span className={importResult.errors.length ? 'text-negative font-medium' : 'text-muted-foreground'}>
+                  <span className={importResult.errors.length ? 'font-medium text-neg' : 'text-text-3'}>
                     {importResult.errors.length} con error
                   </span>
-                  {importResult.truncated && (
-                    <span className="text-amber-600"> · el archivo superaba 500 filas y se recortó</span>
-                  )}
                 </p>
 
+                {/* Recorte del archivo: se cuenta y se avisa (reglas §1.2). */}
+                {importResult.truncated && (
+                  <Notice kind="pend" title="El archivo superaba 500 filas y se recortó">
+                    Sólo se leyeron las primeras 500 filas de datos. Partí el archivo para cargar el resto.
+                  </Notice>
+                )}
+
                 {importResult.errors.length > 0 && (
-                  <div className="max-h-36 overflow-y-auto rounded-lg border border-negative/30 bg-negative/5 p-3 text-xs space-y-1">
+                  <div className="max-h-36 space-y-1 overflow-y-auto rounded-ui-md border border-neg/35 bg-neg-bg p-3 text-[12px] text-foreground">
                     {importResult.errors.map((e) => (
-                      <p key={e.row}><strong>Fila {e.row}:</strong> {e.error}</p>
+                      <p key={e.row}><strong className="text-neg">Fila {e.row}:</strong> {e.error}</p>
                     ))}
                   </div>
                 )}
 
                 {importResult.rows.length > 0 && (
-                  <div className="max-h-40 overflow-y-auto rounded-lg border border-border text-xs">
+                  <div className="max-h-40 overflow-y-auto rounded-ui-md border border-border text-[12px]">
                     <table className="w-full">
                       <thead>
-                        <tr className="text-left text-muted-foreground border-b border-border">
+                        <tr className="border-b border-border-strong text-left text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3">
                           <th className="px-2 py-1.5">Concepto</th>
                           <th className="px-2 py-1.5 text-right">Monto</th>
                           <th className="px-2 py-1.5 text-right">Pagado</th>
@@ -3870,14 +3158,14 @@ export default function UploadPage() {
                       </thead>
                       <tbody>
                         {importResult.rows.slice(0, 8).map((r, i) => (
-                          <tr key={i} className="border-b border-border/50 last:border-0">
-                            <td className="px-2 py-1.5 truncate max-w-[220px]">{r.concept}</td>
-                            <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.amount)}</td>
-                            <td className="px-2 py-1.5 text-right tabular-nums">{formatCurrency(r.paid)}</td>
+                          <tr key={i} className="border-b border-border last:border-0">
+                            <td className="max-w-[220px] truncate px-2 py-1.5">{r.concept}</td>
+                            <td className="px-2 py-1.5 text-right"><Money value={r.amount} /></td>
+                            <td className="px-2 py-1.5 text-right"><Money value={r.paid} /></td>
                           </tr>
                         ))}
                         {importResult.rows.length > 8 && (
-                          <tr><td colSpan={3} className="px-2 py-1.5 text-muted-foreground">
+                          <tr><td colSpan={3} className="px-2 py-1.5 text-text-3">
                             … y {importResult.rows.length - 8} más
                           </td></tr>
                         )}
@@ -3890,15 +3178,17 @@ export default function UploadPage() {
 
             <div className="flex justify-end gap-2 pt-1">
               <button
+                type="button"
                 onClick={() => { setImportOpen(false); setImportResult(null); }}
-                className="px-4 py-2 rounded-lg border border-border text-sm hover:bg-muted"
+                className={btnClass('secondary')}
               >
                 Cancelar
               </button>
               <button
+                type="button"
                 onClick={confirmImport}
                 disabled={!importResult || importResult.rows.length === 0 || savingExpenses}
-                className="px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 disabled:opacity-50"
+                className={btnClass('primary')}
               >
                 {savingExpenses ? 'Guardando…' : `Agregar ${importResult?.rows.length ?? 0} egresos`}
               </button>
