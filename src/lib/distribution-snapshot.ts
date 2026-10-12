@@ -103,7 +103,17 @@ export function applySnapshotOverrides<T extends PeriodDistInput>(
       ['totalExpenses', frozen.totalExpenses, live.totalExpenses],
       ['reservePct', frozen.reservePct ?? 0.1, live.reservePct ?? 0.1],
     ];
+    // Campos que el cierre tomó del CRM (migración 131): lo «vivo» de las
+    // tablas manuales no es su fuente, así que compararlos daría una deriva
+    // falsa («alguien tocó el pasado») en todo mes cerrado con serie automática.
+    const auto = Array.isArray(period.closing_snapshot.auto_sources)
+      ? (period.closing_snapshot.auto_sources as unknown[])
+      : [];
+    const skip = new Set<string>();
+    if (auto.includes('broker_pnl')) skip.add('brokerPnl');
+    if (auto.includes('prop_firm_sales') || auto.includes('prop_firm_withdrawals')) skip.add('propFirmNetIncome');
     for (const [field, f, l] of FIELDS) {
+      if (skip.has(field)) continue;
       if (Math.abs(f - l) > TOLERANCE) {
         drifts.push({ periodId: live.periodId, periodLabel: label, field, frozen: f, live: l });
       }

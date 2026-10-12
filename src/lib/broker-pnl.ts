@@ -170,6 +170,8 @@ export interface BrokerPnlPeriodLike {
   year: number;
   month: number;
   is_closed?: boolean | null;
+  /** Lo congelado al cerrar. Desde la migración 131 puede traer el valor del CRM. */
+  closing_snapshot?: { broker_pnl?: number | string | null } | null;
 }
 
 export interface ResolvedBrokerPnl {
@@ -215,8 +217,14 @@ export function resolveBrokerPnl(
   // Regla 1: cerrado —o anterior al corte de agosto-26— manda el manual
   // congelado, sin mirar el CRM.
   if (period.is_closed || antesDelCorte(period)) {
+    // Cerrado con snapshot: manda lo CONGELADO, no la tabla manual. Hasta el
+    // 2026-10-12 eran el mismo número; desde la migración 131 el cierre puede
+    // congelar el valor del CRM y `operating_income.broker_pnl` queda con el
+    // manual viejo (Ago-26 de Vex: $671.000 tecleados vs $304.392,24).
+    const frozen = period.is_closed ? period.closing_snapshot?.broker_pnl : undefined;
+    const v = frozen !== undefined && frozen !== null ? frozen : manual;
     return {
-      value: manual === null || manual === undefined ? null : Number(manual),
+      value: v === null || v === undefined ? null : Number(v),
       source: 'frozen',
       daysWithData: null,
       daysInMonth: null,

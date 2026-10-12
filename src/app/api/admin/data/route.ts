@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { closingOverrides } from '@/lib/close-auto-inputs';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifyAdminAuth, FINANCE_ROLES } from '@/lib/api-auth';
 import { apiError } from '@/lib/api-error';
@@ -190,11 +191,44 @@ export async function POST(request: NextRequest) {
             console.error('[admin/data:period_status] checklist previo:', checklistErr);
           }
 
+          // Series del CRM que la pantalla mostraba para este mes abierto:
+          // se congelan ESAS (close-auto-inputs.ts, incidente 2026-10-12).
+          // Si no se pueden leer NO se cierra: cerrar igual congelaría el
+          // manual viejo en silencio, que es exactamente el bug.
+          const { data: per, error: perErr } = await admin.from('periods')
+            .select('year, month').eq('id', body.periodId).eq('company_id', companyId).single();
+          if (perErr || !per) return fail(perErr ?? new Error('Periodo no encontrado'), op);
+          const desde = `${per.year}-${String(per.month).padStart(2, '0')}-01`;
+          const hasta = new Date(Date.UTC(per.year, per.month, 0)).toISOString().slice(0, 10);
+          const [dailyRes, monthlyRes] = await Promise.all([
+            admin.from('crm_daily_pnl').select('utc_day, pnl_usd, computed_at')
+              .eq('company_id', companyId).gte('utc_day', desde).lte('utc_day', hasta).limit(100),
+            admin.from('crm_monthly_totals').select('year, month, metric, amount')
+              .eq('company_id', companyId).eq('year', per.year).eq('month', per.month)
+              .in('metric', ['propfirm_sales', 'propfirm_withdrawals']),
+          ]);
+          if (dailyRes.error || monthlyRes.error) {
+            return NextResponse.json(
+              { error: 'No se pudieron leer las series del CRM (Broker P&L / Prop Firm). El período NO se cerró: reintentá en unos minutos.' },
+              { status: 503 },
+            );
+          }
+          const overrides = closingOverrides({
+            year: per.year,
+            month: per.month,
+            dailyPnl: dailyRes.data ?? [],
+            crmMonthly: (monthlyRes.data ?? []).map((r) => ({
+              year: r.year, month: r.month, metric: r.metric,
+              auto: r.amount === null || r.amount === undefined ? null : Number(r.amount),
+            })),
+          });
+
           const { error } = await admin.rpc('close_period', {
             p_company_id: companyId,
             p_period_id: body.periodId,
             p_actor_id: auth.userId,
             p_actor_name: auth.name || auth.email,
+            p_overrides: overrides,
           });
           if (error) return fail(error, op);
 

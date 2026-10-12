@@ -91,6 +91,7 @@ import {
   type ResolvedBrokerPnl,
 } from '@/lib/broker-pnl';
 import { CRM_MONTHLY_RESULT_METRIC_KEYS } from '@/lib/crm-monthly';
+import { propFirmAutoForMonth } from '@/lib/close-auto-inputs';
 
 /** Una fila de `/api/admin/crm-monthly-totals`. `auto: null` = sin dato (≠ 0). */
 export interface CrmMonthlyTotalRow {
@@ -1043,10 +1044,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
     const pfAutoByPeriod = new Map<string, { sales: number; withdrawals: number }>();
     for (const p of periods) {
       if (p.is_closed) continue;
-      const ventas = pfAutoMonths.find((r) => r.metric === 'propfirm_sales' && r.year === p.year && r.month === p.month);
-      const retiros = pfAutoMonths.find((r) => r.metric === 'propfirm_withdrawals' && r.year === p.year && r.month === p.month);
-      if (ventas?.auto == null && retiros?.auto == null) continue;
-      pfAutoByPeriod.set(p.id, { sales: Number(ventas?.auto ?? 0), withdrawals: Number(retiros?.auto ?? 0) });
+      // Misma regla que congela el cierre (close-auto-inputs.ts).
+      const pf = propFirmAutoForMonth(pfAutoMonths, p.year, p.month);
+      if (pf) pfAutoByPeriod.set(p.id, pf);
     }
     return {
       operatingIncome,
