@@ -1,9 +1,19 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronLeft, ChevronRight, ChevronsUpDown, Globe, LogOut, UserCircle } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
+  Globe,
+  ListChevronsDownUp,
+  ListChevronsUpDown,
+  LogOut,
+  UserCircle,
+} from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { apiFetch } from '@/lib/api-fetch';
 import { useAuth, hasModuleAccess, ROLE_LABELS } from '@/lib/auth-context';
@@ -16,6 +26,13 @@ import {
   NAV_ENTRIES,
   NAV_GROUPS,
   findNavEntry,
+  groupPendingTotal,
+  initialOpenGroups,
+  isGroupCollapsible,
+  navOpenStorageKey,
+  readOpenGroups,
+  writeOpenGroups,
+  type ModuleGroupKey,
   type NavEntry,
   type PendingCounterKey,
 } from '@/lib/module-groups';
@@ -38,9 +55,10 @@ import {
 //     (`findNavEntry`): antes `/rrhh/dashboard` iluminaba también `/rrhh`.
 //
 // Descartado:
-//   · Mantener las secciones plegables: la spec define rótulos de grupo fijos
-//     y el plegado escondía dónde estaba uno (la sección se abría sólo si
-//     contenía la página activa).
+//   · Mantener las secciones plegables TAL COMO ERAN: la spec definía rótulos
+//     fijos y el plegado escondía dónde estaba uno (se abría sólo si contenía
+//     la página activa). Ver «Menú desplegable» abajo: vuelven como acordeón
+//     de varios abiertos, con el activo siempre abierto al arrancar.
 //   · Mostrar el logo ancho de la empresa arriba: en 232 px se veía chico y
 //     en el rail contraído era un cuadrado en blanco. La spec pide el isotipo
 //     (o iniciales) a 30×30 sobre `brand` + nombre + modelo · moneda.
@@ -50,7 +68,23 @@ import {
 // (órdenes de pago y retiros se leen dentro de su pantalla). Se dibuja sólo
 // un número > 0 que llegue; nunca un cero o un número inventado.
 //
-// Rail contraído (sólo ≥ 960 px): íconos con tooltip nativo (`title`) y
+// Menú desplegable (2026-10-12, pedido del dueño). Finanzas tiene 17 ítems y
+// obligaba a scrollear. Cada grupo con más de un ítem accesible es un acordeón:
+// el rótulo es un <button aria-expanded aria-controls>; varios abiertos a la
+// vez; el grupo de la ruta activa arranca abierto y se reabre al navegar hacia
+// él; el resto vuelve como el usuario lo dejó (localStorage por usuario y
+// empresa, tolerante a storage roto: ver module-groups.ts). Un grupo CERRADO
+// suma los contadores de pendientes de sus ítems junto al rótulo: plegar no
+// puede esconder un pendiente. Un grupo con un solo ítem se muestra directo,
+// con rótulo estático (no clicable). Los ítems de un grupo cerrado quedan
+// `inert`: salen del orden de tabulación y del árbol de accesibilidad (y el
+// foco atrapado del drawer los salta). La altura anima con grid-rows 0fr→1fr
+// (sin medir en JS) y se apaga con prefers-reduced-motion.
+// Descartado: acordeón exclusivo; medir alturas con JS (parpadea con i18n y
+// fuentes); `hidden` sin animación (corta la transición).
+//
+// Rail contraído (sólo ≥ 960 px): no hay acordeón, todos los íconos con un
+// separador fino entre grupos: íconos con tooltip nativo (`title`) y
 // `aria-label`. Móvil (< 960 px): drawer de 272 px con scrim; Escape cierra,
 // el foco queda atrapado adentro mientras está abierto y vuelve al botón que
 // lo abrió al cerrar.
@@ -112,7 +146,54 @@ export function Sidebar({
   // muestra siempre el menú completo.
   const isCollapsed = collapsed && !mobileOpen;
   const collapseLabel = isCollapsed ? t('nav.expand') : t('nav.collapse');
-  const activeHref = findNavEntry(pathname)?.href ?? null;
+  const activeEntry = findNavEntry(pathname);
+  const activeHref = activeEntry?.href ?? null;
+  const activeGroup = activeEntry?.group ?? null;
+
+  // ── Acordeón de grupos ────────────────────────────────────────────────────
+  const storageKey = user ? navOpenStorageKey(user.id, company?.id) : null;
+  const [openGroups, setOpenGroups] = useState<Set<ModuleGroupKey>>(() =>
+    initialOpenGroups(null, activeGroup),
+  );
+  // Al navegar a otro grupo se ABRE (sin cerrar los demás). Ajuste de estado
+  // durante el render, no en un effect: evita un frame con el grupo cerrado.
+  const [seenGroup, setSeenGroup] = useState(activeGroup);
+  if (seenGroup !== activeGroup) {
+    setSeenGroup(activeGroup);
+    if (activeGroup && !openGroups.has(activeGroup)) {
+      setOpenGroups(new Set(openGroups).add(activeGroup));
+    }
+  }
+  // Lo guardado se lee DESPUÉS de hidratar (el servidor no tiene storage) y se
+  // une a lo ya abierto, que siempre incluye el grupo activo.
+  useEffect(() => {
+    if (!storageKey) return;
+    let storage: Storage | null = null;
+    try {
+      storage = window.localStorage;
+    } catch {
+      storage = null;
+    }
+    const stored = readOpenGroups(storage, storageKey);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage sólo existe en el cliente
+    if (stored && stored.length > 0) setOpenGroups((cur) => new Set([...cur, ...stored]));
+  }, [storageKey]);
+
+  const commitOpenGroups = (next: Set<ModuleGroupKey>) => {
+    setOpenGroups(next);
+    if (!storageKey) return;
+    try {
+      writeOpenGroups(window.localStorage, storageKey, next);
+    } catch {
+      /* storage bloqueado: el estado sigue valiendo en memoria */
+    }
+  };
+  const toggleGroup = (key: ModuleGroupKey) => {
+    const next = new Set(openGroups);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    commitOpenGroups(next);
+  };
 
   // ── Drawer móvil: foco atrapado + Escape ──────────────────────────────────
   useEffect(() => {
@@ -124,7 +205,9 @@ export function Sidebar({
 
     const opener = document.activeElement as HTMLElement | null;
     const focusables = () =>
-      Array.from(aside.querySelectorAll<HTMLElement>(FOCUSABLE)).filter((el) => el.offsetParent !== null);
+      Array.from(aside.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+        (el) => el.offsetParent !== null && !el.closest('[inert]'),
+      );
     focusables()[0]?.focus();
 
     const onKey = (e: KeyboardEvent) => {
@@ -198,6 +281,20 @@ export function Sidebar({
     group: g,
     entries: NAV_ENTRIES.filter((e) => e.group === g.key && canSee(e)),
   })).filter((g) => g.entries.length > 0);
+
+  const collapsibleKeys = groups
+    .filter((g) => isGroupCollapsible(g.entries.length))
+    .map((g) => g.group.key);
+  const allOpen = collapsibleKeys.every((k) => openGroups.has(k));
+  const toggleAll = () => {
+    const next = new Set(openGroups);
+    for (const k of collapsibleKeys) {
+      if (allOpen) next.delete(k);
+      else next.add(k);
+    }
+    commitOpenGroups(next);
+  };
+  const toggleAllLabel = allOpen ? t('nav.collapseAll') : t('nav.expandAll');
 
   const renderLink = (e: NavEntry) => {
     const isActive = e.href === activeHref;
@@ -339,29 +436,97 @@ export function Sidebar({
           aria-label={t('shell.mainNav')}
           className={cn('flex-1 overflow-y-auto', isCollapsed ? 'px-2 py-2' : 'px-2.5 py-2')}
         >
+          {!isCollapsed && collapsibleKeys.length > 0 && (
+            <div className="mb-1 flex justify-end">
+              <button
+                type="button"
+                onClick={toggleAll}
+                aria-label={toggleAllLabel}
+                title={toggleAllLabel}
+                className={iconButton}
+              >
+                {allOpen
+                  ? <ListChevronsDownUp className="h-4 w-4" aria-hidden="true" />
+                  : <ListChevronsUpDown className="h-4 w-4" aria-hidden="true" />}
+              </button>
+            </div>
+          )}
           {ungrouped.length > 0 && <ul className="space-y-0.5">{ungrouped.map(renderLink)}</ul>}
           {groups.map(({ group, entries }) => {
             const headingId = `${id}-group-${group.key}`;
+            const panelId = `${id}-panel-${group.key}`;
+            const label = t(group.i18nKey);
+            const wrapper = cn(isCollapsed ? 'mt-2 border-t border-border pt-2' : 'mt-3');
+            const headingText =
+              'text-[11px] font-semibold uppercase tracking-[0.06em] text-text-3';
+
+            // Rail: sin acordeón, todos los íconos.
+            if (isCollapsed) {
+              return (
+                <div key={group.key} className={wrapper}>
+                  <ul className="space-y-0.5" aria-label={label}>{entries.map(renderLink)}</ul>
+                </div>
+              );
+            }
+
+            // Un solo ítem accesible: directo, con rótulo estático.
+            if (!isGroupCollapsible(entries.length)) {
+              return (
+                <div key={group.key} className={wrapper}>
+                  <p id={headingId} className={cn('px-2.5 pb-1', headingText)}>{label}</p>
+                  <ul className="space-y-0.5" aria-labelledby={headingId}>{entries.map(renderLink)}</ul>
+                </div>
+              );
+            }
+
+            const isOpen = openGroups.has(group.key);
+            const pending = isOpen ? 0 : groupPendingTotal(entries, pendingCounts);
+            const pendingText = pending > 99 ? '99+' : String(pending);
+            const pendingLabel = t('shell.pending', { count: String(pending) });
             return (
-              <div
-                key={group.key}
-                className={cn(isCollapsed ? 'mt-2 border-t border-border pt-2' : 'mt-3')}
-              >
-                {!isCollapsed && (
-                  <p
-                    id={headingId}
-                    className="px-2.5 pb-1 text-[11px] font-semibold uppercase tracking-[0.06em] text-text-3"
-                  >
-                    {t(group.i18nKey)}
-                  </p>
-                )}
-                <ul
-                  className="space-y-0.5"
-                  aria-labelledby={isCollapsed ? undefined : headingId}
-                  aria-label={isCollapsed ? t(group.i18nKey) : undefined}
+              <div key={group.key} className={wrapper}>
+                <button
+                  type="button"
+                  id={headingId}
+                  onClick={() => toggleGroup(group.key)}
+                  aria-expanded={isOpen}
+                  aria-controls={panelId}
+                  className={cn(
+                    'flex h-8 w-full items-center gap-2 rounded-ui-md px-2.5 text-left transition-colors pointer-coarse:h-11',
+                    'hover:bg-surface-2 motion-reduce:transition-none',
+                    headingText,
+                  )}
                 >
-                  {entries.map(renderLink)}
-                </ul>
+                  <span className="min-w-0 flex-1 truncate">{label}</span>
+                  {pending > 0 && (
+                    <span
+                      aria-label={pendingLabel}
+                      title={pendingLabel}
+                      className="min-w-5 rounded-full bg-pend-bg px-1.5 text-center text-[11.5px] font-semibold normal-case leading-5 tracking-normal text-pend tabular-nums"
+                    >
+                      {pendingText}
+                    </span>
+                  )}
+                  <ChevronDown
+                    className={cn(
+                      'h-3.5 w-3.5 shrink-0 transition-transform duration-200 motion-reduce:transition-none',
+                      isOpen ? 'rotate-0' : '-rotate-90',
+                    )}
+                    aria-hidden="true"
+                  />
+                </button>
+                <div
+                  className={cn(
+                    'grid transition-[grid-template-rows] duration-200 motion-reduce:transition-none',
+                    isOpen ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+                  )}
+                >
+                  <div id={panelId} inert={!isOpen} className="min-h-0 overflow-hidden">
+                    <ul className="space-y-0.5 pt-0.5" aria-labelledby={headingId}>
+                      {entries.map(renderLink)}
+                    </ul>
+                  </div>
+                </div>
               </div>
             );
           })}
