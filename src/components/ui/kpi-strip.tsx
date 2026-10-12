@@ -6,7 +6,7 @@ import { MONEY_LOCALE } from '@/lib/money';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { Money, NUM_CLASS, hasValue, type MoneyTone } from './money';
-import { StatusBadge } from './status-badge';
+import { StatusBadge, type StatusKind } from './status-badge';
 import { relativeAge } from './relative-age';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -69,6 +69,18 @@ export interface KpiItem {
   delta?: KpiDelta;
   /** Fecha del dato si es viejo: lo marca `stale` y muestra «hace X». */
   staleAt?: Date | string | number | null;
+  /**
+   * Badge que REEMPLAZA al «Sin dato» (pend) cuando `value` es null, para
+   * cuando la pantalla sabe POR QUÉ falta: «Cargando datos del CRM…» es un
+   * dato que todavía no llegó (`stale`), no algo que alguien tenga que
+   * resolver. `false` = sin badge (el `sub` ya lo explica). Nunca cambia el
+   * «—»: el valor sigue sin inventarse.
+   *
+   * Agregado 2026-10-12 (Home / Resumen / Socios): con el badge fijo, un KPI
+   * en vuelo mostraba DOS badges («Sin dato» + «Cargando datos del CRM»), y
+   * el primero afirma algo falso — sí hay dato, todavía no llegó.
+   */
+  missingBadge?: { kind: StatusKind; label: React.ReactNode } | false;
 }
 
 const pctFmt = () =>
@@ -159,7 +171,12 @@ export function KpiStrip({ items, className, now: nowProp }: KpiStripProps) {
               />
             )}
             <div className="mt-0.5 flex min-h-4 flex-wrap items-center gap-x-1.5 gap-y-1 text-[12px] leading-4 text-text-3">
-              {missing && <StatusBadge kind="pend" label={t('ui.noData')} />}
+              {missing &&
+                (item.missingBadge === undefined ? (
+                  <StatusBadge kind="pend" label={t('ui.noData')} />
+                ) : item.missingBadge ? (
+                  <StatusBadge kind={item.missingBadge.kind} label={item.missingBadge.label} />
+                ) : null)}
               {age && (
                 <span className="inline-flex items-center gap-1 text-stale" suppressHydrationWarning>
                   <Clock aria-hidden className="size-3" strokeWidth={2} />

@@ -1,222 +1,211 @@
 'use client';
 
 import { useMemo } from 'react';
-import { Card, CardTitle, CardValue } from '@/components/ui/card';
-import { StatCard } from '@/components/ui/stat-card';
-import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
+import dynamic from 'next/dynamic';
+import { BarChart3, Download, FileSpreadsheet, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { Money, NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Skeleton } from '@/components/ui/skeleton';
 import { InfoTip } from '@/components/ui/info-tip';
-import { GLOSSARY } from '@/lib/glossary';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { PeriodSelector } from '@/components/period-selector';
-import dynamic from 'next/dynamic';
-import { usePeriod } from '@/lib/period-context';
 import { NoPeriodsState } from '@/components/no-periods-state';
-import { useData, type SaldoInfo } from '@/lib/data-context';
+import { useExport2FA } from '@/components/verify-2fa-modal';
+import { GLOSSARY } from '@/lib/glossary';
+import { usePeriod } from '@/lib/period-context';
+import { useData } from '@/lib/data-context';
 import { features } from '@/lib/business-model';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney, MONEY_LOCALE } from '@/lib/money';
 import { downloadCSV } from '@/lib/csv-export';
 import { downloadExcel, downloadPDF } from '@/lib/export-utils';
 import { useAuth } from '@/lib/auth-context';
-import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
-import { pendingValueLabel } from '@/lib/distribution-inputs';
+import { sumChain } from '@/lib/chain-view';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { withdrawalChannelLabel } from '@/lib/withdrawal-channels';
 import { manualDepositsByChannel } from '@/lib/deposit-channels';
+import { buildExpenses, UNCATEGORIZED } from '@/lib/reports/company-report';
+import { cn } from '@/lib/utils';
 import {
-  ArrowDownCircle,
-  ArrowUpCircle,
-  TrendingUp,
-  Receipt,
-  DollarSign,
-  Wallet,
-  AlertTriangle,
-  Download,
-  FileSpreadsheet,
-  FileText,
-  BarChart3,
-} from 'lucide-react';
+  expenseBasisGap,
+  expenseCategoryRows,
+  waterfallForPeriod,
+  waterfallForRange,
+  waterfallMismatches,
+  type ExpenseCategoryTableRow,
+  type WaterfallTableRow,
+} from './waterfall-rows';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /resumen-general — «Libro mayor» (2026-10-12, T3).
+//
+// Orden: cabecera → KPIs (resultado; flujo de clientes en bróker) → avisos →
+// cascada del resultado → egresos por categoría → evolución mensual.
+//
+// QUÉ CAMBIÓ Y POR QUÉ
+//   · La cascada («Cómo se llega al resultado») sale de `buildCloseWaterfall`
+//     — la función del PDF de cierre — con sus mismas filas y sus controles de
+//     cuadre (waterfall-rows.ts). Antes la pantalla tenía su propio desglose
+//     en una tarjeta y no mostraba reserva, deuda ni monto a distribuir: el
+//     mismo mes contado de dos maneras, una en papel y otra en pantalla.
+//   · Un control de cuadre que no da es un `Notice bad` con la cifra (antes
+//     no existía en pantalla: sólo el PDF lo imprimía).
+//   · KPIs desde `sumChain` (chain-view.ts): con una serie del CRM en vuelo,
+//     Ingresos / Resultado / A distribuir son «—» + badge `stale`, nunca el
+//     fallback 0 de la cadena (incidente 2026-10-05).
+//   · Egresos por categoría: `buildExpenses` (company-report.ts), la misma
+//     agrupación del reporte de /finanzas/reportes. Si el total cargado no es
+//     el egreso que usa el resultado (base caja en `company`, congelado al
+//     cierre), el pie lo dice con las dos cifras.
+//   · Color = significado: fuera `text-amber-600`, `dark:text-accent`,
+//     `text-[10px]` y las tarjetas con ícono de color.
+//
+// LO QUE NO CAMBIÓ: los exportes (CSV / Excel / PDF) — mismas columnas,
+// mismas filas, mismo nombre de archivo; los montos salen de las mismas
+// fuentes (cadena canónica y consolidación API + manual).
+//
+// QUEDÓ FUERA: «egresos por unidad». Un egreso no tiene unidad de negocio
+// (`expenses` no tiene columna de unidad ni la tiene la orden de pago que lo
+// origina; las unidades viven en las UBICACIONES de caja, no en los gastos).
+// Inventar un reparto sería un número sin fuente.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // PERF-03: recharts (~350KB) se carga on-demand — solo esta página lo usa.
-// dynamic + ssr:false lo saca del bundle inicial; placeholder de igual altura
-// que el chart (350px) para evitar layout shift.
 const MonthlyChart = dynamic(
   () => import('@/components/charts/monthly-chart').then((m) => m.MonthlyChart),
   {
     ssr: false,
-    loading: () => (
-      <div className="h-[350px] flex items-center justify-center text-sm text-muted-foreground">
-        Cargando gráfico…
-      </div>
-    ),
+    loading: () => <div className="flex h-[350px] items-center justify-center text-[13px] text-text-3">…</div>,
   },
 );
+
+/** Botón secundario de cabecera (spec §5.1: 32 px, borde `border-strong`). */
+const BTN =
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+
+const pctFmt = new Intl.NumberFormat(MONEY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 export default function ResumenPage() {
   const { t } = useI18n();
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { mode, selectedPeriodId, selectedPeriodIds } = usePeriod();
-  const { getPeriodSummary, getConsolidatedSummary, computeSaldoChain, getBrokerPnl, periods, company, loading, autoSeriesStatus } = useData();
+  const {
+    getPeriodSummary,
+    getConsolidatedSummary,
+    computeSaldoChain,
+    getBrokerPnl,
+    periods,
+    company,
+    loading,
+    autoSeriesStatus,
+  } = useData();
   // Una consultora no mueve fondos de clientes: sin depósitos, "Net Deposit" y
   // el P&L del broker no significan nada y se van de la pantalla (y del export).
-  const { netDeposit: showNetDeposit, brokerPnl: showBrokerPnl } = features(company?.business_model);
+  const model = features(company?.business_model);
+  const showNetDeposit = model.netDeposit;
+  const showBrokerPnl = model.brokerPnl;
 
-  const summary = mode === 'consolidated'
-    ? getConsolidatedSummary(selectedPeriodIds)
-    : getPeriodSummary(selectedPeriodId);
+  const summary = mode === 'consolidated' ? getConsolidatedSummary(selectedPeriodIds) : getPeriodSummary(selectedPeriodId);
 
-  // Single source of truth for the API + manual coexistence block. Same
-  // hook feeds /movimientos so both pages can't drift.
-  const activePeriods = useMemo(() => {
-    const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
-    return periods.filter((p) => ids.includes(p.id));
-  }, [mode, selectedPeriodId, selectedPeriodIds, periods]);
-  // Pass the tenant's preferred wallet so the API totals match what
-  // /movimientos shows. Without this, useApiCoexistence defaulted to
-  // "all wallets" — which inflated Retiros for tenants that have multiple
-  // Coinsbuy wallets (e.g. Vex Pro: wallets 1079 + 1087 + 1076). Bug
-  // reported by Kevin 2026-05-02.
+  const ids = useMemo(
+    () => (mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId]),
+    [mode, selectedPeriodId, selectedPeriodIds],
+  );
+  const activePeriods = useMemo(() => periods.filter((p) => ids.includes(p.id)), [ids, periods]);
   // BUG-05: totales scopeados al set de wallets pinneadas ('' → modo 'pinned'),
   // igual que /movimientos y /balances — net deposit consistente entre pantallas.
   const coexist = useApiCoexistence(activePeriods, '');
   const useDerivedBroker = coexist.useDerivedBroker;
 
-  // ─── Ingresos / Egresos / Balance — CADENA CANÓNICA ───────────────────
-  // Antes esta pantalla re-implementaba la base distribuible
-  // (broker_pnl + other + propFirm + inversiones − egresos) sobre las tablas
-  // VIVAS. Eso duplicaba ingresosNetos/saldoAFavor de distribution.ts y, en un
-  // mes CERRADO, mostraba los números de hoy mientras /socios mostraba los
-  // congelados en closing_snapshot; tampoco aplicaba la neutralización por
-  // modelo de negocio (una 'company' seguía sumando broker_pnl heredado).
-  // Ahora sale de computeSaldoChain() — mismos insumos
-  // (buildDistributionInputs + applySnapshotOverrides) y misma fórmula que
-  // /socios y /balances. En consolidado se suman los períodos seleccionados.
+  // ─── Resultado — CADENA CANÓNICA ─────────────────────────────────────────
+  // Mismos insumos (buildDistributionInputs + applySnapshotOverrides) y misma
+  // fórmula que /socios y /balances. En consolidado se suman los períodos
+  // seleccionados (sumChain: null en cuanto un sumando no es definitivo).
   const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
-  const chainTotals = useMemo(() => {
-    const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
-    return ids.reduce(
-      (acc, id) => {
-        const e = saldoChain.get(id);
-        if (!e) return acc;
-        return {
-          ingresosNetos: acc.ingresosNetos + e.ingresosNetos,
-          egresosNetos: acc.egresosNetos + e.egresosNetos,
-          saldoAFavor: acc.saldoAFavor + e.saldoAFavor,
-          otherIncome: acc.otherIncome + e.desglose.other,
-          propFirmNet: acc.propFirmNet + (e.desglose.propFirmNetIncome ?? 0),
-          investmentProfits: acc.investmentProfits + e.desglose.investmentProfits,
-          // Un mes cuyo Prop Firm / Broker P&L del CRM no llegó contamina el
-          // total del conjunto: se muestra el estado, no la suma parcial.
-          propFirmMissing: acc.propFirmMissing || e.desglose.propFirmNetIncome === null,
-          pendingEntry: acc.pendingEntry ?? (e.incompleto.length > 0 ? e : null),
-        };
-      },
-      {
-        ingresosNetos: 0,
-        egresosNetos: 0,
-        saldoAFavor: 0,
-        otherIncome: 0,
-        propFirmNet: 0,
-        investmentProfits: 0,
-        propFirmMissing: false,
-        pendingEntry: null as SaldoInfo | null,
-      },
-    );
-  }, [saldoChain, mode, selectedPeriodId, selectedPeriodIds]);
-  // Incidente 2026-10-05: con Broker P&L / Prop Firm del CRM todavía en vuelo
-  // (o fallados) la cadena caía al manual 0 y esta pantalla mostraba unos
-  // ingresos plausibles y falsos. Ingresos y Balance muestran el estado.
-  const incomePendingLabel = pendingValueLabel(chainTotals.pendingEntry, autoSeriesStatus);
+  const entries = useMemo(() => ids.map((id) => saldoChain.get(id)), [ids, saldoChain]);
+  const kpis = useMemo(() => sumChain(entries, autoSeriesStatus), [entries, autoSeriesStatus]);
 
   // ─── Broker P&L, con su procedencia ─────────────────────────────────────
-  // En consolidado se suman los períodos seleccionados. La procedencia del
-  // conjunto es la del PEOR caso, en este orden: si a alguno le falta el dato
-  // el conjunto es 'none' (un total al que le falta un mes es un número más
-  // chico y perfectamente creíble); si alguno viene congelado el conjunto es
-  // 'frozen'. Sólo cuando TODOS salen del CRM se puede decir "CRM".
+  // La procedencia del conjunto es la del PEOR caso: si a alguno le falta el
+  // dato el conjunto es 'none'; si alguno viene congelado, 'frozen'.
   const brokerPnl = useMemo(() => {
-    const ids = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
     const partes = ids.map((id) => getBrokerPnl(id)).filter((r) => r !== null);
     if (partes.length === 0) return null;
     if (partes.some((r) => r.value === null)) {
       return { value: null, source: 'none' as const, daysWithData: null, daysInMonth: null };
     }
-    const value = Math.round(partes.reduce((s, r) => s + (r.value ?? 0), 0) * 100) / 100;
+    const value = Math.round(partes.reduce((s, r) => s + (r.value as number), 0) * 100) / 100;
     if (partes.length === 1) {
-      return {
-        value,
-        source: partes[0].source,
-        daysWithData: partes[0].daysWithData,
-        daysInMonth: partes[0].daysInMonth,
-      };
+      return { value, source: partes[0].source, daysWithData: partes[0].daysWithData, daysInMonth: partes[0].daysInMonth };
     }
     const source = partes.every((r) => r.source === 'crm') ? ('crm' as const) : ('frozen' as const);
-    // Los días sólo se muestran en un período único: "27 de 31" no significa
-    // nada sobre cuatro meses sumados.
+    // "27 de 31" no significa nada sobre cuatro meses sumados.
     return { value, source, daysWithData: null, daysInMonth: null };
-  }, [mode, selectedPeriodId, selectedPeriodIds, getBrokerPnl]);
+  }, [ids, getBrokerPnl]);
 
-  // Skeleton while the data-context hasn't produced a summary yet. A blank
-  // page mid-load (what used to show) felt like the app was broken.
-  // Sin períodos no hay nada que cargar: un esqueleto eterno haría creer
-  // que el sistema está trabajando.
+  // ─── Cascada ────────────────────────────────────────────────────────────
+  // Rótulo de `other`: en una empresa de servicios es la facturación cobrada
+  // (mismo criterio que el «Cierre mensual» de /socios).
+  const otherLabel = model.movements ? undefined : 'Facturación cobrada';
+  const waterfall = useMemo(() => {
+    const found = entries.filter((e) => e != null);
+    if (found.length === 0 || found.length < entries.length) return null;
+    if (mode === 'single') {
+      const period = periods.find((p) => p.id === selectedPeriodId);
+      return waterfallForPeriod(found[0], period?.reserve_pct, otherLabel);
+    }
+    return waterfallForRange(found, otherLabel);
+  }, [entries, mode, periods, selectedPeriodId, otherLabel]);
+  const mismatches = waterfall ? waterfallMismatches(waterfall.result) : [];
+
+  // ─── Egresos por categoría ──────────────────────────────────────────────
+  const expenseReport = useMemo(() => (summary ? buildExpenses(summary.expenses) : null), [summary]);
+
+  // Sin períodos no hay nada que cargar: un esqueleto eterno haría creer que
+  // el sistema está trabajando.
   if (!loading && periods.length === 0) return <NoPeriodsState />;
 
   if (!summary) {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-8 w-56 rounded" />
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-28" />
-          ))}
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Skeleton className="h-48" />
-          <Skeleton className="h-48" />
-        </div>
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-56" />
+        <Skeleton className="h-[92px]" />
         <Skeleton className="h-64" />
       </div>
     );
   }
 
-  // ─── Consolidation: API + manual coexist ───
-  // Same formula Movimientos uses. Every channel/category sums both sources
-  // so the number shown here always matches what Movimientos shows.
-
-  // Deposits per channel: API amount (when derived-logic period) + manual.
-  // El manual sale del registro único de canales — antes se enumeraban tres a
-  // mano acá y Pay-Pros no entraba ni por la API ni por el manual.
+  // ─── Flujo de clientes: API + manual (misma fórmula que /movimientos) ───
+  // El manual sale del registro único de canales.
   const manualByChannel = manualDepositsByChannel(summary.deposits);
-  const storedOther = manualByChannel.other;
-
   const consolidatedDeposits = useDerivedBroker
-    ? coexist.apiDepositsTotal(manualByChannel) + storedOther
+    ? coexist.apiDepositsTotal(manualByChannel) + manualByChannel.other
     : summary.totalDeposits;
-
-  // Withdrawals — Kevin (2026-06-06, decisión final): los retiros reales
-  // son los datos de Coinsbuy = API + manual Broker (suplemento Coinsbuy).
-  // Comisiones IB / Prop Firm / Otros son meramente informativos y NO
-  // entran al total.
-  //
-  // Misma lógica que /movimientos y /admin-home — las tres vistas
-  // calculan Retiros Totales idénticamente.
+  // Retiros — Kevin (2026-06-06, decisión final): API + manual Broker
+  // (suplemento Coinsbuy). Comisiones IB / Prop Firm / Otros son informativos.
   const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount || 0;
-  const consolidatedWithdrawals = useDerivedBroker
-    ? coexist.apiWithdrawalsTotal + storedBroker
-    : summary.totalWithdrawals;
-
+  const consolidatedWithdrawals = useDerivedBroker ? coexist.apiWithdrawalsTotal + storedBroker : summary.totalWithdrawals;
   const consolidatedNetDeposit = consolidatedDeposits - consolidatedWithdrawals;
+  // En pantalla, con la API del período derivado caída o en vuelo, el flujo es
+  // «no lo sabemos» (como en /movimientos), no la suma de lo manual.
+  const flowKnown = !useDerivedBroker || coexist.apiFetchState === 'ok';
+  const flowBadge = coexist.apiFetchState === 'loading'
+    ? { kind: 'stale' as const, label: t('summary.flow.loading') }
+    : { kind: 'bad' as const, label: t('summary.flow.failed') };
+  const missingWithdrawalChannels =
+    useDerivedBroker && coexist.withdrawalChannelsWithoutData.length > 0
+      ? coexist.withdrawalChannelsWithoutData.map((c) => withdrawalChannelLabel(c, t)).join(', ')
+      : null;
 
-  const totalIncome = chainTotals.ingresosNetos;
-  const totalExpenses = chainTotals.egresosNetos;
-  const balanceDisponible = chainTotals.saldoAFavor;
-  const incomeDisplay = incomePendingLabel ?? formatCurrency(totalIncome);
-  const balanceDisplay = incomePendingLabel ?? formatCurrency(balanceDisponible);
-
+  // ─── Exportes (sin cambios de formato) ──────────────────────────────────
+  // Pendiente de datos del CRM ⇒ se exporta el estado, no el número falso.
+  const incomePendingLabel = kpis.ownState?.label ?? null;
   const exportHeaders = ['Metrica', 'Valor'];
   const exportRows: (string | number)[][] = [
     ...(showNetDeposit
@@ -226,30 +215,218 @@ export default function ResumenPage() {
           ['Net Deposit', consolidatedNetDeposit],
         ] as (string | number)[][])
       : []),
-    ['Egresos Operativos', totalExpenses],
-    // Pendiente de datos del CRM ⇒ se exporta el estado, no el número falso.
-    ['Ingresos Operativos', incomePendingLabel ?? totalIncome],
-    ['Balance Total', incomePendingLabel ?? balanceDisponible],
+    ['Egresos Operativos', kpis.egresosNetos ?? '—'],
+    ['Ingresos Operativos', incomePendingLabel ?? kpis.ingresosNetos ?? '—'],
+    ['Balance Total', incomePendingLabel ?? kpis.resultado ?? '—'],
+  ];
+  const fileBase = `resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}`;
+  const handleExport = () => verify2FA(() => downloadCSV(`${fileBase}.csv`, exportHeaders, exportRows));
+  const handleExportExcel = () => verify2FA(() => downloadExcel(fileBase, exportHeaders, exportRows));
+  const handleExportPDF = () =>
+    verify2FA(() => {
+      downloadPDF('Resumen General', exportHeaders, exportRows, {
+        companyName: company?.name ?? 'Smart Dashboard',
+        subtitle: `Período: ${summary.period.label}`,
+        date: new Date().toLocaleDateString(),
+      });
+    });
+
+  // ─── KPIs ───────────────────────────────────────────────────────────────
+  const ownBadge = kpis.ownState ? { kind: kpis.ownState.badge, label: kpis.ownState.label } : undefined;
+  const chainBadge = kpis.chainState ? { kind: kpis.chainState.badge, label: kpis.chainState.label } : undefined;
+  const resultItems: KpiItem[] = [
+    {
+      key: 'income',
+      label: t('summary.kpi.income'),
+      value: kpis.ingresosNetos,
+      hero: true,
+      missingBadge: ownBadge,
+      sub: mode === 'consolidated' ? t('summary.kpi.months', { n: String(ids.length) }) : undefined,
+    },
+    { key: 'expenses', label: t('summary.kpi.expenses'), value: kpis.egresosNetos },
+    {
+      key: 'result',
+      label: (
+        <span className="inline-flex items-center gap-1">
+          {t('summary.kpi.result')} <InfoTip text={GLOSSARY.netoOperativo} />
+        </span>
+      ),
+      value: kpis.resultado,
+      tone: 'sign',
+      missingBadge: ownBadge,
+    },
+    {
+      key: 'distribute',
+      label: (
+        <span className="inline-flex items-center gap-1">
+          {t('summary.kpi.toDistribute')} <InfoTip text={GLOSSARY.montoDistribuir} />
+        </span>
+      ),
+      value: kpis.aDistribuir,
+      missingBadge: chainBadge,
+      sub:
+        kpis.aDistribuir !== null && kpis.reserva !== null && kpis.reserva > 0
+          ? t('summary.kpi.afterReserve', { amount: formatMoney(kpis.reserva) })
+          : undefined,
+    },
+  ];
+  const flowItems: KpiItem[] = showNetDeposit
+    ? [
+        { key: 'deposits', label: t('summary.deposits'), value: flowKnown ? consolidatedDeposits : null, missingBadge: flowBadge },
+        {
+          key: 'withdrawals',
+          label: t('summary.withdrawals'),
+          value: flowKnown ? consolidatedWithdrawals : null,
+          missingBadge: flowBadge,
+          // Un canal de retiro que no se pudo leer NO está en este total, y
+          // decirlo es obligatorio (reglas §1.2; auditoría 2026-08-31).
+          sub: missingWithdrawalChannels
+            ? t('movements.withdrawalsMissingChannels', { channels: missingWithdrawalChannels })
+            : undefined,
+        },
+        {
+          key: 'net',
+          label: (
+            <span className="inline-flex items-center gap-1">
+              {t('summary.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} />
+            </span>
+          ),
+          value: flowKnown ? consolidatedNetDeposit : null,
+          tone: 'sign',
+          missingBadge: flowBadge,
+        },
+      ]
+    : [];
+
+  // ─── Columnas ───────────────────────────────────────────────────────────
+  const waterfallLabel = (r: WaterfallTableRow) => {
+    if (r.key === 'other' && otherLabel) return t('summary.waterfall.billing');
+    if (r.key === 'reserva') {
+      const pct = r.pdfLabel.match(/\(([^)]+)\)/)?.[1];
+      return pct ? `${t('summary.waterfall.reserva')} (${pct})` : t('summary.waterfall.reserva');
+    }
+    if (r.key === 'unknown') return r.pdfLabel;
+    const key = `summary.waterfall.${r.key}`;
+    const tr = t(key);
+    return tr === key ? r.pdfLabel : tr;
+  };
+  const brokerSourceLabel = brokerPnl
+    ? brokerPnl.source === 'crm'
+      ? t('brokerPnl.sourceCrm')
+      : brokerPnl.source === 'frozen'
+        ? t('brokerPnl.sourceFrozen')
+        : t('brokerPnl.sourceNone')
+    : null;
+  const partialDays =
+    brokerPnl?.source === 'crm' &&
+    brokerPnl.daysWithData !== null &&
+    brokerPnl.daysInMonth !== null &&
+    brokerPnl.daysWithData < brokerPnl.daysInMonth
+      ? t('brokerPnl.partialDays', { days: String(brokerPnl.daysWithData), total: String(brokerPnl.daysInMonth) })
+      : null;
+  const waterfallMeta = (r: WaterfallTableRow): React.ReactNode => {
+    // Broker P&L DICE de dónde salió (Kevin, 2026-08-31): un número sin
+    // procedencia es exactamente lo que había antes. Un mes incompleto tiene
+    // que VERSE: 27 de 31 días es un número más chico y creíble.
+    if (r.key === 'brokerPnl' && showBrokerPnl && brokerSourceLabel) {
+      return (
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          <span>{t('summary.waterfall.source', { source: brokerSourceLabel })}</span>
+          {partialDays && <StatusBadge kind="stale" label={partialDays} />}
+        </span>
+      );
+    }
+    if (r.amount === null && !r.isTotal && (r.key === 'brokerPnl' || r.key === 'propFirm')) {
+      return kpis.ownState ? <StatusBadge kind="stale" label={kpis.ownState.label} /> : null;
+    }
+    return null;
+  };
+  const waterfallColumns: FinColumn<WaterfallTableRow>[] = [
+    {
+      key: 'concept',
+      header: t('summary.waterfall.concept'),
+      cell: (r) => (
+        <span className={cn('inline-flex min-w-0 items-baseline gap-2', r.isTotal ? 'font-semibold' : 'font-normal')}>
+          <span aria-hidden className={cn(NUM_CLASS, 'w-3 shrink-0 text-center text-text-3')}>
+            {r.op}
+          </span>
+          <span className="truncate">{waterfallLabel(r)}</span>
+        </span>
+      ),
+      meta: (r) => waterfallMeta(r),
+    },
+    {
+      key: 'amount',
+      header: t('summary.waterfall.amount'),
+      kind: 'money',
+      value: (r) => r.amount,
+      subtotal: false,
+      width: '180px',
+      cell: (r) => (
+        <Money
+          value={r.amount}
+          signed={!r.isTotal}
+          tone={r.signTone ? 'sign' : r.isTotal ? 'auto' : 'neutral'}
+          nullLabel={t('ui.noData')}
+          className={r.isTotal ? 'font-semibold' : 'font-medium'}
+        />
+      ),
+    },
   ];
 
-  const handleExport = () => verify2FA(() => {
-    downloadCSV(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}.csv`, exportHeaders, exportRows);
-  });
+  const categoryRows = expenseReport ? expenseCategoryRows(expenseReport.categories, expenseReport.total, UNCATEGORIZED) : [];
+  const basisGap = expenseReport ? expenseBasisGap(expenseReport.total, kpis.egresosNetos) : null;
+  const categoryColumns: FinColumn<ExpenseCategoryTableRow>[] = [
+    {
+      key: 'category',
+      header: t('summary.categories.category'),
+      cell: (r) => r.category ?? t('summary.categories.uncategorized'),
+      meta: (r) => t('summary.categories.count', { n: String(r.count) }),
+    },
+    {
+      key: 'share',
+      header: '%',
+      kind: 'number',
+      hideSm: true,
+      width: '132px',
+      cell: (r) =>
+        r.sharePct === null ? (
+          <span className="text-text-3">—</span>
+        ) : (
+          <span className="inline-flex items-center justify-end gap-2">
+            <span aria-hidden className="block h-1.5 w-16 overflow-hidden rounded-full bg-surface-sunk">
+              <span
+                className="block h-full rounded-full bg-brand-ink/75"
+                style={{ width: `${Math.max(0, Math.min(100, r.sharePct))}%` }}
+              />
+            </span>
+            <span className={cn(NUM_CLASS, 'w-12 text-right text-text-2')}>{pctFmt.format(r.sharePct)} %</span>
+          </span>
+        ),
+    },
+    {
+      key: 'pending',
+      header: t('summary.categories.pending'),
+      kind: 'money',
+      value: (r) => r.pending,
+      hideSm: true,
+      width: '150px',
+      money: { tone: 'neutral' },
+    },
+    {
+      key: 'amount',
+      header: t('summary.categories.amount'),
+      kind: 'money',
+      value: (r) => r.amount,
+      width: '160px',
+      money: { tone: 'neutral' },
+    },
+  ];
 
-  const handleExportExcel = () => verify2FA(() => {
-    downloadExcel(`resumen_${(summary.period.label || 'export').replace(/\s/g, '_')}`, exportHeaders, exportRows);
-  });
-
-  const handleExportPDF = () => verify2FA(() => {
-    downloadPDF('Resumen General', exportHeaders, exportRows, {
-      companyName: company?.name ?? 'Smart Dashboard',
-      subtitle: `Período: ${summary.period.label}`,
-      date: new Date().toLocaleDateString(),
-    });
-  });
+  const singlePeriod = mode === 'single' ? activePeriods[0] : null;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
       <PageHeader
         title={t('summary.title')}
@@ -258,220 +435,125 @@ export default function ResumenPage() {
         actions={
           <>
             <ConsolidatedBadge count={mode === 'consolidated' ? activePeriods.length : 1} />
-            <Button onClick={handleExport} title={t('common.csv')}>
-              <Download className="w-4 h-4" />
+            <button type="button" onClick={handleExport} className={BTN} title={t('common.csv')} aria-label={t('common.csv')}>
+              <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="hidden sm:inline">{t('common.csv')}</span>
-            </Button>
-            <Button onClick={handleExportExcel} title="Excel">
-              <FileSpreadsheet className="w-4 h-4" />
+            </button>
+            <button type="button" onClick={handleExportExcel} className={BTN} title="Excel" aria-label="Excel">
+              <FileSpreadsheet aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="hidden sm:inline">Excel</span>
-            </Button>
-            <Button onClick={handleExportPDF} title="PDF">
-              <FileText className="w-4 h-4" />
+            </button>
+            <button type="button" onClick={handleExportPDF} className={BTN} title="PDF" aria-label="PDF">
+              <FileText aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="hidden sm:inline">PDF</span>
-            </Button>
+            </button>
             <PeriodSelector />
           </>
         }
       />
 
-      {/* Negative balance warning */}
-      {!incomePendingLabel && balanceDisponible < 0 && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 border border-negative/30 text-negative text-sm font-medium">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          {t('summary.negativeBalance', { amount: formatCurrency(balanceDisponible) })}
-        </div>
+      <KpiStrip items={resultItems} />
+      {flowItems.length > 0 && <KpiStrip items={flowItems} />}
+
+      {/* ─── Avisos de estado del dato (spec §5.5) ─── */}
+      {kpis.ownState && (
+        <Notice kind={kpis.ownState.notice} title={kpis.ownState.label}>
+          {t('summary.notice.crmBody')}
+        </Notice>
+      )}
+      {!kpis.ownState && kpis.chainState && (
+        <Notice kind={kpis.chainState.notice} title={t('summary.notice.inheritedTitle')}>
+          {t('summary.notice.inheritedBody')}
+        </Notice>
+      )}
+      {mismatches.length > 0 && (
+        <Notice kind="bad" title={t('summary.notice.mismatchTitle')}>
+          {mismatches.map((m) => (
+            <span key={m.key} className="block">
+              {t(m.key === 'ingresos' ? 'summary.notice.mismatchIncome' : 'summary.notice.mismatchDistribution', {
+                amount: formatMoney(m.amount),
+              })}
+            </span>
+          ))}
+        </Notice>
+      )}
+      {kpis.resultado !== null && kpis.resultado < 0 && (
+        <Notice kind="bad" title={t('summary.negativeBalance', { amount: formatMoney(kpis.resultado) })}>
+          {waterfall && waterfall.result.deudaQuePasa > 0
+            ? t('summary.notice.debtCarries', { amount: formatMoney(waterfall.result.deudaQuePasa) })
+            : null}
+        </Notice>
       )}
 
-      {/* KPI Cards — StatCard compartido con tonos semánticos: el color
-          codifica significado (entrada/salida/resultado), no decoración. */}
-      <div className={showNetDeposit
-        ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4'
-        : 'grid grid-cols-1 md:grid-cols-3 gap-4'}
+      {/* ─── Cascada del resultado ─── */}
+      <Panel
+        title={t('summary.waterfall.title')}
+        hint={
+          mode === 'consolidated'
+            ? t('summary.waterfall.hintRange', { n: String(ids.length) })
+            : singlePeriod?.label
+              ? t('summary.waterfall.hintPeriod', { period: singlePeriod.label })
+              : undefined
+        }
+        flush
+        footer={
+          mode === 'consolidated'
+            ? t('summary.waterfall.rangeFoot')
+            : waterfall && waterfall.result.deudaQuePasa > 0 && kpis.resultado !== null && kpis.resultado >= 0
+              ? t('summary.notice.debtCarries', { amount: formatMoney(waterfall.result.deudaQuePasa) })
+              : undefined
+        }
       >
-        {showNetDeposit && (
-          <>
-            <StatCard
-              label={t('summary.deposits')}
-              value={formatCurrency(consolidatedDeposits)}
-              icon={ArrowDownCircle}
-              tone="info"
-            />
-            {/* Un canal de retiro que no se pudo leer NO está en este total, y
-                decirlo es obligatorio: un recorte silencioso es indistinguible
-                de «no hay más» (docs/reglas-del-proyecto.md §1.2). /movimientos
-                ya lo avisaba desde la tanda 1; acá el mismo número se mostraba
-                pelado, así que la MISMA exclusión era visible en una pantalla e
-                invisible en la otra (2026-08-31, auditoría de finanzas). */}
-            <StatCard
-              label={t('summary.withdrawals')}
-              value={formatCurrency(consolidatedWithdrawals)}
-              hint={
-                useDerivedBroker && coexist.withdrawalChannelsWithoutData.length > 0
-                  ? t('movements.withdrawalsMissingChannels', {
-                      channels: coexist.withdrawalChannelsWithoutData
-                        .map((c) => withdrawalChannelLabel(c, t))
-                        .join(', '),
-                    })
-                  : undefined
-              }
-              icon={ArrowUpCircle}
-              tone="negative"
-            />
-            <StatCard
-              label={<>{t('summary.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} /></>}
-              value={formatCurrency(consolidatedNetDeposit)}
-              icon={DollarSign}
-              tone={consolidatedNetDeposit >= 0 ? 'positive' : 'negative'}
-            />
-          </>
-        )}
-        {!showNetDeposit && (
-          <StatCard
-            label={t('summary.operatingIncome')}
-            value={incomeDisplay}
-            icon={TrendingUp}
-            tone={incomePendingLabel ? 'neutral' : 'positive'}
+        {waterfall ? (
+          <FinTable
+            caption={t('summary.waterfall.title')}
+            columns={waterfallColumns}
+            rows={waterfall.rows}
+            rowKey={(r) => `${r.key}-${r.pdfLabel}`}
+            rowVariant={(r) => (r.isTotal ? 'total' : undefined)}
           />
+        ) : (
+          <p className="px-4 py-8 text-center text-[13px] text-text-3">{t('summary.waterfall.noChain')}</p>
         )}
-        <StatCard
-          label={t('summary.expenses')}
-          value={formatCurrency(totalExpenses)}
-          icon={Receipt}
-          tone="warning"
+      </Panel>
+
+      {/* ─── Egresos por categoría ─── */}
+      <Panel
+        title={t('summary.categories.title')}
+        hint={t('summary.categories.hint')}
+        flush
+        footer={
+          basisGap !== null && expenseReport && kpis.egresosNetos !== null ? (
+            <span>
+              {t('summary.categories.basisGap', {
+                loaded: formatMoney(expenseReport.total),
+                used: formatMoney(kpis.egresosNetos),
+              })}{' '}
+              {model.cashBasisExpenses ? t('summary.categories.basisCash') : t('summary.categories.basisFrozen')}
+            </span>
+          ) : undefined
+        }
+      >
+        <FinTable
+          caption={t('summary.categories.title')}
+          columns={categoryColumns}
+          rows={categoryRows}
+          rowKey={(r) => r.key}
+          empty={t('summary.categories.empty')}
+          footer={
+            expenseReport && categoryRows.length > 0
+              ? {
+                  label: t('summary.categories.total', { n: String(categoryRows.length) }),
+                  values: { amount: expenseReport.total, pending: expenseReport.pending },
+                }
+              : undefined
+          }
         />
-        {!showNetDeposit && (
-          <StatCard
-            label={<>{t('summary.balance')} <InfoTip text={GLOSSARY.netoOperativo} /></>}
-            value={balanceDisplay}
-            icon={Wallet}
-            tone={incomePendingLabel ? 'neutral' : balanceDisponible >= 0 ? 'positive' : 'negative'}
-          />
-        )}
-      </div>
+      </Panel>
 
-      {/* Second row */}
-      <div className={showNetDeposit ? 'grid grid-cols-1 md:grid-cols-2 gap-4' : 'hidden'}>
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <TrendingUp className="w-5 h-5 text-primary dark:text-accent" />
-            </div>
-            <CardTitle>{t('summary.operatingIncome')}</CardTitle>
-          </div>
-          <CardValue positive={!incomePendingLabel && totalIncome > 0} negative={!incomePendingLabel && totalIncome < 0}>
-            {incomeDisplay}
-          </CardValue>
-          <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-            {showBrokerPnl && (chainTotals.propFirmMissing || chainTotals.propFirmNet !== 0) && (
-              <div className="flex justify-between">
-                <span>Balance Prop Firm</span>
-                <span>
-                  {chainTotals.propFirmMissing
-                    ? autoSeriesStatus.crmMonthly === 'loading' ? 'Cargando datos del CRM…' : t('brokerPnl.noData')
-                    : formatCurrency(chainTotals.propFirmNet)}
-                </span>
-              </div>
-            )}
-            {chainTotals.investmentProfits !== 0 && (
-              <div className="flex justify-between">
-                <span>Profits Inversiones</span>
-                <span>{formatCurrency(chainTotals.investmentProfits)}</span>
-              </div>
-            )}
-            {/* «Otros ingresos» (income_lines cobradas → operating_income.other):
-                el sumando que faltaba para que las líneas EXPLIQUEN el total.
-                Sale del desglose de la cadena, no se recomputa acá. */}
-            {chainTotals.otherIncome !== 0 && (
-              <div className="flex justify-between">
-                <span>{t('summary.otherIncome')}</span>
-                <span>{formatCurrency(chainTotals.otherIncome)}</span>
-              </div>
-            )}
-            {/* ── Broker P&L: automático desde el CRM ────────────────────
-                Kevin, 2026-08-31: "dejalo automatizado, eliminemos lo
-                manual". Ya no se lee `income.broker_pnl`: el número sale de
-                `crm_daily_pnl` en los períodos abiertos y del congelado del
-                cierre en los cerrados. La línea DICE de dónde salió, porque
-                un número sin procedencia es exactamente lo que había antes.
-                Sin dato se muestra "sin datos" — nunca $0. */}
-            {showBrokerPnl && brokerPnl && (
-              <div className="flex justify-between gap-3">
-                <span className="flex items-baseline gap-1.5">
-                  {t('summary.brokerPnl')}
-                  <span className="text-[10px] uppercase tracking-wide text-muted-foreground/80">
-                    {brokerPnl.source === 'crm'
-                      ? t('brokerPnl.sourceCrm')
-                      : brokerPnl.source === 'frozen'
-                        ? t('brokerPnl.sourceFrozen')
-                        : t('brokerPnl.sourceNone')}
-                  </span>
-                </span>
-                <span className="text-right">
-                  {brokerPnl.value === null ? (
-                    <span className="text-muted-foreground">
-                      {/* Mientras la serie viaja, «sin datos» sería mentira. */}
-                      {brokerPnl.source === 'none' && autoSeriesStatus.brokerPnl === 'loading'
-                        ? 'Cargando datos del CRM…'
-                        : t('brokerPnl.noData')}
-                    </span>
-                  ) : (
-                    formatCurrency(brokerPnl.value)
-                  )}
-                  {/* Un mes incompleto tiene que VERSE: un acumulado de 31
-                      días construido con 27 es un número más chico y
-                      perfectamente creíble. */}
-                  {brokerPnl.source === 'crm' &&
-                    brokerPnl.daysWithData !== null &&
-                    brokerPnl.daysInMonth !== null &&
-                    brokerPnl.daysWithData < brokerPnl.daysInMonth && (
-                      <span className="block text-[10px] text-amber-600">
-                        {t('brokerPnl.partialDays')
-                          .replace('{days}', String(brokerPnl.daysWithData))
-                          .replace('{total}', String(brokerPnl.daysInMonth))}
-                      </span>
-                    )}
-                </span>
-              </div>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-info/10">
-              <Wallet className="w-5 h-5 text-info" />
-            </div>
-            <CardTitle className="inline-flex items-center gap-1.5">
-              {t('summary.balance')}
-              <InfoTip text={GLOSSARY.netoOperativo} />
-            </CardTitle>
-          </div>
-          <CardValue positive={balanceDisponible > 0} negative={balanceDisponible < 0}>
-            {formatCurrency(balanceDisponible)}
-          </CardValue>
-          <div className="mt-3 space-y-1 text-sm text-muted-foreground">
-            <div className="flex justify-between">
-              <span>{t('summary.operatingIncome')}</span>
-              <span className={totalIncome >= 0 ? 'text-positive' : 'text-negative'}>
-                {formatCurrency(totalIncome)}
-              </span>
-            </div>
-            <div className="flex justify-between">
-              <span>{t('summary.expenses')}</span>
-              <span className="text-negative">
-                -{formatCurrency(totalExpenses)}
-              </span>
-            </div>
-          </div>
-        </Card>
-      </div>
-
-      {/* Chart */}
-      <Card>
-        <h2 className="text-lg font-semibold mb-4">{t('summary.chart')}</h2>
+      <Panel title={t('summary.chart')}>
         <MonthlyChart />
-      </Card>
+      </Panel>
     </div>
   );
 }

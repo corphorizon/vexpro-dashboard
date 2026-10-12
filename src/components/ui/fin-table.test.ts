@@ -211,4 +211,21 @@ describe('<FinTable>', () => {
       'No hay nada para mostrar',
     );
   });
+
+  it('rowVariant «total»: fila group-row en 600, sin hover; las demás quedan igual', () => {
+    const out = html(
+      createElement(FinTable<Row>, {
+        columns: COLS,
+        rows: ROWS,
+        rowKey: (r) => r.id,
+        rowVariant: (r) => (r.id === ROWS[0].id ? 'total' : undefined),
+      }),
+    );
+    const trs = out.match(/<tr[^>]*>/g) ?? [];
+    const total = trs.filter((tr) => tr.includes('data-variant="total"'));
+    expect(total).toHaveLength(1);
+    expect(total[0]).toContain('bg-group-row font-semibold');
+    expect(total[0]).not.toContain('hover:bg-row-hover');
+    expect(trs.filter((tr) => tr.includes('hover:bg-row-hover')).length).toBe(ROWS.length - 1);
+  });
 });
