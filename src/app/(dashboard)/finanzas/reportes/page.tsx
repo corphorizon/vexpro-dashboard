@@ -3,30 +3,26 @@
 import type { ReportData } from '@/lib/reports/data';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import {
-  BarChart3,
-  Download,
-  FileSpreadsheet,
-  FileText,
-  RefreshCw,
-  Send,
-  TrendingDown,
-  TrendingUp,
-  Users,
-  Wallet,
-} from 'lucide-react';
-import { Card } from '@/components/ui/card';
+import { FileSpreadsheet, FileText, RefreshCw, Send } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { StatCard } from '@/components/ui/stat-card';
-import { Badge } from '@/components/ui/badge';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Chip } from '@/components/ui/chip';
+import { Input } from '@/components/ui/field';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton } from '@/components/payment-orders/action-button';
+import { SourceTag } from '@/app/(dashboard)/movimientos/source-tag';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { features } from '@/lib/business-model';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useData } from '@/lib/data-context';
-import { formatCurrency } from '@/lib/utils';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { downloadCSV } from '@/lib/csv-export';
+import { formatMoney } from '@/lib/money';
 // Lazy-loaded (Kevin 2026-06-06 code review): jspdf + jspdf-autotable
 // pesan ~700KB del bundle de /finanzas/reportes aunque solo se usen al
 // hacer click en "Descargar PDF". Dynamic-import los carga al primer
@@ -36,6 +32,14 @@ import { ReportsConfigPanel } from './config-panel';
 import { SendReportModal } from './send-modal';
 import { CompanyReportSections, useCompanyReport } from './company-sections';
 import { companyReportCsvRows } from '@/lib/reports/company-report';
+import {
+  channelAmount,
+  channelSourceKind,
+  missingChannelLabels,
+  pctOfMonth,
+  pctVariation,
+  roundPct,
+} from './report-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /finanzas/reportes — Operational financial report for a date range.
@@ -50,9 +54,40 @@ import { companyReportCsvRows } from '@/lib/reports/company-report';
 // All data flows through ONE endpoint (/api/reports/consolidated) which
 // fans out to Supabase + Orion CRM in parallel. Keeps page load to a
 // single round-trip regardless of how many sources we sum.
+//
+// ── «LIBRO MAYOR» (2026-10-12) ────────────────────────────────────────────
+//   · Cada sección es un `Panel`; sus `StatCard` de colores → una `KpiStrip`
+//     (la variación vs. mes anterior va como `delta` del KPI, con la misma
+//     regla de null de siempre: report-view.ts); tablas a mano → `FinTable`.
+//   · Lo que el endpoint YA decía y la pantalla callaba:
+//       - `failures` (fuentes que no respondieron) → Notice `bad`;
+//       - `truncated` (consultas que tocaron el techo de filas: cifras
+//         posiblemente CORTAS) → Notice `pend`;
+//       - canales con `source: 'missing'` se pintaban «$0.00» como una
+//         wallet vacía → «—» + aviso «no están sumados» (el total del
+//         endpoint ya los sumaba en 0; no cambia);
+//       - días sin cierre del CRM en el P&L → sub del KPI.
+//   · Color = significado: el P&L lleva signo de color (`sign`); depósito
+//     neto sólo pinta negativos; el total de balances ya no va en verde.
+//     Rangos rápidos → `Chip`; botones → `ActionButton` (el primario usa
+//     `text-brand-on-primary`, antes `text-white` fijo).
+//   Medido antes/después en este archivo: 14 clases de paleta cruda + 6
+//   `dark:` + 1 `text-[10px]` → 0; 43 tokens legados → 0.
+//   CSV y PDF: mismos campos, mismos valores (sólo cambió dónde se pinta).
+//
+// DESCARTADO: mover CHANNEL_LABEL / CATEGORY_LABEL a un registro — son de
+// esta pantalla y no se tocaron (otra tanda, si aparece una segunda copia).
 // ─────────────────────────────────────────────────────────────────────────────
 
 type QuickRange = 'today' | 'yesterday' | 'last7' | 'thisMonth' | 'prevMonth';
+
+const QUICK_RANGES: Array<{ key: QuickRange; labelKey: string }> = [
+  { key: 'today', labelKey: 'reports.rangeToday' },
+  { key: 'yesterday', labelKey: 'reports.rangeYesterday' },
+  { key: 'last7', labelKey: 'reports.rangeLast7' },
+  { key: 'thisMonth', labelKey: 'reports.rangeThisMonth' },
+  { key: 'prevMonth', labelKey: 'reports.rangePrevMonth' },
+];
 
 function todayISO(): string {
   const d = new Date();
@@ -103,6 +138,14 @@ function computeQuickRange(kind: QuickRange): { from: string; to: string } {
 // una copia que compila aunque el servidor ya devuelva otra cosa: el
 // desacuerdo aparece en pantalla, no en tsc (auditoría de finanzas, ítem 15).
 type ReportResponse = ReportData & { success: boolean };
+type ChannelRow = ReportData['balances_by_channel']['channels'][number];
+type ProductRow = NonNullable<ReportData['prop_trading']['products']>[number];
+
+interface FlowRow {
+  label: string;
+  count: number;
+  amount: number;
+}
 
 // ─── Human-friendly labels ─────────────────────────────────────────────
 
@@ -141,51 +184,9 @@ function resolveLabel(
   return literals[raw] ?? raw;
 }
 
-// ─── Utility: % variation with safe zero division ──────────────────────
-
-/**
- * `null` de cualquier lado = sin comparación posible. Antes los parámetros eran
- * `number` porque el builder colapsaba los nulos a 0 con un `?? 0`: comparar
- * contra un cero inventado daba «−100%» con toda la cara de un dato real.
- */
-function pctVariation(current: number | null, previous: number | null): number | null {
-  if (current === null || previous === null || !previous) return null;
-  return ((current - previous) / Math.abs(previous)) * 100;
-}
-
-/** Importe que puede faltar: `null` se dice, no se dibuja como $0,00. */
-function money(value: number | null, t: (k: string) => string): string {
-  return value === null || !Number.isFinite(value)
-    ? t('reports.noData')
-    : formatCurrency(value);
-}
-
-/** Tono de un importe que puede faltar: lo desconocido no es ni bueno ni malo. */
-function moneyTone(value: number | null): 'positive' | 'negative' | 'neutral' {
-  if (value === null || !Number.isFinite(value)) return 'neutral';
-  return value >= 0 ? 'positive' : 'negative';
-}
-
 /** Para el CSV: la celda vacía dice «no lo sabemos»; un 0 diría otra cosa. */
 function csvNumber(value: number | null): string | number {
   return value === null || !Number.isFinite(value) ? '' : value;
-}
-
-function VariationBadge({ pct }: { pct: number | null }) {
-  const { t } = useI18n();
-  if (pct === null || !isFinite(pct)) {
-    return <span className="text-xs text-muted-foreground">{t('reports.noComparison')}</span>;
-  }
-  const rounded = Math.round(pct * 10) / 10;
-  const positive = rounded >= 0;
-  const Icon = positive ? TrendingUp : TrendingDown;
-  const cls = positive ? 'text-emerald-600' : 'text-red-600';
-  return (
-    <span className={`inline-flex items-center gap-1 text-xs ${cls}`}>
-      <Icon className="w-3 h-3" />
-      {t('reports.variationVsPrevMonth', { pct: `${rounded > 0 ? '+' : ''}${rounded}` })}
-    </span>
-  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -256,18 +257,18 @@ export default function ReportesPage() {
       })),
     [data],
   );
-  const companyReport = useCompanyReport(from, to, channelBalances, isCompanyModel);
+  const {
+    report: companyReport,
+    billingFailed,
+    classificationFailed,
+  } = useCompanyReport(from, to, channelBalances, isCompanyModel);
 
   // Derive UI values.
   const rangeNet = data?.deposits_withdrawals.range.net_deposit ?? 0;
   const monthNet = data?.deposits_withdrawals.month.net_deposit ?? 0;
   const prevNet = data?.deposits_withdrawals.prev_month.net_deposit ?? 0;
 
-  const netRangePctOfMonth = useMemo(() => {
-    if (!monthNet) return null;
-    return (rangeNet / Math.abs(monthNet)) * 100;
-  }, [rangeNet, monthNet]);
-
+  const netRangePctOfMonth = useMemo(() => pctOfMonth(rangeNet, monthNet), [rangeNet, monthNet]);
   const monthVsPrev = useMemo(() => pctVariation(monthNet, prevNet), [monthNet, prevNet]);
 
   const brokerPnlMonthVsPrev = useMemo(() => {
@@ -276,8 +277,7 @@ export default function ReportesPage() {
   }, [data]);
   const brokerPnlRangePctOfMonth = useMemo(() => {
     const p = data?.broker_pnl;
-    if (!p || !p.pnl_month || p.pnl_range === null) return null;
-    return (p.pnl_range / Math.abs(p.pnl_month)) * 100;
+    return p ? pctOfMonth(p.pnl_range, p.pnl_month) : null;
   }, [data]);
 
   const propPnlMonthVsPrev = useMemo(() => {
@@ -286,8 +286,7 @@ export default function ReportesPage() {
   }, [data]);
   const propPnlRangePctOfMonth = useMemo(() => {
     const p = data?.prop_trading;
-    if (!p || !p.pnl_month || p.pnl_range === null) return null;
-    return (p.pnl_range / Math.abs(p.pnl_month)) * 100;
+    return p ? pctOfMonth(p.pnl_range, p.pnl_month) : null;
   }, [data]);
 
   // ── Export handlers ────────────────────────────────────────────────
@@ -359,8 +358,8 @@ export default function ReportesPage() {
 
   if (!canAccess) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">{t('reports.noAccess')}</p>
+      <div className="flex h-64 items-center justify-center">
+        <p className="text-text-2">{t('reports.noAccess')}</p>
       </div>
     );
   }
@@ -371,8 +370,13 @@ export default function ReportesPage() {
     (data?.broker_pnl.isMock ?? false) ||
     (data?.prop_trading.isMock ?? false);
 
+  const mockBadge = <StatusBadge kind="pend" label={t('reports.lm.mock')} />;
+  const pctSub = (pct: number | null, key: 'reports.pctOfCurrentMonth' | 'reports.pctOfMonth') =>
+    pct === null ? t('reports.noMonthlyReference') : t(key, { pct: roundPct(pct) });
+  const prevRef = t('reports.lm.prevMonthRef');
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
 
       {isAdmin && <ReportsConfigPanel />}
@@ -387,503 +391,468 @@ export default function ReportesPage() {
       <PageHeader
         title={t('reports.title')}
         subtitle={t('reports.subtitle')}
-        icon={BarChart3}
         actions={
-          <div className="flex gap-2">
+          <>
+            <ActionButton onClick={handleExportCSV} disabled={!exportsReady} aria-label={t('common.csv')}>
+              <FileSpreadsheet aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="max-sm:hidden">{t('common.csv')}</span>
+            </ActionButton>
+            <ActionButton onClick={handleExportPDF} disabled={!exportsReady} aria-label="PDF">
+              <FileText aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="max-sm:hidden">PDF</span>
+            </ActionButton>
             {isAdmin && (
-              <button
-                onClick={() => setSendOpen(true)}
-                className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm hover:opacity-90"
-              >
-                <Send className="w-4 h-4" /> {t('reports.send')}
-              </button>
+              <ActionButton variant="primary" onClick={() => setSendOpen(true)}>
+                <Send aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                {t('reports.send')}
+              </ActionButton>
             )}
-            <button
-              onClick={handleExportCSV}
-              disabled={!exportsReady}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50"
-            >
-              <FileSpreadsheet className="w-4 h-4" /> {t('common.csv')}
-            </button>
-            <button
-              onClick={handleExportPDF}
-              disabled={!exportsReady}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50"
-            >
-              <FileText className="w-4 h-4" /> PDF
-            </button>
-          </div>
+          </>
         }
       />
 
       {/* Date range selector */}
-      <Card>
-        <div className="flex flex-col lg:flex-row lg:items-center gap-4 justify-between">
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">{t('reports.from')}</span>
-              <input
-                type="date"
-                value={from}
-                onChange={(e) => {
-                  setFrom(e.target.value);
-                  setActiveQuickRange(null);
-                }}
-                className="px-2 py-1 rounded-md border border-border bg-background text-base sm:text-sm"
-              />
-            </label>
-            <label className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">{t('reports.to')}</span>
-              <input
-                type="date"
-                value={to}
-                max={todayISO()}
-                onChange={(e) => {
-                  setTo(e.target.value);
-                  setActiveQuickRange(null);
-                }}
-                className="px-2 py-1 rounded-md border border-border bg-background text-base sm:text-sm"
-              />
-            </label>
-            <button
-              onClick={() => void load()}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-border text-sm hover:bg-muted"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-              {t('reports.refresh')}
-            </button>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {(['today', 'yesterday', 'last7', 'thisMonth', 'prevMonth'] as QuickRange[]).map((r) => (
-              <button
-                key={r}
-                onClick={() => applyQuickRange(r)}
-                className={`px-3 py-1.5 rounded-md text-xs transition-colors ${
-                  activeQuickRange === r
-                    ? 'bg-[var(--color-primary)] text-white'
-                    : 'border border-border hover:bg-muted'
-                }`}
-              >
-                {r === 'today' && t('reports.rangeToday')}
-                {r === 'yesterday' && t('reports.rangeYesterday')}
-                {r === 'last7' && t('reports.rangeLast7')}
-                {r === 'thisMonth' && t('reports.rangeThisMonth')}
-                {r === 'prevMonth' && t('reports.rangePrevMonth')}
-              </button>
-            ))}
-          </div>
+      <Panel bodyClassName="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <label className="flex items-center gap-2 text-[13px] text-text-2">
+            {t('reports.from')}
+            <Input
+              type="date"
+              value={from}
+              onChange={(e) => {
+                setFrom(e.target.value);
+                setActiveQuickRange(null);
+              }}
+              className="h-8 w-auto"
+            />
+          </label>
+          <label className="flex items-center gap-2 text-[13px] text-text-2">
+            {t('reports.to')}
+            <Input
+              type="date"
+              value={to}
+              max={todayISO()}
+              onChange={(e) => {
+                setTo(e.target.value);
+                setActiveQuickRange(null);
+              }}
+              className="h-8 w-auto"
+            />
+          </label>
+          <ActionButton variant="ghost" onClick={() => void load()} loading={loading}>
+            {!loading && <RefreshCw aria-hidden className="size-[15px]" strokeWidth={1.75} />}
+            {t('reports.refresh')}
+          </ActionButton>
         </div>
-        {anyMock && (
-          <p className="mt-3 text-xs text-warning">
-            {t('reports.mockPrefix')}<strong>mock</strong>{t('reports.mockMiddle')}
-            <em>{t('reports.externalApisPath')}</em>{t('reports.mockSuffix')}
-          </p>
-        )}
-      </Card>
+        <div className="flex flex-wrap gap-2" role="group" aria-label={t('reports.lm.quickRangeAria')}>
+          {QUICK_RANGES.map((r) => (
+            <Chip key={r.key} active={activeQuickRange === r.key} onClick={() => applyQuickRange(r.key)}>
+              {t(r.labelKey)}
+            </Chip>
+          ))}
+        </div>
+      </Panel>
 
-      {error && (
-        <Card className="bg-negative/10 border-red-300 dark:border-red-800">
-          <p className="text-sm text-red-800 dark:text-red-200">{error}</p>
-        </Card>
+      {anyMock && (
+        <Notice kind="pend" title={t('reports.lm.mockTitle')}>
+          {t('reports.mockPrefix')}<strong>mock</strong>{t('reports.mockMiddle')}
+          <em>{t('reports.externalApisPath')}</em>{t('reports.mockSuffix')}
+        </Notice>
       )}
 
-      {loading && !data && <Skeleton />}
+      {error && <Notice kind="bad" title={error} />}
+
+      {/* Lo que el endpoint ya informaba y la pantalla no mostraba. */}
+      {data && data.failures.length > 0 && (
+        <Notice kind="bad" title={t('reports.lm.failuresTitle', { list: data.failures.join(', ') })}>
+          {t('reports.lm.failuresBody')}
+        </Notice>
+      )}
+      {data && data.truncated.length > 0 && (
+        <Notice kind="pend" title={t('reports.lm.truncatedTitle', { list: data.truncated.join(', ') })}>
+          {t('reports.lm.truncatedBody')}
+        </Notice>
+      )}
+
+      {loading && !data && <ReportSkeleton />}
 
       {/* Modelo 'company': el reporte del broker no aplica — se reemplaza
           entero por facturación, egresos, resultado y dónde está la plata. */}
       {isCompanyModel &&
-        (data && companyReport ? <CompanyReportSections report={companyReport} /> : <Skeleton />)}
+        (data && companyReport ? (
+          <CompanyReportSections
+            report={companyReport}
+            billingFailed={billingFailed}
+            classificationFailed={classificationFailed}
+          />
+        ) : (
+          <ReportSkeleton />
+        ))}
 
       {data && !isCompanyModel && (
-        <>
-          {/* SECTION 1 — Deposits & Withdrawals */}
-          {showFlows && (
-          <Card>
-            <div className="flex items-center gap-2 mb-4">
-              <Wallet className="w-5 h-5 text-muted-foreground" />
-              <h2 className="text-lg font-semibold">{t('reports.depositsWithdrawals')}</h2>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-              {/* Deposits by channel */}
-              <div>
-                <h3 className="text-sm font-medium mb-2">{t('reports.depositsByChannel')}</h3>
-                <TableList
-                  rows={data.deposits_withdrawals.range.deposits.map((d) => ({
-                    label: resolveLabel(d.channel, CHANNEL_LABEL, CHANNEL_LABEL_KEY, t),
-                    count: d.count,
-                    amount: d.amount,
-                  }))}
-                  totalAmount={data.deposits_withdrawals.range.total_deposits}
-                  emptyLabel={t('reports.noDepositsInPeriod')}
-                />
-              </div>
-
-              {/* Withdrawals by category */}
-              <div>
-                <h3 className="text-sm font-medium mb-2">{t('reports.withdrawalsByCategory')}</h3>
-                <TableList
-                  rows={data.deposits_withdrawals.range.withdrawals.map((w) => ({
-                    label: resolveLabel(w.category, CATEGORY_LABEL, CATEGORY_LABEL_KEY, t),
-                    count: w.count,
-                    amount: w.amount,
-                  }))}
-                  totalAmount={data.deposits_withdrawals.range.total_withdrawals}
-                  emptyLabel={t('reports.noWithdrawalsInPeriod')}
-                />
-              </div>
-            </div>
-
-            {/* Range net + monthly context */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <StatCard
-                label={t('reports.netDepositRange')}
-                value={formatCurrency(rangeNet)}
-                tone={rangeNet >= 0 ? 'positive' : 'negative'}
-                hint={
-                  netRangePctOfMonth === null
-                    ? t('reports.noMonthlyReference')
-                    : t('reports.pctOfCurrentMonth', {
-                        pct: String(Math.round(netRangePctOfMonth * 10) / 10),
-                      })
-                }
-              />
-              <StatCard
-                label={t('reports.netDepositMonth')}
-                value={formatCurrency(monthNet)}
-                tone={monthNet >= 0 ? 'positive' : 'negative'}
-                hint={<VariationBadge pct={monthVsPrev} />}
-              />
-              <StatCard
-                label={t('reports.netDepositPrevMonth')}
-                value={formatCurrency(prevNet)}
-                tone="neutral"
-              />
-            </div>
-          </Card>
-
-          )}
-
-          {/* SECTION 2 — Balances por Canal */}
-          <Card>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Wallet className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">{t('balances.byChannel')}</h2>
-              </div>
-              <span className="text-xs text-muted-foreground">
-                {t('reports.asOf', { date: data.balances_by_channel.asOf })}
-              </span>
-            </div>
-            {data.balances_by_channel.channels.length === 0 ? (
-              <p className="text-sm text-muted-foreground py-6 text-center">
-                {t('reports.noChannels')}<strong>{t('reports.financeBalancesPath')}</strong>.
-              </p>
-            ) : (
-              <div className="rounded-lg border border-border overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                    <tr className="border-b border-border">
-                      <th className="text-left py-2.5 px-3 font-medium">{t('reports.channel')}</th>
-                      <th className="text-left py-2.5 px-3 font-medium">{t('reports.type')}</th>
-                      <th className="text-right py-2.5 px-3 font-medium">{t('reports.balance')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.balances_by_channel.channels.map((c) => (
-                      <tr key={c.key} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                        <td className="px-3 py-2">
-                          {c.label}
-                          {c.isCustom && (
-                            <span className="ml-2 inline-flex px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-50 dark:bg-violet-950/40 text-violet-700 dark:text-violet-300 border border-violet-200 dark:border-violet-800">
-                              {t('reports.custom')}
-                            </span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-xs text-muted-foreground capitalize">
-                          {c.type === 'auto'
-                            ? t('reports.typeAuto')
-                            : c.type === 'api'
-                              ? t('reports.typeApi')
-                              : t('reports.typeManual')}
-                        </td>
-                        <td
-                          className={`px-3 py-2 text-right font-medium ${
-                            c.amount >= 0 ? '' : 'text-negative'
-                          }`}
-                        >
-                          {formatCurrency(c.amount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot className="bg-muted/30 font-bold">
-                    <tr className="border-t border-border">
-                      <td className="px-3 py-2" colSpan={2}>
-                        {t('reports.totalConsolidated')}
-                      </td>
-                      <td
-                        className={`px-3 py-2 text-right ${
-                          data.balances_by_channel.total >= 0
-                            ? 'text-positive'
-                            : 'text-negative'
-                        }`}
-                      >
-                        {formatCurrency(data.balances_by_channel.total)}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </Card>
-
-          {/* SECTION 3 — CRM Users */}
-          <Card>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <Users className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">{t('reports.crmUsers')}</h2>
-              </div>
-              {data.crm_users.isMock && <Badge variant="warning">{t('reports.mockBadge')}</Badge>}
-            </div>
-            {!data.crm_users.connected && !data.crm_users.isMock ? (
-              <NotConnectedNotice />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <StatCard
-                  label={t('reports.newInRange')}
-                  value={data.crm_users.new_users_in_range.toLocaleString('es')}
-                  tone="info"
-                />
-                <StatCard
-                  label={t('reports.newThisMonth')}
-                  value={data.crm_users.new_users_this_month.toLocaleString('es')}
-                  tone="info"
-                />
-                <StatCard
-                  label={t('reports.totalOnPlatform')}
-                  value={data.crm_users.total_users.toLocaleString('es')}
-                  tone="primary"
-                />
-              </div>
-            )}
-          </Card>
-
-          {/* SECTION 3 — Broker P&L */}
-          <Card>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <TrendingUp className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">{t('summary.brokerPnl')}</h2>
-              </div>
-              {data.broker_pnl.isMock && <Badge variant="warning">{t('reports.mockBadge')}</Badge>}
-            </div>
-            {!data.broker_pnl.connected && !data.broker_pnl.isMock ? (
-              <NotConnectedNotice />
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <StatCard
-                  label={t('reports.pnlRange')}
-                  value={money(data.broker_pnl.pnl_range, t)}
-                  tone={moneyTone(data.broker_pnl.pnl_range)}
-                  hint={
-                    brokerPnlRangePctOfMonth === null
-                      ? t('reports.noMonthlyReference')
-                      : t('reports.pctOfCurrentMonth', {
-                          pct: String(Math.round(brokerPnlRangePctOfMonth * 10) / 10),
-                        })
-                  }
-                />
-                <StatCard
-                  label={t('reports.pnlMonth')}
-                  value={money(data.broker_pnl.pnl_month, t)}
-                  tone={moneyTone(data.broker_pnl.pnl_month)}
-                  hint={<VariationBadge pct={brokerPnlMonthVsPrev} />}
-                />
-                <StatCard
-                  label={t('reports.pnlPrevMonth')}
-                  value={money(data.broker_pnl.pnl_prev_month, t)}
-                  tone="neutral"
-                />
-              </div>
-            )}
-          </Card>
-
-          {/* SECTION 4 — Prop Trading Firm */}
-          <Card>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-muted-foreground" />
-                <h2 className="text-lg font-semibold">{t('reports.propTradingFirm')}</h2>
-              </div>
-              {data.prop_trading.isMock && <Badge variant="warning">{t('reports.mockBadge')}</Badge>}
-            </div>
-
-            {!data.prop_trading.connected && !data.prop_trading.isMock ? (
-              <NotConnectedNotice />
-            ) : (
-              <>
-            {/* Products table */}
-            <div className="mb-4">
-              <h3 className="text-sm font-medium mb-2">{t('reports.productsSoldInRange')}</h3>
-              {data.prop_trading.products === null ? (
-                /* `null` no es una lista vacía: el CRM guarda el total del mes,
-                   no qué se vendió. Decir «no hubo ventas» acá sería afirmar
-                   algo que no sabemos (auditoría 2026-08-31). */
-                <p className="text-sm text-muted-foreground py-3">
-                  {t('reports.productsNoBreakdown')}
-                </p>
-              ) : data.prop_trading.products.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-3">
-                  {t('reports.noSalesInPeriod')}
-                </p>
-              ) : (
-                <div className="rounded-lg border border-border overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                      <tr className="border-b border-border">
-                        <th className="text-left py-2.5 px-3 font-medium">{t('reports.product')}</th>
-                        <th className="text-right py-2.5 px-3 font-medium">{t('reports.quantity')}</th>
-                        <th className="text-right py-2.5 px-3 font-medium">{t('common.amount')}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.prop_trading.products.map((p) => (
-                        <tr key={p.name} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                          <td className="px-3 py-2">{p.name}</td>
-                          <td className="px-3 py-2 text-right">{p.quantity}</td>
-                          <td className="px-3 py-2 text-right">{formatCurrency(p.amount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                    <tfoot className="bg-muted/30 font-medium">
-                      <tr className="border-t border-border">
-                        <td className="px-3 py-2">{t('common.total')}</td>
-                        <td></td>
-                        <td className="px-3 py-2 text-right">
-                          {money(data.prop_trading.total_sales_range, t)}
-                        </td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            {/* Stats grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <StatCard
-                label={t('reports.salesRange')}
-                value={money(data.prop_trading.total_sales_range, t)}
-                tone="info"
-                hint={t('reports.monthHint', {
-                  amount: money(data.prop_trading.total_sales_month, t),
-                })}
-              />
-              <StatCard
-                label={t('reports.propFirmWithdrawals')}
-                value={money(data.prop_trading.prop_withdrawals_range, t)}
-                tone="warning"
-                hint={
-                  data.prop_trading.prop_withdrawals_count_range === null
-                    ? t('reports.noData')
-                    : t('reports.withdrawalsCount', {
-                        count: String(data.prop_trading.prop_withdrawals_count_range),
-                      })
-                }
-              />
-              <StatCard
-                label={t('reports.pnlRange')}
-                value={money(data.prop_trading.pnl_range, t)}
-                tone={moneyTone(data.prop_trading.pnl_range)}
-                hint={
-                  propPnlRangePctOfMonth === null
-                    ? t('reports.noMonthlyReference')
-                    : t('reports.pctOfMonth', {
-                        pct: String(Math.round(propPnlRangePctOfMonth * 10) / 10),
-                      })
-                }
-              />
-            </div>
-
-            {/* Monthly comparison */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
-              <StatCard
-                label={t('reports.propPnlMonth')}
-                value={money(data.prop_trading.pnl_month, t)}
-                tone={moneyTone(data.prop_trading.pnl_month)}
-                hint={<VariationBadge pct={propPnlMonthVsPrev} />}
-              />
-              <StatCard
-                label={t('reports.propPnlPrevMonth')}
-                value={money(data.prop_trading.pnl_prev_month, t)}
-                tone="neutral"
-              />
-            </div>
-              </>
-            )}
-          </Card>
-        </>
+        <BrokerSections
+          data={data}
+          showFlows={showFlows}
+          rangeNet={rangeNet}
+          monthNet={monthNet}
+          prevNet={prevNet}
+          netRangePctOfMonth={netRangePctOfMonth}
+          monthVsPrev={monthVsPrev}
+          brokerPnlMonthVsPrev={brokerPnlMonthVsPrev}
+          brokerPnlRangePctOfMonth={brokerPnlRangePctOfMonth}
+          propPnlMonthVsPrev={propPnlMonthVsPrev}
+          propPnlRangePctOfMonth={propPnlRangePctOfMonth}
+          mockBadge={mockBadge}
+          pctSub={pctSub}
+          prevRef={prevRef}
+        />
       )}
 
       {!loading && !data && !error && (
-        <Card className="text-sm text-muted-foreground text-center py-6">
-          {t('reports.noDataForPeriod')}{' '}
-          <button
-            onClick={() => void load()}
-            className="underline text-primary dark:text-accent"
-          >
-            {t('reports.retry')}
-          </button>
-        </Card>
+        <Panel bodyClassName="flex flex-col items-center gap-3 py-6 text-center">
+          <p className="text-[13px] text-text-2">{t('reports.noDataForPeriod')}</p>
+          <ActionButton onClick={() => void load()}>{t('reports.retry')}</ActionButton>
+        </Panel>
       )}
     </div>
   );
 }
 
+// ─── Secciones del broker ──────────────────────────────────────────────
+
+interface BrokerSectionsProps {
+  data: ReportResponse;
+  showFlows: boolean;
+  rangeNet: number;
+  monthNet: number;
+  prevNet: number;
+  netRangePctOfMonth: number | null;
+  monthVsPrev: number | null;
+  brokerPnlMonthVsPrev: number | null;
+  brokerPnlRangePctOfMonth: number | null;
+  propPnlMonthVsPrev: number | null;
+  propPnlRangePctOfMonth: number | null;
+  mockBadge: React.ReactNode;
+  pctSub: (pct: number | null, key: 'reports.pctOfCurrentMonth' | 'reports.pctOfMonth') => string;
+  prevRef: string;
+}
+
+function BrokerSections({
+  data,
+  showFlows,
+  rangeNet,
+  monthNet,
+  prevNet,
+  netRangePctOfMonth,
+  monthVsPrev,
+  brokerPnlMonthVsPrev,
+  brokerPnlRangePctOfMonth,
+  propPnlMonthVsPrev,
+  propPnlRangePctOfMonth,
+  mockBadge,
+  pctSub,
+  prevRef,
+}: BrokerSectionsProps) {
+  const { t } = useI18n();
+
+  // ── 1. Depósitos y retiros ──
+  const netKpis: KpiItem[] = [
+    {
+      key: 'range',
+      label: t('reports.netDepositRange'),
+      value: rangeNet,
+      format: 'money',
+      hero: true,
+      sub: pctSub(netRangePctOfMonth, 'reports.pctOfCurrentMonth'),
+    },
+    {
+      key: 'month',
+      label: t('reports.netDepositMonth'),
+      value: monthNet,
+      format: 'money',
+      delta: monthVsPrev === null ? undefined : { pct: monthVsPrev, ref: prevRef },
+      sub: monthVsPrev === null ? t('reports.noComparison') : undefined,
+    },
+    { key: 'prev', label: t('reports.netDepositPrevMonth'), value: prevNet, format: 'money' },
+  ];
+  const depositRows: FlowRow[] = data.deposits_withdrawals.range.deposits.map((d) => ({
+    label: resolveLabel(d.channel, CHANNEL_LABEL, CHANNEL_LABEL_KEY, t),
+    count: d.count,
+    amount: d.amount,
+  }));
+  const withdrawalRows: FlowRow[] = data.deposits_withdrawals.range.withdrawals.map((w) => ({
+    label: resolveLabel(w.category, CATEGORY_LABEL, CATEGORY_LABEL_KEY, t),
+    count: w.count,
+    amount: w.amount,
+  }));
+
+  // ── 2. Balances por canal ──
+  const channels = data.balances_by_channel.channels;
+  const missingChannels = missingChannelLabels(channels);
+  const channelColumns: FinColumn<ChannelRow>[] = [
+    {
+      key: 'channel',
+      header: t('reports.channel'),
+      cell: (c) => c.label,
+      meta: (c) => (c.isCustom ? t('reports.custom') : null),
+    },
+    {
+      key: 'type',
+      header: t('reports.type'),
+      cell: (c) => (
+        <SourceTag
+          kind={channelSourceKind(c.type)}
+          label={
+            c.type === 'auto' ? t('reports.typeAuto') : c.type === 'api' ? t('reports.typeApi') : t('reports.typeManual')
+          }
+        />
+      ),
+      hideSm: true,
+    },
+    // Un canal sin dato es «—», no «$0.00» (channelAmount).
+    { key: 'balance', header: t('reports.balance'), kind: 'money', value: (c) => channelAmount(c) },
+  ];
+
+  // ── 3. Usuarios CRM ──
+  const crmKpis: KpiItem[] = [
+    { key: 'range', label: t('reports.newInRange'), value: data.crm_users.new_users_in_range, format: 'count' },
+    { key: 'month', label: t('reports.newThisMonth'), value: data.crm_users.new_users_this_month, format: 'count' },
+    {
+      key: 'total',
+      label: t('reports.totalOnPlatform'),
+      value: data.crm_users.total_users,
+      format: 'count',
+      hero: true,
+    },
+  ];
+
+  // ── 4. Broker P&L ──
+  // Días sin cierre del CRM: el total es más chico y creíble si no se dice.
+  const crmPnl = data.broker_pnl.crm;
+  const daysMissing = crmPnl?.days_missing.length ?? 0;
+  const pnlKpis: KpiItem[] = [
+    {
+      key: 'range',
+      label: t('reports.pnlRange'),
+      value: data.broker_pnl.pnl_range,
+      format: 'money',
+      tone: 'sign',
+      hero: true,
+      sub:
+        daysMissing > 0
+          ? t('reports.lm.daysMissing', { count: String(daysMissing) })
+          : pctSub(brokerPnlRangePctOfMonth, 'reports.pctOfCurrentMonth'),
+    },
+    {
+      key: 'month',
+      label: t('reports.pnlMonth'),
+      value: data.broker_pnl.pnl_month,
+      format: 'money',
+      tone: 'sign',
+      delta: brokerPnlMonthVsPrev === null ? undefined : { pct: brokerPnlMonthVsPrev, ref: prevRef },
+      sub: brokerPnlMonthVsPrev === null ? t('reports.noComparison') : undefined,
+    },
+    { key: 'prev', label: t('reports.pnlPrevMonth'), value: data.broker_pnl.pnl_prev_month, format: 'money' },
+  ];
+
+  // ── 5. Prop trading ──
+  const pt = data.prop_trading;
+  const propKpis: KpiItem[] = [
+    {
+      key: 'pnlRange',
+      label: t('reports.pnlRange'),
+      value: pt.pnl_range,
+      format: 'money',
+      tone: 'sign',
+      hero: true,
+      sub: pctSub(propPnlRangePctOfMonth, 'reports.pctOfMonth'),
+    },
+    {
+      key: 'sales',
+      label: t('reports.salesRange'),
+      value: pt.total_sales_range,
+      format: 'money',
+      sub: t('reports.monthHint', {
+        amount: pt.total_sales_month === null ? t('reports.noData') : formatMoney(pt.total_sales_month),
+      }),
+    },
+    {
+      key: 'withdrawals',
+      label: t('reports.propFirmWithdrawals'),
+      value: pt.prop_withdrawals_range,
+      format: 'money',
+      sub:
+        pt.prop_withdrawals_count_range === null
+          ? t('reports.noData')
+          : t('reports.withdrawalsCount', { count: String(pt.prop_withdrawals_count_range) }),
+    },
+    {
+      key: 'pnlMonth',
+      label: t('reports.propPnlMonth'),
+      value: pt.pnl_month,
+      format: 'money',
+      tone: 'sign',
+      delta: propPnlMonthVsPrev === null ? undefined : { pct: propPnlMonthVsPrev, ref: prevRef },
+      sub: propPnlMonthVsPrev === null ? t('reports.noComparison') : undefined,
+    },
+    { key: 'pnlPrev', label: t('reports.propPnlPrevMonth'), value: pt.pnl_prev_month, format: 'money' },
+  ];
+  const productColumns: FinColumn<ProductRow>[] = [
+    { key: 'name', header: t('reports.product'), cell: (p) => p.name },
+    { key: 'quantity', header: t('reports.quantity'), kind: 'number', value: (p) => p.quantity },
+    { key: 'amount', header: t('common.amount'), kind: 'money', value: (p) => p.amount },
+  ];
+
+  return (
+    <>
+      {/* SECTION 1 — Deposits & Withdrawals */}
+      {showFlows && (
+        <Panel flush title={t('reports.depositsWithdrawals')}>
+          <div className="p-4">
+            <KpiStrip items={netKpis} />
+          </div>
+          <div className="grid grid-cols-1 border-t border-border min-[1100px]:grid-cols-2">
+            <FlowTable
+              title={t('reports.depositsByChannel')}
+              rows={depositRows}
+              totalAmount={data.deposits_withdrawals.range.total_deposits}
+              emptyLabel={t('reports.noDepositsInPeriod')}
+            />
+            <FlowTable
+              title={t('reports.withdrawalsByCategory')}
+              rows={withdrawalRows}
+              totalAmount={data.deposits_withdrawals.range.total_withdrawals}
+              emptyLabel={t('reports.noWithdrawalsInPeriod')}
+              className="max-[1100px]:border-t min-[1100px]:border-l border-border"
+            />
+          </div>
+        </Panel>
+      )}
+
+      {/* SECTION 2 — Balances por Canal */}
+      {missingChannels.length > 0 && (
+        <Notice
+          kind="pend"
+          title={t('reports.lm.missingChannelsTitle', {
+            count: String(missingChannels.length),
+            names: missingChannels.join(', '),
+          })}
+        >
+          {t('reports.lm.missingChannelsBody')}
+        </Notice>
+      )}
+      <Panel
+        flush
+        title={t('balances.byChannel')}
+        hint={t('reports.asOf', { date: data.balances_by_channel.asOf })}
+      >
+        {channels.length === 0 ? (
+          <p className="px-4 py-6 text-center text-[13px] text-text-3">
+            {t('reports.noChannels')}
+            <strong>{t('reports.financeBalancesPath')}</strong>.
+          </p>
+        ) : (
+          <FinTable
+            columns={channelColumns}
+            rows={channels}
+            rowKey={(c) => c.key}
+            caption={t('balances.byChannel')}
+            footer={{
+              label:
+                missingChannels.length > 0
+                  ? t('reports.lm.totalWithMissing', {
+                      shown: String(channels.length - missingChannels.length),
+                      total: String(channels.length),
+                    })
+                  : t('reports.totalConsolidated'),
+              values: { balance: data.balances_by_channel.total },
+            }}
+          />
+        )}
+      </Panel>
+
+      {/* SECTION 3 — CRM Users */}
+      <Panel title={t('reports.crmUsers')} actions={data.crm_users.isMock ? mockBadge : undefined}>
+        {!data.crm_users.connected && !data.crm_users.isMock ? <NotConnectedNotice /> : <KpiStrip items={crmKpis} />}
+      </Panel>
+
+      {/* SECTION 4 — Broker P&L */}
+      <Panel title={t('summary.brokerPnl')} actions={data.broker_pnl.isMock ? mockBadge : undefined}>
+        {!data.broker_pnl.connected && !data.broker_pnl.isMock ? <NotConnectedNotice /> : <KpiStrip items={pnlKpis} />}
+      </Panel>
+
+      {/* SECTION 5 — Prop Trading Firm */}
+      <Panel flush title={t('reports.propTradingFirm')} actions={pt.isMock ? mockBadge : undefined}>
+        {!pt.connected && !pt.isMock ? (
+          <div className="p-4">
+            <NotConnectedNotice />
+          </div>
+        ) : (
+          <>
+            <div className="p-4">
+              <KpiStrip items={propKpis} />
+            </div>
+            <div className="border-t border-border px-4 py-2.5 text-[12px] font-semibold uppercase tracking-[.03em] text-text-3">
+              {t('reports.productsSoldInRange')}
+            </div>
+            {pt.products === null ? (
+              /* `null` no es una lista vacía: el CRM guarda el total del mes,
+                 no qué se vendió. Decir «no hubo ventas» acá sería afirmar
+                 algo que no sabemos (auditoría 2026-08-31). */
+              <p className="px-4 pb-4 text-[13px] text-text-3">{t('reports.productsNoBreakdown')}</p>
+            ) : pt.products.length === 0 ? (
+              <p className="px-4 pb-4 text-[13px] text-text-3">{t('reports.noSalesInPeriod')}</p>
+            ) : (
+              <FinTable
+                columns={productColumns}
+                rows={pt.products}
+                rowKey={(p) => p.name}
+                caption={t('reports.productsSoldInRange')}
+                footer={{ label: t('common.total'), values: { amount: pt.total_sales_range } }}
+              />
+            )}
+          </>
+        )}
+      </Panel>
+    </>
+  );
+}
+
 // ─── Sub-components ────────────────────────────────────────────────────
 
-function TableList({
+function FlowTable({
+  title,
   rows,
   totalAmount,
   emptyLabel,
+  className,
 }: {
-  rows: Array<{ label: string; count: number; amount: number }>;
+  title: string;
+  rows: FlowRow[];
   totalAmount: number;
   emptyLabel: string;
+  className?: string;
 }) {
   const { t } = useI18n();
-  if (rows.length === 0) {
-    return <p className="text-sm text-muted-foreground py-3">{emptyLabel}</p>;
-  }
+  const columns: FinColumn<FlowRow>[] = [
+    { key: 'label', header: t('reports.channelCat'), cell: (r) => r.label },
+    { key: 'count', header: '#', kind: 'number', value: (r) => r.count, hideSm: true },
+    { key: 'amount', header: t('common.amount'), kind: 'money', value: (r) => r.amount },
+  ];
   return (
-    <div className="rounded-lg border border-border overflow-x-auto">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-          <tr className="border-b border-border">
-            <th className="text-left py-2.5 px-3 font-medium">{t('reports.channelCat')}</th>
-            <th className="text-right py-2.5 px-3 font-medium">#</th>
-            <th className="text-right py-2.5 px-3 font-medium">{t('common.amount')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r) => (
-            <tr key={r.label} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-              <td className="px-3 py-2">{r.label}</td>
-              <td className="px-3 py-2 text-right">{r.count}</td>
-              <td className="px-3 py-2 text-right font-medium">{formatCurrency(r.amount)}</td>
-            </tr>
-          ))}
-        </tbody>
-        <tfoot className="bg-muted/30 font-semibold">
-          <tr className="border-t border-border">
-            <td className="px-3 py-2">{t('common.total')}</td>
-            <td></td>
-            <td className="px-3 py-2 text-right">{formatCurrency(totalAmount)}</td>
-          </tr>
-        </tfoot>
-      </table>
+    <div className={className}>
+      <h3 className="px-4 pb-1 pt-3 text-[13px] font-semibold text-foreground">{title}</h3>
+      {rows.length === 0 ? (
+        <p className="px-4 pb-4 text-[13px] text-text-3">{emptyLabel}</p>
+      ) : (
+        <FinTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.label}
+          caption={title}
+          footer={{ label: t('common.total'), values: { amount: totalAmount } }}
+        />
+      )}
     </div>
   );
 }
@@ -891,24 +860,18 @@ function TableList({
 function NotConnectedNotice() {
   const { t } = useI18n();
   return (
-    <div className="rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
-      <p className="text-sm font-medium text-foreground">{t('reports.crmNotConnected')}</p>
-      <p className="text-xs text-muted-foreground mt-1">
-        {t('reports.crmNotConnectedHint')}<em>{t('reports.externalApisPath')}</em>{t('reports.mockSuffix')}
-      </p>
-    </div>
+    <Notice kind="pend" title={t('reports.crmNotConnected')}>
+      {t('reports.crmNotConnectedHint')}<em>{t('reports.externalApisPath')}</em>{t('reports.mockSuffix')}
+    </Notice>
   );
 }
 
-function Skeleton() {
+function ReportSkeleton() {
   return (
-    <div className="space-y-4 animate-pulse">
+    <div className="space-y-4">
       {Array.from({ length: 4 }).map((_, i) => (
-        <div key={i} className="h-40 rounded-xl bg-muted/60" />
+        <Skeleton key={i} className="h-40 rounded-ui-lg" />
       ))}
     </div>
   );
 }
-
-// Suppress icon import warning if Download isn't used elsewhere.
-void Download;

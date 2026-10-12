@@ -6,21 +6,51 @@
 // La pantalla se mira para COBRAR: por eso el orden lo pone `cardsFromLines`
 // (quien más debe, primero) y el "por cobrar" es la cifra destacada.
 //
-// La ficha se abre inline, no en una ruta propia: un cliente entero (meses +
-// conceptos) entra en una tarjeta, y comparar dos deudores es abrir y cerrar
-// en la misma lista en vez de ir y volver — que en el teléfono es lo único
-// que se banca.
+// ── «LIBRO MAYOR» (2026-10-12) ────────────────────────────────────────────
+// Antes cada cliente era una tarjeta con su propia grilla de tres montos y la
+// ficha se desplegaba adentro. Con 40 clientes eran 40 superficies apiladas y
+// los montos no alineaban entre tarjetas — comparar dos deudores era leer dos
+// grillas distintas. Ahora:
+//   · cinco `StatCard` → UNA `KpiStrip`; «Por cobrar» es el hero;
+//   · la lista es una `FinTable` (montos en columna, tabulares; tarjeta en
+//     móvil) con estado `StatusBadge` (debe = pend: requiere acción de
+//     cobro; al día = ok). «Por cobrar» NO va en rojo: es plata a favor, no
+//     una pérdida (spec §2.1);
+//   · el checkbox «Solo los que deben» → `Chip` con conteo, y el pie dice
+//     «Mostrando N de M» cuando hay filtro o búsqueda: un recorte silencioso
+//     es indistinguible de «no hay más» (reglas §1.2). Los KPIs usan siempre
+//     los M; el total al pie, los N mostrados, y lo dice;
+//   · la ficha (mes a mes + conceptos) se abre al hacer clic en la fila, en
+//     un `Panel` debajo de la tabla con el mes como fila de grupo y su
+//     subtotal (el de `cardsFromLines`, no re-sumado acá).
+// La regla «debe» (umbral de 1 centavo) y el filtro viven en clients-view.ts,
+// con test, para que el conteo del chip y la tabla no puedan diferir.
+// El CSV sale igual que antes (mismas columnas, mismas filas visibles).
+// Medido antes/después en este archivo: 18 tokens legados + 1 `text-[11px]`
+// → 0. Paleta cruda: 0 → 0.
+//
+// DESCARTADO: la ficha desplegada DENTRO de la fila (FinTable no tiene filas
+// expandibles y meter una tabla en una celda rompe el modo tarjeta); se
+// compensa llevando la vista al panel al abrirla.
+//
+// No hay KYC, email ni país: esta pantalla es de FACTURACIÓN (líneas de
+// ingreso), no del CRM. Inventar esas columnas sería mostrar «—» en todas.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ChevronDown, Contact, Download, Search, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Contact, Download, Search, X } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { EmptyState } from '@/components/ui/empty-state';
-import { StatCard } from '@/components/ui/stat-card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Chip } from '@/components/ui/chip';
+import { Input } from '@/components/ui/field';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
@@ -28,12 +58,10 @@ import { useI18n } from '@/lib/i18n';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { apiFetch } from '@/lib/api-fetch';
 import { downloadCSV } from '@/lib/csv-export';
-import { cardsFromLines, totalsOf, UNASSIGNED_CLIENT_KEY, type ClientCard } from '@/lib/clients';
+import { cardsFromLines, totalsOf, type ClientCard, type ClientLine } from '@/lib/clients';
 import type { IncomeLine } from '@/lib/income-lines';
-import { cn, formatCurrency, periodLabel } from '@/lib/utils';
-
-/** Una deuda por debajo del centavo es ruido de redondeo, no una deuda. */
-const DEBT_EPSILON = 0.009;
+import { periodLabel } from '@/lib/utils';
+import { clientDisplayName, filterClients, filterCounts, owes, type ClientFilter } from './clients-view';
 
 export default function ClientesPage() {
   const { t } = useI18n();
@@ -46,8 +74,9 @@ export default function ClientesPage() {
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
   const [query, setQuery] = useState('');
-  const [onlyDebt, setOnlyDebt] = useState(false);
+  const [filter, setFilter] = useState<ClientFilter>('all');
   const [openKey, setOpenKey] = useState<string | null>(null);
+  const detailRef = useRef<HTMLElement>(null);
 
   // Sin `period_id` el endpoint devuelve el histórico completo de la empresa,
   // que es justo lo que la ficha necesita: un cliente vive entre meses.
@@ -72,8 +101,12 @@ export default function ClientesPage() {
     };
   }, [accessDenied]);
 
+  // Al abrir una ficha, la vista baja hasta ella: vive debajo de la tabla.
+  useEffect(() => {
+    if (openKey) detailRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [openKey]);
+
   const currency = company?.currency || 'USD';
-  const money = (n: number) => formatCurrency(n, currency);
 
   const periodMeta = useMemo(() => {
     const map = new Map<string, { label: string; order: number }>();
@@ -98,21 +131,17 @@ export default function ClientesPage() {
   );
 
   const totals = useMemo(() => totalsOf(cards), [cards]);
+  const counts = useMemo(() => filterCounts(cards), [cards]);
 
   const unassignedLabel = t('clients.unassigned');
-  const displayName = (card: ClientCard) =>
-    card.key === UNASSIGNED_CLIENT_KEY ? unassignedLabel : card.name;
+  const displayName = (card: ClientCard) => clientDisplayName(card, unassignedLabel);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return cards.filter((c) => {
-      if (onlyDebt && c.pending <= DEBT_EPSILON) return false;
-      if (!q) return true;
-      // La ficha sin cliente se busca por su etiqueta, no por la clave cruda.
-      const name = c.key === UNASSIGNED_CLIENT_KEY ? unassignedLabel : c.name;
-      return name.toLowerCase().includes(q);
-    });
-  }, [cards, query, onlyDebt, unassignedLabel]);
+  const visible = useMemo(
+    () => filterClients(cards, { query, filter, unassignedLabel }),
+    [cards, query, filter, unassignedLabel],
+  );
+  const visibleTotals = useMemo(() => totalsOf(visible), [visible]);
+  const openCard = openKey ? cards.find((c) => c.key === openKey) ?? null : null;
 
   const exportCSV = () => {
     verify2FA(() => {
@@ -142,106 +171,184 @@ export default function ClientesPage() {
     return <EmptyState icon={Contact} title={t('clients.title')} description={t('common.noAccess')} />;
   }
 
+  const range = (card: ClientCard) =>
+    card.firstPeriodLabel === card.lastPeriodLabel
+      ? t('clients.singlePeriod', { from: card.firstPeriodLabel })
+      : t('clients.range', { from: card.firstPeriodLabel, to: card.lastPeriodLabel });
+  const metaLine = (card: ClientCard) =>
+    `${range(card)} · ${t('clients.monthsCount', { count: String(card.months.length) })}`;
+  const statusBadge = (card: ClientCard) =>
+    owes(card) ? (
+      <StatusBadge kind="pend" label={t('clients.lm.owes')} />
+    ) : (
+      <StatusBadge kind="ok" label={t('clients.settled')} />
+    );
+
+  const kpis: KpiItem[] = [
+    { key: 'pending', label: t('clients.statPending'), value: totals.pending, format: 'money', hero: true },
+    { key: 'billed', label: t('clients.statBilled'), value: totals.amount, format: 'money' },
+    { key: 'collected', label: t('clients.statCollected'), value: totals.received, format: 'money' },
+    {
+      key: 'withDebt',
+      label: t('clients.statWithDebt'),
+      value: totals.withDebt,
+      format: 'count',
+      sub: t('clients.statWithDebtHint', { count: String(totals.withDebt), total: String(totals.clients) }),
+    },
+    { key: 'clients', label: t('clients.statClients'), value: totals.clients, format: 'count' },
+  ];
+
+  const columns: FinColumn<ClientCard>[] = [
+    {
+      key: 'name',
+      header: t('clients.csvClient'),
+      cell: (c) => displayName(c),
+      meta: (c) => metaLine(c),
+      mobileMeta: (c) => statusBadge(c),
+    },
+    { key: 'status', header: t('clients.lm.status'), cell: (c) => statusBadge(c), hideSm: true },
+    {
+      key: 'billed',
+      header: t('clients.billed'),
+      kind: 'money',
+      value: (c) => c.amount,
+      money: { currency },
+      hideSm: true,
+    },
+    {
+      key: 'collected',
+      header: t('clients.collected'),
+      kind: 'money',
+      value: (c) => c.received,
+      money: { currency },
+      hideSm: true,
+    },
+    {
+      key: 'pending',
+      header: t('clients.pending'),
+      kind: 'money',
+      value: (c) => c.pending,
+      // Al día: el $0.00 va en gris; lo que se mira es quién debe.
+      cell: (c) => (
+        <Money value={c.pending} currency={currency} className={owes(c) ? 'font-medium' : 'text-text-3'} />
+      ),
+    },
+  ];
+
+  const filtered = visible.length !== cards.length;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
       <PageHeader
         title={t('clients.title')}
         subtitle={t('clients.subtitle')}
         icon={Contact}
         actions={
-          <Button onClick={exportCSV} disabled={visible.length === 0}>
-            <Download className="w-4 h-4" />
+          <ActionButton onClick={exportCSV} disabled={visible.length === 0} aria-label={t('common.csv')}>
+            <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
             {t('common.csv')}
-          </Button>
+          </ActionButton>
         }
       />
 
       {loading ? (
-        <div className="space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-28" />
-            ))}
-          </div>
+        <div className="space-y-4">
+          <Skeleton className="h-[92px]" />
           <Skeleton className="h-64" />
         </div>
       ) : failed ? (
-        <Card>
-          <EmptyState icon={AlertTriangle} title={t('clients.loadError')} />
-        </Card>
+        <Notice kind="bad" title={t('clients.loadError')}>
+          {t('clients.lm.loadErrorBody')}
+        </Notice>
+      ) : cards.length === 0 ? (
+        <Panel>
+          <EmptyState icon={Contact} title={t('clients.empty')} description={t('clients.emptyHint')} />
+        </Panel>
       ) : (
         <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-4">
-            <StatCard label={t('clients.statClients')} value={String(totals.clients)} icon={Users} />
-            <StatCard label={t('clients.statBilled')} value={money(totals.amount)} />
-            <StatCard label={t('clients.statCollected')} value={money(totals.received)} tone="positive" />
-            <StatCard
-              label={t('clients.statPending')}
-              value={money(totals.pending)}
-              tone="negative"
-              emphasis
-              icon={AlertTriangle}
-            />
-            <StatCard
-              label={t('clients.statWithDebt')}
-              value={String(totals.withDebt)}
-              tone={totals.withDebt > 0 ? 'warning' : 'neutral'}
-              hint={t('clients.statWithDebtHint', {
-                count: String(totals.withDebt),
-                total: String(totals.clients),
-              })}
-            />
-          </div>
+          <KpiStrip items={kpis} />
 
-          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
-            <div className="relative flex-1 min-w-0">
-              <Search className="w-4 h-4 text-muted-foreground absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder={t('clients.searchPlaceholder')}
-                aria-label={t('clients.searchPlaceholder')}
-                className="w-full h-11 pl-9 pr-3 rounded-lg border border-border bg-card text-base sm:text-sm text-foreground placeholder:text-muted-foreground"
-              />
-            </div>
-            <label className="inline-flex items-center gap-2 h-11 px-3 rounded-lg border border-border bg-card cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={onlyDebt}
-                onChange={(e) => setOnlyDebt(e.target.checked)}
-                className="w-4 h-4 accent-[var(--color-primary)]"
-              />
-              <span className="text-sm text-foreground">{t('clients.onlyDebt')}</span>
-            </label>
-          </div>
-
-          {cards.length === 0 ? (
-            <Card>
-              <EmptyState icon={Contact} title={t('clients.empty')} description={t('clients.emptyHint')} />
-            </Card>
-          ) : visible.length === 0 ? (
-            <Card>
-              <EmptyState
-                icon={Search}
-                title={t('clients.emptyFiltered')}
-                description={t('clients.emptyFilteredHint')}
-              />
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {visible.map((card) => (
-                <ClientRow
-                  key={card.key}
-                  card={card}
-                  name={displayName(card)}
-                  money={money}
-                  open={openKey === card.key}
-                  onToggle={() => setOpenKey(openKey === card.key ? null : card.key)}
+          <Panel
+            flush
+            title={t('clients.lm.listTitle')}
+            hint={t('clients.lm.listHint')}
+            actions={
+              <div className="flex flex-wrap items-center gap-2">
+                <Chip active={filter === 'all'} count={counts.all} onClick={() => setFilter('all')}>
+                  {t('clients.lm.filterAll')}
+                </Chip>
+                <Chip active={filter === 'debt'} count={counts.debt} onClick={() => setFilter('debt')}>
+                  {t('clients.onlyDebt')}
+                </Chip>
+              </div>
+            }
+            footer={
+              filtered
+                ? t('clients.lm.shownOf', {
+                    shown: String(visible.length),
+                    total: String(cards.length),
+                  })
+                : undefined
+            }
+          >
+            <div className="border-b border-border px-4 py-2.5">
+              <div className="relative max-w-[320px] max-sm:max-w-none">
+                <Search
+                  aria-hidden
+                  className="pointer-events-none absolute left-2.5 top-1/2 size-[15px] -translate-y-1/2 text-text-3"
                 />
-              ))}
+                <Input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder={t('clients.searchPlaceholder')}
+                  aria-label={t('clients.searchPlaceholder')}
+                  className="pl-8"
+                />
+              </div>
             </div>
+            <FinTable
+              columns={columns}
+              rows={visible}
+              rowKey={(c) => c.key}
+              caption={t('clients.title')}
+              selectedKey={openKey}
+              onRowClick={(c) => setOpenKey(openKey === c.key ? null : c.key)}
+              empty={
+                <EmptyState
+                  compact
+                  icon={Search}
+                  title={t('clients.emptyFiltered')}
+                  description={t('clients.emptyFilteredHint')}
+                />
+              }
+              footer={
+                visible.length > 0
+                  ? {
+                      label: filtered
+                        ? t('clients.lm.totalShown', { count: String(visible.length) })
+                        : t('clients.lm.totalAll', { count: String(visible.length) }),
+                      values: {
+                        billed: visibleTotals.amount,
+                        collected: visibleTotals.received,
+                        pending: visibleTotals.pending,
+                      },
+                    }
+                  : undefined
+              }
+            />
+          </Panel>
+
+          {openCard && (
+            <ClientDetail
+              ref={detailRef}
+              card={openCard}
+              name={displayName(openCard)}
+              meta={metaLine(openCard)}
+              currency={currency}
+              onClose={() => setOpenKey(null)}
+            />
           )}
         </>
       )}
@@ -249,151 +356,98 @@ export default function ClientesPage() {
   );
 }
 
-interface ClientRowProps {
+interface DetailLine extends ClientLine {
+  rowId: string;
+}
+
+interface ClientDetailProps {
+  ref: React.Ref<HTMLElement>;
   card: ClientCard;
   name: string;
-  money: (n: number) => string;
-  open: boolean;
-  onToggle: () => void;
+  meta: string;
+  currency: string;
+  onClose: () => void;
 }
 
-function ClientRow({ card, name, money, open, onToggle }: ClientRowProps) {
+function ClientDetail({ ref, card, name, meta, currency, onClose }: ClientDetailProps) {
   const { t } = useI18n();
-  const owes = card.pending > DEBT_EPSILON;
-  const panelId = `client-panel-${card.key}`;
 
-  const range =
-    card.firstPeriodLabel === card.lastPeriodLabel
-      ? t('clients.singlePeriod', { from: card.firstPeriodLabel })
-      : t('clients.range', { from: card.firstPeriodLabel, to: card.lastPeriodLabel });
-
-  return (
-    <Card className="p-0 overflow-hidden">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={open}
-        aria-controls={panelId}
-        className="w-full min-h-[44px] text-left px-4 py-4 sm:px-6 hover:bg-muted transition-colors"
-      >
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-foreground truncate">{name}</span>
-              {owes ? (
-                <Badge variant="danger">{money(card.pending)}</Badge>
-              ) : (
-                <Badge variant="success">{t('clients.settled')}</Badge>
-              )}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {range} · {t('clients.monthsCount', { count: String(card.months.length) })}
-            </p>
-            <div className="grid grid-cols-3 gap-3 mt-3 max-w-md">
-              <Amount label={t('clients.billed')} value={money(card.amount)} />
-              <Amount label={t('clients.collected')} value={money(card.received)} tone="positive" />
-              <Amount
-                label={t('clients.pending')}
-                value={money(card.pending)}
-                tone={owes ? 'negative' : 'muted'}
-              />
-            </div>
-          </div>
-          <ChevronDown
-            className={cn(
-              'w-5 h-5 text-muted-foreground shrink-0 transition-transform',
-              open && 'rotate-180',
-            )}
-          />
-        </div>
-      </button>
-
-      {open && (
-        <div id={panelId} className="border-t border-border px-4 py-4 sm:px-6 space-y-6 bg-muted/30">
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t('clients.history')}
-            </h3>
-            <ul className="mt-3 space-y-3">
-              {card.months.map((m) => (
-                <li key={m.periodId} className="rounded-lg border border-border bg-card p-3">
-                  <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                    <span className="text-sm font-medium text-foreground">{m.periodLabel}</span>
-                    <span className="text-sm font-semibold tabular-nums text-foreground">
-                      {money(m.amount)}
-                    </span>
-                  </div>
-                  <div className="flex gap-4 mt-1 text-xs tabular-nums">
-                    <span className="text-positive">
-                      {t('clients.collected')} {money(m.received)}
-                    </span>
-                    <span className={m.pending > DEBT_EPSILON ? 'text-negative' : 'text-muted-foreground'}>
-                      {t('clients.pending')} {money(m.pending)}
-                    </span>
-                  </div>
-                  <ul className="mt-2 pt-2 border-t border-border space-y-1">
-                    {m.lines.map((l, i) => (
-                      <li
-                        key={`${m.periodId}-${i}`}
-                        className="flex items-baseline justify-between gap-3 text-xs"
-                      >
-                        <span className="text-muted-foreground min-w-0 truncate">{l.concept}</span>
-                        <span className="tabular-nums text-foreground shrink-0">{money(l.amount)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          </section>
-
-          <section>
-            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {t('clients.conceptsSummary')}
-            </h3>
-            <ul className="mt-3 space-y-2">
-              {card.concepts.map((c) => (
-                <li key={c.concept} className="flex items-baseline justify-between gap-3 text-sm">
-                  <span className="text-foreground min-w-0 truncate">
-                    {c.concept}{' '}
-                    <span className="text-muted-foreground text-xs">
-                      {t('clients.conceptTimes', { count: String(c.times) })}
-                    </span>
-                  </span>
-                  <span className="tabular-nums text-foreground shrink-0">{money(c.amount)}</span>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </div>
-      )}
-    </Card>
+  // Cada línea con su mes como grupo. El subtotal del mes es el que ya armó
+  // `cardsFromLines` (`groupTotals`), no una suma nueva de esta pantalla.
+  const historyRows: DetailLine[] = card.months.flatMap((m) =>
+    m.lines.map((l, i) => ({ ...l, rowId: `${m.periodId}-${i}` })),
   );
-}
+  const periodLabels = new Map(card.months.map((m) => [m.periodId, m.periodLabel]));
+  const groupTotals = Object.fromEntries(
+    card.months.map((m) => [m.periodId, { amount: m.amount, received: m.received, pending: m.pending }]),
+  );
 
-function Amount({
-  label,
-  value,
-  tone = 'default',
-}: {
-  label: string;
-  value: string;
-  tone?: 'default' | 'positive' | 'negative' | 'muted';
-}) {
+  const historyColumns: FinColumn<DetailLine>[] = [
+    { key: 'concept', header: t('clients.lm.concept'), cell: (l) => l.concept },
+    { key: 'amount', header: t('clients.billed'), kind: 'money', value: (l) => l.amount, money: { currency } },
+    {
+      key: 'received',
+      header: t('clients.collected'),
+      kind: 'money',
+      value: (l) => l.received,
+      money: { currency },
+      hideSm: true,
+    },
+    {
+      key: 'pending',
+      header: t('clients.pending'),
+      kind: 'money',
+      value: (l) => l.pending,
+      money: { currency },
+      hideSm: true,
+    },
+  ];
+
+  const conceptColumns: FinColumn<ClientCard['concepts'][number]>[] = [
+    {
+      key: 'concept',
+      header: t('clients.lm.concept'),
+      cell: (c) => c.concept,
+      meta: (c) => t('clients.conceptTimes', { count: String(c.times) }),
+    },
+    { key: 'amount', header: t('clients.billed'), kind: 'money', value: (c) => c.amount, money: { currency } },
+  ];
+
   return (
-    <div className="min-w-0">
-      <p className="text-[11px] uppercase tracking-wide text-muted-foreground truncate">{label}</p>
-      <p
-        className={cn(
-          'text-sm font-semibold tabular-nums truncate',
-          tone === 'positive' && 'text-positive',
-          tone === 'negative' && 'text-negative',
-          tone === 'muted' && 'text-muted-foreground',
-          tone === 'default' && 'text-foreground',
-        )}
+    <section ref={ref} aria-label={name} className="scroll-mt-20 space-y-4">
+      <Panel
+        flush
+        title={name}
+        hint={meta}
+        actions={
+          <ActionButton variant="ghost" onClick={onClose} aria-label={t('clients.lm.closeDetail')}>
+            <X aria-hidden className="size-[15px]" strokeWidth={1.75} />
+            <span className="max-sm:hidden">{t('clients.lm.closeDetail')}</span>
+          </ActionButton>
+        }
       >
-        {value}
-      </p>
-    </div>
+        <div className="border-b border-border px-4 py-2.5 text-[12px] font-semibold uppercase tracking-[.03em] text-text-3">
+          {t('clients.history')}
+        </div>
+        <FinTable
+          columns={historyColumns}
+          rows={historyRows}
+          rowKey={(l) => l.rowId}
+          groupBy={(l) => l.periodId}
+          groupLabel={(id) => periodLabels.get(id) ?? id}
+          groupTotals={groupTotals}
+          caption={t('clients.history')}
+        />
+      </Panel>
+
+      <Panel flush title={t('clients.conceptsSummary')}>
+        <FinTable
+          columns={conceptColumns}
+          rows={card.concepts}
+          rowKey={(c) => c.concept}
+          caption={t('clients.conceptsSummary')}
+        />
+      </Panel>
+    </section>
   );
 }

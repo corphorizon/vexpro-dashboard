@@ -12,6 +12,13 @@
 //
 // Submits to POST /api/reports/send. Does not persist overrides — the saved
 // config only changes via the ReportsConfigPanel.
+//
+// «Libro mayor» (2026-10-12): sólo tokens, sin tocar el envío. Botón primario
+// con `bg-[var(--color-primary)] text-white` (blanco fijo: con una marca clara
+// el texto no se leía) → `actionButtonClass('primary')`, que usa
+// `text-brand-on-primary`; cadencia elegida → estilo de chip activo; estados
+// `text-emerald-600`/`text-red-600` → `pos`/`neg`; scrim `bg-black/50` → el
+// de la spec §6.1. Medido: 6 clases de paleta cruda → 0; 19 legados → 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
@@ -24,6 +31,8 @@ import {
   type ReportSections,
 } from '@/lib/reports/sections';
 import { Send, X } from 'lucide-react';
+import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { CONTROL_CLASS } from '@/components/ui/field';
 
 export type Cadence = 'current' | 'daily' | 'weekly' | 'monthly';
 
@@ -207,18 +216,18 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-[rgb(0_0_0/0.45)] p-4"
       onClick={onClose}
     >
       <div
-        className="bg-background border border-border rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        className="bg-card border border-border rounded-ui-xl shadow-3 w-full max-w-2xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-background">
-          <h2 className="text-lg font-semibold">Enviar Reporte</h2>
+        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-card">
+          <h2 className="text-[15px] font-semibold tracking-[-0.005em]">Enviar Reporte</h2>
           <button
             onClick={onClose}
-            className="p-1 rounded-md hover:bg-muted"
+            className="p-1 rounded-md hover:bg-surface-2"
             aria-label="Cerrar"
           >
             <X className="w-4 h-4" />
@@ -244,15 +253,15 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
                   onClick={() => setCadence(k)}
                   className={`px-3 py-2 rounded-md border transition-colors ${
                     cadence === k
-                      ? 'bg-[var(--color-primary)] text-white border-transparent'
-                      : 'border-border hover:bg-muted'
+                      ? 'border-brand-ink bg-brand-tint font-semibold text-brand-ink'
+                      : 'border-border-strong hover:bg-surface-2'
                   }`}
                 >
                   {label}
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-xs text-text-3">
               Desde <strong>{resolvedRange.from}</strong> hasta{' '}
               <strong>{resolvedRange.to}</strong>
             </p>
@@ -265,7 +274,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
               {visibleSectionKeys.map((k) => (
                 <label
                   key={k}
-                  className="flex items-center gap-2 text-sm p-2 rounded-md border border-border cursor-pointer hover:bg-muted/40"
+                  className="flex items-center gap-2 text-sm p-2 rounded-md border border-border cursor-pointer hover:bg-row-hover"
                 >
                   <input
                     type="checkbox"
@@ -288,24 +297,24 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
                   onClick={() =>
                     setSelectedEmails(new Set(candidates.map((c) => c.email)))
                   }
-                  className="underline text-muted-foreground hover:text-foreground"
+                  className="underline text-text-3 hover:text-foreground"
                 >
                   Seleccionar todos
                 </button>
-                <span className="text-muted-foreground">·</span>
+                <span className="text-text-3">·</span>
                 <button
                   type="button"
                   onClick={() => setSelectedEmails(new Set())}
-                  className="underline text-muted-foreground hover:text-foreground"
+                  className="underline text-text-3 hover:text-foreground"
                 >
                   Ninguno
                 </button>
               </div>
             </div>
             {loading ? (
-              <p className="text-sm text-muted-foreground">Cargando…</p>
+              <p className="text-sm text-text-3">Cargando…</p>
             ) : candidates.length === 0 ? (
-              <p className="text-sm text-muted-foreground">
+              <p className="text-sm text-text-3">
                 No hay usuarios con acceso a Reportes en esta empresa.
               </p>
             ) : (
@@ -313,7 +322,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
                 {candidates.map((r) => (
                   <label
                     key={r.id}
-                    className="flex items-center gap-2 text-sm p-2 cursor-pointer hover:bg-muted/40"
+                    className="flex items-center gap-2 text-sm p-2 cursor-pointer hover:bg-row-hover"
                   >
                     <input
                       type="checkbox"
@@ -322,23 +331,23 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
                     />
                     <div className="flex-1 min-w-0">
                       <div className="truncate">{r.name}</div>
-                      <div className="text-xs text-muted-foreground truncate">{r.email}</div>
+                      <div className="text-xs text-text-3 truncate">{r.email}</div>
                     </div>
-                    <span className="text-xs text-muted-foreground uppercase">{r.role}</span>
+                    <span className="text-xs text-text-3 uppercase">{r.role}</span>
                   </label>
                 ))}
               </div>
             )}
 
             <div className="mt-3 space-y-2">
-              <p className="text-xs text-muted-foreground">Agregar email externo</p>
+              <p className="text-xs text-text-3">Agregar email externo</p>
               <div className="flex gap-2">
                 <input
                   type="email"
                   value={externalEmail}
                   onChange={(e) => setExternalEmail(e.target.value)}
                   placeholder="email@dominio.com"
-                  className="flex-1 px-2 py-1.5 rounded-md border border-border bg-background text-sm"
+                  className={`${CONTROL_CLASS} h-8 flex-1 border-control-border`}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -349,7 +358,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
                 <button
                   type="button"
                   onClick={addExternal}
-                  className="px-3 py-1.5 rounded-md border border-border text-sm hover:bg-muted"
+                  className={actionButtonClass('secondary')}
                 >
                   Agregar
                 </button>
@@ -359,13 +368,13 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
                   {externalEmails.map((e) => (
                     <span
                       key={e}
-                      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-muted"
+                      className="inline-flex items-center gap-1 text-xs px-2 py-0.5 rounded-full bg-surface-2"
                     >
                       {e}
                       <button
                         type="button"
                         onClick={() => removeExternal(e)}
-                        className="hover:text-red-600"
+                        className="hover:text-neg"
                         aria-label={`Quitar ${e}`}
                       >
                         <X className="w-3 h-3" />
@@ -378,31 +387,31 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
           </section>
         </div>
 
-        <div className="flex items-center justify-between gap-3 p-5 border-t border-border sticky bottom-0 bg-background">
+        <div className="flex items-center justify-between gap-3 p-5 border-t border-border sticky bottom-0 bg-card">
           {status ? (
             <span
               className={`text-xs ${
-                status.kind === 'ok' ? 'text-emerald-600' : 'text-red-600'
+                status.kind === 'ok' ? 'text-pos' : 'text-neg'
               }`}
             >
               {status.msg}
             </span>
           ) : (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-text-3">
               {allEmails.length} destinatario(s) seleccionados
             </span>
           )}
           <div className="flex gap-2">
             <button
               onClick={onClose}
-              className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted"
+              className={actionButtonClass('secondary')}
             >
               Cancelar
             </button>
             <button
               onClick={submit}
               disabled={submitting || allEmails.length === 0}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm hover:opacity-90 disabled:opacity-50"
+              className={actionButtonClass('primary')}
             >
               <Send className="w-4 h-4" />
               {submitting ? 'Enviando…' : 'Enviar'}
