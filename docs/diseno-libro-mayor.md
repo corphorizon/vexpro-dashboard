@@ -569,3 +569,13 @@ activo, íconos de grupo ≥ 3. Valores medidos del sidebar:
 - Teñir la topbar entera o el fondo de la página: con el sidebar ya oscuro de
   marca, dos bloques de color compiten y el período pierde peso.
 - Pintar el valor de los KPIs o los montos con la marca (ver §10.1).
+
+### 10.x Marcas rojas: el rojo sólo en el menú (Kevin, 2026-10-12)
+
+Si el primario o el secundario usable de una empresa es rojo (`clashesWithLoss`
+en `src/lib/brand-color.ts`: tono 340°–20°, saturación ≥ 40 %), ese color se usa
+**sólo en el sidebar y el login** (`buildSidebarPalette` con los colores
+cargados). Todo el contenido —encabezados, KPIs, tablas, segmentos, línea de la
+topbar— usa los colores del producto (`#1E3A5F` / `#3B82F6`), porque un cuadro
+rojo al lado de números en `neg` se lee como alerta. Hoy aplica a Exura Prime
+(#cf2738) y Exura Liquidez (#db0000). Superadmin lo avisa en la sección Marca.

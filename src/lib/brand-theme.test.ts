@@ -172,3 +172,25 @@ describe('respaldos de globals.css (sin empresa activa)', () => {
     });
   }
 });
+
+describe('marca roja: el rojo sólo en el menú (Kevin, 2026-10-12)', () => {
+  it('detecta los rojos de Exura y no otros tonos', async () => {
+    const { clashesWithLoss } = await import('./brand-color');
+    expect(clashesWithLoss('#cf2738')).toBe(true);
+    expect(clashesWithLoss('#db0000')).toBe(true);
+    expect(clashesWithLoss('#1E3A5F')).toBe(false);
+    expect(clashesWithLoss('#3B82F6')).toBe(false);
+    expect(clashesWithLoss('#F2B13A')).toBe(false);
+    expect(clashesWithLoss('#ffffff')).toBe(false);
+    expect(clashesWithLoss('#000000')).toBe(false);
+  });
+  it('Exura: el contenido usa los colores del producto y el sidebar conserva el rojo', async () => {
+    const { companyThemeVars } = await import('./theme-apply');
+    const exura = companyThemeVars({ primary: '#cf2738', secondary: '#ffffff' });
+    const producto = companyThemeVars({ primary: '#1E3A5F', secondary: '#3B82F6' });
+    expect(exura['--brand-primary-base']).toBe(producto['--brand-primary-base']);
+    expect(exura['--brand-secondary-base']).toBe(producto['--brand-secondary-base']);
+    expect(exura['--brand-tint-light']).toBe(producto['--brand-tint-light']);
+    expect(exura['--brand-sidebar-bg']).not.toBe(producto['--brand-sidebar-bg']);
+  });
+});

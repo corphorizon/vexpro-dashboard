@@ -25,7 +25,7 @@
 // devuelve los respaldos de globals.css (la marca del producto).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { buildBrandPalette, buildBrandTints, buildSidebarPalette, usableSecondary } from './brand-color';
+import { buildBrandPalette, buildBrandTints, buildSidebarPalette, clashesWithLoss, usableSecondary } from './brand-color';
 
 const DEFAULT_PRIMARY = '#1E3A5F';
 const DEFAULT_SECONDARY = '#3B82F6';
@@ -65,11 +65,14 @@ export function companyThemeVars(theme: {
   primary?: string | null;
   secondary?: string | null;
 }): Record<(typeof VARS)[number], string> {
-  const primary = buildBrandPalette(theme.primary, DEFAULT_PRIMARY);
-  const secondary = buildBrandPalette(
-    usableSecondary(theme.primary, theme.secondary, DEFAULT_SECONDARY),
-    DEFAULT_SECONDARY,
-  );
+  // Marca roja: el rojo va sólo en el sidebar/login (buildSidebarPalette, con
+  // los colores cargados). El contenido usa los del producto para no
+  // confundirse con pérdidas (clashesWithLoss, Kevin 2026-10-12).
+  const contentPrimary = clashesWithLoss(theme.primary) ? DEFAULT_PRIMARY : theme.primary;
+  const contentSecondaryRaw = usableSecondary(theme.primary, theme.secondary, DEFAULT_SECONDARY);
+  const contentSecondary = clashesWithLoss(contentSecondaryRaw) ? DEFAULT_SECONDARY : contentSecondaryRaw;
+  const primary = buildBrandPalette(contentPrimary, DEFAULT_PRIMARY);
+  const secondary = buildBrandPalette(contentSecondary, DEFAULT_SECONDARY);
   const tints = buildBrandTints(primary, secondary);
   const sb = buildSidebarPalette(theme.primary, theme.secondary, DEFAULT_PRIMARY, DEFAULT_SECONDARY);
   return {

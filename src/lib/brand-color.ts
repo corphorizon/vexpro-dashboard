@@ -220,6 +220,35 @@ export function usableSecondary(
   return fallback;
 }
 
+/**
+ * ¿El color se confunde con el rojo de pérdida/error? Tono dentro de ±20° del
+ * rojo (340°–20°) y saturación HSL ≥ 40 %. Exura Prime (#cf2738, 354°) y
+ * Exura Liquidez (#db0000, 0°) sí; un naranja (#F2B13A, 39°) o un bordó muy
+ * apagado no.
+ *
+ * Kevin, 2026-10-12: «el rojo de marca solo en el menú». En el CONTENIDO
+ * (encabezados, KPIs, tablas, segmentos) un cuadro rojo se lee como alerta al
+ * lado de los números en `neg`. Una marca así conserva su color en el sidebar
+ * y el login, y el contenido usa los colores del producto.
+ */
+export function clashesWithLoss(hex: string | null | undefined): boolean {
+  if (!isHex(hex) || isAchromatic(hex)) return false;
+  const [r, g, b] = hexToRgb(hex).map((v) => v / 255);
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const d = max - min;
+  const l = (max + min) / 2;
+  const sat = d === 0 ? 0 : d / (1 - Math.abs(2 * l - 1));
+  let h = 0;
+  if (d !== 0) {
+    if (max === r) h = 60 * (((g - b) / d) % 6);
+    else if (max === g) h = 60 * ((b - r) / d + 2);
+    else h = 60 * ((r - g) / d + 4);
+  }
+  if (h < 0) h += 360;
+  return sat >= 0.4 && (h >= 340 || h <= 20);
+}
+
 /** Tintes de marca para SUPERFICIES (nunca para texto ni para números). */
 export interface BrandTints {
   /** Ítem/chip activo, cuadro de ícono. `brand-ink` del tema encima ≥ 4,5:1. */

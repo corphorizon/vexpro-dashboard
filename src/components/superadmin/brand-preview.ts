@@ -29,7 +29,7 @@
 //     error. Se avisa con el color resultante y se deja guardar.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { buildBrandPalette, buildSidebarPalette, contrastRatio, type BrandPalette } from '@/lib/brand-color';
+import { buildBrandPalette, buildSidebarPalette, clashesWithLoss, contrastRatio, type BrandPalette } from '@/lib/brand-color';
 import { hexToRgb, relativeLuminance } from '@/lib/brand';
 
 
@@ -156,6 +156,11 @@ export function brandWarnings(input: {
       out.push({
         field,
         text: `El ${name} es ${c.extreme === 'white' ? 'blanco' : 'negro'} (${c.palette.base}): no se ve ${where}, así que el sistema lo degrada a ${becomes}, que ya no es la marca. Conviene cargar el color de marca real.`,
+      });
+    } else if (clashesWithLoss(input[field])) {
+      out.push({
+        field,
+        text: `El ${name} es rojo (${input[field]}): se usa sólo en el menú lateral y el login. En el contenido se usan los colores del producto para que no se confunda con pérdidas y errores.`,
       });
     }
   }
