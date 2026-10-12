@@ -1,8 +1,46 @@
 'use client';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// /risk/retiros-propfirm — la cola automática de prop firm + la revisión
+// manual de un informe de MetaQuotes (subida de .xlsx).
+//
+// ── «LIBRO MAYOR» (2026-10-12) ──────────────────────────────────────────────
+// Sólo presentación. NO cambiaron: el análisis (`analyzeReport`), las reglas
+// por programa (`risk/programs.ts`), el veredicto según los límites, el
+// guardado en /api/risk/revisions ni los dos PDF (el del análisis y el del
+// historial: mismas tablas, mismos colores RGB, mismos textos).
+//   · Medido antes: 58 clases de paleta cruda (`text-green-500`,
+//     `bg-red-100 dark:bg-red-900/30`, `text-emerald-600`…), 18 variantes
+//     `dark:` de color y 14 `text-[10px]/[11px]` — una pantalla con su propio
+//     sistema de color. Después: 0 / 0 / 0 (ver el reporte de la tanda).
+//   · Color = significado (spec §2.1): el tipo BUY/SELL ya no es verde/rojo
+//     (es un lado, no una ganancia) y va en el metadato; el profit sí lleva
+//     tono `sign`. Una regla omitida es gris, no un ícono de alerta.
+//   · Tablas (historial, incumplimientos, operaciones) con FinTable 36 px;
+//     las acciones de fila al hover. La operación con incumplimientos ya no
+//     se tiñe de rojo entera: la columna de banderas dice cuáles (badge `bad`).
+//   · Un solo primario: «Volver a analizar» (aplica la configuración). El
+//     «Descargar PDF» era un botón rojo sólido — un segundo primario y, en
+//     rojo, una alarma — y pasa a secundario.
+//   · El veredicto aprobado va en una franja `pos`; el rechazado en <Notice
+//     bad>. (Notice no tiene variante ok a propósito; acá el resultado ES la
+//     noticia y se muestra igual de visible en los dos sentidos.)
+//
+// DESCARTADO: mover el análisis manual a otra pantalla — la cola y la
+// revisión suelta se usan juntas (la cola manda a revisar una cuenta).
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge, type StatusKind } from '@/components/ui/status-badge';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { Field, Select, CONTROL_CLASS } from '@/components/ui/field';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
@@ -11,12 +49,12 @@ import { cn, formatCurrency, formatPercentValue } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { parseTradeReport, type ParseResult } from '@/lib/risk/parser';
 import { analyzeReport } from '@/lib/risk/rules';
-import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode } from '@/lib/risk/types';
+import { DEFAULT_RULE_CONFIG, DEFAULT_APPROVAL_LIMITS, type RuleConfig, type AnalysisResult, type Trade, type ApprovalLimits, type ApprovalMode, type RuleResult } from '@/lib/risk/types';
 import { computeDurationDistribution } from '@/lib/risk/duration-distribution';
 import { PROGRAM_RULES, rulesForProgram } from '@/lib/risk/programs';
 import { PropfirmQueuePanel, type QueueRow } from '@/components/risk/propfirm-queue-panel';
 import { DurationDistributionTable } from '@/components/risk/duration-distribution-table';
-import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
+import { apiFetch } from '@/lib/api-fetch';
 import {
   Upload,
   Settings,
@@ -24,10 +62,7 @@ import {
   ChevronLeft,
   ChevronRight,
   CheckCircle,
-  XCircle,
-  AlertTriangle,
   FileSearch,
-  Filter,
   Eye,
   EyeOff,
   Loader2,
@@ -52,6 +87,19 @@ function fmtDate(d: Date): string {
     hour: '2-digit', minute: '2-digit',
   });
 }
+
+/** Estado de una regla del análisis manual → color (skipped = no aplica: gris). */
+const RULE_KIND: Record<RuleResult['status'], StatusKind> = {
+  pass: 'ok',
+  fail: 'bad',
+  skipped: 'neutral',
+};
+const RULE_LABEL: Record<RuleResult['status'], string> = {
+  pass: 'Cumple',
+  fail: 'Falla',
+  skipped: 'Omitida',
+};
+
 
 // ─── History persistence (Supabase via /api/risk/revisions) ───
 // Cada HistoryRecord se guarda en la tabla `risk_revisions` (jsonb), scopeado
@@ -737,24 +785,6 @@ export default function RetirosPropFirmPage() {
     };
   }, [result, approvalLimits, t]);
 
-  // ─── Rule status icon ───
-
-  const ruleStatusIcon = (status: string) => {
-    switch (status) {
-      case 'pass': return <CheckCircle className="w-5 h-5 text-green-500" />;
-      case 'fail': return <XCircle className="w-5 h-5 text-red-500" />;
-      default: return <AlertTriangle className="w-5 h-5 text-muted-foreground" />;
-    }
-  };
-
-  const ruleStatusColor = (status: string) => {
-    switch (status) {
-      case 'pass': return 'border-green-500/30 bg-green-500/5';
-      case 'fail': return 'border-red-500/30 bg-red-500/5';
-      default: return 'border-border bg-muted/30';
-    }
-  };
-
   // ─── Download PDF ───
 
   const downloadPDF = useCallback(async () => {
@@ -952,30 +982,222 @@ export default function RetirosPropFirmPage() {
 
   if (accessDenied) return null;
 
-  return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <p className="text-xs text-muted-foreground mb-1">
-            {t('risk.breadcrumb')}
-          </p>
-          <h1 className="text-2xl font-bold text-foreground">{t('risk.title')}</h1>
-          <p className="text-sm text-muted-foreground mt-1">{t('risk.subtitle')}</p>
+  const activeRules = result ? result.ruleResults.filter((r) => r.isActive && r.violations.length > 0) : [];
+
+  const historyCols: FinColumn<HistoryRecord>[] = [
+    {
+      key: 'savedAt',
+      header: 'Fecha',
+      cell: (rec) => <span className={cn(NUM_CLASS, 'text-[12.5px] text-text-2')}>{fmtDate(new Date(rec.savedAt))}</span>,
+      hideSm: true,
+    },
+    {
+      key: 'trader',
+      header: 'Trader',
+      cell: (rec) => rec.traderName || '—',
+      meta: (rec) => `${rec.accountNumber || '—'} · ${rec.period || '—'}`,
+      mobileMeta: (rec) => <VerdictBadge verdict={rec.verdict} />,
+    },
+    {
+      key: 'trades',
+      header: 'Operaciones',
+      kind: 'number',
+      hideSm: true,
+      value: (rec) => rec.totalTrades,
+    },
+    {
+      key: 'profit',
+      header: 'Net Profit',
+      kind: 'money',
+      value: (rec) => rec.totalNetProfit,
+      money: { tone: 'sign' },
+    },
+    {
+      key: 'verdict',
+      header: 'Veredicto',
+      hideSm: true,
+      cell: (rec) => <VerdictBadge verdict={rec.verdict} />,
+    },
+    {
+      key: 'rules',
+      header: 'Reglas',
+      hideSm: true,
+      cell: (rec) => (
+        <div className="flex flex-wrap gap-1 py-1.5">
+          {rec.rulesSummary.map((r) => (
+            <StatusBadge
+              key={r.ruleName}
+              kind={r.status === 'pass' ? 'ok' : r.status === 'fail' ? 'bad' : 'neutral'}
+              label={`${r.displayName}: ${r.violations}`}
+            />
+          ))}
         </div>
-        <button
-          onClick={() => setShowHistory(!showHistory)}
-          className={cn(
-            'flex items-center gap-2 px-4 py-2 rounded-lg border text-sm font-medium transition-colors flex-shrink-0',
-            showHistory
-              ? 'bg-[var(--color-primary)] text-white border-transparent'
-              : 'border-border hover:bg-muted',
+      ),
+    },
+  ];
+
+  const violationCols: FinColumn<ViolationItem>[] = [
+    {
+      key: 'position',
+      header: 'Position',
+      cell: (item) => <span className="font-mono text-[12px]">{item.trade?.position ?? '—'}</span>,
+      meta: (item) => (item.trade ? `${item.trade.symbol} · ${item.trade.type.toUpperCase()}` : '—'),
+      mobileMeta: (item) => (
+        <>
+          {item.rules.map((r, ri) => (
+            <StatusBadge key={ri} kind="bad" label={r} />
+          ))}
+        </>
+      ),
+    },
+    {
+      key: 'volume',
+      header: 'Volume',
+      kind: 'number',
+      hideSm: true,
+      value: (item) => item.trade?.volume ?? null,
+      cell: (item) => <span className={NUM_CLASS}>{item.trade?.volume ?? '—'}</span>,
+    },
+    {
+      key: 'profit',
+      header: 'Profit',
+      kind: 'money',
+      value: (item) => item.trade?.profit ?? null,
+      money: { tone: 'sign' },
+    },
+    {
+      key: 'duration',
+      header: t('risk.duration'),
+      align: 'right',
+      hideSm: true,
+      cell: (item) => (
+        <span className={cn(NUM_CLASS, 'text-text-2')}>
+          {item.trade ? fmtDuration(item.trade.durationMinutes) : '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'rules',
+      header: t('risk.rulesViolated'),
+      hideSm: true,
+      cell: (item) => (
+        <div className="py-1.5">
+          <div className="flex flex-wrap gap-1">
+            {item.rules.map((r, ri) => (
+              <StatusBadge key={ri} kind="bad" label={r} />
+            ))}
+          </div>
+          {item.details.length > 0 && (
+            <details className="mt-1">
+              <summary className="cursor-pointer text-[12px] text-text-3 hover:text-foreground">{t('risk.details')}</summary>
+              <div className="mt-1 space-y-0.5">
+                {item.details.map((d, di) => (
+                  <p key={di} className="text-[12px] text-text-2">
+                    {d}
+                  </p>
+                ))}
+              </div>
+            </details>
           )}
-        >
-          <FileSearch className="w-4 h-4" />
-          Historial ({history.length})
-        </button>
-      </div>
+        </div>
+      ),
+    },
+  ];
+
+  const opsCols: FinColumn<Trade>[] = [
+    {
+      key: 'position',
+      header: 'Position',
+      cell: (trade) => <span className="font-mono text-[12px]">{trade.position}</span>,
+      meta: (trade) => `#${trade.index + 1} · ${trade.symbol} · ${trade.type.toUpperCase()}`,
+      mobileMeta: (trade) => <TradeFlags rules={tradeRuleMap.get(trade.index) ?? []} />,
+    },
+    {
+      key: 'volume',
+      header: 'Volume',
+      kind: 'number',
+      hideSm: true,
+      value: (trade) => trade.volume,
+      cell: (trade) => <span className={NUM_CLASS}>{trade.volume}</span>,
+    },
+    {
+      key: 'open',
+      header: t('risk.openTime'),
+      hideSm: true,
+      cell: (trade) => <span className={cn(NUM_CLASS, 'text-[12.5px] text-text-2')}>{fmtDate(trade.openTime)}</span>,
+    },
+    {
+      key: 'close',
+      header: t('risk.closeTime'),
+      hideSm: true,
+      cell: (trade) => <span className={cn(NUM_CLASS, 'text-[12.5px] text-text-2')}>{fmtDate(trade.closeTime)}</span>,
+    },
+    {
+      key: 'openPrice',
+      header: t('risk.openPrice'),
+      align: 'right',
+      hideSm: true,
+      cell: (trade) => <span className={NUM_CLASS}>{trade.openPrice}</span>,
+    },
+    {
+      key: 'closePrice',
+      header: t('risk.closePrice'),
+      align: 'right',
+      hideSm: true,
+      cell: (trade) => <span className={NUM_CLASS}>{trade.closePrice}</span>,
+    },
+    {
+      key: 'commission',
+      header: 'Commission',
+      kind: 'money',
+      hideSm: true,
+      value: (trade) => trade.commission,
+      cell: (trade) => <Money value={trade.commission} className="text-text-2" />,
+    },
+    {
+      key: 'swap',
+      header: 'Swap',
+      kind: 'money',
+      hideSm: true,
+      value: (trade) => trade.swap,
+      cell: (trade) => <Money value={trade.swap} className="text-text-2" />,
+    },
+    {
+      key: 'profit',
+      header: 'Profit',
+      kind: 'money',
+      value: (trade) => trade.profit,
+      money: { tone: 'sign' },
+    },
+    {
+      key: 'duration',
+      header: t('risk.duration'),
+      align: 'right',
+      hideSm: true,
+      cell: (trade) => <span className={cn(NUM_CLASS, 'text-text-2')}>{fmtDuration(trade.durationMinutes)}</span>,
+    },
+    {
+      key: 'flags',
+      header: t('risk.flags'),
+      hideSm: true,
+      cell: (trade) => <TradeFlags rules={tradeRuleMap.get(trade.index) ?? []} />,
+    },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title={t('risk.title')}
+        subtitle={t('risk.subtitle')}
+        icon={FileSearch}
+        actions={
+          <ActionButton aria-pressed={showHistory} onClick={() => setShowHistory(!showHistory)}>
+            <FileSearch className="size-4" aria-hidden />
+            Historial
+            <span className={cn(NUM_CLASS, 'text-text-3')}>{history.length}</span>
+          </ActionButton>
+        }
+      />
 
       {/* ── La cola automática ────────────────────────────────────────────
           Va ARRIBA de todo lo demás: es lo que hay que mirar cuando se entra.
@@ -991,138 +1213,130 @@ export default function RetirosPropFirmPage() {
       )}
 
       {/* Rule Config Panel */}
-      <Card className="p-0 overflow-hidden">
+      <section className="rounded-ui-lg border border-border bg-card shadow-1">
         <button
-          onClick={() => setConfigOpen(prev => !prev)}
-          className="w-full flex items-center justify-between px-5 py-3 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors"
+          type="button"
+          onClick={() => setConfigOpen((prev) => !prev)}
+          aria-expanded={configOpen}
+          className="flex min-h-12 w-full items-center justify-between px-4 py-3 text-left hover:bg-row-hover"
         >
-          <span className="flex items-center gap-2">
-            <Settings className="w-4 h-4" />
+          <span className="flex items-center gap-2 text-[15px] font-semibold tracking-[-0.005em] text-foreground">
+            <Settings className="size-4 text-text-3" aria-hidden />
             {t('risk.configRules')}
           </span>
-          <ChevronDown className={cn('w-4 h-4 transition-transform', configOpen && 'rotate-180')} />
+          <ChevronDown className={cn('size-4 text-text-3 transition-transform', configOpen && 'rotate-180')} aria-hidden />
         </button>
 
         {configOpen && (
-          <div className="border-t border-border px-5 py-4">
+          <div className="border-t border-border px-4 py-4">
             <div className="mb-4 flex flex-wrap items-end gap-3">
-              <label className="text-xs text-muted-foreground">
-                <span className="mb-1 block font-medium">Programa</span>
-                <select
-                  value={programa}
-                  onChange={(e) => aplicarPrograma(e.target.value)}
-                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
-                >
+              <Field label="Programa" className="min-w-[220px]">
+                <Select value={programa} onChange={(e) => aplicarPrograma(e.target.value)}>
                   <option value="">Manual (valores de abajo)</option>
                   {PROGRAM_RULES.map((p) => (
-                    <option key={p.label} value={p.orionNames[0]}>{p.label}</option>
+                    <option key={p.label} value={p.orionNames[0]}>
+                      {p.label}
+                    </option>
                   ))}
-                </select>
-              </label>
-              <p className="flex-1 text-xs text-muted-foreground">
+                </Select>
+              </Field>
+              <p className="flex-1 text-[12.5px] text-text-3">
                 {programa
                   ? 'Los parámetros salen del reglamento del programa, el mismo que usa la revisión automática. Una regla apagada no es que se cumpla: es que ese programa no la tiene.'
                   : 'Sin programa elegido se usan los valores de abajo, que son los de Vex Instant y Elite. Para otro programa, elegilo arriba: aplicarle estos daría infracciones que no le corresponden.'}
               </p>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
               {/* R1: Consistencia */}
               <ConfigCard
                 title={t('risk.r1Name')}
                 enabled={config.consistencia.enabled}
-                onToggle={(v) => setConfig(c => ({ ...c, consistencia: { ...c.consistencia, enabled: v } }))}
+                onToggle={(v) => setConfig((c) => ({ ...c, consistencia: { ...c.consistencia, enabled: v } }))}
               >
                 <ConfigInput label={t('risk.r1FactorMin')} value={config.consistencia.factorMin}
-                  onChange={(v) => setConfig(c => ({ ...c, consistencia: { ...c.consistencia, factorMin: v } }))} step={0.05} />
+                  onChange={(v) => setConfig((c) => ({ ...c, consistencia: { ...c.consistencia, factorMin: v } }))} step={0.05} />
                 <ConfigInput label={t('risk.r1FactorMax')} value={config.consistencia.factorMax}
-                  onChange={(v) => setConfig(c => ({ ...c, consistencia: { ...c.consistencia, factorMax: v } }))} step={0.1} />
+                  onChange={(v) => setConfig((c) => ({ ...c, consistencia: { ...c.consistencia, factorMax: v } }))} step={0.1} />
               </ConfigCard>
 
               {/* R2: Profit % */}
               <ConfigCard
                 title={t('risk.r2Name')}
                 enabled={config.profitPct.enabled}
-                onToggle={(v) => setConfig(c => ({ ...c, profitPct: { ...c.profitPct, enabled: v } }))}
+                onToggle={(v) => setConfig((c) => ({ ...c, profitPct: { ...c.profitPct, enabled: v } }))}
               >
                 <ConfigInput label={t('risk.r2Pct')} value={config.profitPct.pct}
-                  onChange={(v) => setConfig(c => ({ ...c, profitPct: { ...c.profitPct, pct: v } }))} step={5} suffix="%" />
+                  onChange={(v) => setConfig((c) => ({ ...c, profitPct: { ...c.profitPct, pct: v } }))} step={5} suffix="%" />
               </ConfigCard>
 
               {/* R3: Tiempo Min */}
               <ConfigCard
                 title={t('risk.r3Name')}
                 enabled={config.tiempoMin.enabled}
-                onToggle={(v) => setConfig(c => ({ ...c, tiempoMin: { ...c.tiempoMin, enabled: v } }))}
+                onToggle={(v) => setConfig((c) => ({ ...c, tiempoMin: { ...c.tiempoMin, enabled: v } }))}
               >
                 <ConfigInput label={t('risk.r3Minutes')} value={config.tiempoMin.minutos}
-                  onChange={(v) => setConfig(c => ({ ...c, tiempoMin: { ...c.tiempoMin, minutos: v } }))} step={1} suffix="min" />
+                  onChange={(v) => setConfig((c) => ({ ...c, tiempoMin: { ...c.tiempoMin, minutos: v } }))} step={1} suffix="min" />
               </ConfigCard>
 
               {/* R4: Grid */}
               <ConfigCard
                 title={t('risk.r4Name')}
                 enabled={config.grid.enabled}
-                onToggle={(v) => setConfig(c => ({ ...c, grid: { ...c.grid, enabled: v } }))}
+                onToggle={(v) => setConfig((c) => ({ ...c, grid: { ...c.grid, enabled: v } }))}
               >
                 <ConfigInput label={t('risk.r4MinGrid')} value={config.grid.minGrid}
-                  onChange={(v) => setConfig(c => ({ ...c, grid: { ...c.grid, minGrid: Math.max(2, Math.round(v)) } }))} step={1} />
+                  onChange={(v) => setConfig((c) => ({ ...c, grid: { ...c.grid, minGrid: Math.max(2, Math.round(v)) } }))} step={1} />
               </ConfigCard>
 
               {/* R5: Martingala */}
               <ConfigCard
                 title={t('risk.r5Name')}
                 enabled={config.martingala.enabled}
-                onToggle={(v) => setConfig(c => ({ ...c, martingala: { ...c.martingala, enabled: v } }))}
+                onToggle={(v) => setConfig((c) => ({ ...c, martingala: { ...c.martingala, enabled: v } }))}
               >
                 <ConfigInput label={t('risk.r5Gap')} value={config.martingala.gapMaximo}
-                  onChange={(v) => setConfig(c => ({ ...c, martingala: { ...c.martingala, gapMaximo: v } }))} step={1} suffix="min" />
+                  onChange={(v) => setConfig((c) => ({ ...c, martingala: { ...c.martingala, gapMaximo: v } }))} step={1} suffix="min" />
               </ConfigCard>
             </div>
 
             {/* Approval Limits */}
             <div className="mt-5 border-t border-border pt-4">
-              <div className="flex items-center gap-2 mb-3">
-                <Shield className="w-4 h-4 text-muted-foreground" />
-                <h3 className="text-sm font-semibold text-foreground">{t('risk.approvalLimits')}</h3>
+              <div className="mb-3 flex items-center gap-2">
+                <Shield className="size-4 text-text-3" aria-hidden />
+                <h3 className="text-[13.5px] font-semibold text-foreground">{t('risk.approvalLimits')}</h3>
               </div>
 
-              {/* Mode selector */}
-              <div className="flex items-center gap-2 mb-4">
-                {(['none', 'global', 'per-rule'] as ApprovalMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => setApprovalLimits(prev => ({ ...prev, mode }))}
-                    className={cn(
-                      'px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border',
-                      approvalLimits.mode === mode
-                        ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                        : 'bg-background text-muted-foreground border-border hover:bg-muted'
-                    )}
-                  >
-                    {mode === 'none' && t('risk.modeNone')}
-                    {mode === 'global' && t('risk.modeGlobal')}
-                    {mode === 'per-rule' && t('risk.modePerRule')}
-                  </button>
-                ))}
-              </div>
+              <Segmented<ApprovalMode>
+                aria-label={t('risk.approvalLimits')}
+                value={approvalLimits.mode}
+                onChange={(mode) => setApprovalLimits((prev) => ({ ...prev, mode }))}
+                options={[
+                  { value: 'none', label: t('risk.modeNone') },
+                  { value: 'global', label: t('risk.modeGlobal') },
+                  { value: 'per-rule', label: t('risk.modePerRule') },
+                ]}
+                className="mb-4"
+              />
 
               {/* Global limit input */}
               {approvalLimits.mode === 'global' && (
-                <div className="flex items-center gap-3 pl-1">
-                  <span className="text-xs text-muted-foreground">{t('risk.globalMaxLabel')}</span>
+                <div className="flex items-center gap-3">
+                  <span className="text-[12.5px] text-text-2">{t('risk.globalMaxLabel')}</span>
                   <input
                     type="number"
                     min={0}
+                    aria-label={t('risk.globalMaxLabel')}
                     value={approvalLimits.globalMax}
-                    onChange={(e) => setApprovalLimits(prev => ({ ...prev, globalMax: Math.max(0, parseInt(e.target.value) || 0) }))}
-                    className="w-20 text-center text-xs bg-background border border-border rounded px-2 py-1"
+                    onChange={(e) => setApprovalLimits((prev) => ({ ...prev, globalMax: Math.max(0, parseInt(e.target.value) || 0) }))}
+                    className={cn(CONTROL_CLASS, 'h-8 w-20 border-control-border text-center tabular-nums')}
                   />
                 </div>
               )}
 
               {/* Per-rule limit inputs */}
               {approvalLimits.mode === 'per-rule' && (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                   {([
                     { key: 'consistencia' as const, label: t('risk.r1Name') },
                     { key: 'profitPct' as const, label: t('risk.r2Name') },
@@ -1130,20 +1344,21 @@ export default function RetirosPropFirmPage() {
                     { key: 'grid' as const, label: t('risk.r4Name') },
                     { key: 'martingala' as const, label: t('risk.r5Name') },
                   ]).map(({ key, label }) => (
-                    <div key={key} className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
-                      <span className="text-xs text-muted-foreground truncate">{label}</span>
+                    <div key={key} className="flex items-center justify-between gap-2 rounded-ui-md border border-border px-3 py-2">
+                      <span className="truncate text-[12.5px] text-text-2">{label}</span>
                       <div className="flex items-center gap-1">
                         <input
                           type="number"
                           min={0}
+                          aria-label={label}
                           value={approvalLimits.perRule[key]}
-                          onChange={(e) => setApprovalLimits(prev => ({
+                          onChange={(e) => setApprovalLimits((prev) => ({
                             ...prev,
                             perRule: { ...prev.perRule, [key]: Math.max(0, parseInt(e.target.value) || 0) },
                           }))}
-                          className="w-16 text-center text-xs bg-background border border-border rounded px-1.5 py-1"
+                          className={cn(CONTROL_CLASS, 'h-8 w-16 border-control-border text-center tabular-nums')}
                         />
-                        <span className="text-[10px] text-muted-foreground">{t('risk.maxShort')}</span>
+                        <span className="text-[12px] text-text-3">{t('risk.maxShort')}</span>
                       </div>
                     </div>
                   ))}
@@ -1153,29 +1368,26 @@ export default function RetirosPropFirmPage() {
 
             {result && (
               <div className="mt-4 flex justify-end">
-                <button
-                  onClick={reAnalyze}
-                  className="px-4 py-2 bg-[var(--color-primary)] text-white rounded-lg text-sm font-medium hover:opacity-90 transition-opacity"
-                >
+                {/* El único primario de la pantalla: aplica la configuración. */}
+                <ActionButton variant="primary" onClick={reAnalyze}>
                   {t('risk.reanalyze')}
-                </button>
+                </ActionButton>
               </div>
             )}
           </div>
         )}
-      </Card>
+      </section>
 
       {/* History Panel */}
       {showHistory && (
-        <Card className="p-0 overflow-hidden">
-          <div className="flex items-center justify-between px-5 py-4 border-b border-border">
-            <h3 className="font-semibold flex items-center gap-2">
-              <FileSearch className="w-4 h-4 text-primary dark:text-accent" />
-              Historial de Revisiones
-              <span className="text-sm font-normal text-muted-foreground">({history.length} registros)</span>
-            </h3>
-            {history.length > 0 && (
-              <button
+        <Panel
+          title="Historial de revisiones"
+          hint={`${history.length} registros`}
+          flush
+          actions={
+            history.length > 0 ? (
+              <ActionButton
+                variant="danger"
                 onClick={async () => {
                   if (!confirm('¿Eliminar todo el historial?')) return;
                   // Optimistic UI: vaciamos local, luego borramos en BD en
@@ -1194,121 +1406,74 @@ export default function RetirosPropFirmPage() {
                     console.error('[risk/revisions] clear all error:', err);
                   }
                 }}
-                className="text-xs text-red-500 hover:text-red-600 transition-colors"
               >
                 Limpiar historial
-              </button>
+              </ActionButton>
+            ) : null
+          }
+        >
+          <FinTable<HistoryRecord>
+            caption="Historial de revisiones"
+            columns={historyCols}
+            rows={history}
+            rowKey={(rec) => rec.id}
+            maxHeight="60vh"
+            empty="No hay revisiones guardadas aún"
+            rowActions={(rec) => (
+              <>
+                <button
+                  type="button"
+                  onClick={() => restoreFromHistory(rec)}
+                  className={ROW_ACTION_CLASS}
+                  aria-label="Ver análisis"
+                  title="Ver análisis"
+                >
+                  <Eye className="size-4" aria-hidden />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => downloadPDFFromHistory(rec)}
+                  disabled={historyLoading === rec.id}
+                  className={ROW_ACTION_CLASS}
+                  aria-label="Descargar PDF"
+                  title="Descargar PDF"
+                >
+                  {historyLoading === rec.id ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <FileText className="size-4" aria-hidden />
+                  )}
+                </button>
+              </>
             )}
-          </div>
-          {history.length === 0 ? (
-            <p className="text-center text-muted-foreground py-8 text-sm">No hay revisiones guardadas aún</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-border bg-muted/30 text-xs">
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Fecha</th>
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Trader</th>
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Cuenta</th>
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Período</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Operaciones</th>
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Net Profit</th>
-                    <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">Veredicto</th>
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Reglas</th>
-                    <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {history.map((rec) => (
-                    <tr key={rec.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors text-xs">
-                      <td className="px-3 py-3 text-muted-foreground whitespace-nowrap">
-                        {new Date(rec.savedAt).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td className="px-3 py-3 font-medium">{rec.traderName || '—'}</td>
-                      <td className="px-3 py-3 font-mono text-muted-foreground">{rec.accountNumber || '—'}</td>
-                      <td className="px-3 py-3 text-muted-foreground">{rec.period || '—'}</td>
-                      <td className="px-3 py-3 text-right">{rec.totalTrades}</td>
-                      <td className={cn('px-3 py-3 text-right font-medium', rec.totalNetProfit >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                        {formatCurrency(rec.totalNetProfit)}
-                      </td>
-                      <td className="px-3 py-3 text-center">
-                        {rec.verdict === 'approved' && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-positive">
-                            <CheckCircle className="w-2.5 h-2.5" /> Aprobado
-                          </span>
-                        )}
-                        {rec.verdict === 'rejected' && (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-100 dark:bg-red-950/60 text-negative">
-                            <XCircle className="w-2.5 h-2.5" /> Rechazado
-                          </span>
-                        )}
-                        {rec.verdict === null && (
-                          <span className="text-muted-foreground">—</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex gap-1 flex-wrap">
-                          {rec.rulesSummary.map((r) => (
-                            <span key={r.ruleName} className={cn(
-                              'px-1.5 py-0.5 rounded text-[9px] font-medium',
-                              r.status === 'pass'
-                                ? 'bg-emerald-100 dark:bg-emerald-950/50 text-positive'
-                                : 'bg-red-100 dark:bg-red-950/50 text-negative',
-                            )}>
-                              {r.displayName}: {r.violations}
-                            </span>
-                          ))}
-                        </div>
-                      </td>
-                      <td className="px-3 py-3">
-                        <div className="flex items-center gap-1.5">
-                          <button
-                            onClick={() => restoreFromHistory(rec)}
-                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-info/10 text-info hover:bg-blue-100 transition-colors"
-                            title="Ver análisis"
-                          >
-                            <Eye className="w-3 h-3" />
-                            Ver
-                          </button>
-                          <button
-                            onClick={() => downloadPDFFromHistory(rec)}
-                            disabled={historyLoading === rec.id}
-                            className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium bg-negative/10 text-negative hover:bg-red-100 transition-colors disabled:opacity-50"
-                            title="Descargar PDF"
-                          >
-                            {historyLoading === rec.id
-                              ? <Loader2 className="w-3 h-3 animate-spin" />
-                              : <FileText className="w-3 h-3" />}
-                            PDF
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
+          />
+        </Panel>
       )}
 
       {/* Upload Zone */}
       {!result && !loading && (
         <div
+          role="button"
+          tabIndex={0}
+          aria-label={t('risk.uploadTitle')}
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              fileInputRef.current?.click();
+            }
+          }}
           className={cn(
-            'border-2 border-dashed rounded-xl p-12 flex flex-col items-center justify-center gap-3 cursor-pointer transition-colors',
-            dragOver
-              ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5'
-              : 'border-border hover:border-muted-foreground/50'
+            'flex cursor-pointer flex-col items-center justify-center gap-3 rounded-ui-lg border-2 border-dashed p-12 transition-colors',
+            dragOver ? 'border-brand-ink bg-brand-tint' : 'border-border-strong hover:border-control-border',
           )}
         >
-          <Upload className="w-10 h-10 text-muted-foreground" />
-          <p className="text-sm font-medium text-foreground">{t('risk.uploadTitle')}</p>
-          <p className="text-xs text-muted-foreground">{t('risk.uploadHint')}</p>
+          <Upload className="size-10 text-text-3" aria-hidden />
+          <p className="text-[13.5px] font-medium text-foreground">{t('risk.uploadTitle')}</p>
+          <p className="text-[12.5px] text-text-3">{t('risk.uploadHint')}</p>
           <input
             ref={fileInputRef}
             type="file"
@@ -1321,344 +1486,254 @@ export default function RetirosPropFirmPage() {
 
       {/* Loading */}
       {loading && (
-        <div className="flex flex-col items-center justify-center py-16 gap-3">
-          <Loader2 className="w-8 h-8 animate-spin text-primary dark:text-accent" />
-          <p className="text-sm text-muted-foreground">{t('risk.analyzing')}</p>
+        <div className="flex flex-col items-center justify-center gap-3 py-16" role="status">
+          <Loader2 className="size-8 animate-spin text-brand-ink" aria-hidden />
+          <p className="text-[13px] text-text-2">{t('risk.analyzing')}</p>
         </div>
       )}
 
       {/* Error */}
       {error && (
-        <Card className="p-4 border-red-500/30 bg-red-500/5">
-          <div className="flex items-center gap-2 text-negative">
-            <XCircle className="w-5 h-5" />
-            <p className="text-sm font-medium">{error}</p>
-          </div>
-        </Card>
+        <Notice kind="bad" title={error} />
       )}
 
       {/* Results */}
       {result && (
         <>
           {/* File info + New upload button */}
-          <div className="flex items-center justify-between">
-            <p className="text-sm text-muted-foreground">
-              <FileSpreadsheet className="w-4 h-4 inline mr-1" />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="flex items-center gap-1.5 text-[13px] text-text-2">
+              <FileSpreadsheet className="size-4 text-text-3" aria-hidden />
               {fileName}
             </p>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+            <div className="flex flex-wrap items-center gap-3">
+              <label className="flex cursor-pointer select-none items-center gap-1.5 text-[12.5px] text-text-2">
                 <input
                   type="checkbox"
                   checked={includeDurationInPDF}
                   onChange={(e) => setIncludeDurationInPDF(e.target.checked)}
-                  className="h-3.5 w-3.5 rounded border-border accent-[var(--color-primary)]"
+                  className="size-3.5 rounded border-control-border accent-brand-ink"
                 />
                 Incluir tabla de duración
               </label>
-              <button
-                onClick={downloadPDF}
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-red-600 hover:bg-red-700 text-white text-sm font-medium transition-colors"
-              >
-                <FileText className="w-4 h-4" />
+              <ActionButton onClick={downloadPDF}>
+                <FileText className="size-4" aria-hidden />
                 Descargar PDF
-              </button>
-              <button
+              </ActionButton>
+              <ActionButton
+                variant="ghost"
                 onClick={() => { setResult(null); setError(null); setFileName(null); }}
-                className="text-sm text-primary dark:text-accent hover:underline"
               >
                 {t('risk.newUpload')}
-              </button>
+              </ActionButton>
             </div>
           </div>
 
-          {/* Metadata Cards */}
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-            <MetaCard label={t('risk.metaTrader')} value={result.metadata.traderName || '—'} />
-            <MetaCard label={t('risk.metaAccount')} value={result.metadata.accountNumber || '—'} />
-            <MetaCard label={t('risk.metaBroker')} value={result.metadata.broker || '—'} />
-            <MetaCard label={t('risk.metaPeriod')} value={result.metadata.period || '—'} />
-            <MetaCard label={t('risk.metaProfit')} value={formatCurrency(result.metadata.totalNetProfit)}
-              valueClass={result.metadata.totalNetProfit >= 0 ? 'text-positive' : 'text-negative'} />
-            <MetaCard label={t('risk.metaTrades')} value={String(result.trades.length)} />
-          </div>
+          {/* Metadatos del informe */}
+          <Panel>
+            <dl className="grid grid-cols-2 gap-4 md:grid-cols-3 lg:grid-cols-6">
+              <MetaField label={t('risk.metaTrader')} value={result.metadata.traderName || '—'} />
+              <MetaField label={t('risk.metaAccount')} value={result.metadata.accountNumber || '—'} mono />
+              <MetaField label={t('risk.metaBroker')} value={result.metadata.broker || '—'} />
+              <MetaField label={t('risk.metaPeriod')} value={result.metadata.period || '—'} />
+              <div className="min-w-0">
+                <dt className="text-[12px] font-medium text-text-3">{t('risk.metaProfit')}</dt>
+                <dd className="mt-0.5 text-[13px] font-semibold">
+                  <Money value={result.metadata.totalNetProfit} tone="sign" />
+                </dd>
+              </div>
+              <MetaField label={t('risk.metaTrades')} value={String(result.trades.length)} num />
+            </dl>
+          </Panel>
 
           {/* Rule Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-5 gap-3">
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-3 lg:grid-cols-5">
             {result.ruleResults.map((rr) => (
-              <Card key={rr.ruleName} className={cn('p-4 border', ruleStatusColor(rr.status))}>
-                <div className="flex items-start justify-between mb-2">
-                  <h3 className="text-sm font-semibold text-foreground">{rr.displayName}</h3>
-                  {ruleStatusIcon(rr.status)}
+              <section key={rr.ruleName} className="rounded-ui-lg border border-border bg-card p-4 shadow-1">
+                <div className="mb-2 flex items-start justify-between gap-2">
+                  <h3 className="text-[13px] font-semibold text-foreground">{rr.displayName}</h3>
+                  <StatusBadge kind={RULE_KIND[rr.status]} label={RULE_LABEL[rr.status]} />
                 </div>
                 {rr.isActive ? (
                   <>
-                    <p className="text-2xl font-bold text-foreground">{rr.violations.length}</p>
-                    <p className="text-xs text-muted-foreground">{t('risk.violations')} ({formatPercentValue(rr.violationPct)})</p>
+                    <p className={cn(NUM_CLASS, 'text-[22px] font-semibold leading-[30px] text-foreground')}>
+                      {rr.violations.length}
+                    </p>
+                    <p className="text-[12px] text-text-3">
+                      {t('risk.violations')} ({formatPercentValue(rr.violationPct)})
+                    </p>
                     {Object.entries(rr.computedParams).length > 0 && (
                       <div className="mt-2 space-y-0.5">
                         {Object.entries(rr.computedParams).map(([k, v]) => (
-                          <p key={k} className="text-[10px] text-muted-foreground truncate">{k}: {v}</p>
+                          <p key={k} className="truncate text-[12px] text-text-3">
+                            {k}: {v}
+                          </p>
                         ))}
                       </div>
                     )}
                   </>
                 ) : (
-                  <p className="text-xs text-muted-foreground italic">{t('risk.skipped')}</p>
+                  <p className="text-[12.5px] italic text-text-3">{t('risk.skipped')}</p>
                 )}
-              </Card>
+              </section>
             ))}
           </div>
 
-          {/* Verdict Banner */}
-          {verdict && (
-            <div className={cn(
-              'rounded-xl p-4 flex items-center gap-3',
-              verdict.status === 'pass'
-                ? 'bg-green-500/10 border border-green-500/30'
-                : 'bg-red-500/10 border border-red-500/30'
-            )}>
-              {verdict.status === 'pass'
-                ? <CheckCircle className="w-6 h-6 text-green-500" />
-                : <XCircle className="w-6 h-6 text-red-500" />}
-              <div>
-                <p className={cn('text-sm font-bold', verdict.status === 'pass' ? 'text-positive' : 'text-negative')}>
-                  {verdict.status === 'pass' ? t('risk.approved') : t('risk.rejected')}
-                </p>
-                <p className="text-xs text-muted-foreground">{verdict.msg}</p>
+          {/* Verdict Banner — el resultado según los LÍMITES elegidos arriba. */}
+          {verdict &&
+            (verdict.status === 'pass' ? (
+              <div
+                role="status"
+                className="flex items-start gap-2.5 rounded-ui-md border border-pos/35 bg-pos-bg px-3.5 py-2.5 text-[13px] leading-5 text-foreground"
+              >
+                <CheckCircle className="mt-0.5 size-4 shrink-0 text-pos" aria-hidden />
+                <div className="min-w-0">
+                  <p className="font-semibold">{t('risk.approved')}</p>
+                  <p className="text-text-2">{verdict.msg}</p>
+                </div>
               </div>
-            </div>
-          )}
+            ) : (
+              <Notice kind="bad" title={t('risk.rejected')}>
+                {verdict.msg}
+              </Notice>
+            ))}
 
           {/* Distribución por Duración — siempre visible cuando hay un
               `result` cargado (analisis nuevo o restaurado del Historial).
               Click en cualquier fila con count>0 abre modal con los trades
               del rango. Calculada al vuelo desde `result.trades`. */}
           {durationDistribution && (
-            <Card className="overflow-hidden">
-              <div className="px-5 py-3 border-b border-border">
-                <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <FileSearch className="w-4 h-4 text-emerald-600" />
-                  Distribución por Duración
-                </h2>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Click sobre un rango para ver los trades incluidos.
-                </p>
-              </div>
-              <div className="p-5">
-                <DurationDistributionTable
-                  buckets={durationDistribution.buckets}
-                  totalCount={durationDistribution.totalCount}
-                  totalProfit={durationDistribution.totalProfit}
-                />
-              </div>
-            </Card>
+            <Panel title="Distribución por duración" hint="Tocá un rango para ver sus operaciones." flush>
+              <DurationDistributionTable
+                buckets={durationDistribution.buckets}
+                totalCount={durationDistribution.totalCount}
+                totalProfit={durationDistribution.totalProfit}
+              />
+            </Panel>
           )}
 
           {/* Violations Table */}
           {filteredViolations.length > 0 && (
-            <Card className="overflow-hidden">
-              <div className="px-5 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
-                <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-orange-500" />
-                  {t('risk.violationsTitle')} ({filteredViolations.length})
-                </h2>
-                <div className="flex items-center gap-2">
-                  <Filter className="w-3.5 h-3.5 text-muted-foreground" />
-                  <select
-                    value={ruleFilter}
-                    onChange={(e) => { setRuleFilter(e.target.value); setViolPage(0); }}
-                    className="text-xs bg-background border border-border rounded px-2 py-1"
-                  >
-                    <option value="all">{t('risk.allRules')}</option>
-                    {result.ruleResults.filter(r => r.isActive && r.violations.length > 0).map(rr => (
-                      <option key={rr.ruleName} value={rr.ruleName}>{rr.displayName} ({rr.violations.length})</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Position</th>
-                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Symbol</th>
-                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Type</th>
-                      <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Volume</th>
-                      <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Profit</th>
-                      <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.duration')}</th>
-                      <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">{t('risk.rulesViolated')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {violPageItems.map((item, i) => (
-                      <tr key={`${item.tradeIndex}-${i}`} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                        <td className="px-3 py-2 font-mono">{item.trade?.position ?? '—'}</td>
-                        <td className="px-3 py-2 font-medium">{item.trade?.symbol ?? '—'}</td>
-                        <td className="px-3 py-2">
-                          {item.trade ? (
-                            <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium uppercase',
-                              item.trade.type === 'buy' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                            )}>{item.trade.type}</span>
-                          ) : '—'}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono">{item.trade?.volume ?? '—'}</td>
-                        <td className={cn('px-3 py-2 text-right font-mono', (item.trade?.profit ?? 0) >= 0 ? 'text-positive' : 'text-negative')}>
-                          {formatCurrency(item.trade?.profit ?? 0)}
-                        </td>
-                        <td className="px-3 py-2 text-right">{fmtDuration(item.trade?.durationMinutes ?? 0)}</td>
-                        <td className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1">
-                            {item.rules.map((r, ri) => (
-                              <span key={ri} className="px-1.5 py-0.5 rounded bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400 text-[10px] font-medium">
-                                {r}
-                              </span>
-                            ))}
-                          </div>
-                          {item.details.length > 0 && (
-                            <details className="mt-1">
-                              <summary className="text-[10px] text-muted-foreground cursor-pointer hover:text-foreground">
-                                {t('risk.details')}
-                              </summary>
-                              <div className="mt-1 space-y-0.5">
-                                {item.details.map((d, di) => (
-                                  <p key={di} className="text-[10px] text-muted-foreground">{d}</p>
-                                ))}
-                              </div>
-                            </details>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Pagination */}
-              {violPageCount > 1 && (
-                <div className="px-5 py-3 border-t border-border flex items-center justify-between">
-                  <p className="text-xs text-muted-foreground">
-                    {t('risk.page')} {violPage + 1} / {violPageCount}
-                  </p>
-                  <div className="flex gap-1">
-                    <button onClick={() => setViolPage(p => Math.max(0, p - 1))} disabled={violPage === 0}
-                      className="p-1 rounded hover:bg-muted disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-                    <button onClick={() => setViolPage(p => Math.min(violPageCount - 1, p + 1))} disabled={violPage >= violPageCount - 1}
-                      className="p-1 rounded hover:bg-muted disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
-                  </div>
-                </div>
-              )}
-            </Card>
+            <Panel
+              title={`${t('risk.violationsTitle')} (${filteredViolations.length})`}
+              flush
+              actions={
+                <Select
+                  aria-label={t('risk.allRules')}
+                  value={ruleFilter}
+                  onChange={(e) => { setRuleFilter(e.target.value); setViolPage(0); }}
+                  className="h-8 w-auto min-w-[180px]"
+                >
+                  <option value="all">{t('risk.allRules')}</option>
+                  {activeRules.map((rr) => (
+                    <option key={rr.ruleName} value={rr.ruleName}>
+                      {rr.displayName} ({rr.violations.length})
+                    </option>
+                  ))}
+                </Select>
+              }
+            >
+              <FinTable<ViolationItem>
+                caption={t('risk.violationsTitle')}
+                columns={violationCols}
+                rows={violPageItems}
+                rowKey={(item) => String(item.tradeIndex)}
+              />
+              <SimplePager
+                page={violPage}
+                pageCount={violPageCount}
+                label={t('risk.page')}
+                onPage={setViolPage}
+              />
+            </Panel>
           )}
 
           {/* Restored-from-history notice */}
           {result.trades.length === 0 && (
-            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-warning/10 border border-amber-200 text-amber-700 text-sm">
-              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-              <span>Este análisis fue restaurado del historial. Las operaciones individuales no están disponibles — sube el archivo original para verlas.</span>
-            </div>
+            <Notice kind="pend" title="Análisis restaurado del historial">
+              Las operaciones individuales no están disponibles — subí el archivo original para verlas.
+            </Notice>
           )}
 
           {/* Full Operations Table */}
-          <Card className="overflow-hidden">
-            <div className="px-5 py-3 border-b border-border flex items-center justify-between flex-wrap gap-2">
-              <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-                <FileSearch className="w-4 h-4" />
-                {t('risk.operationsTitle')} ({opsData.length})
-              </h2>
-              <button
-                onClick={() => { setShowAll(prev => !prev); setOpsPage(0); }}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors"
-              >
-                {showAll ? <Eye className="w-3.5 h-3.5" /> : <EyeOff className="w-3.5 h-3.5" />}
+          <Panel
+            title={`${t('risk.operationsTitle')} (${opsData.length})`}
+            flush
+            actions={
+              <ActionButton variant="ghost" onClick={() => { setShowAll((prev) => !prev); setOpsPage(0); }}>
+                {showAll ? <Eye className="size-4" aria-hidden /> : <EyeOff className="size-4" aria-hidden />}
                 {showAll ? t('risk.showAll') : t('risk.showViolationsOnly')}
-              </button>
-            </div>
-
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border bg-muted/50">
-                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">#</th>
-                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Position</th>
-                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Symbol</th>
-                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">Type</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Volume</th>
-                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">{t('risk.openTime')}</th>
-                    <th className="py-2.5 px-3 text-left font-medium text-muted-foreground">{t('risk.closeTime')}</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.openPrice')}</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.closePrice')}</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Commission</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Swap</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">Profit</th>
-                    <th className="py-2.5 px-3 text-right font-medium text-muted-foreground">{t('risk.duration')}</th>
-                    <th className="py-2.5 px-3 text-center font-medium text-muted-foreground">{t('risk.flags')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {opsPageItems.map((trade) => {
-                    const isViolated = violatedTradeIndices.has(trade.index);
-                    const rules = tradeRuleMap.get(trade.index) || [];
-                    return (
-                      <tr key={trade.index} className={cn(
-                        'border-b border-border/50 transition-colors',
-                        isViolated ? 'bg-red-50/50 dark:bg-red-950/20' : 'hover:bg-muted/50'
-                      )}>
-                        <td className="px-3 py-2 text-muted-foreground">{trade.index + 1}</td>
-                        <td className="px-3 py-2 font-mono">{trade.position}</td>
-                        <td className="px-3 py-2 font-medium">{trade.symbol}</td>
-                        <td className="px-3 py-2">
-                          <span className={cn('px-1.5 py-0.5 rounded text-[10px] font-medium uppercase',
-                            trade.type === 'buy' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                          )}>{trade.type}</span>
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono">{trade.volume}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{fmtDate(trade.openTime)}</td>
-                        <td className="px-3 py-2 text-muted-foreground">{fmtDate(trade.closeTime)}</td>
-                        <td className="px-3 py-2 text-right font-mono">{trade.openPrice}</td>
-                        <td className="px-3 py-2 text-right font-mono">{trade.closePrice}</td>
-                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatCurrency(trade.commission)}</td>
-                        <td className="px-3 py-2 text-right font-mono text-muted-foreground">{formatCurrency(trade.swap)}</td>
-                        <td className={cn('px-3 py-2 text-right font-mono', trade.profit >= 0 ? 'text-positive' : 'text-negative')}>
-                          {formatCurrency(trade.profit)}
-                        </td>
-                        <td className="px-3 py-2 text-right text-muted-foreground">{fmtDuration(trade.durationMinutes)}</td>
-                        <td className="px-3 py-2 text-center">
-                          {isViolated ? (
-                            <div className="flex flex-wrap gap-0.5 justify-center">
-                              {rules.map((r, i) => (
-                                <span key={i} className="w-2 h-2 rounded-full bg-red-500" title={r} />
-                              ))}
-                            </div>
-                          ) : (
-                            <span className="text-green-500">✓</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            {/* Pagination */}
-            {opsPageCount > 1 && (
-              <div className="px-5 py-3 border-t border-border flex items-center justify-between">
-                <p className="text-xs text-muted-foreground">
-                  {t('risk.page')} {opsPage + 1} / {opsPageCount}
-                </p>
-                <div className="flex gap-1">
-                  <button onClick={() => setOpsPage(p => Math.max(0, p - 1))} disabled={opsPage === 0}
-                    className="p-1 rounded hover:bg-muted disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-                  <button onClick={() => setOpsPage(p => Math.min(opsPageCount - 1, p + 1))} disabled={opsPage >= opsPageCount - 1}
-                    className="p-1 rounded hover:bg-muted disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
-                </div>
-              </div>
-            )}
-          </Card>
+              </ActionButton>
+            }
+          >
+            <FinTable<Trade>
+              caption={t('risk.operationsTitle')}
+              columns={opsCols}
+              rows={opsPageItems}
+              rowKey={(trade) => String(trade.index)}
+            />
+            <SimplePager page={opsPage} pageCount={opsPageCount} label={t('risk.page')} onPage={setOpsPage} />
+          </Panel>
         </>
       )}
+    </div>
+  );
+}
+
+// ─── Piezas de presentación ───
+
+type ViolationItem = { trade: Trade | undefined; tradeIndex: number; rules: string[]; details: string[] };
+
+function VerdictBadge({ verdict }: { verdict: HistoryRecord['verdict'] }) {
+  if (verdict === 'approved') return <StatusBadge kind="ok" label="Aprobado" />;
+  if (verdict === 'rejected') return <StatusBadge kind="bad" label="Rechazado" />;
+  if (verdict === 'review') return <StatusBadge kind="pend" label="En revisión" />;
+  return <span className="text-[12.5px] text-text-3">—</span>;
+}
+
+/** Reglas que marcó una operación: badge `bad` con el conteo, o «OK». */
+function TradeFlags({ rules }: { rules: string[] }) {
+  if (rules.length === 0) return <StatusBadge kind="ok" label="OK" />;
+  return <StatusBadge kind="bad" label={rules.length === 1 ? rules[0] : `${rules.length} reglas`} title={rules.join(', ')} />;
+}
+
+function SimplePager({
+  page,
+  pageCount,
+  label,
+  onPage,
+}: {
+  page: number;
+  pageCount: number;
+  label: string;
+  onPage: (updater: (p: number) => number) => void;
+}) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex items-center justify-between border-t border-border px-4 py-2.5">
+      <p className={cn(NUM_CLASS, 'text-[12.5px] text-text-3')}>
+        {label} {page + 1} / {pageCount}
+      </p>
+      <div className="flex gap-1">
+        <button
+          type="button"
+          onClick={() => onPage((p) => Math.max(0, p - 1))}
+          disabled={page === 0}
+          className={ROW_ACTION_CLASS}
+          aria-label="Página anterior"
+        >
+          <ChevronLeft className="size-4" aria-hidden />
+        </button>
+        <button
+          type="button"
+          onClick={() => onPage((p) => Math.min(pageCount - 1, p + 1))}
+          disabled={page >= pageCount - 1}
+          className={ROW_ACTION_CLASS}
+          aria-label="Página siguiente"
+        >
+          <ChevronRight className="size-4" aria-hidden />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1672,12 +1747,12 @@ function ConfigCard({ title, enabled, onToggle, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className={cn('rounded-lg border p-3 space-y-2 transition-colors', enabled ? 'border-border' : 'border-border/50 opacity-60')}>
+    <div className={cn('space-y-2 rounded-ui-md border border-border p-3', !enabled && 'opacity-60')}>
       <div className="flex items-center justify-between">
-        <h4 className="text-xs font-semibold text-foreground">{title}</h4>
-        <label className="relative inline-flex items-center cursor-pointer">
-          <input type="checkbox" aria-label={title} checked={enabled} onChange={(e) => onToggle(e.target.checked)} className="sr-only peer" />
-          <div className="w-8 h-4 bg-muted rounded-full peer peer-checked:bg-[var(--color-primary)] after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:after:translate-x-4" />
+        <h4 className="text-[12.5px] font-semibold text-foreground">{title}</h4>
+        <label className="relative inline-flex cursor-pointer items-center">
+          <input type="checkbox" aria-label={title} checked={enabled} onChange={(e) => onToggle(e.target.checked)} className="peer sr-only" />
+          <div className="h-4 w-8 rounded-full bg-surface-sunk shadow-[inset_0_0_0_1px_var(--border-strong)] after:absolute after:left-[2px] after:top-0.5 after:h-3 after:w-3 after:rounded-full after:bg-card after:shadow-1 after:transition-all after:content-[''] peer-checked:bg-primary peer-checked:after:translate-x-4 peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2" />
         </label>
       </div>
       {enabled && children}
@@ -1694,30 +1769,35 @@ function ConfigInput({ label, value, onChange, step = 1, suffix }: {
 }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[11px] text-muted-foreground">{label}</span>
+      <span className="text-[12px] text-text-2">{label}</span>
       <div className="flex items-center gap-1">
         <input
           type="number"
+          aria-label={label}
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
           step={step}
-          className="w-16 text-right text-xs bg-background border border-border rounded px-1.5 py-1"
+          className={cn(CONTROL_CLASS, 'h-8 w-16 border-control-border text-right tabular-nums')}
         />
-        {suffix && <span className="text-[10px] text-muted-foreground">{suffix}</span>}
+        {suffix && <span className="text-[12px] text-text-3">{suffix}</span>}
       </div>
     </div>
   );
 }
 
-function MetaCard({ label, value, valueClass }: {
-  label: string;
-  value: string;
-  valueClass?: string;
-}) {
+function MetaField({ label, value, mono, num }: { label: string; value: string; mono?: boolean; num?: boolean }) {
   return (
-    <Card className="p-3">
-      <p className="text-[10px] text-muted-foreground uppercase tracking-wider">{label}</p>
-      <p className={cn('text-sm font-semibold text-foreground mt-0.5 truncate', valueClass)}>{value}</p>
-    </Card>
+    <div className="min-w-0">
+      <dt className="text-[12px] font-medium text-text-3">{label}</dt>
+      <dd
+        className={cn(
+          'mt-0.5 truncate text-[13px] font-semibold text-foreground',
+          mono && 'font-mono text-[12px]',
+          num && NUM_CLASS,
+        )}
+      >
+        {value}
+      </dd>
+    </div>
   );
 }
