@@ -173,17 +173,19 @@ export function EmployeePayrollChart({
 
 // ─── Distribución de empleados activos por departamento (donut) ───
 
-// Paleta categórica: arranca en tokens de marca y extiende con hues fijos
-// legibles en ambos temas (los tokens semánticos NO se usan acá — un
-// departamento no es "positivo" ni "negativo").
+// Paleta categórica: la escala de series SIN significado de globals.css
+// (`--chart-1…7`, spec §10): arranca en el acento y la tinta de la marca de la
+// empresa y sigue con tonos fijos. Los tokens semánticos NO se usan acá — un
+// departamento no es "positivo" ni "negativo". Antes había hex sueltos con
+// ámbar y esmeralda, que en este sistema leen como `pend` y `pos`.
 const DONUT_COLORS = [
-  'var(--accent)',
-  '#8B5CF6', // violet
-  '#06B6D4', // cyan
-  '#F59E0B', // amber
-  '#EC4899', // pink
-  '#10B981', // emerald
-  '#94A3B8', // slate
+  'var(--chart-1)',
+  'var(--chart-2)',
+  'var(--chart-3)',
+  'var(--chart-4)',
+  'var(--chart-5)',
+  'var(--chart-6)',
+  'var(--chart-7)',
 ];
 
 export function DepartmentDonut({

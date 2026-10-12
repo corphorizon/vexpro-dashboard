@@ -18,6 +18,10 @@
 //   · `dark:hidden` / `dark:block` cambian de ARCHIVO, no de color: es la única
 //     forma de tener el logo negro/blanco sin un SVG inline de 400 KB.
 //
+//   · `onDark` (2026-10-12): sobre una superficie SIEMPRE oscura (la columna de
+//     marca del login, que usa el fondo del sidebar) va siempre el blanco,
+//     sea cual sea el tema.
+//
 // DESCARTADO: inline SVG con `currentColor` — el SVG exportado pesa 420 KB y
 // trae capas de otra marca ocultas («Atlas»); limpiarlo es trabajo de diseño.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -31,9 +35,19 @@ interface AuthBrandProps {
   className?: string;
   /** Texto alternativo. Vacío si al lado ya está escrito «Smart Dashboard». */
   alt?: string;
+  /** Sobre una superficie siempre oscura: logo blanco en los dos temas. */
+  onDark?: boolean;
 }
 
-export function AuthBrand({ className = 'size-16', alt = 'Smart Dashboard' }: AuthBrandProps) {
+export function AuthBrand({ className = 'size-16', alt = 'Smart Dashboard', onDark = false }: AuthBrandProps) {
+  if (onDark) {
+    return (
+      <span className={cn('relative block shrink-0', className)}>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/brand/logo-white.png" alt={alt} width={160} height={160} className="block size-full object-contain" />
+      </span>
+    );
+  }
   return (
     <span className={cn('relative block shrink-0', className)}>
       {/* eslint-disable-next-line @next/next/no-img-element */}

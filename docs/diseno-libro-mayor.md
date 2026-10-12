@@ -19,7 +19,9 @@ Lo que define la dirección, en una línea cada cosa:
 
 - **Una pantalla es un libro contable, no un tablero de tarjetas.** Pocas
   superficies, grandes, con bordes de 1 px; los números alineados en columna.
-- **El color es significado, nunca decoración** (§2.1). Todo lo demás es gris.
+- **El color es significado, nunca decoración** (§2.1) — en los DATOS. La
+  estructura (navegación, encabezados, acentos, selección) lleva el color de la
+  marca de cada empresa desde el 2026-10-12 (§10).
 - **Cada número dice de cuándo es.** Un saldo viejo se ve viejo (`stale`), un
   canal que no respondió se avisa y se cuenta — nunca se suma en silencio como
   cero (`reglas-del-proyecto.md` §1.2 y §1.3).
@@ -73,12 +75,12 @@ tarjeta legada `#1E293B` sobre la que caen hoy. AA texto = 4,5:1; componentes
 | `control-border` (`border-control-border`) | `#8A94A3` | `#5E6B82` | 3,07 / 3,33 | **inputs** (3:1 de componente) |
 | `text-2` (`text-text-2`) | `#465264` | `#AAB4C5` | 7,92 / 8,58 (7,00) | texto secundario, cifras de apoyo |
 | `text-3` (`text-text-3`) | = `muted-foreground` | = `muted-foreground` | 4,76 / 8,28 | terciario, metadatos — ver §2.3 |
-| `brand-tint` (`bg-brand-tint`) | `#E9EEF5` | `#18263B` | `brand-ink` encima: 9,87 / 6,80 | ítem activo de nav, chip activo |
-| `pos` / `pos-bg` | `#047857` / `#E6F4EE` | `#3CCB8F` / `#0F2A20` | 5,48 · sobre bg 4,84 / 8,65 (7,06) · 7,38 | |
-| `neg` / `neg-bg` | `#B42318` / `#FCEBE9` | `#F97066` / `#331614` | 6,57 · 5,70 / 6,44 (5,25) · 5,96 | |
-| `pend` / `pend-bg` | `#A15C07` / `#FCF1DF` | `#F2B13A` / `#30230B` | 5,19 · 4,64 / 9,50 (7,75) · 8,12 | |
-| `info` / `info-bg` | `#1D5BD6` / `#E8EFFC` | `#6EA3FF` / `#132443` | 5,97 · 5,17 / 7,13 (5,81) · 6,13 | |
-| `stale` / `stale-bg` | `#6B5FA8` / `#EFEDF8` | `#B3A6F0` / `#221E3A` | 5,49 · 4,74 / 8,23 (6,71) · 7,32 | **nuevo** |
+| `brand-tint` (`bg-brand-tint`) | deriva de la marca (§10); respaldo `#E7EEFA` | respaldo `#172848` | `brand-ink` encima ≥ 4,5 (test) | chip activo, cuadro de ícono |
+| `pos` / `pos-bg` | `#047857` / `#D7F0E4` | `#3CCB8F` / `#113524` | sobre blanco 5,48 · sobre su bg ≥ 4,5 (test) | `*-bg` más saturados desde 2026-10-12 (§10) |
+| `neg` / `neg-bg` | `#B42318` / `#FADCD8` | `#F97066` / `#421B18` | 6,57 · ≥ 4,5 | |
+| `pend` / `pend-bg` | `#A15C07` / `#FCEED8` | `#F2B13A` / `#3D2C0C` | 5,19 · ≥ 4,5 | |
+| `info` / `info-bg` | `#1D5BD6` / `#DCE7FC` | `#6EA3FF` / `#18305C` | 5,97 · ≥ 4,5 | |
+| `stale` / `stale-bg` | `#6B5FA8` / `#EBE8F8` | `#B3A6F0` / `#2C2550` | 5,49 · ≥ 4,5 | |
 | `row-hover` (`bg-row-hover`) | `#F3F5F8` | `#151D2C` | — | hover de fila |
 | `row-selected` (`bg-row-selected`) | `#EEF3FB` | `#16233A` | — | fila seleccionada (+ barra 3 px `brand-ink`) |
 | `group-row` (`bg-group-row`) | `#F7F8FA` | `#0E141F` | — | fila de grupo/subtotal |
@@ -110,8 +112,8 @@ fase 3): `bg #F5F6F8 / #0A0E15`, `surface #FFFFFF / #111723`, `border #E2E6EC /
   que cambió de valor fuera de la fase 0.
 - **`border`, `accent`, `brand-ink`** ya existen y **no se tocaron**.
   `brand-ink` deriva del color de cada empresa (`brand-color.ts`), que es mejor
-  que el navy fijo de la maqueta. `brand-tint` todavía es fijo: derivarlo de la
-  marca queda **pendiente** (fase 3, en `brand-color.ts`, nunca en un componente).
+  que el navy fijo de la maqueta. `brand-tint` también deriva de la marca desde
+  el 2026-10-12 (§10, en `brand-color.ts`, nunca en un componente).
 - **Radios `rounded-ui-*`**: `rounded-r-md` ya es de Tailwind (radio del lado
   derecho). No se pisan `rounded-sm/md/lg/xl` porque cambiaría el aspecto de
   toda la app.
@@ -317,10 +319,12 @@ cifra afectada y un enlace «Revisar».
 
 ## 6. Layout
 
-### 6.1 Sidebar (sigue el tema)
+### 6.1 Sidebar (oscuro de marca — ver §10)
 
-- Hoy es **siempre oscura** (`--brand-on-dark-surface`). En «Libro mayor»
-  **sigue el tema**: fondo superficie, borde derecho `border`.
+- **Reemplazado el 2026-10-12** (Kevin): el sidebar **no** sigue el tema; es
+  **siempre oscuro, del color de la marca** de la empresa activa (§10.2). Lo
+  que sigue de esta sección vale para medidas y comportamiento; los colores
+  salen de los tokens `sidebar-*`.
 - Ancho 232, sticky a alto completo, padding 14 10.
 - Bloque de empresa arriba: logo 30×30 `rounded 8` en `brand`, nombre 13/600,
   sub 12 `text-3` («Bróker · USD»), selector a la derecha; borde inferior.
@@ -395,7 +399,7 @@ Reglas:
 | 0 | Bugs visuales existentes: `--positive` `#047857`, `--warning` `#A15C07` (AA); 20 clases `bg-x/10/30` inválidas → `bg-x/10` | **Hecha** (2026-10-12) |
 | 1 | Tokens nuevos en `globals.css` + utilidades Tailwind + test de valores y contraste | **Hecha** (2026-10-12) |
 | 2 | `formatMoney` único (`src/lib/money.ts`), `formatCurrency`/`pdfMoney` delegan, 19 `toLocaleString` de dinero reemplazados | **Hecha** (2026-10-12) |
-| 3 | Superficies y neutros: `background/card/foreground/border/muted-foreground` a los valores de la maqueta; `negative` → `neg`; legados como alias de los nuevos; sidebar sigue el tema; `brand-tint` derivado de la marca; anillo de foco a `--focus` | Pendiente |
+| 3 | Superficies y neutros: `background/card/foreground/border/muted-foreground` a los valores de la maqueta; `negative` → `neg`; legados como alias de los nuevos; anillo de foco a `--focus`. (`brand-tint` derivado y sidebar: hechos en §10, el sidebar NO sigue el tema) | Pendiente |
 | 4 | Componentes base en `src/components/ui/`: `Button`, `Panel`, `KpiStrip`, `Badge`, `Banner`, `FinTable` (con modo tarjeta), `DistBar`, `Seg`, `Chip` | Pendiente |
 | 5 | Pantallas, de a una: **Balances** y **Movimientos** primero (las maquetas), después Socios, Comisiones, Órdenes de pago | Pendiente |
 | 6 | Lint (§9) en modo error; borrar los tokens legados sin uso | Pendiente |
@@ -435,3 +439,133 @@ de tokens):
    clase `.dark`) — ya lo verifica el test.
 7. Tablas financieras: números con `tabular-nums` y alineados a la derecha
    (regla de revisión, no de lint).
+
+---
+
+## 10. Color de marca y sidebar oscuro (decisión 2026-10-12)
+
+> Kevin, al ver el diseño en producción: *«quedó bien, pero se ve muy plano, me
+> gustaría agregarle más colores y que el menú del lado tenga un color oscuro.
+> También recuerda que cada marca sube su isotipo y sus colores para que quede
+> customizado».*
+
+### 10.1 La regla, ajustada
+
+- **La marca va en la estructura; la semántica, en los datos.** Navegación,
+  encabezados, acentos, selección y series de gráfico *sin* significado llevan
+  el color de la empresa. Montos, badges de estado, banners y deltas siguen en
+  `pos / neg / pend / info / stale` (§2.1) y **ningún token de esta sección se
+  usa para pintar un número** — un monto en el azul o el rojo de la marca se
+  leería como «info» o como «pérdida». Hay un test que verifica que ningún
+  token de significado depende de la marca.
+- **Nunca el color crudo.** Todo sale de `color_primary` y `color_secondary`
+  vía `src/lib/brand-color.ts` (única fuente de colores derivados) y se inyecta
+  en `src/lib/theme-apply.ts` (`companyThemeVars`, lista única `VARS` que
+  `resetCompanyTheme` limpia). `globals.css` elige la variante del tema y tiene
+  como respaldo la marca del producto (`#1E3A5F / #3B82F6`), recalculada por
+  `brand-theme.test.ts`. Sin empresa (login, superadmin) se ven los respaldos.
+- **Secundario gris → primario** (`usableSecondary`). Un secundario blanco o
+  negro (croma < 12 %) no sirve de acento: desaparece en uno de los dos temas.
+  En prod: Exura Prime carga `#ffffff` y Exura Liquidez `#000000`; en las dos el
+  acento (foco, chip/segmented activo, línea de la topbar, ítem activo del
+  menú) es su rojo, corregido por contraste. Antes del cambio su `--accent` era
+  un gris `#767676`.
+
+### 10.2 Sidebar oscuro de marca
+
+- Fondo `sidebar-bg` = primario mezclado ≥ 50 % hacia un casi-negro azulado
+  (`#05080F`) y más si hace falta hasta **≥ 14:1 contra blanco**. Conserva el
+  tono: navy → `#122137`, Exura Prime → `#52141F` (bordó), Exura Liquidez →
+  `#5B0509`. Nunca `slate-900` ni un negro genérico. Igual en claro y oscuro:
+  los tokens `sidebar-*` viven **sólo en `:root`**.
+- `sidebar-fg` (texto principal, 94 % blanco), `sidebar-muted` (ítems y
+  rótulos, ≥ 4,5:1 sobre fondo y hover), `sidebar-hover`, `sidebar-border`.
+- **Activo**: fondo `sidebar-active-bg` (fondo teñido 24 % con el acento),
+  texto `sidebar-fg` 600, ícono y barra de 3 px en `sidebar-accent` (acento
+  usable aclarado: ≥ 4,5:1 sobre el fondo, ≥ 3:1 sobre el activo).
+- **Grupos**: rótulo 12/600 MAYÚSCULAS `sidebar-muted` con el ícono del grupo
+  coloreado: Finanzas = acento de marca, RRHH `#C4B5FD`, Riesgo `#5EEAD4`,
+  General `#CBD5E1` (`nav-*`, ≥ 3:1). Nunca verde/rojo/ámbar. El acordeón, el
+  localStorage y `NAV_ENTRIES` no cambiaron.
+- **Foco**: `data-surface="brand-dark"` cambia el anillo a `sidebar-accent`
+  (el `--accent` global no llega a 3:1 sobre un fondo bordó).
+- **Logo** (URL vacía `''` = no hay; una imagen que no carga cae a la
+  siguiente opción):
+  - expandido: `logo_url_white`; si no hay, `logo_url` sobre una placa blanca;
+    si no hay ninguno, isotipo/inicial + nombre. Debajo, modelo · moneda.
+  - contraído: `logo_icon_url` sobre placa blanca; si no hay, la **inicial**
+    en un cuadro `sidebar-accent` con texto `sidebar-bg`.
+  - El margen transparente de los logos se recorta en el cliente
+    (`src/lib/logo-trim.ts`, por canal alfa; si no hay CORS o no hay
+    transparencia, se usa la URL tal cual). Motivo: el logo blanco de Exura
+    Prime es una palabra ancha en un PNG de 2250×2250 y a 28 px de alto no se
+    leía.
+  - En prod: Vex Pro y AP Markets → logo blanco expandido, inicial contraído;
+    Exura Prime → logo blanco, inicial (su `logo_icon_url` es `''`); Exura
+    Liquidez y Horizon* / Vonix → inicial + nombre.
+- Pastilla de pendientes: sigue `pend-bg` + `pend` (autocontenida, ≥ 4,5:1).
+
+### 10.3 Tokens nuevos
+
+| Token (utilidad) | Claro | Oscuro | Uso |
+|---|---|---|---|
+| `brand-tint` (`bg-brand-tint`) | tono del acento al 12 % sobre blanco, hasta que `brand-ink` encima ≥ 4,5 | acento al 20 % sobre `#0B1222`, ídem | chip activo, cuadro de ícono de panel/KPI |
+| `brand-wash` (`bg-brand-wash`) | acento al 5 % sobre blanco | acento al 10 % sobre la tarjeta | cabecera de FinTable, cabecera de Panel `accent` |
+| `sidebar-bg/fg/muted/hover/border/accent/active-bg` | igual en los dos temas | — | sidebar y columna de marca del login |
+| `sidebar-plate` | `#FFFFFF` | — | placa de un logo a color sin versión blanca |
+| `nav-finance/hr/risk/config` | ver §10.2 | — | ícono de cada grupo del menú y filete de cada área en el login |
+| `chart-1…7` (CSS var) | acento, `brand-ink`, sus escalones al 55/50 % sobre la tarjeta, `#8B5CF6`, `#0891B2`, `#808DA1` | flipan con `--accent/--brand-ink/--card` | series sin significado (donut de departamentos) |
+
+Variables inyectadas por empresa (además de las de `--brand-primary-*` /
+`--brand-secondary-*`): `--brand-tint-{light,dark}`, `--brand-wash-{light,dark}`,
+`--brand-sidebar-{bg,fg,muted,hover,border,accent,active-bg}`.
+
+### 10.4 Dónde va el color (primitivas)
+
+- **Topbar**: línea de 2 px al pie, degradé `brand-ink` → `accent` →
+  transparente; el grupo de las migas en `brand-ink`. Frescura (pos/stale) y
+  período no cambian.
+- **PageHeader**: el cuadro del ícono es relleno de marca (`bg-primary` +
+  `brand-on-primary`, 36 px).
+- **KpiStrip**: filete superior 2 px `brand-ink` en toda la franja; `icon`
+  opcional por KPI en un cuadro `brand-tint`. El valor nunca toma la marca.
+- **Panel**: `accent` (destacado: filete superior 2 px `brand-ink` + cabecera
+  `brand-wash`) e `icon` (cuadro `brand-tint`) opcionales.
+- **FinTable**: cabecera `brand-wash` con texto `text-2` (el `text-3` quedaba
+  al borde de AA sobre el lavado).
+- **Segmented**: activo con texto `brand-ink` y filete inferior de 2 px de
+  marca (además de superficie + sombra + 600). **Chip**: activo como antes
+  (`brand-tint` + `brand-ink`), hover del inactivo en `brand-ink`.
+- **StatusBadge / Notice**: los `*-bg` de significado son algo más saturados
+  (tabla §2.2); el texto sigue ≥ 4,5:1.
+- **Login** (`auth-shell.tsx`): la columna de marca usa `sidebar-bg` (sin
+  empresa = respaldos del producto), logo blanco, lema y las tres áreas en
+  texto con un filete del color de su grupo. Sin cifras de ejemplo.
+- **Gráficos**: el donut de departamentos usa `chart-1…7`; las series con
+  significado (ingresos, retiros, aprobadas…) siguen en tokens semánticos.
+
+### 10.5 Contraste (fijado en `src/lib/brand-theme.test.ts`)
+
+Con Vex (default), Exura Prime y Exura Liquidez, en claro y oscuro: `brand-ink`
+≥ 4,5 sobre tarjeta, fondo y `brand-tint`; texto sobre el relleno de marca ≥
+4,5; `text-2` y `foreground` sobre `brand-wash` ≥ 4,5; acento y filetes ≥ 3
+sobre la tarjeta; sidebar: fondo ≥ 14:1 contra blanco y no gris, texto/apagado
+≥ 4,5 sobre fondo, hover y activo, acento ≥ 4,5 sobre el fondo y ≥ 3 sobre el
+activo, íconos de grupo ≥ 3. Valores medidos del sidebar:
+
+| Marca | fondo | texto / fondo | apagado / fondo | acento / fondo | acento / activo |
+|---|---|---|---|---|---|
+| Vex (default) | `#122137` | 14,43 | 8,11 | 4,54 (`#3F85F6`) | 3,27 |
+| Exura Prime | `#52141F` | 12,68 | 7,21 | 4,56 (`#DF707C`) | 3,64 |
+| Exura Liquidez | `#5B0509` | 12,65 | 7,00 | 4,63 (`#EA6B6B`) | 3,69 |
+
+### 10.6 Descartado
+
+- Volver a `bg-slate-900` para el sidebar: un negro genérico, igual para todas
+  las marcas — justo lo que se pidió evitar.
+- Pintar el fondo del sidebar con el primario crudo: `#db0000` de fondo no deja
+  leer nada y ninguna marca clara pasaría contraste.
+- Usar el secundario tal cual: con blanco/negro el acento desaparece.
+- Teñir la topbar entera o el fondo de la página: con el sidebar ya oscuro de
+  marca, dos bloques de color compiten y el período pierde peso.
+- Pintar el valor de los KPIs o los montos con la marca (ver §10.1).

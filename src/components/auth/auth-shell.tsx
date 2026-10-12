@@ -30,11 +30,19 @@ import { cn } from '@/lib/utils';
 // deja texto»). Montos inventados en la puerta de un sistema financiero
 // sumaban ruido; las áreas en texto dicen qué hay adentro.
 //
+// 2026-10-12 (tarde), «más color» + sidebar oscuro de marca: la columna de
+// marca usa el MISMO fondo oscuro que el sidebar (`--sidebar-bg`,
+// `data-surface="brand-dark"`), así la puerta y el dashboard se leen como una
+// sola marca. Antes del login no hay empresa: `resetCompanyTheme` deja los
+// respaldos de globals.css, que son la marca del producto (#1E3A5F/#3B82F6).
+// Cada área lleva un filete del color de su grupo en el menú (`--nav-*`): el
+// mismo código de color que el usuario va a ver adentro.
+//
 // DESCARTADO:
 //   · Logo de la empresa por subdominio: no existe esa lógica hoy (ver
 //     auth-brand.tsx). Si aparece, entra por la prop `brand`.
-//   · Fondo con imagen / gradiente de marca: «el color es significado, nunca
-//     decoración» (spec §2.1). El motivo es gris (`border`) sobre `surface-2`.
+//   · Fondo con imagen / gradiente de marca: el fondo es plano (el oscuro de
+//     marca, medido); el motivo de reglas va en `--sidebar-border`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const ICON_BUTTON_CLASS =
@@ -76,17 +84,17 @@ export function AuthPreferences({ className }: { className?: string }) {
 function AuthAreas() {
   const { t } = useI18n();
   const areas = [
-    { title: t('auth.area.finance'), desc: t('auth.area.financeDesc') },
-    { title: t('auth.area.hr'), desc: t('auth.area.hrDesc') },
-    { title: t('auth.area.risk'), desc: t('auth.area.riskDesc') },
+    { title: t('auth.area.finance'), desc: t('auth.area.financeDesc'), bar: 'border-nav-finance' },
+    { title: t('auth.area.hr'), desc: t('auth.area.hrDesc'), bar: 'border-nav-hr' },
+    { title: t('auth.area.risk'), desc: t('auth.area.riskDesc'), bar: 'border-nav-risk' },
   ];
   return (
     <ul className="max-w-[420px] space-y-4">
       {areas.map((a) => (
-        <li key={a.title}>
-          <p className="text-[15px] font-semibold">{a.title}</p>
-          {/* text-2, no text-3: sobre `surface-2` el terciario no llega a AA. */}
-          <p className="mt-0.5 text-[13.5px] leading-5 text-text-2">{a.desc}</p>
+        <li key={a.title} className={cn('border-l-[3px] pl-3', a.bar)}>
+          <p className="text-[15px] font-semibold text-sidebar-fg">{a.title}</p>
+          {/* sidebar-muted: ≥ 4,5:1 sobre el fondo oscuro de marca. */}
+          <p className="mt-0.5 text-[13.5px] leading-5 text-sidebar-muted">{a.desc}</p>
         </li>
       ))}
     </ul>
@@ -109,17 +117,20 @@ export function AuthShell({ title, subtitle, icon, footer, children, width = 'de
   const { t } = useI18n();
   return (
     <div className="min-h-dvh bg-card text-foreground min-[960px]:grid min-[960px]:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]">
-      <aside className="relative hidden overflow-hidden border-r border-border bg-surface-2 min-[960px]:flex min-[960px]:flex-col min-[960px]:justify-between min-[960px]:gap-10 min-[960px]:p-10">
+      <aside
+        data-surface="brand-dark"
+        className="relative hidden overflow-hidden border-r border-sidebar-border bg-sidebar-bg text-sidebar-fg min-[960px]:flex min-[960px]:flex-col min-[960px]:justify-between min-[960px]:gap-10 min-[960px]:p-10"
+      >
         {/* Motivo de libro mayor: reglas de 1 px cada 36 px (= alto de fila) y
             la doble raya del margen, en el gris de los bordes. */}
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,var(--border)_1px,transparent_1px)] bg-[length:100%_36px] opacity-70"
+          className="pointer-events-none absolute inset-0 bg-[linear-gradient(to_bottom,var(--sidebar-border)_1px,transparent_1px)] bg-[length:100%_36px] opacity-60"
         />
-        <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-6 w-[3px] border-x border-border-strong opacity-60" />
+        <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-6 w-[3px] border-x border-sidebar-accent opacity-50" />
 
         <div className="relative flex items-center gap-3">
-          <AuthBrand className="size-14" alt="" />
+          <AuthBrand className="size-14" alt="" onDark />
           <span className="text-[15px] font-semibold tracking-[-0.005em]">Smart Dashboard</span>
         </div>
 
@@ -130,7 +141,7 @@ export function AuthShell({ title, subtitle, icon, footer, children, width = 'de
           <AuthAreas />
         </div>
 
-        <p className="relative text-[12px] text-text-2">© {new Date().getFullYear()} Smart Dashboard</p>
+        <p className="relative text-xs text-sidebar-muted">© {new Date().getFullYear()} Smart Dashboard</p>
       </aside>
 
       <main className="flex min-h-dvh flex-col">

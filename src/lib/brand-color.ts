@@ -163,3 +163,148 @@ export function buildBrandPalette(hex: string | null | undefined, fallback = '#1
     fgDark: rgbToHex(readableTextOn(dark)),
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Color de marca y sidebar oscuro (2026-10-12, pedido de Kevin: «se ve muy
+// plano, me gustaría agregarle más colores y que el menú del lado tenga un
+// color oscuro… cada marca sube su isotipo y sus colores»).
+//
+// Todo lo que sigue deriva de los MISMOS dos colores que carga el admin, con
+// la misma regla de arriba: nunca el color crudo, siempre una variante medida.
+// Ver docs/diseno-libro-mayor.md §10.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Casi negro con un toque azul: hacia acá se oscurece la marca para el
+ *  sidebar. Es la DIRECCIÓN, no el destino (eso lo decide el contraste): así
+ *  un navy queda navy y un rojo queda bordó, nunca un negro genérico. */
+const INK_BLACK: RGB = [5, 8, 15];
+
+/** Contraste mínimo del fondo del sidebar contra el blanco. 14:1 deja lugar
+ *  para texto apagado (≥ 4,5:1) y para íconos de grupo de color (≥ 3:1). */
+export const SIDEBAR_MIN_CONTRAST = 14;
+
+/** Íconos de grupo del menú (Finanzas usa el acento de la marca). Fijos y
+ *  claros: con el fondo del sidebar a ≥ 14:1 del blanco, cualquier color de
+ *  luminancia ≥ 0,18 pasa 3:1. NO son pos/neg/pend (verde/rojo/ámbar): un
+ *  grupo del menú no es una ganancia ni una pérdida. */
+export const NAV_GROUP_HUES = {
+  hr: '#C4B5FD', // violeta
+  risk: '#5EEAD4', // turquesa
+  config: '#CBD5E1', // pizarra
+} as const;
+
+const HEX = /^#?([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
+const isHex = (h: string | null | undefined): h is string => !!h && HEX.test(h.trim());
+
+/**
+ * ¿El color es gris (blanco, negro o cualquier gris)? Croma sRGB < 12 %.
+ * Un secundario así no sirve de acento: blanco desaparece en claro y negro en
+ * oscuro (Exura Prime carga #ffffff y Exura Liquidez #000000 — medido en prod
+ * el 2026-10-12). Con el secundario gris, la marca ES el primario.
+ */
+export function isAchromatic(hex: string | null | undefined): boolean {
+  if (!isHex(hex)) return false;
+  const [r, g, b] = hexToRgb(hex);
+  return Math.max(r, g, b) - Math.min(r, g, b) < 0.12 * 255;
+}
+
+/** El secundario que se usa de verdad: el cargado, salvo que falte o sea
+ *  gris → el primario; si el primario también es gris, el `fallback`. */
+export function usableSecondary(
+  primary: string | null | undefined,
+  secondary: string | null | undefined,
+  fallback = '#3B82F6',
+): string {
+  if (isHex(secondary) && !isAchromatic(secondary)) return secondary;
+  if (isHex(primary) && !isAchromatic(primary)) return primary;
+  return fallback;
+}
+
+/** Tintes de marca para SUPERFICIES (nunca para texto ni para números). */
+export interface BrandTints {
+  /** Ítem/chip activo, cuadro de ícono. `brand-ink` del tema encima ≥ 4,5:1. */
+  tintLight: string;
+  tintDark: string;
+  /** Lavado muy suave: cabecera de tabla, cabecera de panel destacado. */
+  washLight: string;
+  washDark: string;
+}
+
+/**
+ * El tinte toma el TONO del acento (secundario usable: más saturado que un
+ * primario navy, que daba un gris) y se aclara/oscurece hasta que la tinta de
+ * marca (`brand-ink`, del primario) encima pase 4,5:1. `s` = paleta del
+ * secundario usable; sin ella, el primario.
+ */
+export function buildBrandTints(p: BrandPalette, s: BrandPalette = p): BrandTints {
+  const ink = hexToRgb(p.light);
+  const inkDark = hexToRgb(p.inkDark);
+  const white = hexToRgb(LIGHT_SURFACE);
+  const darkBg = hexToRgb(DARK_BG);
+  const darkSurface = hexToRgb(DARK_SURFACE);
+  const ensureInk = (c: RGB, inkOn: RGB, toward: RGB): RGB => {
+    for (let k = 0; k <= 1.0001; k += 0.02) {
+      const cand = mix(c, toward, k);
+      if (contrastRatio(inkOn, cand) >= TEXT_CONTRAST) return cand;
+    }
+    return toward;
+  };
+  const tintLight = ensureInk(mix(hexToRgb(s.light), white, 0.88), ink, white);
+  const tintDark = ensureInk(mix(hexToRgb(s.inkDark), darkBg, 0.8), inkDark, darkBg);
+  return {
+    tintLight: rgbToHex(tintLight),
+    tintDark: rgbToHex(tintDark),
+    washLight: rgbToHex(mix(hexToRgb(s.light), white, 0.95)),
+    washDark: rgbToHex(mix(hexToRgb(s.inkDark), darkSurface, 0.9)),
+  };
+}
+
+/** El sidebar: SIEMPRE oscuro (los dos temas), del color de la marca. */
+export interface SidebarPalette {
+  bg: string;
+  /** Texto principal: nombre, ítem activo. */
+  fg: string;
+  /** Ítems inactivos y rótulos de grupo: ≥ 4,5:1 sobre `bg` y sobre `hover`. */
+  muted: string;
+  hover: string;
+  border: string;
+  /** Acento (secundario usable, aclarado): barra e ícono del activo, anillo de
+   *  foco. ≥ 4,5:1 sobre `bg` y ≥ 3:1 sobre `activeBg`. */
+  accent: string;
+  /** Fondo del ítem activo: el fondo teñido con el acento. */
+  activeBg: string;
+}
+
+export function buildSidebarPalette(
+  primary: string | null | undefined,
+  secondary: string | null | undefined,
+  fallbackPrimary = '#1E3A5F',
+  fallbackSecondary = '#3B82F6',
+): SidebarPalette {
+  const base = hexToRgb(isHex(primary) ? primary : fallbackPrimary);
+  // Oscurecer hacia el casi-negro (conserva el tono) un 50 % como mínimo, y
+  // más si el contraste contra el blanco no llega (marcas claras).
+  let bg = mix(base, INK_BLACK, 0.5);
+  for (let t = 0.52; contrastRatio(bg, WHITE) < SIDEBAR_MIN_CONTRAST && t <= 1.0001; t += 0.02) {
+    bg = mix(base, INK_BLACK, t);
+  }
+  const hover = mix(bg, WHITE, 0.07);
+  const border = mix(bg, WHITE, 0.14);
+  const fg = mix(bg, WHITE, 0.94);
+  const muted = ensureContrast(mix(bg, WHITE, 0.68), hover, TEXT_CONTRAST, 'lighter');
+
+  const accentRaw = hexToRgb(usableSecondary(primary, secondary, fallbackSecondary));
+  const activeBg = mix(bg, accentRaw, 0.24);
+  let accent = ensureContrast(accentRaw, bg, TEXT_CONTRAST, 'lighter');
+  accent = ensureContrast(accent, activeBg, UI_CONTRAST, 'lighter');
+
+  return {
+    bg: rgbToHex(bg),
+    fg: rgbToHex(fg),
+    muted: rgbToHex(muted),
+    hover: rgbToHex(hover),
+    border: rgbToHex(border),
+    accent: rgbToHex(accent),
+    activeBg: rgbToHex(activeBg),
+  };
+}

@@ -22,6 +22,7 @@ import { useI18n } from '@/lib/i18n';
 import { moduleDisplayLabel } from '@/lib/modules';
 import { BUSINESS_MODEL_LABELS, normalizeBusinessModel } from '@/lib/business-model';
 import { clearActiveCompanyId } from '@/lib/active-company';
+import { useTrimmedLogo } from '@/lib/logo-trim';
 import {
   NAV_ENTRIES,
   NAV_GROUPS,
@@ -38,12 +39,32 @@ import {
 } from '@/lib/module-groups';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Sidebar «Libro mayor» (docs/diseno-libro-mayor.md §6.1, Fase 4 2026-10-12).
+// Sidebar «Libro mayor» (docs/diseno-libro-mayor.md §6.1 y §10).
+//
+// OSCURO DE MARCA (2026-10-12, segunda decisión de Kevin: «se ve muy plano…
+// que el menú del lado tenga un color oscuro… cada marca sube su isotipo y sus
+// colores»). Revierte el «sigue el tema» de la fase 4: el fondo es el primario
+// de la empresa oscurecido hacia casi-negro (`--sidebar-bg`, ≥ 14:1 contra el
+// blanco), igual en claro y en oscuro; texto/apagado/acento medidos contra ese
+// fondo (brand-color.ts `buildSidebarPalette`). El activo lleva el acento de
+// marca (secundario usable: si la empresa cargó blanco o negro, el primario).
+// `data-surface="brand-dark"` cambia el anillo de foco al acento del sidebar.
+// Descartado: volver a `bg-slate-900` (un negro genérico igual para todas las
+// marcas — justo lo que Kevin no quiere) y pintar el fondo con el primario
+// crudo (un rojo #db0000 de fondo no deja leer nada).
+//
+// Logo: expandido → `logo_url_white`; si no hay, `logo_url` sobre una placa
+// clara; si no hay ninguno, isotipo/inicial + nombre. Contraído → isotipo
+// (`logo_icon_url`) sobre placa clara; si no hay, la inicial en un cuadro del
+// acento de marca. Una URL vacía ('' — Exura Prime y Horizon Atlas la tienen
+// así en prod) cuenta como «no hay», y una imagen que no carga también. El
+// margen transparente del lienzo se recorta en el cliente (src/lib/logo-trim.ts).
 //
 // POR QUÉ se rehízo:
 //   · Era SIEMPRE oscura (`bg-slate-900`) con 28 colores de paleta cruda y un
-//     `#60A5FA` fijo para el ícono de la sección activa. Ahora sigue el tema:
-//     superficie (`bg-card` hasta la fase 3), borde `border`, sólo tokens.
+//     `#60A5FA` fijo para el ícono de la sección activa. En la fase 4 pasó a
+//     seguir el tema; desde el 2026-10-12 vuelve a ser oscura pero DE MARCA
+//     (ver arriba) y sigue siendo sólo tokens.
 //   · Tenía su propia lista (`NAV_STRUCTURE`) y además un modo «plano» que se
 //     dibujaba desde OTRA lista (`MODULE_GROUPS`) donde faltaban Forecast y
 //     Registro: un usuario de un solo grupo no veía Forecast. Ahora todo sale
@@ -96,7 +117,101 @@ const DRAWER_QUERY = '(max-width: 959.98px)';
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-/** Hasta dos iniciales — avatar del pie y marca de la empresa sin isotipo. */
+/** URL de logo utilizable: null si falta o es '' (pasa en prod). */
+function logoUrl(url: string | null | undefined): string | null {
+  const u = url?.trim();
+  return u ? u : null;
+}
+
+/**
+ * Marca de la empresa en el sidebar. Elige el asset según el espacio y cae al
+ * siguiente si la imagen no carga (404, storage borrado): nunca un cuadro roto.
+ */
+function CompanyMark({
+  name,
+  logoWhite,
+  logoColor,
+  logoIcon,
+  compact,
+  sub,
+}: {
+  name: string;
+  logoWhite: string | null;
+  logoColor: string | null;
+  logoIcon: string | null;
+  compact: boolean;
+  sub: string;
+}) {
+  const [broken, setBroken] = useState<ReadonlySet<string>>(() => new Set());
+  const ok = (u: string | null) => (u && !broken.has(u) ? u : null);
+  const onError = (u: string) => () => setBroken((cur) => new Set(cur).add(u));
+  const iconUrl = ok(logoIcon);
+  const white = ok(logoWhite);
+  const color = white ? null : ok(logoColor);
+  const wideUrl = white ?? color;
+  // Sin el margen transparente del lienzo (logo-trim.ts): el logo blanco de
+  // Exura Prime es una palabra ancha en un PNG cuadrado y en 28 px no se leía.
+  const icon = useTrimmedLogo(iconUrl);
+  const wide = useTrimmedLogo(wideUrl);
+  const initial = (name.trim().charAt(0) || '?').toUpperCase();
+
+  const square = icon && iconUrl ? (
+    <span className="flex h-7.5 w-7.5 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-sidebar-plate p-0.5">
+      {/* <img> nativo: los logos vienen de URLs arbitrarias (no van al
+          allow-list de next/image). */}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src={icon} alt="" onError={onError(iconUrl)} className="size-full object-contain" />
+    </span>
+  ) : (
+    <span
+      aria-hidden="true"
+      className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-lg bg-sidebar-accent text-[13px] font-bold text-sidebar-bg"
+    >
+      {initial}
+    </span>
+  );
+  if (compact) return square;
+
+  const subLine = sub ? (
+    <span className="block truncate text-xs leading-tight text-sidebar-muted">{sub}</span>
+  ) : null;
+  if (wide && wideUrl) {
+    return (
+      <span className="flex min-w-0 flex-col gap-1.5">
+        <span className="sr-only">{name}</span>
+        <span className={cn('flex items-center', color ? 'h-9 w-fit rounded-ui-md bg-sidebar-plate px-2' : 'h-9')}>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={wide}
+            alt=""
+            onError={onError(wideUrl)}
+            className={cn('max-w-[176px] object-contain object-left', color ? 'h-6' : 'h-8')}
+          />
+        </span>
+        {subLine}
+      </span>
+    );
+  }
+  return (
+    <span className="flex min-w-0 items-center gap-2.5">
+      {square}
+      <span className="min-w-0">
+        <span className="block truncate text-[13px] font-semibold leading-tight text-sidebar-fg">{name}</span>
+        {subLine}
+      </span>
+    </span>
+  );
+}
+
+/** Color del ícono de cada grupo del menú (tokens `--nav-*`, globals.css). */
+const GROUP_ICON_CLASS: Record<ModuleGroupKey, string> = {
+  finance: 'text-nav-finance',
+  hr: 'text-nav-hr',
+  risk: 'text-nav-risk',
+  config: 'text-nav-config',
+};
+
+/** Hasta dos iniciales — avatar del pie. */
 function initialsOf(name: string | null | undefined): string {
   return (name ?? '')
     .trim()
@@ -319,11 +434,11 @@ export function Sidebar({
               ? 'mx-auto h-10 w-10 justify-center'
               : 'h-8.5 gap-2.5 px-2.5 pointer-coarse:h-11',
             isActive
-              ? 'bg-brand-tint font-semibold text-brand-ink before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-brand-ink'
-              : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+              ? 'bg-sidebar-active-bg font-semibold text-sidebar-fg before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-sidebar-accent'
+              : 'text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg',
           )}
         >
-          <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+          <Icon className={cn('h-4 w-4 shrink-0', isActive && 'text-sidebar-accent')} aria-hidden="true" />
           {!isCollapsed && <span className="min-w-0 flex-1 truncate">{label}</span>}
           {countText !== null && (
             <span
@@ -348,8 +463,8 @@ export function Sidebar({
   const roleLabel = user ? (ROLE_LABELS[user.role] || user.role) : '';
 
   const iconButton = cn(
-    'flex h-10 w-10 shrink-0 items-center justify-center rounded-ui-md text-text-2 transition-colors motion-reduce:transition-none',
-    'hover:bg-surface-2 hover:text-foreground',
+    'flex h-10 w-10 shrink-0 items-center justify-center rounded-ui-md text-sidebar-muted transition-colors motion-reduce:transition-none',
+    'hover:bg-sidebar-hover hover:text-sidebar-fg',
   );
 
   return (
@@ -369,8 +484,9 @@ export function Sidebar({
         role={mobileOpen ? 'dialog' : undefined}
         aria-modal={mobileOpen ? true : undefined}
         aria-label={mobileOpen ? t('shell.mainNav') : undefined}
+        data-surface="brand-dark"
         className={cn(
-          'h-full shrink-0 flex-col border-r border-border bg-card text-foreground',
+          'h-full shrink-0 flex-col border-r border-sidebar-border bg-sidebar-bg text-sidebar-fg',
           'hidden min-[960px]:flex transition-[width] duration-200 motion-reduce:transition-none',
           isCollapsed ? 'w-16' : 'w-58',
           mobileOpen && 'max-[959.98px]:fixed max-[959.98px]:inset-y-0 max-[959.98px]:left-0 max-[959.98px]:z-50 max-[959.98px]:flex max-[959.98px]:w-68 max-[959.98px]:shadow-3',
@@ -379,7 +495,7 @@ export function Sidebar({
         {/* ── Empresa ── */}
         <div
           className={cn(
-            'flex shrink-0 items-center border-b border-border',
+            'flex shrink-0 items-center border-b border-sidebar-border',
             isCollapsed ? 'flex-col gap-1 px-2 py-3' : 'gap-2.5 px-3.5 py-3',
           )}
         >
@@ -390,33 +506,14 @@ export function Sidebar({
             aria-label={company?.name || t('nav.home')}
             title={isCollapsed ? company?.name : undefined}
           >
-            {company?.logo_icon_url ? (
-              // Isotipo de la empresa (migración 072). <img> nativo: los logos
-              // vienen de URLs arbitrarias y no van al allow-list de next/image.
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={company.logo_icon_url}
-                alt=""
-                className="h-7.5 w-7.5 shrink-0 rounded-lg object-contain"
-              />
-            ) : (
-              <span
-                aria-hidden="true"
-                className="flex h-7.5 w-7.5 shrink-0 items-center justify-center rounded-lg bg-primary text-[12px] font-semibold text-brand-on-primary"
-              >
-                {initialsOf(company?.name)}
-              </span>
-            )}
-            {!isCollapsed && (
-              <span className="min-w-0">
-                <span className="block truncate text-[13px] font-semibold leading-tight">
-                  {company?.name ?? ''}
-                </span>
-                {companySub && (
-                  <span className="block truncate text-[12px] leading-tight text-text-3">{companySub}</span>
-                )}
-              </span>
-            )}
+            <CompanyMark
+              name={company?.name ?? ''}
+              logoWhite={logoUrl(company?.logo_url_white)}
+              logoColor={logoUrl(company?.logo_url)}
+              logoIcon={logoUrl(company?.logo_icon_url)}
+              compact={isCollapsed}
+              sub={companySub}
+            />
           </Link>
           {canSwitchCompany && (
             <button
@@ -456,9 +553,13 @@ export function Sidebar({
             const headingId = `${id}-group-${group.key}`;
             const panelId = `${id}-panel-${group.key}`;
             const label = t(group.i18nKey);
-            const wrapper = cn(isCollapsed ? 'mt-2 border-t border-border pt-2' : 'mt-3');
+            const wrapper = cn(isCollapsed ? 'mt-2 border-t border-sidebar-border pt-2' : 'mt-3');
             const headingText =
-              'text-[11px] font-semibold uppercase tracking-[0.06em] text-text-3';
+              'text-xs font-semibold uppercase tracking-[0.06em] text-sidebar-muted';
+            const GroupIcon = group.icon;
+            const groupIcon = (
+              <GroupIcon className={cn('h-3.5 w-3.5 shrink-0', GROUP_ICON_CLASS[group.key])} aria-hidden="true" />
+            );
 
             // Rail: sin acordeón, todos los íconos.
             if (isCollapsed) {
@@ -473,7 +574,10 @@ export function Sidebar({
             if (!isGroupCollapsible(entries.length)) {
               return (
                 <div key={group.key} className={wrapper}>
-                  <p id={headingId} className={cn('px-2.5 pb-1', headingText)}>{label}</p>
+                  <p id={headingId} className={cn('flex items-center gap-2 px-2.5 pb-1', headingText)}>
+                    {groupIcon}
+                    {label}
+                  </p>
                   <ul className="space-y-0.5" aria-labelledby={headingId}>{entries.map(renderLink)}</ul>
                 </div>
               );
@@ -493,10 +597,11 @@ export function Sidebar({
                   aria-controls={panelId}
                   className={cn(
                     'flex h-8 w-full items-center gap-2 rounded-ui-md px-2.5 text-left transition-colors pointer-coarse:h-11',
-                    'hover:bg-surface-2 motion-reduce:transition-none',
+                    'hover:bg-sidebar-hover hover:text-sidebar-fg motion-reduce:transition-none',
                     headingText,
                   )}
                 >
+                  {groupIcon}
                   <span className="min-w-0 flex-1 truncate">{label}</span>
                   {pending > 0 && (
                     <span
@@ -533,7 +638,7 @@ export function Sidebar({
         </nav>
 
         {/* ── Pie: persona + utilidades ── */}
-        <div className={cn('shrink-0 border-t border-border', isCollapsed ? 'px-2 py-2' : 'px-3 py-2.5')}>
+        <div className={cn('shrink-0 border-t border-sidebar-border', isCollapsed ? 'px-2 py-2' : 'px-3 py-2.5')}>
           {user && (
             <Link
               href="/perfil"
@@ -542,20 +647,20 @@ export function Sidebar({
               title={isCollapsed ? `${user.name} · ${roleLabel}` : t('nav.profile')}
               aria-label={isCollapsed ? `${t('nav.profile')}: ${user.name}` : undefined}
               className={cn(
-                'flex items-center rounded-ui-md transition-colors hover:bg-surface-2 motion-reduce:transition-none',
+                'flex items-center rounded-ui-md transition-colors hover:bg-sidebar-hover motion-reduce:transition-none',
                 isCollapsed ? 'mx-auto h-10 w-10 justify-center' : 'gap-2.5 px-1.5 py-1.5',
               )}
             >
               <span
                 aria-hidden="true"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[12px] font-semibold text-text-2"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-sidebar-active-bg text-xs font-semibold text-sidebar-fg"
               >
                 {initialsOf(user.name)}
               </span>
               {!isCollapsed && (
                 <span className="min-w-0">
                   <span className="block truncate text-[13px] font-semibold leading-tight">{user.name}</span>
-                  <span className="block truncate text-[12px] leading-tight text-text-3">{roleLabel}</span>
+                  <span className="block truncate text-xs leading-tight text-sidebar-muted">{roleLabel}</span>
                 </span>
               )}
             </Link>
@@ -578,7 +683,7 @@ export function Sidebar({
               onClick={toggleLanguage}
               aria-label={t('shell.language')}
               title={t('shell.language')}
-              className={cn(iconButton, 'gap-1 text-[12px] font-semibold', !isCollapsed && 'w-auto px-2.5')}
+              className={cn(iconButton, 'gap-1 text-xs font-semibold', !isCollapsed && 'w-auto px-2.5')}
             >
               <Globe className="h-4 w-4" aria-hidden="true" />
               {!isCollapsed && <span>{locale === 'es' ? 'EN' : 'ES'}</span>}
@@ -604,7 +709,7 @@ export function Sidebar({
               onClick={handleLogout}
               aria-label={t('nav.logout')}
               title={t('nav.logout')}
-              className={cn(iconButton, 'hover:bg-neg-bg hover:text-neg', !isCollapsed && 'ml-auto')}
+              className={cn(iconButton, !isCollapsed && 'ml-auto')}
             >
               <LogOut className="h-4 w-4" aria-hidden="true" />
             </button>

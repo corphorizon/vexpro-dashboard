@@ -122,8 +122,10 @@ describe('<AuthShell>', () => {
     expect(out.match(/<h1/g)).toHaveLength(1);
     expect(out).toContain('Iniciá sesión');
     expect(out).toContain('FORM');
-    expect(out).toMatch(/<aside class="[^"]*hidden[^"]*min-\[960px\]:flex/);
-    expect(out).toContain('bg-surface-2');
+    expect(out).toMatch(/<aside data-surface="brand-dark" class="[^"]*hidden[^"]*min-\[960px\]:flex/);
+    // Mismo fondo oscuro de marca que el sidebar (spec §10).
+    expect(out).toContain('bg-sidebar-bg text-sidebar-fg');
+    expect(out).toContain('/brand/logo-white.png');
   });
   it('la marca es sólo texto: las tres áreas, sin cifras de ejemplo', () => {
     expect(out).toContain('Recursos Humanos');

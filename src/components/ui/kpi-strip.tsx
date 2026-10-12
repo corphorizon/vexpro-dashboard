@@ -36,6 +36,12 @@ import { relativeAge } from './relative-age';
 // número de columnas (la spec pide «recalcular los bordes»; esto lo hace sin
 // calcular nada por breakpoint).
 //
+// Color de marca (2026-10-12, spec §10): filete superior de 2 px `brand-ink`
+// en toda la franja y, opcional, un `icon` por KPI en un cuadro con el tinte de
+// marca. El VALOR nunca toma el color de marca: sigue `foreground` o el tono de
+// significado (pos/neg/stale) que decide Money — un número azul de marca se
+// leería como «info» o como «positivo».
+//
 // DESCARTADO:
 //   · `gap-px` sobre fondo `border` (el truco clásico): con 5 KPIs en 3
 //     columnas la celda vacía del final queda pintada de color borde.
@@ -81,6 +87,8 @@ export interface KpiItem {
    * el primero afirma algo falso — sí hay dato, todavía no llegó.
    */
   missingBadge?: { kind: StatusKind; label: React.ReactNode } | false;
+  /** Ícono junto a la etiqueta, en un cuadro con el tinte de marca. */
+  icon?: React.ComponentType<{ className?: string; 'aria-hidden'?: boolean }>;
 }
 
 const pctFmt = () =>
@@ -125,7 +133,7 @@ export function KpiStrip({ items, className, now: nowProp }: KpiStripProps) {
   return (
     <div
       className={cn(
-        'grid overflow-hidden rounded-ui-lg border border-border bg-card shadow-1',
+        'grid overflow-hidden rounded-ui-lg border border-border border-t-2 border-t-brand-ink bg-card shadow-1',
         'grid-cols-2 sm:grid-cols-[repeat(var(--kc3),minmax(0,1fr))] min-[1100px]:grid-cols-[repeat(var(--kc),minmax(0,1fr))]',
         className,
       )}
@@ -150,7 +158,14 @@ export function KpiStrip({ items, className, now: nowProp }: KpiStripProps) {
             )}
             data-hero={item.hero || undefined}
           >
-            <div className="truncate text-[12px] font-medium text-text-2">{item.label}</div>
+            <div className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-text-2">
+              {item.icon && (
+                <span className="flex size-5 shrink-0 items-center justify-center rounded-ui-sm bg-brand-tint text-brand-ink">
+                  <item.icon className="size-3" aria-hidden />
+                </span>
+              )}
+              <span className="truncate">{item.label}</span>
+            </div>
             {missing ? (
               <span className={cn(valueClass, NUM_CLASS, 'text-text-3')}>—</span>
             ) : format === 'count' || format === 'percent' ? (

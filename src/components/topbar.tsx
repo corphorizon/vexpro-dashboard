@@ -37,6 +37,13 @@ import { PeriodSelector } from '@/components/period-selector';
 //   (`usesPeriod` en el registro): en Usuarios o Risk un selector de mes sería
 //   un control que no cambia nada.
 //
+// Acento de marca (2026-10-12, spec §10, «más color»): una línea de 2 px al
+// pie de la barra que va de la tinta de marca al acento y se desvanece, y el
+// grupo de las migas en `brand-ink`. Es estructura, no dato: el punto de
+// frescura sigue en pos/stale y el período en `foreground`, legibles igual.
+// Descartado: teñir todo el fondo de la barra — con el sidebar ya oscuro de
+// marca, dos bloques de color compiten y el período pierde contraste visual.
+//
 // Pendiente (fase 5): esas pantallas todavía tienen su `<PeriodSelector/>`
 // dentro del contenido. Comparten estado con la topbar (no se desincronizan),
 // pero la spec pide uno solo; sacarlo es tocar cada pantalla.
@@ -215,7 +222,11 @@ export function Topbar({ onMenuToggle, menuOpen, sidebarId }: TopbarProps) {
   );
 
   return (
-    <header className="flex h-13 items-center gap-3 border-b border-border bg-background/88 px-6 backdrop-blur-[8px] max-[959.98px]:px-4">
+    <header className="relative flex h-13 items-center gap-3 border-b border-border bg-background/88 px-6 backdrop-blur-[8px] max-[959.98px]:px-4">
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 -bottom-px h-0.5 bg-[linear-gradient(90deg,var(--brand-ink),var(--accent)_45%,transparent)]"
+      />
       <button
         type="button"
         onClick={onMenuToggle}
@@ -232,7 +243,7 @@ export function Topbar({ onMenuToggle, menuOpen, sidebarId }: TopbarProps) {
           <ol className="flex min-w-0 items-center gap-1.5 text-[13.5px]">
             {group && (
               <li className="flex items-center gap-1.5 text-text-3 max-sm:hidden">
-                <span className="whitespace-nowrap">{t(group.i18nKey)}</span>
+                <span className="whitespace-nowrap font-medium text-brand-ink">{t(group.i18nKey)}</span>
                 <span aria-hidden="true">/</span>
               </li>
             )}
