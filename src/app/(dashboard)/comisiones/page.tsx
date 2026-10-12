@@ -1,15 +1,53 @@
 'use client';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// /comisiones — diseño «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md)
+//
+// POR QUÉ: la pantalla tenía 144 clases de paleta cruda, 26 `dark:` de color,
+// 24 `text-[10px]/[11px]` y 51 recetas de foco propias (medido con grep antes
+// de tocarla). Dos de esos colores mentían: el «Pago real» iba SIEMPRE en
+// verde, también cuando era negativo — o sea DEUDA del BDM (§2.1 #1, sin
+// clamp) — y el Historial pintaba de verde una tabla donde todo es ≥ 0.
+//
+// QUÉ CAMBIÓ (sólo presentación):
+//   · Pestañas → `Segmented`; selectores → `Field` + `Select`; avisos (CRM
+//     automático, mes cerrado, error del CRM, deuda arrastrada, sin dato CRM,
+//     ND del equipo que no cuadra) → `Notice`; KPIs → `KpiStrip`.
+//   · Las 6 tablas → `FinTable` (teams-table, individual-tables,
+//     history-table): Pago real y Total en tono `sign`, deuda arrastrada en
+//     su propia columna, líder → líneas como filas de grupo, totales en tfoot.
+//   · Inputs de celda → `Input compact` (32 px) con el foco global; la
+//     procedencia del insumo con la etiqueta de fuente de Movimientos.
+//
+// QUÉ NO CAMBIÓ — a propósito: commission-calculator.ts intacto; los cuatro
+// caminos de guardado (`handleSave`, `handleSaveBdm`, `handleRecalcHistory`,
+// `handleRecalcPnlDesdeCrm`) intactos; los cuerpos de los PDF por fila son
+// los mismos (se mudaron del JSX a `*RowActions` sin tocar una línea).
+// Unificar los guardados es otra tarea.
+//
+// DESCARTADO:
+//   · Mover estado o handlers a los componentes extraídos: las tablas reciben
+//     filas ya armadas y callbacks; todo lo que decide un número sigue acá.
+//   · Corregir el «$0 en vez de negativo» del Historial o el pie de
+//     Individual que suma el total SIN deuda: son números, no presentación.
+//     Quedan dichos en pantalla (pie del Historial) y en el reporte.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
+import { Button } from '@/components/ui/button';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { Field, Select } from '@/components/ui/field';
+import { Segmented } from '@/components/ui/segmented';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
 import { useData } from '@/lib/data-context';
-import type { CommercialMonthlyResult } from '@/lib/types';
+import type { CommercialMonthlyResult, CommercialProfile } from '@/lib/types';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency, cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/utils';
 import { formatMoney } from '@/lib/money';
 import { downloadCSV } from '@/lib/csv-export';
 // Lazy-loaded (Kevin 2026-06-06 code review): jspdf + jspdf-autotable
@@ -20,7 +58,6 @@ async function loadPdfExports() {
   return import('@/lib/pdf-export');
 }
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { FiredBadge, firedNameClass } from '@/components/fired-badge';
 import {
   calculateCommission,
   calculateGroupSummary,
@@ -71,17 +108,28 @@ import {
   ChevronRight,
   CheckCircle,
   AlertCircle,
-  Info,
   UserCircle,
   Users,
   BarChart3,
   FileText,
   FileSpreadsheet,
   ChevronDown,
-  Loader2,
-  Sparkles,
   RefreshCw,
 } from 'lucide-react';
+import { RowActionButtons, SearchBox } from './commission-ui';
+import { ROLE_LABEL, carriedDebtSummary, countSinDatoCrm, periodLabel as periodOptionLabel } from './commission-view';
+import { DebtEquation, TeamsTable, type InputControls, type PctControls, type TeamRow } from './teams-table';
+import {
+  LotTable,
+  NdIndividualTable,
+  PnlIndividualTable,
+  PnlSpecialTable,
+  type LotRow,
+  type NdRow,
+  type PnlRow,
+  type PnlSpecialRow,
+} from './individual-tables';
+import { HistoryTable } from './history-table';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // `appearsInCommissions`
@@ -153,13 +201,9 @@ function totalGuardadoDelMes(
   ).total_earned;
 }
 
-const ROLE_BADGE: Record<string, string> = {
-  sales_manager: 'bg-warning/10 text-warning',
-  head: 'bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
-  bdm: 'bg-info/10 text-info',
-  bdm_global: 'bg-purple-100 dark:bg-purple-950/50 text-purple-800 dark:text-purple-300 border border-purple-300',
-};
-const ROLE_LABEL: Record<string, string> = { sales_manager: 'Sales Manager', head: 'HEAD', bdm: 'BDM', bdm_global: 'BDM GLOBAL' };
+// Rótulos de rol: `ROLE_LABEL` vive en commission-view.ts (lo leen también
+// los PDF). Los colores por rol (`ROLE_BADGE`, violeta/púrpura) se borraron:
+// un rol no es dinero ni estado — va como metadato gris (spec §2.1).
 
 type Tab = 'teams' | 'individual' | 'history';
 
@@ -174,90 +218,13 @@ type Tab = 'teams' | 'individual' | 'history';
  */
 const RECALC_PNL_DESDE = { year: 2026, month: 4 } as const;
 
-/**
- * El rótulo de procedencia del insumo, debajo del input de ND.
- *
- * Existe porque el número dejó de tener una sola fuente: puede venir del rollup
- * del CRM, de un override cargado a mano, de un período congelado, o no existir.
- * Sin el rótulo, las cuatro cosas se ven idénticas en pantalla — y "no lo
- * sabemos" mostrado como $0 es el modo de falla que este repo persigue (§1.2).
- *
- * `auto` es el automático del mes: se muestra AL LADO del override para que
- * quien lo cargó a mano vea contra qué está corrigiendo.
- */
-function NdSourceTag({
-  source,
-  auto,
-  labels,
-}: {
-  source: NetDepositSource;
-  auto: number | null;
-  labels: (k: string) => string;
-}) {
-  if (source === 'crm') {
-    return <span className="block text-[10px] uppercase tracking-wide text-positive/80 mt-0.5">{labels('comm.ndSourceCrm')}</span>;
-  }
-  if (source === 'manual') {
-    return (
-      <span className="block text-[10px] mt-0.5 text-warning" title={labels('comm.ndOverrideHint')}>
-        {labels('comm.ndSourceManual')}
-        {auto !== null && (
-          <span className="ml-1 text-muted-foreground normal-case">({labels('comm.ndAutoRef')} {formatCurrency(auto)})</span>
-        )}
-      </span>
-    );
-  }
-  if (source === 'frozen') {
-    return <span className="block text-[10px] uppercase tracking-wide text-muted-foreground mt-0.5">{labels('comm.ndSourceFrozen')}</span>;
-  }
-  return <span className="block text-[10px] text-muted-foreground mt-0.5">{labels('comm.ndSourceNone')}</span>;
-}
-
-/**
- * La celda del % de una fila de NET DEPOSIT: el % manual del mes.
- *
- * Vacío = automático, y el PLACEHOLDER muestra cuál es ese automático — el
- * mismo recurso que el rótulo del ND: quien corrige a mano tiene que ver contra
- * qué está corrigiendo. Un `0` tecleado es un 0 de verdad (ese mes no cobra
- * comisión) y NO es lo mismo que vaciar el campo (§1.3).
- *
- * En período CERRADO no se edita, como el resto de la fila.
- */
-function PctOverrideInput({
-  value,
-  auto,
-  disabled,
-  onChange,
-  labels,
-}: {
-  value: string;
-  auto: number;
-  disabled: boolean;
-  onChange: (v: string) => void;
-  labels: (k: string) => string;
-}) {
-  const manual = value.trim() !== '' && value.trim() !== '-';
-  return (
-    <span className="inline-flex items-center gap-0.5">
-      <input
-        type="number"
-        step="0.01"
-        aria-label={labels('comm.pctOverrideAria')}
-        title={labels('comm.pctOverrideHint')}
-        placeholder={String(auto)}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(e.target.value)}
-        onFocus={(e) => e.target.select()}
-        className={cn(
-          'w-14 px-1 py-0.5 text-right rounded border border-border bg-background text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] disabled:opacity-60 disabled:cursor-not-allowed',
-          manual && 'border-warning text-warning font-semibold',
-        )}
-      />
-      <span className="text-[10px] text-muted-foreground">%</span>
-    </span>
-  );
-}
+// `NdSourceTag` (el rótulo de procedencia del insumo) y `PctOverrideInput`
+// (el % manual del mes) se mudaron a commission-ui.tsx con el diseño «Libro
+// mayor» (2026-10-12). Siguen existiendo por lo mismo: el número tiene cuatro
+// fuentes posibles (CRM, override, congelado, ninguna) y sin el rótulo se ven
+// idénticas — "no lo sabemos" mostrado como $0 es el modo de falla que este
+// repo persigue (§1.2). Y un `0` tecleado en el % es un 0 de verdad, distinto
+// de vaciar el campo (§1.3).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // EL INSUMO AUTOMÁTICO DEL GRUPO PnL (migración 123, 2026-09-02)
@@ -334,29 +301,9 @@ function indiceParaResolver(
   return out;
 }
 
-/**
- * El contexto del número: de qué red salió, o que no hay cruce con el CRM.
- *
- * Se muestra SIEMPRE que el perfil esté en la respuesta del CRM, incluso
- * cuando el campo lo pisó un override: quien corrige a mano tiene derecho a
- * saber contra qué red está corrigiendo.
- */
-function PnlCrmHint({ info, labels }: { info: PnlCrmEntry | undefined; labels: (k: string, p?: Record<string, string>) => string }) {
-  if (!info) return null;
-  if (info.sinDatoCrm) {
-    return (
-      <span className="block text-[10px] text-warning mt-0.5" title={labels('comm.pnlNoCrmData')}>
-        {labels('comm.pnlNoCrmDataShort')}
-      </span>
-    );
-  }
-  if (info.usuariosRed === null) return null;
-  return (
-    <span className="block text-[10px] text-muted-foreground mt-0.5">
-      {labels('comm.pnlNetworkUsers', { n: info.usuariosRed.toLocaleString('es-AR') })}
-    </span>
-  );
-}
+// `PnlCrmHint` (de qué red salió el PnL, o que no hay cruce con el CRM) vive
+// en commission-ui.tsx. Se muestra SIEMPRE que el perfil esté en la respuesta
+// del CRM, incluso con override: quien corrige a mano ve contra qué red corrige.
 
 // ═══════════════════════════════════════════════════════════
 // MAIN PAGE
@@ -1496,7 +1443,10 @@ export default function ComisionesPage() {
     });
   }, [allBdms, ndInputs, ndRawInputs, ndResolved, previousResultsAll, periodYear, periodMonth, getPctOverride]);
 
-  const indSummary = useMemo(() => calculateGroupSummary(indCalcs), [indCalcs]);
+  // `indSummary` (calculateGroupSummary de indCalcs) se borró el 2026-10-12:
+  // su único uso era ELEGIR EL COLOR del pie de Net Deposit, que pintaba la
+  // suma de pagos reales según el signo de OTRA suma (`totalCommission`). El
+  // pie ahora usa el tono del propio número; ninguna cifra salía de acá.
 
   // Filtered BDM lists by commission type
   const ndBdms = useMemo(() => allBdms.filter((p) => p.net_deposit_pct != null), [allBdms]);
@@ -2543,981 +2493,588 @@ export default function ComisionesPage() {
   // ═══════════════════════════════════════════════════════════
 
   if (!canAccess) {
-    return <div className="flex items-center justify-center h-64"><p className="text-muted-foreground">{t('common.noAccess')}</p></div>;
+    return <div className="flex h-64 items-center justify-center"><p className="text-text-2">{t('common.noAccess')}</p></div>;
   }
 
+  // ── Insumos editables, agrupados para las tablas ─────────────────────────
+  // Los MISMOS getters y handlers de siempre (ver arriba); sólo se juntan en
+  // un objeto para no pasar cuatro props por columna. Ninguno cambia.
+  const ndControls: InputControls = { display: getNdDisplay, change: handleNdChange, source: getNdSource, auto: getNdAuto };
+  const masterNdControls: InputControls = {
+    display: getMasterNdDisplay,
+    change: handleMasterNdChange,
+    source: getMasterNdSource,
+    auto: (id) => masterNdResolved.get(id)?.crm ?? null,
+  };
+  const lotControls: InputControls = { display: getLotDisplay, change: handleLotChange, source: getLotSource, auto: getLotAuto };
+  const pctControls: PctControls = { display: getPctOverrideDisplay, change: handlePctOverrideChange, disabled: periodoCerrado };
+
+  const headNameOf = (profile: CommercialProfile) =>
+    profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
+
+  // ── Tab Equipos: filas ───────────────────────────────────────────────────
+  // El líder siempre (el buscador no lo oculta, como antes); las líneas, las
+  // que pasen el buscador. `totalCount` = todas, para que FinTable diga
+  // «Mostrando N de M» cuando el buscador esconde filas.
+  const allTeamRows: TeamRow[] = [];
+  if (headProfile && headOwnCalc) allTeamRows.push({ kind: 'lead', profile: headProfile, calc: headOwnCalc });
+  for (const calc of bdmCalcs) {
+    const profile = commercialProfiles.find((p) => p.id === calc.profileId);
+    if (!profile) continue;
+    allTeamRows.push({
+      kind: 'line',
+      profile,
+      calc,
+      hasOwnTeam: commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub)),
+    });
+  }
+  const teamRows = allTeamRows.filter(
+    (r) => r.kind === 'lead' || matchesCommissionSearch(r.calc as unknown as Record<string, unknown>, teamsSearch, profileLookup, headLookup),
+  );
+
+  const teamKpis: KpiItem[] = headProfile
+    ? [
+        { key: 'members', label: t('comm.membersLabel'), value: teamProfiles.length, format: 'count', sub: headProfile.name },
+        { key: 'nd', label: t('comm.teamTotalND'), value: teamTotalND, format: 'money', tone: 'sign' },
+        {
+          key: 'salary',
+          label: t('comm.autoSalary'),
+          value: autoSalary,
+          format: 'money',
+          // La tabla que se muestra es la que se aplicó: a un BDM-líder se le
+          // paga por SALARY_TIERS sobre su ND, no por la de HEAD.
+          sub: (liderEsBdm ? SALARY_TIERS : HEAD_SALARY_TIERS)
+            .map((tier) => `≥${formatMoney(tier.minND)} → ${formatMoney(tier.salary)}`)
+            .join(' | '),
+        },
+        {
+          key: 'total',
+          label: t('comm.totalWithSalary'),
+          value: teamSummary.totalWithSalary,
+          format: 'money',
+          tone: 'sign',
+          hero: true,
+          sub: teamSummary.prevDebt < 0 ? t('comm.kpiDebtIncluded') : undefined,
+        },
+      ]
+    : [];
+
+  // ── Tab Individual: filas ────────────────────────────────────────────────
+  // Cada fila llega con su deuda arrastrada y su total CON deuda, calculados
+  // con la MISMA llamada que usaban las celdas (y que usan el guardado y el
+  // PDF): `applyTotalEarnedDebt(getPrevDebtAll(id), real + salario)`.
+  const matchesInd = (row: Record<string, unknown>) =>
+    matchesCommissionSearch(row, individualSearch, profileLookup, headLookup);
+
+  const ndCalcsDelGrupo = indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId));
+  const ndRowsAll: NdRow[] = ndCalcsDelGrupo.flatMap((calc) => {
+    const profile = commercialProfiles.find((p) => p.id === calc.profileId);
+    if (!profile) return [];
+    const prevDebt = getPrevDebtAll(calc.profileId);
+    const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, calc.realPayment + calc.salary);
+    return [{ profile, headName: headNameOf(profile), calc, prevDebt, total: finalTotalEarned }];
+  });
+  const ndRows = ndRowsAll.filter((r) => matchesInd(r.calc as unknown as Record<string, unknown>));
+
+  const pnlRowsAll: PnlRow[] = pnlCalcs.flatMap((calc) => {
+    const profile = commercialProfiles.find((p) => p.id === calc.profileId);
+    if (!profile) return [];
+    const lotComm = lotInputs.get(calc.profileId) ?? 0;
+    const finalReal = calc.realPayment - lotComm;
+    const prevDebt = getPrevDebtAll(calc.profileId);
+    const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, finalReal + calc.salary);
+    return [{ profile, headName: headNameOf(profile), calc, lotComm, finalReal, prevDebt, total: finalTotalEarned }];
+  });
+  const pnlRows = pnlRowsAll.filter((r) => matchesInd(r.calc as unknown as Record<string, unknown>));
+
+  const pnlSpecialRowsAll: PnlSpecialRow[] = pnlSpecialCalcs.flatMap((calc) => {
+    const profile = commercialProfiles.find((p) => p.id === calc.profileId);
+    if (!profile) return [];
+    const prevDebt = getPrevDebtAll(calc.profileId);
+    const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, calc.realPayment + calc.salary);
+    return [{ profile, headName: headNameOf(profile), calc, prevDebt, total: finalTotalEarned }];
+  });
+  const pnlSpecialRows = pnlSpecialRowsAll.filter((r) => matchesInd(r.calc as unknown as Record<string, unknown>));
+
+  const lotRowsAll: LotRow[] = lotBdms.map((profile) => ({ profile, headName: headNameOf(profile) }));
+  const lotRows = lotRowsAll.filter((r) => matchesInd(r.profile as unknown as Record<string, unknown>));
+
+  // Avisos del tab: quién arrastra deuda (una persona cuenta una vez aunque
+  // esté en dos secciones) y cuántos perfiles de PnL no cruzan con el CRM.
+  const deudaPorPerfil = new Map<string, number>();
+  for (const r of [...ndRowsAll, ...pnlRowsAll, ...pnlSpecialRowsAll]) deudaPorPerfil.set(r.profile.id, r.prevDebt);
+  const indDebt = carriedDebtSummary([...deudaPorPerfil.values()]);
+  const pnlSinCrm = countSinDatoCrm([...pnlBdms, ...pnlSpecialBdms].map((p) => p.id), getPnlCrmInfo);
+
+  // ── Acciones por fila (guardar + PDF). Los cuerpos son los de siempre. ───
+  const ndRowActions = ({ calc, profile }: NdRow) => (
+    <RowActionButtons
+      saving={savingBdm.has(calc.profileId)}
+      onSave={() => handleSaveBdm(calc.profileId, 'nd')}
+      onPdf={() => verify2FA(async () => {
+        if (!selectedPeriod) return;
+        const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
+        const { generateIndividualPDF } = await loadPdfExports();
+        generateIndividualPDF({
+          companyName: company?.name ?? 'Smart Dashboard',
+          companyLogoUrl: company?.logo_url ?? null,
+          periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+          name: profile.name,
+          email: profile.email,
+          role: ROLE_LABEL[profile.role] || profile.role,
+          headName: headP?.name ?? '—',
+          pct: calc.commissionPct,
+          nd: calc.netDepositCurrent,
+          accumulatedIn: calc.accumulatedIn,
+          division: calc.division,
+          commission: calc.commission,
+          realPayment: calc.realPayment,
+          accumulatedOut: calc.accumulatedOut,
+          salary: calc.salary,
+          // Con la MISMA regla de deuda que la tabla
+          // y el guardado: el PDF decía $5.000
+          // cuando se pagaban $3.000 porque ignoraba
+          // la deuda arrastrada (auditoría 2026-08-06).
+          total: applyTotalEarnedDebt(
+            getPrevDebtAll(calc.profileId),
+            calc.realPayment + calc.salary,
+          ).finalTotalEarned,
+          // Deuda arrastrada para mostrarla en el
+          // resumen (si negativa) y que el TOTAL cuadre.
+          prevDebt: getPrevDebtAll(calc.profileId),
+        });
+      })}
+    />
+  );
+
+  const pnlRowActions = ({ calc, profile }: PnlRow) => (
+    <RowActionButtons
+      saving={savingBdm.has(calc.profileId)}
+      onSave={() => handleSaveBdm(calc.profileId, 'pnl')}
+      onPdf={() => verify2FA(async () => {
+        if (!selectedPeriod) return;
+        const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
+        const lotComm = lotInputs.get(calc.profileId) ?? 0;
+        const adjustedReal = calc.realPayment - lotComm;
+        const { generatePnlPDF } = await loadPdfExports();
+        generatePnlPDF({
+          companyName: company?.name ?? 'Smart Dashboard',
+          companyLogoUrl: company?.logo_url ?? null,
+          periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+          name: profile.name,
+          email: profile.email,
+          role: ROLE_LABEL[profile.role] || profile.role,
+          headName: headP?.name ?? '—',
+          pct: calc.commissionPct,
+          pnl: calc.netDepositCurrent,
+          accumulatedIn: calc.accumulatedIn,
+          division: calc.division,
+          commission: calc.commission,
+          lotCommissions: lotComm,
+          realPayment: adjustedReal,
+          accumulatedOut: calc.accumulatedOut,
+          salary: calc.salary,
+          // El MISMO total que muestra la columna Total de la fila:
+          // con la deuda arrastrada ya descontada. Sin esto el PDF
+          // decía un número y la pantalla otro (dueño, 2026-09-02).
+          ...(() => {
+            const prevDebt = getPrevDebtAll(calc.profileId);
+            const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, adjustedReal + calc.salary);
+            return { prevDebt, total: finalTotalEarned };
+          })(),
+        });
+      })}
+    />
+  );
+
+  // PDF del modo Especial: mismo reporte que PnL normal, con accumulatedIn=0,
+  // division=0, accumulatedOut=0 — la regla «no hay acumulado».
+  const pnlSpecialRowActions = ({ calc, profile }: PnlSpecialRow) => (
+    <RowActionButtons
+      saving={savingBdm.has(calc.profileId)}
+      onSave={() => handleSaveBdm(calc.profileId, 'pnlSpecial')}
+      onPdf={() => verify2FA(async () => {
+        if (!selectedPeriod) return;
+        const headP = profile.head_id
+          ? commercialProfiles.find(p => p.id === profile.head_id)
+          : null;
+        const { generatePnlPDF } = await loadPdfExports();
+        generatePnlPDF({
+          companyName: company?.name ?? 'Smart Dashboard',
+          companyLogoUrl: company?.logo_url ?? null,
+          periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
+          name: profile.name,
+          email: profile.email,
+          role: ROLE_LABEL[profile.role] || profile.role,
+          headName: headP?.name ?? '—',
+          pct: calc.commissionPct,
+          pnl: calc.pnl,
+          accumulatedIn: 0,
+          division: 0,
+          commission: calc.commission,
+          lotCommissions: calc.lotCommissions,
+          realPayment: calc.realPayment,
+          accumulatedOut: 0,
+          salary: calc.salary,
+          // Igual que el PnL normal: el total del PDF es el de la
+          // columna Total (deuda arrastrada ya descontada).
+          ...(() => {
+            const prevDebt = getPrevDebtAll(calc.profileId);
+            const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, calc.realPayment + calc.salary);
+            return { prevDebt, total: finalTotalEarned };
+          })(),
+          mode: 'special',
+        });
+      })}
+    />
+  );
+
+  const emptySection = (
+    <p className="px-4 py-8 text-center text-[13px] text-text-3">{t('comm.noBdmsInSection')}</p>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
-      {/* Header */}
       <PageHeader
         title={t('comm.title')}
         subtitle={t('comm.subtitle')}
         icon={Calculator}
         actions={
-        <div className="relative">
-          <button
-            onClick={() => setShowExportMenu(!showExportMenu)}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-          >
-            <Download className="w-4 h-4" />{t('comm.export')}
-            <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
-          </button>
-          {showExportMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
-              <div className="absolute right-0 top-full mt-1 z-50 bg-card border border-border rounded-lg shadow-lg py-1 min-w-[180px]">
-                <button
-                  onClick={() => { handleExport(); setShowExportMenu(false); }}
-                  className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
-                >
-                  <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
-                  {t('audit.exportCsv')}
-                </button>
-                {tab === 'teams' && (
+          <div className="relative">
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => setShowExportMenu(!showExportMenu)}
+              aria-expanded={showExportMenu}
+              aria-haspopup="menu"
+            >
+              <Download aria-hidden className="size-4" />
+              {t('comm.export')}
+              <ChevronDown aria-hidden className="size-3.5 text-text-3" />
+            </Button>
+            {showExportMenu && (
+              <>
+                <div className="fixed inset-0 z-40" onClick={() => setShowExportMenu(false)} />
+                <div role="menu" className="absolute right-0 top-full z-50 mt-1 min-w-[180px] rounded-ui-md border border-border bg-card py-1 shadow-2">
                   <button
-                    onClick={() => { handleExportPDF(); setShowExportMenu(false); }}
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
+                    type="button"
+                    role="menuitem"
+                    onClick={() => { handleExport(); setShowExportMenu(false); }}
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-surface-2"
                   >
-                    <FileText className="w-4 h-4 text-red-500" />
-                    {t('comm.exportPdfDetailed')}
+                    <FileSpreadsheet aria-hidden className="size-4 text-text-2" />
+                    {t('audit.exportCsv')}
                   </button>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+                  {tab === 'teams' && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => { handleExportPDF(); setShowExportMenu(false); }}
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-surface-2"
+                    >
+                      <FileText aria-hidden className="size-4 text-text-2" />
+                      {t('comm.exportPdfDetailed')}
+                    </button>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
         }
       />
 
-      {/* Tabs */}
-      <div className="flex gap-1 bg-muted p-1 rounded-lg w-fit max-w-full overflow-x-auto">
-        <button onClick={() => setTab('teams')} className={cn('flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap', tab === 'teams' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
-          <Users className="w-4 h-4" />{t('comm.tabTeams')}
-        </button>
-        <button onClick={() => setTab('individual')} className={cn('flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap', tab === 'individual' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
-          <UserCircle className="w-4 h-4" />{t('comm.tabIndividual')}
-        </button>
-        <button onClick={() => setTab('history')} className={cn('flex items-center gap-2 px-3 sm:px-4 py-2 rounded-md text-sm font-medium transition-colors whitespace-nowrap', tab === 'history' ? 'bg-card shadow-sm' : 'hover:bg-card/50')}>
-          <BarChart3 className="w-4 h-4" />{t('comm.tabHistory')}
-        </button>
+      {/* Pestañas: control segmentado (spec §5.6). La pestaña no va a la URL. */}
+      <div className="max-w-full overflow-x-auto">
+        <Segmented<Tab>
+          aria-label={t('comm.tabsAria')}
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'teams', label: <><Users aria-hidden className="size-3.5" />{t('comm.tabTeams')}</> },
+            { value: 'individual', label: <><UserCircle aria-hidden className="size-3.5" />{t('comm.tabIndividual')}</> },
+            { value: 'history', label: <><BarChart3 aria-hidden className="size-3.5" />{t('comm.tabHistory')}</> },
+          ]}
+        />
       </div>
 
-      {/* Period selector (teams & individual only) */}
+      {/* Grupo y período (Equipos e Individual) */}
       {tab !== 'history' && (
-        <Card>
-          <div className="flex flex-col sm:flex-row gap-4">
-            {tab === 'teams' && (
-              <div className="flex-1">
-                <label className="block text-sm font-medium mb-1.5">{t('comm.selectHead')}</label>
-                {/* El `value` es "" cuando el grupo activo es el de un BDM: así
-                    los dos selectores nunca se ven elegidos a la vez sin que
-                    haya que limpiarlos a mano (un solo estado, ver arriba). */}
-                <select
-                  value={heads.some((h) => h.id === selectedHeadId) ? selectedHeadId : ''}
-                  onChange={(e) => setSelectedHeadId(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                >
-                  <option value="">{t('comm.selectHead')}</option>
-                  {heads.map((h) => <option key={h.id} value={h.id}>{h.name} — {h.net_deposit_pct ?? 0}%</option>)}
-                </select>
-              </div>
-            )}
-            {/* Sin ningún BDM con equipo el selector NO aparece: hoy sólo Ana
-                García lo tiene (un Master IB colgado). */}
-            {tab === 'teams' && bdmsLideres.length > 0 && (
-              <div className="flex-1">
-                <label className="block text-sm font-medium mb-1.5">{t('comm.selectBdm')}</label>
-                <select
-                  value={bdmLiderIds.has(selectedHeadId) ? selectedHeadId : ''}
-                  onChange={(e) => setSelectedHeadId(e.target.value)}
-                  title={t('comm.selectBdmHint')}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                >
-                  <option value="">{t('comm.selectBdm')}</option>
-                  {bdmsLideres.map((b) => <option key={b.id} value={b.id}>{b.name} — {b.net_deposit_pct ?? 0}%</option>)}
-                </select>
-              </div>
-            )}
-            <div className="flex-1">
-              <label className="block text-sm font-medium mb-1.5">{t('comm.selectPeriod')}</label>
-              <div className="flex items-center gap-2">
-                <button onClick={() => navigatePeriod(-1)} disabled={periodIdx <= 0} className="p-2 rounded-lg border border-border hover:bg-muted disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
-                <select value={selectedPeriod?.id ?? ''} onChange={(e) => { const i = sortedPeriods.findIndex((p) => p.id === e.target.value); if (i >= 0) setPeriodIdx(i); }} className="flex-1 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
-                  {sortedPeriods.map((p) => <option key={p.id} value={p.id}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
-                </select>
-                <button onClick={() => navigatePeriod(1)} disabled={periodIdx >= sortedPeriods.length - 1} className="p-2 rounded-lg border border-border hover:bg-muted disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
-              </div>
+        <>
+          <Panel>
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+              {tab === 'teams' && (
+                <Field label={t('comm.selectHead')} className="flex-1">
+                  {/* El `value` es "" cuando el grupo activo es el de un BDM: así
+                      los dos selectores nunca se ven elegidos a la vez sin que
+                      haya que limpiarlos a mano (un solo estado, ver arriba). */}
+                  <Select
+                    value={heads.some((h) => h.id === selectedHeadId) ? selectedHeadId : ''}
+                    onChange={(e) => setSelectedHeadId(e.target.value)}
+                  >
+                    <option value="">{t('comm.selectHead')}</option>
+                    {heads.map((h) => <option key={h.id} value={h.id}>{h.name} — {h.net_deposit_pct ?? 0}%</option>)}
+                  </Select>
+                </Field>
+              )}
+              {/* Sin ningún BDM con equipo el selector NO aparece: hoy sólo Ana
+                  García lo tiene (un Master IB colgado). */}
+              {tab === 'teams' && bdmsLideres.length > 0 && (
+                <Field label={t('comm.selectBdm')} className="flex-1">
+                  <Select
+                    title={t('comm.selectBdmHint')}
+                    value={bdmLiderIds.has(selectedHeadId) ? selectedHeadId : ''}
+                    onChange={(e) => setSelectedHeadId(e.target.value)}
+                  >
+                    <option value="">{t('comm.selectBdm')}</option>
+                    {bdmsLideres.map((b) => <option key={b.id} value={b.id}>{b.name} — {b.net_deposit_pct ?? 0}%</option>)}
+                  </Select>
+                </Field>
+              )}
+              <Field label={t('comm.selectPeriod')} className="flex-1">
+                <div className="flex items-center gap-2">
+                  <Button size="icon" variant="secondary" aria-label={t('comm.prevPeriod')} onClick={() => navigatePeriod(-1)} disabled={periodIdx <= 0}>
+                    <ChevronLeft aria-hidden className="size-4" />
+                  </Button>
+                  <Select
+                    value={selectedPeriod?.id ?? ''}
+                    onChange={(e) => { const i = sortedPeriods.findIndex((p) => p.id === e.target.value); if (i >= 0) setPeriodIdx(i); }}
+                  >
+                    {sortedPeriods.map((p) => <option key={p.id} value={p.id}>{periodOptionLabel(p)}</option>)}
+                  </Select>
+                  <Button size="icon" variant="secondary" aria-label={t('comm.nextPeriod')} onClick={() => navigatePeriod(1)} disabled={periodIdx >= sortedPeriods.length - 1}>
+                    <ChevronRight aria-hidden className="size-4" />
+                  </Button>
+                </div>
+              </Field>
             </div>
-          </div>
+          </Panel>
+
           {/* De dónde sale el insumo de este mes. Se dice SIEMPRE: un mes
               congelado y un mes automático se ven iguales en la tabla, y la
               diferencia es de dónde salió cada peso. */}
-          <p className="text-xs text-muted-foreground mt-3">
-            {!periodoUsaAutomatico
-              ? t('comm.ndInputFrozenNotice')
-              : crmNetLoading
-                ? t('comm.ndInputLoading')
-                : crmNetError
-                  ? (
-                    <span className="text-negative">
-                      {t('comm.ndInputError')}{' '}
-                      <button
-                        type="button"
-                        onClick={() => setCrmNetIntento((n) => n + 1)}
-                        className="underline font-medium hover:opacity-80"
-                      >
-                        {t('comm.ndInputRetry')}
-                      </button>
-                    </span>
-                  )
-                  : t('comm.ndInputAutoNotice')}
-          </p>
+          {!periodoUsaAutomatico ? (
+            <Notice kind="info" title={t('comm.ndInputFrozenNotice')} />
+          ) : crmNetLoading ? (
+            <Notice kind="stale" title={t('comm.ndInputLoading')} />
+          ) : crmNetError ? (
+            <Notice
+              kind="bad"
+              title={t('comm.ndInputError')}
+              action={
+                <button type="button" onClick={() => setCrmNetIntento((n) => n + 1)} className="underline hover:opacity-80">
+                  {t('comm.ndInputRetry')}
+                </button>
+              }
+            />
+          ) : (
+            <Notice kind="info" title={t('comm.ndInputAutoNotice')} />
+          )}
           {/* El PnL se avisa APARTE: puede fallar su RPC sin que falle la del
               net deposit, y decir "falló el CRM" a secas haría dudar de los 120
               perfiles de net que sí cargaron bien. */}
           {periodoUsaAutomatico && !crmNetLoading && !crmNetError && crmPnlError && (
-            <p className="text-xs text-negative mt-1">{t('comm.pnlInputError')}</p>
+            <Notice kind="bad" title={t('comm.pnlInputError')} />
           )}
-        </Card>
+        </>
       )}
 
       {/* ═══════════ TAB: TEAMS ═══════════ */}
       {tab === 'teams' && selectedHeadId && headProfile && (
         <>
-          {/* KPIs */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            <Card>
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center"><UserCircle className="w-6 h-6 text-violet-600" /></div>
-                <div>
-                  <p className="font-semibold text-sm">{headProfile.name}</p>
-                  <p className="text-xs text-muted-foreground"><Users className="w-3 h-3 inline mr-1" />{teamProfiles.length} {t('comm.members')}</p>
-                </div>
-              </div>
-            </Card>
-            <Card>
-              <p className="text-sm text-muted-foreground">{t('comm.teamTotalND')}</p>
-              <p className={cn('text-2xl font-bold', teamTotalND >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(teamTotalND)}</p>
-            </Card>
-            <Card>
-              <p className="text-sm text-muted-foreground">{t('comm.autoSalary')}</p>
-              <p className="text-2xl font-bold text-blue-600">{formatCurrency(autoSalary)}</p>
-              {/* La tabla que se muestra es la que se aplicó: a un BDM-líder se
-                  le paga por SALARY_TIERS sobre su ND, no por la de HEAD. */}
-              <p className="text-xs text-muted-foreground mt-1">{(liderEsBdm ? SALARY_TIERS : HEAD_SALARY_TIERS).map((tier) => `≥${formatCurrency(tier.minND)} → ${formatCurrency(tier.salary)}`).join(' | ')}</p>
-            </Card>
-            <Card>
-              <p className="text-sm text-muted-foreground">{t('comm.totalWithSalary')}</p>
-              <p className={cn('text-2xl font-bold', teamSummary.totalWithSalary >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(teamSummary.totalWithSalary)}</p>
-              {teamSummary.prevDebt < 0 && (
-                <p className="text-xs text-warning mt-1">
-                  {formatCurrency(teamSummary.rawTotalWithSalary)} − {formatCurrency(Math.abs(teamSummary.prevDebt))} deuda = {formatCurrency(teamSummary.totalWithSalary)}
-                </p>
-              )}
-            </Card>
-          </div>
+          <KpiStrip items={teamKpis} />
 
-          {/* Info */}
-          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
-            <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.teamFromHR')}</span>
-          </div>
+          {teamSummary.prevDebt < 0 && (
+            <Notice kind="pend" title={t('comm.teamDebtTitle', { debt: formatMoney(Math.abs(teamSummary.prevDebt)) })}>
+              <DebtEquation raw={teamSummary.rawTotalWithSalary} debt={teamSummary.prevDebt} total={teamSummary.totalWithSalary} />
+            </Notice>
+          )}
 
-          {/* Validation warning */}
           {teamNdValidation && (
-            <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm">
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
-              <span>
-                El ND total de este equipo ({formatCurrency(teamNdValidation.actual)}) no coincide con el valor ingresado en el grupo de <strong>{teamNdValidation.parentName}</strong> ({formatCurrency(teamNdValidation.expected)}). La suma del equipo debe ser igual.
-              </span>
-            </div>
+            <Notice kind="bad" title={t('comm.teamNdValidationTitle')}>
+              {t('comm.teamNdValidation', {
+                actual: formatMoney(teamNdValidation.actual),
+                parent: teamNdValidation.parentName,
+                expected: formatMoney(teamNdValidation.expected),
+              })}
+            </Notice>
           )}
 
-          {/* Buscador libre — filtra solo las filas mostradas, no los totales */}
-          <div className="relative flex items-center mb-3">
-            <svg className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="text"
-              value={teamsSearch}
-              onChange={(e) => setTeamsSearch(e.target.value)}
-              placeholder={t('comm.searchPlaceholder')}
-              className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-            {teamsSearch && (
-              <button
-                onClick={() => setTeamsSearch('')}
-                className="absolute right-2 text-muted-foreground hover:text-foreground"
-                aria-label={t('comm.clearSearch')}
-              >
-                ✕
-              </button>
-            )}
-          </div>
-          {teamsSearch && (
-            <p className="text-xs text-muted-foreground mb-2">Mostrando filtrado por &quot;{teamsSearch}&quot;</p>
-          )}
+          <Notice kind="info" title={t('comm.teamFromHR')} />
 
-          {/* BDM Commission Table */}
           {bdmCalcs.length > 0 ? (
-            <Card className="p-0 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[900px]">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('comm.role')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.ndCurrent')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accumulated')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.division')}</th>
-                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accNext')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {/* HEAD's own ND row — earns full percentage on own work */}
-                    {headOwnCalc && (
-                      <tr className="border-b border-border bg-violet-50/50 dark:bg-violet-950/20 hover:bg-violet-50 dark:hover:bg-violet-950/30">
-                        <td className="px-3 py-3"><span className="font-semibold block">{headProfile.name}</span><span className="text-xs text-muted-foreground">{headProfile.email}</span></td>
-                        <td className="px-3 py-3"><span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[headProfile.role])}>{ROLE_LABEL[headProfile.role]}</span></td>
-                        <td className="px-3 py-3">
-                          <input type="number" aria-label={t('comm.ndHeadAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(headProfile.id)} onChange={(e) => handleNdChange(headProfile.id, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
-                          <NdSourceTag source={getNdSource(headProfile.id)} auto={getNdAuto(headProfile.id)} labels={t} />
-                        </td>
-                        <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.accumulatedIn)}</td>
-                        <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(headOwnCalc.division)}</td>
-                        {/* El % del líder. Un head cobra su % pactado y no hay
-                            nada que editar; un BDM-líder conserva sus tramos y
-                            su % manual del mes, y sin esta celda ese override
-                            no tendría dónde cargarse (en Individual ya no
-                            aparece). El placeholder muestra el automático. */}
-                        <td className="px-3 py-3 text-center text-xs font-medium">
-                          {liderEsBdm ? (
-                            <span className="flex items-center justify-center gap-1">
-                              <PctOverrideInput
-                                value={getPctOverrideDisplay(headProfile.id)}
-                                auto={headPctAuto}
-                                disabled={periodoCerrado}
-                                onChange={(v) => handlePctOverrideChange(headProfile.id, v)}
-                                labels={t}
-                              />
-                              <span className="text-muted-foreground text-[10px]">{t('comm.pctBase')}</span>
-                            </span>
-                          ) : (
-                            `${headOwnCalc.commissionPct}%`
-                          )}
-                        </td>
-                        <td className={cn('px-3 py-3 text-right font-medium', headOwnCalc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(headOwnCalc.commission)}</td>
-                        <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(headOwnCalc.realPayment)}</td>
-                        <td className={cn('px-3 py-3 text-right', headOwnCalc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(headOwnCalc.accumulatedOut)}</td>
-                      </tr>
-                    )}
-                    {/* BDM rows */}
-                    {bdmCalcs.filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, teamsSearch, profileLookup, headLookup)).map((calc) => {
-                      const profile = commercialProfiles.find((p) => p.id === calc.profileId);
-                      if (!profile) return null;
-                      const hasOwnTeam = commercialProfiles.some((sub) => sub.head_id === profile.id && appearsInCommissions(sub));
-                      return (
-                        <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                          <td className="px-3 py-3">
-                            <span className={cn('font-medium block', firedNameClass(profile))}>
-                              {profile.name}{hasOwnTeam && <span className="ml-1 text-[10px] text-violet-500">(equipo)</span>}
-                              {profile.role === 'bdm_global' && (
-                                <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
-                              )}
-                              <FiredBadge profile={profile} />
-                            </span>
-                            <span className="text-xs text-muted-foreground">{profile.email}</span>
-                          </td>
-                          <td className="px-3 py-3">
-                            {/* Un master NO es un BDM: su tag es el mismo ámbar
-                                de Fuerza Comercial (dueño, 2026-09-06). */}
-                            {profile.is_master_ib
-                              ? <span className="px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
-                              : <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', ROLE_BADGE[profile.role])}>{ROLE_LABEL[profile.role]}</span>}
-                          </td>
-                          <td className="px-3 py-3">
-                            {/* La línea de un master lee/escribe SU carril de ND
-                                — jamás ndInputs, que para un perfil PnL es su
-                                campo PnL (ver la cabecera del carril). */}
-                            {profile.is_master_ib ? (
-                              <>
-                                <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getMasterNdDisplay(calc.profileId)} onChange={(e) => handleMasterNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
-                                <NdSourceTag source={getMasterNdSource(calc.profileId)} auto={masterNdResolved.get(calc.profileId)?.crm ?? null} labels={t} />
-                              </>
-                            ) : (
-                              <>
-                                <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
-                                <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
-                              </>
-                            )}
-                          </td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
-                          <td className="px-3 py-3 text-center text-xs font-medium">
-                            {/* Arriba, el diferencial que cobra el HEAD (derivado).
-                                Abajo, el % BASE del BDM, que es el editable: el
-                                manual del mes pisa tramos y % del perfil, y el
-                                diferencial se recalcula solo. */}
-                            {/* Un % pisado y uno derivado NO se pueden ver
-                                igual (§1.2): con `pct_linea` cargado el
-                                diferencial va rotulado «línea» y en ámbar. */}
-                            <span
-                              className={cn(calc.pctLinea !== null ? 'text-warning font-semibold' : 'text-violet-600')}
-                              title={calc.pctLinea !== null ? t('comm.pctLineaHint') : undefined}
-                            >
-                              {calc.diffPct}%
-                              {calc.pctLinea !== null && (
-                                <span className="ml-1 text-[10px] uppercase tracking-wide">{t('comm.pctLineaTag')}</span>
-                              )}
-                            </span>
-                            <span className="flex items-center justify-center gap-1 mt-0.5">
-                              <PctOverrideInput
-                                value={getPctOverrideDisplay(calc.profileId)}
-                                auto={calc.bdmOwnPctAuto}
-                                disabled={periodoCerrado}
-                                onChange={(v) => handlePctOverrideChange(calc.profileId, v)}
-                                labels={t}
-                              />
-                              <span className="text-muted-foreground text-[10px]">{t('comm.pctBase')}</span>
-                            </span>
-                          </td>
-                          <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
-                          <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
-                          <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/50 font-semibold">
-                      <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
-                      <td className="px-3 py-3 text-right">{formatCurrency(teamTotalND)}</td>
-                      <td className="px-3 py-3" colSpan={4}></td>
-                      <td className={cn('px-3 py-3 text-right', teamSummary.totalPayment >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(teamSummary.totalPayment)}</td>
-                      <td className="px-3 py-3 text-right">
-                        <span className={cn(teamSummary.totalPayment >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(teamSummary.totalPayment)}</span>
-                        {autoSalary > 0 && (
-                          <span className="block text-blue-600 text-xs">+ {formatCurrency(autoSalary)} sal. = {formatCurrency(teamSummary.totalWithSalary)}</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-3"></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </Card>
+            <Panel
+              flush
+              title={headProfile.name}
+              hint={selectedPeriod ? periodOptionLabel(selectedPeriod) : undefined}
+              actions={<SearchBox value={teamsSearch} onChange={setTeamsSearch} />}
+            >
+              <TeamsTable
+                rows={teamRows}
+                totalCount={allTeamRows.length}
+                nd={ndControls}
+                masterNd={masterNdControls}
+                pct={pctControls}
+                liderEsBdm={liderEsBdm}
+                headPctAuto={headPctAuto}
+                groupTotals={{
+                  ...(headOwnCalc ? { lead: { commission: headOwnCalc.commission, realPayment: headOwnCalc.realPayment } } : {}),
+                  line: { commission: headDiff.totalDifferential, realPayment: headDiff.totalRealPayment },
+                }}
+                totals={{
+                  teamTotalND,
+                  totalPayment: teamSummary.totalPayment,
+                  autoSalary,
+                  prevDebt: teamSummary.prevDebt,
+                  totalWithSalary: teamSummary.totalWithSalary,
+                }}
+              />
+            </Panel>
           ) : (
-            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noData')}</p></Card>
+            <Panel><p className="py-6 text-center text-[13px] text-text-3">{t('comm.noData')}</p></Panel>
           )}
         </>
       )}
 
       {tab === 'teams' && !selectedHeadId && (
-        <Card><p className="text-center text-muted-foreground py-8">{t('comm.selectHead')}</p></Card>
+        <Panel><p className="py-6 text-center text-[13px] text-text-3">{t('comm.selectHead')}</p></Panel>
       )}
 
       {/* ═══════════ TAB: INDIVIDUAL ═══════════ */}
       {tab === 'individual' && (
         <>
-          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
-            <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.allBdms')} — {allBdms.length} BDMs</span>
-          </div>
+          <Notice kind="info" title={`${t('comm.allBdms')} — ${allBdms.length} BDMs`} />
 
-          {/* Buscador libre — filtra las 4 sub-tablas a la vez, no los totales */}
-          <div className="relative flex items-center mt-2">
-            <svg className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              type="text"
-              value={individualSearch}
-              onChange={(e) => setIndividualSearch(e.target.value)}
-              placeholder={t('comm.searchPlaceholder')}
-              className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
-            />
-            {individualSearch && (
-              <button
-                onClick={() => setIndividualSearch('')}
-                className="absolute right-2 text-muted-foreground hover:text-foreground"
-                aria-label={t('comm.clearSearch')}
-              >
-                ✕
-              </button>
-            )}
-          </div>
-          {individualSearch && (
-            <p className="text-xs text-muted-foreground">Mostrando filtrado por &quot;{individualSearch}&quot;</p>
+          {indDebt.count > 0 && (
+            <Notice
+              kind="pend"
+              title={t('comm.indDebtTitle', { n: String(indDebt.count), sum: formatMoney(indDebt.sum) })}
+            >
+              {t('comm.indDebtDetail')}
+            </Notice>
           )}
 
-          {/* ── Section: Net Deposit ── */}
-          <h3 className="text-base font-semibold flex items-center gap-2 mt-2">
-            <Calculator className="w-4 h-4 text-emerald-600" />
-            {t('comm.sectionND')}
-            <span className="text-xs text-muted-foreground font-normal">({ndBdms.length})</span>
-          </h3>
-          {ndBdms.length > 0 ? (
-            <Card className="p-0 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[900px]">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.ndCurrent')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accumulated')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.division')}</th>
-                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.salary')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accNext')}</th>
-                      <th className="py-2.5 px-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((calc) => {
-                      const profile = commercialProfiles.find((p) => p.id === calc.profileId);
-                      if (!profile) return null;
-                      const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
-                      return (
-                        <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                          <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
-                          <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
-                          <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
-                            <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
-                          </td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
-                          {/* El % del mes: vacío = automático (el placeholder lo
-                              muestra), un valor —0 incluido— manda este mes. */}
-                          <td className="px-3 py-3 text-center text-xs font-medium">
-                            <PctOverrideInput
-                              value={getPctOverrideDisplay(calc.profileId)}
-                              auto={calc.commissionPctAuto}
-                              disabled={periodoCerrado}
-                              onChange={(v) => handlePctOverrideChange(calc.profileId, v)}
-                              labels={t}
-                            />
-                          </td>
-                          <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
-                          <td className="px-3 py-3 text-right font-semibold text-emerald-600">{formatCurrency(calc.realPayment)}</td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.salary)}</td>
-                          <td className="px-3 py-3 text-right font-semibold">
-                            {(() => {
-                              const rawTE = calc.realPayment + calc.salary;
-                              const prevDebt = getPrevDebtAll(calc.profileId);
-                              const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
-                              return (
-                                <span className={prevDebt < 0 ? 'text-orange-600' : ''}>
-                                  {formatCurrency(finalTotalEarned)}
-                                  {prevDebt < 0 && (
-                                    <span className="block text-[10px] text-orange-500">deuda: {formatCurrency(prevDebt)}</span>
-                                  )}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
-                          <td className="px-2 py-3">
-                            <div className="flex items-center gap-1 justify-center">
-                              <button
-                                onClick={() => handleSaveBdm(calc.profileId, 'nd')}
-                                disabled={savingBdm.has(calc.profileId)}
-                                className="p-2 sm:p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
-                                title={t('comm.saveBdm')}
-                              >
-                                {savingBdm.has(calc.profileId)
-                                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                                  : <Save className="w-4 h-4" />}
-                              </button>
-                              <button
-                                onClick={() => verify2FA(async () => {
-                                  if (!selectedPeriod) return;
-                                  const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
-                                  const { generateIndividualPDF } = await loadPdfExports();
-                                  generateIndividualPDF({
-                                    companyName: company?.name ?? 'Smart Dashboard',
-                                    companyLogoUrl: company?.logo_url ?? null,
-                                    periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
-                                    name: profile.name,
-                                    email: profile.email,
-                                    role: ROLE_LABEL[profile.role] || profile.role,
-                                    headName: headP?.name ?? '—',
-                                    pct: calc.commissionPct,
-                                    nd: calc.netDepositCurrent,
-                                    accumulatedIn: calc.accumulatedIn,
-                                    division: calc.division,
-                                    commission: calc.commission,
-                                    realPayment: calc.realPayment,
-                                    accumulatedOut: calc.accumulatedOut,
-                                    salary: calc.salary,
-                                    // Con la MISMA regla de deuda que la tabla
-                                    // y el guardado: el PDF decía $5.000
-                                    // cuando se pagaban $3.000 porque ignoraba
-                                    // la deuda arrastrada (auditoría 2026-08-06).
-                                    total: applyTotalEarnedDebt(
-                                      getPrevDebtAll(calc.profileId),
-                                      calc.realPayment + calc.salary,
-                                    ).finalTotalEarned,
-                                    // Deuda arrastrada para mostrarla en el
-                                    // resumen (si negativa) y que el TOTAL cuadre.
-                                    prevDebt: getPrevDebtAll(calc.profileId),
-                                  });
-                                })}
-                                className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                                title={t('comm.downloadPdf')}
-                              >
-                                <FileText className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/50 font-semibold">
-                      <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
-                      <td className="px-3 py-3 text-right">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
-                      <td className="px-3 py-3" colSpan={4}></td>
-                      <td className={cn('px-3 py-3 text-right', indSummary.totalCommission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.realPayment, 0))}</td>
-                      <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.realPayment, 0))}</td>
-                      <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.salary, 0))}</td>
-                      <td className="px-3 py-3 text-right font-semibold">{formatCurrency(indCalcs.filter((c) => ndBdms.some((b) => b.id === c.profileId)).reduce((s, c) => s + c.realPayment + c.salary, 0))}</td>
-                      <td className="px-3 py-3"></td>
-                      <td className="px-2 py-3"></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </Card>
-          ) : (
-            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noBdmsInSection')}</p></Card>
+          {pnlSinCrm > 0 && (
+            <Notice kind="pend" title={t('comm.pnlNoCrmTitle', { n: String(pnlSinCrm) })}>
+              {t('comm.pnlNoCrmDetail')}
+            </Notice>
           )}
 
-          {/* ── Section: PnL ── */}
-          {/* El botón de recálculo vive acá y no en la sección Especial porque
-              reescribe A LOS DOS grupos (normal y especial) — son los perfiles
-              con pnl_pct, que es exactamente lo que devuelve la RPC 123. */}
-          <div className="flex items-center justify-between mt-6 gap-2 flex-wrap">
-            <h3 className="text-base font-semibold flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-blue-600" />
-              {t('comm.sectionPnL')}
-              <span className="text-xs text-muted-foreground font-normal">({pnlBdms.length})</span>
-            </h3>
-            {isCompanyAdmin(user) && (pnlBdms.length > 0 || pnlSpecialBdms.length > 0) && (
-              <button
-                onClick={() => handleRecalcPnlDesdeCrm()}
-                disabled={recalcPnlCrmInProgress}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-blue-300 dark:border-blue-800 text-blue-700 dark:text-blue-400 text-xs font-medium hover:bg-blue-50 dark:hover:bg-blue-950/30 disabled:opacity-50"
-                title={t('comm.recalcPnlCrmTitle')}
-              >
-                {recalcPnlCrmInProgress ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                {recalcPnlCrmInProgress ? t('comm.recalcPnlCrmInProgress') : t('comm.recalcPnlCrmButton')}
-              </button>
-            )}
-          </div>
-          {pnlBdms.length > 0 ? (
-            <Card className="p-0 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm min-w-[900px]">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">PnL</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.lotCommShort')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accumulated')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.division')}</th>
-                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.accNext')}</th>
-                      <th className="py-2.5 px-3"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pnlCalcs.filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((calc) => {
-                      const profile = commercialProfiles.find((p) => p.id === calc.profileId);
-                      if (!profile) return null;
-                      const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
-                      return (
-                        <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                          <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
-                          <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
-                          <td className="px-3 py-3">
-                            <input type="number" aria-label={t('comm.ndProfileAria')} placeholder={t('comm.ndPlaceholder')} title={t('comm.ndOverrideHint')} value={getNdDisplay(calc.profileId)} onChange={(e) => handleNdChange(calc.profileId, e.target.value)} onFocus={(e) => e.target.select()} className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]" />
-                            <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
-                            <PnlCrmHint info={getPnlCrmInfo(calc.profileId)} labels={t} />
-                          </td>
-                          <td className="px-3 py-3">
-                            <input
-                              type="number"
-                              value={getLotDisplay(calc.profileId)}
-                              onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
-                              onFocus={(e) => e.target.select()}
-                              placeholder={t('comm.ndPlaceholder')}
-                              title={t('comm.ndOverrideHint')}
-                              className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                            />
-                            <NdSourceTag source={getLotSource(calc.profileId)} auto={getLotAuto(calc.profileId)} labels={t} />
-                          </td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.accumulatedIn)}</td>
-                          <td className="px-3 py-3 text-right text-muted-foreground">{formatCurrency(calc.division)}</td>
-                          <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
-                          <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>{formatCurrency(calc.commission)}</td>
-                          <td className="px-3 py-3 text-right font-semibold">
-                            {(() => {
-                              const lotComm = lotInputs.get(calc.profileId) ?? 0;
-                              const finalReal = calc.realPayment - lotComm;
-                              return (
-                                <span className={finalReal >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                                  {formatCurrency(finalReal)}
-                                  {lotComm > 0 && (
-                                    <span className="block text-[10px] text-muted-foreground">
-                                      {formatCurrency(calc.realPayment)} − {formatCurrency(lotComm)} lotes
-                                    </span>
-                                  )}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          <td className="px-3 py-3 text-right font-semibold">
-                            {(() => {
-                              const lotComm = lotInputs.get(calc.profileId) ?? 0;
-                              const adjustedReal = calc.realPayment - lotComm;
-                              const rawTE = adjustedReal + calc.salary;
-                              const prevDebt = getPrevDebtAll(calc.profileId);
-                              const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
-                              return (
-                                <span className={prevDebt < 0 ? 'text-orange-600' : ''}>
-                                  {formatCurrency(finalTotalEarned)}
-                                  {prevDebt < 0 && (
-                                    <span className="block text-[10px] text-orange-500">deuda: {formatCurrency(prevDebt)}</span>
-                                  )}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          <td className={cn('px-3 py-3 text-right', calc.accumulatedOut < 0 ? 'text-red-600' : 'text-muted-foreground')}>{formatCurrency(calc.accumulatedOut)}</td>
-                          <td className="px-2 py-3">
-                            <div className="flex items-center gap-1 justify-center">
-                              <button
-                                onClick={() => handleSaveBdm(calc.profileId, 'pnl')}
-                                disabled={savingBdm.has(calc.profileId)}
-                                className="p-2 sm:p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
-                                title={t('comm.saveBdm')}
-                              >
-                                {savingBdm.has(calc.profileId)
-                                  ? <Loader2 className="w-4 h-4 animate-spin" />
-                                  : <Save className="w-4 h-4" />}
-                              </button>
-                              <button
-                                onClick={() => verify2FA(async () => {
-                                  if (!selectedPeriod) return;
-                                  const headP = profile.head_id ? commercialProfiles.find(p => p.id === profile.head_id) : null;
-                                  const lotComm = lotInputs.get(calc.profileId) ?? 0;
-                                  const adjustedReal = calc.realPayment - lotComm;
-                                  const { generatePnlPDF } = await loadPdfExports();
-                                  generatePnlPDF({
-                                    companyName: company?.name ?? 'Smart Dashboard',
-                                    companyLogoUrl: company?.logo_url ?? null,
-                                    periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
-                                    name: profile.name,
-                                    email: profile.email,
-                                    role: ROLE_LABEL[profile.role] || profile.role,
-                                    headName: headP?.name ?? '—',
-                                    pct: calc.commissionPct,
-                                    pnl: calc.netDepositCurrent,
-                                    accumulatedIn: calc.accumulatedIn,
-                                    division: calc.division,
-                                    commission: calc.commission,
-                                    lotCommissions: lotComm,
-                                    realPayment: adjustedReal,
-                                    accumulatedOut: calc.accumulatedOut,
-                                    salary: calc.salary,
-                                    // El MISMO total que muestra la columna Total de la fila:
-                                    // con la deuda arrastrada ya descontada. Sin esto el PDF
-                                    // decía un número y la pantalla otro (dueño, 2026-09-02).
-                                    ...(() => {
-                                      const prevDebt = getPrevDebtAll(calc.profileId);
-                                      const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, adjustedReal + calc.salary);
-                                      return { prevDebt, total: finalTotalEarned };
-                                    })(),
-                                  });
-                                })}
-                                className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                                title={t('comm.downloadPdf')}
-                              >
-                                <FileText className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-muted/50 font-semibold">
-                      <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
-                      <td className="px-3 py-3 text-right">{formatCurrency(pnlCalcs.reduce((s, c) => s + c.netDepositCurrent, 0))}</td>
-                      <td className="px-3 py-3" colSpan={5}></td>
-                      <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(pnlSummary.totalRealPayment)}</td>
-                      <td className="px-3 py-3 text-right font-semibold">{formatCurrency(pnlSummary.totalWithSalary)}</td>
-                      <td className="px-3 py-3"></td>
-                      <td className="px-2 py-3"></td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </Card>
-          ) : (
-            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noBdmsInSection')}</p></Card>
-          )}
+          {/* Buscador libre — filtra las 4 tablas a la vez, no los totales */}
+          <SearchBox value={individualSearch} onChange={setIndividualSearch} />
 
-          {/* ── Section: PnL Especial ── */}
-          {/* Solo se renderiza si hay al menos un perfil con pnl_special_mode=true.
-              Columnas reducidas (sin División, Acumulado, Acc→Sig), badge violeta
-              "Especial" junto al nombre, botón admin-only de "Recalcular histórico". */}
+          {/* ── Net Deposit ── */}
+          <Panel flush title={t('comm.sectionND')} hint={String(ndBdms.length)}>
+            {ndBdms.length > 0 ? (
+              <NdIndividualTable
+                rows={ndRows}
+                totalCount={ndRowsAll.length}
+                nd={ndControls}
+                pct={pctControls}
+                renderActions={ndRowActions}
+                footer={{
+                  nd: ndCalcsDelGrupo.reduce((s, c) => s + c.netDepositCurrent, 0),
+                  commission: ndCalcsDelGrupo.reduce((s, c) => s + c.realPayment, 0),
+                  realPayment: ndCalcsDelGrupo.reduce((s, c) => s + c.realPayment, 0),
+                  salary: ndCalcsDelGrupo.reduce((s, c) => s + c.salary, 0),
+                  total: ndCalcsDelGrupo.reduce((s, c) => s + c.realPayment + c.salary, 0),
+                }}
+              />
+            ) : emptySection}
+          </Panel>
+
+          {/* ── PnL ── El botón de recálculo vive acá y no en la sección
+              Especial porque reescribe A LOS DOS grupos (normal y especial) —
+              son los perfiles con pnl_pct, que es lo que devuelve la RPC 123. */}
+          <Panel
+            flush
+            title={t('comm.sectionPnL')}
+            hint={String(pnlBdms.length)}
+            actions={
+              isCompanyAdmin(user) && (pnlBdms.length > 0 || pnlSpecialBdms.length > 0) ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => handleRecalcPnlDesdeCrm()}
+                  loading={recalcPnlCrmInProgress}
+                  title={t('comm.recalcPnlCrmTitle')}
+                >
+                  {!recalcPnlCrmInProgress && <RefreshCw aria-hidden className="size-3.5" />}
+                  {recalcPnlCrmInProgress ? t('comm.recalcPnlCrmInProgress') : t('comm.recalcPnlCrmButton')}
+                </Button>
+              ) : undefined
+            }
+          >
+            {pnlBdms.length > 0 ? (
+              <PnlIndividualTable
+                rows={pnlRows}
+                totalCount={pnlRowsAll.length}
+                nd={ndControls}
+                lots={lotControls}
+                pnlInfo={getPnlCrmInfo}
+                renderActions={pnlRowActions}
+                footer={{
+                  nd: pnlCalcs.reduce((s, c) => s + c.netDepositCurrent, 0),
+                  realPayment: pnlSummary.totalRealPayment,
+                  total: pnlSummary.totalWithSalary,
+                }}
+              />
+            ) : emptySection}
+          </Panel>
+
+          {/* ── PnL Especial ── Sólo si hay al menos un perfil con
+              pnl_special_mode. Botón admin-only de «Recalcular histórico». */}
           {pnlSpecialBdms.length > 0 && (
-            <>
-              <div className="flex items-center justify-between mt-6 gap-2 flex-wrap">
-                <h3 className="text-base font-semibold flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-violet-600" />
-                  {t('comm.sectionPnLSpecial')}
-                  <span className="text-xs text-muted-foreground font-normal">({pnlSpecialBdms.length})</span>
-                </h3>
-                {isCompanyAdmin(user) && (
-                  <button
+            <Panel
+              flush
+              title={t('comm.sectionPnLSpecial')}
+              hint={`${pnlSpecialBdms.length} · ${t('comm.sectionPnLSpecialHint')}`}
+              actions={
+                isCompanyAdmin(user) ? (
+                  <Button
+                    size="sm"
+                    variant="secondary"
                     onClick={() => handleRecalcHistory()}
-                    disabled={recalcInProgress}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-violet-300 dark:border-violet-800 text-violet-700 dark:text-violet-400 text-xs font-medium hover:bg-violet-50 dark:hover:bg-violet-950/30 disabled:opacity-50"
+                    loading={recalcInProgress}
                     title={t('comm.recalcHistoryTitle')}
                   >
-                    {recalcInProgress ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    {!recalcInProgress && <RefreshCw aria-hidden className="size-3.5" />}
                     {recalcInProgress ? t('comm.recalcHistoryInProgress') : t('comm.recalcHistoryButton')}
-                  </button>
-                )}
-              </div>
-              <p className="text-xs text-muted-foreground -mt-1 mb-2">{t('comm.sectionPnLSpecialHint')}</p>
-              <Card className="p-0 overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm min-w-[800px]">
-                    <thead>
-                      <tr className="border-b border-border bg-muted/50">
-                        <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                        <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
-                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">PnL</th>
-                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.lotCommShort')}</th>
-                        <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">%</th>
-                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
-                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.realPayment')}</th>
-                        <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
-                        <th className="py-2.5 px-3"></th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {pnlSpecialCalcs.filter((calc) => matchesCommissionSearch(calc as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((calc) => {
-                        const profile = commercialProfiles.find((p) => p.id === calc.profileId);
-                        if (!profile) return null;
-                        const headName = profile.head_id
-                          ? commercialProfiles.find((p) => p.id === profile.head_id)?.name
-                          : '—';
-                        const prevDebt = getPrevDebtAll(calc.profileId);
-                        const rawTE = calc.realPayment + calc.salary;
-                        const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, rawTE);
-                        return (
-                          <tr key={calc.profileId} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                            <td className="px-3 py-3">
-                              <span className={cn('font-medium block', firedNameClass(profile))}>
-                                {profile.name}
-                                <FiredBadge profile={profile} />
-                                <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 align-middle">
-                                  {t('comm.specialBadge')}
-                                </span>
-                              </span>
-                              <span className="text-xs text-muted-foreground">{profile.email}</span>
-                            </td>
-                            <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
-                            <td className="px-3 py-3">
-                              <input
-                                type="number"
-                                value={getNdDisplay(calc.profileId)}
-                                onChange={(e) => handleNdChange(calc.profileId, e.target.value)}
-                                onFocus={(e) => e.target.select()}
-                                placeholder={t('comm.ndPlaceholder')}
-                                title={t('comm.ndOverrideHint')}
-                                className="w-28 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                              />
-                              <NdSourceTag source={getNdSource(calc.profileId)} auto={getNdAuto(calc.profileId)} labels={t} />
-                              <PnlCrmHint info={getPnlCrmInfo(calc.profileId)} labels={t} />
-                            </td>
-                            <td className="px-3 py-3">
-                              <input
-                                type="number"
-                                value={getLotDisplay(calc.profileId)}
-                                onChange={(e) => handleLotChange(calc.profileId, e.target.value)}
-                                onFocus={(e) => e.target.select()}
-                                placeholder={t('comm.ndPlaceholder')}
-                                title={t('comm.ndOverrideHint')}
-                                className="w-24 px-2 py-1 text-right rounded border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-                              />
-                              <NdSourceTag source={getLotSource(calc.profileId)} auto={getLotAuto(calc.profileId)} labels={t} />
-                            </td>
-                            <td className="px-3 py-3 text-center text-xs font-medium">{calc.commissionPct}%</td>
-                            <td className={cn('px-3 py-3 text-right font-medium', calc.commission >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                              {formatCurrency(calc.commission)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold">
-                              <span className={calc.realPayment >= 0 ? 'text-emerald-600' : 'text-red-600'}>
-                                {formatCurrency(calc.realPayment)}
-                                {calc.lotCommissions > 0 && (
-                                  <span className="block text-[10px] text-muted-foreground">
-                                    {formatCurrency(calc.commission)} − {formatCurrency(calc.lotCommissions)} lotes
-                                  </span>
-                                )}
-                              </span>
-                            </td>
-                            <td className="px-3 py-3 text-right font-semibold">
-                              <span className={prevDebt < 0 ? 'text-orange-600' : ''}>
-                                {formatCurrency(finalTotalEarned)}
-                                {prevDebt < 0 && (
-                                  <span className="block text-[10px] text-orange-500">deuda: {formatCurrency(prevDebt)}</span>
-                                )}
-                              </span>
-                            </td>
-                            <td className="px-2 py-3">
-                              <div className="flex items-center gap-1 justify-center">
-                                <button
-                                  onClick={() => handleSaveBdm(calc.profileId, 'pnlSpecial')}
-                                  disabled={savingBdm.has(calc.profileId)}
-                                  className="p-2 sm:p-1.5 rounded-lg hover:bg-emerald-50 dark:hover:bg-emerald-950/30 text-emerald-600 hover:text-emerald-700 transition-colors disabled:opacity-50"
-                                  title={t('comm.saveBdm')}
-                                >
-                                  {savingBdm.has(calc.profileId)
-                                    ? <Loader2 className="w-4 h-4 animate-spin" />
-                                    : <Save className="w-4 h-4" />}
-                                </button>
-                                {/* PDF: mismo reporte que PnL normal, pero con los valores
-                                    del modo Especial — accumulatedIn=0, division=0,
-                                    accumulatedOut=0 reflejan la regla "no hay acumulado". */}
-                                <button
-                                  onClick={() => verify2FA(async () => {
-                                    if (!selectedPeriod) return;
-                                    const headP = profile.head_id
-                                      ? commercialProfiles.find(p => p.id === profile.head_id)
-                                      : null;
-                                    const { generatePnlPDF } = await loadPdfExports();
-                                    generatePnlPDF({
-                                      companyName: company?.name ?? 'Smart Dashboard',
-                                      companyLogoUrl: company?.logo_url ?? null,
-                                      periodLabel: selectedPeriod.label || `${selectedPeriod.month}/${selectedPeriod.year}`,
-                                      name: profile.name,
-                                      email: profile.email,
-                                      role: ROLE_LABEL[profile.role] || profile.role,
-                                      headName: headP?.name ?? '—',
-                                      pct: calc.commissionPct,
-                                      pnl: calc.pnl,
-                                      accumulatedIn: 0,
-                                      division: 0,
-                                      commission: calc.commission,
-                                      lotCommissions: calc.lotCommissions,
-                                      realPayment: calc.realPayment,
-                                      accumulatedOut: 0,
-                                      salary: calc.salary,
-                                      // Igual que el PnL normal: el total del PDF es el de la
-                                      // columna Total (deuda arrastrada ya descontada).
-                                      ...(() => {
-                                        const prevDebt = getPrevDebtAll(calc.profileId);
-                                        const { finalTotalEarned } = applyTotalEarnedDebt(prevDebt, calc.realPayment + calc.salary);
-                                        return { prevDebt, total: finalTotalEarned };
-                                      })(),
-                                      mode: 'special',
-                                    });
-                                  })}
-                                  className="p-2 sm:p-1.5 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/30 text-red-500 hover:text-red-600 transition-colors"
-                                  title={t('comm.downloadPdf')}
-                                >
-                                  <FileText className="w-4 h-4" />
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                    <tfoot>
-                      <tr className="bg-muted/50 font-semibold">
-                        <td className="px-3 py-3" colSpan={2}>{t('comm.groupTotal')}</td>
-                        <td className="px-3 py-3 text-right">{formatCurrency(pnlSpecialCalcs.reduce((s, c) => s + c.pnl, 0))}</td>
-                        <td className="px-3 py-3" colSpan={3}></td>
-                        <td className="px-3 py-3 text-right text-emerald-600">{formatCurrency(pnlSpecialSummary.totalRealPayment)}</td>
-                        <td className="px-3 py-3 text-right font-semibold">{formatCurrency(pnlSpecialSummary.totalWithSalary)}</td>
-                        <td className="px-2 py-3"></td>
-                      </tr>
-                    </tfoot>
-                  </table>
-                </div>
-              </Card>
-            </>
+                  </Button>
+                ) : undefined
+              }
+            >
+              <PnlSpecialTable
+                rows={pnlSpecialRows}
+                totalCount={pnlSpecialRowsAll.length}
+                nd={ndControls}
+                lots={lotControls}
+                pnlInfo={getPnlCrmInfo}
+                renderActions={pnlSpecialRowActions}
+                footer={{
+                  nd: pnlSpecialCalcs.reduce((s, c) => s + c.pnl, 0),
+                  realPayment: pnlSpecialSummary.totalRealPayment,
+                  total: pnlSpecialSummary.totalWithSalary,
+                }}
+              />
+            </Panel>
           )}
 
-          {/* ── Section: Commission per Lot ── */}
-          <h3 className="text-base font-semibold flex items-center gap-2 mt-6">
-            <FileSpreadsheet className="w-4 h-4 text-amber-600" />
-            {t('comm.sectionLot')}
-            <span className="text-xs text-muted-foreground font-normal">({lotBdms.length})</span>
-          </h3>
-          {lotBdms.length > 0 ? (
-            <Card className="p-0 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">HEAD</th>
-                      <th className="text-center py-2.5 px-3 text-muted-foreground font-medium">{t('comm.usdPerLot')}</th>
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('comm.commission')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lotBdms.filter((profile) => matchesCommissionSearch(profile as unknown as Record<string, unknown>, individualSearch, profileLookup, headLookup)).map((profile) => {
-                      const headName = profile.head_id ? commercialProfiles.find((p) => p.id === profile.head_id)?.name : '—';
-                      return (
-                        <tr key={profile.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                          <td className="px-3 py-3"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} /></span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
-                          <td className="px-3 py-3 text-xs text-muted-foreground">{headName}</td>
-                          <td className="px-3 py-3 text-center text-xs font-medium">{formatCurrency(profile.commission_per_lot ?? 0)}</td>
-                          <td className="px-3 py-3 text-right text-muted-foreground italic text-xs">—</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </Card>
-          ) : (
-            <Card><p className="text-center text-muted-foreground py-8">{t('comm.noBdmsInSection')}</p></Card>
-          )}
+          {/* ── Comisión por lote ── */}
+          <Panel flush title={t('comm.sectionLot')} hint={String(lotBdms.length)}>
+            {lotBdms.length > 0 ? <LotTable rows={lotRows} totalCount={lotRowsAll.length} /> : emptySection}
+          </Panel>
         </>
       )}
+
       {/* ═══════════ TAB: HISTORY ═══════════ */}
       {tab === 'history' && (() => {
         // Historial: excluir despedidos (status inactive + termination_date). En
-      // Equipos/Individual sí aparecen para cargar negativos post-despido, pero
-      // en el Historial no se quieren ver.
-      const activeProfiles = commercialProfiles.filter(
-        (p) => appearsInCommissions(p) && !(p.status === 'inactive' && p.termination_date),
-      );
+        // Equipos/Individual sí aparecen para cargar negativos post-despido, pero
+        // en el Historial no se quieren ver.
+        const activeProfiles = commercialProfiles.filter(
+          (p) => appearsInCommissions(p) && !(p.status === 'inactive' && p.termination_date),
+        );
         const smProfiles = activeProfiles.filter((p) => p.role === 'sales_manager');
         const headProfiles = activeProfiles.filter((p) => p.role === 'head');
         const bdmProfiles = activeProfiles.filter((p) => p.role === 'bdm' || p.role === 'bdm_global');
@@ -3544,137 +3101,69 @@ export default function ComisionesPage() {
           }, 0);
         };
 
+        // Totales del pie: sobre TODOS los perfiles, no sólo los que pasan el
+        // buscador (el buscador filtra filas, nunca totales).
+        const monthTotals: Record<string, number> = {};
+        for (const p of historyPeriods) {
+          monthTotals[p.id] = allProfiles.reduce((sum, profile) => {
+            const val = getTotal(profile.id, p.id);
+            return sum + (val ?? 0);
+          }, 0);
+        }
+        const grandTotal = allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0);
+
         return (
           <>
-            {/* History period filter */}
-            <Card>
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-medium mb-1.5">{t('audit.filterFrom')}</label>
-                  <select value={historyFrom} onChange={(e) => setHistoryFrom(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
-                    {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
-                  </select>
-                </div>
-                <div className="flex-1">
-                  <label className="block text-sm font-medium mb-1.5">{t('audit.filterTo')}</label>
-                  <select value={historyTo} onChange={(e) => setHistoryTo(Number(e.target.value))} className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]">
-                    {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}</option>)}
-                  </select>
-                </div>
+            <Panel>
+              <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+                <Field label={t('audit.filterFrom')} className="flex-1">
+                  <Select value={historyFrom} onChange={(e) => setHistoryFrom(Number(e.target.value))}>
+                    {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{periodOptionLabel(p)}</option>)}
+                  </Select>
+                </Field>
+                <Field label={t('audit.filterTo')} className="flex-1">
+                  <Select value={historyTo} onChange={(e) => setHistoryTo(Number(e.target.value))}>
+                    {sortedPeriods.map((p, i) => <option key={p.id} value={i}>{periodOptionLabel(p)}</option>)}
+                  </Select>
+                </Field>
+                <Button variant="secondary" onClick={() => refresh()}>
+                  <RefreshCw aria-hidden className="size-4" />
+                  {t('comm.refreshData')}
+                </Button>
               </div>
-              <div className="flex items-end">
-                <button
-                  onClick={() => refresh()}
-                  className="flex items-center gap-2 px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
-                  Actualizar datos
-                </button>
-              </div>
-            </Card>
+            </Panel>
 
-            {/* Buscador libre — filtra solo las filas, no el footer de totales */}
-            <div className="relative flex items-center">
-              <svg className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="11" cy="11" r="8" />
-                <line x1="21" y1="21" x2="16.65" y2="16.65" />
-              </svg>
-              <input
-                type="text"
-                value={historySearch}
-                onChange={(e) => setHistorySearch(e.target.value)}
-                placeholder={t('comm.searchPlaceholder')}
-                className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
+            <Panel
+              flush
+              title={t('comm.historyTitle')}
+              actions={<SearchBox value={historySearch} onChange={setHistorySearch} />}
+              footer={t('comm.historyClampNote')}
+            >
+              <HistoryTable
+                rows={allProfiles.filter((profile) => matchesCommissionSearch(profile as unknown as Record<string, unknown>, historySearch, profileLookup, headLookup))}
+                totalCount={allProfiles.length}
+                periods={historyPeriods}
+                getTotal={getTotal}
+                getProfileTotal={getProfileTotal}
+                monthTotals={monthTotals}
+                grandTotal={grandTotal}
               />
-              {historySearch && (
-                <button
-                  onClick={() => setHistorySearch('')}
-                  className="absolute right-2 text-muted-foreground hover:text-foreground"
-                  aria-label={t('comm.clearSearch')}
-                >
-                  ✕
-                </button>
-              )}
-            </div>
-            {historySearch && (
-              <p className="text-xs text-muted-foreground">Mostrando filtrado por &quot;{historySearch}&quot;</p>
-            )}
-
-            <Card className="p-0 overflow-hidden">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-border bg-muted/50">
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium sticky left-0 bg-muted/50 z-10 min-w-[180px]">{t('common.name')}</th>
-                      <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('comm.role')}</th>
-                      {historyPeriods.map((p) => (
-                        <th key={p.id} className="text-right py-2.5 px-3 text-muted-foreground font-medium whitespace-nowrap">
-                          {p.label || `${p.year}-${String(p.month).padStart(2, '0')}`}
-                        </th>
-                      ))}
-                      <th className="text-right py-2.5 px-3 text-muted-foreground font-medium bg-muted/80">{t('comm.totalAll')}</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allProfiles.filter((profile) => matchesCommissionSearch(profile as unknown as Record<string, unknown>, historySearch, profileLookup, headLookup)).map((profile, idx) => {
-                      const prevRole = idx > 0 ? allProfiles[idx - 1].role : null;
-                      const showSeparator = prevRole && prevRole !== profile.role;
-                      const total = getProfileTotal(profile.id);
-                      return (
-                        <tr key={profile.id} className={cn('border-b border-border/50 hover:bg-muted/50 transition-colors', showSeparator && 'border-t-2 border-t-border')}>
-                          <td className="px-4 py-2.5 sticky left-0 bg-card z-10"><span className={cn('font-medium block', firedNameClass(profile))}>{profile.name}{profile.role === 'bdm_global' && (<span className="inline-block ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>)}<FiredBadge profile={profile} />{profile.pnl_special_mode && (<span className="ml-1 inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-300 align-middle">{t('comm.specialBadge')}</span>)}</span><span className="text-xs text-muted-foreground">{profile.email}</span></td>
-                          <td className="px-2 py-2.5">
-                            <span className={cn('px-2 py-0.5 rounded-full text-[10px] font-medium', ROLE_BADGE[profile.role])}>
-                              {ROLE_LABEL[profile.role]}
-                            </span>
-                          </td>
-                          {historyPeriods.map((p) => {
-                            const val = getTotal(profile.id, p.id);
-                            return (
-                              <td key={p.id} className={cn('px-3 py-2.5 text-right text-xs', val === null ? 'text-muted-foreground' : val >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                                {val !== null ? formatCurrency(val) : '—'}
-                              </td>
-                            );
-                          })}
-                          <td className={cn('px-4 py-2.5 text-right font-semibold bg-muted/30', total >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                            {formatCurrency(total)}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-border bg-muted/50 font-semibold">
-                      <td className="px-3 py-3 sticky left-0 bg-muted/50 z-10">Total</td>
-                      <td className="px-2 py-3"></td>
-                      {historyPeriods.map((p) => {
-                        const monthTotal = allProfiles.reduce((sum, profile) => {
-                          const val = getTotal(profile.id, p.id);
-                          return sum + (val ?? 0);
-                        }, 0);
-                        return (
-                          <td key={p.id} className={cn('px-3 py-3 text-right text-xs', monthTotal >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                            {formatCurrency(monthTotal)}
-                          </td>
-                        );
-                      })}
-                      <td className={cn('px-3 py-3 text-right bg-muted/80', (() => { const gt = allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0); return gt >= 0 ? 'text-emerald-600' : 'text-red-600'; })())}>
-                        {formatCurrency(allProfiles.reduce((s, p) => s + getProfileTotal(p.id), 0))}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </Card>
+            </Panel>
           </>
         );
       })()}
 
-      {/* Save button + toast at bottom */}
-      <div className="flex items-center justify-end gap-4 sticky bottom-4">
+      {/* Guardar + aviso del resultado, pegados abajo */}
+      <div className="sticky bottom-4 flex items-center justify-end gap-4">
         {toast && (
-          <div className={cn('flex items-center gap-2 px-4 py-3 rounded-lg text-sm shadow-lg', toast.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white')}>
-            {toast.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}{toast.msg}
+          <div
+            role={toast.type === 'success' ? 'status' : 'alert'}
+            className="flex items-center gap-2 rounded-ui-md border border-border bg-card px-4 py-3 text-[13px] text-foreground shadow-2"
+          >
+            {toast.type === 'success'
+              ? <CheckCircle aria-hidden className="size-4 shrink-0 text-pos" />
+              : <AlertCircle aria-hidden className="size-4 shrink-0 text-neg" />}
+            {toast.msg}
           </div>
         )}
         {/* Disable while EITHER the master save OR any per-row save is in
@@ -3682,11 +3171,12 @@ export default function ComisionesPage() {
             of a single BDM, which races the two updates and can leave one
             with stale data. */}
         <button
+          type="button"
           onClick={handleSave}
           disabled={saving || savingBdm.size > 0}
-          className="flex items-center gap-2 px-6 py-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 shadow-lg"
+          className="inline-flex h-10 items-center gap-2 rounded-ui-md bg-primary px-5 text-[13px] font-semibold text-brand-on-primary shadow-2 hover:bg-[color-mix(in_srgb,var(--color-primary)_86%,black)] disabled:pointer-events-none disabled:opacity-50"
         >
-          <Save className="w-5 h-5" />{saving ? t('comm.saving') : t('comm.save')}
+          <Save aria-hidden className="size-4" />{saving ? t('comm.saving') : t('comm.save')}
         </button>
       </div>
     </div>
