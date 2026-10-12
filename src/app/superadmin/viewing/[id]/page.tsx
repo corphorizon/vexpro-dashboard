@@ -3,7 +3,7 @@
 import { useEffect } from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { setActiveCompanyId } from '@/lib/active-company';
-import { Loader2 } from 'lucide-react';
+import { LoadingScreen } from '@/components/loading-screen';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/viewing/[id] — shim that lets a superadmin "enter" a tenant.
@@ -17,6 +17,7 @@ import { Loader2 } from 'lucide-react';
 //      operator sees "Viendo como Admin: <company>" with a Salir button.
 //
 // There is no UI here beyond a brief spinner; the screen is transient.
+// «Libro mayor» (2026-10-12): el spinner usa la pantalla de carga compartida.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SuperadminViewingEnterPage() {
@@ -31,12 +32,5 @@ export default function SuperadminViewingEnterPage() {
     router.replace('/');
   }, [id, router]);
 
-  return (
-    <div className="min-h-[60vh] flex items-center justify-center">
-      <div className="inline-flex items-center gap-2 text-sm text-muted-foreground">
-        <Loader2 className="w-4 h-4 animate-spin" />
-        Entrando a la empresa…
-      </div>
-    </div>
-  );
+  return <LoadingScreen message="Entrando a la empresa…" />;
 }

@@ -4,10 +4,24 @@ import { useEffect, useState, useCallback } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { Plus, Users, Building2, ArrowRight, Settings, PowerOff, AlertTriangle, KeyRound, Droplets } from 'lucide-react';
+import { Plus, Building2, ArrowRight, Settings, RotateCw } from 'lucide-react';
 import { formatDate } from '@/lib/dates';
-import { DataTable } from '@/components/ui/data-table';
+import { PageHeader } from '@/components/ui/page-header';
+import { KpiStrip } from '@/components/ui/kpi-strip';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
+import {
+  companyStatusKind,
+  companySummary,
+  formatCount,
+  initials,
+  plural,
+} from '@/components/superadmin/superadmin-model';
 
 interface CompanyRow {
   id: string;
@@ -31,7 +45,19 @@ interface CompanyRow {
 //   · "Gestionar" — sends the superadmin to the entity detail page
 //       (/superadmin/companies/:id) for editing.
 //
-// Plus header actions: "Nueva entidad" and a link to "Usuarios".
+// «Libro mayor» (2026-10-12):
+//   · Tres MetricCard con ícono de color → KpiStrip. Antes, con la carga
+//     fallida o en vuelo, mostraban «0 activas · 0 usuarios · 0 inactivas»
+//     (sumaban `companies ?? []`): ahora «—» con el motivo
+//     (`companySummary(null)` → null, superadmin-model.ts).
+//   · «Usuarios totales» es una suma ENTRE empresas: el sub dice de cuántas
+//     sale. El conteo por empresa lo arma GET /api/superadmin/companies.
+//   · DataTable → FinTable (tarjetas < 720 px). Estado con StatusBadge
+//     (activa = ok, inactiva = gris); el avatar ya no pinta texto blanco
+//     sobre el color de la marca (con marcas claras no se leía): iniciales
+//     neutras y el color de la empresa como una raya de 3 px.
+//   · Usuarios / Tokens / Liquidez salieron de la cabecera: viven en la barra
+//     lateral del panel (SuperadminShell). Un solo primario: «Nueva entidad».
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SuperadminHome() {
@@ -40,6 +66,7 @@ export default function SuperadminHome() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    setError(null);
     try {
       const res = await apiFetch('/api/superadmin/companies');
       const json = await res.json();
@@ -62,219 +89,188 @@ export default function SuperadminHome() {
     router.push(`/superadmin/viewing/${id}`);
   };
 
-  const totalUsers = (companies ?? []).reduce((sum, c) => sum + c.user_count, 0);
-  const activeCount = (companies ?? []).filter((c) => c.status === 'active').length;
-  const inactiveCount = (companies?.length ?? 0) - activeCount;
+  // Con error NO se usan datos viejos para los KPIs: «—», nunca un número
+  // que ya no se sabe si es cierto.
+  const summary = error ? null : companySummary(companies);
+  const loading = !error && companies === null;
+  const reason = error ? 'No se pudo leer la lista' : loading ? 'Cargando…' : undefined;
+
+  const columns: FinColumn<CompanyRow>[] = [
+    {
+      key: 'name',
+      header: 'Entidad',
+      cell: (c) => (
+        <div className="flex min-w-0 items-center gap-3 py-1.5 max-[720px]:py-0">
+          <div
+            className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-ui-md border border-border bg-surface-2 text-[12px] font-semibold text-text-2"
+            // El color de la marca es un dato de la empresa, no un token:
+            // va como raya inferior, sin texto encima.
+            style={c.color_primary ? { boxShadow: `inset 0 -3px 0 0 ${c.color_primary}` } : undefined}
+          >
+            {c.logo_url ? (
+              // Logos from tenants are arbitrary URLs — use plain
+              // <img> so we don't force the Next.js loader's
+              // domain allowlist.
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={c.logo_url} alt="" className="size-full object-cover" />
+            ) : (
+              <span aria-hidden="true">{initials(c.name)}</span>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="truncate font-medium text-foreground">{c.name}</div>
+            <div className="truncate text-[12px] leading-[1.3] text-text-3">Creada: {formatDate(c.created_at)}</div>
+            <div className="mt-1 hidden flex-wrap items-center gap-1.5 max-[720px]:flex">
+              <StatusBadge kind={companyStatusKind(c.status)} label={c.status === 'active' ? 'Activa' : 'Inactiva'} />
+              <span className="text-[12px] text-text-3">
+                {formatCount(c.user_count)} {plural(c.user_count, 'usuario', 'usuarios')}
+              </span>
+            </div>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'slug',
+      header: 'Slug',
+      hideSm: true,
+      cell: (c) => <code className="font-mono text-[12px] text-text-2">{c.slug}</code>,
+    },
+    {
+      key: 'users',
+      header: 'Usuarios',
+      kind: 'number',
+      hideSm: true,
+      value: (c) => c.user_count,
+    },
+    {
+      key: 'status',
+      header: 'Estado',
+      hideSm: true,
+      cell: (c) => <StatusBadge kind={companyStatusKind(c.status)} label={c.status === 'active' ? 'Activa' : 'Inactiva'} />,
+    },
+  ];
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Entidades</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Gestiona las empresas clientes de la plataforma.
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Link
-            href="/superadmin/users"
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-          >
-            <Users className="w-4 h-4" /> Usuarios
+    <div className="space-y-4">
+      <PageHeader
+        title="Entidades"
+        subtitle="Las empresas clientes de la plataforma: branding, módulos, usuarios y credenciales."
+        actions={
+          <Link href="/superadmin/companies/new" className={actionButtonClass('primary')}>
+            <Plus aria-hidden className="size-4" /> Nueva entidad
           </Link>
-          <Link
-            href="/superadmin/tokens"
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-          >
-            <KeyRound className="w-4 h-4" /> Tokens
-          </Link>
-          <Link
-            href="/superadmin/liquidity"
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-          >
-            <Droplets className="w-4 h-4" /> Liquidez
-          </Link>
-          <Link
-            href="/superadmin/companies/new"
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-          >
-            <Plus className="w-4 h-4" /> Nueva entidad
-          </Link>
-        </div>
-      </div>
+        }
+      />
 
-      {/* Metrics */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <MetricCard
-          icon={Building2}
-          label="Entidades activas"
-          value={activeCount}
-          sub={`${companies?.length ?? 0} total`}
-        />
-        <MetricCard icon={Users} label="Usuarios totales" value={totalUsers} />
-        <MetricCard
-          icon={PowerOff}
-          label="Inactivas"
-          value={inactiveCount}
-          tone="muted"
-        />
-      </div>
+      <KpiStrip
+        items={[
+          {
+            key: 'active',
+            label: 'Entidades activas',
+            value: summary?.active,
+            format: 'count',
+            hero: true,
+            sub: summary ? `de ${formatCount(summary.total)} en total` : reason,
+            missingBadge: loading ? false : undefined,
+          },
+          {
+            key: 'users',
+            label: 'Usuarios totales',
+            value: summary?.users,
+            format: 'count',
+            sub: summary
+              ? summary.users === null
+                ? `${summary.usersMissing} ${plural(summary.usersMissing, 'entidad', 'entidades')} sin conteo`
+                : `suma de ${formatCount(summary.total)} ${plural(summary.total, 'entidad', 'entidades')}`
+              : reason,
+            missingBadge: loading ? false : undefined,
+          },
+          {
+            key: 'inactive',
+            label: 'Inactivas',
+            value: summary?.inactive,
+            format: 'count',
+            sub: summary ? 'sus usuarios no pueden entrar' : reason,
+            missingBadge: loading ? false : undefined,
+          },
+        ]}
+      />
+
+      {error && (
+        <Notice
+          kind="bad"
+          title="No se pudo cargar la lista de entidades"
+          action={
+            <ActionButton variant="secondary" onClick={() => void load()}>
+              <RotateCw aria-hidden className="size-4" /> Reintentar
+            </ActionButton>
+          }
+        >
+          {error}. Los números de arriba quedan en «—» hasta que la lista cargue.
+        </Notice>
+      )}
 
       {/* System alerts — surfaces inactive tenants so the operator notices at
           a glance. Non-blocking and always dismissable by the status change. */}
-      {inactiveCount > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-warning/10 dark:border-amber-800 text-amber-900 dark:text-amber-100 p-3 text-sm">
-          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-          <div>
-            <p className="font-medium">{inactiveCount} {inactiveCount === 1 ? 'empresa inactiva' : 'empresas inactivas'}</p>
-            <p className="text-xs mt-0.5">
-              Los usuarios de entidades inactivas no pueden iniciar sesión. Revisa el estado en la tabla de abajo.
-            </p>
-          </div>
-        </div>
+      {summary && summary.inactive > 0 && (
+        <Notice
+          kind="pend"
+          title={`${summary.inactive} ${plural(summary.inactive, 'empresa inactiva', 'empresas inactivas')}`}
+        >
+          Los usuarios de entidades inactivas no pueden iniciar sesión. Revisá el estado en la tabla de abajo.
+        </Notice>
       )}
 
-      {/* Error / Loading / Empty */}
-      {error && (
-        <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
-          {error}
-        </div>
+      {loading && (
+        <Panel title="Todas las entidades" flush>
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-12" />
+            ))}
+          </div>
+        </Panel>
       )}
-      {!error && companies === null && (
-        <div className="animate-pulse space-y-2">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="h-16 rounded-xl bg-muted/50" />
-          ))}
-        </div>
-      )}
-      {/* Table */}
+
       {!error && companies !== null && (
-        <div className="rounded-xl border border-border bg-card overflow-hidden">
-          <DataTable<CompanyRow>
-            data={companies}
+        <Panel
+          title="Todas las entidades"
+          hint={`${formatCount(companies.length)} ${plural(companies.length, 'entidad', 'entidades')}`}
+          flush
+        >
+          <FinTable<CompanyRow>
+            caption="Entidades de la plataforma"
+            columns={columns}
+            rows={companies}
+            rowKey={(c) => c.id}
             empty={
               <EmptyState
                 compact
                 icon={Building2}
                 title="Aún no hay entidades"
-                description="Crea la primera con &quot;Nueva entidad&quot;."
+                description="Creá la primera con «Nueva entidad»."
               />
             }
-            columns={[
-              {
-                header: 'Entidad',
-                accessor: (c) => (
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="w-9 h-9 rounded-md flex items-center justify-center shrink-0 text-white font-semibold text-xs"
-                      style={{ backgroundColor: c.color_primary || '#1E3A5F' }}
-                    >
-                      {c.logo_url ? (
-                        // Logos from tenants are arbitrary URLs — use plain
-                        // <img> so we don't force the Next.js loader's
-                        // domain allowlist.
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={c.logo_url} alt={c.name} className="w-full h-full object-cover rounded-md" />
-                      ) : (
-                        initials(c.name)
-                      )}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{c.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        Creada: {formatDate(c.created_at)}
-                      </div>
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                header: 'Slug',
-                className: 'hidden sm:table-cell',
-                accessor: (c) => <code className="text-xs text-muted-foreground">{c.slug}</code>,
-              },
-              {
-                header: 'Usuarios',
-                accessor: (c) => c.user_count,
-              },
-              {
-                header: 'Estado',
-                accessor: (c) => (
-                  <span
-                    className={
-                      c.status === 'active'
-                        ? 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
-                        : 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                    }
-                  >
-                    {c.status === 'active' ? 'Activa' : 'Inactiva'}
-                  </span>
-                ),
-              },
-              {
-                header: 'Acciones',
-                align: 'right',
-                accessor: (c) => (
-                  <div className="flex justify-end gap-2">
-                    <Link
-                      href={`/superadmin/companies/${c.id}`}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-border text-xs hover:bg-muted"
-                    >
-                      <Settings className="w-3 h-3" /> Gestionar
-                    </Link>
-                    <button
-                      onClick={() => enterAsAdmin(c.id)}
-                      disabled={c.status !== 'active'}
-                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-[var(--color-primary)] text-white text-xs hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
-                    >
-                      Entrar como Admin <ArrowRight className="w-3 h-3" />
-                    </button>
-                  </div>
-                ),
-              },
-            ]}
+            rowActions={(c) => (
+              <>
+                <Link href={`/superadmin/companies/${c.id}`} className={actionButtonClass('ghost')}>
+                  <Settings aria-hidden className="size-4" />
+                  <span className="max-sm:sr-only">Gestionar</span>
+                </Link>
+                <ActionButton
+                  variant="secondary"
+                  onClick={() => enterAsAdmin(c.id)}
+                  disabled={c.status !== 'active'}
+                  title={c.status !== 'active' ? 'La entidad está inactiva' : undefined}
+                >
+                  <span className="max-sm:sr-only">Entrar como admin</span>
+                  <ArrowRight aria-hidden className="size-4" />
+                </ActionButton>
+              </>
+            )}
           />
-        </div>
+        </Panel>
       )}
     </div>
   );
-}
-
-function MetricCard({
-  icon: Icon,
-  label,
-  value,
-  sub,
-  tone = 'primary',
-}: {
-  icon: React.ComponentType<{ className?: string }>;
-  label: string;
-  value: number | string;
-  sub?: string;
-  tone?: 'primary' | 'muted';
-}) {
-  return (
-    <div className="rounded-xl border border-border bg-card p-4 flex items-start justify-between">
-      <div className="min-w-0">
-        <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
-        <p className={`text-2xl font-bold mt-1 ${tone === 'muted' ? 'text-muted-foreground' : ''}`}>
-          {value}
-        </p>
-        {sub && <p className="text-xs text-muted-foreground mt-1">{sub}</p>}
-      </div>
-      <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800">
-        <Icon className="w-5 h-5 text-slate-600 dark:text-slate-300" />
-      </div>
-    </div>
-  );
-}
-
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join('');
 }

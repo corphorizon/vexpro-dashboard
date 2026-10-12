@@ -8,11 +8,20 @@
 //
 // Posts to POST /api/superadmin/companies/:id/users. On success, calls
 // `onCreated(user)` so the parent can prepend the new row optimistically.
+//
+// «Libro mayor» (2026-10-12): modal rounded-ui-xl + shadow-3 con pie fijo,
+// Field/Input/Select, ActionButton. El mínimo de la contraseña sale de
+// PASSWORD_MIN_LENGTH (auth-form.ts, el mismo 8 que valida el endpoint) en
+// vez de un 8 suelto. Payload y validación sin cambios.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import { X, Loader2, UserPlus } from 'lucide-react';
+import { X, UserPlus } from 'lucide-react';
+import { PASSWORD_MIN_LENGTH } from '@/lib/auth-form';
+import { Notice } from '@/components/ui/notice';
+import { Field, Input, Select } from '@/components/ui/field';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
 import { ROLE_DEFAULT_MODULES } from '@/lib/auth-context';
 import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import { ALL_MODULES } from '../../_form';
@@ -107,135 +116,113 @@ export function CreateUserModal({
   const valid =
     !!email.trim() &&
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()) &&
-    password.length >= 8 &&
+    password.length >= PASSWORD_MIN_LENGTH &&
     !!name.trim();
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
       onClick={onClose}
     >
       <div
-        className="bg-background border border-border rounded-xl shadow-xl w-full max-w-xl max-h-[90vh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="create-user-title"
+        className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-hidden rounded-ui-xl border border-border bg-card text-foreground shadow-3"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between p-5 border-b border-border sticky top-0 bg-background">
-          <div className="flex items-center gap-2">
-            <UserPlus className="w-5 h-5" />
-            <h2 className="text-lg font-semibold">Agregar usuario</h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md hover:bg-muted"
-            aria-label="Cerrar"
-          >
-            <X className="w-4 h-4" />
+        <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-3">
+          <h2 id="create-user-title" className="flex items-center gap-2 text-[15px] font-semibold">
+            <UserPlus aria-hidden className="size-4 text-text-3" />
+            Agregar usuario
+          </h2>
+          <button onClick={onClose} className={ROW_ACTION_CLASS} aria-label="Cerrar">
+            <X aria-hidden className="size-4" />
           </button>
         </div>
 
-        <div className="p-5 space-y-4">
+        <div className="space-y-4 overflow-y-auto p-5">
           {error && (
-            <div className="rounded-md border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-2.5 text-xs">
+            <Notice kind="bad" title="No se pudo crear el usuario">
               {error}
-            </div>
+            </Notice>
           )}
 
-          <div>
-            <label className="text-xs font-medium block mb-1">Nombre</label>
-            <input
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm"
-              placeholder="Juan Pérez"
-              autoFocus
-            />
-          </div>
+          <Field label="Nombre" required>
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Juan Pérez" autoFocus />
+          </Field>
 
-          <div>
-            <label className="text-xs font-medium block mb-1">Email</label>
-            <input
+          <Field label="Email" required>
+            <Input
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm"
               placeholder="usuario@empresa.com"
             />
-          </div>
+          </Field>
 
-          <div>
-            <label className="text-xs font-medium block mb-1">Contraseña inicial</label>
-            <input
+          <Field
+            label="Contraseña inicial"
+            required
+            hint="El usuario puede cambiarla luego desde su perfil o pidiéndola por email."
+          >
+            <Input
               type="text"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm font-mono"
-              placeholder="Mínimo 8 caracteres"
+              className="font-mono"
+              placeholder={`Mínimo ${PASSWORD_MIN_LENGTH} caracteres`}
             />
-            <p className="text-[11px] text-muted-foreground mt-1">
-              El usuario puede cambiarla luego desde su perfil o pidiéndola por email.
-            </p>
-          </div>
+          </Field>
 
-          <div>
-            <label className="text-xs font-medium block mb-1">Rol</label>
-            <select
-              value={role}
-              onChange={(e) => onRoleChange(e.target.value)}
-              className="w-full px-3 py-2 rounded-md border border-border bg-background text-sm"
-            >
+          <Field label="Rol">
+            <Select value={role} onChange={(e) => onRoleChange(e.target.value)}>
               {BUILT_IN_ROLES.map((r) => (
                 <option key={r} value={r}>
                   {BUILT_IN_ROLE_LABELS[r]}
                 </option>
               ))}
-            </select>
-          </div>
+            </Select>
+          </Field>
 
           <div>
-            <label className="text-xs font-medium block mb-2">Módulos permitidos</label>
-            <div className="grid grid-cols-2 gap-1.5 max-h-48 overflow-y-auto p-2 border border-border rounded-md">
-              {eligibleModules.length === 0 ? (
-                <p className="col-span-2 text-xs text-muted-foreground italic p-2">
-                  Esta empresa no tiene módulos activos.
-                </p>
-              ) : (
-                eligibleModules.map((m) => (
+            <p className="mb-1.5 text-[12.5px] font-medium text-text-2">Módulos permitidos</p>
+            {eligibleModules.length === 0 ? (
+              <Notice kind="info" title="Sin módulos activos">
+                Esta empresa no tiene módulos activos.
+              </Notice>
+            ) : (
+              <div className="grid max-h-48 grid-cols-1 gap-x-4 gap-y-1 overflow-y-auto rounded-ui-md border border-border p-2 min-[420px]:grid-cols-2">
+                {eligibleModules.map((m) => (
                   <label
                     key={m.key}
-                    className="flex items-center gap-2 text-xs p-1.5 rounded hover:bg-muted/40 cursor-pointer"
+                    className="flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-ui-sm px-1 text-[13px] hover:bg-surface-2 pointer-coarse:min-h-11"
                   >
                     <input
                       type="checkbox"
                       checked={modules.includes(m.key)}
                       onChange={() => toggleModule(m.key)}
+                      className="size-4 shrink-0 accent-brand-ink"
                     />
                     <span>{m.label}</span>
                   </label>
-                ))
-              )}
-            </div>
-            <p className="text-[11px] text-muted-foreground mt-1">
+                ))}
+              </div>
+            )}
+            <p className="mt-1 text-[12px] text-text-3">
               Defaults aplicados según el rol — podés ajustarlos manualmente.
             </p>
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 p-5 border-t border-border sticky bottom-0 bg-background">
-          <button
-            onClick={onClose}
-            disabled={saving}
-            className="px-3 py-2 rounded-md border border-border text-sm hover:bg-muted disabled:opacity-50"
-          >
+        <div className="flex items-center justify-end gap-2 border-t border-border px-5 py-3">
+          <ActionButton variant="secondary" onClick={onClose} disabled={saving}>
             Cancelar
-          </button>
-          <button
-            onClick={submit}
-            disabled={!valid || saving}
-            className="inline-flex items-center gap-1.5 px-4 py-2 rounded-md bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-          >
-            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
+          </ActionButton>
+          <ActionButton variant="primary" onClick={submit} disabled={!valid} loading={saving}>
+            {!saving && <UserPlus aria-hidden className="size-4" />}
             {saving ? 'Creando…' : 'Crear usuario'}
-          </button>
+          </ActionButton>
         </div>
       </div>
     </div>

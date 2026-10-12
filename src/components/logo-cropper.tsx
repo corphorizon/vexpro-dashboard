@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, X, ZoomIn } from 'lucide-react';
+import { ActionButton } from '@/components/payment-orders/action-button';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LogoCropper — recorte previo a la subida, con canvas y sin dependencias.
@@ -17,6 +18,10 @@ import { Check, X, ZoomIn } from 'lucide-react';
 //
 // Los SVG no pasan por acá — rasterizarlos sería perder el vector. El uploader
 // los sube tal cual.
+//
+// «Libro mayor» (2026-10-12): modal con shadow-3 / rounded-ui-xl, botones con
+// ActionButton (el primario ya no arma `bg-[var(--color-primary)]` a mano) y
+// damero sobre `surface-2`. Recorte y exportación sin cambios.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Lado del recorte cuadrado en pantalla. */
@@ -174,38 +179,38 @@ export function LogoCropper({ file, aspect, onCancel, onConfirm, onUseOriginal, 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Recortar imagen"
     >
-      <div className="w-full max-w-md rounded-xl border border-border bg-card text-card-foreground shadow-[var(--elevation-3)] p-4 vex-pop-in">
+      <div className="w-full max-w-md rounded-ui-xl border border-border bg-card p-4 text-foreground shadow-3 vex-pop-in">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold">
+          <h2 className="text-[15px] font-semibold">
             {aspect === 'square' ? 'Recortar isotipo (1:1)' : 'Recortar logo'}
           </h2>
           <button
             type="button"
             onClick={onCancel}
             aria-label="Cerrar"
-            className="w-11 h-11 -mr-2 flex items-center justify-center rounded-lg text-muted-foreground hover:bg-muted"
+            className="-mr-2 flex size-10 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
         {error ? (
-          <p className="text-sm text-negative py-6 text-center">{error}</p>
+          <p role="alert" className="py-6 text-center text-[13px] text-neg">{error}</p>
         ) : (
           <>
             {/* Damero: sin él, un PNG transparente parece un recuadro vacío. */}
             <div
-              className="mx-auto rounded-lg border border-border overflow-hidden"
+              className="mx-auto overflow-hidden rounded-ui-md border border-border"
               style={{
                 width: view.w,
                 height: view.h,
                 backgroundImage:
-                  'linear-gradient(45deg, var(--muted) 25%, transparent 25%), linear-gradient(-45deg, var(--muted) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, var(--muted) 75%), linear-gradient(-45deg, transparent 75%, var(--muted) 75%)',
+                  'linear-gradient(45deg, var(--surface-2) 25%, transparent 25%), linear-gradient(-45deg, var(--surface-2) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, var(--surface-2) 75%), linear-gradient(-45deg, transparent 75%, var(--surface-2) 75%)',
                 backgroundSize: '16px 16px',
                 backgroundPosition: '0 0, 0 8px, 8px -8px, -8px 0px',
               }}
@@ -223,7 +228,7 @@ export function LogoCropper({ file, aspect, onCancel, onConfirm, onUseOriginal, 
             </div>
 
             <div className="flex items-center gap-3 mt-3">
-              <ZoomIn className="w-4 h-4 text-muted-foreground shrink-0" />
+              <ZoomIn aria-hidden className="size-4 shrink-0 text-text-3" />
               <input
                 type="range"
                 min={MIN_ZOOM * 100}
@@ -231,43 +236,28 @@ export function LogoCropper({ file, aspect, onCancel, onConfirm, onUseOriginal, 
                 value={zoomPct}
                 aria-label="Zoom"
                 onChange={(e) => setZoomFromSlider(Number(e.target.value))}
-                className="flex-1 h-11 accent-[var(--color-primary)] cursor-pointer"
+                className="h-11 flex-1 cursor-pointer accent-brand-ink"
               />
-              <span className="text-xs tabular-nums text-muted-foreground w-12 text-right">
+              <span className="num w-12 text-right text-[12px] tabular-nums text-text-2">
                 {zoomPct}%
               </span>
             </div>
 
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="mt-1 text-[12px] text-text-3">
               Arrastrá la imagen para encuadrarla y usá la rueda o el control para acercar.
               El fondo transparente se conserva.
             </p>
 
-            <div className="flex flex-wrap items-center justify-end gap-2 mt-4">
-              <button
-                type="button"
-                onClick={onUseOriginal}
-                disabled={busy}
-                className="min-h-11 px-3 rounded-lg text-sm text-muted-foreground hover:bg-muted disabled:opacity-50"
-              >
+            <div className="mt-4 flex flex-wrap items-center justify-end gap-2">
+              <ActionButton variant="ghost" onClick={onUseOriginal} disabled={busy}>
                 Subir sin recortar
-              </button>
-              <button
-                type="button"
-                onClick={onCancel}
-                disabled={busy}
-                className="min-h-11 px-3 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50"
-              >
+              </ActionButton>
+              <ActionButton variant="secondary" onClick={onCancel} disabled={busy}>
                 Cancelar
-              </button>
-              <button
-                type="button"
-                onClick={confirm}
-                disabled={busy || !ready}
-                className="min-h-11 inline-flex items-center gap-2 px-4 rounded-lg bg-[var(--color-primary)] text-[var(--brand-on-primary)] text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                <Check className="w-4 h-4" /> Recortar y subir
-              </button>
+              </ActionButton>
+              <ActionButton variant="primary" onClick={confirm} disabled={busy || !ready}>
+                <Check aria-hidden className="size-4" /> Recortar y subir
+              </ActionButton>
             </div>
           </>
         )}

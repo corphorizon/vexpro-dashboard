@@ -5,6 +5,8 @@ import { apiFetch } from '@/lib/api-fetch';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
+import { actionButtonClass } from '@/components/payment-orders/action-button';
 import { DEFAULT_ACTIVE_MODULES } from '@/lib/modules';
 // El default del alta sale del registro, no de un literal: cuando se agregó un
 // tercer modelo este archivo era el único lugar donde 'broker' estaba escrito a
@@ -63,19 +65,11 @@ export default function NewCompanyPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <Link
-        href="/superadmin"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="w-4 h-4" /> Volver al panel
+    <div className="max-w-4xl space-y-4">
+      <Link href="/superadmin" className={actionButtonClass('ghost', '-ml-3')}>
+        <ArrowLeft aria-hidden className="size-4" /> Volver al panel
       </Link>
-      <div>
-        <h1 className="text-2xl font-bold">Nueva entidad</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Crea una empresa cliente con su branding y módulos.
-        </p>
-      </div>
+      <PageHeader title="Nueva entidad" subtitle="Creá una empresa cliente con su branding y sus módulos." />
 
       <CompanyForm
         mode="create"

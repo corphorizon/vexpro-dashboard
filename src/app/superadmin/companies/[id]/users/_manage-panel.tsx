@@ -2,7 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import { X, Loader2, KeyRound, ShieldOff, Power, ClipboardList, Check } from 'lucide-react';
+import { X, KeyRound, ShieldOff, Power, ClipboardList, Check } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Notice } from '@/components/ui/notice';
+import { Field, Input, Select } from '@/components/ui/field';
+import { Segmented } from '@/components/ui/segmented';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import {
+  USER_AUDIT_PREVIEW,
+  atLimit,
+  auditActionKind,
+  twofaKind,
+} from '@/components/superadmin/superadmin-model';
 import { ALL_MODULES } from '../../_form';
 import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import type { CompanyUser } from './page';
@@ -19,6 +32,13 @@ import type { CompanyUser } from './page';
 // State is local — on save we POST to /api/superadmin/.../users/:userId and
 // bubble the fresh row back up via onUpdated(). Failures surface in a banner
 // without closing the panel so the user can retry.
+//
+// «Libro mayor» (2026-10-12): superficie `bg-card` + shadow-3; Field/Input/
+// Select; el toggle de estado (esmeralda crudo) es un Segmented; los botones
+// de seguridad son ActionButton (desactivar = `danger`, sin rojos crudos ni
+// `dark:`); el historial dice cuando muestra exactamente las últimas
+// USER_AUDIT_PREVIEW (puede haber más). Endpoints, payloads y confirmaciones
+// sin cambios.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // Roles rendered as { key, label } pairs for the <select>. Sourced from the
@@ -61,7 +81,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
     (async () => {
       try {
         const res = await apiFetch(
-          `/api/superadmin/companies/${user.company_id}/users/${user.id}/audit?limit=5`,
+          `/api/superadmin/companies/${user.company_id}/users/${user.id}/audit?limit=${USER_AUDIT_PREVIEW}`,
         );
         const json = await res.json();
         if (!res.ok || !json.success) throw new Error(json.error || `HTTP ${res.status}`);
@@ -197,120 +217,97 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
 
   const availableModules = ALL_MODULES.filter((m) => companyActiveModules.includes(m.key));
 
+
   return (
     <div className="fixed inset-0 z-50 flex" role="dialog" aria-modal="true" aria-label="Gestionar usuario">
       {/* Backdrop */}
       <button
         aria-label="Cerrar"
         onClick={onClose}
-        className="flex-1 bg-black/40"
+        className="flex-1 bg-black/45"
       />
 
       {/* Panel */}
-      <div className="w-full max-w-xl h-full bg-background border-l border-border overflow-y-auto shadow-xl">
-        <div className="sticky top-0 z-10 bg-background border-b border-border px-5 py-3 flex items-center justify-between">
+      <div className="h-full w-full max-w-xl overflow-y-auto border-l border-border bg-card text-foreground shadow-3">
+        <div className="sticky top-0 z-10 flex items-center justify-between gap-3 border-b border-border bg-card px-5 py-3">
           <div className="min-w-0">
-            <div className="text-xs text-muted-foreground">Gestionar usuario</div>
-            <div className="font-semibold truncate">{user.name || user.email}</div>
+            <div className="text-[12px] text-text-3">Gestionar usuario</div>
+            <div className="truncate text-[15px] font-semibold">{user.name || user.email}</div>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded hover:bg-muted"
-            aria-label="Cerrar"
-          >
-            <X className="w-4 h-4" />
+          <button onClick={onClose} className={ROW_ACTION_CLASS} aria-label="Cerrar">
+            <X aria-hidden className="size-4" />
           </button>
         </div>
 
-        <div className="p-5 space-y-6">
+        <div className="space-y-6 p-5">
           {error && (
-            <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
+            <Notice kind="bad" title="No se pudo completar la acción">
               {error}
-            </div>
+            </Notice>
           )}
           {toast && (
-            <div className="rounded-lg border border-emerald-300 bg-positive/10 dark:border-emerald-800 text-emerald-800 dark:text-emerald-200 p-3 text-sm flex items-center gap-2">
-              <Check className="w-4 h-4" /> {toast}
-            </div>
+            <p role="status" className="flex items-center gap-2 text-[13px] font-medium text-pos">
+              <Check aria-hidden className="size-4" /> {toast}
+            </p>
           )}
 
           {/* SECTION: Basic info */}
-          <section>
-            <h3 className="text-sm font-semibold mb-3">Información básica</h3>
-            <div className="space-y-3">
-              <Field label="Nombre completo">
-                <input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                />
-              </Field>
-              <Field label="Email">
-                <input
-                  type="email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  Cambiar el email también actualiza la cuenta de login.
-                </p>
-              </Field>
-              <Field label="Estado">
-                <button
-                  type="button"
-                  onClick={() => setStatus((s) => (s === 'active' ? 'inactive' : 'active'))}
-                  className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-medium border transition-colors ${
-                    status === 'active'
-                      ? 'border-emerald-300 bg-emerald-50 text-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-200'
-                      : 'border-border bg-muted text-muted-foreground'
-                  }`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50'
-                    }`}
-                  />
-                  {status === 'active' ? 'Activo' : 'Inactivo'}
-                </button>
-              </Field>
+          <section className="space-y-3">
+            <h3 className={SECTION_TITLE}>Información básica</h3>
+            <Field label="Nombre completo">
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </Field>
+            <Field label="Email" hint="Cambiar el email también actualiza la cuenta de login.">
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </Field>
+            <div className="flex flex-col gap-1">
+              <span className="text-[12.5px] font-medium text-text-2">Estado</span>
+              <Segmented<'active' | 'inactive'>
+                aria-label="Estado del usuario"
+                value={status}
+                onChange={setStatus}
+                options={[
+                  { value: 'active', label: 'Activo' },
+                  { value: 'inactive', label: 'Inactivo' },
+                ]}
+              />
+              <span className="text-[12px] text-text-3">Se aplica al «Guardar cambios».</span>
             </div>
           </section>
 
           {/* SECTION: Role + permissions */}
-          <section>
-            <h3 className="text-sm font-semibold mb-3">Rol y permisos</h3>
+          <section className="space-y-3">
+            <h3 className={SECTION_TITLE}>Rol y permisos</h3>
             <Field label="Rol">
-              <select
-                value={role}
-                onChange={(e) => setRole(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-              >
+              <Select value={role} onChange={(e) => setRole(e.target.value)}>
                 {ROLES.map((r) => (
                   <option key={r.key} value={r.key}>
                     {r.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
-            <div className="mt-3">
-              <p className="text-xs font-medium mb-2">Módulos accesibles</p>
+            <div>
+              <p className="mb-1.5 text-[12.5px] font-medium text-text-2">Módulos accesibles</p>
               {availableModules.length === 0 ? (
-                <p className="text-xs text-muted-foreground">
-                  Esta organización no tiene módulos activos. Actívalos primero en Configuración.
-                </p>
+                <Notice kind="info" title="Sin módulos activos">
+                  Esta organización no tiene módulos activos. Activalos primero en Configuración.
+                </Notice>
               ) : (
-                <div className="grid grid-cols-2 gap-2 p-3 rounded-lg border border-border bg-card">
+                <div className="grid grid-cols-1 gap-x-4 gap-y-1 rounded-ui-md border border-border p-2 min-[420px]:grid-cols-2">
                   {availableModules.map((m) => {
                     const on = modules.includes(m.key);
                     return (
-                      <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer select-none">
+                      <label
+                        key={m.key}
+                        className="flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-ui-sm px-1 text-[13px] hover:bg-surface-2 pointer-coarse:min-h-11"
+                      >
                         <input
                           type="checkbox"
                           checked={on}
                           onChange={() => toggleModule(m.key)}
-                          className="rounded border-border"
+                          className="size-4 shrink-0 accent-brand-ink"
                         />
                         <span>{m.label}</span>
                       </label>
@@ -320,133 +317,123 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
               )}
             </div>
 
-            <div className="mt-4">
-              <button
-                onClick={handleSave}
-                disabled={saving}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
-                Guardar cambios
-              </button>
-            </div>
+            <ActionButton variant="primary" onClick={handleSave} loading={saving}>
+              Guardar cambios
+            </ActionButton>
           </section>
 
           {/* SECTION: Security */}
-          <section>
-            <h3 className="text-sm font-semibold mb-3">Seguridad</h3>
+          <section className="space-y-2">
+            <h3 className={SECTION_TITLE}>Seguridad</h3>
 
-            <div className="space-y-2">
-              <button
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-ui-md border border-border p-3">
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium">Contraseña</div>
+                <div className="text-[12px] text-text-3">Envía un email de recuperación a {user.email}.</div>
+              </div>
+              <ActionButton
+                variant="secondary"
                 onClick={handleResetPassword}
                 disabled={busyAction !== null}
-                className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50"
+                loading={busyAction === 'reset'}
               >
-                {busyAction === 'reset' ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <KeyRound className="w-4 h-4" />
-                )}
+                {busyAction !== 'reset' && <KeyRound aria-hidden className="size-4" />}
                 Resetear contraseña
-                <span className="ml-auto text-xs text-muted-foreground">
-                  envía email de recuperación
-                </span>
-              </button>
+              </ActionButton>
+            </div>
 
-              <div className="rounded-lg border border-border p-3">
-                <div className="flex items-center justify-between gap-2 mb-2">
-                  <div className="text-sm font-medium">Autenticador (2FA)</div>
-                  <span
-                    className={`text-xs ${
-                      user.twofa_enabled
-                        ? 'text-positive'
-                        : 'text-muted-foreground'
-                    }`}
-                  >
-                    {user.twofa_enabled ? 'Activo' : 'No configurado'}
-                  </span>
-                </div>
-                <button
-                  onClick={handleDisable2fa}
-                  disabled={!user.twofa_enabled || busyAction !== null}
-                  className="w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {busyAction === 'disable2fa' ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <ShieldOff className="w-4 h-4" />
-                  )}
-                  Desactivar 2FA
-                </button>
-                {user.twofa_enabled && (
-                  <p className="text-xs text-muted-foreground mt-2">
-                    Usa esto solo si el usuario perdió acceso a su autenticador. Deberá configurar 2FA de nuevo en su próximo login.
-                  </p>
-                )}
+            <div className="rounded-ui-md border border-border p-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-[13px] font-medium">Autenticador (2FA)</div>
+                <StatusBadge
+                  kind={twofaKind(user.twofa_enabled)}
+                  label={user.twofa_enabled ? 'Activo' : 'No configurado'}
+                />
               </div>
+              <ActionButton
+                variant="secondary"
+                onClick={handleDisable2fa}
+                disabled={!user.twofa_enabled || busyAction !== null}
+                loading={busyAction === 'disable2fa'}
+              >
+                {busyAction !== 'disable2fa' && <ShieldOff aria-hidden className="size-4" />}
+                Desactivar 2FA
+              </ActionButton>
+              {user.twofa_enabled && (
+                <p className="mt-2 text-[12px] text-text-3">
+                  Usá esto solo si el usuario perdió acceso a su autenticador. Deberá configurar 2FA de nuevo en su próximo login.
+                </p>
+              )}
+            </div>
 
-              <button
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-ui-md border border-border p-3">
+              <div className="min-w-0">
+                <div className="text-[13px] font-medium">Acceso a la organización</div>
+                <div className="text-[12px] text-text-3">
+                  {status === 'active'
+                    ? 'Desactivarlo le corta el login en esta organización al instante.'
+                    : 'Está desactivado: no puede iniciar sesión en esta organización.'}
+                </div>
+              </div>
+              <ActionButton
+                variant={status === 'active' ? 'danger' : 'secondary'}
                 onClick={handleDeactivate}
                 disabled={busyAction !== null}
-                className={`w-full inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-sm disabled:opacity-50 ${
-                  status === 'active'
-                    ? 'border-red-300 text-red-700 hover:bg-red-50 dark:border-red-900 dark:text-red-300 dark:hover:bg-red-950/40'
-                    : 'border-border hover:bg-muted'
-                }`}
+                loading={busyAction === 'deactivate'}
               >
-                {busyAction === 'deactivate' ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Power className="w-4 h-4" />
-                )}
+                {busyAction !== 'deactivate' && <Power aria-hidden className="size-4" />}
                 {status === 'active' ? 'Desactivar usuario' : 'Reactivar usuario'}
-              </button>
+              </ActionButton>
             </div>
           </section>
 
           {/* SECTION: History */}
-          <section>
-            <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-              <ClipboardList className="w-4 h-4" /> Historial reciente
+          <section className="space-y-2">
+            <h3 className={cn(SECTION_TITLE, 'flex items-center gap-2')}>
+              <ClipboardList aria-hidden className="size-4 text-text-3" /> Historial reciente
             </h3>
             {auditErr && (
-              <div className="text-xs text-negative">{auditErr}</div>
+              <Notice kind="bad" title="No se pudo cargar el historial">
+                {auditErr}
+              </Notice>
             )}
-            {!audit && !auditErr && (
-              <div className="text-xs text-muted-foreground">Cargando…</div>
-            )}
+            {!audit && !auditErr && <Skeleton className="h-16" />}
             {audit && audit.length === 0 && (
-              <div className="text-xs text-muted-foreground">
-                Este usuario aún no tiene actividad registrada.
-              </div>
+              <p className="text-[13px] text-text-2">Este usuario aún no tiene actividad registrada.</p>
             )}
             {audit && audit.length > 0 && (
-              <ul className="space-y-2">
-                {audit.map((e) => (
-                  <li key={e.id} className="rounded-lg border border-border p-2.5 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {e.action} · {e.module}
-                      </span>
-                      <span className="text-muted-foreground">
-                        {new Date(e.created_at).toLocaleString('es', {
-                          day: '2-digit',
-                          month: 'short',
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </div>
-                    {e.details && (
-                      <div className="mt-1 text-muted-foreground line-clamp-2">{e.details}</div>
-                    )}
-                  </li>
-                ))}
-              </ul>
+              <>
+                <ul className="divide-y divide-border rounded-ui-md border border-border">
+                  {audit.map((e) => (
+                    <li key={e.id} className="px-3 py-2 text-[13px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-2">
+                          <StatusBadge kind={auditActionKind(e.action)} label={e.action} />
+                          <span className="truncate text-text-2">{e.module}</span>
+                        </span>
+                        <span className="shrink-0 whitespace-nowrap text-[12px] text-text-3">
+                          {new Date(e.created_at).toLocaleString('es', {
+                            day: '2-digit',
+                            month: 'short',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </div>
+                      {e.details && <div className="mt-1 line-clamp-2 text-[12px] text-text-3">{e.details}</div>}
+                    </li>
+                  ))}
+                </ul>
+                {atLimit(audit.length, USER_AUDIT_PREVIEW) && (
+                  <p className="text-[12px] text-text-3">
+                    Mostrando las últimas {USER_AUDIT_PREVIEW}; puede haber más en el historial completo.
+                  </p>
+                )}
+              </>
             )}
             <a
               href={`/superadmin/companies/${user.company_id}?tab=audit`}
-              className="inline-block mt-2 text-xs text-primary dark:text-accent hover:underline"
+              className="inline-block text-[13px] font-medium text-brand-ink hover:underline"
             >
               Ver historial completo →
             </a>
@@ -457,11 +444,4 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <label className="block">
-      <span className="text-xs font-medium mb-1 inline-block">{label}</span>
-      {children}
-    </label>
-  );
-}
+const SECTION_TITLE = 'text-[15px] font-semibold tracking-[-0.005em] text-foreground';

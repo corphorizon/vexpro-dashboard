@@ -2,9 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import { Card } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Key, Check, Loader2, Eye, EyeOff, Wifi, WifiOff, AlertTriangle, Copy } from 'lucide-react';
+import { Check, Eye, EyeOff, Wifi, Copy, RotateCw } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Field, Input, Select } from '@/components/ui/field';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { createClient } from '@/lib/supabase/client';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,6 +39,20 @@ import { createClient } from '@/lib/supabase/client';
 //
 // When `companyId` is passed, requests append `?company_id=<id>` so the API
 // route knows which tenant to operate on (see /api/admin/api-credentials).
+//
+// «Libro mayor» (2026-10-12) — sólo presentación; payloads, validaciones y
+// endpoints iguales:
+//   · El fallo que no da error: si GET /api/admin/api-credentials fallaba,
+//     el error salía arriba y DEBAJO cada proveedor se dibujaba «sin
+//     configurar» con su botón «Configurar» (creds = []). Ahora con error no
+//     hay tarjetas: un Notice con «Reintentar».
+//   · La wallet de Coinsbuy (companies.default_wallet_id) que no se podía
+//     leer quedaba en console.warn y la tarjeta se veía como «sin wallet»; el
+//     formulario mostraba el campo vacío. Ahora se dice en los dos lugares.
+//   · «Copiar» de la Webhook URL ya no calla un portapapeles bloqueado.
+//   · Card + ícono índigo → Panel; Badge legado → StatusBadge (ok/pend/bad);
+//     inputs a mano → Field/Input/Select (+ SecretInput con mostrar/ocultar);
+//     rojos/verdes crudos y `dark:` → tokens; botones → ActionButton.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Provider =
@@ -237,6 +256,8 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   const [walletId, setWalletId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  /** No se pudo leer companies.default_wallet_id (Coinsbuy). null = leída bien. */
+  const [walletError, setWalletError] = useState<string | null>(null);
   const [editing, setEditing] = useState<Provider | null>(null);
   // Per-provider ping state. Only populated for providers in which
   // `supportsPing` is true and the user has clicked "Probar conexión".
@@ -322,11 +343,14 @@ export function ApiCredentialsPanel({ companyId }: Props) {
           .eq('id', companyId)
           .maybeSingle();
         if (coErr) {
-          // Non-fatal: the Coinsbuy card will just lack the wallet badge.
+          // No fatal, pero tampoco callado: la tarjeta y el formulario de
+          // Coinsbuy dicen que la wallet no se pudo leer.
           console.warn('[api-credentials-panel] could not load wallet_id:', coErr.message);
           setWalletId(null);
+          setWalletError(coErr.message);
         } else {
           setWalletId((companyRow?.default_wallet_id as string | null) ?? null);
+          setWalletError(null);
         }
       }
     } catch (err) {
@@ -356,14 +380,27 @@ export function ApiCredentialsPanel({ companyId }: Props) {
     }
   };
 
+  // Sin la lista de credenciales NO se dibujan las tarjetas: con `creds = []`
+  // cada proveedor se veía «sin configurar» con un botón «Configurar» —
+  // afirmar que no hay credencial cuando no se pudo leer (reglas §1.2).
+  if (error && !loading) {
+    return (
+      <Notice
+        kind="bad"
+        title="No se pudieron leer las credenciales"
+        action={
+          <ActionButton variant="secondary" onClick={() => void reload()}>
+            <RotateCw aria-hidden className="size-4" /> Reintentar
+          </ActionButton>
+        }
+      >
+        {error}. No se muestran los proveedores: sin la lista, todos parecerían «sin configurar».
+      </Notice>
+    );
+  }
+
   return (
     <div className="space-y-4">
-      {error && (
-        <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 text-sm">
-          {error}
-        </div>
-      )}
-
       {PROVIDER_ORDER.map((provider) => {
         const meta = PROVIDER_META[provider];
         const cred = getCred(provider);
@@ -372,70 +409,51 @@ export function ApiCredentialsPanel({ companyId }: Props) {
         const dbProbe = dbProbes[provider];
 
         return (
-          <Card key={provider}>
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center gap-3">
-                <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/50">
-                  <Key className="w-5 h-5 text-indigo-500" />
+          <Panel
+            key={provider}
+            title={meta.label}
+            hint={meta.description}
+            actions={
+              ping || dbProbe || (cred?.is_configured && !isEditing) ? (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {/* Live connection status — only rendered after the user has
+                      pressed "Probar conexión" at least once (empty state =
+                      no badge so we don't imply a test happened). */}
+                  {ping && (
+                    <StatusBadge
+                      kind={ping.connected ? 'ok' : ping.isMock ? 'pend' : 'bad'}
+                      label={ping.connected ? 'Conectada' : ping.isMock ? 'Mock' : 'Sin conectar'}
+                    />
+                  )}
+                  {/* Sondeo de base: verde si conecta con usuario de solo
+                      lectura, ámbar si conecta pero puede escribir, rojo si no
+                      conecta. */}
+                  {dbProbe && (
+                    <StatusBadge
+                      kind={!dbProbe.connected ? 'bad' : dbProbe.readOnly?.verdict === 'ok' ? 'ok' : 'pend'}
+                      label={
+                        !dbProbe.connected
+                          ? 'Sin conectar'
+                          : dbProbe.readOnly?.verdict === 'ok'
+                            ? 'Solo lectura'
+                            : 'Permite escritura'
+                      }
+                    />
+                  )}
+                  {cred?.is_configured && !isEditing && <StatusBadge kind="ok" label="Configurado" />}
                 </div>
-                <div>
-                  <h3 className="font-semibold">{meta.label}</h3>
-                  <p className="text-xs text-muted-foreground">{meta.description}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                {/* Live connection status — only rendered after the user has
-                    pressed "Probar conexión" at least once (empty state =
-                    no badge so we don't imply a test happened). */}
-                {ping && (
-                  <Badge variant={ping.connected ? 'success' : ping.isMock ? 'warning' : 'danger'}>
-                    {ping.connected ? (
-                      <><Wifi className="w-3 h-3" /> Conectada</>
-                    ) : ping.isMock ? (
-                      <><AlertTriangle className="w-3 h-3" /> Mock</>
-                    ) : (
-                      <><WifiOff className="w-3 h-3" /> Sin conectar</>
-                    )}
-                  </Badge>
-                )}
-                {/* Sondeo de base: verde si conecta con usuario de solo
-                    lectura, ámbar si conecta pero puede escribir, rojo si no
-                    conecta. */}
-                {dbProbe && (
-                  <Badge
-                    variant={
-                      !dbProbe.connected
-                        ? 'danger'
-                        : dbProbe.readOnly?.verdict === 'ok'
-                          ? 'success'
-                          : 'warning'
-                    }
-                  >
-                    {!dbProbe.connected ? (
-                      <><WifiOff className="w-3 h-3" /> Sin conectar</>
-                    ) : dbProbe.readOnly?.verdict === 'ok' ? (
-                      <><Wifi className="w-3 h-3" /> Solo lectura</>
-                    ) : (
-                      <><AlertTriangle className="w-3 h-3" /> Permite escritura</>
-                    )}
-                  </Badge>
-                )}
-                {cred?.is_configured && !isEditing && (
-                  <Badge variant="success">
-                    <Check className="w-3 h-3" /> Configurado
-                  </Badge>
-                )}
-              </div>
-            </div>
-
+              ) : undefined
+            }
+          >
             {loading ? (
-              <Loader2 className="w-5 h-5 animate-spin text-muted-foreground" />
+              <Skeleton className="h-8" />
             ) : isEditing ? (
               <ApiCredentialForm
                 provider={provider}
                 meta={meta}
                 existingExtras={cred?.extra_config || {}}
                 currentWalletId={walletId}
+                walletError={walletError}
                 companyId={companyId}
                 onSaved={() => { setEditing(null); reload(); }}
                 onCancel={() => setEditing(null)}
@@ -447,20 +465,18 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                   meta={meta}
                   cred={cred}
                   walletId={walletId}
+                  walletError={walletError}
                 />
-                <p className="text-xs text-muted-foreground">
+                <p className="text-[12px] text-text-3">
                   Última actualización: {new Date(cred.updated_at).toLocaleString('es-ES')}
                 </p>
                 {/* Ping result message (only for providers that support it) */}
                 {meta.supportsPing && ping && (
                   <p
-                    className={`text-xs ${
-                      ping.connected
-                        ? 'text-positive'
-                        : ping.isMock
-                          ? 'text-warning'
-                          : 'text-negative'
-                    }`}
+                    className={cn(
+                      'text-[12px]',
+                      ping.connected ? 'text-pos' : ping.isMock ? 'text-pend' : 'text-neg',
+                    )}
                   >
                     {ping.message} · {new Date(ping.testedAt).toLocaleString('es-ES')}
                   </p>
@@ -468,56 +484,42 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                 {/* Resultado del sondeo de base (MT5 SQL / Orion Mongo). */}
                 {meta.dbProbePath && dbProbe && <DbProbeReport result={dbProbe} />}
                 {meta.dbProbePath && <ReadOnlyNote />}
-                <div className="flex gap-2 pt-2 flex-wrap">
-                  <button
-                    onClick={() => setEditing(provider)}
-                    className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted"
-                  >
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <ActionButton variant="secondary" onClick={() => setEditing(provider)}>
                     Cambiar
-                  </button>
+                  </ActionButton>
                   {meta.supportsPing && (
-                    <button
+                    <ActionButton
+                      variant="secondary"
                       onClick={() => handlePing(provider)}
-                      disabled={pingBusy === provider}
-                      className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
+                      loading={pingBusy === provider}
                     >
-                      {pingBusy === provider ? (
-                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando…</>
-                      ) : (
-                        <><Wifi className="w-3.5 h-3.5" /> Probar conexión</>
-                      )}
-                    </button>
+                      {pingBusy !== provider && <Wifi aria-hidden className="size-4" />}
+                      {pingBusy === provider ? 'Probando…' : 'Probar conexión'}
+                    </ActionButton>
                   )}
                   {meta.dbProbePath && (
-                    <button
+                    <ActionButton
+                      variant="secondary"
                       onClick={() => handleDbProbe(provider, meta.dbProbePath!)}
-                      disabled={dbProbeBusy === provider || !companyId}
+                      disabled={!companyId}
+                      loading={dbProbeBusy === provider}
                       title={!companyId ? 'Requiere el contexto de una empresa' : undefined}
-                      className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
                     >
-                      {dbProbeBusy === provider ? (
-                        <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando…</>
-                      ) : (
-                        <><Wifi className="w-3.5 h-3.5" /> Probar conexión</>
-                      )}
-                    </button>
+                      {dbProbeBusy !== provider && <Wifi aria-hidden className="size-4" />}
+                      {dbProbeBusy === provider ? 'Probando…' : 'Probar conexión'}
+                    </ActionButton>
                   )}
-                  <button
-                    onClick={() => handleDelete(provider)}
-                    className="px-3 py-1.5 rounded-lg border border-negative/30 text-red-600 text-sm hover:bg-red-50 dark:hover:bg-red-950/30"
-                  >
+                  <ActionButton variant="danger" onClick={() => handleDelete(provider)}>
                     Eliminar
-                  </button>
+                  </ActionButton>
                 </div>
               </div>
             ) : (
-              <div className="flex gap-2 flex-wrap">
-                <button
-                  onClick={() => setEditing(provider)}
-                  className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-                >
+              <div className="flex flex-wrap gap-2">
+                <ActionButton variant="secondary" onClick={() => setEditing(provider)}>
                   Configurar
-                </button>
+                </ActionButton>
                 {/* Sin credenciales no hay nada que sondear: la nota explica
                     qué se va a hacer con lo que se cargue. */}
                 {meta.dbProbePath && (
@@ -528,21 +530,18 @@ export function ApiCredentialsPanel({ companyId }: Props) {
                 {/* Even without credentials, Orion CRM can be probed — it
                     reports "mock mode" which is useful info for the admin. */}
                 {meta.supportsPing && (
-                  <button
+                  <ActionButton
+                    variant="secondary"
                     onClick={() => handlePing(provider)}
-                    disabled={pingBusy === provider}
-                    className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted disabled:opacity-50 inline-flex items-center gap-1.5"
+                    loading={pingBusy === provider}
                   >
-                    {pingBusy === provider ? (
-                      <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Probando…</>
-                    ) : (
-                      <><Wifi className="w-3.5 h-3.5" /> Probar conexión</>
-                    )}
-                  </button>
+                    {pingBusy !== provider && <Wifi aria-hidden className="size-4" />}
+                    {pingBusy === provider ? 'Probando…' : 'Probar conexión'}
+                  </ActionButton>
                 )}
               </div>
             )}
-          </Card>
+          </Panel>
         );
       })}
     </div>
@@ -554,7 +553,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
 /** Nota fija de las dos tarjetas de base de datos. */
 function ReadOnlyNote() {
   return (
-    <p className="text-xs text-muted-foreground">
+    <p className="text-[12px] leading-4 text-text-3">
       Los datos nunca salen del servidor: la conexión se abre desde el backend y el
       dashboard sólo LEE. El usuario que cargues debe ser de solo lectura; el botón
       &quot;Probar conexión&quot; lo verifica contra los permisos reales del motor.
@@ -574,23 +573,22 @@ function truncateHost(host: string): string {
  * legible y, si huele a firewall, las IPs a autorizar).
  */
 function DbProbeReport({ result }: { result: DbProbeResult }) {
-  const tone = !result.connected
-    ? 'border-negative/30 bg-negative/5 text-negative'
-    : result.readOnly?.verdict === 'ok'
-      ? 'border-positive/30 bg-positive/5 text-positive'
-      : 'border-warning/30 bg-warning/5 text-warning';
+  const kind = !result.connected ? 'bad' : result.readOnly?.verdict === 'ok' ? 'ok' : 'pend';
+  const box =
+    kind === 'bad' ? 'border-neg/35 bg-neg-bg' : kind === 'ok' ? 'border-pos/35 bg-pos-bg' : 'border-pend/35 bg-pend-bg';
+  const ink = kind === 'bad' ? 'text-neg' : kind === 'ok' ? 'text-pos' : 'text-pend';
 
   return (
-    <div className={`rounded-lg border p-3 text-xs space-y-1.5 ${tone}`}>
+    <div className={cn('space-y-1.5 rounded-ui-md border p-3 text-[12px] text-text-2', box)}>
       {!result.connected ? (
         <>
-          <p className="font-medium">No se pudo conectar.</p>
-          <p className="text-foreground/80 break-words">{result.error}</p>
-          {result.hint && <p className="text-foreground/80">Pista: {result.hint}</p>}
+          <p className={cn('font-semibold', ink)}>No se pudo conectar.</p>
+          <p className="break-words">{result.error}</p>
+          {result.hint && <p>Pista: {result.hint}</p>}
         </>
       ) : (
         <>
-          <p className="font-medium">
+          <p className={cn('font-semibold', ink)}>
             Conexión OK
             {result.engine ? ` · ${result.engine}` : ''}
             {result.serverVersion ? ` ${result.serverVersion}` : ''}
@@ -599,13 +597,13 @@ function DbProbeReport({ result }: { result: DbProbeResult }) {
 
           {/* MT5 SQL */}
           {result.tables && (
-            <div className="text-foreground/80 space-y-1">
+            <div className="space-y-1">
               <p>
-                {result.tableCountTotal} tablas ({result.tables.filter((t) => t.isMt5).length} mt5_*
+                {result.tableCountTotal ?? '—'} tablas ({result.tables.filter((t) => t.isMt5).length} mt5_*
                 entre las {result.tables.length} listadas)
                 {result.dealsPartitioned ? ' · deals particionados por año' : ''}
               </p>
-              <p className="font-mono break-words">
+              <p className="break-words font-mono">
                 {result.tables.map((t) => (t.isMt5 ? `▸${t.name}` : t.name)).join('  ')}
               </p>
               {result.samples?.mt5_users && (
@@ -625,15 +623,15 @@ function DbProbeReport({ result }: { result: DbProbeResult }) {
 
           {/* Orion Mongo */}
           {result.collections && (
-            <div className="text-foreground/80 space-y-1">
+            <div className="space-y-1">
               <p>
-                {result.collectionCountTotal} colecciones
+                {result.collectionCountTotal ?? '—'} colecciones
                 {result.user ? ` · usuario ${result.user}` : ''}
                 {result.crmMatches && result.crmMatches.length > 0
                   ? ` · típicas de CRM: ${result.crmMatches.join(', ')}`
                   : ''}
               </p>
-              <p className="font-mono break-words">
+              <p className="break-words font-mono">
                 {result.collections
                   .map((c) => `${c.isCrmLike ? '▸' : ''}${c.name}${c.count != null ? `(${c.count})` : ''}`)
                   .join('  ')}
@@ -642,15 +640,15 @@ function DbProbeReport({ result }: { result: DbProbeResult }) {
           )}
 
           {result.readOnly && (
-            <p className="text-foreground/80">
-              <span className="font-medium">Solo lectura: {result.readOnly.verdict}.</span>{' '}
+            <p>
+              <span className={cn('font-semibold', ink)}>Solo lectura: {result.readOnly.verdict}.</span>{' '}
               {result.readOnly.detail}
               {result.readOnly.verdict !== 'ok' && ' Pedí un usuario de solo lectura.'}
             </p>
           )}
         </>
       )}
-      <p className="text-foreground/60">
+      <p className="text-text-3">
         {result.elapsedMs != null ? `${result.elapsedMs} ms · ` : ''}
         {new Date(result.testedAt).toLocaleString('es-ES')}
       </p>
@@ -664,16 +662,20 @@ function DbProbeReport({ result }: { result: DbProbeResult }) {
 // show the last 4 chars of what was typed, plus any relevant extra-config or
 // per-tenant data (like Coinsbuy's wallet_id).
 
+const CODE_CLASS = 'rounded-ui-sm border border-border bg-surface-2 px-1.5 py-0.5 font-mono text-[12px] text-foreground';
+
 function ConfiguredView({
   provider,
   meta,
   cred,
   walletId,
+  walletError,
 }: {
   provider: Provider;
   meta: ProviderMeta;
   cred: ApiCredential;
   walletId: string | null;
+  walletError: string | null;
 }) {
   const secretLabel = (() => {
     switch (meta.form.kind) {
@@ -697,9 +699,9 @@ function ConfiguredView({
 
   return (
     <>
-      <div className="flex items-center gap-2 text-sm">
-        <span className="text-muted-foreground">{secretLabel}:</span>
-        <code className="px-2 py-0.5 rounded bg-muted font-mono">••••••••{cred.last_four}</code>
+      <div className="flex flex-wrap items-center gap-2 text-[13px]">
+        <span className="text-text-2">{secretLabel}:</span>
+        <code className={CODE_CLASS}>••••••••{cred.last_four}</code>
       </div>
 
       {/* Pay-Pros: la URL que hay que darle a Pay-Pros para las notificaciones
@@ -708,22 +710,28 @@ function ConfiguredView({
         <WebhookUrlBlock url={cred.webhook_url} />
       )}
 
-      {/* Coinsbuy: show wallet_id read from companies.default_wallet_id. */}
-      {meta.editsCompanyWallet && walletId && (
-        <div className="flex items-center gap-2 text-sm">
-          <span className="text-muted-foreground">Wallet ID:</span>
-          <code className="px-2 py-0.5 rounded bg-muted font-mono">{walletId}</code>
+      {/* Coinsbuy: show wallet_id read from companies.default_wallet_id. Si
+          la lectura falló se dice: antes la fila simplemente no aparecía y
+          se leía como «no hay wallet». */}
+      {meta.editsCompanyWallet && (walletId || walletError) && (
+        <div className="flex flex-wrap items-center gap-2 text-[13px]">
+          <span className="text-text-2">Wallet ID:</span>
+          {walletId ? (
+            <code className={CODE_CLASS}>{walletId}</code>
+          ) : (
+            <span className="text-pend">— no se pudo leer ({walletError})</span>
+          )}
         </div>
       )}
 
       {/* Generic extra_config (sendgrid from_email/from_name, orion_crm base_url). */}
       {extraEntries.length > 0 && (
-        <div className="text-xs text-muted-foreground space-y-0.5">
+        <div className="space-y-0.5 text-[12px] text-text-2">
           {extraEntries.map(([k, v]) => (
-            <div key={k}>
+            <div key={k} className="break-words">
               {/* host / host_hint son la puerta de la base del broker: se
                   muestran truncados aunque estén guardados enteros. */}
-              <span className="font-medium">{k}:</span>{' '}
+              <span className="font-medium text-foreground">{k}:</span>{' '}
               {k === 'host' || k === 'host_hint' ? truncateHost(String(v ?? '')) : String(v ?? '')}
             </div>
           ))}
@@ -741,35 +749,35 @@ function ConfiguredView({
 
 function WebhookUrlBlock({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
 
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
+      setCopyFailed(false);
       setTimeout(() => setCopied(false), 2000);
     } catch {
       // Clipboard bloqueado (contexto no seguro): la URL igual está visible
-      // y se puede seleccionar a mano.
+      // y se puede seleccionar a mano — pero se dice, no se calla.
+      setCopyFailed(true);
     }
   };
 
   return (
     <div className="space-y-1">
-      <span className="text-sm text-muted-foreground">Webhook URL:</span>
+      <span className="text-[13px] text-text-2">Webhook URL:</span>
       <div className="flex items-start gap-2">
-        <code className="flex-1 px-2 py-1 rounded bg-muted font-mono text-xs break-all">
-          {url}
-        </code>
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="px-2 py-1 rounded-lg border border-border text-xs hover:bg-muted inline-flex items-center gap-1.5 shrink-0"
-        >
-          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+        <code className={cn(CODE_CLASS, 'min-w-0 flex-1 break-all')}>{url}</code>
+        <ActionButton variant="secondary" onClick={() => void handleCopy()}>
+          {copied ? <Check aria-hidden className="size-4" /> : <Copy aria-hidden className="size-4" />}
           {copied ? 'Copiada' : 'Copiar'}
-        </button>
+        </ActionButton>
       </div>
-      <p className="text-xs text-muted-foreground">
+      {copyFailed && (
+        <p className="text-[12px] text-neg">No se pudo copiar automáticamente: seleccioná la URL y copiala a mano.</p>
+      )}
+      <p className="text-[12px] leading-4 text-text-3">
         Esta es la URL que hay que registrar en Pay-Pros para recibir las notificaciones
         de pago. Es única por empresa: no la compartas entre tenants ni la cambies sin
         actualizarla también del lado de Pay-Pros.
@@ -784,11 +792,33 @@ function WebhookUrlBlock({ url }: { url: string }) {
 // /api/admin/api-credentials with action:'upsert'. Coinsbuy additionally
 // PATCHes /api/superadmin/companies/:id to update default_wallet_id.
 
+/** Input de secreto con «mostrar/ocultar» (el estado `showSecret` es del formulario). */
+function SecretInput({
+  show,
+  onToggle,
+  ...props
+}: React.InputHTMLAttributes<HTMLInputElement> & { show: boolean; onToggle: () => void }) {
+  return (
+    <div className="relative">
+      <Input {...props} type={show ? 'text' : 'password'} className="pr-10 font-mono" />
+      <button
+        type="button"
+        onClick={onToggle}
+        className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-ui-md text-text-3 hover:text-foreground"
+        aria-label={show ? 'Ocultar' : 'Mostrar'}
+      >
+        {show ? <EyeOff aria-hidden className="size-4" /> : <Eye aria-hidden className="size-4" />}
+      </button>
+    </div>
+  );
+}
+
 function ApiCredentialForm({
   provider,
   meta,
   existingExtras,
   currentWalletId,
+  walletError,
   companyId,
   onSaved,
   onCancel,
@@ -797,6 +827,7 @@ function ApiCredentialForm({
   meta: ProviderMeta;
   existingExtras: Record<string, unknown>;
   currentWalletId: string | null;
+  walletError: string | null;
   companyId?: string;
   onSaved: () => void;
   onCancel: () => void;
@@ -1004,63 +1035,56 @@ function ApiCredentialForm({
     }
   };
 
+  const toggleSecret = () => setShowSecret((v) => !v);
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-3 mt-2 p-4 rounded-lg bg-muted/30 border border-border">
+    <form onSubmit={handleSubmit} className="space-y-3 rounded-ui-md border border-border bg-surface-2 p-4">
       {/* Compound: client_id + client_secret */}
       {meta.form.kind === 'compound' && (
         <>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Client ID</label>
-            <input
+          <Field label="Client ID" required>
+            <Input
               type="text"
               value={clientId}
               onChange={(e) => setClientId(e.target.value)}
               placeholder="Pega aquí el Client ID."
-              required
               autoComplete="off"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+              className="font-mono"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Client Secret</label>
-            <div className="relative">
-              <input
-                type={showSecret ? 'text' : 'password'}
-                value={clientSecret}
-                onChange={(e) => setClientSecret(e.target.value)}
-                placeholder="Pega aquí el Client Secret. Se guardará encriptado."
-                required
-                autoComplete="new-password"
-                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setShowSecret((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
-              >
-                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Por seguridad el secret no se muestra después de guardar. Si lo cambiás, pegalo completo.
-            </p>
-          </div>
+          </Field>
+          <Field
+            label="Client Secret"
+            required
+            hint="Por seguridad el secret no se muestra después de guardar. Si lo cambiás, pegalo completo."
+          >
+            <SecretInput
+              show={showSecret}
+              onToggle={toggleSecret}
+              value={clientSecret}
+              onChange={(e) => setClientSecret(e.target.value)}
+              placeholder="Pega aquí el Client Secret. Se guardará encriptado."
+              autoComplete="new-password"
+            />
+          </Field>
           {meta.editsCompanyWallet && (
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Wallet ID</label>
-              <input
+            <Field
+              label="Wallet ID"
+              hint="ID de la wallet predeterminada. Se guarda a nivel empresa y es la que se pre-selecciona en /movimientos."
+            >
+              <Input
                 type="text"
                 value={walletInput}
                 onChange={(e) => setWalletInput(e.target.value)}
                 placeholder="Ej: 1079"
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
+                className="font-mono"
               />
-              <p className="text-xs text-muted-foreground mt-1">
-                ID de la wallet predeterminada. Se guarda a nivel empresa y es la que se
-                pre-selecciona en /movimientos.
-              </p>
-            </div>
+            </Field>
+          )}
+          {meta.editsCompanyWallet && walletError && (
+            <Notice kind="pend" title="No se pudo leer la wallet actual">
+              {walletError}. El campo está vacío porque no se pudo leer, no porque no haya: si lo dejás vacío no se
+              cambia; si escribís un ID, reemplaza al que haya.
+            </Notice>
           )}
         </>
       )}
@@ -1068,71 +1092,53 @@ function ApiCredentialForm({
       {/* Pay-Pros: merchant_id + api_key + sign_key (un solo secreto JSON) + base_url */}
       {meta.form.kind === 'paypros' && (
         <>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Merchant ID</label>
-            <input
+          <Field label="Merchant ID" required>
+            <Input
               type="text"
               value={merchantId}
               onChange={(e) => setMerchantId(e.target.value)}
               placeholder="Pega aquí el Merchant ID de Pay-Pros."
-              required
               autoComplete="off"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              className="font-mono"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">API Key</label>
-            <div className="relative">
-              <input
-                type={showSecret ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Pega aquí la API Key. Se guardará encriptada."
-                required
-                autoComplete="new-password"
-                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setShowSecret((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
-              >
-                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Sign Key</label>
-            <input
+          </Field>
+          <Field label="API Key" required>
+            <SecretInput
+              show={showSecret}
+              onToggle={toggleSecret}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Pega aquí la API Key. Se guardará encriptada."
+              autoComplete="new-password"
+            />
+          </Field>
+          <Field
+            label="Sign Key"
+            required
+            hint="Por seguridad ni la API Key ni la Sign Key se muestran después de guardar. Si cambiás una, pegá las tres completas."
+          >
+            <Input
               type={showSecret ? 'text' : 'password'}
               value={signKey}
               onChange={(e) => setSignKey(e.target.value)}
               placeholder="Pega aquí la Sign Key. Se guardará encriptada."
-              required
               autoComplete="new-password"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              className="font-mono"
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              Por seguridad ni la API Key ni la Sign Key se muestran después de guardar.
-              Si cambiás una, pegá las tres completas.
-            </p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Base URL</label>
-            <input
+          </Field>
+          <Field
+            label="Base URL"
+            hint="Producción por defecto. Cambiala solo para apuntar al entorno de pruebas de Pay-Pros. Debe empezar con https:// y terminar en /."
+          >
+            <Input
               type="text"
               value={payprosBaseUrl}
               onChange={(e) => setPayprosBaseUrl(e.target.value)}
               placeholder={PAYPROS_DEFAULT_BASE_URL}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              className="font-mono"
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              Producción por defecto. Cambiala solo para apuntar al entorno de pruebas de
-              Pay-Pros. Debe empezar con https:// y terminar en /.
-            </p>
-          </div>
-          <p className="text-xs text-muted-foreground">
+          </Field>
+          <p className="text-[12px] text-text-3">
             Al guardar se genera la Webhook URL de esta empresa (aparece en la tarjeta y hay
             que registrarla en Pay-Pros). No cambia en guardados posteriores.
           </p>
@@ -1143,9 +1149,11 @@ function ApiCredentialForm({
           Los seis viajan como un único JSON cifrado. */}
       {meta.form.kind === 'mt5sql' && (
         <>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Motor</label>
-            <select
+          <Field
+            label="Motor"
+            hint="El SQL Export de MT5 también admite MSSQL y Oracle, pero todavía no los leemos: si el hosting sólo ofrece uno de esos, avisanos."
+          >
+            <Select
               value={mt5Engine}
               onChange={(e) => {
                 const next = e.target.value as 'mysql' | 'postgres';
@@ -1155,210 +1163,145 @@ function ApiCredentialForm({
                   setMt5Port(next === 'postgres' ? '5432' : '3306');
                 }
               }}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
             >
               <option value="mysql">MySQL / MariaDB</option>
               <option value="postgres">PostgreSQL</option>
-            </select>
-            <p className="text-xs text-muted-foreground mt-1">
-              El SQL Export de MT5 también admite MSSQL y Oracle, pero todavía no los
-              leemos: si el hosting sólo ofrece uno de esos, avisanos.
-            </p>
-          </div>
+            </Select>
+          </Field>
           <div className="grid grid-cols-3 gap-2">
-            <div className="col-span-2">
-              <label className="block text-sm font-medium mb-1.5">Host</label>
-              <input
+            <Field label="Host" required className="col-span-2">
+              <Input
                 type="text"
                 value={mt5Host}
                 onChange={(e) => setMt5Host(e.target.value)}
                 placeholder="db.hosting-del-broker.com"
-                required
                 autoComplete="off"
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+                className="font-mono"
               />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Puerto</label>
-              <input
+            </Field>
+            <Field label="Puerto" required>
+              <Input
                 type="number"
                 inputMode="numeric"
                 min={1}
                 max={65535}
                 value={mt5Port}
                 onChange={(e) => setMt5Port(e.target.value)}
-                required
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+                className="num font-mono"
               />
-            </div>
+            </Field>
           </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Base de datos</label>
-            <input
+          <Field label="Base de datos" required>
+            <Input
               type="text"
               value={mt5Database}
               onChange={(e) => setMt5Database(e.target.value)}
               placeholder="mt5"
-              required
               autoComplete="off"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              className="font-mono"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Usuario</label>
-            <input
+          </Field>
+          <Field label="Usuario" required>
+            <Input
               type="text"
               value={mt5User}
               onChange={(e) => setMt5User(e.target.value)}
               placeholder="usuario de SOLO LECTURA"
-              required
               autoComplete="off"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              className="font-mono"
             />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Contraseña</label>
-            <div className="relative">
-              <input
-                type={showSecret ? 'text' : 'password'}
-                value={mt5Password}
-                onChange={(e) => setMt5Password(e.target.value)}
-                placeholder="Se guardará encriptada."
-                required
-                autoComplete="new-password"
-                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setShowSecret((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
-              >
-                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Host, puerto y base se muestran después de guardar; usuario y contraseña no.
-              Si cambiás algo, completá los seis campos.
-            </p>
-          </div>
+          </Field>
+          <Field
+            label="Contraseña"
+            required
+            hint="Host, puerto y base se muestran después de guardar; usuario y contraseña no. Si cambiás algo, completá los seis campos."
+          >
+            <SecretInput
+              show={showSecret}
+              onToggle={toggleSecret}
+              value={mt5Password}
+              onChange={(e) => setMt5Password(e.target.value)}
+              placeholder="Se guardará encriptada."
+              autoComplete="new-password"
+            />
+          </Field>
         </>
       )}
 
       {/* Orion Mongo: la connection string entera es el secreto. */}
       {meta.form.kind === 'mongo' && (
         <>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Connection string</label>
-            <div className="relative">
-              <input
-                type={showSecret ? 'text' : 'password'}
-                value={mongoUri}
-                onChange={(e) => setMongoUri(e.target.value)}
-                placeholder="mongodb+srv://usuario:clave@cluster.mongodb.net/orion"
-                required
-                autoComplete="new-password"
-                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setShowSecret((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
-              >
-                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Lleva el usuario y la contraseña adentro: se cifra entera y no vuelve a
-              mostrarse. Del lado del panel sólo queda visible el host.
-            </p>
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">Base de datos (opcional)</label>
-            <input
+          <Field
+            label="Connection string"
+            required
+            hint="Lleva el usuario y la contraseña adentro: se cifra entera y no vuelve a mostrarse. Del lado del panel sólo queda visible el host."
+          >
+            <SecretInput
+              show={showSecret}
+              onToggle={toggleSecret}
+              value={mongoUri}
+              onChange={(e) => setMongoUri(e.target.value)}
+              placeholder="mongodb+srv://usuario:clave@cluster.mongodb.net/orion"
+              autoComplete="new-password"
+            />
+          </Field>
+          <Field label="Base de datos (opcional)" hint="Si la connection string ya trae la base en el path, dejalo vacío.">
+            <Input
               type="text"
               value={mongoDatabase}
               onChange={(e) => setMongoDatabase(e.target.value)}
               placeholder="orion"
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm font-mono"
+              className="font-mono"
             />
-            <p className="text-xs text-muted-foreground mt-1">
-              Si la connection string ya trae la base en el path, dejalo vacío.
-            </p>
-          </div>
+          </Field>
         </>
       )}
 
       {/* apiKey only (fairpay) */}
       {meta.form.kind === 'apiKey' && (
-        <div>
-          <label className="block text-sm font-medium mb-1.5">API Key</label>
-          <div className="relative">
-            <input
-              type={showSecret ? 'text' : 'password'}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder="Pega aquí la API Key. Se guardará encriptada."
-              required
-              autoComplete="new-password"
-              className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
-            />
-            <button
-              type="button"
-              onClick={() => setShowSecret((v) => !v)}
-              className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-              aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
-            >
-              {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-            </button>
-          </div>
-          <p className="text-xs text-muted-foreground mt-1">
-            Por seguridad la llave no se muestra después de guardar. Si la cambiás, pegala completa.
-          </p>
-        </div>
+        <Field
+          label="API Key"
+          required
+          hint="Por seguridad la llave no se muestra después de guardar. Si la cambiás, pegala completa."
+        >
+          <SecretInput
+            show={showSecret}
+            onToggle={toggleSecret}
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="Pega aquí la API Key. Se guardará encriptada."
+            autoComplete="new-password"
+          />
+        </Field>
       )}
 
       {/* keyExtras (sendgrid, orion_crm) — original UX */}
       {meta.form.kind === 'keyExtras' && (
         <>
-          <div>
-            <label className="block text-sm font-medium mb-1.5">API Key / Secret</label>
-            <div className="relative">
-              <input
-                type={showSecret ? 'text' : 'password'}
-                value={apiKey}
-                onChange={(e) => setApiKey(e.target.value)}
-                placeholder="Pega aquí la llave. Se guardará encriptada."
-                required
-                autoComplete="new-password"
-                className="w-full pr-11 px-3 py-2 rounded-lg border border-border bg-background text-sm font-mono"
-              />
-              <button
-                type="button"
-                onClick={() => setShowSecret((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
-                aria-label={showSecret ? 'Ocultar' : 'Mostrar'}
-              >
-                {showSecret ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-              </button>
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Por seguridad la llave no se muestra después de guardar. Si la cambiás, pegala completa.
-            </p>
-          </div>
+          <Field
+            label="API Key / Secret"
+            required
+            hint="Por seguridad la llave no se muestra después de guardar. Si la cambiás, pegala completa."
+          >
+            <SecretInput
+              show={showSecret}
+              onToggle={toggleSecret}
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder="Pega aquí la llave. Se guardará encriptada."
+              autoComplete="new-password"
+            />
+          </Field>
 
           {meta.extraFields?.map((f) => (
-            <div key={f.key}>
-              <label className="block text-sm font-medium mb-1.5">{f.label}</label>
-              <input
+            <Field key={f.key} label={f.label}>
+              <Input
                 type="text"
                 value={extras[f.key] ?? ''}
                 onChange={(e) => setExtras((prev) => ({ ...prev, [f.key]: e.target.value }))}
                 placeholder={f.placeholder}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
               />
-            </div>
+            </Field>
           ))}
         </>
       )}
@@ -1366,9 +1309,11 @@ function ApiCredentialForm({
       {/* Comisión del proveedor (%) — solo fairpay/unipayment. Persistida en
           extra_config.fee_pct (merge sin pisar otras keys). */}
       {meta.supportsFeePct && (
-        <div>
-          <label className="block text-sm font-medium mb-1.5">Comisión del proveedor (%)</label>
-          <input
+        <Field
+          label="Comisión del proveedor (%)"
+          hint="Se descuenta de cada depósito para calcular el neto. FairPay/UniPayment no exponen este dato por API. Vacío = sin comisión configurada."
+        >
+          <Input
             type="number"
             inputMode="decimal"
             min={0}
@@ -1377,37 +1322,24 @@ function ApiCredentialForm({
             value={feePct}
             onChange={(e) => setFeePct(e.target.value)}
             placeholder="Ej: 9"
-            className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
+            className="num tabular-nums"
           />
-          <p className="text-xs text-muted-foreground mt-1">
-            Se descuenta de cada depósito para calcular el neto. FairPay/UniPayment no
-            exponen este dato por API. Vacío = sin comisión configurada.
-          </p>
-        </div>
+        </Field>
       )}
 
       {error && (
-        <div className="p-2 rounded-lg bg-negative/10 border border-negative/30 text-red-700 text-sm">
+        <Notice kind="bad" title="No se guardó">
           {error}
-        </div>
+        </Notice>
       )}
 
       <div className="flex gap-2">
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
-        >
-          {saving && <Loader2 className="w-4 h-4 animate-spin" />}
+        <ActionButton type="submit" variant="primary" loading={saving}>
           Guardar
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted"
-        >
+        </ActionButton>
+        <ActionButton variant="secondary" onClick={onCancel}>
           Cancelar
-        </button>
+        </ActionButton>
       </div>
     </form>
   );
