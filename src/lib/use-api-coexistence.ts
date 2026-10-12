@@ -86,6 +86,27 @@ export interface ApiCoexistenceTotals {
   apiDepositsTotal: (manualByChannel: Record<DepositChannel, number>) => number;
   /** The `api_transactions`-backed totals keyed by provider slug. */
   apiTotalsBy: Record<ProviderSlug, number>;
+  /**
+   * ── Lo que la pantalla necesita para NO sumar en silencio (2026-10-12) ──
+   * Agregado para el rediseño «Libro mayor» de /movimientos. Ninguno de estos
+   * campos cambia un total: dicen qué falta en ellos.
+   *
+   * Canales de DEPÓSITO con API cuyo dataset no llegó. Hasta hoy
+   * `apiByChannel` les ponía 0 y la tabla mostraba «$0.00»; siguen sumando
+   * 0 al total (el cálculo no cambia), pero la pantalla los muestra «sin
+   * dato» y el pie dice «N de M canales». Vacío en períodos históricos.
+   */
+  depositChannelsWithoutData: DepositChannel[];
+  /** Estado de la lectura de /persisted-movements ('ok' siempre en históricos). */
+  apiFetchState: 'loading' | 'ok' | 'failed';
+  /** Proveedores con dataset recortado (techo de páginas del endpoint). */
+  truncatedSlugs: ProviderSlug[];
+  /** Operaciones que cuentan por slug; null en históricos (no se consulta la API). */
+  apiCountBy: Record<ProviderSlug, number> | null;
+  /** Retiros de Pay-Pros que cuentan (null en históricos). */
+  apiPayoutCount: number | null;
+  /** Pendientes en juego en las pasarelas; null en históricos o sin datasets. */
+  apiPending: { count: number; amount: number; channels: string[] } | null;
 }
 
 /** Azúcar para las páginas: manual por canal a partir de `summary.deposits`. */
@@ -156,8 +177,24 @@ export function useApiCoexistence(
   // quedaba una segunda puerta a la misma fórmula, sin usar — y una segunda
   // puerta a una fórmula de dinero es cómo empiezan las dos verdades.
 
+  // Un canal sin dataset es «no lo sabemos». Los apagados para la empresa no
+  // vienen nunca (el endpoint no los manda) y no son «sin dato»: no existen.
+  const loaded = new Set(apiTotals.loadedSlugs);
+  const depositChannelsWithoutData: DepositChannel[] =
+    useDerivedBroker && apiTotals.fetchState !== 'loading'
+      ? API_DEPOSIT_CHANNELS.filter(
+          ({ channel, slug }) => !hiddenChannels.includes(channel) && !loaded.has(slug),
+        ).map((c) => c.channel)
+      : [];
+
   return {
     useDerivedBroker,
+    depositChannelsWithoutData,
+    apiFetchState: useDerivedBroker ? apiTotals.fetchState : 'ok',
+    truncatedSlugs: useDerivedBroker ? apiTotals.truncatedSlugs : [],
+    apiCountBy: useDerivedBroker && apiTotals.fetchState === 'ok' ? apiTotals.countBy : null,
+    apiPayoutCount: useDerivedBroker && apiTotals.fetchState === 'ok' ? apiTotals.payoutCount : null,
+    apiPending: useDerivedBroker ? apiTotals.pending : null,
     apiByChannel,
     hiddenChannels,
     apiWithdrawalsTotal,

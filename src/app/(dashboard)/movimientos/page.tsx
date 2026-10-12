@@ -1,9 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Card } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
-import { StatCard } from '@/components/ui/stat-card';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, kpiPlainText, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Notice } from '@/components/ui/notice';
 import { MovimientosPeriodSelector } from '@/components/movimientos-period-selector';
 import {
   RealTimeMovementsBanner,
@@ -13,7 +16,7 @@ import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { useCrmMonthlyAuto } from '@/lib/use-crm-monthly-auto';
 import { resolveAutoOrManual } from '@/lib/crm-auto-values';
 import { computeDerivedNetDeposit } from '@/lib/broker-logic';
-import { ArrowDownCircle, ArrowUpCircle, Wallet, ArrowLeftRight } from 'lucide-react';
+import { ArrowLeftRight, Download, RotateCw } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
@@ -21,28 +24,73 @@ import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { usePeriod } from '@/lib/period-context';
 import { NoPeriodsState } from '@/components/no-periods-state';
 import { useData } from '@/lib/data-context';
-import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
+import { PROVIDER_META } from '@/lib/api-channels';
 import {
   ALL_WITHDRAWAL_CATEGORIES,
   withdrawalCategoryLabel,
 } from '@/lib/withdrawal-categories';
 import {
   ALL_DEPOSIT_CHANNELS,
+  API_DEPOSIT_CHANNELS,
   apiSlugForChannel,
   depositChannelLabel,
   manualDepositsByChannel,
+  type DepositChannel,
 } from '@/lib/deposit-channels';
 import {
   API_WITHDRAWAL_CHANNELS,
   withdrawalChannelLabel,
 } from '@/lib/withdrawal-channels';
 import type { Deposit, Withdrawal } from '@/lib/types';
+import type { ProviderSlug } from '@/lib/api-integrations/types';
 import { downloadCSV } from '@/lib/csv-export';
 import { apiFetch } from '@/lib/api-fetch';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
-import { Download } from 'lucide-react';
+import {
+  buildDepositRows,
+  buildWithdrawalRows,
+  channelCoverage,
+  sharePct,
+  type ChannelRow,
+} from './channel-rows';
+import { SourceTag } from './source-tag';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /movimientos — rediseño «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md)
+//
+// QUÉ CAMBIÓ (sólo presentación; ningún cálculo se movió):
+//   · Tres StatCard con ícono de color → UNA franja de KPIs: Depósito neto
+//     (hero, color por signo: acá el signo ES la noticia), Depósitos, Retiros,
+//     Pendientes. Cada sub cuenta operaciones y «N canal(es) sin dato».
+//   · Aviso `pend` cuando un canal de API no respondió: lo nombra, dice que NO
+//     está sumado y que no es cero, es desconocido, con «Reintentar». Antes era
+//     una línea ámbar (paleta cruda) al pie de Retiros, y para los depósitos no
+//     había nada: un canal sin dataset mostraba «$0.00» (`?? 0`).
+//   · «Depósitos» en azul y «Retiros» en rojo de paleta cruda, el total en
+//     verde: color decorativo fuera (spec §2.1). Los montos van en tinta
+//     neutra con signo + / −; el signo dice el sentido, no el color.
+//   · Retiros separa en grupos lo que SUMA de lo informativo (IB, Prop Firm,
+//     Otros, P2P), que antes convivían sin distinción sobre un total que no
+//     las incluía.
+//   · El orden sigue la spec §6.3: período → KPIs → avisos → paneles. «APIs en
+//     tiempo real» (que tiene su propio rango de fechas, independiente del
+//     período) pasa al final: arriba competía con los KPIs del período y era
+//     la causa recurrente de «las tarjetas no coinciden con la tabla».
+//
+// MEDICIÓN: los totales salen de las mismas expresiones que antes
+// (`computeDerivedNetDeposit`, `coexist.apiDepositsTotal`, `summary.*`,
+// `resolveAutoOrManual`); las filas por canal se arman en `channel-rows.ts` y
+// su test cruza Σ filas contra `computeDerivedNetDeposit`.
+//
+// DESCARTADO:
+//   · Sacar `MovimientosPeriodSelector` en favor del período de la topbar
+//     (spec §6.2): es multi-mes (consolidado) y la topbar no lo es todavía.
+//   · Fila «Net Deposit» al pie de Retiros: está en el KPI hero; repetirla
+//     abajo era el mismo número dos veces con dos colores.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Los canales de la tarjeta «Depósitos del período» salen del registro único
 // (src/lib/deposit-channels.ts). Antes eran una lista dura acá y otra en el
@@ -406,26 +454,296 @@ export default function MovimientosPage() {
   const displayTotalWithdrawals = _derived ? _derived.totalWithdrawals : summary.totalWithdrawals;
   const displayNetDeposit = _derived ? _derived.netDeposit : summary.netDeposit;
 
-  // Filas de la tabla de Depósitos — API + manual coexist: per-channel
-  // display = API amount (when this period uses derived broker logic) +
-  // manual entry from Supabase `deposits` table.
-  const depositRows = fullDeposits.map((d) => {
-    const apiSlug = apiSlugForChannel(d.channel);
-    const apiAmount = useDerivedBroker && apiSlug
-      ? coexist.apiTotalsBy[apiSlug] ?? 0
-      : 0;
-    const manualAmount = d.amount;
-    return {
-      ...d,
-      apiAmount,
-      manualAmount,
-      displayAmount: apiAmount + manualAmount,
-      isApiChannel: !!apiSlug,
-    };
+  // ─── Filas por canal (presentación; los totales de arriba no se tocan) ───
+  // Depósitos: API + manual coexisten por canal. Un canal de API cuyo dataset
+  // no llegó muestra «sin dato» (null), no «$0.00»: el total sigue sumándole
+  // 0 de API —el cálculo es el de siempre— y el pie lo dice («3 de 4 canales»).
+  // Mientras la lectura está en curso tampoco hay dato: «—» (sin el badge, que
+  // sería una alarma antes de saber si falta algo).
+  //
+  // `apiLoading` va declarado ACÁ, antes de su primer uso: el 2026-09-02 esta
+  // página se cayó en prod por un `const` usado antes de su línea (ver
+  // `canalOculto`).
+  const apiLoading = useDerivedBroker && coexist.apiFetchState === 'loading';
+  const loadedSlugs = new Set<string>(
+    API_DEPOSIT_CHANNELS.filter(
+      ({ channel }) => !coexist.depositChannelsWithoutData.includes(channel),
+    ).map(({ slug }) => slug),
+  );
+  const depositRows = buildDepositRows({
+    channels: fullDeposits.map((d) => d.channel),
+    derived: useDerivedBroker,
+    apiSlugOf: (ch) => apiSlugForChannel(ch as DepositChannel),
+    apiAmountOf: (slug) =>
+      !apiLoading && loadedSlugs.has(slug) ? coexist.apiTotalsBy[slug as ProviderSlug] ?? 0 : null,
+    manualOf: (ch) => fullDeposits.find((d) => d.channel === ch)?.amount ?? 0,
+    labelOf: (ch) =>
+      ch === 'other' ? t('movements.otherDepositsManual') : depositChannelLabel(ch as DepositChannel, t),
   });
 
+  // Retiros: canales de API (sólo derivados) + categorías manuales + P2P. Los
+  // canales apagados para la empresa no se dibujan; mientras la lectura está
+  // en curso, «sin dato» todavía no es un aviso (no sabemos ni que falte).
+  const withdrawalRows = buildWithdrawalRows({
+    derived: useDerivedBroker,
+    apiChannels: apiWithdrawalRows,
+    categories: fullWithdrawals.map((w) => ({
+      key: w.category,
+      label: withdrawalCategoryLabel(w.category, t),
+      amount: withdrawalRowAmount(w.category, w.amount),
+      source: withdrawalRowSource(w.category),
+    })),
+    p2p: { label: t('movements.p2pTransfer'), amount: p2pTransferDisplay, source: p2p.source },
+  });
+
+  const depositCoverage = channelCoverage(depositRows);
+  const withdrawalCoverage = channelCoverage(withdrawalRows);
+
+  // Canales sin dato, para el aviso y los KPIs. Los retiros vienen del hook,
+  // que cuenta también los apagados (su dataset tampoco llega): se filtran.
+  const depositsMissing = apiLoading ? [] : coexist.depositChannelsWithoutData;
+  const withdrawalsMissing = apiLoading
+    ? []
+    : coexist.withdrawalChannelsWithoutData.filter((c) => !canalOculto(c));
+  const missingLabels = [
+    ...depositsMissing.map((c) =>
+      t('movements.notice.channelSide', {
+        channel: depositChannelLabel(c, t),
+        side: t('movements.depositsTab').toLowerCase(),
+      }),
+    ),
+    ...withdrawalsMissing.map((c) =>
+      t('movements.notice.channelSide', {
+        channel: withdrawalChannelLabel(c, t),
+        side: t('movements.withdrawalsTab').toLowerCase(),
+      }),
+    ),
+  ];
+  const missingCount = depositsMissing.length + withdrawalsMissing.length;
+  const fetchFailed = coexist.apiFetchState === 'failed';
+  const truncatedLabels = coexist.truncatedSlugs.map((s) => PROVIDER_META[s]?.cardLabel ?? s);
+  const retryApi = () => setApiRefreshKey((k) => k + 1);
+
+  // ─── KPIs ───
+  // Si la lectura de la API falló en un período derivado, los tres totales
+  // tienen un hueco de tamaño desconocido: «—», no un número parcial con cara
+  // de total (el aviso de arriba explica qué falta).
+  const totalsUnknown = useDerivedBroker && fetchFailed;
+  const countText = (n: number) => kpiPlainText(n, 'count');
+  const noDataSub = (n: number) =>
+    n > 0
+      ? t(n === 1 ? 'movements.kpi.channelNoDataOne' : 'movements.kpi.channelNoDataMany', { n: String(n) })
+      : null;
+  const joinSub = (...parts: (string | null)[]) => parts.filter(Boolean).join(' · ') || null;
+  const depositOps = coexist.apiCountBy
+    ? API_DEPOSIT_CHANNELS.filter(({ channel }) => !canalOculto(channel)).reduce(
+        (s, { slug }) => s + (coexist.apiCountBy?.[slug] ?? 0),
+        0,
+      )
+    : null;
+  const withdrawalOps =
+    coexist.apiCountBy && coexist.apiPayoutCount !== null
+      ? (canalOculto('coinsbuy') ? 0 : coexist.apiCountBy['coinsbuy-withdrawals']) +
+        (canalOculto('paypros') ? 0 : coexist.apiPayoutCount)
+      : null;
+  const opsSub = (n: number | null) =>
+    !useDerivedBroker
+      ? t('movements.kpi.manualOnly')
+      : n === null
+        ? null
+        : t('movements.kpi.ops', { n: countText(n) });
+  const pending = coexist.apiPending;
+  const kpis: KpiItem[] = [
+    {
+      key: 'net',
+      label: (
+        <span className="inline-flex items-center gap-1">
+          {t('movements.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} />
+        </span>
+      ),
+      value: totalsUnknown ? null : displayNetDeposit,
+      tone: 'sign',
+      hero: true,
+      sub: totalsUnknown
+        ? t('movements.kpi.apiFailed')
+        : noDataSub(missingCount) ?? t('movements.netDepositHint'),
+    },
+    {
+      key: 'deposits',
+      label: t('movements.depositsTab'),
+      value: totalsUnknown ? null : displayTotalDeposits,
+      tone: 'neutral',
+      sub: totalsUnknown
+        ? t('movements.kpi.apiFailed')
+        : joinSub(opsSub(depositOps), noDataSub(depositsMissing.length)),
+    },
+    {
+      key: 'withdrawals',
+      label: t('movements.withdrawalsTab'),
+      value: totalsUnknown ? null : displayTotalWithdrawals,
+      tone: 'neutral',
+      sub: totalsUnknown
+        ? t('movements.kpi.apiFailed')
+        : joinSub(opsSub(withdrawalOps), noDataSub(withdrawalsMissing.length)),
+    },
+    {
+      key: 'pending',
+      label: t('movements.kpi.pending'),
+      value: pending ? pending.count : null,
+      format: 'count',
+      sub: !useDerivedBroker
+        ? t('movements.kpi.pendingHistorical')
+        : pending
+          ? pending.count > 0
+            ? t('movements.kpi.pendingAmount', { amount: formatMoney(pending.amount, { compact: true }) })
+            : t('movements.kpi.pendingNone')
+          : null,
+    },
+  ];
+
+  // ─── Columnas ───
+  const pctCell = (row: ChannelRow, total: number | null) => {
+    const pct = sharePct(row, total);
+    return pct === null ? (
+      <span className="text-text-3">—</span>
+    ) : (
+      <span className={NUM_CLASS}>{kpiPlainText(pct, 'percent')}</span>
+    );
+  };
+  const noDataCell = (
+    <span className="inline-flex items-center justify-end gap-2">
+      {!apiLoading && <StatusBadge kind="stale" label={t('ui.noData')} />}
+      <span className={`${NUM_CLASS} text-text-3`} aria-hidden>
+        —
+      </span>
+    </span>
+  );
+  const sourceLabel = (k: ChannelRow['source']) =>
+    k === 'api'
+      ? t('movements.source.api')
+      : k === 'manual'
+        ? t('movements.source.manual')
+        : t('movements.source.apiManual');
+
+  const channelColumn = (meta: (r: ChannelRow) => React.ReactNode): FinColumn<ChannelRow> => ({
+    key: 'channel',
+    header: (
+      <span className="inline-flex items-center gap-1.5">
+        {t('movements.channel')}
+        {/* Cada fila de API es API + manual y el manual nunca se pisa: es lo
+            que explica esta entrada del glosario (auditoría 2026-08-31, ítem 20). */}
+        <InfoTip text={GLOSSARY.apiManualCoexist} />
+      </span>
+    ),
+    cell: (r) => (
+      <span className="inline-flex min-w-0 items-center gap-2">
+        <span className="truncate">{r.label}</span>
+        {useDerivedBroker && <SourceTag kind={r.source} label={sourceLabel(r.source)} />}
+      </span>
+    ),
+    meta,
+    mobileMeta: (r) =>
+      r.amount === null && !apiLoading ? <StatusBadge kind="stale" label={t('ui.noData')} /> : null,
+  });
+
+  const depositColumns: FinColumn<ChannelRow>[] = [
+    channelColumn((r) => {
+      if (r.amount === null) {
+        return r.manualAmount !== 0
+          ? t('movements.manualStillSums', { amount: formatMoney(r.manualAmount) })
+          : t('movements.channelNotSummed');
+      }
+      if (r.source === 'api+manual' && r.apiAmount !== null) {
+        return t('movements.totalDepositsBreakdown', {
+          api: formatMoney(r.apiAmount),
+          manual: formatMoney(r.manualAmount),
+        });
+      }
+      return null;
+    }),
+    {
+      key: 'amount',
+      header: t('movements.amount'),
+      kind: 'money',
+      value: (r) => r.amount,
+      cell: (r) =>
+        r.amount === null ? noDataCell : <Money value={r.amount} signed tone="neutral" className="font-medium" />,
+      width: '40%',
+    },
+    {
+      key: 'share',
+      header: '%',
+      kind: 'number',
+      cell: (r) => pctCell(r, displayTotalDeposits),
+      hideSm: true,
+      width: '72px',
+    },
+  ];
+
+  const withdrawalColumns: FinColumn<ChannelRow>[] = [
+    channelColumn((r) => (r.amount === null ? t('movements.channelNotSummed') : null)),
+    {
+      key: 'amount',
+      header: t('movements.amount'),
+      kind: 'money',
+      value: (r) => (r.amount === null ? null : -r.amount),
+      // Sin subtotal por grupo: el grupo «informativas» sumaría IB + Prop
+      // Firm + P2P, un número que no existe en ningún lado.
+      subtotal: false,
+      cell: (r) =>
+        r.amount === null ? noDataCell : <Money value={-r.amount} signed tone="neutral" className="font-medium" />,
+      width: '40%',
+    },
+    {
+      key: 'share',
+      header: '%',
+      kind: 'number',
+      cell: (r) => pctCell(r, displayTotalWithdrawals),
+      hideSm: true,
+      width: '72px',
+    },
+  ];
+
+  const coverageLabel = (base: string, cov: ReturnType<typeof channelCoverage>) =>
+    cov.withData < cov.total
+      ? t('movements.totalCoverage', { label: base, n: String(cov.withData), m: String(cov.total) })
+      : base;
+
+  const exactRow = (label: React.ReactNode, value: number, hint?: React.ReactNode) => (
+    <div className="flex items-baseline justify-between gap-3">
+      <span className="min-w-0">
+        {label}
+        {hint && <span className="ml-1.5">· {hint}</span>}
+      </span>
+      <Money value={value} tone="neutral" className="text-text-2" />
+    </div>
+  );
+
+  const simpleColumns: FinColumn<SimpleRow>[] = [
+    {
+      key: 'concept',
+      header: t('movements.concept'),
+      cell: (r) => (
+        <span className="inline-flex min-w-0 items-center gap-2">
+          <span className="truncate">{r.label}</span>
+          {r.source && <SourceTag kind={r.source} label={sourceLabel(r.source)} />}
+        </span>
+      ),
+    },
+    {
+      key: 'amount',
+      header: t('movements.amount'),
+      kind: 'money',
+      value: (r) => r.amount,
+      money: { signed: true, tone: 'neutral' },
+      width: '40%',
+    },
+  ];
+  const brokerPnl = summary.operatingIncome?.broker_pnl || 0;
+  const brokerOther = summary.operatingIncome?.other || 0;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
       <PageHeader
         title={t('movements.title')}
@@ -435,360 +753,200 @@ export default function MovimientosPage() {
           <>
             <ConsolidatedBadge count={mode === 'consolidated' ? activePeriods.length : 1} />
             <button
+              type="button"
               onClick={handleExport}
-              className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
+              className="inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2"
               title={t('common.csv')}
+              aria-label={t('common.csv')}
             >
-              <Download className="w-4 h-4" />
+              <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
               <span className="hidden sm:inline">{t('common.csv')}</span>
             </button>
           </>
         }
       />
 
-      {/* ─── Upper section: APIs en tiempo real (owns its own filter) ─── */}
+      {/* ─── Período (multi-mes) ─── */}
+      <Panel title={t('movements.periodData')} hint={t('movements.periodDataDesc')}>
+        <MovimientosPeriodSelector />
+      </Panel>
+
+      <KpiStrip items={kpis} />
+
+      {/* ─── Avisos de estado del dato (spec §5.5) ───
+          Un canal que no se pudo leer NO está en el total. Decirlo es
+          obligatorio: un recorte silencioso es indistinguible de "no hay más"
+          (docs/reglas-del-proyecto.md §1.2). */}
+      {totalsUnknown && (
+        <Notice
+          kind="pend"
+          title={t('movements.notice.failedTitle')}
+          action={<RetryButton label={t('movements.notice.retry')} onClick={retryApi} />}
+        >
+          {t('movements.notice.unknownNotZero')}
+        </Notice>
+      )}
+      {useDerivedBroker && !fetchFailed && missingLabels.length > 0 && (
+        <Notice
+          kind="pend"
+          title={t('movements.notice.channelsTitle', { channels: missingLabels.join(', ') })}
+          action={<RetryButton label={t('movements.notice.retry')} onClick={retryApi} />}
+        >
+          {t('movements.notice.unknownNotZero')}
+        </Notice>
+      )}
+      {useDerivedBroker && truncatedLabels.length > 0 && (
+        <Notice
+          kind="pend"
+          title={t('movements.notice.truncatedTitle', { channels: truncatedLabels.join(', ') })}
+        >
+          {t('movements.notice.truncatedBody')}
+        </Notice>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 min-[1100px]:grid-cols-2">
+        <Panel
+          title={t('movements.depositsByChannel')}
+          hint={useDerivedBroker ? t('movements.depositsByChannelHint') : t('movements.kpi.manualOnly')}
+          flush
+          footer={
+            <div className="space-y-1">
+              {/* «Restante (Broker)» se deriva del total SOLO-API (regla
+                  Abr-2026): por eso el desglose API + manual sigue visible. */}
+              {otherDeposits > 0 &&
+                exactRow(
+                  t('movements.totalDepositsAll'),
+                  displayTotalDeposits,
+                  t('movements.totalDepositsBreakdown', {
+                    api: formatMoney(apiDepositsTotal),
+                    manual: formatMoney(otherDeposits),
+                  }),
+                )}
+              {exactRow(
+                <span className="inline-flex items-center gap-1.5">
+                  {t('movements.propFirmSales')} <InfoTip text={GLOSSARY.propFirm} />
+                </span>,
+                propFirmSalesDisplay,
+              )}
+              {exactRow(
+                <span className="inline-flex items-center gap-1.5">
+                  {t('movements.brokerDeposits')} <InfoTip text={GLOSSARY.brokerDeposits} />
+                </span>,
+                brokerDepositsDisplay,
+                useDerivedBroker ? t('movements.brokerDerivedHint') : undefined,
+              )}
+            </div>
+          }
+        >
+          <FinTable
+            caption={t('movements.depositsByChannel')}
+            columns={depositColumns}
+            rows={depositRows}
+            rowKey={(r) => r.key}
+            footer={{
+              label: coverageLabel(t('movements.totalDepositsLabel'), depositCoverage),
+              values: { amount: displayTotalDeposits },
+            }}
+          />
+        </Panel>
+
+        <Panel
+          title={t('movements.withdrawalsByChannel')}
+          hint={useDerivedBroker ? t('movements.withdrawalsByChannelHint') : t('movements.kpi.manualOnly')}
+          flush
+        >
+          <FinTable
+            caption={t('movements.withdrawalsByChannel')}
+            columns={withdrawalColumns}
+            rows={withdrawalRows}
+            rowKey={(r) => r.key}
+            groupBy={(r) => (r.sums ? 'sums' : 'info')}
+            groupLabel={(g) => (g === 'sums' ? t('movements.group.sums') : t('movements.group.info'))}
+            footer={{
+              label: coverageLabel(t('movements.totalWithdrawalsLabel'), withdrawalCoverage),
+              values: { amount: -displayTotalWithdrawals },
+            }}
+          />
+        </Panel>
+
+        <Panel title={t('movements.balancePropFirm')} flush>
+          <FinTable
+            caption={t('movements.balancePropFirm')}
+            columns={simpleColumns}
+            rows={[
+              {
+                key: 'sales',
+                label: t('movements.propFirmSales'),
+                amount: propFirmSalesDisplay,
+                source: useDerivedBroker ? pfSalesSource : undefined,
+              },
+              {
+                key: 'wdr',
+                label: t('movements.propFirmWithdrawals'),
+                amount: -propFirmWithdrawalDisplay,
+                source: useDerivedBroker ? pfWdrSource : undefined,
+              },
+            ]}
+            rowKey={(r) => r.key}
+            footer={{ label: t('movements.netIncome'), values: { amount: propFirmNetIncomeDisplay } }}
+          />
+        </Panel>
+
+        <Panel title={t('movements.balanceBroker')} flush>
+          {/* Desde 2026-08-31 el P&L ya no se teclea: sale de `crm_daily_pnl`
+              en los períodos abiertos y del congelado del cierre en los
+              cerrados (src/lib/broker-pnl.ts). La PROCEDENCIA se muestra en
+              /resumen-general, donde hay un solo período a la vista; acá una
+              etiqueta fija diría "CRM" también sobre un mes cerrado. */}
+          <FinTable
+            caption={t('movements.balanceBroker')}
+            columns={simpleColumns}
+            rows={[
+              {
+                key: 'pnl',
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    {t('movements.brokerPnlBookB')} <InfoTip text={GLOSSARY.libroB} />
+                  </span>
+                ),
+                amount: brokerPnl,
+              },
+              { key: 'other', label: t('upload.other'), amount: brokerOther },
+            ]}
+            rowKey={(r) => r.key}
+            footer={{ label: t('movements.totalBroker'), values: { amount: brokerPnl + brokerOther } }}
+          />
+        </Panel>
+      </div>
+
+      {/* ─── APIs en tiempo real (rango propio, independiente del período) ─── */}
       <RealTimeMovementsBanner
         walletId={coinsbuyWalletId}
         onWalletChange={handleWalletChange}
         onAfterLiveSync={() => setApiRefreshKey((k) => k + 1)}
       />
-
-      {/* ─── Lower section: Datos del período (mes) ─── */}
-      <div className="flex flex-col gap-3 pt-2 border-t border-border">
-        <div>
-          <h2 className="text-lg font-semibold">{t('movements.periodData')}</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            {t('movements.periodDataDesc')}
-          </p>
-        </div>
-        <MovimientosPeriodSelector />
-      </div>
-
-      {/* ─── Summary cards: Depósitos / Retiros / Net Deposit ─── */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          label={t('summary.deposits')}
-          value={formatCurrency(displayTotalDeposits)}
-          hint={t('movements.selectedPeriodHint')}
-          icon={ArrowDownCircle}
-          tone="info"
-        />
-        <StatCard
-          label={t('summary.withdrawals')}
-          value={formatCurrency(displayTotalWithdrawals)}
-          hint={t('movements.selectedPeriodHint')}
-          icon={ArrowUpCircle}
-          tone="negative"
-        />
-        <StatCard
-          label={<>{t('movements.netDeposit')} <InfoTip text={GLOSSARY.netDeposit} /></>}
-          value={formatCurrency(displayNetDeposit)}
-          hint={t('movements.netDepositHint')}
-          icon={Wallet}
-          tone={displayNetDeposit >= 0 ? 'positive' : 'negative'}
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Depósitos */}
-        <Card>
-          <h2 className="text-lg font-semibold mb-4 text-blue-600">
-            {t('movements.depositsTab')}
-          </h2>
-          <DataTable
-            data={depositRows}
-            columns={[
-              {
-                header: (
-                  <span className="inline-flex items-center gap-1.5">
-                    {t('movements.channel')}
-                    {/* La entrada del glosario existía desde hace meses y no la
-                        usaba nadie: explicaba justo lo que esta tabla no dice,
-                        que cada fila es API + manual y que el manual nunca se
-                        pisa. Va acá, al lado del rótulo «api» que la motiva
-                        (2026-08-31, auditoría de finanzas, ítem 20). */}
-                    <InfoTip text={GLOSSARY.apiManualCoexist} />
-                  </span>
-                ),
-                accessor: (d) => (
-                  <>
-                    {depositChannelLabel(d.channel, t)}
-                    {d.channel === 'other' && (
-                      <span className="ml-2 text-[10px] text-muted-foreground uppercase tracking-wide">
-                        manual
-                      </span>
-                    )}
-                    {d.isApiChannel && useDerivedBroker && (
-                      <span className="ml-2 text-[10px] text-emerald-500 uppercase tracking-wide">
-                        api
-                      </span>
-                    )}
-                  </>
-                ),
-              },
-              {
-                header: t('movements.amount'),
-                align: 'right',
-                accessor: (d) => (
-                  <span className="font-medium">
-                    {formatCurrency(d.displayAmount)}
-                    {/* Breakdown when both sources contribute — shows the
-                        user that manual + API are coexisting, not fighting. */}
-                    {d.isApiChannel && useDerivedBroker && d.apiAmount > 0 && d.manualAmount > 0 && (
-                      <span className="block text-[10px] text-muted-foreground">
-                        {formatCurrency(d.apiAmount)} API + {formatCurrency(d.manualAmount)} manual
-                      </span>
-                    )}
-                  </span>
-                ),
-              },
-            ]}
-            footerRow={
-              <>
-                {/* Kevin (2026-08-31): «sigue sin sumar esto bien» — el total en
-                    negrita tiene que ser la suma de TODAS las filas visibles,
-                    incluida la manual «Otros Depósitos». El total solo-API sigue
-                    disponible como desglose debajo, porque «Restante (Broker)»
-                    se deriva de él (regla Abr-2026) y no debe moverse. */}
-                <tr className="font-bold">
-                  <td className="px-4 py-3">{t('movements.totalDepositsAll')}</td>
-                  <td className="px-4 py-3 text-right text-blue-600">
-                    {formatCurrency(displayTotalDeposits)}
-                    {otherDeposits > 0 && (
-                      <span className="block text-[10px] font-normal text-muted-foreground">
-                        {t('movements.totalDepositsBreakdown', {
-                          api: formatCurrency(apiDepositsTotal),
-                          manual: formatCurrency(otherDeposits),
-                        })}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-                <tr className="text-muted-foreground">
-                  <td className="px-4 py-1">
-                    <span className="inline-flex items-center gap-1.5">
-                      {t('movements.propFirmSales')}
-                      <InfoTip text={GLOSSARY.propFirm} />
-                    </span>
-                  </td>
-                  <td className="px-4 py-1 text-right">{formatCurrency(propFirmSalesDisplay)}</td>
-                </tr>
-                <tr className="text-muted-foreground">
-                  <td className="px-4 py-1">
-                    <span className="inline-flex items-center gap-1.5">
-                      {t('movements.brokerDeposits')}
-                      <InfoTip text={GLOSSARY.brokerDeposits} />
-                    </span>
-                    {useDerivedBroker && (
-                      <span className="ml-2 text-[10px] text-muted-foreground/80 uppercase tracking-wide">
-                        total api − prop firm
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-1 text-right">{formatCurrency(brokerDepositsDisplay)}</td>
-                </tr>
-              </>
-            }
-          />
-        </Card>
-
-        {/* Retiros */}
-        <Card>
-          <h2 className="text-lg font-semibold mb-4 text-red-600">
-            {t('movements.withdrawalsTab')}
-          </h2>
-          <DataTable
-            data={fullWithdrawals}
-            columns={[
-              {
-                header: t('movements.category'),
-                accessor: (w) => {
-                  const src = withdrawalRowSource(w.category);
-                  return (
-                    <>
-                      {withdrawalCategoryLabel(w.category, t)}
-                      <span
-                        className={`ml-2 text-[10px] uppercase tracking-wide ${
-                          src === 'api' ? 'text-positive' : 'text-muted-foreground'
-                        }`}
-                      >
-                        {src === 'api' ? 'api' : 'manual'}
-                      </span>
-                      {/* «Informativa» no es decoración: dice por qué este
-                          número NO está en Retiros Totales. Sin el rótulo, una
-                          fila de $180.000 arriba de un total que no la incluye
-                          se lee como un error de suma. */}
-                      {w.category === 'ib_commissions' && (
-                        <span className="ml-2 text-[10px] text-muted-foreground/80 uppercase tracking-wide">
-                          {t('movements.informationalOnly')}
-                        </span>
-                      )}
-                    </>
-                  );
-                },
-              },
-              {
-                header: t('movements.amount'),
-                align: 'right',
-                // Broker — Kevin (2026-05-03): es informativo manual,
-                // siempre se muestra solo lo cargado en Carga de Datos.
-                // Comisiones IB y Prop Firm muestran desde el 2026-08-31 el
-                // valor EFECTIVO (automático del espejo del CRM, o el manual si
-                // hay override), el mismo que ya usaban las tarjetas de abajo:
-                // tener la tabla en $0 y la tarjeta en $11.981,70 era el mismo
-                // dato contado dos veces con dos resultados. Ninguna suma a
-                // «Retiros Totales» — los retiros reales viven ahí.
-                accessor: (w) => (
-                  <span className="font-medium">
-                    {formatCurrency(withdrawalRowAmount(w.category, w.amount))}
-                  </span>
-                ),
-              },
-            ]}
-            footerRow={
-              <>
-                {/* Retiros por API, uno por canal del registro único. Van
-                    ANTES del total para que se lea como su desglose. */}
-                {apiWithdrawalRows.map((r) => (
-                  <tr key={r.key} className="text-muted-foreground">
-                    <td className="px-4 py-1">
-                      {r.label}
-                      <span className="ml-2 text-[10px] text-emerald-500 uppercase tracking-wide">
-                        api
-                      </span>
-                    </td>
-                    <td className="px-4 py-1 text-right">
-                      {r.amount === null ? t('movements.noData') : formatCurrency(r.amount)}
-                    </td>
-                  </tr>
-                ))}
-                <tr className="font-bold">
-                  <td className="px-4 py-3">{t('summary.withdrawals')}</td>
-                  <td className="px-4 py-3 text-right text-red-600">
-                    {formatCurrency(displayTotalWithdrawals)}
-                  </td>
-                </tr>
-                {/* Un canal que no se pudo leer NO está en el total. Decirlo es
-                    obligatorio: un recorte silencioso es indistinguible de
-                    "no hay más" (docs/reglas-del-proyecto.md §1.2). */}
-                {coexist.withdrawalChannelsWithoutData.length > 0 && (
-                  <tr>
-                    <td colSpan={2} className="px-4 pb-2 text-xs text-amber-600">
-                      {t('movements.withdrawalsMissingChannels', {
-                        channels: coexist.withdrawalChannelsWithoutData
-                          .map((c) => withdrawalChannelLabel(c, t))
-                          .join(', '),
-                      })}
-                    </td>
-                  </tr>
-                )}
-                <tr className="text-muted-foreground">
-                  <td className="px-4 py-1">
-                    {t('movements.p2pTransfer')}
-                    <span
-                      className={`ml-2 text-[10px] uppercase tracking-wide ${
-                        p2p.source === 'api' ? 'text-positive' : 'text-muted-foreground'
-                      }`}
-                    >
-                      {p2p.source === 'api' ? 'api' : 'manual'}
-                    </span>
-                  </td>
-                  <td className="px-4 py-1 text-right">
-                    {formatCurrency(p2pTransferDisplay)}
-                  </td>
-                </tr>
-                <tr className="font-bold border-t border-border">
-                  <td className="px-4 py-3">{t('movements.netDeposit')}</td>
-                  <td
-                    className={`px-4 py-3 text-right ${
-                      displayNetDeposit >= 0 ? 'text-emerald-600' : 'text-red-600'
-                    }`}
-                  >
-                    {formatCurrency(displayNetDeposit)}
-                  </td>
-                </tr>
-              </>
-            }
-          />
-        </Card>
-
-        {/* Balance Prop Firm */}
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('movements.balancePropFirm')}</h2>
-          <table className="w-full text-sm">
-            <tbody>
-              <tr className="border-b border-border/50">
-                <td className="py-2.5">
-                  {t('movements.propFirmSales')}
-                  <span className={`ml-2 text-[10px] uppercase tracking-wide ${pfSalesSource === 'api' ? 'text-positive' : 'text-muted-foreground'}`}>
-                    {pfSalesSource === 'api' ? 'api' : 'manual'}
-                  </span>
-                </td>
-                <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(propFirmSalesDisplay)}
-                </td>
-              </tr>
-              <tr className="border-b border-border/50">
-                <td className="py-2.5">
-                  {t('movements.propFirmWithdrawals')}
-                  <span className={`ml-2 text-[10px] uppercase tracking-wide ${pfWdrSource === 'api' ? 'text-positive' : 'text-muted-foreground'}`}>
-                    {pfWdrSource === 'api' ? 'api' : 'manual'}
-                  </span>
-                </td>
-                <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(propFirmWithdrawalDisplay)}
-                </td>
-              </tr>
-              <tr className="font-bold">
-                <td className="py-3">{t('movements.netIncome')}</td>
-                <td className="py-3 text-right">{formatCurrency(propFirmNetIncomeDisplay)}</td>
-              </tr>
-            </tbody>
-          </table>
-        </Card>
-
-        {/* Balance Broker */}
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('movements.balanceBroker')}</h2>
-          <table className="w-full text-sm">
-            <tbody>
-              <tr className="border-b border-border/50">
-                <td className="py-2.5">
-                  <span className="inline-flex items-center gap-1.5">
-                    {t('movements.brokerPnlBookB')}
-                    <InfoTip text={GLOSSARY.libroB} />
-                  </span>
-                  {/* Desde 2026-08-31 este número YA NO se teclea: sale de
-                      `crm_daily_pnl` en los períodos abiertos y del congelado
-                      del cierre en los cerrados (src/lib/broker-pnl.ts). La
-                      PROCEDENCIA se muestra en /resumen-general, que es donde
-                      hay un solo período a la vista; acá una etiqueta fija
-                      diría "CRM" también sobre un mes cerrado, que es
-                      justamente el número que NO sale del CRM. */}
-                </td>
-                <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(summary.operatingIncome?.broker_pnl || 0)}
-                </td>
-              </tr>
-              <tr className="border-b border-border/50">
-                <td className="py-2.5">{t('upload.other')}</td>
-                <td className="py-2.5 text-right font-medium">
-                  {formatCurrency(summary.operatingIncome?.other || 0)}
-                </td>
-              </tr>
-              <tr className="font-bold">
-                <td className="py-3">{t('movements.totalBroker')}</td>
-                <td className="py-3 text-right">
-                  {formatCurrency(
-                    (summary.operatingIncome?.broker_pnl || 0) +
-                      (summary.operatingIncome?.other || 0)
-                  )}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </Card>
-      </div>
     </div>
+  );
+}
+
+/** Fila de los libritos Prop Firm / Broker. */
+interface SimpleRow {
+  key: string;
+  label: React.ReactNode;
+  amount: number;
+  source?: 'api' | 'manual';
+}
+
+/** «Reintentar» del aviso: botón secundario (el único primario es «Sincronizar ahora»). */
+function RetryButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2"
+    >
+      <RotateCw aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      {label}
+    </button>
   );
 }

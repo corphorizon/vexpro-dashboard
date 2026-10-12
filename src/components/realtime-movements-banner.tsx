@@ -2,19 +2,16 @@
 
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { Card } from '@/components/ui/card';
-import { formatCurrency } from '@/lib/utils';
-import {
-  RefreshCw,
-  CheckCircle2,
-  AlertTriangle,
-  Plug,
-  ChevronRight,
-  Calendar,
-  Wallet,
-  Pin,
-  PinOff,
-} from 'lucide-react';
+import { RefreshCw, Calendar, Wallet, Pin, PinOff } from 'lucide-react';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { Input, Select } from '@/components/ui/field';
+import { relativeAge } from '@/components/ui/relative-age';
+import { cn } from '@/lib/utils';
+import { useI18n } from '@/lib/i18n';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { computeProviderTotals, countPayprosPayouts } from '@/lib/api-integrations/totals';
@@ -24,6 +21,7 @@ import {
   type WithdrawalsByChannel,
 } from '@/lib/withdrawal-channels';
 import { PROVIDER_META } from '@/lib/api-channels';
+import { pendingFromDatasets } from '@/lib/movements-ledger';
 import { apiFetch } from '@/lib/api-fetch';
 import {
   pinCoinsbuyWallet,
@@ -40,27 +38,27 @@ import type {
 } from '@/lib/api-integrations/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// RealTimeMovementsBanner
+// RealTimeMovementsBanner — panel «APIs en tiempo real» de /movimientos.
 //
-// Upper-filter section of the Movimientos page. Owns its own date-range
-// filter (month or custom range) and polls /api/integrations/movements with
-// those params. Renders four cards (Coinsbuy Deposits/Withdrawals, FairPay,
-// Unipayment), each linking to a breakdown page.
+// Tiene su PROPIO filtro de fechas (mes o rango) y de wallet de Coinsbuy, y
+// lee /api/integrations/persisted-movements (caché en Supabase); sólo
+// «Sincronizar ahora» llama a las APIs externas.
+//
+// REDISEÑO «Libro mayor» (2026-10-12): las 4-6 tarjetas por proveedor pasan a
+// un `Panel` con una `FinTable` compacta — proveedor, estado (`StatusBadge`
+// ok/stale/bad según `ds.status`), última sync «hace X», total con signo. Las
+// tarjetas de Coinsbuy por wallet operativa (Main / Instant) son filas de su
+// propio grupo. Por qué:
+//   · cada tarjeta pintaba el importe con un color por proveedor
+//     (`PROVIDER_META.accent`) y el estado con un ícono verde/ámbar/rojo de
+//     14 px sin texto: color sin significado y estado sólo por color;
+//   · 12 clases de paleta cruda + 4 `dark:` + 6 textos de 10-11 px (medido
+//     antes del cambio) que no siguen el tema ni llegan al mínimo de 11.5 px;
+//   · el «Refrescar desde APIs» era un botón de borde tenue: es la única
+//     acción primaria de la pantalla y ahora se ve como tal.
+// DESCARTADO: dejar `PROVIDER_META.accent` en uso (sigue en el registro para
+// no tocar src/lib en esta tanda; queda sin consumidores en esta pantalla).
 // ─────────────────────────────────────────────────────────────────────────────
-
-function timeAgo(iso: string): string {
-  const diffSec = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (diffSec < 60) return 'hace unos segundos';
-  const diffMin = Math.floor(diffSec / 60);
-  if (diffMin < 60) return `hace ${diffMin} min`;
-  const diffH = Math.floor(diffMin / 60);
-  return `hace ${diffH} h`;
-}
-
-// Las etiquetas y el color de cada tarjeta salen del registro único
-// (src/lib/api-channels.ts, PROVIDER_META). Eran DOS `Record<ProviderSlug,…>`
-// escritos acá, en un archivo de UI, mientras `integrations-sync.ts` tenía un
-// tercero para los avisos al que le faltaba `paypros` (2026-08-31, ítem 14).
 
 // ── Current month helpers ──
 
@@ -132,7 +130,11 @@ interface BannerProps {
 }
 
 export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange, onAfterLiveSync }: BannerProps = {}) {
+  const { t } = useI18n();
   const { user } = useAuth();
+  // «Ahora» para «hace X», tomado al montar (Date.now() en el render no es
+  // puro). Tras «Sincronizar» la marca nueva es posterior y se lee «recién».
+  const [now] = useState(() => Date.now());
   const { company } = useData();
   // isCompanyAdmin y no `user.role === 'admin'`: el superadmin en modo
   // "viendo como" llega con role 'superadmin' y quedaba sin selector de
@@ -412,339 +414,369 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
     return p.toString();
   }, [from, to, walletId]);
 
+  // ── Filas de la tabla compacta («Libro mayor», 2026-10-12) ───────────────
+  // Antes: una tarjeta por proveedor, el importe pintado con el color de cada
+  // proveedor (`PROVIDER_META.accent`: azul, rojo, verde, violeta, ámbar — cinco
+  // colores que no significaban nada) y el estado como un ícono verde/ámbar/
+  // rojo de 14 px. Ahora: una fila por proveedor con el estado en palabras
+  // (`StatusBadge` vía `statusKind('fetch', …)`), la antigüedad del dato y el
+  // monto con signo en tinta neutra. Un dataset en `error` sin caché no tiene
+  // monto: «—», no $0.00 (el $0 se leía como «no hubo depósitos»).
+  const statusLabel = (s: ProviderDataset['status']) =>
+    s === 'fresh' ? t('movements.rt.status.fresh') : s === 'stale' ? t('movements.rt.status.stale') : t('movements.rt.status.error');
+  const syncedAt = (iso: string | null | undefined) => {
+    // `fetchedAt` = epoch 0 cuando nunca sincronizó (persisted-movements).
+    if (!iso || Date.parse(iso) <= 0) return null;
+    const age = relativeAge(iso, now);
+    return age ? t(age.key, { n: String(age.n) }) : null;
+  };
+  const rows: ProviderRow[] = datasets.flatMap((ds): ProviderRow[] => {
+    const meta = PROVIDER_META[ds.slug];
+    const totals = computeProviderTotals(ds);
+    const sign = meta.direction === 'out' ? -1 : 1;
+    const known = ds.status !== 'error' || totals.count > 0;
+    const base = {
+      status: ds.status,
+      synced: syncedAt(ds.fetchedAt),
+      error: ds.errorMessage ?? null,
+    };
+    // Retiros de Coinsbuy: una fila POR WALLET OPERATIVA cuando la carga sin
+    // filtro respondió; si no, la agregada de siempre (que sigue el selector).
+    // Nunca un $0 inventado por fallo de red.
+    if (ds.slug === 'coinsbuy-withdrawals' && retirosPorWallet !== null) {
+      return retirosPorWallet.map((w) => ({
+        ...base,
+        key: `cbw-${w.walletId}`,
+        group: 'cbWallets' as const,
+        label: w.label,
+        href: `/movimientos/desglose/coinsbuy-withdrawals${linkQs ? `?${linkQs}&` : '?'}walletId=${w.walletId}`,
+        meta: t('movements.rt.txMeta', { n: String(w.count), status: 'Approved' }),
+        amount: -w.total,
+      }));
+    }
+    const out: ProviderRow[] = [
+      {
+        ...base,
+        key: ds.slug,
+        group: meta.direction === 'out' ? 'out' : 'in',
+        label: meta.cardLabel,
+        href: `/movimientos/desglose/${ds.slug}${linkQs ? `?${linkQs}` : ''}`,
+        meta:
+          t('movements.rt.txMeta', { n: String(totals.count), status: totals.acceptedStatus }) +
+          (ds.isMock ? ' · mock' : ''),
+        amount: known ? sign * totals.total : null,
+      },
+    ];
+    // Kevin (2026-08-31): «pon aquí también una tarjeta con la info de los
+    // retiros de paypros». Pay-Pros es UN provider con dos sentidos separados
+    // por status; la fila de retiros sale del mismo dataset vía
+    // countPayprosPayouts (los payout_paid que computeProviderTotals excluye a
+    // propósito del lado de depósitos).
+    if (ds.slug === 'paypros') {
+      const payouts = countPayprosPayouts(ds);
+      out.push({
+        ...base,
+        key: 'paypros-payouts',
+        group: 'out',
+        label: t('movements.rt.payprosPayouts'),
+        href: `/movimientos/desglose/paypros${linkQs ? `?${linkQs}` : ''}`,
+        meta: t('movements.rt.txMeta', { n: String(payouts.count), status: 'payout_paid' }),
+        amount: known ? -payouts.total : null,
+      });
+    }
+    return out;
+  });
+  // Orden de lectura: depósitos, retiros de Coinsbuy por wallet, otros retiros.
+  const GROUP_ORDER: ProviderRow['group'][] = ['in', 'cbWallets', 'out'];
+  rows.sort((a, b) => GROUP_ORDER.indexOf(a.group) - GROUP_ORDER.indexOf(b.group));
+
+  const columns: FinColumn<ProviderRow>[] = [
+    {
+      key: 'provider',
+      header: t('movements.rt.col.provider'),
+      cell: (r) => (
+        <Link href={r.href} className="font-medium text-foreground hover:underline" title={r.label}>
+          {r.label}
+        </Link>
+      ),
+      meta: (r) => (r.status === 'error' && r.error ? r.error : r.meta),
+      mobileMeta: (r) => (
+        <>
+          <StatusBadge domain="fetch" status={r.status} label={statusLabel(r.status)} title={r.error ?? undefined} />
+          {r.synced && <span suppressHydrationWarning>{r.synced}</span>}
+        </>
+      ),
+    },
+    {
+      key: 'status',
+      header: t('movements.rt.col.status'),
+      cell: (r) => (
+        <StatusBadge
+          domain="fetch"
+          status={r.status}
+          label={statusLabel(r.status)}
+          // Ámbar/violeta = dato de la última sincronización buena: la API en
+          // vivo falló pero el número NO es cero ni inventado.
+          title={
+            r.status === 'stale'
+              ? r.error
+                ? t('movements.rt.staleTitleError', { error: r.error })
+                : t('movements.rt.staleTitle')
+              : (r.error ?? undefined)
+          }
+        />
+      ),
+      hideSm: true,
+    },
+    {
+      key: 'synced',
+      header: t('movements.rt.col.synced'),
+      cell: (r) => (
+        <span className="text-text-2" suppressHydrationWarning>
+          {r.synced ?? '—'}
+        </span>
+      ),
+      hideSm: true,
+    },
+    {
+      key: 'amount',
+      header: t('movements.rt.col.total'),
+      kind: 'money',
+      value: (r) => r.amount,
+      money: { signed: true, tone: 'neutral' },
+    },
+  ];
+
+  const pickerLabel = 'inline-flex items-center gap-1.5 text-[12.5px] font-medium text-text-2';
+  const selectedWallet = walletOptions.find((w) => w.id === walletId);
+  const selectedPin = pinned.find((p) => p.wallet_id === walletId);
+  const operatingNames = operatingPins.map((p) => p.wallet_label || `#${p.wallet_id}`).join(', ');
+  const internalNames = pinned
+    .filter((p) => p.role === 'internal')
+    .map((p) => p.wallet_label || `#${p.wallet_id}`)
+    .join(', ');
+  const lastSync = fetchedAt ? syncedAt(fetchedAt) : null;
+
   return (
-    <Card>
-      {/* Header row */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
-        <div className="flex items-center gap-2 flex-wrap">
-          <Plug className="w-4 h-4 text-violet-500" />
-          <h3 className="text-sm font-semibold">APIs en tiempo real</h3>
-          {fetchedAt && (
-            <span className="text-xs text-muted-foreground">
-              · Actualizado {timeAgo(fetchedAt)}
-            </span>
-          )}
-        </div>
+    <Panel
+      title={t('movements.rt.title')}
+      hint={
+        <span suppressHydrationWarning>
+          {lastSync ? t('movements.rt.updated', { ago: lastSync }) : t('movements.rt.neverSynced')}
+        </span>
+      }
+      flush
+      actions={
+        // El ÚNICO botón primario de /movimientos (spec §5.1).
         <button
+          type="button"
           onClick={loadLive}
           disabled={loading}
-          title="Consulta las APIs externas y guarda los resultados"
-          className="self-start sm:self-auto flex items-center gap-1.5 px-3 py-1.5 rounded-md border border-[var(--color-primary)]/30 bg-[var(--color-primary)]/5 text-xs font-medium hover:bg-[var(--color-primary)]/10 transition-colors disabled:opacity-50"
+          title={t('movements.rt.syncTitle')}
+          className="inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-primary bg-primary px-3 text-[13px] font-medium text-brand-on-primary hover:bg-[color-mix(in_srgb,var(--color-primary)_86%,#000)] disabled:cursor-not-allowed disabled:opacity-60"
         >
-          <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
-          {loading ? 'Sincronizando…' : 'Refrescar desde APIs'}
+          <RefreshCw aria-hidden className={cn('size-[15px]', loading && 'animate-spin')} strokeWidth={1.75} />
+          {loading ? t('movements.rt.syncing') : t('movements.rt.sync')}
         </button>
-      </div>
-
-      {/* Filter controls */}
-      <div className="flex flex-wrap items-center gap-3 mb-4 p-3 rounded-lg bg-muted/30 border border-border">
-        {/* Mode toggle: Mes vs Rango */}
+      }
+    >
+      {/* Filtro propio del banner: mes o rango, y wallet de Coinsbuy. */}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
-          <Calendar className="w-4 h-4 text-muted-foreground" />
-          <div className="inline-flex rounded-md border border-border bg-card overflow-hidden">
-            <button
-              type="button"
-              onClick={() => setMode('month')}
-              aria-pressed={mode === 'month'}
-              className={`px-3.5 py-1.5 text-xs font-semibold transition-colors ${
-                mode === 'month'
-                  ? 'bg-[var(--color-primary)] text-white'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
-            >
-              Mes
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('range')}
-              aria-pressed={mode === 'range'}
-              className={`px-3.5 py-1.5 text-xs font-semibold transition-colors border-l border-border ${
-                mode === 'range'
-                  ? 'bg-[var(--color-primary)] text-white border-l-[var(--color-primary)]'
-                  : 'text-muted-foreground hover:bg-muted hover:text-foreground'
-              }`}
-            >
-              Rango
-            </button>
-          </div>
+          <Calendar aria-hidden className="size-4 text-text-3" />
+          <Segmented<FilterMode>
+            aria-label={t('movements.rt.modeAria')}
+            value={mode}
+            onChange={setMode}
+            options={[
+              { value: 'month', label: t('movements.rt.month') },
+              { value: 'range', label: t('movements.rt.range') },
+            ]}
+          />
         </div>
 
-        {/* Date input(s) — mes único o rango */}
         {mode === 'month' ? (
-          <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <span className="font-medium">Mes:</span>
-            <input
+          <label className={pickerLabel}>
+            {t('movements.rt.month')}
+            <Input
               type="month"
               value={month}
               onChange={(e) => setMonth(e.target.value)}
-              className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-              aria-label="Seleccionar mes"
+              className="w-auto"
+              aria-label={t('movements.rt.monthAria')}
             />
           </label>
         ) : (
           <div className="flex flex-wrap items-center gap-2">
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="font-medium">Desde:</span>
-              <input
+            <label className={pickerLabel}>
+              {t('movements.rt.from')}
+              <Input
                 type="date"
                 value={rangeFrom}
                 onChange={(e) => setRangeFrom(e.target.value)}
-                className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                aria-label="Fecha desde"
+                className="w-auto"
               />
             </label>
-            <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="font-medium">Hasta:</span>
-              <input
+            <label className={pickerLabel}>
+              {t('movements.rt.to')}
+              <Input
                 type="date"
                 value={rangeTo}
                 onChange={(e) => setRangeTo(e.target.value)}
-                className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30"
-                aria-label="Fecha hasta"
+                className="w-auto"
               />
             </label>
           </div>
         )}
 
-        {/* Divider + wallet selector */}
-        <div className="w-px h-6 bg-border hidden sm:block" />
-
-        {/* Wallet selector (Coinsbuy) — only admins can change */}
-        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Wallet className="w-4 h-4" />
-          <span className="font-medium">Wallet:</span>
+        {/* Wallet (Coinsbuy) — sólo admins la cambian. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={pickerLabel}>
+            <Wallet aria-hidden className="size-4 text-text-3" />
+            {t('movements.rt.wallet')}
+          </span>
           {isAdmin && walletOptions.length > 0 ? (
-            <select
+            <Select
               value={walletId}
               onChange={(e) => setWalletId(e.target.value)}
-              className="h-8 px-2.5 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 max-w-[240px]"
-              aria-label="Seleccionar wallet de Coinsbuy"
+              className="w-auto max-w-[240px]"
+              aria-label={t('movements.rt.walletAria')}
             >
-              <option value="">Todas las wallets</option>
+              <option value="">{t('movements.rt.allWallets')}</option>
               {walletOptions.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.label} ({w.currencyCode})
                 </option>
               ))}
-            </select>
-          ) : (
-            <></>
-          )}
-          {isAdmin && walletId && walletOptions.length > 0 ? (
+            </Select>
+          ) : !isAdmin ? (
+            <span className="text-[13px] text-foreground">{t('movements.rt.mainWallet')}</span>
+          ) : null}
+          {isAdmin && walletId && walletOptions.length > 0 && (
             // Fijar/quitar la wallet seleccionada + su ROL. Los pins son
             // company-wide → afectan también a /balances y /resumen-general.
-            (() => {
-              const sel = walletOptions.find((w) => w.id === walletId);
-              const pin = pinned.find((p) => p.wallet_id === walletId);
-              return (
-                <>
-                  <button
-                    type="button"
-                    onClick={() => togglePin(walletId, sel?.label ?? '')}
-                    disabled={pinBusy}
-                    className={`h-8 inline-flex items-center gap-1 px-2 text-xs rounded-md border transition-colors disabled:opacity-50 ${
-                      pin
-                        ? 'border-[var(--color-primary)]/40 bg-[var(--color-primary)]/10 text-primary dark:text-accent'
-                        : 'border-border bg-card text-muted-foreground hover:text-foreground'
-                    }`}
-                    title={pin ? 'Quitar del balance y de los totales' : 'Fijar: suma al balance consolidado'}
-                    aria-label={pin ? 'Quitar wallet fijada' : 'Fijar wallet'}
-                  >
-                    {pin ? <PinOff className="w-3.5 h-3.5" /> : <Pin className="w-3.5 h-3.5" />}
-                    {pin ? 'Fijada' : 'Fijar'}
-                  </button>
-                  {pin && (
-                    <select
-                      value={pin.role}
-                      onChange={(e) =>
-                        changePinRole(walletId, e.target.value as PinnedWalletRole)
-                      }
-                      disabled={pinBusy}
-                      className="h-8 px-2 text-base sm:text-xs rounded-md border border-border bg-card text-foreground focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)]/30 disabled:opacity-50"
-                      aria-label="Rol de la wallet fijada"
-                      title="Operativa: cuenta como depósitos y retiros de clientes. Interna: solo suma al balance (ahorro, egresos)."
-                    >
-                      <option value="operating">Operativa</option>
-                      <option value="internal">Interna (solo balance)</option>
-                    </select>
-                  )}
-                </>
-              );
-            })()
-          ) : !isAdmin ? (
-            <span className="h-8 flex items-center px-2.5 text-xs rounded-md border border-border bg-muted/50 text-foreground">
-              Wallet principal
-            </span>
-          ) : null}
-        </label>
+            <>
+              <button
+                type="button"
+                onClick={() => togglePin(walletId, selectedWallet?.label ?? '')}
+                disabled={pinBusy}
+                aria-pressed={Boolean(selectedPin)}
+                className={cn(
+                  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border px-2.5 text-[13px] font-medium disabled:opacity-50',
+                  selectedPin
+                    ? 'border-brand-ink bg-brand-tint text-brand-ink'
+                    : 'border-border-strong bg-card text-text-2 hover:bg-surface-2 hover:text-foreground',
+                )}
+                title={selectedPin ? t('movements.rt.unpinTitle') : t('movements.rt.pinTitle')}
+              >
+                {selectedPin ? (
+                  <PinOff aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                ) : (
+                  <Pin aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                )}
+                {selectedPin ? t('movements.rt.pinned') : t('movements.rt.pin')}
+              </button>
+              {selectedPin && (
+                <Select
+                  value={selectedPin.role}
+                  onChange={(e) => changePinRole(walletId, e.target.value as PinnedWalletRole)}
+                  disabled={pinBusy}
+                  className="w-auto"
+                  aria-label={t('movements.rt.roleAria')}
+                  title={t('movements.rt.roleTitle')}
+                >
+                  <option value="operating">{t('movements.rt.roleOperating')}</option>
+                  <option value="internal">{t('movements.rt.roleInternal')}</option>
+                </Select>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
-      {/* Qué wallets cuentan y para qué. Sin esto, "Datos del período" (abajo)
-          y las tarjetas de acá arriba muestran números distintos sin explicar
-          por qué: el selector de wallet filtra SOLO estas tarjetas, mientras
-          que los totales del período siempre cuentan las operativas. */}
+      {/* Qué wallets cuentan y para qué. Sin esto, «Datos del período» (arriba)
+          y esta tabla muestran números distintos sin explicar por qué: el
+          selector de wallet filtra SOLO esta tabla, mientras que los totales
+          del período siempre cuentan las operativas. */}
       {isAdmin && pinned.length > 0 && (
-        <p className="text-[11px] text-muted-foreground mb-3 -mt-1">
-          <span className="font-medium text-foreground">Datos del período</span>{' '}
-          cuenta {operatingPins.length}{' '}
-          {operatingPins.length === 1 ? 'wallet operativa' : 'wallets operativas'}
-          {operatingPins.length > 0 && (
-            <>: {operatingPins.map((p) => p.wallet_label || `#${p.wallet_id}`).join(', ')}</>
-          )}
-          .
-          {pinned.length > operatingPins.length && (
-            <>
-              {' '}
-              Las internas (solo suman al balance, no a depósitos/retiros):{' '}
-              {pinned
-                .filter((p) => p.role === 'internal')
-                .map((p) => p.wallet_label || `#${p.wallet_id}`)
-                .join(', ')}
-              .
-            </>
+        <p className="border-b border-border px-4 py-2.5 text-[12px] leading-5 text-text-3">
+          {t(
+            operatingPins.length === 1 ? 'movements.periodDataScopeOne' : 'movements.periodDataScopeMany',
+            { count: String(operatingPins.length), wallets: operatingNames || '—' },
           )}{' '}
-          El selector de wallet de acá arriba filtra únicamente estas tarjetas.
+          {pinned.length > operatingPins.length &&
+            `${t('movements.periodDataScopeInternal', { internal: internalNames })} `}
+          {t('movements.periodDataScopeHint')}
         </p>
       )}
 
-      {errorMsg && (
-        <div className="p-2 mb-2 rounded bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
-          {errorMsg}
-        </div>
-      )}
-
-      {/* Un recorte silencioso es indistinguible de «no hay más». Si el
-          endpoint tocó su techo de páginas, la tarjeta de ese proveedor muestra
-          MENOS de lo que hay y hay que decirlo antes de que alguien lo sume. */}
-      {truncatedSlugs.length > 0 && (
-        <div className="p-2 mb-2 rounded bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-300 text-xs">
-          Datos incompletos en{' '}
-          {truncatedSlugs.map((s) => PROVIDER_META[s]?.provider ?? s).join(', ')}: se
-          alcanzó el máximo de filas que se pueden leer de una vez. Los importes de
-          esa(s) tarjeta(s) están CORTOS — achicá el rango de fechas.
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-        {datasets.flatMap((ds) => {
-          const totals = computeProviderTotals(ds);
-          // Retiros de Coinsbuy: una tarjeta POR WALLET OPERATIVA cuando la
-          // carga sin filtro respondió; si no, la agregada de siempre (que
-          // sigue el selector). Nunca un $0 inventado por fallo de red.
-          if (ds.slug === 'coinsbuy-withdrawals' && retirosPorWallet !== null) {
-            return retirosPorWallet.map((w) => (
-              <Link
-                key={`cbw-${w.walletId}`}
-                href={`/movimientos/desglose/coinsbuy-withdrawals${linkQs ? `?${linkQs}&` : '?'}walletId=${w.walletId}`}
-                className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold truncate" title={w.label}>
-                    Coinsbuy · Retiros · {w.label}
-                  </span>
-                  {ds.status === 'fresh' ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                  ) : (
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                  )}
-                </div>
-                <p className="text-base font-bold text-negative">{formatCurrency(w.total)}</p>
-                <div className="flex items-center justify-between mt-0.5">
-                  <p className="text-[10px] text-muted-foreground">{w.count} tx · Approved</p>
-                  <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
-                </div>
-              </Link>
-            ));
-          }
-          // Kevin (2026-08-31): «pon aquí también una tarjeta con la info de
-          // los retiros de paypros». Pay-Pros es UN provider con dos sentidos
-          // separados por status; la tarjeta de retiros sale del mismo dataset
-          // vía countPayprosPayouts (los payout_paid que computeProviderTotals
-          // excluye a propósito del lado de depósitos).
-          const cards = [(
-            <Link
-              key={ds.slug}
-              href={`/movimientos/desglose/${ds.slug}${linkQs ? `?${linkQs}` : ''}`}
-              className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-xs font-semibold truncate">
-                  {PROVIDER_META[ds.slug].cardLabel}
-                </span>
-                {ds.status === 'fresh' ? (
-                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                ) : ds.status === 'stale' ? (
-                  // Ámbar = dato de la última sincronización buena; la API en
-                  // vivo falló pero el número NO es cero ni inventado.
-                  <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                ) : (
-                  <AlertTriangle className="w-3.5 h-3.5 text-red-500 flex-shrink-0" />
-                )}
-              </div>
-              <p className={`text-base font-bold ${PROVIDER_META[ds.slug].accent}`}>
-                {formatCurrency(totals.total)}
-              </p>
-              <div className="flex items-center justify-between mt-0.5">
-                <p className="text-[10px] text-muted-foreground">
-                  {totals.count} {totals.count === 1 ? 'tx' : 'tx'} ·{' '}
-                  {totals.acceptedStatus}
-                  {ds.isMock && ' · mock'}
-                </p>
-                <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
-              </div>
-              {ds.status === 'error' && ds.errorMessage && (
-                <p className="text-[10px] text-red-500 mt-0.5 truncate" title={ds.errorMessage}>
-                  {ds.errorMessage}
-                </p>
-              )}
-              {ds.status === 'stale' && (
-                <p
-                  className="text-[10px] text-amber-600 dark:text-amber-400 mt-0.5 truncate"
-                  title={ds.errorMessage ? `La API no respondió (${ds.errorMessage}). Se muestra la última sincronización buena.` : 'Última sincronización buena'}
+      {(errorMsg || truncatedSlugs.length > 0) && (
+        <div className="space-y-2 border-b border-border px-4 py-3">
+          {errorMsg && (
+            <Notice
+              kind="bad"
+              title={t('movements.rt.errorTitle')}
+              action={
+                <button
+                  type="button"
+                  onClick={loadFromCache}
+                  className="inline-flex h-8 items-center rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2"
                 >
-                  Última sincronización · API sin respuesta ahora
-                </p>
-              )}
-            </Link>
-          )];
-          if (ds.slug === 'paypros') {
-            const payouts = countPayprosPayouts(ds);
-            cards.push(
-              <Link
-                key="paypros-payouts"
-                href={`/movimientos/desglose/paypros${linkQs ? `?${linkQs}` : ''}`}
-                className="block p-3 rounded-lg border border-border bg-muted/20 hover:bg-muted/40 transition-colors group"
-              >
-                <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-semibold truncate">Pay-Pros · Retiros</span>
-                  {ds.status === 'fresh' ? (
-                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0" />
-                  ) : (
-                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                  )}
-                </div>
-                <p className="text-base font-bold text-negative">
-                  {formatCurrency(payouts.total)}
-                </p>
-                <div className="flex items-center justify-between mt-0.5">
-                  <p className="text-[10px] text-muted-foreground">
-                    {payouts.count} tx · payout_paid
-                  </p>
-                  <ChevronRight className="w-3 h-3 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
-                </div>
-              </Link>,
-            );
-          }
-          return cards;
-        })}
-        {datasets.length === 0 && !errorMsg && (
-          <p className="text-xs text-muted-foreground col-span-full">
-            Cargando datos de APIs...
-          </p>
-        )}
-      </div>
-    </Card>
+                  {t('movements.notice.retry')}
+                </button>
+              }
+            >
+              {errorMsg}
+            </Notice>
+          )}
+          {/* Un recorte silencioso es indistinguible de «no hay más». Si el
+              endpoint tocó su techo de páginas, la fila de ese proveedor
+              muestra MENOS de lo que hay y hay que decirlo antes de que alguien
+              lo sume. */}
+          {truncatedSlugs.length > 0 && (
+            <Notice
+              kind="pend"
+              title={t('movements.notice.truncatedTitle', {
+                channels: truncatedSlugs.map((s) => PROVIDER_META[s]?.provider ?? s).join(', '),
+              })}
+            >
+              {t('movements.notice.truncatedBody')}
+            </Notice>
+          )}
+        </div>
+      )}
+
+      <FinTable
+        caption={t('movements.rt.title')}
+        columns={columns}
+        rows={rows}
+        rowKey={(r) => r.key}
+        groupBy={(r) => r.group}
+        groupLabel={(g) =>
+          g === 'in'
+            ? t('movements.depositsTab')
+            : g === 'cbWallets'
+              ? t('movements.rt.cbWallets')
+              : t('movements.withdrawalsTab')
+        }
+        empty={errorMsg ? t('movements.rt.empty') : t('movements.rt.loading')}
+      />
+    </Panel>
   );
+}
+
+/** Una fila de la tabla compacta del banner. */
+interface ProviderRow {
+  key: string;
+  group: 'in' | 'out' | 'cbWallets';
+  label: string;
+  href: string;
+  meta: string;
+  status: ProviderDataset['status'];
+  synced: string | null;
+  error: string | null;
+  /** Con signo: depósitos +, retiros −. null = sin dato (error sin caché). */
+  amount: number | null;
 }
 
 // Exported so the main Movimientos page can read API totals for the
@@ -767,6 +799,15 @@ export function useApiTotals(
   // escondería canales reales en los períodos históricos, que no consultan la
   // API. Ver la cabecera de /api/integrations/persisted-movements.
   const [hiddenChannels, setHiddenChannels] = useState<string[]>([]);
+  // ── Estado de la lectura (2026-10-12, «Libro mayor») ───────────────────
+  // Hasta hoy un fallo de esta lectura era `catch {}` silencioso: los
+  // datasets quedaban vacíos, los depósitos por canal daban `?? 0` y la
+  // pantalla mostraba $0.00 por canal con cara de dato. Ahora el estado viaja
+  // ('loading' | 'ok' | 'failed') junto con `truncatedSlugs`, que el endpoint
+  // ya devolvía y este hook tiraba. Una exclusión silenciosa es
+  // indistinguible de un cruce roto (reglas §1.2).
+  const [fetchState, setFetchState] = useState<'loading' | 'ok' | 'failed'>('loading');
+  const [truncatedSlugs, setTruncatedSlugs] = useState<ProviderSlug[]>([]);
 
   // Debounce rapid wallet-selector clicks (350 ms) and support AbortController
   // so a newer request supersedes an older one mid-flight — fixes N-fetches-
@@ -790,12 +831,18 @@ export function useApiTotals(
             { signal: controller.signal },
           );
           const json = await res.json();
-          if (!cancelled && json.success) {
+          if (cancelled) return;
+          if (json.success) {
             setDatasets(json.datasets ?? []);
             setHiddenChannels(json.hiddenChannels ?? []);
+            setTruncatedSlugs(json.truncatedSlugs ?? []);
+            setFetchState('ok');
+          } else {
+            setFetchState('failed');
           }
         } catch {
-          // Silent — card already shows errors.
+          // Un abort (lo reemplazó una lectura más nueva) no es un fallo.
+          if (!cancelled) setFetchState('failed');
         }
       })();
     }, 350);
@@ -816,8 +863,12 @@ export function useApiTotals(
       // vivo: no tiene endpoint de listado. Ver aggregator.fetchProviderBySlug.
       paypros: 0,
     };
+    // Cantidad de operaciones que cuentan, por slug (mismo filtro que `by`).
+    const countBy: Record<ProviderSlug, number> = { ...by };
     for (const ds of datasets) {
-      by[ds.slug] = computeProviderTotals(ds).total;
+      const totals = computeProviderTotals(ds);
+      by[ds.slug] = totals.total;
+      countBy[ds.slug] = totals.count;
     }
     const depositsTotal =
       by['coinsbuy-deposits'] + by.fairpay + by.unipayment + by.paypros;
@@ -840,15 +891,29 @@ export function useApiTotals(
     const withdrawalsByChannel: WithdrawalsByChannel = apiWithdrawalsFromDatasets(datasets);
     const { total: withdrawalsTotal, channelsWithoutData: withdrawalChannelsWithoutData } =
       sumApiWithdrawals(withdrawalsByChannel);
+    const paypros = datasets.find((d) => d.slug === 'paypros');
+    const payoutCount = paypros ? countPayprosPayouts(paypros).count : 0;
 
     return {
       by,
+      /** Operaciones que cuentan por slug (0 si el dataset no llegó: mirar `loadedSlugs`). */
+      countBy,
+      /** Retiros de Pay-Pros (payout_paid) que cuentan. */
+      payoutCount,
       depositsTotal,
       withdrawalsTotal,
       withdrawalsByChannel,
       withdrawalChannelsWithoutData,
       /** Canales apagados para la empresa: la tabla no dibuja su fila. */
       hiddenChannels,
+      /** Slugs cuyo dataset LLEGÓ. Un slug ausente es «sin dato», no $0. */
+      loadedSlugs: datasets.map((d) => d.slug),
+      /** Estado de la última lectura de /persisted-movements. */
+      fetchState,
+      /** Proveedores cuyo dataset vino recortado por el techo de páginas. */
+      truncatedSlugs,
+      /** Transacciones pendientes (en juego). null = no hay datasets. */
+      pending: pendingFromDatasets(datasets),
     };
-  }, [datasets, hiddenChannels]);
+  }, [datasets, hiddenChannels, fetchState, truncatedSlugs]);
 }

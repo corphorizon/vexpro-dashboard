@@ -3,29 +3,44 @@
 import { useEffect, useMemo, useState, use as useUnwrap } from 'react';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
-import { Card } from '@/components/ui/card';
-import { formatCurrency } from '@/lib/utils';
-import { formatDateTime } from '@/lib/dates';
+import { ArrowLeft, RefreshCw, Download, ChevronLeft, ChevronRight, Search, X } from 'lucide-react';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, kpiPlainText, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { Chip } from '@/components/ui/chip';
+import { Input } from '@/components/ui/field';
+import { cn } from '@/lib/utils';
+import { formatDateRelative, formatDateTime } from '@/lib/dates';
+import { formatMoney } from '@/lib/money';
 import { downloadCSV } from '@/lib/csv-export';
-import {
-  ArrowLeft,
-  RefreshCw,
-  Download,
-  ChevronLeft,
-  ChevronRight,
-  Calendar,
-  CheckCircle2,
-  AlertTriangle,
-  Search,
-} from 'lucide-react';
+import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { apiFetch } from '@/lib/api-fetch';
 import { useExport2FA } from '@/components/verify-2fa-modal';
+import { PROVIDER_META } from '@/lib/api-channels';
 import {
   computeProviderTotals,
   acceptedTransactions,
   countPayprosPayouts,
 } from '@/lib/api-integrations/totals';
+import {
+  countedNet,
+  dailyNet,
+  dayKey,
+  filterLedger,
+  ledgerCounts,
+  ledgerRows,
+  signedAmount,
+  timeOf,
+  type LedgerCategory,
+  type LedgerDirection,
+  type LedgerRow,
+} from '@/lib/movements-ledger';
 import { ExcludeToggleButton } from './_components/exclude-toggle-button';
 import type {
   ProviderDataset,
@@ -38,11 +53,40 @@ import type {
 } from '@/lib/api-integrations/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Breakdown page — /movimientos/desglose/[slug]
+// /movimientos/desglose/[slug] — el LIBRO de movimientos de un proveedor.
 //
-// Shows a filter-driven list of transactions for a single provider, with
-// summary cards (total amount, tx count, total fees), pagination (100 per
-// page), and CSV export of the currently-filtered rows.
+// REDISEÑO «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md §5.3):
+// /movimientos sólo muestra totales por canal; el detalle por operación vive
+// acá, así que el libro de movimientos de la propuesta A se aplicó a esta
+// pantalla. Antes había cinco tablas a mano (una por proveedor, `text-xs`,
+// textos de 10 px, un StatusBadge local con verde para cuatro status y gris
+// para todo lo demás) y tres tarjetas sueltas. Ahora:
+//   · KPIs en una franja (total, operaciones, comisiones, pendientes).
+//   · UNA FinTable agrupada por DÍA con el neto diario en la fila de grupo,
+//     columnas Hora · Cliente·ID · Canal · Tipo · Estado · Monto (+ comisión).
+//     El neto del día se calcula sobre TODA la lista filtrada, no sobre la
+//     página: un día partido entre dos páginas no muestra medio neto.
+//   · Lo que NO cuenta se ve y se dice: rechazadas y excluidas tachadas en
+//     `text-3`, internas atenuadas. Antes la tabla mostraba sólo el status
+//     aceptado y escondía pendientes y rechazadas sin contarlas; ahora cada
+//     categoría es un Chip con su conteo y el pie dice «Mostrando N de M · los
+//     totales usan las K que cuentan».
+//   · `Segmented` Todos/Depósitos/Retiros cuando el proveedor trae los dos
+//     sentidos (Pay-Pros). Los payouts de Pay-Pros, que antes sólo se
+//     mencionaban en un cartel, se listan con su sentido (no entran al total
+//     de depósitos: lo dice el aviso).
+//
+// MEDICIÓN: los KPIs siguen saliendo de `computeProviderTotals` /
+// `countPayprosPayouts` (lo que suma /movimientos). La marca «cuenta» de cada
+// fila (src/lib/movements-ledger.ts) usa los mismos criterios y su test fija
+// Σ filas que cuentan === total canónico por proveedor.
+//
+// DESCARTADO:
+//   · Paginar dentro de FinTable: la tabla no pagina (esconde cuántas filas
+//     hay); la página arma la porción y el pie la cuenta.
+//   · Ocultar por defecto pendientes/rechazadas sin chip: era el recorte
+//     silencioso de antes. Por defecto se ven las que cuentan (como antes),
+//     pero los chips muestran cuántas hay de cada otra categoría.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const PAGE_SIZE = 100;
@@ -57,23 +101,11 @@ const VALID_SLUGS: readonly ProviderSlug[] = [
   'paypros',
 ] as const;
 
-const SLUG_TITLE: Record<ProviderSlug, string> = {
-  'coinsbuy-deposits': 'Coinsbuy · Depósitos',
-  'coinsbuy-withdrawals': 'Coinsbuy · Retiros',
-  fairpay: 'FairPay · Depósitos',
-  unipayment: 'Unipayment · Depósitos',
-  paypros: 'Pay-Pros · Depósitos',
-};
+/** Orden de los chips de categoría. */
+const CATEGORY_ORDER: readonly LedgerCategory[] = ['counts', 'pending', 'rejected', 'excluded', 'internal', 'other'];
 
-const SLUG_KIND_LABEL: Record<ProviderSlug, { amountCard: string; countCard: string }> = {
-  'coinsbuy-deposits': { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
-  'coinsbuy-withdrawals': { amountCard: 'Total Retiros', countCard: 'Total Transacciones' },
-  fairpay: { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
-  unipayment: { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
-  paypros: { amountCard: 'Total Depósitos', countCard: 'Total Transacciones' },
-};
-
-// formatDateTime moved to src/lib/dates.ts — centralised across the app.
+/** Lo que se ve al entrar: lo que cuenta (y las internas, que antes también se veían). */
+const DEFAULT_CATEGORIES: readonly LedgerCategory[] = ['counts', 'internal'];
 
 export default function BreakdownPage({
   params,
@@ -85,6 +117,7 @@ export default function BreakdownPage({
   // Next.js 16: params and searchParams are Promises — unwrap with React.use()
   const { slug: rawSlug } = useUnwrap(params);
   const initialQuery = useUnwrap(searchParams);
+  const { t } = useI18n();
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
 
@@ -93,9 +126,7 @@ export default function BreakdownPage({
   }
   const slug = rawSlug as ProviderSlug;
   // Providers que soportan exclusión manual (mismo set que la whitelist del
-  // endpoint POST /api/integrations/excluded-transactions). Para estos se
-  // muestra la columna "Acciones", el toggle "Mostrar excluidas" y el filtro
-  // de filas. El resto de providers se renderiza sin nada de eso.
+  // endpoint POST /api/integrations/excluded-transactions).
   const supportsExclusion =
     slug === 'coinsbuy-deposits' || slug === 'coinsbuy-withdrawals';
 
@@ -114,15 +145,13 @@ export default function BreakdownPage({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [page, setPage] = useState(1);
-  // Toggle para mostrar las transacciones marcadas como excluidas. Por
-  // defecto se ocultan; el botón "Mostrar excluidas" del header las revela
-  // (con strikethrough y opacity para que sea visible que no cuentan).
-  const [showExcluded, setShowExcluded] = useState(false);
-  // Buscador libre client-side (solo en las tablas de Coinsbuy). Filtra las
-  // filas visibles sin tocar los totales de arriba ni el CSV export.
+  const [direction, setDirection] = useState<'all' | LedgerDirection>('all');
+  const [categories, setCategories] = useState<readonly LedgerCategory[]>(DEFAULT_CATEGORIES);
+  // Buscador libre client-side: filtra las filas visibles sin tocar los KPIs
+  // de arriba ni el CSV export.
   const [searchQuery, setSearchQuery] = useState('');
-  const supportsSearch =
-    slug === 'coinsbuy-deposits' || slug === 'coinsbuy-withdrawals';
+  // «Ahora» para la antigüedad del dato, tomado al montar (render puro).
+  const [now] = useState(() => Date.now());
 
   const load = async () => {
     setLoading(true);
@@ -138,17 +167,16 @@ export default function BreakdownPage({
       //      slow (12s timeouts × retries). Persisted reads stay under 1s.
       //   2. Tarjetas (banner) and breakdown now share the same source —
       //      whatever the card shows, the breakdown shows the same.
-      // To pull fresh data the user clicks "Refrescar desde APIs" on the
-      // banner up on /movimientos; that endpoint hits live + write-throughs.
-      const res = await apiFetch(`/api/integrations/persisted-movements?${qs.toString()}`,
-      );
+      // To pull fresh data the user clicks «Sincronizar ahora» on the
+      // panel down on /movimientos; that endpoint hits live + write-throughs.
+      const res = await apiFetch(`/api/integrations/persisted-movements?${qs.toString()}`);
       const json = await res.json();
-      if (!json.success) throw new Error(json.error || 'Error desconocido');
+      if (!json.success) throw new Error(json.error || t('movements.ledger.unknownError'));
       setDataset(json.dataset ?? null);
       setFetchedAt(json.fetchedAt ?? null);
       setPage(1);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Error de red');
+      setErrorMsg(err instanceof Error ? err.message : t('movements.ledger.networkError'));
     } finally {
       setLoading(false);
     }
@@ -160,67 +188,59 @@ export default function BreakdownPage({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, from, to, initialWalletId]);
 
-  // Show a stale-data hint when the most recent sync for this provider was
-  // more than 6 hours ago. The breakdown stays usable — the user can click
-  // "Refrescar desde APIs" on the parent /movimientos to trigger a re-sync.
+  // Datos de un sync de hace más de 6 h: el número sigue (suma), pero se
+  // marca viejo — cada número dice de cuándo es.
   const dataAgeHours = useMemo(() => {
     if (!fetchedAt) return null;
-    const ms = Date.now() - new Date(fetchedAt).getTime();
-    return ms / (1000 * 60 * 60);
-  }, [fetchedAt]);
+    return (now - new Date(fetchedAt).getTime()) / (1000 * 60 * 60);
+  }, [fetchedAt, now]);
+  const isStale = dataAgeHours !== null && dataAgeHours > 6;
 
-  const totals = useMemo(
-    () => (dataset ? computeProviderTotals(dataset) : null),
-    [dataset]
-  );
-  const accepted = useMemo(
-    () => (dataset ? acceptedTransactions(dataset) : []),
-    [dataset]
-  );
-
-  // Payouts de Pay-Pros que este desglose NO lista (ver el cartel más abajo).
-  // `countPayprosPayouts` devuelve {0,0} para cualquier otro slug.
+  const totals = useMemo(() => (dataset ? computeProviderTotals(dataset) : null), [dataset]);
+  // CSV: las filas con el status aceptado, como siempre (incluye excluidas).
+  const accepted = useMemo(() => (dataset ? acceptedTransactions(dataset) : []), [dataset]);
+  // Payouts de Pay-Pros: se listan con el filtro «Retiros» pero NO entran al
+  // total de depósitos de arriba. `countPayprosPayouts` da {0,0} en otro slug.
   const payprosPayouts = useMemo(
     () => (dataset ? countPayprosPayouts(dataset) : { count: 0, total: 0 }),
-    [dataset]
+    [dataset],
   );
 
-  // Filtrar excluidas a nivel UI (coinsbuy-deposits y coinsbuy-withdrawals).
-  // El total que muestra la card grande ya las descuenta en
-  // computeProviderTotals; acá controlamos solo qué filas se ven en la tabla.
-  // baseRows = filas tras aplicar el toggle de excluidas, ANTES del buscador.
-  // Sirve de denominador para el contador "Mostrando X de Y".
-  const baseRows = useMemo(() => {
-    if (!supportsExclusion || showExcluded) return accepted;
-    return accepted.filter((t) => !(t as { excluded?: boolean }).excluded);
-  }, [accepted, supportsExclusion, showExcluded]);
+  // ── El libro ──
+  const allRows = useMemo(() => (dataset ? ledgerRows(dataset) : []), [dataset]);
+  const counts = useMemo(() => ledgerCounts(allRows), [allRows]);
+  const hasBothDirections = counts.deposit > 0 && counts.withdrawal > 0;
+  const effectiveDirection = hasBothDirections ? direction : 'all';
+  // Conteos de los chips: dentro del sentido elegido, antes del buscador.
+  const byDirection = useMemo(
+    () => filterLedger(allRows, { direction: effectiveDirection, categories: [], query: '' }),
+    [allRows, effectiveDirection],
+  );
+  const chipCounts = useMemo(() => ledgerCounts(byDirection).byCategory, [byDirection]);
+  const filtered = useMemo(
+    () =>
+      filterLedger(allRows, {
+        direction: effectiveDirection,
+        // Un chip activo sin filas no filtra: si ninguna categoría activa
+        // tiene filas se ve TODO, nunca una tabla vacía que parezca «no hay».
+        categories: categories.filter((c) => chipCounts[c] > 0),
+        query: searchQuery,
+      }),
+    [allRows, effectiveDirection, categories, chipCounts, searchQuery],
+  );
+  const dayNets = useMemo(() => dailyNet(filtered), [filtered]);
+  const filteredNet = useMemo(() => countedNet(filtered), [filtered]);
+  const filteredCounting = filtered.filter((r) => r.counts).length;
+  const countingAll = counts.byCategory.counts;
 
-  // visibleRows = baseRows tras aplicar el buscador libre (solo Coinsbuy).
-  // El buscador es puramente client-side y NO afecta totales ni CSV.
-  const visibleRows = useMemo(() => {
-    if (!supportsSearch || !searchQuery.trim()) return baseRows;
-    return baseRows.filter((t) =>
-      matchesSearchQuery(t as unknown as Record<string, unknown>, searchQuery),
-    );
-  }, [baseRows, supportsSearch, searchQuery]);
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const safePage = Math.min(page, totalPages);
+  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE);
 
-  // Resetear a la página 1 cuando cambia el query — si no, el usuario podría
-  // quedar en una página vacía tras filtrar (visibleRows se achica).
-  useEffect(() => {
+  const toggleCategory = (c: LedgerCategory) => {
+    setCategories((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
     setPage(1);
-  }, [searchQuery]);
-
-  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
-  const pageRows = visibleRows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
-
-  // Cantidad de excluidas que existen actualmente — para mostrar contador
-  // en el botón del toggle (coinsbuy-deposits y coinsbuy-withdrawals).
-  const excludedCount = useMemo(() => {
-    if (!supportsExclusion) return 0;
-    return accepted.filter(
-      (t) => (t as { excluded?: boolean }).excluded === true,
-    ).length;
-  }, [accepted, supportsExclusion]);
+  };
 
   const handleExport = () => verify2FA(() => {
     if (!dataset) return;
@@ -232,539 +252,407 @@ export default function BreakdownPage({
     );
   });
 
+  // ── KPIs ──
+  const isPaypros = slug === 'paypros';
+  const pendingRows = allRows.filter((r) => r.category === 'pending');
+  const pendingAmount = pendingRows.reduce((s, r) => s + r.amount, 0);
+  const amountLabel =
+    PROVIDER_META[slug].direction === 'out' ? t('movements.ledger.kpi.totalOut') : t('movements.ledger.kpi.totalIn');
+  const kpis: KpiItem[] = [
+    {
+      key: 'total',
+      label: amountLabel,
+      value: totals ? totals.total : null,
+      format: 'money',
+      tone: 'neutral',
+      hero: true,
+      staleAt: isStale ? fetchedAt : null,
+      sub: totals ? t('movements.ledger.kpi.status', { status: totals.acceptedStatus }) : null,
+    },
+    {
+      key: 'count',
+      label: t('movements.ledger.kpi.count'),
+      value: totals ? totals.count + payprosPayouts.count : null,
+      format: 'count',
+      sub:
+        isPaypros && totals
+          ? t('movements.ledger.kpi.countSplit', {
+              d: kpiPlainText(totals.count, 'count'),
+              w: kpiPlainText(payprosPayouts.count, 'count'),
+            })
+          : t('movements.ledger.kpi.countSub'),
+    },
+    {
+      key: 'fee',
+      label: t('movements.ledger.kpi.fee'),
+      // Pay-Pros no informa comisión: «—» con el porqué, no un $0.00 que
+      // afirmaría que no cobró nada (reglas §1.3).
+      value: totals && !isPaypros ? totals.feeTotal : null,
+      format: 'money',
+      tone: 'neutral',
+      sub: isPaypros ? t('movements.ledger.kpi.feeNotReported') : t('movements.ledger.kpi.feeSub'),
+    },
+    {
+      key: 'pending',
+      label: t('movements.kpi.pending'),
+      value: dataset ? pendingRows.length : null,
+      format: 'count',
+      sub:
+        dataset && pendingRows.length > 0
+          ? t('movements.kpi.pendingAmount', { amount: formatMoney(pendingAmount, { compact: true }) })
+          : dataset
+            ? t('movements.kpi.pendingNone')
+            : null,
+    },
+  ];
+
+  // ── Columnas ──
+  const directionLabel = (d: LedgerDirection) =>
+    d === 'deposit' ? t('movements.deposit') : t('movements.withdrawal');
+  /** Rechazadas y excluidas: tachadas en `text-3`; internas: atenuadas. */
+  const rowTone = (r: LedgerRow) =>
+    r.category === 'rejected' || r.category === 'excluded'
+      ? 'text-text-3 line-through'
+      : r.category === 'internal'
+        ? 'text-text-3'
+        : undefined;
+  const statusCell = (r: LedgerRow) => (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <StatusBadge kind={r.statusKind} label={r.status || '—'} />
+      {r.category === 'excluded' && (
+        <StatusBadge
+          kind="neutral"
+          label={t('movements.ledger.cat.excluded')}
+          title={t('movements.ledger.excludedTitle', {
+            reason: String((r.tx as { excludedReason?: string }).excludedReason ?? '?'),
+            by: String((r.tx as { excludedByName?: string }).excludedByName ?? '?'),
+          })}
+        />
+      )}
+      {r.category === 'internal' && (
+        <StatusBadge kind="neutral" label={t('movements.ledger.cat.internal')} title={t('movements.ledger.internalTitle')} />
+      )}
+    </span>
+  );
+
+  const columns: FinColumn<LedgerRow>[] = [
+    {
+      key: 'time',
+      header: t('movements.ledger.col.time'),
+      cell: (r) => <span className={cn('tabular-nums text-text-2', rowTone(r))}>{timeOf(r.at)}</span>,
+      hideSm: true,
+      width: '64px',
+    },
+    {
+      key: 'client',
+      header: t('movements.ledger.col.client'),
+      cell: (r) => <span className={rowTone(r)}>{r.client || '—'}</span>,
+      meta: (r) => <span className="font-mono text-[12px]">{r.clientId}</span>,
+      mobileMeta: (r) => (
+        <>
+          <span className="tabular-nums">{timeOf(r.at)}</span>
+          {statusCell(r)}
+        </>
+      ),
+    },
+    {
+      key: 'channel',
+      header: t('movements.channel'),
+      cell: (r) => <span className={rowTone(r)}>{r.channel}</span>,
+      meta: (r) => r.wallet,
+      hideSm: true,
+    },
+    {
+      key: 'type',
+      header: t('movements.type'),
+      cell: (r) => <span className={cn('text-text-2', rowTone(r))}>{directionLabel(r.direction)}</span>,
+      hideSm: true,
+    },
+    {
+      key: 'status',
+      header: t('movements.ledger.col.status'),
+      cell: statusCell,
+      hideSm: true,
+    },
+    {
+      key: 'amount',
+      header: t('movements.amount'),
+      kind: 'money',
+      value: (r) => signedAmount(r),
+      cell: (r) => (
+        <Money
+          value={signedAmount(r)}
+          signed
+          tone="neutral"
+          className={cn('font-medium', rowTone(r))}
+        />
+      ),
+    },
+    {
+      key: 'fee',
+      header: t('movements.ledger.col.fee'),
+      kind: 'money',
+      value: (r) => r.fee,
+      subtotal: false,
+      cell: (r) => <Money value={r.fee} tone="neutral" className={cn('text-text-2', rowTone(r))} />,
+      hideSm: true,
+    },
+  ];
+
+  const groupTotals = useMemo(() => {
+    const out: Record<string, Record<string, number>> = {};
+    for (const [day, net] of Object.entries(dayNets)) out[day] = { amount: net };
+    return out;
+  }, [dayNets]);
+
+  const title = isPaypros ? PROVIDER_META[slug].provider : PROVIDER_META[slug].cardLabel;
+  const shownFrom = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1;
+  const shownTo = Math.min(safePage * PAGE_SIZE, filtered.length);
+  const fmtN = (n: number) => kpiPlainText(n, 'count');
+  const secondaryBtn =
+    'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50';
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
-          <Link
-            href="/movimientos"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground mb-1"
-          >
-            <ArrowLeft className="w-3 h-3" />
-            Movimientos
-          </Link>
-          <h1 className="text-2xl font-bold">{SLUG_TITLE[slug]}</h1>
-          <p className="text-muted-foreground text-sm mt-1">
-            Desglose detallado de transacciones con status{' '}
-            <span className="font-medium text-foreground">
-              {totals?.acceptedStatus || '—'}
-            </span>
-            {initialWalletId ? (
-              <>
-                {' '}· wallet <span className="font-medium text-foreground">{initialWalletId}</span>
-              </>
-            ) : (
-              <>
-                {' '}· todas las wallets
-              </>
-            )}
-            .
-          </p>
-          {dataAgeHours !== null && dataAgeHours > 6 && (
-            <p className="mt-1 text-xs text-warning inline-flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" />
-              Datos del último sync hace {Math.round(dataAgeHours)}h. Volvé a /movimientos y clickeá &quot;Refrescar desde APIs&quot; para datos actualizados.
-            </p>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          {supportsSearch && (
-            <div className="flex flex-col">
-              <div className="relative flex items-center">
-                <Search className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" />
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar por label, tracking, monto..."
-                  className="pl-8 pr-8 py-1.5 text-sm border border-border rounded-md bg-background w-72 focus:outline-none focus:ring-2 focus:ring-primary/50"
-                />
-                {searchQuery && (
-                  <button
-                    onClick={() => setSearchQuery('')}
-                    className="absolute right-2 text-muted-foreground hover:text-foreground"
-                    aria-label="Limpiar búsqueda"
-                  >
-                    ✕
-                  </button>
-                )}
-              </div>
-              {searchQuery && (
-                <p className="text-xs text-muted-foreground mt-1">
-                  Mostrando {visibleRows.length} de {baseRows.length} transacciones
-                </p>
-              )}
-            </div>
-          )}
-          {supportsExclusion && (
-            <button
-              onClick={() => setShowExcluded((v) => !v)}
-              className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-              title="Las excluidas son fondeos manuales / swaps marcados como externos. No cuentan en totales."
-            >
-              {showExcluded ? '👁️ Ocultar excluidas' : '👁️‍🗨️ Mostrar excluidas'}
-              {excludedCount > 0 && (
-                <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300">
-                  {excludedCount}
-                </span>
-              )}
+      <div>
+        <Link
+          href="/movimientos"
+          className="mb-1 inline-flex items-center gap-1 text-[12.5px] text-text-2 hover:text-foreground"
+        >
+          <ArrowLeft aria-hidden className="size-3.5" />
+          {t('movements.title')}
+        </Link>
+        <PageHeader
+          title={title}
+          subtitle={
+            initialWalletId
+              ? t('movements.ledger.subtitleWallet', { wallet: initialWalletId })
+              : t('movements.ledger.subtitleAll')
+          }
+          actions={
+            <>
+              <button type="button" onClick={load} disabled={loading} className={secondaryBtn} aria-label={t('movements.ledger.refresh')}>
+                <RefreshCw aria-hidden className={cn('size-[15px]', loading && 'animate-spin')} strokeWidth={1.75} />
+                <span className="hidden sm:inline">{t('movements.ledger.refresh')}</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                disabled={!dataset || accepted.length === 0}
+                className={secondaryBtn}
+                aria-label={t('common.csv')}
+              >
+                <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                <span className="hidden sm:inline">{t('common.csv')}</span>
+              </button>
+            </>
+          }
+        />
+      </div>
+
+      <KpiStrip items={kpis} />
+
+      {errorMsg && (
+        <Notice
+          kind="bad"
+          title={t('movements.ledger.errorTitle')}
+          action={
+            <button type="button" onClick={load} className={secondaryBtn}>
+              {t('movements.notice.retry')}
             </button>
-          )}
-          <button
-            onClick={load}
-            disabled={loading}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50"
-          >
-            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            <span className="hidden sm:inline">Refrescar</span>
-          </button>
-          <button
-            onClick={handleExport}
-            disabled={!dataset || accepted.length === 0}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors disabled:opacity-50"
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">CSV</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Filter */}
-      <Card>
-        <div className="flex flex-wrap items-center gap-2">
-          <Calendar className="w-4 h-4 text-muted-foreground" />
-          <label className="text-xs text-muted-foreground">Desde</label>
-          <input
-            type="date"
-            value={from}
-            onChange={(e) => setFrom(e.target.value)}
-            className="px-2 py-1 text-sm rounded-md border border-border bg-card"
-          />
-          <label className="text-xs text-muted-foreground">Hasta</label>
-          <input
-            type="date"
-            value={to}
-            onChange={(e) => setTo(e.target.value)}
-            className="px-2 py-1 text-sm rounded-md border border-border bg-card"
-          />
-          <button
-            onClick={() => {
-              setFrom('');
-              setTo('');
-            }}
-            className="ml-auto text-xs text-muted-foreground hover:text-foreground underline"
-          >
-            Limpiar
-          </button>
-          {dataset && (
-            <span className="text-[10px] text-muted-foreground">
-              {dataset.status === 'fresh' ? (
-                <CheckCircle2 className="w-3 h-3 text-emerald-500 inline mr-1" />
-              ) : (
-                <AlertTriangle className="w-3 h-3 text-red-500 inline mr-1" />
-              )}
-              Actualizado {formatDateTime(dataset.fetchedAt)}
-              {dataset.isMock && ' · mock'}
-            </span>
-          )}
-        </div>
-        {errorMsg && (
-          <div className="mt-2 p-2 rounded bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
-            {errorMsg}
-          </div>
-        )}
-      </Card>
-
-      {/* Summary cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <Card>
-          <p className="text-xs text-muted-foreground">
-            {SLUG_KIND_LABEL[slug].amountCard}
-          </p>
-          <p className="text-2xl font-bold mt-1">
-            {formatCurrency(totals?.total ?? 0)}
-          </p>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            Status: {totals?.acceptedStatus || '—'}
-          </p>
-        </Card>
-        <Card>
-          <p className="text-xs text-muted-foreground">
-            {SLUG_KIND_LABEL[slug].countCard}
-          </p>
-          <p className="text-2xl font-bold mt-1">{totals?.count ?? 0}</p>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            Transacciones aceptadas
-          </p>
-        </Card>
-        <Card>
-          <p className="text-xs text-muted-foreground">Fee total</p>
-          <p className="text-2xl font-bold mt-1 text-orange-600 dark:text-orange-400">
-            {formatCurrency(totals?.feeTotal ?? 0)}
-          </p>
-          <p className="text-[10px] text-muted-foreground mt-1">
-            Comisiones del proveedor
-          </p>
-        </Card>
-      </div>
-
-      {/* Pay-Pros: la exclusión de los payouts se AVISA, no se disimula.
-          Este desglose es el de DEPÓSITOS (status 'paid'); los payouts
-          ('payout_paid') son retiros y viven en la sección de Retiros de
-          /movimientos, que desde el 2026-08-31 los suma. Sin este cartel, un
-          usuario que compara el total de acá con el de allá encuentra una
-          diferencia y no tiene forma de saber de dónde sale — una exclusión
-          silenciosa es indistinguible de un cruce roto. */}
+          }
+        >
+          {errorMsg}
+        </Notice>
+      )}
+      {isStale && (
+        <Notice
+          kind="stale"
+          title={t('movements.ledger.staleTitle', { h: String(Math.round(dataAgeHours ?? 0)) })}
+          action={
+            <Link href="/movimientos" className="underline underline-offset-2">
+              {t('movements.ledger.staleAction')}
+            </Link>
+          }
+        >
+          {t('movements.ledger.staleBody')}
+        </Notice>
+      )}
+      {/* Pay-Pros: la exclusión de los payouts del total de DEPÓSITOS se
+          AVISA, no se disimula. Se cuentan en Retiros Totales de /movimientos;
+          acá se listan con su sentido. Una exclusión silenciosa es
+          indistinguible de un cruce roto. */}
       {payprosPayouts.count > 0 && (
-        <Card>
-          <p className="text-xs text-amber-600">
-            Además de lo listado acá hay {payprosPayouts.count} retiro(s) por Pay-Pros
-            por {formatCurrency(payprosPayouts.total)}. No entran a este desglose
-            porque esta pantalla es la de depósitos: se cuentan en Retiros
-            Totales, en Movimientos.
-          </p>
-        </Card>
+        <Notice
+          kind="info"
+          title={t('movements.ledger.payoutsTitle', {
+            n: fmtN(payprosPayouts.count),
+            amount: formatMoney(payprosPayouts.total),
+          })}
+        >
+          {t('movements.ledger.payoutsBody')}
+        </Notice>
       )}
 
-      {/* Transactions table */}
-      <Card>
-        {/* Scroll interno (70vh) para que el header quede sticky al recorrer
-            las 100 filas de la página — sin él, position:sticky no tiene
-            contra qué pegarse (el wrapper solo scrollea en X). */}
-        <div className="overflow-auto max-h-[70vh]">
-          <BreakdownTable slug={slug} rows={pageRows} onExclusionChanged={load} />
+      <Panel
+        title={t('movements.ledger.title')}
+        hint={
+          dataset
+            ? t('movements.ledger.hint', {
+                at: formatDateTime(dataset.fetchedAt),
+              }) + (dataset.isMock ? ' · mock' : '')
+            : undefined
+        }
+        flush
+        actions={
+          <div className="flex flex-wrap items-center gap-2 text-[12.5px] text-text-2">
+            <label className="inline-flex items-center gap-1.5">
+              {t('movements.rt.from')}
+              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} className="w-auto" />
+            </label>
+            <label className="inline-flex items-center gap-1.5">
+              {t('movements.rt.to')}
+              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} className="w-auto" />
+            </label>
+            {(from || to) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFrom('');
+                  setTo('');
+                }}
+                className="h-8 rounded-ui-md px-2 font-medium text-text-2 hover:bg-surface-2 hover:text-foreground"
+              >
+                {t('movements.ledger.clear')}
+              </button>
+            )}
+          </div>
+        }
+        footer={
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            {/* El recorte SIEMPRE contado (reglas §1.2). */}
+            <p>
+              {t('movements.ledger.showing', {
+                from: fmtN(shownFrom),
+                to: fmtN(shownTo),
+                total: fmtN(filtered.length),
+                counted: fmtN(countingAll),
+              })}
+            </p>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage(Math.max(1, safePage - 1))}
+                  disabled={safePage === 1}
+                  className={cn(secondaryBtn, 'w-8 justify-center px-0')}
+                  aria-label={t('movements.ledger.prev')}
+                >
+                  <ChevronLeft aria-hidden className="size-4" />
+                </button>
+                <span className="tabular-nums">
+                  {t('movements.ledger.page', { n: String(safePage), m: String(totalPages) })}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setPage(Math.min(totalPages, safePage + 1))}
+                  disabled={safePage === totalPages}
+                  className={cn(secondaryBtn, 'w-8 justify-center px-0')}
+                  aria-label={t('movements.ledger.next')}
+                >
+                  <ChevronRight aria-hidden className="size-4" />
+                </button>
+              </div>
+            )}
+          </div>
+        }
+      >
+        {/* Filtros: sentido, categoría y búsqueda. */}
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          {hasBothDirections && (
+            <Segmented<'all' | LedgerDirection>
+              aria-label={t('movements.ledger.directionAria')}
+              value={direction}
+              onChange={(v) => {
+                setDirection(v);
+                setPage(1);
+              }}
+              options={[
+                { value: 'all', label: t('movements.ledger.all'), count: counts.all },
+                { value: 'deposit', label: t('movements.depositsTab'), count: counts.deposit },
+                { value: 'withdrawal', label: t('movements.withdrawalsTab'), count: counts.withdrawal },
+              ]}
+            />
+          )}
+          {CATEGORY_ORDER.filter((c) => chipCounts[c] > 0).map((c) => (
+            <Chip
+              key={c}
+              active={categories.includes(c)}
+              count={chipCounts[c]}
+              onClick={() => toggleCategory(c)}
+            >
+              {t(`movements.ledger.cat.${c}`)}
+            </Chip>
+          ))}
+          <div className="relative ml-auto flex min-w-[220px] max-w-[320px] flex-1 items-center max-sm:max-w-none">
+            <Search aria-hidden className="pointer-events-none absolute left-2.5 size-[15px] text-text-3" />
+            <Input
+              type="search"
+              value={searchQuery}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                setPage(1);
+              }}
+              placeholder={t('movements.ledger.searchPlaceholder')}
+              aria-label={t('movements.ledger.searchPlaceholder')}
+              className="pl-8 pr-8"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-1.5 inline-flex size-6 items-center justify-center rounded-ui-sm text-text-3 hover:text-foreground"
+                aria-label={t('movements.ledger.clearSearch')}
+              >
+                <X aria-hidden className="size-3.5" />
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Pagination */}
-        {visibleRows.length > 0 && (
-          <div className="flex items-center justify-between mt-4 pt-3 border-t border-border">
-            <p className="text-xs text-muted-foreground">
-              Mostrando {(page - 1) * PAGE_SIZE + 1}–
-              {Math.min(page * PAGE_SIZE, visibleRows.length)} de {visibleRows.length}
-            </p>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
-                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-xs text-muted-foreground">
-                Página {page} / {totalPages}
-              </span>
-              <button
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-        )}
-
-        {visibleRows.length === 0 && !loading && (
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No hay transacciones en el rango seleccionado.
-          </p>
-        )}
-      </Card>
+        <FinTable
+          caption={t('movements.ledger.title')}
+          columns={columns}
+          rows={pageRows}
+          rowKey={(r) => `${r.slug}:${r.id}`}
+          groupBy={(r) => dayKey(r.at)}
+          groupLabel={(day) => (day === 'sin-fecha' ? t('movements.ledger.noDate') : formatDateRelative(day))}
+          groupTotals={groupTotals}
+          rowActions={
+            supportsExclusion
+              ? (r) => (
+                  <ExcludeToggleButton
+                    tx={r.tx as CoinsbuyDepositTx | CoinsbuyWithdrawalTx}
+                    provider={slug}
+                    onChange={load}
+                  />
+                )
+              : undefined
+          }
+          footer={
+            filtered.length > 0
+              ? {
+                  label: t('movements.ledger.footer', { n: fmtN(filteredCounting) }),
+                  values: { amount: filteredNet },
+                }
+              : undefined
+          }
+          maxHeight="70vh"
+          empty={loading ? t('movements.rt.loading') : t('movements.ledger.empty')}
+        />
+      </Panel>
     </div>
-  );
-}
-
-// ── Per-provider table renderer ──
-// Each provider has its own column set (see the task spec).
-
-function BreakdownTable({
-  slug,
-  rows,
-  onExclusionChanged,
-}: {
-  slug: ProviderSlug;
-  rows: unknown[];
-  /** Lo usan las tablas de coinsbuy-deposits y coinsbuy-withdrawals para
-   *  refrescar después de marcar / desmarcar una exclusión. */
-  onExclusionChanged?: () => void;
-}) {
-  const thCls =
-    'text-left py-2.5 px-3 text-muted-foreground font-medium border-b border-border sticky top-0 bg-card z-10';
-  const tdCls = 'py-2 px-3 border-b border-border/50';
-
-  if (slug === 'coinsbuy-deposits') {
-    const r = rows as CoinsbuyDepositTx[];
-    return (
-      <table className="w-full text-xs">
-        <thead>
-          <tr>
-            <th className={thCls}>Created at</th>
-            <th className={thCls}>Label</th>
-            <th className={thCls}>Tracking ID</th>
-            <th className={`${thCls} text-right`}>Commission</th>
-            <th className={`${thCls} text-right`}>Amount Target</th>
-            <th className={thCls}>Status</th>
-            <th className={thCls}>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          {r.map((t) => {
-            const isExcluded = t.excluded === true;
-            const rowCls = isExcluded ? 'opacity-50 line-through bg-muted/30' : 'hover:bg-muted/50 transition-colors';
-            return (
-              <tr key={t.id} className={rowCls}>
-                <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-                <td className={tdCls}>{t.label}</td>
-                <td className={`${tdCls} font-mono`}>{t.trackingId}</td>
-                <td className={`${tdCls} text-right`}>{formatCurrency(t.commission)}</td>
-                <td className={`${tdCls} text-right font-medium`}>
-                  {formatCurrency(t.amountTarget)}
-                </td>
-                <td className={tdCls}>
-                  <StatusBadge value={t.status} />
-                </td>
-                <td className={`${tdCls} no-underline`} style={{ textDecoration: 'none' }}>
-                  <ExcludeToggleButton
-                    tx={t}
-                    provider="coinsbuy-deposits"
-                    onChange={() => onExclusionChanged?.()}
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    );
-  }
-
-  if (slug === 'coinsbuy-withdrawals') {
-    const r = rows as CoinsbuyWithdrawalTx[];
-    return (
-      <table className="w-full text-xs">
-        <thead>
-          <tr>
-            <th className={thCls}>Created at</th>
-            <th className={thCls}>Label</th>
-            <th className={thCls}>Tracking ID</th>
-            <th className={`${thCls} text-right`}>Amount</th>
-            <th className={`${thCls} text-right`}>Charged Amount</th>
-            <th className={`${thCls} text-right`}>Commission</th>
-            <th className={thCls}>Status</th>
-            <th className={thCls}>Acciones</th>
-          </tr>
-        </thead>
-        <tbody>
-          {r.map((t) => {
-            const isExcluded = t.excluded === true;
-            // Transferencia interna entre wallets propias (txid null en
-            // Coinsbuy): se muestra atenuada (sin strikethrough — no es una
-            // exclusión manual) con un badge "Interna". No cuenta en los
-            // totales de arriba (computeProviderTotals ya la descuenta).
-            const isInternal = t.internal === true;
-            const rowCls = isExcluded
-              ? 'opacity-50 line-through bg-muted/30'
-              : isInternal
-                ? 'opacity-60 hover:bg-muted/50 transition-colors'
-                : 'hover:bg-muted/50 transition-colors';
-            return (
-              <tr key={t.id} className={rowCls}>
-                <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-                <td className={tdCls}>
-                  {t.label}
-                  {isInternal && (
-                    <span
-                      className="ml-1.5 inline-block px-1.5 py-0.5 rounded text-[10px] font-medium bg-muted text-muted-foreground align-middle"
-                      title="Transferencia interna entre wallets propias — no cuenta en los totales"
-                    >
-                      Interna
-                    </span>
-                  )}
-                </td>
-                <td className={`${tdCls} font-mono`}>{t.trackingId}</td>
-                <td className={`${tdCls} text-right`}>{formatCurrency(t.amount)}</td>
-                <td className={`${tdCls} text-right font-medium`}>
-                  {formatCurrency(t.chargedAmount)}
-                </td>
-                <td className={`${tdCls} text-right`}>{formatCurrency(t.commission)}</td>
-                <td className={tdCls}>
-                  <StatusBadge value={t.status} />
-                </td>
-                <td className={`${tdCls} no-underline`} style={{ textDecoration: 'none' }}>
-                  <ExcludeToggleButton
-                    tx={t}
-                    provider="coinsbuy-withdrawals"
-                    onChange={() => onExclusionChanged?.()}
-                  />
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    );
-  }
-
-  if (slug === 'fairpay') {
-    const r = rows as FairpayDepositTx[];
-    return (
-      <table className="w-full text-xs">
-        <thead>
-          <tr>
-            <th className={thCls}>Created at</th>
-            <th className={thCls}>Customer Email</th>
-            <th className={thCls}>ID</th>
-            <th className={`${thCls} text-right`}>Billed</th>
-            <th className={`${thCls} text-right`}>MDR</th>
-            <th className={`${thCls} text-right`}>Net</th>
-            <th className={thCls}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {r.map((t) => (
-            <tr key={t.id} className="hover:bg-muted/50 transition-colors">
-              <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-              <td className={tdCls}>{t.customerEmail}</td>
-              <td className={`${tdCls} font-mono`}>{t.id}</td>
-              <td className={`${tdCls} text-right`}>{formatCurrency(t.billed)}</td>
-              <td className={`${tdCls} text-right`}>{formatCurrency(t.mdr)}</td>
-              <td className={`${tdCls} text-right font-medium`}>
-                {formatCurrency(t.net)}
-              </td>
-              <td className={tdCls}>
-                <StatusBadge value={t.status} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
-  }
-
-  if (slug === 'paypros') {
-    // Pay-Pros no manda comisión ni email: las columnas son las que el
-    // proveedor realmente informa. Inventar una columna vacía es peor que no
-    // tenerla — parece un dato que se perdió.
-    const r = rows as PayprosDepositTx[];
-    return (
-      <table className="w-full text-xs">
-        <thead>
-          <tr>
-            <th className={thCls}>Fecha</th>
-            <th className={thCls}>ID</th>
-            <th className={thCls}>Referencia</th>
-            <th className={`${thCls} text-right`}>Monto</th>
-            <th className={thCls}>Moneda</th>
-            <th className={thCls}>Status</th>
-          </tr>
-        </thead>
-        <tbody>
-          {r.map((t) => (
-            <tr key={t.id} className="hover:bg-muted/50 transition-colors">
-              <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-              <td className={`${tdCls} font-mono`}>{t.id}</td>
-              <td className={`${tdCls} font-mono`}>{t.notifyReference}</td>
-              <td className={`${tdCls} text-right font-medium`}>
-                {formatCurrency(t.amount)}
-              </td>
-              <td className={tdCls}>{t.currency}</td>
-              <td className={tdCls}>
-                <StatusBadge value={t.status} />
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    );
-  }
-
-  // Unipayment
-  const r = rows as UnipaymentDepositTx[];
-  return (
-    <table className="w-full text-xs">
-      <thead>
-        <tr>
-          <th className={thCls}>Create Date</th>
-          <th className={thCls}>Email</th>
-          <th className={thCls}>Order ID</th>
-          <th className={`${thCls} text-right`}>Gross Amount</th>
-          <th className={`${thCls} text-right`}>Fee</th>
-          <th className={`${thCls} text-right`}>Net Amount</th>
-          <th className={thCls}>Status</th>
-        </tr>
-      </thead>
-      <tbody>
-        {r.map((t) => (
-          <tr key={t.id} className="hover:bg-muted/50 transition-colors">
-            <td className={tdCls}>{formatDateTime(t.createdAt)}</td>
-            <td className={tdCls}>{t.email}</td>
-            <td className={`${tdCls} font-mono`}>{t.orderId}</td>
-            <td className={`${tdCls} text-right`}>{formatCurrency(t.grossAmount)}</td>
-            <td className={`${tdCls} text-right`}>{formatCurrency(t.fee)}</td>
-            <td className={`${tdCls} text-right font-medium`}>
-              {formatCurrency(t.netAmount)}
-            </td>
-            <td className={tdCls}>
-              <StatusBadge value={t.status} />
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
-}
-
-/**
- * Decide si una transacción matchea el query de búsqueda. Búsqueda libre
- * case-insensitive sobre todos los campos visibles: label, tracking, monto,
- * comisión, status, fecha.
- *
- * Acepta tanto CoinsbuyDepositTx como CoinsbuyWithdrawalTx. Si el query
- * está vacío, retorna true (no filtra).
- */
-function matchesSearchQuery(
-  tx: Record<string, unknown>,
-  query: string,
-): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-
-  // Campos posibles según provider. Convertimos todo a string y concatenamos.
-  const haystack = [
-    tx.label,
-    tx.trackingId,
-    tx.status,
-    tx.createdAt,
-    // Para deposit: amountTarget. Para withdrawal: amount, chargedAmount.
-    tx.amountTarget,
-    tx.amount,
-    tx.chargedAmount,
-    tx.commission,
-    // ID interno (por si el usuario copia el "Withdraw #225246" sin el #)
-    tx.id,
-  ]
-    .filter((v) => v !== undefined && v !== null)
-    .map((v) => String(v).toLowerCase())
-    .join(' ');
-
-  return haystack.includes(q);
-}
-
-function StatusBadge({ value }: { value: string }) {
-  // 'paid' = el estado aceptado de Pay-Pros (ver ACCEPTED_STATUS en totals.ts).
-  const ok = ['Confirmed', 'Approved', 'Completed', 'paid'].includes(value);
-  return (
-    <span
-      className={`inline-block px-1.5 py-0.5 rounded text-[10px] font-medium ${
-        ok
-          ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400'
-          : 'bg-muted text-muted-foreground'
-      }`}
-    >
-      {value}
-    </span>
   );
 }
 
