@@ -18,6 +18,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { notify } from '@/lib/notifications/notify';
+import { formatMoney } from '@/lib/money';
 import type { PaymentOrder, PaymentOrderStatus } from './types';
 
 const T = {
@@ -62,8 +63,7 @@ function wrap(body: string, orderId: string, cta: string): string {
     </div>`;
 }
 
-const money = (n: number, currency: string) =>
-  `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency}`;
+const money = (n: number, currency: string) => `${formatMoney(n)} ${currency}`;
 
 /**
  * `created_by` apunta a auth.users (FK de la migración 054), pero la pantalla

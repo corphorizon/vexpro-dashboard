@@ -9,6 +9,7 @@ import { ExpenseConcept } from '@/components/ui/expense-concept';
 import { useData } from '@/lib/data-context';
 import { useAuth, canAdd, canEdit, canDelete } from '@/lib/auth-context';
 import { formatCurrency } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
 import { CHANNEL_LABELS, WITHDRAWAL_LABELS } from '@/lib/types';
 import {
   ALL_WITHDRAWAL_CATEGORIES,
@@ -1461,7 +1462,7 @@ export default function UploadPage() {
           t('upload.opSaveDeposit'),
         );
 
-        if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: $${amount.toLocaleString()}`);
+        if (user) logAction(user.id, user.name, 'update', 'deposits', `Deposito ${CHANNEL_LABELS[deposits.find(d => d.id === id)?.channel || ''] || ''}: ${formatMoney(amount)}`);
         showSuccess(t('upload.depositRegistered'));
 
         // Await refresh so callers see fresh data. We do NOT show a
@@ -1530,7 +1531,7 @@ export default function UploadPage() {
           t('upload.opSaveWithdrawal'),
         );
 
-        if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: $${amount.toLocaleString()}`);
+        if (user) logAction(user.id, user.name, 'update', 'withdrawals', `Retiro ${WITHDRAWAL_LABELS[withdrawals.find(w => w.id === id)?.category || ''] || ''}: ${formatMoney(amount)}`);
         showSuccess(t('upload.withdrawalRegistered'));
 
         // Same rationale as updateDeposit: skip false-positive toast on
@@ -1717,7 +1718,7 @@ export default function UploadPage() {
     if (cat) addCategoryToHistory(cat);
     void persistExpenses(next, previous, {
       toast: t('upload.expenseAdded'),
-      audit: { action: 'create', details: `Egreso creado: ${newExpense.concept}, monto: $${amt.toLocaleString()}` },
+      audit: { action: 'create', details: `Egreso creado: ${newExpense.concept}, monto: ${formatMoney(amt)}` },
     });
   };
 
@@ -1757,7 +1758,7 @@ export default function UploadPage() {
     void (async () => {
       await persistExpenses(next, previous, {
         toast: t('upload.expenseUpdated'),
-        audit: { action: 'update', details: `Egreso ${concept}: $${amt.toLocaleString()}` },
+        audit: { action: 'update', details: `Egreso ${concept}: ${formatMoney(amt)}` },
       });
       // Egreso fijo: el mes actual ya se guardó; ahora se pregunta el alcance.
       // Solo si SIGUE siendo fijo tras la edición (destildar "fijo" es sacarlo
@@ -1832,7 +1833,7 @@ export default function UploadPage() {
     setExpensesRaw(next); // optimista
     void persistExpenses(next, previous, {
       toast: t('upload.markedPaid', { concept: target.concept }),
-      audit: { action: 'update', details: `Egreso marcado como pagado: ${target.concept} ($${target.amount.toLocaleString()})` },
+      audit: { action: 'update', details: `Egreso marcado como pagado: ${target.concept} (${formatMoney(target.amount)})` },
     });
   };
 
@@ -1927,7 +1928,7 @@ export default function UploadPage() {
             user.name,
             'update',
             'income',
-            `Ingresos operativos: Broker $${income.broker_pnl.toLocaleString()}, Otros $${income.other.toLocaleString()}, Prop Firm net $${propFirmNet.toLocaleString()}`,
+            `Ingresos operativos: Broker ${formatMoney(income.broker_pnl)}, Otros ${formatMoney(income.other)}, Prop Firm net ${formatMoney(propFirmNet)}`,
           );
         }
         showSuccess(t('upload.incomeSaved'));

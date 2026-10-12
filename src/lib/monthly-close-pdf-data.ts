@@ -57,7 +57,8 @@
 //   copiarlo a un mensaje.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { formatNumber, round2 } from './utils';
+import { round2 } from './utils';
+import { formatMoney } from './money';
 import {
   incompleteNotice,
   type AutoSeriesKey,
@@ -89,14 +90,13 @@ export const CLOSE_TOLERANCE = 0.01;
  * pegado al número, después del símbolo). Un importe que redondea a cero se
  * imprime «$0.00», nunca «-$0.00».
  *
- * Los separadores siguen siendo los de `formatNumber` (en-US), los mismos de
- * toda la app y de los demás PDFs: cambiarlos solo acá haría que el informe y
- * la pantalla escriban distinto el mismo número.
+ * Desde el 2026-10-12 delega en `formatMoney` (src/lib/money.ts), que nació
+ * copiando exactamente esta regla: el informe y la pantalla escriben igual el
+ * mismo número, y si el dueño cambia MONEY_LOCALE cambian los dos juntos.
+ * Sin `signed`: el «−» tipográfico no está en la Helvetica de jsPDF.
  */
 export function pdfMoney(n: number): string {
-  const v = round2(n);
-  if (Math.abs(v) < 0.005) return `$${formatNumber(0)}`;
-  return v < 0 ? `-$${formatNumber(-v)}` : `$${formatNumber(v)}`;
+  return formatMoney(n);
 }
 
 // ─── Período ─────────────────────────────────────────────────────────────────

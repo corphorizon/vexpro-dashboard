@@ -383,7 +383,7 @@ export default function UsuariosPage() {
               const effectiveRole = custom?.base_role ?? form.role;
               if (roleCanWrite(effectiveRole)) return null;
               return (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10/30 border border-warning/30 text-amber-800 dark:text-amber-300 text-sm">
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-800 dark:text-amber-300 text-sm">
                   <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
                   <span>
                     <strong>{ROLE_LABELS[effectiveRole] ?? form.role}</strong> es un rol de
@@ -428,7 +428,7 @@ export default function UsuariosPage() {
             </div>
 
             {formError && (
-              <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
+              <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
                 {formError}
               </div>
             )}

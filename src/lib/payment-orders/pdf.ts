@@ -22,7 +22,8 @@
 
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { formatNumber } from '@/lib/utils';
+import { BRAND_RGB, type RGB } from '@/lib/brand';
+import { formatMoney } from '@/lib/money';
 import { buildFileIndexRows } from './file-index';
 import {
   isAuthorized,
@@ -151,20 +152,24 @@ const LABELS = {
   },
 } as const satisfies Record<PaymentOrderLocale, Record<string, string>>;
 
-// ── Paleta (misma que pdf-export.ts) ────────────────────────────────────────
+// ── Paleta (la de src/lib/brand.ts) ─────────────────────────────────────────
+// Era una copia a mano de los mismos hex. El 2026-10-12 el verde de ganancia
+// pasó de #059669 a #047857 en brand.ts (3,77:1 → 5,48:1 contra blanco) y esta
+// copia se habría quedado con el viejo sin que ningún test lo notara: es el
+// modo de falla número uno del repo. Ahora sale del registro; sólo el dorado
+// del sello es propio de este documento.
 
-type RGB = [number, number, number];
 const C = {
-  primary: [30, 58, 95] as RGB,   // #1E3A5F — fallback de marca
+  primary: BRAND_RGB.primary,     // fallback de marca
   gold: [193, 154, 87] as RGB,    // #C19A57 — regla fina bajo la banda
-  ink: [15, 23, 42] as RGB,       // #0F172A
-  muted: [100, 116, 139] as RGB,  // #64748B
-  border: [226, 232, 240] as RGB, // #E2E8F0
-  surface: [248, 250, 252] as RGB,// #F8FAFC
-  positive: [5, 150, 105] as RGB, // #059669
-  negative: [220, 38, 38] as RGB, // #DC2626
-  watermark: [148, 163, 184] as RGB, // #94A3B8
-  white: [255, 255, 255] as RGB,
+  ink: BRAND_RGB.ink,
+  muted: BRAND_RGB.muted,
+  border: BRAND_RGB.border,
+  surface: BRAND_RGB.surface,
+  positive: BRAND_RGB.positive,
+  negative: BRAND_RGB.negative,
+  watermark: BRAND_RGB.mutedLight,
+  white: BRAND_RGB.white,
 };
 
 /** #RRGGBB / #RGB → RGB. Devuelve el fallback si el hex no es válido. */
@@ -183,7 +188,9 @@ function hexToRgb(hex: string | null | undefined, fallback: RGB): RGB {
 // ── Formateo ────────────────────────────────────────────────────────────────
 
 /** El dinero se ve igual en los dos idiomas: $1,234.56 (Intl en-US). */
-const money = (n: number) => `$${formatNumber(Number(n) || 0)}`;
+// formatMoney (src/lib/money.ts): antes `$${formatNumber(n)}`, que con un
+// negativo (descuento, ajuste) imprimía «$-50.00».
+const money = (n: number) => formatMoney(Number(n) || 0);
 
 const EN_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 

@@ -4,6 +4,7 @@ import { useState, useMemo, useEffect, useCallback, type RefObject } from 'react
 import * as Sentry from '@sentry/nextjs';
 import { apiFetch } from '@/lib/api-fetch';
 import { logAction } from '@/lib/audit-log';
+import { formatMoney } from '@/lib/money';
 import { useI18n } from '@/lib/i18n';
 import { parseAmount, findInvalidAmount } from '@/lib/upload-calculations';
 import {
@@ -292,7 +293,7 @@ export function useIncomeLines(
     setNewIncomeLine(EMPTY_INCOME_LINE);
     void persistIncomeLines(next, previous, {
       toast: t('income.lineAdded'),
-      audit: { action: 'create', details: `Ingreso creado: ${newIncomeLine.concept}, monto: $${amt.toLocaleString()}` },
+      audit: { action: 'create', details: `Ingreso creado: ${newIncomeLine.concept}, monto: ${formatMoney(amt)}` },
     });
   };
 
@@ -323,7 +324,7 @@ export function useIncomeLines(
     setEditingIncomeLineId(null);
     void persistIncomeLines(next, previous, {
       toast: t('income.lineUpdated'),
-      audit: { action: 'update', details: `Ingreso ${concept}: $${amt.toLocaleString()}` },
+      audit: { action: 'update', details: `Ingreso ${concept}: ${formatMoney(amt)}` },
     });
   };
 
@@ -336,7 +337,7 @@ export function useIncomeLines(
     setIncomeLines(next); // optimista
     void persistIncomeLines(next, previous, {
       toast: t('income.lineUpdated'),
-      audit: { action: 'update', details: `Ingreso marcado como cobrado: ${target.concept} ($${target.amount.toLocaleString()})` },
+      audit: { action: 'update', details: `Ingreso marcado como cobrado: ${target.concept} (${formatMoney(target.amount)})` },
     });
   };
 

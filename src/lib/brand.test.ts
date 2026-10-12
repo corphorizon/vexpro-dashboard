@@ -32,7 +32,7 @@ describe('BRAND_RGB', () => {
   it('deriva de BRAND_HEX sin perder ningún color', () => {
     expect(Object.keys(BRAND_RGB).sort()).toEqual(Object.keys(BRAND_HEX).sort());
     expect(BRAND_RGB.primary).toEqual([30, 58, 95]);
-    expect(BRAND_RGB.positive).toEqual([5, 150, 105]);
+    expect(BRAND_RGB.positive).toEqual([4, 120, 87]);
     expect(BRAND_RGB.negative).toEqual([220, 38, 38]);
   });
 });

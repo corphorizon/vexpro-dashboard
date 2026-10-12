@@ -40,6 +40,7 @@ import { apiError } from '@/lib/api-error';
 import { loadCycleFromMt5 } from '@/lib/risk/propfirm-auto';
 import { withOrionMongo } from '@/lib/api-integrations/orion-mongo/client';
 import { BRAND_HEX } from '@/lib/brand';
+import { formatMoney } from '@/lib/money';
 import type { Trade } from '@/lib/risk/types';
 
 export const dynamic = 'force-dynamic';
@@ -67,8 +68,9 @@ const esc = (v: unknown): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-const money = (n: number) =>
-  n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Con símbolo y signo delante (formatMoney): antes era el número pelado y el
+// «$» lo pegaba cada llamador, así que un resultado negativo salía «$-12.00».
+const money = (n: number) => formatMoney(n);
 
 const cuando = (d: Date) => d.toISOString().slice(0, 19).replace('T', ' ');
 
@@ -257,7 +259,7 @@ ${cabecera(marca, `Informe de la cuenta ${esc(fila.login)}`, `${marca.name} · g
     ${dato('Correo', String(fila.user_email ?? '—'))}
     ${dato('Cuenta', String(fila.login ?? '—'))}
     ${dato('Programa', String(fila.program_name ?? '—'))}
-    ${dato('Retiro solicitado', `$${money(Number(fila.requested_amount ?? 0))}`)}
+    ${dato('Retiro solicitado', `${money(Number(fila.requested_amount ?? 0))}`)}
     ${dato('Fecha de solicitud', fila.requested_date ? String(fila.requested_date).slice(0, 19).replace('T', ' ') : '—')}
     ${dato('Estado en el CRM', String(fila.status ?? '—'))}
     ${dato('Ciclo desde', `${inicio} (${porQue})`)}
@@ -267,10 +269,10 @@ ${cabecera(marca, `Informe de la cuenta ${esc(fila.login)}`, `${marca.name} · g
   <div class="datos">
     ${dato('Operaciones', String(trades.length))}
     ${dato('Ganadoras', `${ganadoras} de ${trades.length}`)}
-    ${dato('Resultado bruto', `$${money(bruto)}`)}
-    ${dato('Swap', `$${money(swap)}`)}
-    ${dato('Comisiones', `$${money(comision)}`)}
-    ${dato('Resultado neto', `$${money(neto)}`)}
+    ${dato('Resultado bruto', `${money(bruto)}`)}
+    ${dato('Swap', `${money(swap)}`)}
+    ${dato('Comisiones', `${money(comision)}`)}
+    ${dato('Resultado neto', `${money(neto)}`)}
   </div>
 
   <h2>Operaciones del ciclo (${trades.length})</h2>

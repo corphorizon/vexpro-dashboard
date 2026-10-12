@@ -27,6 +27,7 @@ import { withMt5Connection, mt5DateUtc } from '@/lib/api-integrations/mt5-sql/cl
 import { loadHighImpact } from '@/lib/risk/economic-calendar';
 import { loadAperturas, findSynchronizedPairs, loadSharedIpFacts, type SharedIpFacts } from '@/lib/risk/copy-detection';
 import { notify } from '@/lib/notifications/notify';
+import { formatMoney } from '@/lib/money';
 
 /** Ventana del espejo. Los retiros viejos no cambian y no hace falta releerlos. */
 const DIAS = 180;
@@ -115,8 +116,7 @@ export function propfirmAlertFor({ outcome, error, violations }: PropfirmAlertIn
 }
 
 /** Mismo formato de monto que las órdenes de pago. Los retiros son en USD. */
-const monto = (n: number): string =>
-  `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const monto = (n: number): string => formatMoney(n);
 
 /**
  * Dedupe POR RETIRO, no por día (a diferencia de `dailyKey`, que es lo que usa

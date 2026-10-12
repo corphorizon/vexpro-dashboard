@@ -10,6 +10,7 @@ import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { useI18n } from '@/lib/i18n';
 import { formatCurrency, cn } from '@/lib/utils';
+import { formatMoney } from '@/lib/money';
 import { downloadCSV } from '@/lib/csv-export';
 // Lazy-loaded (Kevin 2026-06-06 code review): jspdf + jspdf-autotable
 // se cargan solo al hacer click en cualquier botón "Exportar PDF". Antes
@@ -2482,7 +2483,7 @@ export default function ComisionesPage() {
 
     // Build salary tier label — la tabla que de verdad se le aplicó al líder
     // (la de BDM cuando el grupo lo lidera un BDM, ver `autoSalary`).
-    const tierLabels = (liderEsBdm ? SALARY_TIERS : HEAD_SALARY_TIERS).map(t => `≥$${t.minND.toLocaleString()} → $${t.salary.toLocaleString()}`).join(' | ');
+    const tierLabels = (liderEsBdm ? SALARY_TIERS : HEAD_SALARY_TIERS).map(t => `≥${formatMoney(t.minND)} → ${formatMoney(t.salary)}`).join(' | ');
 
     const { generateCommissionPDF } = await loadPdfExports();
     generateCommissionPDF({
@@ -2718,13 +2719,13 @@ export default function ComisionesPage() {
           </div>
 
           {/* Info */}
-          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10/30 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
+          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
             <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.teamFromHR')}</span>
           </div>
 
           {/* Validation warning */}
           {teamNdValidation && (
-            <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-warning/10/30 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm">
+            <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm">
               <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
               <span>
                 El ND total de este equipo ({formatCurrency(teamNdValidation.actual)}) no coincide con el valor ingresado en el grupo de <strong>{teamNdValidation.parentName}</strong> ({formatCurrency(teamNdValidation.expected)}). La suma del equipo debe ser igual.
@@ -2923,7 +2924,7 @@ export default function ComisionesPage() {
       {/* ═══════════ TAB: INDIVIDUAL ═══════════ */}
       {tab === 'individual' && (
         <>
-          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10/30 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
+          <div className="flex items-start gap-2 px-4 py-3 rounded-lg bg-info/10 border border-info/30 text-blue-700 dark:text-blue-300 text-sm">
             <Info className="w-4 h-4 mt-0.5 shrink-0" /><span>{t('comm.allBdms')} — {allBdms.length} BDMs</span>
           </div>
 

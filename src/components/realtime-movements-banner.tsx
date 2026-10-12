@@ -603,7 +603,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
       )}
 
       {errorMsg && (
-        <div className="p-2 mb-2 rounded bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
+        <div className="p-2 mb-2 rounded bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
           {errorMsg}
         </div>
       )}

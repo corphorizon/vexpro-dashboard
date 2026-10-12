@@ -408,3 +408,4 @@ los cron se pisan en `:15` y `:45`.
 | Dónde está prendido el Pool | `supabase/donde-vive-liquidity-pool.sql` |
 | El contrato con Atlas | `src/app/api/partner/v1/*/route.ts` (cabeceras) |
 | Qué avisa el sistema | `src/lib/notifications/catalog.ts` |
+| El sistema visual (tokens, componentes, dinero en pantalla) | `docs/diseno-libro-mayor.md` · `src/app/globals.css` · `src/lib/money.ts` |

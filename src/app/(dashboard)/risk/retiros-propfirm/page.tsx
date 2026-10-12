@@ -1554,7 +1554,7 @@ export default function RetirosPropFirmPage() {
 
           {/* Restored-from-history notice */}
           {result.trades.length === 0 && (
-            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-warning/10/30 border border-amber-200 text-amber-700 text-sm">
+            <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-warning/10 border border-amber-200 text-amber-700 text-sm">
               <AlertTriangle className="w-4 h-4 flex-shrink-0" />
               <span>Este análisis fue restaurado del historial. Las operaciones individuales no están disponibles — sube el archivo original para verlas.</span>
             </div>

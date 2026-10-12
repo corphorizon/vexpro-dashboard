@@ -3,6 +3,8 @@
  * Uses browser-native approaches without external dependencies
  */
 
+import { formatMoney } from '@/lib/money';
+
 // ─── Excel Export (XML Spreadsheet format) ───
 export function downloadExcel(filename: string, headers: string[], rows: (string | number)[][]) {
   const escape = (val: string | number) => {
@@ -83,7 +85,7 @@ export function downloadPDF(
     const cells = row.map((cell, j) => {
       const isNum = typeof cell === 'number' || (!isNaN(Number(cell)) && cell !== '');
       const align = isNum ? 'right' : 'left';
-      const formatted = isNum ? `$${Number(cell).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : escape(cell);
+      const formatted = isNum ? formatMoney(Number(cell)) : escape(cell); // antes «$-1,234.00» en negativos
       return `<td style="padding:6px 12px;text-align:${align};font-size:11px;border-bottom:1px solid #e2e8f0;">${formatted}</td>`;
     }).join('');
     return `<tr style="background:${bg}">${cells}</tr>`;

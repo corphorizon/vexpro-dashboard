@@ -163,7 +163,7 @@ export function NegotiationForm({ onClose, onSave, editing, profiles, saving, er
           </div>
         </div>
         {errorMsg && (
-          <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-negative/10/30 border border-negative/30">
+          <div className="mt-4 flex items-start gap-2 p-3 rounded-lg bg-negative/10 border border-negative/30">
             <AlertCircle className="w-4 h-4 text-negative shrink-0 mt-0.5" />
             <span className="text-sm text-negative">{errorMsg}</span>
           </div>

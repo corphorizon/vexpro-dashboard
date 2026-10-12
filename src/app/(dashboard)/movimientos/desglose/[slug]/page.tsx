@@ -371,7 +371,7 @@ export default function BreakdownPage({
           )}
         </div>
         {errorMsg && (
-          <div className="mt-2 p-2 rounded bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
+          <div className="mt-2 p-2 rounded bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
             {errorMsg}
           </div>
         )}

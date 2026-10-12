@@ -15,6 +15,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { features } from '@/lib/business-model';
+import { formatMoney } from '@/lib/money';
 import { FAIRPAY_COMPLETED, FAIRPAY_PROVIDER } from '@/lib/crm-monthly';
 import {
   CHECKLIST_LABEL_KEYS,
@@ -55,8 +56,9 @@ const FALLBACK_METRIC_LABEL: Record<string, string> = {
   propfirm_withdrawals: 'Retiros Prop Firm',
 };
 
-const money = (n: number) =>
-  `$${Math.abs(n).toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+// Valor absoluto a propósito: el sentido lo dice el texto («falta»/«sobra»).
+// Era es-AR («$2.373,37») al lado de tablas en en-US: ahora formatMoney.
+const money = (n: number) => formatMoney(Math.abs(n));
 
 export interface PeriodCloseChecklist {
   period: { id: string; label: string | null };

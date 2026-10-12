@@ -468,7 +468,7 @@ export default function PerfilPage() {
           </div>
         </div>
         {profileData.contract_url ? (
-          <div className="flex items-center gap-3 p-3 bg-positive/10/30 rounded-lg">
+          <div className="flex items-center gap-3 p-3 bg-positive/10 rounded-lg">
             <FileText className="w-5 h-5 text-emerald-600" />
             <span className="text-sm font-medium text-positive flex-1">Contrato cargado</span>
             <a href={withActiveCompany(`/api/admin/contract-url/${profileData.id}`)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">

@@ -877,12 +877,12 @@ export default function BalancesPage() {
       />
 
       {okMsg && (
-        <div className="p-3 rounded-lg bg-positive/10/30 border border-positive/30 text-emerald-700 dark:text-emerald-300 text-sm">
+        <div className="p-3 rounded-lg bg-positive/10 border border-positive/30 text-emerald-700 dark:text-emerald-300 text-sm">
           {okMsg}
         </div>
       )}
       {errMsg && (
-        <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
+        <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 dark:text-red-300 text-sm">
           {errMsg}
         </div>
       )}
@@ -1193,7 +1193,7 @@ export default function BalancesPage() {
             {/* Body */}
             <div className="p-5 overflow-y-auto flex-1">
               {walletsError && (
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10/30 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm mb-3">
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-warning/10 border border-warning/30 text-amber-700 dark:text-amber-300 text-sm mb-3">
                   <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
                   <span>
                     {walletsError}

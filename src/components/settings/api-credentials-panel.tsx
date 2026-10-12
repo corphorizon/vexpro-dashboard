@@ -359,7 +359,7 @@ export function ApiCredentialsPanel({ companyId }: Props) {
   return (
     <div className="space-y-4">
       {error && (
-        <div className="p-3 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 text-sm">
+        <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 text-sm">
           {error}
         </div>
       )}
@@ -1387,7 +1387,7 @@ function ApiCredentialForm({
       )}
 
       {error && (
-        <div className="p-2 rounded-lg bg-negative/10/30 border border-negative/30 text-red-700 text-sm">
+        <div className="p-2 rounded-lg bg-negative/10 border border-negative/30 text-red-700 text-sm">
           {error}
         </div>
       )}

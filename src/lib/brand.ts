@@ -45,14 +45,28 @@ export const BRAND_HEX = {
   // ── Semánticos ──
   // Se usan los tonos 600: sobre papel blanco los 500 quedan lavados y en un
   // PDF impreso no se distingue una ganancia de una pérdida.
+  //
+  // CORRECCIÓN 2026-10-12 (rediseño «Libro mayor», fase 0): «los 600» no
+  // alcanzaba para dos de los cuatro. Medido contra blanco con la fórmula
+  // WCAG: emerald-600 #059669 daba 3,77:1 y amber-600 #D97706 3,19:1 — los
+  // dos por debajo de 4,5:1 (AA texto), justo los colores con que se pinta
+  // una ganancia y un «pendiente» en tablas de 13px. Pasan a #047857
+  // (5,48:1) y #A15C07 (5,19:1), que son además los valores de
+  // `--pos`/`--pend` de la dirección nueva (docs/diseno-libro-mayor.md).
+  // Descartado: amber-700 de Tailwind (#B45309, 5,02:1) — también pasa, pero
+  // dejaría la app y el token `--pend` del diseño nuevo con dos ámbares
+  // distintos; un solo valor para pantalla, PDF y email.
+  // Rojo #DC2626 (4,83:1) pasa: no se toca. Info #2563EB pasaba sobre blanco
+  // (5,17:1) pero no sobre su fondo nuevo --info-bg (4,48:1): pasa a #1D5BD6
+  // (5,97:1 / 5,17:1), el `--info` de la maqueta.
   /** Ganancia, ingreso, éxito. */
-  positive: '#059669',
+  positive: '#047857',
   /** Pérdida, egreso, destructivo. */
   negative: '#DC2626',
   /** Pendiente, atención. */
-  warning: '#D97706',
+  warning: '#A15C07',
   /** Informativo, neutro con énfasis. */
-  info: '#2563EB',
+  info: '#1D5BD6',
 } as const;
 
 export type BrandColorName = keyof typeof BRAND_HEX;

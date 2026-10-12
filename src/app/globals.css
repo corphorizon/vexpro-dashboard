@@ -45,10 +45,15 @@
   --accent: var(--brand-secondary-light, #3472D8);
 
   /* ── Semánticos (dinero / estado) ── */
-  --positive: #059669;           /* emerald-600 — ganancia, éxito */
+  /* positive/warning corregidos el 2026-10-12: emerald-600 y amber-600 daban
+     3,77:1 y 3,19:1 contra blanco (no pasan AA 4,5:1). Ver brand.ts. */
+  --positive: #047857;           /* ganancia, éxito — 5,48:1 sobre blanco */
   --negative: #DC2626;           /* red-600 — pérdida, destructivo */
-  --warning: #D97706;            /* amber-600 — pendiente, atención */
-  --info: #2563EB;               /* blue-600 — informativo */
+  --warning: #A15C07;            /* pendiente, atención — 5,19:1 sobre blanco */
+  /* info pasa al valor de la maqueta (#2563EB → #1D5BD6) el 2026-10-12: el
+     viejo daba 5,17:1 sobre blanco pero 4,48:1 sobre su fondo nuevo
+     --info-bg, o sea que el badge «info» nacía sin pasar AA. */
+  --info: #1D5BD6;               /* informativo — 5,97:1 blanco, 5,17:1 info-bg */
 
   /* ── Elevación (escalera de 3 niveles; no usar shadow-* sueltos) ── */
   --elevation-1: 0 1px 2px rgb(15 23 42 / 0.05);                             /* cards en reposo */
@@ -61,6 +66,32 @@
   --duration-slow: 280ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  /* ── «Libro mayor» (rediseño 2026-10) — ver el bloque explicativo más abajo ── */
+  --surface-2: #F0F2F5;
+  --surface-sunk: #EBEEF2;
+  --border-strong: #C9D0DA;
+  --control-border: #8A94A3;
+  --text-2: #465264;
+  --text-3: var(--muted-foreground);   /* alias: ver nota «text-3» abajo */
+  --brand-tint: #E9EEF5;
+  --pos: #047857;   --pos-bg: #E6F4EE;
+  --neg: #B42318;   --neg-bg: #FCEBE9;
+  --pend: #A15C07;  --pend-bg: #FCF1DF;
+  /* --info está arriba (ya era token): ver nota «info» abajo. */
+  --info-bg: #E8EFFC;
+  --stale: #6B5FA8; --stale-bg: #EFEDF8;
+  --row-hover: #F3F5F8;
+  --row-selected: #EEF3FB;
+  --group-row: #F7F8FA;
+  --shadow-1: 0 1px 2px rgb(13 21 36 / .05);
+  --shadow-2: 0 1px 2px rgb(13 21 36 / .06), 0 6px 16px -6px rgb(13 21 36 / .12);
+  --shadow-3: 0 12px 32px -8px rgb(13 21 36 / .28);
+  --r-sm: 4px;
+  --r-md: 6px;
+  --r-lg: 10px;
+  --r-xl: 14px;
+  --row-h: 36px;
 }
 
 .dark {
@@ -83,11 +114,80 @@
   --positive: #34D399;
   --negative: #F87171;
   --warning: #FBBF24;
-  --info: #60A5FA;
+  --info: #6EA3FF;               /* maqueta; 5,81:1 sobre card, 6,13:1 info-bg */
 
   --elevation-1: 0 1px 2px rgb(0 0 0 / 0.4);
   --elevation-2: 0 2px 4px rgb(0 0 0 / 0.4), 0 8px 16px -6px rgb(0 0 0 / 0.5);
   --elevation-3: 0 8px 12px -4px rgb(0 0 0 / 0.5), 0 20px 40px -12px rgb(0 0 0 / 0.6);
+
+  /* ── «Libro mayor» — oscuro ── */
+  --surface-2: #172031;
+  --surface-sunk: #0D121C;
+  --border-strong: #33405A;
+  --control-border: #5E6B82;
+  --text-2: #AAB4C5;
+  /* --text-3 sigue siendo var(--muted-foreground): flipa solo. */
+  --brand-tint: #18263B;
+  --pos: #3CCB8F;   --pos-bg: #0F2A20;
+  --neg: #F97066;   --neg-bg: #331614;
+  --pend: #F2B13A;  --pend-bg: #30230B;
+  --info-bg: #132443;
+  --stale: #B3A6F0; --stale-bg: #221E3A;
+  --row-hover: #151D2C;
+  --row-selected: #16233A;
+  --group-row: #0E141F;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / .4);
+  --shadow-2: 0 2px 4px rgb(0 0 0 / .4), 0 8px 20px -8px rgb(0 0 0 / .6);
+  --shadow-3: 0 16px 40px -8px rgb(0 0 0 / .7);
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   TOKENS «LIBRO MAYOR» (rediseño 2026-10-12, fases 0-1)
+   Especificación completa: docs/diseno-libro-mayor.md. Valores copiados de la
+   maqueta aprobada (design-opus/src/base.css), con el contraste medido allí.
+
+   REGLA DE ORO — el color es SIGNIFICADO, nunca decoración:
+     pos   = ganancia / entrada / completado      neg  = pérdida / salida / error
+     pend  = pendiente / requiere acción          info = informativo / fuente API
+     stale = dato viejo o sin sincronizar (sigue sumando, pero no es de hoy)
+   Cada uno trae su fondo *-bg con texto ≥ 4,5:1 encima (badge = text-pos +
+   bg-pos-bg). Si un color no significa una de estas cinco cosas, va en gris
+   (text-text-2 / text-text-3), no en un color.
+   · Nada de paleta cruda (text-emerald-600, bg-red-50…) en código nuevo.
+   · Nada de variantes `dark:` de color: los tokens flipan solos en .dark.
+   · Se vienen reglas de lint que lo hacen cumplir (ver la doc, §Lint).
+
+   CÓMO SE RESUELVE EL TEMA — por qué NO hay @media (prefers-color-scheme):
+   La maqueta define el oscuro dos veces (media query + [data-theme=dark]).
+   Este repo no: theme-context.tsx resuelve «system» en JS y pone/quita la
+   clase `.dark` en <html>. Un bloque @media acá le daría tokens oscuros a
+   quien eligió «claro» con el sistema en oscuro, mezclados con los tokens
+   legados en claro. Por eso los valores oscuros viven SOLO en `.dark`.
+
+   ALIAS Y DESCARTES (sin cambiar el aspecto de las pantallas):
+   · text-3 es alias de --muted-foreground (pedido explícito): el código nuevo
+     que escriba text-text-3 se ve igual que el legado mientras conviven. El
+     valor final de la maqueta (#5F6B7D claro / #8B96AA oscuro) entra cuando
+     se migren las superficies (fase 3): se cambia --muted-foreground y los
+     dos nombres se mueven juntos.
+   · info: --info ya existía (#2563EB / #60A5FA). Se reusa el nombre con el
+     valor de la maqueta (#1D5BD6 / #6EA3FF) porque #2563EB sobre el fondo
+     nuevo --info-bg daba 4,48:1. Es el único token existente que cambia de
+     valor fuera de la fase 0 (tono apenas más oscuro); brand.ts lo sigue.
+   · --negative (#DC2626) se queda: 4,83:1 sobre blanco, pero 4,41:1 sobre
+     --muted. Lo resuelve --neg (#B42318) cuando se migre (fase 3); el test
+     design-tokens.test.ts deja fijada la brecha para que no se olvide.
+   · --border y --accent existen con otro valor/uso: no se tocan.
+   · --brand-ink ya existe y DERIVA de la marca de cada empresa
+     (brand-color.ts) — es mejor que el navy fijo de la maqueta. --brand-tint
+     todavía es fijo (#E9EEF5 / #18263B): derivarlo de la marca está anotado
+     como pendiente en la doc.
+   · Radios: las utilidades se llaman rounded-ui-{sm,md,lg,xl} porque
+     rounded-r-md YA es de Tailwind (radio del lado derecho).
+   · --row-h: 36px; 44px con puntero grueso (táctil) — el mínimo de toque.
+   ═════════════════════════════════════════════════════════════════════════ */
+@media (pointer: coarse) {
+  :root { --row-h: 44px; }
 }
 
 @theme inline {
@@ -115,6 +215,38 @@
   --shadow-card: var(--elevation-1);
   --shadow-raised: var(--elevation-2);
   --shadow-overlay: var(--elevation-3);
+
+  /* ── «Libro mayor» — utilidades (bg-surface-2, text-text-2, text-pos,
+     bg-stale-bg, border-border-strong, shadow-2, rounded-ui-lg, h-row…) ── */
+  --color-surface-2: var(--surface-2);
+  --color-surface-sunk: var(--surface-sunk);
+  --color-border-strong: var(--border-strong);
+  --color-control-border: var(--control-border);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-brand-tint: var(--brand-tint);
+  --color-pos: var(--pos);
+  --color-pos-bg: var(--pos-bg);
+  --color-neg: var(--neg);
+  --color-neg-bg: var(--neg-bg);
+  --color-pend: var(--pend);
+  --color-pend-bg: var(--pend-bg);
+  --color-info-bg: var(--info-bg);
+  --color-stale: var(--stale);
+  --color-stale-bg: var(--stale-bg);
+  --color-row-hover: var(--row-hover);
+  --color-row-selected: var(--row-selected);
+  --color-group-row: var(--group-row);
+  /* Mismo patrón que --color-primary: la declaración de la capa `theme` se
+     auto-referencia, pero la de :root/.dark (sin capa) gana la cascada. */
+  --shadow-1: var(--shadow-1);
+  --shadow-2: var(--shadow-2);
+  --shadow-3: var(--shadow-3);
+  --radius-ui-sm: var(--r-sm);
+  --radius-ui-md: var(--r-md);
+  --radius-ui-lg: var(--r-lg);
+  --radius-ui-xl: var(--r-xl);
+  --spacing-row: var(--row-h);
 }
 
 body {

@@ -90,6 +90,7 @@
 // solos con la ventana (ver `bandsFor`).
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { formatMoney } from '@/lib/money';
 import type {
   AgeBucket,
   NetBucket,
@@ -295,8 +296,10 @@ function impactOf(weight: number): FactorImpact {
 }
 
 const pct = (r: number) => `${(r * 100).toFixed(1).replace('.', ',')}%`;
-const money = (n: number) =>
-  `US$ ${Math.round(n).toLocaleString('es-AR', { maximumFractionDigits: 0 })}`;
+// Era «US$ 12.345» (es-AR, sin centavos) y un neto negativo salía
+// «US$ -1.234». Ahora el formateador único: el auditor lee la misma cifra que
+// en la ficha del retiro.
+const money = (n: number) => formatMoney(n);
 
 // ── El score ─────────────────────────────────────────────────────────────────
 

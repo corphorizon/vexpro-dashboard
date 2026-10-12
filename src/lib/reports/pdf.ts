@@ -19,6 +19,7 @@ import type { ReportCadence } from './email-template';
 import jsPDF from 'jspdf';
 import { BRAND_RGB, hexToRgb } from '@/lib/brand';
 import autoTable from 'jspdf-autotable';
+import { formatMoney } from '@/lib/money';
 import { allSectionsOn, allSectionsOff, type ReportSections } from './sections';
 
 // Del registro único (./sections): la interfaz estaba escrita acá otra vez, con
@@ -67,13 +68,9 @@ const MONTHS_ES = [
   'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre',
 ];
 
+/** Era un Intl propio (en-US): ahora el formateador único, src/lib/money.ts. */
 function fmtCurrency(n: number): string {
-  return new Intl.NumberFormat('en-US', {
-    style: 'currency',
-    currency: 'USD',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
+  return formatMoney(n);
 }
 
 function fmtDateEs(iso: string): string {

@@ -286,7 +286,7 @@ export function ProfileForm({
               (pnl × pct − lotes) y aparece en una sección separada en
               /comisiones. */}
           {pnlPct && (
-            <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-info/10/30 border border-info/30">
+            <div className="md:col-span-2 flex items-start gap-2 p-3 rounded-lg bg-info/10 border border-info/30">
               <input
                 id="pnl-special-mode"
                 type="checkbox"
@@ -469,7 +469,7 @@ export function ProfileForm({
         <div className="mt-4 border-t border-border pt-4">
           <label className="block text-xs font-medium text-muted-foreground mb-2">{t('hr.signedContract')}</label>
           {contractUrl && !contractFile && (
-            <div className="flex items-center gap-2 mb-2 p-2 bg-positive/10/30 rounded-lg">
+            <div className="flex items-center gap-2 mb-2 p-2 bg-positive/10 rounded-lg">
               <FileText className="w-4 h-4 text-emerald-600" />
               <span className="text-sm text-positive flex-1">{t('hr.contractUploaded')}</span>
               <a href={editing?.id ? withActiveCompany(`/api/admin/contract-url/${editing.id}`) : '#'} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex items-center gap-1">
@@ -494,7 +494,7 @@ export function ProfileForm({
             )}
           </div>
         </div>
-        {error && <p className="mt-4 text-sm text-red-600 bg-negative/10/30 px-3 py-2 rounded-lg">{error}</p>}
+        {error && <p className="mt-4 text-sm text-red-600 bg-negative/10 px-3 py-2 rounded-lg">{error}</p>}
         <div className="mt-4 flex justify-end gap-3">
           <button onClick={onClose} className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors">
             {t('common.cancel')}
