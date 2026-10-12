@@ -4,13 +4,27 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Users, Settings2, Loader2, UserPlus } from 'lucide-react';
+import { ArrowLeft, Users, Settings2, UserPlus, RotateCw } from 'lucide-react';
 import { formatDateRelative } from '@/lib/dates';
 import { BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import { ManageUserPanel } from './_manage-panel';
 import { CreateUserModal } from './_create-modal';
-import { DataTable } from '@/components/ui/data-table';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
+import {
+  formatCount,
+  formatLastLogin,
+  initials,
+  plural,
+  twofaKind,
+  userStatusKind,
+} from '@/components/superadmin/superadmin-model';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/companies/[id]/users
@@ -19,6 +33,16 @@ import { EmptyState } from '@/components/ui/empty-state';
 // Each row opens the slide-over <ManageUserPanel /> where the superadmin can
 // change role, status, module access, reset password, disable 2FA, and see
 // the user's recent audit activity.
+//
+// «Libro mayor» (2026-10-12):
+//   · El fallo que no da error: `users` arrancaba en `[]` y, si la carga
+//     fallaba, debajo del error se dibujaba la tabla vacía con «Sin usuarios —
+//     esta organización aún no tiene usuarios». Ahora con error NO hay tabla:
+//     un Notice con el motivo y «Reintentar».
+//   · ROLE_COLORS (seis colores crudos, uno por rol, sin significado) se fue:
+//     el rol es un badge gris (spec §2.1). Estado y 2FA con StatusBadge —
+//     2FA sin configurar es `pend` porque es obligatorio (migración 029).
+//   · DataTable → FinTable (tarjetas < 720 px con estado y 2FA bajo el nombre).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CompanyUser {
@@ -42,15 +66,6 @@ interface Company {
   active_modules: string[];
 }
 
-const ROLE_COLORS: Record<string, string> = {
-  admin: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-200',
-  socio: 'bg-purple-100 text-purple-800 dark:bg-purple-950/50 dark:text-purple-200',
-  auditor: 'bg-amber-100 text-amber-800 dark:bg-amber-950/50 dark:text-amber-200',
-  soporte: 'bg-sky-100 text-sky-800 dark:bg-sky-950/50 dark:text-sky-200',
-  hr: 'bg-pink-100 text-pink-800 dark:bg-pink-950/50 dark:text-pink-200',
-  invitado: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200',
-};
-
 // Etiquetas del registro único (src/lib/roles.ts) — era otra copia literal.
 const ROLE_LABEL: Record<string, string> = BUILT_IN_ROLE_LABELS;
 
@@ -64,6 +79,7 @@ export default function CompanyUsersPage() {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<CompanyUser | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [now] = useState(() => Date.now());
 
   const load = useCallback(async () => {
     if (!companyId) return;
@@ -91,50 +107,110 @@ export default function CompanyUsersPage() {
     setSelected((curr) => (curr && curr.id === updated.id ? { ...curr, ...updated } : curr));
   };
 
-  return (
-    <div className="space-y-6 max-w-6xl">
-      <div className="flex items-center justify-between gap-4">
-        <Link
-          href={`/superadmin/companies/${companyId}`}
-          className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-        >
-          <ArrowLeft className="w-4 h-4" /> Volver a la entidad
-        </Link>
-      </div>
+  const statusBadge = (u: CompanyUser) => (
+    <StatusBadge kind={userStatusKind(u.status)} label={u.status === 'active' ? 'Activo' : 'Inactivo'} />
+  );
+  const twofaBadge = (u: CompanyUser) => (
+    <StatusBadge kind={twofaKind(u.twofa_enabled)} label={u.twofa_enabled ? '2FA activo' : '2FA sin configurar'} />
+  );
 
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Users className="w-6 h-6" /> Usuarios {company?.name ? `— ${company.name}` : ''}
-          </h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Gestiona roles, accesos por módulo, seguridad y auditoría de cada usuario de la organización.
-          </p>
+  const columns: FinColumn<CompanyUser>[] = [
+    {
+      key: 'user',
+      header: 'Usuario',
+      cell: (u) => (
+        <div className="flex min-w-0 items-center gap-3 py-1.5 max-[720px]:py-0">
+          <span
+            aria-hidden="true"
+            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-surface-2 text-[12px] font-semibold text-text-2"
+          >
+            {initials(u.name || u.email)}
+          </span>
+          <div className="min-w-0">
+            <div className="truncate font-medium text-foreground">{u.name || '(sin nombre)'}</div>
+            <div className="truncate text-[12px] leading-[1.3] text-text-3">{u.email}</div>
+            <div className="mt-1 hidden flex-wrap items-center gap-1.5 max-[720px]:flex">
+              {statusBadge(u)}
+              {twofaBadge(u)}
+            </div>
+          </div>
         </div>
-        <button
-          onClick={() => setCreateOpen(true)}
-          disabled={!company}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-md bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-        >
-          <UserPlus className="w-4 h-4" />
-          Agregar usuario
-        </button>
-      </div>
+      ),
+    },
+    {
+      key: 'role',
+      header: 'Rol',
+      hideSm: true,
+      cell: (u) => <StatusBadge kind="neutral" label={ROLE_LABEL[u.role] ?? u.role} />,
+    },
+    { key: 'status', header: 'Estado', hideSm: true, cell: statusBadge },
+    { key: 'twofa', header: '2FA', hideSm: true, cell: twofaBadge },
+    {
+      key: 'last',
+      header: 'Último acceso',
+      hideSm: true,
+      cell: (u) => (
+        <span className="whitespace-nowrap text-text-2" suppressHydrationWarning>
+          {formatLastLogin(u.last_login_at, now, formatDateRelative)}
+        </span>
+      ),
+    },
+  ];
+
+  return (
+    <div className="max-w-6xl space-y-4">
+      <Link href={`/superadmin/companies/${companyId}`} className={actionButtonClass('ghost', '-ml-3')}>
+        <ArrowLeft aria-hidden className="size-4" /> Volver a la entidad
+      </Link>
+
+      <PageHeader
+        icon={Users}
+        title={company?.name ? `Usuarios — ${company.name}` : 'Usuarios'}
+        subtitle="Roles, accesos por módulo, seguridad y auditoría de cada usuario de la organización."
+        actions={
+          <ActionButton variant="primary" onClick={() => setCreateOpen(true)} disabled={!company}>
+            <UserPlus aria-hidden className="size-4" />
+            Agregar usuario
+          </ActionButton>
+        }
+      />
 
       {error && (
-        <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
-          {error}
-        </div>
+        <Notice
+          kind="bad"
+          title="No se pudo cargar la lista de usuarios"
+          action={
+            <ActionButton variant="secondary" onClick={() => void load()}>
+              <RotateCw aria-hidden className="size-4" /> Reintentar
+            </ActionButton>
+          }
+        >
+          {error}. No se muestra la tabla: una lista vacía acá diría que la organización no tiene usuarios.
+        </Notice>
       )}
 
-      {loading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="w-4 h-4 animate-spin" /> Cargando usuarios…
-        </div>
-      ) : (
-        <div className="rounded-lg border border-border overflow-hidden">
-          <DataTable<CompanyUser>
-            data={users}
+      {loading && !error && (
+        <Panel title="Usuarios de la organización" flush>
+          <div className="space-y-2 p-4">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-11" />
+            ))}
+          </div>
+        </Panel>
+      )}
+
+      {!loading && !error && (
+        <Panel
+          title="Usuarios de la organización"
+          hint={`${formatCount(users.length)} ${plural(users.length, 'usuario', 'usuarios')}`}
+          flush
+        >
+          <FinTable<CompanyUser>
+            caption="Usuarios de la organización"
+            columns={columns}
+            rows={users}
+            rowKey={(u) => u.id}
+            selectedKey={selected?.id ?? null}
             empty={
               <EmptyState
                 compact
@@ -143,82 +219,14 @@ export default function CompanyUsersPage() {
                 description="Esta organización aún no tiene usuarios."
               />
             }
-            columns={[
-              {
-                header: 'Usuario',
-                accessor: (u) => (
-                  <div className="flex items-center gap-3">
-                    <div className="w-9 h-9 rounded-full bg-[var(--color-primary)] text-white flex items-center justify-center text-xs font-semibold shrink-0">
-                      {initials(u.name || u.email)}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="font-medium truncate">{u.name || '(sin nombre)'}</div>
-                      <div className="text-xs text-muted-foreground truncate">{u.email}</div>
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                header: 'Rol',
-                accessor: (u) => (
-                  <span
-                    className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                      ROLE_COLORS[u.role] ?? ROLE_COLORS.invitado
-                    }`}
-                  >
-                    {ROLE_LABEL[u.role] ?? u.role}
-                  </span>
-                ),
-              },
-              {
-                header: 'Estado',
-                accessor: (u) => (
-                  <span
-                    className={`inline-flex items-center gap-1.5 text-xs ${
-                      u.status === 'active'
-                        ? 'text-positive'
-                        : 'text-muted-foreground'
-                    }`}
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${
-                        u.status === 'active' ? 'bg-emerald-500' : 'bg-muted-foreground/50'
-                      }`}
-                    />
-                    {u.status === 'active' ? 'Activo' : 'Inactivo'}
-                  </span>
-                ),
-              },
-              {
-                header: '2FA',
-                accessor: (u) =>
-                  u.twofa_enabled ? (
-                    <span className="text-xs text-positive">Activo</span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">No configurado</span>
-                  ),
-              },
-              {
-                header: 'Último acceso',
-                accessor: (u) => (
-                  <span className="text-xs text-muted-foreground">{formatLastLogin(u.last_login_at)}</span>
-                ),
-              },
-              {
-                header: '',
-                align: 'right',
-                accessor: (u) => (
-                  <button
-                    onClick={() => setSelected(u)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border hover:bg-muted"
-                  >
-                    <Settings2 className="w-3.5 h-3.5" /> Gestionar
-                  </button>
-                ),
-              },
-            ]}
+            rowActions={(u) => (
+              <ActionButton variant="ghost" onClick={() => setSelected(u)}>
+                <Settings2 aria-hidden className="size-4" />
+                <span className="max-sm:sr-only">Gestionar</span>
+              </ActionButton>
+            )}
           />
-        </div>
+        </Panel>
       )}
 
       {selected && company && (
@@ -245,29 +253,4 @@ export default function CompanyUsersPage() {
       )}
     </div>
   );
-}
-
-function initials(label: string): string {
-  return (label || '?')
-    .split(/\s+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join('');
-}
-
-function formatLastLogin(ts: string | null): string {
-  if (!ts) return 'Nunca';
-  const d = new Date(ts);
-  if (Number.isNaN(d.getTime())) return '—';
-  const now = Date.now();
-  const diffMs = now - d.getTime();
-  const mins = Math.floor(diffMs / 60000);
-  if (mins < 1) return 'hace un momento';
-  if (mins < 60) return `hace ${mins} min`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `hace ${hrs} h`;
-  const days = Math.floor(hrs / 24);
-  if (days < 30) return `hace ${days} d`;
-  return formatDateRelative(d);
 }

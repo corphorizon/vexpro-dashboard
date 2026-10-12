@@ -2,12 +2,28 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
-import Link from 'next/link';
-import { ArrowLeft, Plus, Trash2, Loader2, Mail } from 'lucide-react';
+import { Plus, Trash2, Mail, RotateCw, Users } from 'lucide-react';
 import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import { ROLE_DEFAULT_MODULES } from '@/lib/auth-context';
 import { blockedModules } from '@/lib/business-model';
 import { ALL_MODULES } from '../companies/_form';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Field, Input, Select } from '@/components/ui/field';
+import { EmptyState } from '@/components/ui/empty-state';
+import { Skeleton } from '@/components/ui/skeleton';
+import { ActionButton } from '@/components/payment-orders/action-button';
+import {
+  USERS_LIST_LIMIT,
+  companySummary,
+  formatCount,
+  membershipCoverage,
+  plural,
+  twofaKind,
+} from '@/components/superadmin/superadmin-model';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/users — cross-tenant user management
@@ -21,6 +37,18 @@ import { ALL_MODULES } from '../companies/_form';
 //
 // Auth user records in auth.users are NOT deleted here — only the membership,
 // because the same person may belong to multiple tenants.
+//
+// «Libro mayor» (2026-10-12):
+//   · El fallo que no da error: con un error al cambiar de filtro, la tabla
+//     del filtro ANTERIOR seguía debajo del aviso. Ahora con error no hay
+//     tabla. Y el endpoint corta en 500 filas sin flag: si la suma de
+//     user_count del filtro supera lo que llegó (o se llega al tope), un
+//     Notice y el pie lo dicen con números (membershipCoverage).
+//   · <table> a mano → FinTable (tarjetas < 720 px: empresa y 2FA bajo el
+//     nombre, el rol editable sigue a mano). Badges de paleta cruda →
+//     StatusBadge; botones rojo/azul crudos → ActionButton danger/ghost.
+//   · El «Volver al panel» se fue: la barra lateral del panel ya lleva.
+//   · Endpoints, payloads, confirmaciones y el fetch plano (ver load) iguales.
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface UserRow {
@@ -45,6 +73,8 @@ interface CompanyOpt {
   status: string;
   active_modules: string[] | null;
   business_model: string | null;
+  /** Membresías de la entidad (GET /api/superadmin/companies). Sirve para contar el recorte. */
+  user_count?: number | null;
 }
 
 // Los roles salen del registro único (src/lib/roles.ts). Era la sexta copia
@@ -154,145 +184,167 @@ export default function SuperadminUsersPage() {
     }
   };
 
-  return (
-    <div className="space-y-6">
-      <Link
-        href="/superadmin"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="w-4 h-4" /> Volver al panel
-      </Link>
+  // Cobertura de la lista: la suma de user_count del filtro (misma tabla,
+  // company_users) dice cuántas membresías hay; el endpoint corta en 500.
+  const expected =
+    filterCompany === 'all'
+      ? companySummary(companies)?.users ?? null
+      : companies.find((c) => c.id === filterCompany)?.user_count ?? null;
+  const coverage = users ? membershipCoverage(users.length, expected) : null;
+  const filterName =
+    filterCompany === 'all' ? 'todas las entidades' : companies.find((c) => c.id === filterCompany)?.name ?? 'la entidad';
 
-      <div className="flex flex-col sm:flex-row sm:items-end sm:justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold">Usuarios</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Gestión de usuarios cross-tenant.
-          </p>
+  const twofaBadge = (u: UserRow) => (
+    <StatusBadge kind={twofaKind(u.twofa_enabled)} label={u.twofa_enabled ? '2FA activo' : '2FA sin configurar'} />
+  );
+
+  const columns: FinColumn<UserRow>[] = [
+    {
+      key: 'user',
+      header: 'Usuario',
+      cell: (u) => (
+        <div className="min-w-0 py-1.5 max-[720px]:py-0">
+          <div className="truncate font-medium text-foreground">{u.name}</div>
+          <div className="truncate text-[12px] leading-[1.3] text-text-3">{u.email}</div>
+          <div className="mt-1 hidden flex-wrap items-center gap-1.5 text-[12px] text-text-3 max-[720px]:flex">
+            <span>{u.companies?.name ?? '—'}</span>
+            {u.companies?.status === 'inactive' && <StatusBadge kind="neutral" label="Entidad inactiva" />}
+            {twofaBadge(u)}
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <select
-            value={filterCompany}
-            onChange={(e) => setFilterCompany(e.target.value)}
-            className="h-9 px-3 rounded-lg border border-border bg-card text-sm"
-          >
-            <option value="all">Todas las entidades</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-          <button
-            onClick={() => setInviteOpen(true)}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-          >
-            <Plus className="w-4 h-4" /> Invitar usuario
-          </button>
-        </div>
-      </div>
+      ),
+    },
+    {
+      key: 'company',
+      header: 'Empresa',
+      hideSm: true,
+      cell: (u) => (
+        <span className="inline-flex flex-wrap items-center gap-1.5">
+          <span className="text-text-2">{u.companies?.name ?? '—'}</span>
+          {u.companies?.status === 'inactive' && <StatusBadge kind="neutral" label="inactiva" />}
+        </span>
+      ),
+    },
+    {
+      key: 'role',
+      header: 'Rol',
+      cardSide: 'left',
+      cell: (u) => (
+        <Select
+          aria-label={`Rol de ${u.email}`}
+          value={u.role}
+          onChange={(e) => updateUser(u.id, { role: e.target.value })}
+          className="max-w-[180px]"
+        >
+          {BUILT_IN_ROLES.map((r) => (
+            <option key={r} value={r}>
+              {BUILT_IN_ROLE_LABELS[r]}
+            </option>
+          ))}
+          {/* Allow the current value even if it's a custom role */}
+          {!ROLES.includes(u.role) && <option value={u.role}>{u.role} (custom)</option>}
+        </Select>
+      ),
+    },
+    { key: 'twofa', header: '2FA', hideSm: true, cell: twofaBadge },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <PageHeader
+        title="Usuarios"
+        subtitle="Membresías de todas las entidades: rol, invitación y acceso."
+        actions={
+          <>
+            <Select
+              aria-label="Filtrar por entidad"
+              value={filterCompany}
+              onChange={(e) => setFilterCompany(e.target.value)}
+              className="w-auto min-w-[200px]"
+            >
+              <option value="all">Todas las entidades</option>
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+            <ActionButton variant="primary" onClick={() => setInviteOpen(true)}>
+              <Plus aria-hidden className="size-4" /> Invitar usuario
+            </ActionButton>
+          </>
+        }
+      />
 
       {error && (
-        <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
-          {error}
-        </div>
+        <Notice
+          kind="bad"
+          title="No se pudo cargar la lista de usuarios"
+          action={
+            <ActionButton variant="secondary" onClick={() => void load()}>
+              <RotateCw aria-hidden className="size-4" /> Reintentar
+            </ActionButton>
+          }
+        >
+          {error}. No se muestra la lista anterior: podría ser de otro filtro.
+        </Notice>
       )}
 
-      {!error && users === null && (
-        <div className="animate-pulse h-48 rounded-lg bg-muted/50" />
+      {!error && coverage?.truncated && users && (
+        <Notice kind="pend" title="La lista está recortada">
+          {coverage.total !== null
+            ? `Se muestran ${formatCount(users.length)} de ${formatCount(coverage.total)} membresías de ${filterName}.`
+            : `Se muestran ${formatCount(users.length)} membresías: es el máximo que devuelve el servidor, puede haber más.`}{' '}
+          Filtrá por entidad para ver el resto.
+        </Notice>
       )}
 
-      {users !== null && users.length === 0 && !error && (
-        <div className="rounded-lg border border-dashed border-border bg-card p-8 text-center text-sm text-muted-foreground">
-          Sin usuarios para el filtro actual.
-        </div>
-      )}
+      {!error && users === null && <Skeleton className="h-48" />}
 
-      {users && users.length > 0 && (
-        <div className="rounded-xl border border-border bg-card overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Usuario</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Empresa</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Rol</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">2FA</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.id} className="border-b border-border/50 hover:bg-muted/30">
-                  <td className="p-3">
-                    <div className="font-medium">{u.name}</div>
-                    <div className="text-xs text-muted-foreground">{u.email}</div>
-                  </td>
-                  <td className="p-3 text-xs">
-                    {u.companies?.name ?? '—'}
-                    {u.companies?.status === 'inactive' && (
-                      <span className="ml-1 px-1.5 py-0.5 rounded bg-slate-200 dark:bg-slate-800 text-[10px]">
-                        inactiva
-                      </span>
-                    )}
-                  </td>
-                  <td className="p-3">
-                    <select
-                      value={u.role}
-                      onChange={(e) => updateUser(u.id, { role: e.target.value })}
-                      className="px-2 py-1 rounded border border-border bg-background text-xs"
-                    >
-                      {BUILT_IN_ROLES.map((r) => (
-                        <option key={r} value={r}>
-                          {BUILT_IN_ROLE_LABELS[r]}
-                        </option>
-                      ))}
-                      {/* Allow the current value even if it's a custom role */}
-                      {!ROLES.includes(u.role) && (
-                        <option value={u.role}>{u.role} (custom)</option>
-                      )}
-                    </select>
-                  </td>
-                  <td className="p-3">
-                    <span
-                      className={
-                        u.twofa_enabled
-                          ? 'inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium bg-emerald-100 text-emerald-800 dark:bg-emerald-900/50 dark:text-emerald-300'
-                          : 'inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
-                      }
-                    >
-                      {u.twofa_enabled ? 'activo' : 'no activo'}
-                    </span>
-                  </td>
-                  <td className="p-3 text-right">
-                    <div className="inline-flex items-center gap-2 justify-end">
-                      {/* Reenviar invitación: solo si el usuario aún no ha
-                          activado su cuenta (must_change_password=true). */}
-                      {u.must_change_password && (
-                        <button
-                          onClick={() => resendInvite(u.id, u.email)}
-                          disabled={resendingId === u.id}
-                          title="Reenviar invitación (el usuario aún no creó contraseña)"
-                          className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-blue-300 text-blue-600 text-xs hover:bg-blue-50 dark:hover:bg-blue-950/40 disabled:opacity-50"
-                        >
-                          {resendingId === u.id
-                            ? <Loader2 className="w-3 h-3 animate-spin" />
-                            : <Mail className="w-3 h-3" />}
-                          Reenviar
-                        </button>
-                      )}
-                      <button
-                        onClick={() => deleteUser(u.id, u.email)}
-                        className="inline-flex items-center gap-1 px-2 py-1 rounded-md border border-red-300 text-red-600 text-xs hover:bg-red-50 dark:hover:bg-red-950/40"
-                      >
-                        <Trash2 className="w-3 h-3" /> Quitar
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+      {!error && users !== null && (
+        <Panel
+          title={filterCompany === 'all' ? 'Todas las membresías' : `Membresías de ${filterName}`}
+          hint={`${formatCount(users.length)} ${plural(users.length, 'usuario', 'usuarios')}`}
+          flush
+          footer={
+            coverage?.truncated
+              ? coverage.total !== null
+                ? `Mostrando ${formatCount(users.length)} de ${formatCount(coverage.total)}.`
+                : `Mostrando ${formatCount(users.length)} (tope del servidor: ${formatCount(USERS_LIST_LIMIT)}).`
+              : undefined
+          }
+        >
+          <FinTable<UserRow>
+            caption="Usuarios de la plataforma"
+            columns={columns}
+            rows={users}
+            rowKey={(u) => u.id}
+            empty={
+              <EmptyState compact icon={Users} title="Sin usuarios" description="No hay usuarios para el filtro actual." />
+            }
+            rowActions={(u) => (
+              <>
+                {/* Reenviar invitación: solo si el usuario aún no ha
+                    activado su cuenta (must_change_password=true). */}
+                {u.must_change_password && (
+                  <ActionButton
+                    variant="ghost"
+                    onClick={() => resendInvite(u.id, u.email)}
+                    loading={resendingId === u.id}
+                    title="Reenviar invitación (el usuario aún no creó contraseña)"
+                  >
+                    {resendingId !== u.id && <Mail aria-hidden className="size-4" />}
+                    <span className="max-sm:sr-only">Reenviar</span>
+                  </ActionButton>
+                )}
+                <ActionButton variant="danger" onClick={() => deleteUser(u.id, u.email)}>
+                  <Trash2 aria-hidden className="size-4" />
+                  <span className="max-sm:sr-only">Quitar</span>
+                </ActionButton>
+              </>
+            )}
+          />
+        </Panel>
       )}
 
       {inviteOpen && (
@@ -386,110 +438,98 @@ function InviteModal({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
       onClick={onClose}
     >
       <form
         onSubmit={submit}
         onClick={(e) => e.stopPropagation()}
-        className="bg-card rounded-xl shadow-xl p-6 max-w-lg w-full space-y-4 max-h-[90vh] overflow-y-auto"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="invite-title"
+        className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-hidden rounded-ui-xl border border-border bg-card text-foreground shadow-3"
       >
-        <h3 className="text-lg font-semibold">Invitar usuario</h3>
-        {err && (
-          <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-2 text-sm">
-            {err}
-          </div>
-        )}
-
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <label className="block">
-            <span className="text-xs font-medium mb-1 inline-block">Nombre</span>
-            <input
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium mb-1 inline-block">Email</span>
-            <input
-              required
-              type="email"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium mb-1 inline-block">Empresa</span>
-            <select
-              required
-              value={companyId}
-              onChange={(e) => onCompanyChange(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            >
-              {companies.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium mb-1 inline-block">Rol</span>
-            <select
-              value={role}
-              onChange={(e) => onRoleChange(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            >
-              {BUILT_IN_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {BUILT_IN_ROLE_LABELS[r]}
-                </option>
-              ))}
-            </select>
-          </label>
+        <div className="border-b border-border px-5 py-3">
+          <h3 id="invite-title" className="text-[15px] font-semibold">Invitar usuario</h3>
+          <p className="text-[12.5px] text-text-3">Recibe un email para crear su contraseña.</p>
         </div>
 
-        <div>
-          <p className="text-xs font-medium mb-2">Módulos permitidos</p>
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 p-3 rounded-lg border border-border">
+        <div className="space-y-4 overflow-y-auto p-5">
+          {err && (
+            <Notice kind="bad" title="No se pudo enviar la invitación">
+              {err}
+            </Notice>
+          )}
+          {companies.length === 0 && (
+            <Notice kind="pend" title="No hay entidades para elegir">
+              La lista de entidades no cargó o está vacía: sin entidad no se puede invitar.
+            </Notice>
+          )}
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label="Nombre" required>
+              <Input value={name} onChange={(e) => setName(e.target.value)} />
+            </Field>
+            <Field label="Email" required>
+              <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </Field>
+            <Field label="Empresa" required>
+              <Select value={companyId} onChange={(e) => onCompanyChange(e.target.value)}>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+            <Field label="Rol">
+              <Select value={role} onChange={(e) => onRoleChange(e.target.value)}>
+                {BUILT_IN_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {BUILT_IN_ROLE_LABELS[r]}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+
+          <div>
+            <p className="mb-1.5 text-[12.5px] font-medium text-text-2">Módulos permitidos</p>
             {eligibleModules.length === 0 ? (
-              <p className="col-span-full text-xs text-muted-foreground italic">
+              <Notice kind="info" title="Sin módulos disponibles">
                 La empresa seleccionada no tiene módulos disponibles.
-              </p>
+              </Notice>
             ) : (
-              eligibleModules.map((m) => (
-                <label key={m.key} className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={allowed.includes(m.key)}
-                    onChange={() => toggle(m.key)}
-                    className="rounded border-border"
-                  />
-                  <span>{m.label}</span>
-                </label>
-              ))
+              <div className="grid grid-cols-1 gap-x-4 gap-y-1 rounded-ui-md border border-border p-2 min-[420px]:grid-cols-2 sm:grid-cols-3">
+                {eligibleModules.map((m) => (
+                  <label
+                    key={m.key}
+                    className="flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-ui-sm px-1 text-[13px] hover:bg-surface-2 pointer-coarse:min-h-11"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={allowed.includes(m.key)}
+                      onChange={() => toggle(m.key)}
+                      className="size-4 shrink-0 accent-brand-ink"
+                    />
+                    <span>{m.label}</span>
+                  </label>
+                ))}
+              </div>
             )}
+            <p className="mt-1 text-[12px] text-text-3">
+              Defaults según el rol, acotados a los módulos activos de la empresa.
+            </p>
           </div>
-          <p className="text-[11px] text-muted-foreground mt-1">
-            Defaults según el rol, acotados a los módulos activos de la empresa.
-          </p>
         </div>
 
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted">
+        <div className="flex justify-end gap-2 border-t border-border px-5 py-3">
+          <ActionButton variant="secondary" onClick={onClose}>
             Cancelar
-          </button>
-          <button
-            type="submit"
-            disabled={submitting || !companyId}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-          >
-            {submitting && <Loader2 className="w-4 h-4 animate-spin" />}
+          </ActionButton>
+          <ActionButton type="submit" variant="primary" loading={submitting} disabled={!companyId}>
             Enviar invitación
-          </button>
+          </ActionButton>
         </div>
       </form>
     </div>

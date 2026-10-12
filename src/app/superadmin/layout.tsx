@@ -5,7 +5,10 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
-import { ShieldCheck, LogOut } from 'lucide-react';
+import { LoadingScreen } from '@/components/loading-screen';
+import { SystemScreen } from '@/components/system-screen';
+import { SuperadminShell } from '@/components/superadmin/superadmin-shell';
+import { actionButtonClass } from '@/components/payment-orders/action-button';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin — Horizon Consulting platform panel.
@@ -14,8 +17,10 @@ import { ShieldCheck, LogOut } from 'lucide-react';
 // under this route. Everyone else (unauthenticated OR authenticated but not
 // superadmin) gets bounced out.
 //
-// This is the first Phase-3 surface — a minimal shell with the guard and a
-// landing page. The full dashboard + entity CRUD + user CRUD come in Phase 4.
+// «Libro mayor» (2026-10-12): la cabecera `bg-slate-900` siempre oscura pasó
+// a SuperadminShell (components/superadmin/), de la misma familia que el
+// shell del dashboard; carga y 403 usan las pantallas de sistema compartidas.
+// El guard y sus redirecciones no cambiaron.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function SuperadminLayout({ children }: { children: React.ReactNode }) {
@@ -45,50 +50,27 @@ export default function SuperadminLayout({ children }: { children: React.ReactNo
   }, [user, isLoading, router]);
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <p className="text-muted-foreground text-sm">Cargando…</p>
-      </div>
-    );
+    return <LoadingScreen />;
   }
 
   if (!user || !user.is_superadmin) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <p className="text-muted-foreground text-sm">403 · Acceso restringido</p>
-      </div>
+      <SystemScreen
+        code="403"
+        title="Acceso restringido"
+        body="Este panel es sólo para los superadmins de la plataforma. Te estamos redirigiendo."
+        action={
+          <Link href="/" className={actionButtonClass('primary')}>
+            Ir al inicio
+          </Link>
+        }
+      />
     );
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      {/* Header */}
-      <header className="border-b border-border bg-slate-900 text-slate-100">
-        <div className="max-w-7xl mx-auto flex items-center justify-between px-4 py-3">
-          <Link href="/superadmin" className="flex items-center gap-3 font-semibold">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src="/brand/logo-white.svg"
-              alt="Smart Dashboard"
-              className="h-7 w-auto object-contain"
-            />
-            <span className="hidden sm:inline text-slate-300 font-normal">·</span>
-            <ShieldCheck className="w-4 h-4 text-amber-300" />
-            <span className="text-sm">Superadmin</span>
-          </Link>
-          <div className="flex items-center gap-4 text-sm">
-            <span className="hidden sm:inline text-slate-400">{user.email}</span>
-            <button
-              onClick={logout}
-              className="inline-flex items-center gap-1 text-slate-300 hover:text-white"
-            >
-              <LogOut className="w-4 h-4" /> Salir
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="max-w-7xl mx-auto px-4 py-6">{children}</main>
-    </div>
+    <SuperadminShell email={user.email} name={user.name} onLogout={logout}>
+      {children}
+    </SuperadminShell>
   );
 }

@@ -14,16 +14,35 @@
 //  2. A quién le está abriendo la puerta y a qué organización.
 //  3. Si el token todavía se usa, antes de revocarlo. Cortar algo vivo un
 //     viernes es peor que dejar algo muerto.
+//
+// «Libro mayor» (2026-10-12):
+//   · El fallo que no da error: si la carga fallaba había un toast y debajo
+//     «Todavía no hay tokens» — la lista vacía afirmaba algo que no se sabía.
+//     Ahora con error hay un Notice con «Reintentar» y no hay lista. Y si la
+//     lista de organizaciones fallaba (`.catch(() => null)`), el selector del
+//     alta quedaba vacío sin explicación: ahora lo dice.
+//   · «Copiar» decía «Copiado» aunque el portapapeles rechazara la escritura
+//     (`void writeText`): con el secreto que se ve UNA vez, eso es perderlo.
+//     Ahora espera la promesa y, si falla, pide copiarlo a mano.
+//   · El secreto sigue viviendo sólo en memoria hasta «Ya lo copié»; ni el
+//     alta ni la revocación cambiaron (mismos endpoints y payloads).
+//   · Card/Button/Badge legados → Panel, ActionButton, StatusBadge; scopes con
+//     Chip; tarjeta por token → FinTable (tarjetas < 720 px).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useState } from 'react';
-import Link from 'next/link';
-import { ArrowLeft, KeyRound, Plus, Ban, Copy, Check, AlertTriangle } from 'lucide-react';
+import { KeyRound, Plus, Ban, Copy, Check, AlertTriangle, RotateCw } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
-import { Card, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
+import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Notice } from '@/components/ui/notice';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Chip } from '@/components/ui/chip';
+import { Field, Input, Select } from '@/components/ui/field';
 import { EmptyState } from '@/components/ui/empty-state';
+import { ActionButton } from '@/components/payment-orders/action-button';
+import { formatCount, plural } from '@/components/superadmin/superadmin-model';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToasts } from '@/components/ui/toast';
@@ -65,7 +84,10 @@ export default function TokensPage() {
   /** El secreto recién creado. Vive sólo en memoria y sólo hasta que se cierre. */
   const [secret, setSecret] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyFailed, setCopyFailed] = useState(false);
   const [toRevoke, setToRevoke] = useState<TokenRow | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [companiesError, setCompaniesError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -78,10 +100,17 @@ export default function TokensPage() {
       if (!tRes.ok || t?.success === false) throw new Error(t?.error ?? 'No se pudieron cargar los tokens');
       setTokens(t.tokens ?? []);
       setScopes(t.scopes ?? []);
+      setLoadError(null);
       const c = await cRes.json().catch(() => null);
-      setCompanies(Array.isArray(c?.companies) ? c.companies : Array.isArray(c) ? c : []);
+      const list = Array.isArray(c?.companies) ? c.companies : Array.isArray(c) ? c : null;
+      setCompanies(list ?? []);
+      setCompaniesError(
+        cRes.ok && list ? null : (c?.error as string | undefined) ?? `HTTP ${cRes.status}`,
+      );
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Error al cargar');
+      const msg = err instanceof Error ? err.message : 'Error al cargar';
+      setLoadError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -103,6 +132,7 @@ export default function TokensPage() {
       if (!res.ok || data?.success === false) throw new Error(data?.error ?? 'No se pudo crear');
       setSecret(data.secret);
       setCopied(false);
+      setCopyFailed(false);
       setCreating(false);
       setForm({ company_id: '', app_name: '', scopes: [] });
       await load();
@@ -133,218 +163,266 @@ export default function TokensPage() {
     }
   }
 
+  async function copySecret() {
+    if (!secret) return;
+    try {
+      await navigator.clipboard.writeText(secret);
+      setCopied(true);
+      setCopyFailed(false);
+    } catch {
+      // Antes: `void writeText(...)` y «Copiado» igual. Si el portapapeles
+      // está bloqueado, el usuario cerraba el aviso creyendo que lo tenía.
+      setCopied(false);
+      setCopyFailed(true);
+    }
+  }
+
+  const columns: FinColumn<TokenRow>[] = [
+    {
+      key: 'app',
+      header: 'Aplicativo',
+      cell: (t) => (
+        <div className={cn('min-w-0 py-1.5 max-[720px]:py-0', !t.is_active && 'text-text-2')}>
+          <div className="truncate font-medium">{t.app_name}</div>
+          <div className="truncate font-mono text-[12px] text-text-3">{t.token_prefix}…</div>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {t.scopes.length === 0 ? (
+              <span className="text-[12px] text-text-3">sin permisos</span>
+            ) : (
+              t.scopes.map((s) => (
+                <span key={s} className="rounded-ui-sm border border-border-strong px-1.5 font-mono text-[12px] leading-5 text-text-2">
+                  {s}
+                </span>
+              ))
+            )}
+          </div>
+          <div className="mt-1 hidden flex-wrap items-center gap-1.5 text-[12px] text-text-3 max-[720px]:flex">
+            <StatusBadge kind={t.is_active ? 'ok' : 'neutral'} label={t.is_active ? 'Activo' : 'Revocado'} />
+            <span>{t.companies?.name ?? '—'}</span>
+            <span>· {t.last_used_at ? `usado ${formatDateTime(t.last_used_at)}` : 'nunca se usó'}</span>
+          </div>
+        </div>
+      ),
+    },
+    {
+      key: 'company',
+      header: 'Organización',
+      hideSm: true,
+      cell: (t) => <span className="text-text-2">{t.companies?.name ?? '—'}</span>,
+    },
+    {
+      key: 'status',
+      header: 'Estado',
+      hideSm: true,
+      cell: (t) => (
+        <div className="py-1.5">
+          <StatusBadge kind={t.is_active ? 'ok' : 'neutral'} label={t.is_active ? 'Activo' : 'Revocado'} />
+          {!t.is_active && (
+            <div className="mt-0.5 text-[12px] leading-[1.3] text-text-3">
+              {formatDateTime(t.revoked_at)}
+              {t.revoked_reason ? ` · ${t.revoked_reason}` : ''}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      key: 'used',
+      header: 'Último uso',
+      hideSm: true,
+      // Antes de cortar algo, saber si está vivo.
+      cell: (t) => (
+        <div className="py-1.5">
+          <div className={cn('whitespace-nowrap', t.last_used_at ? 'text-foreground' : 'text-text-3')}>
+            {t.last_used_at ? formatDateTime(t.last_used_at) : 'Nunca se usó'}
+          </div>
+          {t.last_used_ip && <div className="font-mono text-[12px] text-text-3">{t.last_used_ip}</div>}
+        </div>
+      ),
+    },
+    {
+      key: 'calls',
+      header: 'Llamadas',
+      kind: 'number',
+      value: (t) => t.request_count,
+    },
+    {
+      key: 'created',
+      header: 'Creado',
+      hideSm: true,
+      cell: (t) => (
+        <div className="py-1.5">
+          <div className="whitespace-nowrap">{formatDateTime(t.created_at)}</div>
+          {t.created_by_name && <div className="text-[12px] text-text-3">{t.created_by_name}</div>}
+        </div>
+      ),
+    },
+  ];
+
+  const activeCount = tokens.filter((t) => t.is_active).length;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {ToastHost}
 
-      <Link
-        href="/superadmin"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="h-4 w-4" aria-hidden />
-        Volver
-      </Link>
-
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold">
-            <KeyRound className="h-6 w-6" aria-hidden />
-            Tokens de aplicativos
-          </h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Smart Dashboard es el único que se conecta al MySQL de MetaTrader y al Mongo del CRM.
-            Los demás aplicativos leen por la API con uno de estos tokens.
-          </p>
-        </div>
-        <Button variant="primary" onClick={() => setCreating(true)}>
-          <Plus className="h-4 w-4" aria-hidden />
-          Crear token
-        </Button>
-      </div>
+      <PageHeader
+        icon={KeyRound}
+        title="Tokens de aplicativos"
+        subtitle="Smart Dashboard es el único que se conecta al MySQL de MetaTrader y al Mongo del CRM. Los demás aplicativos leen por la API con uno de estos tokens."
+        actions={
+          <ActionButton variant="primary" onClick={() => setCreating(true)} disabled={creating}>
+            <Plus aria-hidden className="size-4" />
+            Crear token
+          </ActionButton>
+        }
+      />
 
       {/* ── El secreto: se ve una vez ─────────────────────────────────────── */}
       {secret && (
-        <Card className="border-warning">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-warning" aria-hidden />
+        <section
+          role="alert"
+          className="rounded-ui-lg border border-pend/35 bg-pend-bg p-4 text-foreground shadow-1"
+        >
+          <div className="flex items-start gap-2.5">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-pend" aria-hidden />
             <div className="min-w-0 flex-1">
-              <CardTitle>Copialo ahora: no se puede volver a ver</CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
+              <h2 className="text-[15px] font-semibold">Copialo ahora: no se puede volver a ver</h2>
+              <p className="mt-1 text-[13px] text-text-2">
                 No lo guardamos —sólo guardamos su huella—, así que si se pierde hay que revocarlo y
                 crear otro. Tratalo como una contraseña: no lo pegues en un chat de grupo.
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
-                <code className="min-w-0 flex-1 break-all rounded-lg border border-border bg-muted px-3 py-2 font-mono text-sm">
+                <code className="min-w-0 flex-1 break-all rounded-ui-md border border-border-strong bg-card px-3 py-2 font-mono text-[13px]">
                   {secret}
                 </code>
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(secret);
-                    setCopied(true);
-                  }}
-                >
-                  {copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
+                <ActionButton variant="secondary" onClick={() => void copySecret()}>
+                  {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
                   {copied ? 'Copiado' : 'Copiar'}
-                </Button>
-                <Button variant="ghost" onClick={() => setSecret(null)}>
+                </ActionButton>
+                <ActionButton variant="ghost" onClick={() => setSecret(null)}>
                   Ya lo copié
-                </Button>
+                </ActionButton>
               </div>
+              {copyFailed && (
+                <p className="mt-2 text-[12px] font-medium text-neg">
+                  No se pudo copiar automáticamente: seleccioná el texto y copialo a mano antes de cerrar.
+                </p>
+              )}
             </div>
           </div>
-        </Card>
+        </section>
       )}
 
       {/* ── Alta ──────────────────────────────────────────────────────────── */}
       {creating && (
-        <Card>
-          <CardTitle>Nuevo token</CardTitle>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <label className="block text-sm">
-              <span className="font-medium">Organización</span>
-              <select
-                value={form.company_id}
-                onChange={(e) => setForm({ ...form, company_id: e.target.value })}
-                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
-              >
+        <Panel title="Nuevo token" hint="El secreto se muestra una sola vez al crearlo.">
+          {companiesError && (
+            <Notice kind="bad" title="No se pudo cargar la lista de organizaciones" className="mb-4">
+              {companiesError}. Sin la lista no se puede elegir a quién abrirle la puerta.
+            </Notice>
+          )}
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Field label="Organización" hint="El token sólo podrá leer datos de esta organización, aunque pida otra.">
+              <Select value={form.company_id} onChange={(e) => setForm({ ...form, company_id: e.target.value })}>
                 <option value="">Elegí una…</option>
                 {companies.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
-              </select>
-              <span className="mt-1 block text-xs text-muted-foreground">
-                El token sólo podrá leer datos de esta organización, aunque pida otra.
-              </span>
-            </label>
+              </Select>
+            </Field>
 
-            <label className="block text-sm">
-              <span className="font-medium">Aplicativo</span>
-              <input
+            <Field label="Aplicativo" hint="Sirve para saber a quién cortarle el acceso si hace falta.">
+              <Input
                 value={form.app_name}
                 onChange={(e) => setForm({ ...form, app_name: e.target.value })}
                 placeholder="atlas, assistant, task-system…"
-                className="mt-1 w-full rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
               />
-              <span className="mt-1 block text-xs text-muted-foreground">
-                Sirve para saber a quién cortarle el acceso si hace falta.
-              </span>
-            </label>
+            </Field>
           </div>
 
           <fieldset className="mt-4">
-            <legend className="text-sm font-medium">Permisos</legend>
-            <p className="mb-2 text-xs text-muted-foreground">
-              Un token sin permisos no puede leer nada.
-            </p>
+            <legend className="text-[12.5px] font-medium text-text-2">Permisos</legend>
+            <p className="mb-2 text-[12px] text-text-3">Un token sin permisos no puede leer nada.</p>
             <div className="flex flex-wrap gap-2">
               {scopes.map((s) => {
                 const on = form.scopes.includes(s);
                 return (
-                  <button
+                  <Chip
                     key={s}
-                    type="button"
-                    aria-pressed={on}
+                    active={on}
+                    className="font-mono"
                     onClick={() =>
                       setForm({
                         ...form,
                         scopes: on ? form.scopes.filter((x) => x !== s) : [...form.scopes, s],
                       })
                     }
-                    className={cn(
-                      'rounded-md border px-3 py-1.5 font-mono text-xs transition-colors',
-                      on ? 'border-primary bg-primary text-white' : 'border-border hover:bg-muted',
-                    )}
                   >
                     {s}
-                  </button>
+                  </Chip>
                 );
               })}
             </div>
           </fieldset>
 
           <div className="mt-4 flex gap-2">
-            <Button variant="primary" loading={busy} onClick={crear}>
+            <ActionButton variant="primary" loading={busy} onClick={crear}>
               Crear
-            </Button>
-            <Button variant="ghost" onClick={() => setCreating(false)}>
+            </ActionButton>
+            <ActionButton variant="ghost" onClick={() => setCreating(false)}>
               Cancelar
-            </Button>
+            </ActionButton>
           </div>
-        </Card>
+        </Panel>
       )}
 
       {/* ── Listado ───────────────────────────────────────────────────────── */}
+      {loadError && (
+        <Notice
+          kind="bad"
+          title="No se pudo cargar la lista de tokens"
+          action={
+            <ActionButton variant="secondary" onClick={() => void load()}>
+              <RotateCw aria-hidden className="size-4" /> Reintentar
+            </ActionButton>
+          }
+        >
+          {loadError}. Esto no quiere decir que no haya tokens: no se pudo leer.
+        </Notice>
+      )}
+
       {loading ? (
         <Skeleton className="h-64" />
-      ) : tokens.length === 0 ? (
-        <EmptyState
-          icon={KeyRound}
-          title="Todavía no hay tokens"
-          description="Cuando un aplicativo necesite leer datos del bróker, creale uno acá en vez de darle acceso directo a la base."
-        />
-      ) : (
-        <div className="space-y-3">
-          {tokens.map((t) => (
-            <Card key={t.id} className={cn(!t.is_active && 'opacity-60')}>
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-semibold">{t.app_name}</span>
-                    <Badge variant={t.is_active ? 'success' : 'neutral'}>
-                      {t.is_active ? 'Activo' : 'Revocado'}
-                    </Badge>
-                    <span className="text-sm text-muted-foreground">{t.companies?.name ?? '—'}</span>
-                  </div>
-                  <p className="mt-1 font-mono text-xs text-muted-foreground">{t.token_prefix}…</p>
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {t.scopes.map((s) => (
-                      <span key={s} className="rounded border border-border px-1.5 py-0.5 font-mono text-xs">
-                        {s}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {t.is_active && (
-                  <Button variant="destructive" size="sm" onClick={() => setToRevoke(t)}>
-                    <Ban className="h-4 w-4" aria-hidden />
-                    Revocar
-                  </Button>
-                )}
-              </div>
-
-              <dl className="mt-4 grid gap-3 border-t border-border pt-3 text-xs sm:grid-cols-4">
-                <div>
-                  <dt className="text-muted-foreground">Creado</dt>
-                  <dd>{formatDateTime(t.created_at)}</dd>
-                  {t.created_by_name && <dd className="text-muted-foreground">{t.created_by_name}</dd>}
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Último uso</dt>
-                  {/* Antes de cortar algo, saber si está vivo. */}
-                  <dd className={cn(!t.last_used_at && 'text-muted-foreground')}>
-                    {t.last_used_at ? formatDateTime(t.last_used_at) : 'Nunca se usó'}
-                  </dd>
-                  {t.last_used_ip && <dd className="text-muted-foreground">{t.last_used_ip}</dd>}
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">Llamadas</dt>
-                  <dd className="tabular-nums">{t.request_count.toLocaleString('es')}</dd>
-                </div>
-                {!t.is_active && (
-                  <div>
-                    <dt className="text-muted-foreground">Revocado</dt>
-                    <dd>{formatDateTime(t.revoked_at)}</dd>
-                    {t.revoked_reason && <dd className="text-muted-foreground">{t.revoked_reason}</dd>}
-                  </div>
-                )}
-              </dl>
-            </Card>
-          ))}
-        </div>
+      ) : loadError ? null : (
+        <Panel
+          title="Tokens emitidos"
+          hint={`${formatCount(activeCount)} ${plural(activeCount, 'activo', 'activos')} de ${formatCount(tokens.length)}`}
+          flush
+        >
+          <FinTable<TokenRow>
+            caption="Tokens de aplicativos"
+            columns={columns}
+            rows={tokens}
+            rowKey={(t) => t.id}
+            empty={
+              <EmptyState
+                icon={KeyRound}
+                title="Todavía no hay tokens"
+                description="Cuando un aplicativo necesite leer datos del bróker, creale uno acá en vez de darle acceso directo a la base."
+              />
+            }
+            rowActions={(t) =>
+              t.is_active ? (
+                <ActionButton variant="danger" onClick={() => setToRevoke(t)}>
+                  <Ban className="size-4" aria-hidden />
+                  <span className="max-sm:sr-only">Revocar</span>
+                </ActionButton>
+              ) : null
+            }
+          />
+        </Panel>
       )}
 
       {toRevoke && (
@@ -353,7 +431,7 @@ export default function TokensPage() {
           title={`Revocar el token de ${toRevoke.app_name}`}
           message={
             toRevoke.last_used_at
-              ? `Este token se usó por última vez el ${formatDateTime(toRevoke.last_used_at)} y lleva ${toRevoke.request_count.toLocaleString('es')} llamadas. Si lo cortás, ese aplicativo deja de leer AHORA. No se puede reactivar: habría que crear otro.`
+              ? `Este token se usó por última vez el ${formatDateTime(toRevoke.last_used_at)} y lleva ${formatCount(toRevoke.request_count)} llamadas. Si lo cortás, ese aplicativo deja de leer AHORA. No se puede reactivar: habría que crear otro.`
               : `Este token nunca se usó, así que cortarlo no debería romper nada. No se puede reactivar: habría que crear otro.`
           }
           confirmLabel="Cortar el acceso"

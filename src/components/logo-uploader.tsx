@@ -5,6 +5,7 @@ import { apiFetch } from '@/lib/api-fetch';
 import { Upload, Trash2, Loader2, AlertCircle } from 'lucide-react';
 import { CompanyLogo } from './company-logo';
 import { LogoCropper } from './logo-cropper';
+import { DARK_BG } from '@/lib/brand-color';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LogoUploader
@@ -19,6 +20,12 @@ import { LogoCropper } from './logo-cropper';
 // Antes de subir se abre el recorte (LogoCropper): los archivos llegan con
 // márgenes enormes y el isotipo TIENE que ser cuadrado. Se saltea para SVG
 // (rasterizar un vector es perderlo) y el modal ofrece "subir sin recortar".
+//
+// «Libro mayor» (2026-10-12): la vista previa oscura era `bg-slate-900` fijo
+// con `text-white`; ahora es el fondo del sidebar oscuro DE ESA MARCA
+// (`previewBg`, derivado en brand-preview.ts) — un logo blanco que se lee
+// sobre slate puede no leerse sobre el navy de la empresa. Zona de arrastre y
+// acciones con tokens (brand-ink / neg). Subida, recorte y endpoints sin cambios.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const ACCEPTED = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/svg+xml'];
@@ -39,6 +46,14 @@ interface Props {
   previewTone?: 'light' | 'dark';
   /** Proporción del recorte. El isotipo va cuadrado sí o sí. */
   aspect?: 'free' | 'square';
+  /**
+   * Fondo de la vista previa oscura (hex). Es un DATO de la marca: el sidebar
+   * oscuro derivado del primario (brand-preview.ts). Sin él, el fondo
+   * oscuro fijo de la app (DARK_BG de brand-color.ts).
+   */
+  previewBg?: string;
+  /** Texto sobre `previewBg` (blanco o negro, elegido por contraste). */
+  previewFg?: string;
 }
 
 export function LogoUploader({
@@ -50,6 +65,8 @@ export function LogoUploader({
   variant = 'color',
   previewTone = 'light',
   aspect = 'free',
+  previewBg = DARK_BG,
+  previewFg = '#FFFFFF',
 }: Props) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragging, setDragging] = useState(false);
@@ -146,18 +163,21 @@ export function LogoUploader({
 
   return (
     <div>
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-3">
         <div className="shrink-0">
           {previewTone === 'dark' ? (
             // White logo preview — render on a dark surface so the logo is
             // actually visible (otherwise white-on-white = blank square).
-            <div className="w-20 h-20 rounded-md bg-slate-900 flex items-center justify-center overflow-hidden p-2">
+            <div
+              className="flex size-20 items-center justify-center overflow-hidden rounded-ui-md border border-border p-2"
+              style={{ background: previewBg }}
+            >
               {logoUrl ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img src={logoUrl} alt={companyName} className="w-full h-full object-contain" />
+                <img src={logoUrl} alt={companyName} className="size-full object-contain" />
               ) : (
-                <span className="text-white text-xs text-center opacity-60">
-                  {variant === 'icon' ? 'Isotipo' : 'Versión blanca'}
+                <span className="text-center text-[12px] opacity-70" style={{ color: previewFg }}>
+                  {variant === 'icon' ? 'Sin isotipo' : 'Sin versión blanca'}
                 </span>
               )}
             </div>
@@ -166,13 +186,13 @@ export function LogoUploader({
               name={companyName || '?'}
               logoUrl={logoUrl}
               colorPrimary={colorPrimary}
-              className="w-20 h-20"
+              className="size-20 border border-border"
               initialsClassName="text-xl"
             />
           )}
         </div>
 
-        <div className="flex-1 min-w-0">
+        <div className="min-w-0 flex-1">
           <div
             onDragOver={(e) => {
               e.preventDefault();
@@ -180,28 +200,25 @@ export function LogoUploader({
             }}
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
-            className={`rounded-lg border-2 border-dashed p-4 text-center text-sm transition-colors ${
-              dragging
-                ? 'border-[var(--color-primary)] bg-[var(--color-primary)]/5'
-                : 'border-border hover:bg-muted/50'
+            className={`rounded-ui-md border border-dashed p-3 text-center text-[13px] transition-colors motion-reduce:transition-none ${
+              dragging ? 'border-solid border-brand-ink bg-brand-tint' : 'border-border-strong hover:bg-surface-2'
             }`}
           >
-            <div className="flex items-center justify-center gap-2 text-muted-foreground">
-              <Upload className="w-4 h-4" />
+            <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-text-2">
+              <Upload aria-hidden className="size-4" />
               <span>
-                Arrastra una imagen aquí o{' '}
+                Arrastrá una imagen o{' '}
                 <button
                   type="button"
                   onClick={() => inputRef.current?.click()}
-                  className="text-primary dark:text-accent hover:underline font-medium"
+                  disabled={!companyId}
+                  className="font-medium text-brand-ink hover:underline disabled:cursor-not-allowed disabled:text-text-3 disabled:no-underline"
                 >
-                  elige un archivo
+                  elegí un archivo
                 </button>
               </span>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              PNG, SVG, JPG o WEBP — máx 2MB
-            </p>
+            <p className="mt-1 text-[12px] text-text-3">PNG, SVG, JPG o WEBP — máx 2MB</p>
             <input
               ref={inputRef}
               type="file"
@@ -218,17 +235,17 @@ export function LogoUploader({
 
           <div className="mt-2 flex items-center gap-2">
             {busy && (
-              <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Procesando…
+              <span className="inline-flex items-center gap-1.5 text-[12px] text-text-2">
+                <Loader2 aria-hidden className="size-3.5 animate-spin" /> Procesando…
               </span>
             )}
             {logoUrl && !busy && (
               <button
                 type="button"
                 onClick={handleRemove}
-                className="inline-flex items-center gap-1.5 text-xs text-negative hover:underline"
+                className="inline-flex items-center gap-1.5 text-[12px] font-medium text-neg hover:underline"
               >
-                <Trash2 className="w-3.5 h-3.5" /> Quitar logo
+                <Trash2 aria-hidden className="size-3.5" /> Quitar logo
               </button>
             )}
           </div>
@@ -236,14 +253,12 @@ export function LogoUploader({
       </div>
 
       {!companyId && (
-        <p className="text-xs text-muted-foreground mt-2">
-          Podrás subir el logo después de crear la organización.
-        </p>
+        <p className="mt-2 text-[12px] text-text-3">Podrás subir el logo después de crear la organización.</p>
       )}
 
       {error && (
-        <div className="mt-2 flex items-start gap-2 text-xs text-negative">
-          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+        <div role="alert" className="mt-2 flex items-start gap-1.5 text-[12px] text-neg">
+          <AlertCircle aria-hidden className="mt-0.5 size-3.5 shrink-0" />
           <span>{error}</span>
         </div>
       )}

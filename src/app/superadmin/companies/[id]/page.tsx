@@ -4,17 +4,31 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowLeft, Settings as SettingsIcon, Key, ClipboardList, Users } from 'lucide-react';
+import { ArrowLeft, Users } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { CompanyForm, type CompanyFormValues } from '../_form';
 import { ApiCredentialsPanel } from '@/components/settings/api-credentials-panel';
 import { CompanyAuditPanel } from '@/components/settings/company-audit-panel';
+import { PageHeader } from '@/components/ui/page-header';
+import { Segmented } from '@/components/ui/segmented';
+import { Notice } from '@/components/ui/notice';
+import { Skeleton } from '@/components/ui/skeleton';
+import { actionButtonClass } from '@/components/payment-orders/action-button';
+
+type Tab = 'settings' | 'apis' | 'audit';
+const TABS: readonly Tab[] = ['settings', 'apis', 'audit'];
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin/companies/[id] — edit existing tenant
 //
 // Loads the row via the Supabase client (RLS permits superadmin), then pushes
 // updates to /api/superadmin/companies/:id via PATCH.
+//
+// «Libro mayor» (2026-10-12): pestañas a mano con `border-[var(--color-primary)]`
+// y `dark:text-accent` → Segmented; avisos con paleta cruda → Notice; «Usuarios»
+// pasa a botón (no es una pestaña: navega a otra pantalla). `?tab=audit` ahora
+// abre Auditoría: el enlace «Ver historial completo» del panel de un usuario
+// lo pedía y la pantalla lo ignoraba. Carga y PATCH sin cambios.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const supabase = createClient();
@@ -34,7 +48,14 @@ export default function EditCompanyPage() {
   // Three tabs: Configuración (branding + modules), APIs externas, Auditoría.
   // Auditoría lives here (not in the tenant sidebar) because platform audit
   // is a superadmin-only surface.
-  const [activeTab, setActiveTab] = useState<'settings' | 'apis' | 'audit'>('settings');
+  const [activeTab, setActiveTab] = useState<Tab>('settings');
+
+  // Pestaña inicial desde `?tab=` (sin useSearchParams: obligaría a envolver
+  // la página en Suspense sólo por esto).
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get('tab');
+    if (t && (TABS as readonly string[]).includes(t)) setActiveTab(t as Tab);
+  }, []);
 
   useEffect(() => {
     if (!id) return;
@@ -103,83 +124,56 @@ export default function EditCompanyPage() {
   };
 
   return (
-    <div className="space-y-6 max-w-3xl">
-      <Link
-        href="/superadmin"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
-      >
-        <ArrowLeft className="w-4 h-4" /> Volver al panel
+    <div className="max-w-5xl space-y-4">
+      <Link href="/superadmin" className={actionButtonClass('ghost', '-ml-3')}>
+        <ArrowLeft aria-hidden className="size-4" /> Volver al panel
       </Link>
-      <div>
-        <h1 className="text-2xl font-bold">
-          Editar entidad{values?.name ? ` — ${values.name}` : ''}
-        </h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          Modifica branding, módulos, estado y credenciales de APIs.
-        </p>
-      </div>
+      <PageHeader
+        title={values?.name ? `Editar entidad — ${values.name}` : 'Editar entidad'}
+        subtitle="Branding, módulos, estado y credenciales de APIs."
+        actions={
+          <Link href={`/superadmin/companies/${id}/users`} className={actionButtonClass('secondary')}>
+            <Users aria-hidden className="size-4" /> Usuarios
+          </Link>
+        }
+      />
 
-      {/* Tabs */}
-      <div className="flex border-b border-border overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('settings')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'settings'
-              ? 'border-[var(--color-primary)] text-primary dark:text-accent'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <SettingsIcon className="w-4 h-4" /> Configuración
-        </button>
-        <button
-          onClick={() => setActiveTab('apis')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'apis'
-              ? 'border-[var(--color-primary)] text-primary dark:text-accent'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <Key className="w-4 h-4" /> APIs externas
-        </button>
-        <button
-          onClick={() => setActiveTab('audit')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
-            activeTab === 'audit'
-              ? 'border-[var(--color-primary)] text-primary dark:text-accent'
-              : 'border-transparent text-muted-foreground hover:text-foreground'
-          }`}
-        >
-          <ClipboardList className="w-4 h-4" /> Auditoría
-        </button>
-        <Link
-          href={`/superadmin/companies/${id}/users`}
-          className="flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 border-transparent text-muted-foreground hover:text-foreground transition-colors"
-        >
-          <Users className="w-4 h-4" /> Usuarios
-        </Link>
-      </div>
+      <Segmented<Tab>
+        aria-label="Sección de la entidad"
+        value={activeTab}
+        onChange={setActiveTab}
+        options={[
+          { value: 'settings', label: 'Configuración' },
+          { value: 'apis', label: 'APIs externas' },
+          { value: 'audit', label: 'Auditoría' },
+        ]}
+      />
 
       {loadErr && (
-        <div className="rounded-lg border border-red-300 bg-negative/10 dark:border-red-800 text-red-800 dark:text-red-200 p-3 text-sm">
-          {loadErr}
-        </div>
+        <Notice kind="bad" title="No se pudo cargar la entidad">
+          {loadErr}. La configuración no se muestra para no editar sobre datos que no cargaron.
+        </Notice>
       )}
 
       {warning && (
-        <div className="rounded-lg border border-amber-300 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/40 text-amber-900 dark:text-amber-100 p-3 text-sm space-y-2">
-          <p><strong>Cambios guardados.</strong> {warning}</p>
-          <button
-            onClick={() => router.push('/superadmin')}
-            className="underline underline-offset-2 font-medium"
-          >
-            Entendido, volver al panel
-          </button>
-        </div>
+        <Notice
+          kind="pend"
+          title="Cambios guardados, con una advertencia"
+          action={
+            <button
+              type="button"
+              onClick={() => router.push('/superadmin')}
+              className="font-medium text-foreground underline underline-offset-2"
+            >
+              Entendido, volver al panel
+            </button>
+          }
+        >
+          {warning}
+        </Notice>
       )}
 
-      {!loadErr && values === null && (
-        <div className="animate-pulse h-48 rounded-lg bg-muted/50" />
-      )}
+      {activeTab === 'settings' && !loadErr && values === null && <Skeleton className="h-48" />}
 
       {activeTab === 'apis' && id && (
         <ApiCredentialsPanel companyId={id} />
