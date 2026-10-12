@@ -125,9 +125,12 @@ describe('<AuthShell>', () => {
     expect(out).toMatch(/<aside class="[^"]*hidden[^"]*min-\[960px\]:flex/);
     expect(out).toContain('bg-surface-2');
   });
-  it('la franja de ejemplo dice que es ilustración y no la leen los lectores', () => {
-    expect(out).toContain('Ilustración · cifras de ejemplo');
-    expect(out).toMatch(/aria-hidden="true" class="[^"]*rounded-ui-lg/);
+  it('la marca es sólo texto: las tres áreas, sin cifras de ejemplo', () => {
+    expect(out).toContain('Recursos Humanos');
+    expect(out).toContain('Risk Management');
+    expect(out).toContain('Finanzas');
+    expect(out).not.toContain('cifras de ejemplo');
+    expect(out).not.toMatch(/\$\d/);
   });
   it('idioma y tema con nombre accesible y 40 px', () => {
     expect(out).toContain('aria-label="Cambiar el idioma a inglés"');

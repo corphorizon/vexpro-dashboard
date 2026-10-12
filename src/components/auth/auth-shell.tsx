@@ -2,10 +2,8 @@
 
 import { Moon, Sun } from 'lucide-react';
 import { AuthBrand } from '@/components/auth-brand';
-import { StatusBadge } from '@/components/ui/status-badge';
 import { useI18n } from '@/lib/i18n';
 import { useTheme } from '@/lib/theme-context';
-import { formatMoney } from '@/lib/money';
 import { cn } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -21,17 +19,16 @@ import { cn } from '@/lib/utils';
 //
 // Composición:
 //   ≥ 960 px  dos columnas: a la izquierda la marca sobre `surface-2` con el
-//             motivo de libro mayor (reglas finas cada 36 px = `h-row`) y una
-//             franja de KPIs de EJEMPLO; a la derecha el formulario sobre la
-//             superficie limpia (`bg-card`).
+//             motivo de libro mayor (reglas finas cada 36 px = `h-row`), el
+//             lema y las tres áreas en texto (Finanzas, Recursos Humanos, Risk
+//             Management); a la derecha el formulario sobre `bg-card`.
 //   < 960 px  una columna: logo arriba, formulario. La ilustración no aparece
 //             (en 390 px no aporta y empuja el formulario fuera de la vista).
 //   Arriba a la derecha, siempre: idioma y tema (40×40, `aria-label`).
 //
-// La franja de ejemplo dice «Ilustración · cifras de ejemplo» en texto
-// visible y va `aria-hidden`: un lector de pantalla no tiene por qué leer
-// montos inventados en la puerta de entrada de un sistema financiero, y
-// alguien que mira tampoco puede confundirlos con datos reales.
+// 2026-10-12: se quitó la franja de KPIs de ejemplo (pedido de Kevin: «solo
+// deja texto»). Montos inventados en la puerta de un sistema financiero
+// sumaban ruido; las áreas en texto dicen qué hay adentro.
 //
 // DESCARTADO:
 //   · Logo de la empresa por subdominio: no existe esa lógica hoy (ver
@@ -75,65 +72,24 @@ export function AuthPreferences({ className }: { className?: string }) {
   );
 }
 
-/** Mini libro mayor de EJEMPLO (decorativo). Cifras fijas, marcadas como ilustración. */
-function LedgerSample() {
+/** Las tres áreas del sistema, sólo texto (Kevin, 2026-10-12: «solo deja texto»). */
+function AuthAreas() {
   const { t } = useI18n();
-  const rows = [
-    { name: 'Binance', src: 'API', amount: 62_410.2, stale: false },
-    { name: t('auth.sample.bank'), src: 'Manual', amount: 40_120, stale: true },
-    { name: 'Coinsbuy', src: 'API', amount: 18_904.75, stale: false },
+  const areas = [
+    { title: t('auth.area.finance'), desc: t('auth.area.financeDesc') },
+    { title: t('auth.area.hr'), desc: t('auth.area.hrDesc') },
+    { title: t('auth.area.risk'), desc: t('auth.area.riskDesc') },
   ];
   return (
-    <div className="w-full max-w-[460px]">
-      {/* text-2, no text-3: sobre `surface-2` el terciario da 4,28:1 (no AA). */}
-      <p className="text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-2">{t('auth.sample.label')}</p>
-      <div aria-hidden="true" className="mt-2 overflow-hidden rounded-ui-lg border border-border bg-card shadow-1">
-        <div className="grid grid-cols-3">
-          <div className="px-4 py-3">
-            <p className="text-[12px] font-medium text-text-2">{t('auth.sample.available')}</p>
-            <p className="mt-0.5 text-[20px] font-semibold leading-7 tracking-[-0.02em] tabular-nums slashed-zero whitespace-nowrap">
-              {formatMoney(121_434.95, { compact: true })}
-            </p>
-          </div>
-          <div className="border-l border-border px-4 py-3">
-            <p className="text-[12px] font-medium text-text-2">{t('auth.sample.netDeposit')}</p>
-            <p className="mt-0.5 text-[20px] font-semibold leading-7 tracking-[-0.02em] text-pos tabular-nums slashed-zero whitespace-nowrap">
-              {formatMoney(12_480, { compact: true, signed: true })}
-            </p>
-          </div>
-          <div className="border-l border-border px-4 py-3">
-            <p className="text-[12px] font-medium text-text-2">{t('auth.sample.toApprove')}</p>
-            <p className="mt-0.5 text-[20px] font-semibold leading-7 tracking-[-0.02em] tabular-nums">7</p>
-          </div>
-        </div>
-        <ul className="border-t border-border text-[13px]">
-          {rows.map((r) => (
-            <li key={r.name} className="flex h-row items-center justify-between gap-3 border-b border-border px-4 last:border-b-0">
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate font-medium">{r.name}</span>
-                <span
-                  className={cn(
-                    'rounded-ui-sm border px-1 text-[10.5px] font-semibold uppercase leading-4',
-                    r.src === 'API' ? 'border-info/35 text-info' : 'border-border-strong text-text-2',
-                  )}
-                >
-                  {r.src}
-                </span>
-                {r.stale && <StatusBadge kind="stale" label={t('auth.sample.staleAgo')} />}
-              </span>
-              <span
-                className={cn(
-                  'font-medium tabular-nums slashed-zero whitespace-nowrap',
-                  r.stale && 'text-text-2 underline decoration-stale decoration-dotted underline-offset-[3px]',
-                )}
-              >
-                {formatMoney(r.amount)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </div>
-    </div>
+    <ul className="max-w-[420px] space-y-4">
+      {areas.map((a) => (
+        <li key={a.title}>
+          <p className="text-[15px] font-semibold">{a.title}</p>
+          {/* text-2, no text-3: sobre `surface-2` el terciario no llega a AA. */}
+          <p className="mt-0.5 text-[13.5px] leading-5 text-text-2">{a.desc}</p>
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -171,7 +127,7 @@ export function AuthShell({ title, subtitle, icon, footer, children, width = 'de
           <p className="max-w-[420px] text-[26px] font-semibold leading-8 tracking-[-0.02em] text-balance">
             {t('auth.tagline')}
           </p>
-          <LedgerSample />
+          <AuthAreas />
         </div>
 
         <p className="relative text-[12px] text-text-2">© {new Date().getFullYear()} Smart Dashboard</p>
