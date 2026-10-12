@@ -5,6 +5,7 @@ import { verifyAdminAuth } from '@/lib/api-auth';
 import { isBuiltInRole } from '@/lib/roles';
 import { sanitizeModuleKeys } from '@/lib/modules';
 import {
+  buscarAuthUserPorEmail,
   generateAndSendInvite,
   resolveInviterName,
   originFromRequest,
@@ -111,18 +112,17 @@ export async function POST(request: NextRequest) {
     let authUserId: string | null = null;
     let createdNewAuthUser = false;
 
-    {
-      const target = normalizedEmail;
-      for (let page = 1; page <= 20; page++) {
-        const { data, error } = await adminClient.auth.admin.listUsers({ page, perPage: 200 });
-        if (error) break;
-        const found = data?.users?.find((u) => (u.email || '').toLowerCase() === target);
-        if (found) {
-          authUserId = found.id;
-          break;
-        }
-        if (!data?.users || data.users.length < 200) break;
-      }
+    // Fail-closed (2026-10-12): si no se puede saber si el correo ya tiene
+    // cuenta, NO se intenta crear una — ver buscarAuthUserPorEmail. Antes un
+    // `break` silencioso mandaba el flujo a createUser con la búsqueda a
+    // medias y el alta moría con "No se pudo crear el usuario auth".
+    try {
+      authUserId = (await buscarAuthUserPorEmail(adminClient, normalizedEmail))?.id ?? null;
+    } catch (lookupErr) {
+      return apiError('admin/create-user', lookupErr, {
+        status: 500,
+        clientMessage: 'No se pudo consultar si el correo ya tiene cuenta. Probá de nuevo en unos segundos.',
+      });
     }
 
     if (!authUserId) {

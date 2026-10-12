@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server';
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { verifySuperadminAuth } from '@/lib/api-auth';
 import { serverAuditLog } from '@/lib/server-audit';
@@ -13,6 +12,7 @@ import { apiError } from '@/lib/api-error';
 import { BUILT_IN_ROLES, isBuiltInRole } from '@/lib/roles';
 import { sanitizeModuleKeys } from '@/lib/modules';
 import { notify } from '@/lib/notifications/notify';
+import { buscarAuthUserPorEmail } from '@/lib/invite-user';
 
 // ---------------------------------------------------------------------------
 // GET /api/superadmin/companies/:id/users
@@ -34,17 +34,7 @@ import { notify } from '@/lib/notifications/notify';
 // pattern in /api/admin/create-user.
 // ---------------------------------------------------------------------------
 
-async function findAuthByEmail(admin: SupabaseClient, email: string) {
-  const target = email.toLowerCase().trim();
-  for (let page = 1; page <= 20; page++) {
-    const { data, error } = await admin.auth.admin.listUsers({ page, perPage: 200 });
-    if (error) throw error;
-    const found = data?.users?.find((u) => (u.email || '').toLowerCase().trim() === target);
-    if (found) return found;
-    if (!data?.users || data.users.length < 200) return null;
-  }
-  return null;
-}
+
 
 export async function POST(
   request: NextRequest,
@@ -150,7 +140,8 @@ export async function POST(
       if (!alreadyRegistered) {
         return apiError('superadmin/companies/[id]/users', createErr, { status: 500 });
       }
-      const existing = await findAuthByEmail(admin, email);
+      // buscarAuthUserPorEmail: registro unico en lib/invite-user (2026-10-12).
+      const existing = await buscarAuthUserPorEmail(admin, email);
       if (!existing) {
         return NextResponse.json(
           { success: false, error: 'Email reservado pero no se encontró el auth user huérfano' },
