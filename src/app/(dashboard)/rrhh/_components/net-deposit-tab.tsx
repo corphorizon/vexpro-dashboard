@@ -1,20 +1,25 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { ChevronDown, ChevronRight, Info } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency, cn } from '@/lib/utils';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money } from '@/components/ui/money';
 import { hrRoleLabel } from '@/lib/hr/domain';
 import type { RollupNode } from '@/lib/hr/net-deposit';
 import {
   indexarNetDelCrm,
   resolveNetDepositInput,
-  type NetDepositSource,
   type ResolvedNetDeposit,
 } from '@/lib/hr/net-deposit-input';
 import { manualDeEstructura } from '@/lib/hr/overview';
 import { IbProductionView } from './ib-production-tab';
 import { useHrPeriod } from './hr-period-context';
+import { NetWithSource, TreeNameCell } from './hr-ui';
+import { flattenTree, type FlatTreeRow } from './hr-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña Net Deposit — lo que Daniela arma hoy a mano, ya armado.
@@ -43,18 +48,21 @@ import { useHrPeriod } from './hr-period-context';
 // rótulo. Sale del mismo `resolveNetDepositInput` que usan /comisiones y la
 // pestaña Comercial: si esta tabla dijera una cosa y el cálculo usara otra,
 // nadie podría auditar el número mirando acá, que es para lo que existe.
+//
+// ── «Libro mayor» (2026-10-12) — sólo presentación ─────────────────────────
+// Las tres tarjetas de totales → KpiStrip (sin asignar con su explicación en
+// el sub); el árbol → FinTable (aplanado por `flattenTree`, hr-view.ts, con la
+// sangría y el colapso de siempre); el conmutador de vistas → Segmented (antes
+// `bg-primary` relleno, compitiendo con el único primario); error/«sin
+// período» → Notice. El verde/rojo por signo se conserva (`tone="sign"`:
+// acá el signo ES la noticia) pero ahora sale del token `pos`/`neg`.
+// Medición (sin comentarios): antes 2 `text-[10px]` y 30 tokens legados
+// (`text-positive`, `text-muted-foreground`, `bg-info/5`…); después 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // El mes ya NO se elige acá: viene del selector único del módulo
 // (rrhh/_components/hr-period-context.tsx). El <input type="month"> que vivía en
 // esta pestaña era uno de los tres relojes del módulo.
-
-/** Verde/rojo por el signo — un net deposit negativo es plata que se fue. */
-function moneyClass(v: number): string {
-  if (v > 0) return 'text-positive';
-  if (v < 0) return 'text-negative';
-  return 'text-muted-foreground';
-}
 
 /**
  * Las dos miradas de LA MISMA estructura comercial.
@@ -72,30 +80,20 @@ export function NetDepositTab() {
   const [vista, setVista] = useState<Vista>('net_deposit');
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
-        {/* El mes lo pone el selector del módulo, arriba de las pestañas:
-            cambiar de vista (o de pestaña) no le hace perder a nadie el mes
-            que estaba mirando. */}
-        <div className="inline-flex rounded-lg border border-border p-0.5" role="tablist">
-          {([
-            ['net_deposit', 'hr.prodViewNetDeposit'],
-            ['production', 'hr.prodViewProduction'],
-          ] as const).map(([v, key]) => (
-            <button
-              key={v}
-              role="tab"
-              aria-selected={vista === v}
-              onClick={() => setVista(v)}
-              className={cn(
-                'px-3 py-1.5 rounded-md text-sm transition-colors',
-                vista === v ? 'bg-primary text-brand-on-primary' : 'text-muted-foreground hover:text-foreground',
-              )}
-            >
-              {t(key)}
-            </button>
-          ))}
-        </div>
+    <div className="space-y-4">
+      {/* El mes lo pone el selector del módulo, arriba de las pestañas:
+          cambiar de vista (o de pestaña) no le hace perder a nadie el mes
+          que estaba mirando. */}
+      <div className="flex justify-end">
+        <Segmented
+          options={[
+            { value: 'net_deposit', label: t('hr.prodViewNetDeposit') },
+            { value: 'production', label: t('hr.prodViewProduction') },
+          ]}
+          value={vista}
+          onChange={setVista}
+          aria-label={t('hr.netDepositTab')}
+        />
       </div>
 
       {vista === 'net_deposit' ? <NetDepositView /> : <IbProductionView month={month} />}
@@ -130,6 +128,8 @@ function NetDepositView() {
     () => (data?.tree ?? []).filter((n) => n.total !== 0 || n.children.length > 0 || n.manual != null),
     [data],
   );
+  const hiddenRoots = data ? data.tree.length - roots.length : 0;
+  const rows = useMemo(() => flattenTree(roots, collapsed), [roots, collapsed]);
 
   /**
    * Qué número manda por perfil, con su procedencia — el MISMO resolver que el
@@ -141,8 +141,8 @@ function NetDepositView() {
     const out = new Map<string, ResolvedNetDeposit>();
     if (!data?.tree) return out;
     const idx = indexarNetDelCrm(data.tree);
-    const rows = overview?.data.monthlyResults ?? null;
-    const manual = rows ? manualDeEstructura(rows) : null;
+    const rowsMr = overview?.data.monthlyResults ?? null;
+    const manual = rowsMr ? manualDeEstructura(rowsMr) : null;
     const [y, m] = (overview?.month ?? '').split('-');
     const period = overview?.period ?? (y && m ? { year: Number(y), month: Number(m), is_closed: false } : null);
     if (!period) return out;
@@ -158,133 +158,104 @@ function NetDepositView() {
     return out;
   }, [data, overview]);
 
+  type Row = FlatTreeRow<RollupNode>;
+  const columns: FinColumn<Row>[] = [
+    {
+      key: 'name',
+      header: t('common.name'),
+      cell: (r) => (
+        <TreeNameCell
+          name={r.node.name}
+          depth={r.depth}
+          hasKids={r.hasKids}
+          collapsed={r.collapsed}
+          onToggle={() => toggle(r.node.profileId)}
+        />
+      ),
+      mobileMeta: (r) => hrRoleLabel(r.node.role),
+    },
+    {
+      key: 'role',
+      header: t('hr.role'),
+      hideSm: true,
+      cell: (r) => <span className="text-text-2">{hrRoleLabel(r.node.role)}</span>,
+    },
+    {
+      key: 'team',
+      header: t('hr.ndTeam'),
+      kind: 'money',
+      hideSm: true,
+      money: { tone: 'sign' },
+      value: (r) => (r.hasKids ? r.node.team : null),
+    },
+    // El ajuste se muestra siempre, aunque sea cero: es la línea que hoy se
+    // calcula de memoria y no verla es lo que la vuelve invisible.
+    { key: 'adjustment', header: t('hr.ndAdjustment'), kind: 'money', hideSm: true, money: { tone: 'sign' }, value: (r) => r.node.adjustment },
+    { key: 'suggested', header: t('hr.ndSuggested'), kind: 'money', money: { tone: 'sign' }, value: (r) => r.node.total },
+    { key: 'manual', header: t('hr.ndManual'), kind: 'money', hideSm: true, money: { tone: 'neutral' }, value: (r) => r.node.manual },
+    // Cuál de las dos manda. `null` = sin datos → «—» + stale, nunca $0.
+    {
+      key: 'input',
+      header: t('hr.ndInput'),
+      align: 'right',
+      cardSide: 'right',
+      cell: (r) => {
+        const res = insumo.get(r.node.profileId);
+        return <NetWithSource value={res?.value ?? null} source={res?.source ?? 'none'} tone="sign" />;
+      },
+    },
+    {
+      key: 'diff',
+      header: t('hr.ndDiff'),
+      align: 'right',
+      hideSm: true,
+      cell: (r) =>
+        r.node.manual == null ? (
+          <span className="text-[12px] text-text-3">{t('hr.ndNotLoaded')}</span>
+        ) : (
+          <Money value={r.node.total - r.node.manual} tone="sign" />
+        ),
+    },
+  ];
+
+  if (loadError) return <Notice kind="bad" title={t('hr.warningError')} />;
+  if (loading) return <p className="text-[13px] text-text-3">{t('common.loading')}</p>;
+  if (!data) return null;
+
   return (
-    <div className="space-y-6">
-      {/* El selector de mes vive en `NetDepositTab`, arriba del conmutador de
-          vistas: es uno solo para las dos miradas de la misma estructura. */}
-      <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 p-3">
-        <Info className="w-4 h-4 text-info mt-0.5 shrink-0" />
-        <p className="text-xs text-muted-foreground">{t('hr.ndHint')}</p>
-      </div>
+    <div className="space-y-4">
+      <KpiStrip
+        items={[
+          { key: 'crm', label: t('hr.ndTotalCrm'), value: data.totalCrm, tone: 'sign', hero: true },
+          { key: 'assigned', label: t('hr.ndAssigned'), value: data.totalAssigned, tone: 'sign' },
+          {
+            key: 'unassigned',
+            label: t('hr.ndUnassigned'),
+            value: data.unassigned,
+            tone: 'sign',
+            sub: t('hr.ndUnassignedHint'),
+          },
+        ]}
+      />
 
-      {loadError ? (
-        <p className="text-sm text-negative">{t('hr.warningError')}</p>
-      ) : loading ? (
-        <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
-      ) : !data ? null : (
-        <>
-          {/* ── Totales del mes ─────────────────────────────────────────── */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="rounded-lg border border-border p-4">
-              <p className="text-sm text-muted-foreground mb-1">{t('hr.ndTotalCrm')}</p>
-              <p className={cn('text-xl font-bold', moneyClass(data.totalCrm))}>{formatCurrency(data.totalCrm)}</p>
-            </div>
-            <div className="rounded-lg border border-border p-4">
-              <p className="text-sm text-muted-foreground mb-1">{t('hr.ndAssigned')}</p>
-              <p className={cn('text-xl font-bold', moneyClass(data.totalAssigned))}>{formatCurrency(data.totalAssigned)}</p>
-            </div>
-            <div className="rounded-lg border border-border p-4">
-              <p className="text-sm text-muted-foreground mb-1">{t('hr.ndUnassigned')}</p>
-              <p className={cn('text-xl font-bold', moneyClass(data.unassigned))}>{formatCurrency(data.unassigned)}</p>
-              <p className="text-[11px] text-muted-foreground mt-1">{t('hr.ndUnassignedHint')}</p>
-            </div>
-          </div>
+      {!hasPeriod && <Notice kind="info" title={t('hr.ndNoPeriod')} />}
 
-          {!hasPeriod && (
-            <p className="text-xs text-muted-foreground">{t('hr.ndNoPeriod')}</p>
-          )}
-
-          {/* ── Estructuras ─────────────────────────────────────────────── */}
-          <div className="rounded-lg border border-border overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <table className="w-full text-sm min-w-[760px]">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.role')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndTeam')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndAdjustment')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndSuggested')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndManual')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ndInput')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden md:table-cell">{t('hr.ndDiff')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {roots.map((n) => (
-                  <RollupRows key={n.profileId} node={n} depth={0} collapsed={collapsed} toggle={toggle} insumo={insumo} />
-                ))}
-                {roots.length === 0 && (
-                  <tr><td colSpan={8} className="text-center text-muted-foreground py-8">{t('hr.ndEmpty')}</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+      <Panel
+        title={t('hrv.structures')}
+        hint={overview?.month?.slice(0, 7)}
+        flush
+        // Recorte contado (reglas §1.2): las estructuras en cero no se listan.
+        footer={hiddenRoots > 0 ? t('hrv.hiddenZeroStructures', { n: String(hiddenRoots) }) : undefined}
+      >
+        <p className="border-b border-border px-4 py-2.5 text-[12.5px] leading-5 text-text-3">{t('hr.ndHint')}</p>
+        <FinTable
+          columns={columns}
+          rows={rows}
+          rowKey={(r) => r.node.profileId}
+          caption={t('hr.prodViewNetDeposit')}
+          empty={t('hr.ndEmpty')}
+        />
+      </Panel>
     </div>
-  );
-}
-
-/**
- * Una estructura y todo lo que cuelga de ella. Se devuelve como fragmento de
- * filas (no como <table> anidada) para que las columnas de un BDM de tercer
- * nivel sigan alineadas con las del sales manager de arriba.
- */
-function RollupRows({ node, depth, collapsed, toggle, insumo }: {
-  node: RollupNode;
-  depth: number;
-  collapsed: Set<string>;
-  toggle: (id: string) => void;
-  insumo: Map<string, ResolvedNetDeposit>;
-}) {
-  const { t } = useI18n();
-  const isCollapsed = collapsed.has(node.profileId);
-  const hasKids = node.children.length > 0;
-  const diff = node.manual == null ? null : node.total - node.manual;
-  const r = insumo.get(node.profileId);
-  const srcLabel = (s: NetDepositSource) =>
-    t(s === 'crm' ? 'hr.srcCrm' : s === 'manual' ? 'hr.srcManual' : s === 'frozen' ? 'hr.srcFrozen' : 'hr.srcNone');
-
-  return (
-    <>
-      <tr className={cn('border-b border-border/50 hover:bg-muted/50', depth === 0 && 'font-medium')}>
-        <td className="py-2 px-3">
-          <div className="flex items-center gap-1" style={{ paddingLeft: depth * 16 }}>
-            {hasKids ? (
-              <button onClick={() => toggle(node.profileId)} className="text-muted-foreground hover:text-foreground" aria-label={node.name}>
-                {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-            ) : (
-              <span className="w-3.5" />
-            )}
-            {node.name}
-          </div>
-        </td>
-        <td className="py-2 px-3 text-muted-foreground hidden sm:table-cell">{hrRoleLabel(node.role)}</td>
-        <td className={cn('py-2 px-3 text-right', moneyClass(node.team))}>
-          {hasKids ? formatCurrency(node.team) : '-'}
-        </td>
-        {/* El ajuste se muestra siempre, aunque sea cero: es la línea que hoy
-            se calcula de memoria y no verla es lo que la vuelve invisible. */}
-        <td className={cn('py-2 px-3 text-right', moneyClass(node.adjustment))}>{formatCurrency(node.adjustment)}</td>
-        <td className={cn('py-2 px-3 text-right font-medium', moneyClass(node.total))}>{formatCurrency(node.total)}</td>
-        <td className="py-2 px-3 text-right text-muted-foreground">
-          {node.manual == null ? '-' : formatCurrency(node.manual)}
-        </td>
-        {/* Cuál de las dos manda. `null` = sin datos → «—», nunca $0. */}
-        <td className={cn('py-2 px-3 text-right', r && r.value !== null ? moneyClass(r.value) : 'text-muted-foreground')}>
-          {r && r.value !== null ? formatCurrency(r.value) : '—'}
-          <span className={cn('ml-1 text-[10px] uppercase tracking-wide', r?.source === 'crm' ? 'text-positive/80' : 'text-muted-foreground')}>
-            {srcLabel(r?.source ?? 'none')}
-          </span>
-        </td>
-        <td className={cn('py-2 px-3 text-right hidden md:table-cell text-xs', diff == null ? 'text-muted-foreground' : moneyClass(diff))}>
-          {diff == null ? t('hr.ndNotLoaded') : formatCurrency(diff)}
-        </td>
-      </tr>
-      {!isCollapsed && node.children.map((c) => (
-        <RollupRows key={c.profileId} node={c} depth={depth + 1} collapsed={collapsed} toggle={toggle} insumo={insumo} />
-      ))}
-    </>
   );
 }

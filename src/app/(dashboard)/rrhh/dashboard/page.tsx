@@ -1,36 +1,59 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { Card, CardTitle, CardValue } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
-import { EmptyState } from '@/components/ui/empty-state';
 import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS, moneyText } from '@/components/ui/money';
 import { PeriodSelector } from '@/components/period-selector';
 import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
-import { useAuth } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';
 import { features } from '@/lib/business-model';
-import { formatCurrency, cn } from '@/lib/utils';
 import { hrRoleLabel } from '@/lib/hr/domain';
-import {
-  Users,
-  UserCheck,
-  UserX,
-  Briefcase,
-  Award,
-  DollarSign,
-  TrendingUp,
-  UserCog,
-} from 'lucide-react';
+import { mesDePeriodo } from '@/lib/hr/period-filter';
+import { HrPeriodProvider, useHrPeriod } from '../_components/hr-period-context';
+import { alertsKpi, headcount, payrollOfPeriod, teamNetKpi } from '../_components/hr-view';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /rrhh/dashboard — resumen del módulo («Libro mayor», 2026-10-12).
+//
+// Qué cambió (sólo presentación; ningún número se calcula distinto):
+//   · Cuatro StatCard con ícono de color → UNA franja de KPIs: headcount,
+//     nómina del período (hero), net deposit del equipo y alertas del mes.
+//   · Net deposit del equipo y alertas son NUEVOS en esta pantalla y salen del
+//     MISMO overview que las pestañas de /rrhh (HrPeriodProvider, con el mes
+//     del período elegido acá). Si el slice `net` no llegó, el KPI es «—» con
+//     badge `stale` y un aviso arriba lo dice — nunca $0 (reglas §1.3).
+//   · Nómina: con CERO filas guardadas en el período el total era $0.00; ahora
+//     es «—» + «sin calcular» y un aviso con el enlace a /comisiones. Un mes que
+//     nadie calculó no es un mes que pagó cero.
+//   · Top performers y equipos en FinTable; el rol es metadato gris bajo el
+//     nombre (antes tres colores de badge por rol, que no significaban nada:
+//     spec §2.1). El ND del equipo se pinta por signo — ahí el signo SÍ es la
+//     noticia.
+//
+// Medición (sin comentarios, script de conteo de la tanda): antes 24 clases de
+// paleta cruda, 8 `dark:` de color, 3 `text-[10px]`, 14 tokens legados y 5
+// `?? 0`; después 0 / 0 / 0 / 0 y 2 `?? 0` acá (el conteo por departamento
+// y el ND personal del head, intactos) + 2 movidos a hr-view.ts
+// (`payrollOfPeriod`, la misma suma de antes). Ninguno nuevo.
+//
+// DESCARTADO:
+//   · Sumar el ND guardado (`net_deposit_current`) de todos los perfiles como
+//     «net del equipo»: los heads aparecen en la fila de su propio grupo Y en la
+//     de su sales manager, y la suma contaría dos veces. El overview ya trae el
+//     total atribuido a la estructura, calculado una vez (RPC).
+//   · Quitar el PeriodSelector del contenido (spec §6.2): las pantallas
+//     migradas lo conservan hasta que la topbar lo absorba.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // recharts (~350KB) on-demand — mismo patrón PERF-03 de resumen-general.
-const chartLoading = () => (
-  <div className="h-[260px] flex items-center justify-center text-sm text-muted-foreground">
-    Cargando gráfico…
-  </div>
-);
+const chartLoading = () => <div className="flex h-[260px] items-center justify-center text-[13px] text-text-3">…</div>;
 const PayrollTrendChart = dynamic(
   () => import('@/components/charts/hr-charts').then((m) => m.PayrollTrendChart),
   { ssr: false, loading: chartLoading },
@@ -44,64 +67,47 @@ const DepartmentDonut = dynamic(
   { ssr: false, loading: chartLoading },
 );
 
-const ROLE_BADGE: Record<string, string> = {
-  sales_manager: 'bg-amber-100 dark:bg-amber-950/50 text-warning',
-  head: 'bg-violet-100 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
-  bdm: 'bg-blue-100 dark:bg-blue-950/50 text-info',
+type TopRow = { key: string; rank: number; name: string; role: string; commission: number; nd: number };
+type TeamRow = {
+  id: string;
+  name: string;
+  role: string;
+  membersCount: number;
+  teamND: number;
+  teamCommissions: number;
 };
-// Las etiquetas salen del registro único (src/lib/hr/domain.ts): acá había una
-// cuarta copia, que además no conocía `bdm_global` y lo mostraba en crudo.
-// Los colores del badge de ESTA pantalla se quedan: son otros que los de /rrhh.
+
+const countFmt = (n: number) => String(n);
 
 export default function DashboardPage() {
   const { t } = useI18n();
-  const { user } = useAuth();
   const { selectedPeriodId } = usePeriod();
-  const {
-    company,
-    commercialProfiles,
-    employees,
-    getResultsByPeriod,
-    getProfilesByHead,
-    periods,
-    monthlyResults,
-  } = useData();
+  const { company, commercialProfiles, employees, getResultsByPeriod, getProfilesByHead, periods, monthlyResults } =
+    useData();
 
   // Sin equipo comercial no hay perfiles, comisiones, top performers ni
   // equipos: RRHH es la ficha de empleados y nada más.
   const { commercialTeam } = features(company?.business_model);
 
-  // ─── Commercial profiles stats ───
-  const profileStats = useMemo(() => {
-    const active = commercialProfiles.filter((p) => p.status === 'active');
-    const inactive = commercialProfiles.filter((p) => p.status === 'inactive');
-    const salesManagers = active.filter((p) => p.role === 'sales_manager');
-    const heads = active.filter((p) => p.role === 'head');
-    const bdms = active.filter((p) => p.role === 'bdm');
-    return { total: commercialProfiles.length, active, inactive, salesManagers, heads, bdms };
-  }, [commercialProfiles]);
-
   // ─── Employee stats ───
   const empStats = useMemo(() => {
     const active = employees.filter((e) => e.status === 'active');
-    const inactive = employees.filter((e) => e.status === 'inactive');
-    const probation = employees.filter((e) => e.status === 'probation');
     // Group by department
     const deptMap = new Map<string, number>();
     for (const e of active) {
       const dept = e.department || 'Sin departamento';
       deptMap.set(dept, (deptMap.get(dept) ?? 0) + 1);
     }
-    const departments = [...deptMap.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([name, count]) => ({ name, count }));
+    const departments = [...deptMap.entries()].sort((a, b) => b[1] - a[1]).map(([name, count]) => ({ name, count }));
     // Nómina mensual comprometida: el sueldo de quien está trabajando hoy
     // (el período de prueba se cobra igual).
     const monthlySalaries = employees
       .filter((e) => e.status !== 'inactive')
       .reduce((sum, e) => sum + (Number(e.salary) || 0), 0);
-    return { total: employees.length, active, inactive, probation, departments, monthlySalaries };
+    return { departments, monthlySalaries };
   }, [employees]);
+
+  const people = useMemo(() => headcount(employees, commercialProfiles), [employees, commercialProfiles]);
 
   // ─── Period results ───
   const periodResults = useMemo(() => {
@@ -109,81 +115,152 @@ export default function DashboardPage() {
     return getResultsByPeriod(selectedPeriodId);
   }, [selectedPeriodId, getResultsByPeriod]);
 
-  // ─── Payroll summary for selected period ───
-  const payroll = useMemo(() => {
-    let totalCommissions = 0;
-    let totalSalaries = 0;
-    for (const r of periodResults) {
-      totalCommissions += r.real_payment ?? 0;
-      totalSalaries += r.salary_paid ?? 0;
-    }
-    return { totalCommissions, totalSalaries, total: totalCommissions + totalSalaries };
-  }, [periodResults]);
+  const payroll = useMemo(() => payrollOfPeriod(periodResults), [periodResults]);
 
   // ─── Top performers (by real_payment this period) ───
-  const topPerformers = useMemo(() => {
+  const topPerformers = useMemo<TopRow[]>(() => {
     return periodResults
       .filter((r) => r.real_payment > 0)
       .sort((a, b) => b.real_payment - a.real_payment)
       .slice(0, 5)
-      .map((r) => {
+      .map((r, i) => {
         const profile = commercialProfiles.find((p) => p.id === r.profile_id);
         return {
+          key: `${r.profile_id}-${r.head_id ?? ''}-${i}`,
+          rank: i + 1,
           name: profile?.name ?? '—',
           role: profile?.role ?? 'bdm',
           commission: r.real_payment,
-          salary: r.salary_paid,
-          total: r.total_earned,
           nd: r.net_deposit_current,
         };
       });
   }, [periodResults, commercialProfiles]);
+  const withPayment = useMemo(() => periodResults.filter((r) => r.real_payment > 0).length, [periodResults]);
 
   // ─── Team summary (HEAD teams) ───
-  const teamSummary = useMemo(() => {
+  const teamSummary = useMemo<TeamRow[]>(() => {
     const headProfiles = commercialProfiles.filter(
-      (p) => (p.role === 'head' || p.role === 'sales_manager') && p.status === 'active'
+      (p) => (p.role === 'head' || p.role === 'sales_manager') && p.status === 'active',
     );
-    return headProfiles.map((head) => {
-      const members = getProfilesByHead(head.id).filter((p) => p.status === 'active');
-      // HEAD's own result in their OWN team context (head_id = their own id)
-      const headResult = periodResults.find(
-        (r) => r.profile_id === head.id && r.head_id === head.id
-      );
-      // Sum ND and commissions from direct team members
-      let teamND = 0;
-      let teamCommissions = 0;
-      for (const m of members) {
-        const mr = periodResults.find((r) => r.profile_id === m.id && r.head_id === head.id);
-        if (mr) {
-          teamND += mr.net_deposit_current;
-          teamCommissions += mr.real_payment;
+    return headProfiles
+      .map((head) => {
+        const members = getProfilesByHead(head.id).filter((p) => p.status === 'active');
+        // HEAD's own result in their OWN team context (head_id = their own id)
+        const headResult = periodResults.find((r) => r.profile_id === head.id && r.head_id === head.id);
+        // Sum ND and commissions from direct team members
+        let teamND = 0;
+        let teamCommissions = 0;
+        for (const m of members) {
+          const mr = periodResults.find((r) => r.profile_id === m.id && r.head_id === head.id);
+          if (mr) {
+            teamND += mr.net_deposit_current;
+            teamCommissions += mr.real_payment;
+          }
         }
-      }
-      // Include HEAD's own personal ND
-      if (headResult) {
-        // If HEAD has parent, their personal ND is in net_deposit_accumulated
-        // If HEAD has no parent, it's in net_deposit_current
-        const headPersonalND = head.head_id
-          ? (headResult.net_deposit_accumulated ?? 0)
-          : headResult.net_deposit_current;
-        teamND += headPersonalND;
-        teamCommissions += headResult.real_payment;
-      }
-      return {
-        id: head.id,
-        name: head.name,
-        role: head.role,
-        membersCount: members.length + 1,
-        teamND,
-        teamCommissions,
-        totalEarned: headResult?.total_earned ?? 0,
-      };
-    }).sort((a, b) => b.teamND - a.teamND);
+        // Include HEAD's own personal ND
+        if (headResult) {
+          // If HEAD has parent, their personal ND is in net_deposit_accumulated
+          // If HEAD has no parent, it's in net_deposit_current
+          const headPersonalND = head.head_id
+            ? (headResult.net_deposit_accumulated ?? 0)
+            : headResult.net_deposit_current;
+          teamND += headPersonalND;
+          teamCommissions += headResult.real_payment;
+        }
+        return {
+          id: head.id,
+          name: head.name,
+          role: head.role,
+          membersCount: members.length + 1,
+          teamND,
+          teamCommissions,
+        };
+      })
+      .sort((a, b) => b.teamND - a.teamND);
   }, [commercialProfiles, getProfilesByHead, periodResults]);
 
+  // El overview del mes del PERÍODO elegido arriba (no el «mes anterior» por
+  // defecto de /rrhh): los cuatro KPIs hablan del mismo mes.
+  const selectedPeriod = periods.find((p) => p.id === selectedPeriodId) ?? null;
+  const month = selectedPeriod ? mesDePeriodo(selectedPeriod) : undefined;
+
+  const topColumns: FinColumn<TopRow>[] = [
+    {
+      key: 'rank',
+      header: '#',
+      width: '48px',
+      cell: (r) => <span className={`${NUM_CLASS} text-text-3`}>{r.rank}</span>,
+      hideSm: true,
+    },
+    {
+      key: 'name',
+      header: t('common.name'),
+      cell: (r) => r.name,
+      meta: (r) => hrRoleLabel(r.role),
+    },
+    { key: 'nd', header: t('hrv.ndShort'), kind: 'money', value: (r) => r.nd, hideSm: true, subtotal: false },
+    { key: 'commission', header: t('hrDash.totalCommissions'), kind: 'money', value: (r) => r.commission, subtotal: false },
+  ];
+
+  const teamColumns: FinColumn<TeamRow>[] = [
+    { key: 'name', header: t('hrDash.team'), cell: (r) => r.name, meta: (r) => hrRoleLabel(r.role) },
+    {
+      key: 'members',
+      header: t('hrDash.members'),
+      kind: 'number',
+      value: (r) => r.membersCount,
+      hideSm: true,
+    },
+    {
+      key: 'teamND',
+      header: t('hrDash.teamND'),
+      kind: 'money',
+      value: (r) => r.teamND,
+      // El signo del ND de un equipo es la noticia (plata que entró o se fue).
+      money: { tone: 'sign' },
+      subtotal: false,
+    },
+    {
+      key: 'teamCommissions',
+      header: t('hrDash.teamCommissions'),
+      kind: 'money',
+      value: (r) => r.teamCommissions,
+      hideSm: true,
+      subtotal: false,
+    },
+  ];
+
+  const serviceKpis: KpiItem[] = [
+    {
+      key: 'headcount',
+      label: t('hrv.headcount'),
+      value: people.admin,
+      format: 'count',
+      sub: people.probation > 0 ? t('hrv.probationSub', { n: countFmt(people.probation) }) : undefined,
+    },
+    {
+      key: 'salaries',
+      label: t('hrDash.monthlySalaries'),
+      value: empStats.monthlySalaries,
+      hero: true,
+      sub: t('hrDash.monthlySalariesHint'),
+    },
+    {
+      key: 'departments',
+      label: t('hrDash.departmentsCount'),
+      value: empStats.departments.length,
+      format: 'count',
+      sub: empStats.departments[0]
+        ? t('hrDash.largestDepartment', {
+            name: empStats.departments[0].name,
+            count: String(empStats.departments[0].count),
+          })
+        : undefined,
+    },
+  ];
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeader
         title={t('hrDash.title')}
         subtitle={t('hrDash.subtitle')}
@@ -192,130 +269,21 @@ export default function DashboardPage() {
         actions={commercialTeam ? <PeriodSelector /> : undefined}
       />
 
-      {/* KPI Row 1 — People count */}
-      <div
-        className={cn(
-          'grid grid-cols-1 gap-4',
-          commercialTeam ? 'md:grid-cols-2 lg:grid-cols-4' : 'md:grid-cols-3',
-        )}
-      >
-        {commercialTeam && (
-          <Card>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50">
-                <Users className="w-5 h-5 text-violet-500" />
-              </div>
-              <CardTitle>{t('hrDash.totalProfiles')}</CardTitle>
-            </div>
-            <CardValue>{profileStats.active.length}</CardValue>
-            <p className="text-xs text-muted-foreground mt-1">
-              {profileStats.inactive.length} {t('hrDash.inactiveProfiles').toLowerCase()}
-            </p>
-          </Card>
-        )}
+      {commercialTeam ? (
+        <HrPeriodProvider month={month}>
+          <CommercialKpis
+            people={people}
+            payroll={payroll}
+            hasPeriod={selectedPeriod != null}
+            periodLabel={selectedPeriod?.label ?? null}
+          />
+        </HrPeriodProvider>
+      ) : (
+        <KpiStrip items={serviceKpis} />
+      )}
 
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-info/10">
-              <Briefcase className="w-5 h-5 text-blue-500" />
-            </div>
-            <CardTitle>{t('hrDash.totalEmployees')}</CardTitle>
-          </div>
-          <CardValue>{empStats.active.length}</CardValue>
-          <p className="text-xs text-muted-foreground mt-1">
-            {empStats.probation.length > 0 && `${empStats.probation.length} ${t('hrDash.probationEmployees').toLowerCase()} · `}
-            {empStats.inactive.length} {t('hrDash.inactiveEmployees').toLowerCase()}
-          </p>
-        </Card>
-
-        <Card>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="p-2 rounded-lg bg-positive/10">
-              <DollarSign className="w-5 h-5 text-emerald-500" />
-            </div>
-            <CardTitle>{commercialTeam ? t('hrDash.totalPayroll') : t('hrDash.monthlySalaries')}</CardTitle>
-          </div>
-          {commercialTeam ? (
-            <>
-              <CardValue>{formatCurrency(payroll.total)}</CardValue>
-              <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                <div className="flex justify-between">
-                  <span>{t('hrDash.totalCommissions')}</span>
-                  <span>{formatCurrency(payroll.totalCommissions)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span>{t('hrDash.totalSalaries')}</span>
-                  <span>{formatCurrency(payroll.totalSalaries)}</span>
-                </div>
-              </div>
-            </>
-          ) : (
-            <>
-              <CardValue>{formatCurrency(empStats.monthlySalaries)}</CardValue>
-              <p className="text-xs text-muted-foreground mt-1">{t('hrDash.monthlySalariesHint')}</p>
-            </>
-          )}
-        </Card>
-
-        {commercialTeam ? (
-          <Card>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-2 rounded-lg bg-warning/10">
-                <UserCog className="w-5 h-5 text-amber-500" />
-              </div>
-              <CardTitle>{t('hrDash.byRole')}</CardTitle>
-            </div>
-            <div className="space-y-2 mt-1">
-              <div className="flex justify-between items-center">
-                <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.sales_manager)}>
-                  {t('hrDash.salesManagers')}
-                </span>
-                <span className="font-semibold text-sm">{profileStats.salesManagers.length}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.head)}>
-                  {t('hrDash.heads')}
-                </span>
-                <span className="font-semibold text-sm">{profileStats.heads.length}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className={cn('text-xs px-2 py-0.5 rounded-full font-medium', ROLE_BADGE.bdm)}>
-                  {t('hrDash.bdms')}
-                </span>
-                <span className="font-semibold text-sm">{profileStats.bdms.length}</span>
-              </div>
-            </div>
-          </Card>
-        ) : (
-          <Card>
-            <div className="flex items-center gap-3 mb-3">
-              <div className="p-2 rounded-lg bg-warning/10">
-                <UserCog className="w-5 h-5 text-amber-500" />
-              </div>
-              <CardTitle>{t('hrDash.departmentsCount')}</CardTitle>
-            </div>
-            <CardValue>{empStats.departments.length}</CardValue>
-            <p className="text-xs text-muted-foreground mt-1">
-              {empStats.departments[0]
-                ? t('hrDash.largestDepartment', {
-                    name: empStats.departments[0].name,
-                    count: String(empStats.departments[0].count),
-                  })
-                : t('hrDash.noData')}
-            </p>
-          </Card>
-        )}
-      </div>
-
-      {/* Row 2 — Charts: evolución de nómina + distribución por departamento */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Card>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-accent/10">
-              <TrendingUp className="w-5 h-5 text-accent" />
-            </div>
-            <h2 className="font-semibold">{t('hrDash.payrollByPeriod')}</h2>
-          </div>
+      <div className="grid grid-cols-1 gap-4 min-[1100px]:grid-cols-2">
+        <Panel title={t('hrDash.payrollByPeriod')}>
           {commercialTeam ? (
             <PayrollTrendChart periods={periods} monthlyResults={monthlyResults} />
           ) : (
@@ -327,99 +295,148 @@ export default function DashboardPage() {
               emptyDescription={t('hrDash.noPayrollHint')}
             />
           )}
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-primary/10">
-              <Users className="w-5 h-5 text-primary dark:text-accent" />
-            </div>
-            <h2 className="font-semibold">{t('hrDash.employeesByDept')}</h2>
-          </div>
+        </Panel>
+        <Panel title={t('hrDash.employeesByDept')}>
           <DepartmentDonut departments={empStats.departments} />
-        </Card>
+        </Panel>
       </div>
 
-      {/* Row 3 — Top Performers + Team Summary (solo con equipo comercial) */}
       {commercialTeam && (
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        {/* Top Performers */}
-        <Card>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-yellow-50 dark:bg-yellow-950/50">
-              <Award className="w-5 h-5 text-yellow-500" />
-            </div>
-            <h2 className="font-semibold">{t('hrDash.topPerformers')}</h2>
-          </div>
-          {topPerformers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">{t('hrDash.noData')}</p>
-          ) : (
-            <div className="space-y-3">
-              {topPerformers.map((p, i) => (
-                <div key={i} className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <span className="w-6 h-6 flex items-center justify-center rounded-full bg-muted text-xs font-bold">
-                      {i + 1}
-                    </span>
-                    <div>
-                      <p className="text-sm font-medium">{p.name}</p>
-                      <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', ROLE_BADGE[p.role] || ROLE_BADGE.bdm)}>
-                        {hrRoleLabel(p.role)}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-sm font-semibold text-emerald-600">{formatCurrency(p.commission)}</p>
-                    <p className="text-[10px] text-muted-foreground">ND: {formatCurrency(p.nd)}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </Card>
+        <div className="grid grid-cols-1 gap-4 min-[1100px]:grid-cols-2">
+          <Panel
+            title={t('hrDash.topPerformers')}
+            hint={selectedPeriod?.label}
+            flush
+            // Recorte contado: «top 5 de 23 con pago» (reglas §1.2).
+            footer={
+              withPayment > topPerformers.length
+                ? t('hrv.topShowing', { shown: String(topPerformers.length), total: String(withPayment) })
+                : undefined
+            }
+          >
+            <FinTable
+              columns={topColumns}
+              rows={topPerformers}
+              rowKey={(r) => r.key}
+              caption={t('hrDash.topPerformers')}
+              empty={t('hrDash.noData')}
+            />
+          </Panel>
 
-        {/* Team Summary */}
-        <Card>
-          <div className="flex items-center gap-3 mb-4">
-            <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/50">
-              <TrendingUp className="w-5 h-5 text-indigo-500" />
-            </div>
-            <h2 className="font-semibold">{t('hrDash.teamSummary')}</h2>
-          </div>
-          <DataTable
-            data={teamSummary}
-            columns={[
-              {
-                header: t('hrDash.team'),
-                accessor: (team) => (
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium">{team.name}</span>
-                    <span className={cn('text-[10px] px-1.5 py-0.5 rounded-full font-medium', ROLE_BADGE[team.role] || ROLE_BADGE.head)}>
-                      {hrRoleLabel(team.role)}
-                    </span>
-                  </div>
-                ),
-              },
-              { header: t('hrDash.members'), align: 'center', accessor: 'membersCount' },
-              {
-                header: t('hrDash.teamND'),
-                align: 'right',
-                accessor: (team) => (
-                  <span className={cn('font-medium', team.teamND >= 0 ? 'text-emerald-600' : 'text-red-600')}>
-                    {formatCurrency(team.teamND)}
-                  </span>
-                ),
-              },
-              {
-                header: t('hrDash.teamCommissions'),
-                align: 'right',
-                accessor: (team) => formatCurrency(team.teamCommissions),
-              },
-            ]}
-            empty={<EmptyState compact title={t('hrDash.noData')} />}
-          />
-        </Card>
-      </div>
+          <Panel title={t('hrDash.teamSummary')} hint={selectedPeriod?.label} flush>
+            <FinTable
+              columns={teamColumns}
+              rows={teamSummary}
+              rowKey={(r) => r.id}
+              caption={t('hrDash.teamSummary')}
+              empty={t('hrDash.noData')}
+            />
+          </Panel>
+        </div>
       )}
     </div>
+  );
+}
+
+/** La franja con equipo comercial. Vive dentro del provider para leer el overview. */
+function CommercialKpis({
+  people,
+  payroll,
+  hasPeriod,
+  periodLabel,
+}: {
+  people: ReturnType<typeof headcount>;
+  payroll: ReturnType<typeof payrollOfPeriod>;
+  hasPeriod: boolean;
+  periodLabel: string | null;
+}) {
+  const { t } = useI18n();
+  const { overview, loading, error } = useHrPeriod();
+  const net = teamNetKpi(overview, loading && !error);
+  const alerts = alertsKpi(overview, loading && !error);
+
+  const loadingBadge = { kind: 'stale' as const, label: t('hrv.crmLoading') };
+  const missingNetBadge = { kind: 'stale' as const, label: t('hrv.netNoData') };
+
+  const items: KpiItem[] = [
+    {
+      key: 'headcount',
+      label: t('hrv.headcount'),
+      value: people.total,
+      format: 'count',
+      sub: t('hrv.headcountSub', { admin: String(people.admin), commercial: String(people.commercial) }),
+    },
+    {
+      key: 'payroll',
+      label: t('hrv.payrollOfPeriod'),
+      value: payroll.total,
+      hero: true,
+      missingBadge: { kind: 'pend', label: t('hrv.notCalculated') },
+      sub:
+        payroll.total == null
+          ? hasPeriod
+            ? t('hrv.payrollNoRows')
+            : t('hrv.noPeriodSelected')
+          : t('hrv.payrollSub', {
+              commissions: moneyText(payroll.commissions, { compact: true }),
+              salaries: moneyText(payroll.salaries, { compact: true }),
+            }),
+    },
+    {
+      key: 'teamNet',
+      label: t('hrv.teamNet'),
+      value: net.assigned,
+      tone: 'sign',
+      missingBadge: net.state === 'loading' ? loadingBadge : missingNetBadge,
+      sub:
+        net.state === 'ok' && net.unassigned != null && net.unassigned !== 0
+          ? t('hrv.unassignedSub', { amount: moneyText(net.unassigned, { compact: true }) })
+          : net.state === 'ok'
+            ? t('hrv.teamNetSub')
+            : undefined,
+    },
+    {
+      key: 'alerts',
+      label: t('hrv.alerts'),
+      value: alerts.ofMonth,
+      format: 'count',
+      missingBadge: alerts.state === 'loading' ? loadingBadge : { kind: 'stale', label: t('hrv.alertsNoData') },
+      sub:
+        alerts.state === 'ok'
+          ? t('hrv.alertsSub', { suggested: String(alerts.suggested), repeat: String(alerts.repeat) })
+          : undefined,
+    },
+  ];
+
+  return (
+    <>
+      <KpiStrip items={items} />
+      {net.state === 'missing' && (
+        <Notice
+          kind="stale"
+          title={t('hrv.netNoDataTitle')}
+          action={
+            <Link href="/rrhh" className="text-[13px] font-medium text-brand-ink underline-offset-2 hover:underline">
+              {t('hrv.review')}
+            </Link>
+          }
+        >
+          {t('hrv.netNoDataBody', { month: overview?.month?.slice(0, 7) ?? periodLabel ?? '—' })}
+        </Notice>
+      )}
+      {hasPeriod && payroll.total == null && (
+        <Notice
+          kind="pend"
+          title={t('hrv.payrollNoRowsTitle', { period: periodLabel ?? '' })}
+          action={
+            <Link href="/comisiones" className="text-[13px] font-medium text-brand-ink underline-offset-2 hover:underline">
+              {t('hrv.goToCommissions')}
+            </Link>
+          }
+        >
+          {t('hrv.payrollNoRowsBody')}
+        </Notice>
+      )}
+    </>
   );
 }

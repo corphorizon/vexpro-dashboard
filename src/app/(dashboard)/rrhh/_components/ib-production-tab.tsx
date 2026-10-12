@@ -1,13 +1,19 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { ChevronDown, ChevronRight, Info, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency, formatNumber, cn } from '@/lib/utils';
+import { formatNumber } from '@/lib/utils';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS } from '@/components/ui/money';
 import { ROLE_LABELS_HR } from '@/lib/hr-data';
 import type { IbProduction, IbProductionNode } from '@/lib/hr/ib-production';
 import { hasProduction } from '@/lib/hr/ib-production';
+import { TreeNameCell } from './hr-ui';
+import { flattenTree, type FlatTreeRow } from './hr-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Vista "Producción IB" — la misma estructura comercial que el net deposit,
@@ -34,6 +40,15 @@ import { hasProduction } from '@/lib/hr/ib-production';
 // y USD. Todo el origen es USD (verificado: currency='USD' en el 100% de las
 // filas). Los lotes son ESTÁNDAR: las cuentas cent ya vienen ÷100 del bróker,
 // así que un lote cent no es un lote acá.
+//
+// ── «Libro mayor» (2026-10-12) — sólo presentación ────────────────────────
+// Totales → KpiStrip; árbol → FinTable (flattenTree) con la fila «sin
+// asignar» como fila de total al pie; avisos de cobertura → Notice (`pend` si
+// falta parte del mes, `info` si está completo). Los totales del mes eran
+// `formatCurrency(data.totalAssigned?.commission ?? 0)`: sin `totalAssigned`
+// mostraban $0 y 0 lotes; ahora «—» (reglas §1.3). Medición (sin
+// comentarios): antes 1 `text-[11px]`, 37 tokens legados y 5 `?? 0`; después
+// 0 / 0 / 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type IbProductionResponse = {
@@ -50,12 +65,29 @@ export type IbProductionResponse = {
   };
 };
 
-/** Verde/rojo por el signo — un PNL negativo del cliente es plata del bróker. */
-function moneyClass(v: number): string {
-  if (v > 0) return 'text-positive';
-  if (v < 0) return 'text-negative';
-  return 'text-muted-foreground';
+/** Lotes / conteos: 2 decimales como siempre (formatNumber), tabulares. */
+function Num({ v, trimZeros }: { v: number; trimZeros?: boolean }) {
+  const txt = formatNumber(v);
+  return <span className={NUM_CLASS}>{trimZeros ? txt.replace(/\.00$/, '') : txt}</span>;
 }
+
+/**
+ * Lotes de una clase de activo. `null` NO se dibuja como 0: dice "sin dato".
+ * Es la diferencia entre "no operó sintéticos" y "ese mes no está espejado", y
+ * confundirlas es el modo de fallo que esta pantalla existe para evitar.
+ */
+function Lots({ v }: { v: number | null }) {
+  const { t } = useI18n();
+  if (v === null) return <span className="text-[12px] text-text-3">{t('hr.prodNoData')}</span>;
+  return <Num v={v} />;
+}
+
+/** Una fila de la tabla: un nodo del árbol o la línea «sin asignar». */
+type ProdRow =
+  | ({ kind: 'node' } & FlatTreeRow<IbProductionNode>)
+  | { kind: 'unassigned'; production: IbProduction };
+
+const prodOf = (r: ProdRow): IbProduction => (r.kind === 'node' ? r.node.total : r.production);
 
 export function IbProductionView({ month }: { month: string }) {
   const { t } = useI18n();
@@ -94,6 +126,12 @@ export function IbProductionView({ month }: { month: string }) {
     () => (data?.tree ?? []).filter((n) => hasProduction(n) || n.children.length > 0),
     [data],
   );
+  const hiddenRoots = data ? data.tree.length - roots.length : 0;
+  const rows = useMemo((): ProdRow[] => {
+    const flat: ProdRow[] = flattenTree(roots, collapsed).map((r) => ({ kind: 'node' as const, ...r }));
+    if (data?.unassigned) flat.push({ kind: 'unassigned', production: data.unassigned });
+    return flat;
+  }, [roots, collapsed, data]);
 
   const cov = data?.symbolCoverage;
   const coverageMsg = !cov
@@ -111,148 +149,98 @@ export function IbProductionView({ month }: { month: string }) {
           }
         : { tone: 'info' as const, text: t('hr.prodCoverageFull') };
 
-  return (
-    <div className="space-y-6">
-      <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 p-3">
-        <Info className="w-4 h-4 text-info mt-0.5 shrink-0" />
-        <p className="text-xs text-muted-foreground">{t('hr.prodHint')}</p>
-      </div>
+  const columns: FinColumn<ProdRow>[] = [
+    {
+      key: 'name',
+      header: t('common.name'),
+      cell: (r) =>
+        r.kind === 'node' ? (
+          <TreeNameCell
+            name={r.node.name}
+            depth={r.depth}
+            hasKids={r.hasKids}
+            collapsed={r.collapsed}
+            onToggle={() => toggle(r.node.profileId)}
+          />
+        ) : (
+          <span className="pl-7 text-text-2">{t('hr.ndUnassigned')}</span>
+        ),
+      mobileMeta: (r) => (r.kind === 'node' ? ROLE_LABELS_HR[r.node.role] : null),
+    },
+    {
+      key: 'role',
+      header: t('hr.role'),
+      hideSm: true,
+      cell: (r) => <span className="text-text-2">{r.kind === 'node' ? ROLE_LABELS_HR[r.node.role] : ''}</span>,
+    },
+    { key: 'rewards', header: t('hr.prodRewards'), align: 'right', hideSm: true, cell: (r) => <Num v={prodOf(r).rewards} trimZeros /> },
+    { key: 'lots', header: t('hr.prodLots'), align: 'right', hideSm: true, cell: (r) => <Num v={prodOf(r).lots} /> },
+    { key: 'forex', header: t('hr.prodForex'), align: 'right', hideSm: true, cell: (r) => <Lots v={prodOf(r).forexLots} /> },
+    { key: 'synthetic', header: t('hr.prodSynthetic'), align: 'right', hideSm: true, cell: (r) => <Lots v={prodOf(r).syntheticLots} /> },
+    { key: 'commission', header: t('hr.prodCommission'), kind: 'money', value: (r) => prodOf(r).commission, subtotal: false },
+    {
+      key: 'pnl',
+      header: t('hr.prodPnl'),
+      kind: 'money',
+      hideSm: true,
+      money: { tone: 'sign' },
+      value: (r) => prodOf(r).pnl,
+      subtotal: false,
+    },
+  ];
 
+  const tot = data?.totalAssigned ?? null;
+  const lots = tot?.lots ?? null;
+
+  return (
+    <div className="space-y-4">
       {coverageMsg && (
-        <div className={cn(
-          'flex items-start gap-2 rounded-lg border p-3',
-          coverageMsg.tone === 'warn' ? 'border-warning/30 bg-warning/5' : 'border-border',
-        )}>
-          {coverageMsg.tone === 'warn'
-            ? <AlertTriangle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
-            : <Info className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />}
-          <p className="text-xs text-muted-foreground">{coverageMsg.text}</p>
-        </div>
+        <Notice kind={coverageMsg.tone === 'warn' ? 'pend' : 'info'} title={coverageMsg.text} />
       )}
 
       {loadError ? (
-        <p className="text-sm text-negative">{t('hr.warningError')}</p>
+        <Notice kind="bad" title={t('hr.warningError')} />
       ) : loading ? (
-        <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+        <p className="text-[13px] text-text-3">{t('common.loading')}</p>
       ) : !data ? null : (
         <>
           {/* ── Totales del mes ─────────────────────────────────────────── */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Total label={t('hr.prodLots')} value={formatNumber(data.totalAssigned?.lots ?? 0)} />
-            <Total label={t('hr.prodCommission')} value={formatCurrency(data.totalAssigned?.commission ?? 0)} />
-            <Total
-              label={t('hr.prodPnl')}
-              value={formatCurrency(data.totalAssigned?.pnl ?? 0)}
-              hint={t('hr.prodPnlHint')}
-              tone={moneyClass(data.totalAssigned?.pnl ?? 0)}
-            />
-            <Total label={t('hr.prodRewards')} value={formatNumber(data.totalAssigned?.rewards ?? 0).replace(/\.00$/, '')} />
-          </div>
+          {/* Sin `totalAssigned` el KPI es «—», no 0 (antes `?? 0`). */}
+          <KpiStrip
+            items={[
+              {
+                key: 'lots',
+                label: t('hr.prodLots'),
+                value: lots,
+                format: 'count',
+                // El KPI redondea a entero; el exacto va abajo.
+                sub: lots != null && !Number.isInteger(lots) ? formatNumber(lots) : undefined,
+              },
+              { key: 'commission', label: t('hr.prodCommission'), value: tot?.commission ?? null, hero: true },
+              { key: 'pnl', label: t('hr.prodPnl'), value: tot?.pnl ?? null, tone: 'sign', sub: t('hr.prodPnlHint') },
+              { key: 'rewards', label: t('hr.prodRewards'), value: tot?.rewards ?? null, format: 'count' },
+            ]}
+          />
 
           {/* ── Estructuras ─────────────────────────────────────────────── */}
-          <div className="rounded-lg border border-border overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <table className="w-full text-sm min-w-[900px]">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.role')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.prodRewards')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.prodLots')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.prodForex')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.prodSynthetic')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.prodCommission')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden md:table-cell">{t('hr.prodPnl')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {roots.map((n) => (
-                  <ProductionRows key={n.profileId} node={n} depth={0} collapsed={collapsed} toggle={toggle} />
-                ))}
-                {roots.length === 0 && (
-                  <tr><td colSpan={8} className="text-center text-muted-foreground py-8">{t('hr.prodEmpty')}</td></tr>
-                )}
-                {data.unassigned && (
-                  <tr className="border-t border-border bg-muted/30">
-                    <td className="py-2 px-3 text-muted-foreground italic" colSpan={2}>{t('hr.ndUnassigned')}</td>
-                    <td className="py-2 px-3 text-right text-muted-foreground">{formatNumber(data.unassigned.rewards).replace(/\.00$/, '')}</td>
-                    <td className="py-2 px-3 text-right text-muted-foreground">{formatNumber(data.unassigned.lots)}</td>
-                    <td className="py-2 px-3 text-right text-muted-foreground"><Lots v={data.unassigned.forexLots} /></td>
-                    <td className="py-2 px-3 text-right text-muted-foreground"><Lots v={data.unassigned.syntheticLots} /></td>
-                    <td className="py-2 px-3 text-right text-muted-foreground">{formatCurrency(data.unassigned.commission)}</td>
-                    <td className="py-2 px-3 text-right text-muted-foreground hidden md:table-cell">{formatCurrency(data.unassigned.pnl)}</td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <Panel
+            title={t('hrv.structures')}
+            hint={data.month?.slice(0, 7)}
+            flush
+            footer={hiddenRoots > 0 ? t('hrv.hiddenZeroStructures', { n: String(hiddenRoots) }) : undefined}
+          >
+            <p className="border-b border-border px-4 py-2.5 text-[12.5px] leading-5 text-text-3">{t('hr.prodHint')}</p>
+            <FinTable
+              columns={columns}
+              rows={rows}
+              rowKey={(r) => (r.kind === 'node' ? r.node.profileId : '__unassigned__')}
+              rowVariant={(r) => (r.kind === 'unassigned' ? 'total' : undefined)}
+              caption={t('hr.prodViewProduction')}
+              empty={t('hr.prodEmpty')}
+            />
+          </Panel>
         </>
       )}
     </div>
-  );
-}
-
-function Total({ label, value, hint, tone }: { label: string; value: string; hint?: string; tone?: string }) {
-  return (
-    <div className="rounded-lg border border-border p-4">
-      <p className="text-sm text-muted-foreground mb-1">{label}</p>
-      <p className={cn('text-xl font-bold', tone)}>{value}</p>
-      {hint && <p className="text-[11px] text-muted-foreground mt-1">{hint}</p>}
-    </div>
-  );
-}
-
-/**
- * Lotes de una clase de activo. `null` NO se dibuja como 0: dice "sin dato".
- * Es la diferencia entre "no operó sintéticos" y "ese mes no está espejado", y
- * confundirlas es el modo de fallo que esta pantalla existe para evitar.
- */
-function Lots({ v }: { v: number | null }) {
-  const { t } = useI18n();
-  if (v === null) return <span className="text-muted-foreground/60 italic text-xs">{t('hr.prodNoData')}</span>;
-  return <>{formatNumber(v)}</>;
-}
-
-/**
- * Una estructura y todo lo que cuelga de ella. Se devuelve como fragmento de
- * filas (no como <table> anidada) para que las columnas de un BDM de tercer
- * nivel sigan alineadas con las del sales manager de arriba.
- */
-function ProductionRows({ node, depth, collapsed, toggle }: {
-  node: IbProductionNode;
-  depth: number;
-  collapsed: Set<string>;
-  toggle: (id: string) => void;
-}) {
-  const isCollapsed = collapsed.has(node.profileId);
-  const hasKids = node.children.length > 0;
-  const p = node.total;
-
-  return (
-    <>
-      <tr className={cn('border-b border-border/50 hover:bg-muted/50', depth === 0 && 'font-medium')}>
-        <td className="py-2 px-3">
-          <div className="flex items-center gap-1" style={{ paddingLeft: depth * 16 }}>
-            {hasKids ? (
-              <button onClick={() => toggle(node.profileId)} className="text-muted-foreground hover:text-foreground" aria-label={node.name}>
-                {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-            ) : (
-              <span className="w-3.5" />
-            )}
-            {node.name}
-          </div>
-        </td>
-        <td className="py-2 px-3 text-muted-foreground hidden sm:table-cell">{ROLE_LABELS_HR[node.role]}</td>
-        <td className="py-2 px-3 text-right">{formatNumber(p.rewards).replace(/\.00$/, '')}</td>
-        <td className="py-2 px-3 text-right font-medium">{formatNumber(p.lots)}</td>
-        <td className="py-2 px-3 text-right text-muted-foreground"><Lots v={p.forexLots} /></td>
-        <td className="py-2 px-3 text-right text-muted-foreground"><Lots v={p.syntheticLots} /></td>
-        <td className="py-2 px-3 text-right font-medium">{formatCurrency(p.commission)}</td>
-        <td className={cn('py-2 px-3 text-right hidden md:table-cell', moneyClass(p.pnl))}>{formatCurrency(p.pnl)}</td>
-      </tr>
-      {!isCollapsed && node.children.map((c) => (
-        <ProductionRows key={c.profileId} node={c} depth={depth + 1} collapsed={collapsed} toggle={toggle} />
-      ))}
-    </>
   );
 }

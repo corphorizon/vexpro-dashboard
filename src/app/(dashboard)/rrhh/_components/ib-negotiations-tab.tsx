@@ -1,12 +1,19 @@
 'use client';
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import {
-  ChevronDown, ChevronRight, Info, AlertTriangle, Plus, Search, X, Handshake, Lock,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, Plus, X, Handshake, Lock } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
-import { formatCurrency, formatNumber, cn } from '@/lib/utils';
+import { formatNumber, cn } from '@/lib/utils';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, NUM_CLASS, moneyText } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { useToasts } from '@/components/ui/toast';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import {
   IB_DEAL_TYPES,
   toNumber,
@@ -17,6 +24,8 @@ import {
   type IbNetworkMember,
   type IbProfile,
 } from '@/lib/hr/ib-negotiations';
+import { ROW_ACTION_CLASS, SearchField, TOGGLE_CLASS } from './hr-ui';
+import { sumKnown } from './hr-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña «Negociaciones IB».
@@ -51,6 +60,17 @@ import {
 // quince días: sólo hay espejo desde el 2026-08-13 y los meses anteriores NUNCA
 // lo van a tener. En esas celdas dice "sin dato" y arriba hay un aviso con los
 // días cubiertos, igual que en la pestaña de producción IB.
+//
+// ── «Libro mayor» (2026-10-12) — sólo presentación ────────────────────────
+// Totales → KpiStrip; lista → FinTable (el tipo de trato es un badge neutro:
+// no es un estado); el detalle de una fila abierta pasa a su propio Panel
+// debajo de la tabla (FinTable no tiene filas de detalle y en tarjeta móvil
+// no tendrían lugar); alta con Field/Input/Select/Textarea; cobertura → Notice
+// `pend`/`info`; avisos al toast flotante. El total «Net de la red» sumaba
+// `p.network?.net ?? 0`: una red que no se pudo resolver entraba como cero
+// sin decirlo. Ahora suma lo conocido y el sub cuenta los que faltan (y si
+// faltan todos, «—»). Medición (sin comentarios): antes 2 clases de paleta
+// cruda, 2 `text-[11px]`, 83 tokens legados y 1 `?? 0`; después 0 / 0 / 0 / 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
 function defaultMonth(): string {
@@ -65,12 +85,38 @@ const DEAL_LABEL_KEY: Record<IbDealType, string> = {
   net_deposit: 'hr.ibNegDealNetDeposit',
 };
 
-/** Verde/rojo por el signo — un net deposit negativo es plata que se fue. */
-function moneyClass(v: number): string {
-  if (v > 0) return 'text-positive';
-  if (v < 0) return 'text-negative';
-  return 'text-muted-foreground';
+/**
+ * `null` NO se dibuja como 0: dice "sin dato". Es la diferencia entre "no operó
+ * sintéticos" y "ese mes no está espejado", y confundirlas es el modo de fallo
+ * que esta pantalla existe para evitar.
+ */
+function NoData() {
+  const { t } = useI18n();
+  return <span className="text-[12px] text-text-3">{t('hr.prodNoData')}</span>;
 }
+
+function Maybe({ v, money }: { v: number | null; money?: boolean }) {
+  if (v === null) return <NoData />;
+  return money ? <Money value={v} /> : <span className={NUM_CLASS}>{formatNumber(v)}</span>;
+}
+
+/** Tipo de trato + % + «cerrada». El tipo no es un estado: gris. */
+function DealBadges({ pkg }: { pkg: IbNegotiationPackage }) {
+  const { t } = useI18n();
+  const neg = pkg.negotiation;
+  return (
+    <span className="inline-flex flex-wrap items-center gap-1.5">
+      <StatusBadge kind="neutral" label={t(DEAL_LABEL_KEY[neg.deal_type])} />
+      {neg.pct != null && <span className={cn(NUM_CLASS, 'text-[12px] text-text-2')}>{toNumber(neg.pct)}%</span>}
+      {neg.status === 'closed' && (
+        <span className="inline-flex items-center gap-0.5 text-[12px] text-text-3">
+          <Lock aria-hidden className="size-3" /> {t('hr.ibNegStatusClosed')}
+        </span>
+      )}
+    </span>
+  );
+}
+const dealBadges = (pkg: IbNegotiationPackage) => <DealBadges pkg={pkg} />;
 
 export function IbNegotiationsTab() {
   const { t } = useI18n();
@@ -80,11 +126,11 @@ export function IbNegotiationsTab() {
   const [loadError, setLoadError] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const { toast, ToastHost } = useToasts();
 
   const flash = (type: 'success' | 'error', msg: string) => {
-    setToast({ type, msg });
-    setTimeout(() => setToast(null), 4000);
+    if (type === 'success') toast.success(msg);
+    else toast.error(msg);
   };
 
   const load = useCallback(async () => {
@@ -144,61 +190,113 @@ export function IbNegotiationsTab() {
 
   // Totales de lo negociado: es la pregunta que sigue a "¿cuánto le pagamos a
   // los IB con los que tenemos trato?" y no se puede sacar mirando la tabla.
+  // La red de un IB puede no resolverse (`network` null ≠ 0): se suma lo que
+  // se sabe y se CUENTA lo que falta (antes `p.network?.net ?? 0`, que sumaba
+  // «no sabemos» como cero sin decirlo).
   const totals = useMemo(() => {
     const act = (data?.packages ?? []).filter((p) => p.negotiation.status === 'active');
+    const networkNet = sumKnown(act, (p) => p.network?.net);
     return {
       count: act.length,
       commission: act.reduce((s, p) => s + p.production.commission, 0),
       lots: act.reduce((s, p) => s + p.production.lots, 0),
-      networkNet: act.reduce((s, p) => s + (p.network?.net ?? 0), 0),
+      networkNet: networkNet.sum,
+      networkMissing: networkNet.missing,
     };
   }, [data]);
 
+  const columns: FinColumn<IbNegotiationPackage>[] = [
+    {
+      key: 'ib',
+      header: t('hr.ibNegIb'),
+      cell: (pkg) => (
+        <span className="inline-flex min-w-0 items-center gap-1">
+          <button
+            type="button"
+            onClick={() => toggle(pkg.negotiation.id)}
+            className={TOGGLE_CLASS}
+            aria-label={ibDisplayName(pkg)}
+            aria-expanded={expanded.has(pkg.negotiation.id)}
+          >
+            {expanded.has(pkg.negotiation.id)
+              ? <ChevronDown aria-hidden className="size-3.5" />
+              : <ChevronRight aria-hidden className="size-3.5" />}
+          </button>
+          <span className={cn('truncate', pkg.negotiation.status === 'closed' && 'text-text-3')}>{ibDisplayName(pkg)}</span>
+        </span>
+      ),
+      meta: (pkg) => pkg.negotiation.ib_username ?? '—',
+      mobileMeta: (pkg) => dealBadges(pkg),
+    },
+    { key: 'deal', header: t('hr.ibNegDeal'), hideSm: true, cell: dealBadges },
+    // Los dos net deposit van SEPARADOS: sumarlos escondería que el IB
+    // personalmente retira más de lo que deposita.
+    {
+      key: 'ownNet',
+      header: t('hr.ibNegOwnNet'),
+      kind: 'money',
+      hideSm: true,
+      money: { tone: 'sign' },
+      value: (pkg) => (pkg.network ? pkg.network.ownNet : null),
+      subtotal: false,
+    },
+    {
+      key: 'networkNet',
+      header: t('hr.ibNegNetworkNet'),
+      kind: 'money',
+      money: { tone: 'sign' },
+      value: (pkg) => (pkg.network ? pkg.network.net : null),
+      subtotal: false,
+    },
+    {
+      key: 'size',
+      header: t('hr.ibNegNetworkSize'),
+      align: 'right',
+      hideSm: true,
+      cell: (pkg) =>
+        pkg.network
+          ? <span className={NUM_CLASS}>{formatNumber(pkg.network.size).replace(/\.00$/, '')}</span>
+          : <NoData />,
+    },
+    {
+      key: 'lots',
+      header: t('hr.prodLots'),
+      align: 'right',
+      hideSm: true,
+      cell: (pkg) => <span className={NUM_CLASS}>{formatNumber(pkg.production.lots)}</span>,
+    },
+    { key: 'paid', header: t('hr.ibNegPaid'), kind: 'money', value: (pkg) => pkg.production.commission, subtotal: false },
+    {
+      key: 'pnl',
+      header: t('hr.prodPnl'),
+      kind: 'money',
+      hideSm: true,
+      money: { tone: 'sign' },
+      value: (pkg) => pkg.production.pnl,
+      subtotal: false,
+    },
+  ];
+
+  const openPackages = (data?.packages ?? []).filter((pkg) => expanded.has(pkg.negotiation.id));
+
   return (
-    <div className="space-y-6">
-      {toast && (
-        <div className={cn('px-4 py-3 rounded-lg text-sm', toast.type === 'success'
-          ? 'bg-positive/10 text-positive border border-positive/30'
-          : 'bg-negative/10 text-negative border border-negative/30')}>
-          {toast.msg}
-        </div>
-      )}
+    <div className="space-y-4">
+      {ToastHost}
 
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+      <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="flex items-center gap-2">
-          <label className="text-sm text-muted-foreground" htmlFor="ibneg-month">{t('hr.warningMonth')}</label>
-          <input
-            id="ibneg-month"
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="px-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm"
-          />
+          <label className="text-[12.5px] font-medium text-text-2" htmlFor="ibneg-month">{t('hr.warningMonth')}</label>
+          {/* Ancho en el contenedor: `cn` no fusiona con el `w-full` del control. */}
+          <div className="w-44">
+            <Input id="ibneg-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
+          </div>
         </div>
-        <button
-          onClick={() => setShowForm((v) => !v)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-        >
-          <Plus className="w-4 h-4" /> {t('hr.ibNegNew')}
-        </button>
+        <ActionButton variant="primary" onClick={() => setShowForm((v) => !v)} aria-expanded={showForm}>
+          <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} /> {t('hr.ibNegNew')}
+        </ActionButton>
       </div>
 
-      <div className="flex items-start gap-2 rounded-lg border border-info/30 bg-info/5 p-3">
-        <Info className="w-4 h-4 text-info mt-0.5 shrink-0" />
-        <p className="text-xs text-muted-foreground">{t('hr.ibNegHint')}</p>
-      </div>
-
-      {coverageMsg && (
-        <div className={cn(
-          'flex items-start gap-2 rounded-lg border p-3',
-          coverageMsg.tone === 'warn' ? 'border-warning/30 bg-warning/5' : 'border-border',
-        )}>
-          {coverageMsg.tone === 'warn'
-            ? <AlertTriangle className="w-4 h-4 text-warning mt-0.5 shrink-0" />
-            : <Info className="w-4 h-4 text-muted-foreground mt-0.5 shrink-0" />}
-          <p className="text-xs text-muted-foreground">{coverageMsg.text}</p>
-        </div>
-      )}
+      {coverageMsg && <Notice kind={coverageMsg.tone === 'warn' ? 'pend' : 'info'} title={coverageMsg.text} />}
 
       {showForm && (
         <NewNegotiationForm
@@ -209,155 +307,85 @@ export function IbNegotiationsTab() {
       )}
 
       {loadError ? (
-        <p className="text-sm text-negative">{t('hr.warningError')}</p>
+        <Notice kind="bad" title={t('hr.warningError')} />
       ) : loading ? (
-        <p className="text-sm text-muted-foreground">{t('common.loading')}</p>
+        <p className="text-[13px] text-text-3">{t('common.loading')}</p>
       ) : !data ? null : data.packages.length === 0 ? (
-        <div className="rounded-lg border border-border p-8 text-center">
-          <Handshake className="w-8 h-8 text-muted-foreground mx-auto mb-2" />
-          <p className="text-sm text-muted-foreground">{t('hr.ibNegEmpty')}</p>
-        </div>
+        <Panel>
+          <div className="py-6 text-center">
+            <Handshake aria-hidden className="mx-auto mb-2 size-8 text-text-3" strokeWidth={1.5} />
+            <p className="text-[13px] text-text-3">{t('hr.ibNegEmpty')}</p>
+          </div>
+        </Panel>
       ) : (
         <>
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Total label={t('hr.ibNegActive')} value={formatNumber(totals.count).replace(/\.00$/, '')} />
-            <Total label={t('hr.prodLots')} value={formatNumber(totals.lots)} />
-            <Total label={t('hr.ibNegPaid')} value={formatCurrency(totals.commission)} />
-            <Total
-              label={t('hr.ibNegNetworkNet')}
-              value={formatCurrency(totals.networkNet)}
-              tone={moneyClass(totals.networkNet)}
-            />
-          </div>
+          <KpiStrip
+            items={[
+              { key: 'active', label: t('hr.ibNegActive'), value: totals.count, format: 'count' },
+              {
+                key: 'lots',
+                label: t('hr.prodLots'),
+                value: totals.lots,
+                format: 'count',
+                sub: Number.isInteger(totals.lots) ? undefined : formatNumber(totals.lots),
+              },
+              { key: 'paid', label: t('hr.ibNegPaid'), value: totals.commission, hero: true },
+              {
+                key: 'networkNet',
+                label: t('hr.ibNegNetworkNet'),
+                value: totals.networkNet,
+                tone: 'sign',
+                missingBadge: { kind: 'stale', label: t('hr.prodNoData') },
+                sub:
+                  totals.networkMissing > 0
+                    ? t('hrv.networkMissing', { n: String(totals.networkMissing) })
+                    : undefined,
+              },
+            ]}
+          />
 
-          <div className="rounded-lg border border-border overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <table className="w-full text-sm min-w-[1000px]">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ibNegIb')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ibNegDeal')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ibNegOwnNet')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ibNegNetworkNet')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ibNegNetworkSize')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.prodLots')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.ibNegPaid')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden md:table-cell">{t('hr.prodPnl')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.packages.map((pkg) => (
-                  <NegotiationRows
-                    key={pkg.negotiation.id}
-                    pkg={pkg}
-                    month={month}
-                    open={expanded.has(pkg.negotiation.id)}
-                    onToggle={() => toggle(pkg.negotiation.id)}
-                    onClose={() => close(pkg.negotiation.id)}
-                  />
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <Panel title={t('hr.ibNegotiationsTab')} hint={data.month?.slice(0, 7)} flush>
+            <p className="border-b border-border px-4 py-2.5 text-[12.5px] leading-5 text-text-3">{t('hr.ibNegHint')}</p>
+            <FinTable
+              columns={columns}
+              rows={data.packages}
+              rowKey={(pkg) => pkg.negotiation.id}
+              caption={t('hr.ibNegotiationsTab')}
+              rowActions={(pkg) =>
+                pkg.negotiation.status === 'closed' ? null : (
+                  <ActionButton variant="ghost" onClick={() => close(pkg.negotiation.id)}>
+                    {t('hr.ibNegClose')}
+                  </ActionButton>
+                )
+              }
+            />
+          </Panel>
+
+          {/* El detalle de cada fila abierta. Antes era una fila extra dentro
+              de la tabla; FinTable no tiene filas de detalle (y en tarjeta
+              móvil no tendrían dónde ir), así que va en su propio Panel. */}
+          {openPackages.map((pkg) => (
+            <Panel
+              key={pkg.negotiation.id}
+              title={ibDisplayName(pkg)}
+              hint={pkg.negotiation.ib_username ?? undefined}
+              actions={
+                <button
+                  type="button"
+                  onClick={() => toggle(pkg.negotiation.id)}
+                  className={ROW_ACTION_CLASS}
+                  aria-label={t('common.close')}
+                >
+                  <X aria-hidden className="size-4" />
+                </button>
+              }
+            >
+              <NegotiationDetail pkg={pkg} month={month} />
+            </Panel>
+          ))}
         </>
       )}
     </div>
-  );
-}
-
-function Total({ label, value, tone }: { label: string; value: string; tone?: string }) {
-  return (
-    <div className="rounded-lg border border-border p-4">
-      <p className="text-sm text-muted-foreground mb-1">{label}</p>
-      <p className={cn('text-xl font-bold', tone)}>{value}</p>
-    </div>
-  );
-}
-
-/**
- * `null` NO se dibuja como 0: dice "sin dato". Es la diferencia entre "no operó
- * sintéticos" y "ese mes no está espejado", y confundirlas es el modo de fallo
- * que esta pantalla existe para evitar.
- */
-function Maybe({ v, money }: { v: number | null; money?: boolean }) {
-  const { t } = useI18n();
-  if (v === null) return <span className="text-muted-foreground/60 italic text-xs">{t('hr.prodNoData')}</span>;
-  return <>{money ? formatCurrency(v) : formatNumber(v)}</>;
-}
-
-function NegotiationRows({ pkg, month, open, onToggle, onClose }: {
-  pkg: IbNegotiationPackage;
-  month: string;
-  open: boolean;
-  onToggle: () => void;
-  onClose: () => void;
-}) {
-  const { t } = useI18n();
-  const neg = pkg.negotiation;
-  const p = pkg.production;
-  const net = pkg.network;
-  const cerrada = neg.status === 'closed';
-
-  return (
-    <>
-      <tr className={cn('border-b border-border/50 hover:bg-muted/50', cerrada && 'opacity-60')}>
-        <td className="py-2 px-3">
-          <div className="flex items-center gap-1.5">
-            <button onClick={onToggle} className="text-muted-foreground hover:text-foreground" aria-label={ibDisplayName(pkg)}>
-              {open ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
-            </button>
-            <div>
-              <p className="font-medium">{ibDisplayName(pkg)}</p>
-              <p className="text-xs text-muted-foreground">{neg.ib_username ?? '-'}</p>
-            </div>
-          </div>
-        </td>
-        <td className="py-2 px-3">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs bg-muted">
-            {t(DEAL_LABEL_KEY[neg.deal_type])}
-          </span>
-          {neg.pct != null && (
-            <span className="ml-1.5 text-xs text-muted-foreground">{toNumber(neg.pct)}%</span>
-          )}
-          {cerrada && (
-            <span className="ml-1.5 inline-flex items-center gap-0.5 text-xs text-muted-foreground">
-              <Lock className="w-3 h-3" /> {t('hr.ibNegStatusClosed')}
-            </span>
-          )}
-        </td>
-        {/* Los dos net deposit van SEPARADOS: sumarlos escondería que el IB
-            personalmente retira más de lo que deposita. */}
-        <td className={cn('py-2 px-3 text-right', net ? moneyClass(net.ownNet) : '')}>
-          {net ? formatCurrency(net.ownNet) : <Maybe v={null} />}
-        </td>
-        <td className={cn('py-2 px-3 text-right font-medium', net ? moneyClass(net.net) : '')}>
-          {net ? formatCurrency(net.net) : <Maybe v={null} />}
-        </td>
-        <td className="py-2 px-3 text-right text-muted-foreground">
-          {net ? formatNumber(net.size).replace(/\.00$/, '') : <Maybe v={null} />}
-        </td>
-        <td className="py-2 px-3 text-right">{formatNumber(p.lots)}</td>
-        <td className="py-2 px-3 text-right font-medium">{formatCurrency(p.commission)}</td>
-        <td className={cn('py-2 px-3 text-right hidden md:table-cell', moneyClass(p.pnl))}>{formatCurrency(p.pnl)}</td>
-        <td className="py-2 px-3 text-right">
-          {!cerrada && (
-            <button
-              onClick={onClose}
-              className="text-xs px-2 py-1 rounded border border-border hover:bg-muted text-muted-foreground"
-            >
-              {t('hr.ibNegClose')}
-            </button>
-          )}
-        </td>
-      </tr>
-      {open && (
-        <tr className="border-b border-border/50 bg-muted/20">
-          <td colSpan={9} className="py-4 px-3">
-            <NegotiationDetail pkg={pkg} month={month} />
-          </td>
-        </tr>
-      )}
-    </>
   );
 }
 
@@ -393,74 +421,90 @@ function NegotiationDetail({ pkg, month }: { pkg: IbNegotiationPackage; month: s
   // filas de la lista a la vez.
   useEffect(() => { loadMembers(); }, [loadMembers]);
 
+  const memberColumns: FinColumn<IbNetworkMember>[] = [
+    {
+      key: 'user',
+      header: t('hr.ibNegUsername'),
+      cell: (m) => m.username ?? m.email ?? m.user_external_id,
+      meta: (m) => m.country ?? undefined,
+    },
+    { key: 'level', header: t('hr.ibNegLevel'), kind: 'number', hideSm: true, value: (m) => m.depth },
+    { key: 'deposits', header: t('hr.ibNegDeposits'), kind: 'money', hideSm: true, value: (m) => toNumber(m.deposits), subtotal: false },
+    { key: 'withdrawals', header: t('hr.ibNegWithdrawals'), kind: 'money', hideSm: true, value: (m) => toNumber(m.withdrawals), subtotal: false },
+    { key: 'net', header: t('hr.ibNegNet'), kind: 'money', money: { tone: 'sign' }, value: (m) => toNumber(m.net), subtotal: false },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
         {/* ── Perfil completo del IB ─────────────────────────────────────── */}
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('hr.ibNegProfile')}</h4>
+        <section className="space-y-1.5">
+          <h3 className="text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3">{t('hr.ibNegProfile')}</h3>
           {prof ? (
-            <dl className="text-xs space-y-1">
-              <Field label={t('common.email')} value={prof.email} />
-              <Field label={t('hr.ibNegUsername')} value={prof.username} />
-              <Field label={t('hr.ibNegPhone')} value={[prof.phone_country_code, prof.phone_raw].filter(Boolean).join(' ') || null} />
-              <Field label={t('hr.ibNegCountry')} value={prof.country} />
-              <Field label={t('hr.ibNegKyc')} value={prof.kyc_status} />
-              <Field label={t('hr.ibNegRank')} value={prof.rank} />
-              <Field label={t('hr.ibNegStatus')} value={prof.status} />
-              <Field label={t('hr.ibNegRegistered')} value={prof.register_date ? String(prof.register_date).slice(0, 10) : null} />
-              <Field label={t('hr.ibNegSponsor')} value={prof.sponsor_username ?? prof.sponsor_email} />
-              <Field label={t('hr.ibNegProgram')} value={prof.ib_program_name} />
+            <dl className="space-y-1 text-[12.5px]">
+              <DetailItem label={t('common.email')} value={prof.email} />
+              <DetailItem label={t('hr.ibNegUsername')} value={prof.username} />
+              <DetailItem label={t('hr.ibNegPhone')} value={[prof.phone_country_code, prof.phone_raw].filter(Boolean).join(' ') || null} />
+              <DetailItem label={t('hr.ibNegCountry')} value={prof.country} />
+              <DetailItem label={t('hr.ibNegKyc')} value={prof.kyc_status} />
+              <DetailItem label={t('hr.ibNegRank')} value={prof.rank} />
+              <DetailItem label={t('hr.ibNegStatus')} value={prof.status} />
+              <DetailItem label={t('hr.ibNegRegistered')} value={prof.register_date ? String(prof.register_date).slice(0, 10) : null} />
+              <DetailItem label={t('hr.ibNegSponsor')} value={prof.sponsor_username ?? prof.sponsor_email} />
+              <DetailItem label={t('hr.ibNegProgram')} value={prof.ib_program_name} />
             </dl>
           ) : (
             // El IB dejó de estar en el espejo del CRM. La negociación sigue
             // existiendo (por eso no hay FK): se dice, no se oculta.
-            <p className="text-xs text-muted-foreground italic">{t('hr.ibNegProfileGone')}</p>
+            <p className="text-[12.5px] text-text-3">{t('hr.ibNegProfileGone')}</p>
           )}
-        </div>
+        </section>
 
         {/* ── El trato ───────────────────────────────────────────────────── */}
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('hr.ibNegDeal')}</h4>
-          <dl className="text-xs space-y-1">
-            <Field label={t('hr.ibNegDealType')} value={t(DEAL_LABEL_KEY[neg.deal_type])} />
-            <Field label={t('hr.ibNegPct')} value={neg.pct == null ? null : `${toNumber(neg.pct)}%`} />
-            <Field label={t('hr.ibNegTarget')} value={neg.target_amount == null ? null : formatCurrency(toNumber(neg.target_amount))} />
-            <Field label={t('hr.ibNegFrom')} value={neg.starts_on} />
-            <Field label={t('hr.ibNegTo')} value={neg.ends_on} />
-            <Field label={t('hr.ibNegTerms')} value={neg.terms} />
-            <Field label={t('hr.ibNegNotes')} value={neg.notes} />
-            <Field label={t('hr.ibNegCreatedBy')} value={neg.created_by_name} />
+        <section className="space-y-1.5">
+          <h3 className="text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3">{t('hr.ibNegDeal')}</h3>
+          <dl className="space-y-1 text-[12.5px]">
+            <DetailItem label={t('hr.ibNegDealType')} value={t(DEAL_LABEL_KEY[neg.deal_type])} />
+            <DetailItem label={t('hr.ibNegPct')} value={neg.pct == null ? null : `${toNumber(neg.pct)}%`} />
+            <DetailItem
+              label={t('hr.ibNegTarget')}
+              value={neg.target_amount == null ? null : moneyText(toNumber(neg.target_amount))}
+            />
+            <DetailItem label={t('hr.ibNegFrom')} value={neg.starts_on} />
+            <DetailItem label={t('hr.ibNegTo')} value={neg.ends_on} />
+            <DetailItem label={t('hr.ibNegTerms')} value={neg.terms} />
+            <DetailItem label={t('hr.ibNegNotes')} value={neg.notes} />
+            <DetailItem label={t('hr.ibNegCreatedBy')} value={neg.created_by_name} />
           </dl>
-        </div>
+        </section>
 
         {/* ── Producción del mes ─────────────────────────────────────────── */}
-        <div className="space-y-1.5">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('hr.ibNegProduction')}</h4>
-          <dl className="text-xs space-y-1">
-            <Field label={t('hr.prodLots')} value={formatNumber(p.lots)} />
-            <Field label={t('hr.ibNegPaid')} value={formatCurrency(p.commission)} />
-            <Field label={t('hr.prodRewards')} value={formatNumber(p.rewards).replace(/\.00$/, '')} />
-            <Field label={t('hr.prodPnl')} value={formatCurrency(p.pnl)} />
+        <section className="space-y-1.5">
+          <h3 className="text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3">{t('hr.ibNegProduction')}</h3>
+          <dl className="space-y-1 text-[12.5px]">
+            <DetailItem label={t('hr.prodLots')} value={formatNumber(p.lots)} />
+            <DetailItem label={t('hr.ibNegPaid')} value={moneyText(p.commission)} />
+            <DetailItem label={t('hr.prodRewards')} value={formatNumber(p.rewards).replace(/\.00$/, '')} />
+            <DetailItem label={t('hr.prodPnl')} value={moneyText(p.pnl)} />
             <div className="flex gap-2">
-              <dt className="text-muted-foreground min-w-[92px]">{t('hr.prodForex')}</dt>
+              <dt className="min-w-[92px] text-text-3">{t('hr.prodForex')}</dt>
               <dd><Maybe v={p.forexLots} /></dd>
             </div>
             <div className="flex gap-2">
-              <dt className="text-muted-foreground min-w-[92px]">{t('hr.prodSynthetic')}</dt>
+              <dt className="min-w-[92px] text-text-3">{t('hr.prodSynthetic')}</dt>
               <dd><Maybe v={p.syntheticLots} /></dd>
             </div>
           </dl>
-          <p className="text-[11px] text-muted-foreground pt-1">{t('hr.ibNegPnlHint')}</p>
-        </div>
+          <p className="pt-1 text-[12px] text-text-3">{t('hr.ibNegPnlHint')}</p>
+        </section>
       </div>
 
       {/* ── La red que movió plata este mes ──────────────────────────────── */}
-      <div>
-        <div className="flex items-center gap-2 mb-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t('hr.ibNegNetwork')}</h4>
+      <section className="space-y-2">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h3 className="text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3">{t('hr.ibNegNetwork')}</h3>
           {pkg.network && (
-            <span className="text-xs text-muted-foreground">
+            <span className="text-[12px] text-text-3">
               {t('hr.ibNegNetworkSummary')
                 .replace('{size}', String(pkg.network.size))
                 .replace('{depth}', String(pkg.network.depth))
@@ -469,52 +513,32 @@ function NegotiationDetail({ pkg, month }: { pkg: IbNegotiationPackage; month: s
           )}
         </div>
         {membersError ? (
-          <p className="text-xs text-negative">{t('hr.warningError')}</p>
+          <Notice kind="bad" title={t('hr.warningError')} />
         ) : loadingMembers ? (
-          <p className="text-xs text-muted-foreground">{t('common.loading')}</p>
+          <p className="text-[12.5px] text-text-3">{t('common.loading')}</p>
         ) : !members || members.length === 0 ? (
-          <p className="text-xs text-muted-foreground">{t('hr.ibNegNetworkEmpty')}</p>
+          <p className="text-[12.5px] text-text-3">{t('hr.ibNegNetworkEmpty')}</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs min-w-[560px]">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-1.5 px-2 text-muted-foreground font-medium">{t('hr.ibNegUsername')}</th>
-                  <th className="text-left py-1.5 px-2 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.ibNegCountry')}</th>
-                  <th className="text-right py-1.5 px-2 text-muted-foreground font-medium">{t('hr.ibNegLevel')}</th>
-                  <th className="text-right py-1.5 px-2 text-muted-foreground font-medium">{t('hr.ibNegDeposits')}</th>
-                  <th className="text-right py-1.5 px-2 text-muted-foreground font-medium">{t('hr.ibNegWithdrawals')}</th>
-                  <th className="text-right py-1.5 px-2 text-muted-foreground font-medium">{t('hr.ibNegNet')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {members.map((m) => (
-                  <tr key={m.user_external_id} className="border-b border-border/40">
-                    <td className="py-1.5 px-2">{m.username ?? m.email ?? m.user_external_id}</td>
-                    <td className="py-1.5 px-2 text-muted-foreground hidden sm:table-cell">{m.country ?? '-'}</td>
-                    <td className="py-1.5 px-2 text-right text-muted-foreground">{m.depth}</td>
-                    <td className="py-1.5 px-2 text-right">{formatCurrency(toNumber(m.deposits))}</td>
-                    <td className="py-1.5 px-2 text-right">{formatCurrency(toNumber(m.withdrawals))}</td>
-                    <td className={cn('py-1.5 px-2 text-right font-medium', moneyClass(toNumber(m.net)))}>
-                      {formatCurrency(toNumber(m.net))}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <p className="text-[11px] text-muted-foreground mt-2">{t('hr.ibNegNetworkTopHint')}</p>
+          <div className="overflow-hidden rounded-ui-md border border-border">
+            <FinTable
+              columns={memberColumns}
+              rows={members}
+              rowKey={(m) => m.user_external_id}
+              caption={t('hr.ibNegNetwork')}
+            />
+            <p className="border-t border-border px-4 py-2 text-[12px] text-text-3">{t('hr.ibNegNetworkTopHint')}</p>
           </div>
         )}
-      </div>
+      </section>
     </div>
   );
 }
 
-function Field({ label, value }: { label: string; value: string | null | undefined }) {
+function DetailItem({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <div className="flex gap-2">
-      <dt className="text-muted-foreground min-w-[92px] shrink-0">{label}</dt>
-      <dd className="break-all">{value || <span className="text-muted-foreground/60">-</span>}</dd>
+      <dt className="min-w-[92px] shrink-0 text-text-3">{label}</dt>
+      <dd className="break-all text-foreground">{value || <span className="text-text-3">—</span>}</dd>
     </div>
   );
 }
@@ -592,40 +616,43 @@ function NewNegotiationForm({ onCancel, onSaved, onError }: {
   };
 
   return (
-    <div className="rounded-lg border border-border p-4 space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">{t('hr.ibNegNew')}</h3>
-          <p className="text-xs text-muted-foreground mt-1">{t('hr.ibNegSearchHint')}</p>
-        </div>
-        <button onClick={onCancel} className="text-muted-foreground hover:text-foreground" aria-label={t('common.cancel')}>
-          <X className="w-4 h-4" />
+    <Panel
+      title={t('hr.ibNegNew')}
+      hint={t('hr.ibNegSearchHint')}
+      actions={
+        <button type="button" onClick={onCancel} className={ROW_ACTION_CLASS} aria-label={t('common.cancel')}>
+          <X aria-hidden className="size-4" />
         </button>
-      </div>
-
+      }
+      footer={
+        picked ? (
+          <span className="flex flex-wrap items-center gap-2">
+            <ActionButton variant="primary" onClick={save} loading={saving}>
+              {t('common.save')}
+            </ActionButton>
+            <ActionButton variant="ghost" onClick={onCancel}>
+              {t('common.cancel')}
+            </ActionButton>
+          </span>
+        ) : undefined
+      }
+    >
       {!picked ? (
         <div className="space-y-2">
-          <div className="relative">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-            <input
-              value={q}
-              onChange={(e) => setQ(e.target.value)}
-              placeholder={t('hr.ibNegSearchPlaceholder')}
-              className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm"
-            />
-          </div>
-          {searching && <p className="text-xs text-muted-foreground">{t('common.loading')}</p>}
+          <SearchField value={q} onChange={setQ} placeholder={t('hr.ibNegSearchPlaceholder')} className="max-w-none" />
+          {searching && <p className="text-[12.5px] text-text-3">{t('common.loading')}</p>}
           {results.length > 0 && (
-            <ul className="rounded-lg border border-border divide-y divide-border max-h-64 overflow-y-auto">
+            <ul className="max-h-64 divide-y divide-border overflow-y-auto rounded-ui-md border border-border">
               {results.map((r) => (
                 <li key={r.user_external_id}>
                   <button
+                    type="button"
                     onClick={() => setPicked(r)}
-                    className="w-full text-left px-3 py-2 hover:bg-muted text-sm"
+                    className="w-full px-3 py-2 text-left text-[13px] hover:bg-row-hover"
                   >
-                    <span className="font-medium">{r.username ?? r.email}</span>
-                    <span className="text-xs text-muted-foreground ml-2">{r.email}</span>
-                    {r.country && <span className="text-xs text-muted-foreground ml-2">· {r.country}</span>}
+                    <span className="font-medium text-foreground">{r.username ?? r.email}</span>
+                    <span className="ml-2 text-[12px] text-text-3">{r.email}</span>
+                    {r.country && <span className="ml-2 text-[12px] text-text-3">· {r.country}</span>}
                   </button>
                 </li>
               ))}
@@ -634,93 +661,61 @@ function NewNegotiationForm({ onCancel, onSaved, onError }: {
         </div>
       ) : (
         <div className="space-y-3">
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-border px-3 py-2">
-            <div className="text-sm">
-              <p className="font-medium">{[picked.first_name, picked.last_name].filter(Boolean).join(' ') || picked.username}</p>
-              <p className="text-xs text-muted-foreground">{picked.username} · {picked.email}</p>
+          <div className="flex items-center justify-between gap-2 rounded-ui-md border border-border bg-surface-2 px-3 py-2">
+            <div className="min-w-0 text-[13px]">
+              <p className="font-medium text-foreground">
+                {[picked.first_name, picked.last_name].filter(Boolean).join(' ') || picked.username}
+              </p>
+              <p className="truncate text-[12px] text-text-3">{picked.username} · {picked.email}</p>
             </div>
-            <button onClick={() => setPicked(null)} className="text-xs text-muted-foreground hover:text-foreground">
+            <ActionButton variant="ghost" onClick={() => setPicked(null)}>
               {t('common.cancel')}
-            </button>
+            </ActionButton>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <label className="text-xs text-muted-foreground space-y-1">
-              <span>{t('hr.ibNegDealType')}</span>
-              <select
-                value={dealType}
-                onChange={(e) => setDealType(e.target.value as IbDealType)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm text-foreground"
-              >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <Field label={t('hr.ibNegDealType')}>
+              <Select value={dealType} onChange={(e) => setDealType(e.target.value as IbDealType)}>
                 {IB_DEAL_TYPES.map((d) => (
                   <option key={d} value={d}>{t(DEAL_LABEL_KEY[d])}</option>
                 ))}
-              </select>
-            </label>
-            <label className="text-xs text-muted-foreground space-y-1">
-              <span>{t('hr.ibNegPct')}</span>
-              <input
+              </Select>
+            </Field>
+            <Field label={t('hr.ibNegPct')}>
+              <Input
                 type="number" min="0" max="100" step="0.01"
                 value={pct}
                 onChange={(e) => setPct(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm text-foreground"
+                className="text-right tabular-nums"
               />
-            </label>
-            <label className="text-xs text-muted-foreground space-y-1">
-              <span>{t('hr.ibNegTarget')}</span>
-              <input
+            </Field>
+            <Field label={t('hr.ibNegTarget')}>
+              <Input
                 type="number" min="0" step="0.01"
                 value={target}
                 onChange={(e) => setTarget(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm text-foreground"
+                className="text-right tabular-nums"
               />
-            </label>
-            <label className="text-xs text-muted-foreground space-y-1">
-              <span>{t('hr.ibNegFrom')}</span>
-              <input
-                type="date"
-                value={startsOn}
-                onChange={(e) => setStartsOn(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm text-foreground"
-              />
-            </label>
+            </Field>
+            <Field label={t('hr.ibNegFrom')}>
+              <Input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} />
+            </Field>
           </div>
 
-          <label className="text-xs text-muted-foreground space-y-1 block">
-            <span>{t('hr.ibNegTerms')}</span>
-            <textarea
+          <Field label={t('hr.ibNegTerms')}>
+            <Textarea
               value={terms}
               onChange={(e) => setTerms(e.target.value)}
               rows={2}
               placeholder={t('hr.ibNegTermsPlaceholder')}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm text-foreground"
             />
-          </label>
+          </Field>
 
-          <label className="text-xs text-muted-foreground space-y-1 block">
-            <span>{t('hr.ibNegNotes')}</span>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm text-foreground"
-            />
-          </label>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={save}
-              disabled={saving}
-              className="px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-            >
-              {t('common.save')}
-            </button>
-            <button onClick={onCancel} className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-muted">
-              {t('common.cancel')}
-            </button>
-          </div>
+          <Field label={t('hr.ibNegNotes')}>
+            <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={2} />
+          </Field>
         </div>
       )}
-    </div>
+    </Panel>
   );
 }
