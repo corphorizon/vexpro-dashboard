@@ -112,7 +112,7 @@ export function FireModal({ profile, onClose, onSuccess }: FireModalProps) {
             onClick={onClose}
             disabled={saving}
             aria-label="Close"
-            className="p-1 rounded hover:bg-surface-2 disabled:opacity-50"
+            className="p-1 rounded hover:bg-surface-hover disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -171,7 +171,7 @@ export function FireModal({ profile, onClose, onSuccess }: FireModalProps) {
           <button
             onClick={onClose}
             disabled={saving}
-            className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-surface-2 disabled:opacity-50"
+            className="px-3 py-1.5 rounded-lg border border-border text-sm hover:bg-surface-hover disabled:opacity-50"
           >
             {t('hr.fireCancel')}
           </button>

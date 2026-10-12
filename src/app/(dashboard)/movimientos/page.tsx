@@ -755,7 +755,7 @@ export default function MovimientosPage() {
             <button
               type="button"
               onClick={handleExport}
-              className="inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2"
+              className="inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover"
               title={t('common.csv')}
               aria-label={t('common.csv')}
             >
@@ -943,7 +943,7 @@ function RetryButton({ label, onClick }: { label: string; onClick: () => void })
     <button
       type="button"
       onClick={onClick}
-      className="inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2"
+      className="inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover"
     >
       <RotateCw aria-hidden className="size-[15px]" strokeWidth={1.75} />
       {label}

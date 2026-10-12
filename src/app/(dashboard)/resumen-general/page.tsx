@@ -86,7 +86,7 @@ const MonthlyChart = dynamic(
 
 /** Botón secundario de cabecera (spec §5.1: 32 px, borde `border-strong`). */
 const BTN =
-  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-10';
 
 const pctFmt = new Intl.NumberFormat(MONEY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 

@@ -84,7 +84,7 @@ const STATUS_DESC_KEY: Record<PeriodStatus, string> = {
 
 /** Acción de fila con texto (Cerrar / Reabrir): mismo alto que el botón-ícono. */
 const ROW_TEXT_ACTION =
-  'inline-flex h-8 items-center gap-1.5 rounded-ui-md px-2.5 text-[12.5px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md px-2.5 text-[12.5px] font-medium text-text-2 hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 [@media(pointer:coarse)]:h-10';
 
 /** Cáscara de modal: scrim, ESC para cerrar, cabecera con título y «×». */
 function Dialog({

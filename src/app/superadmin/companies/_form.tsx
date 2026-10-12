@@ -309,7 +309,7 @@ export function CompanyForm({ initial, submitting, error, onSubmit, onCancel, mo
                 title={off ? `No aplica al modelo "${modelLabel}"` : undefined}
                 className={cn(
                   'flex min-h-8 select-none items-center gap-2 rounded-ui-sm px-1 text-[13px] pointer-coarse:min-h-11',
-                  off ? 'cursor-not-allowed text-text-3' : 'cursor-pointer text-foreground hover:bg-surface-2',
+                  off ? 'cursor-not-allowed text-text-3' : 'cursor-pointer text-foreground hover:bg-surface-hover',
                 )}
               >
                 <input

@@ -42,7 +42,7 @@ const SIDEBAR_ID = 'superadmin-sidebar';
 
 const ICON_BUTTON = cn(
   'flex h-10 w-10 shrink-0 items-center justify-center rounded-ui-md text-text-2 transition-colors motion-reduce:transition-none',
-  'hover:bg-surface-2 hover:text-foreground',
+  'hover:bg-surface-hover hover:text-foreground',
 );
 
 interface ShellProps {
@@ -199,7 +199,7 @@ function SuperadminSidebar({
                       'relative flex h-8.5 items-center gap-2.5 rounded-ui-md px-2.5 text-[13.5px] font-medium transition-colors motion-reduce:transition-none pointer-coarse:h-11',
                       isActive
                         ? 'bg-brand-tint font-semibold text-brand-ink before:absolute before:inset-y-1.5 before:left-0 before:w-[3px] before:rounded-full before:bg-brand-ink'
-                        : 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+                        : 'text-text-2 hover:bg-surface-hover hover:text-foreground',
                     )}
                   >
                     <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />

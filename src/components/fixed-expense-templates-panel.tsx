@@ -113,7 +113,7 @@ export function FixedExpenseTemplatesPanel({
     <div className="mt-6 pt-4 border-t border-border">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between text-left p-2 -mx-2 rounded hover:bg-surface-2/50 transition-colors"
+        className="w-full flex items-center justify-between text-left p-2 -mx-2 rounded hover:bg-surface-hover/50 transition-colors"
       >
         <div className="flex items-center gap-2">
           <Repeat className="w-4 h-4 text-brand-ink" />
@@ -188,7 +188,7 @@ export function FixedExpenseTemplatesPanel({
                               <button
                                 onClick={() => handleToggleHidden(tpl.id, isHidden)}
                                 disabled={busy === tpl.id || !selectedPeriodId}
-                                className="p-1 text-text-2 hover:bg-surface-2 hover:text-foreground rounded disabled:opacity-50"
+                                className="p-1 text-text-2 hover:bg-surface-hover hover:text-foreground rounded disabled:opacity-50"
                                 title={isHidden ? `Mostrar en ${selectedPeriodLabel}` : `Ocultar en ${selectedPeriodLabel}`}
                                 aria-label={isHidden ? 'Mostrar este mes' : 'Ocultar este mes'}
                               >

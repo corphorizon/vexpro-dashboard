@@ -196,7 +196,7 @@ export function CreateUserModal({
                 {eligibleModules.map((m) => (
                   <label
                     key={m.key}
-                    className="flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-ui-sm px-1 text-[13px] hover:bg-surface-2 pointer-coarse:min-h-11"
+                    className="flex min-h-8 cursor-pointer select-none items-center gap-2 rounded-ui-sm px-1 text-[13px] hover:bg-surface-hover pointer-coarse:min-h-11"
                   >
                     <input
                       type="checkbox"

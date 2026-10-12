@@ -178,7 +178,7 @@ export function PickedFileList({
           </span>
           <button
             type="button"
-            className="inline-flex size-7 shrink-0 items-center justify-center rounded-ui-sm text-text-3 hover:bg-surface-2 hover:text-neg [@media(pointer:coarse)]:size-10"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-ui-sm text-text-3 hover:bg-surface-hover hover:text-neg [@media(pointer:coarse)]:size-10"
             aria-label={removeAria(f.name)}
             onClick={() => onRemove(i)}
           >

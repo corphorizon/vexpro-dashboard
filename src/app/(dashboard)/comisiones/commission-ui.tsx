@@ -232,7 +232,7 @@ export function LotsBreakdown({ base, lots }: { base: number; lots: number }) {
 }
 
 const ICON_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-50 [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-50 [@media(pointer:coarse)]:size-10';
 
 /** Guardar la fila + PDF individual. Los handlers vienen de page.tsx tal cual. */
 export function RowActionButtons({

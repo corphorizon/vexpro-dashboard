@@ -78,11 +78,11 @@ interface Props {
 // paleta cruda con variante oscura a mano) y «Oculto · no suma» en texto, no sólo el
 // ojo tachado. Sólo presentación: alta, deuda, on-chain y reparto no cambiaron.
 const BTN =
-  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover disabled:opacity-50 [@media(pointer:coarse)]:h-10';
 const ICON_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-hover disabled:opacity-50 [@media(pointer:coarse)]:size-10';
 const ROW_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground disabled:opacity-50 [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground disabled:opacity-50 [@media(pointer:coarse)]:size-10';
 
 export function ChannelConfigModal({ open, onClose, onChanged, getValue }: Props) {
   const { t, locale } = useI18n();

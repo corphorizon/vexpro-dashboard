@@ -79,7 +79,7 @@ export function DataTable<T>({
               <tr
                 key={rowIdx}
                 className={cn(
-                  'border-b border-border/50 hover:bg-surface-2/50 transition-colors',
+                  'border-b border-border/50 hover:bg-surface-hover/50 transition-colors',
                   zebra && rowIdx % 2 === 1 && 'bg-surface-2/30'
                 )}
               >

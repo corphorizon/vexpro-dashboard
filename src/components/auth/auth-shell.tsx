@@ -46,7 +46,7 @@ import { cn } from '@/lib/utils';
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const ICON_BUTTON_CLASS =
-  'inline-flex size-10 items-center justify-center rounded-ui-md text-text-2 transition-colors hover:bg-surface-2 hover:text-foreground motion-reduce:transition-none';
+  'inline-flex size-10 items-center justify-center rounded-ui-md text-text-2 transition-colors hover:bg-surface-hover hover:text-foreground motion-reduce:transition-none';
 
 /** Idioma y tema. Viven fuera del dashboard: las pantallas de acceso no tienen topbar. */
 export function AuthPreferences({ className }: { className?: string }) {

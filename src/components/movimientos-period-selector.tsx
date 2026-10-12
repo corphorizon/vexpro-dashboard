@@ -138,7 +138,7 @@ export function MovimientosPeriodSelector() {
                 className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors ${
                   isActive
                     ? 'bg-primary text-brand-on-primary border-primary'
-                    : 'border-border bg-card hover:bg-surface-2'
+                    : 'border-border bg-card hover:bg-surface-hover'
                 }`}
               >
                 {isActive && <Check className="w-3 h-3" />}
@@ -153,7 +153,7 @@ export function MovimientosPeriodSelector() {
           <button
             type="button"
             onClick={selectAllYear}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-surface-2 transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-surface-hover transition-colors"
             title={`Seleccionar todos los meses de ${selectedYear}`}
           >
             <CheckSquare className="w-3.5 h-3.5" />
@@ -162,7 +162,7 @@ export function MovimientosPeriodSelector() {
           <button
             type="button"
             onClick={clearAll}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-surface-2 transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-surface-hover transition-colors"
             title="Volver al mes más reciente"
           >
             <Square className="w-3.5 h-3.5" />

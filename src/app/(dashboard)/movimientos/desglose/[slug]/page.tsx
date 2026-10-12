@@ -410,7 +410,7 @@ export default function BreakdownPage({
   const shownTo = Math.min(safePage * PAGE_SIZE, filtered.length);
   const fmtN = (n: number) => kpiPlainText(n, 'count');
   const secondaryBtn =
-    'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50';
+    'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50';
 
   return (
     <div className="space-y-4">
@@ -522,7 +522,7 @@ export default function BreakdownPage({
                   setFrom('');
                   setTo('');
                 }}
-                className="h-8 rounded-ui-md px-2 font-medium text-text-2 hover:bg-surface-2 hover:text-foreground"
+                className="h-8 rounded-ui-md px-2 font-medium text-text-2 hover:bg-surface-hover hover:text-foreground"
               >
                 {t('movements.ledger.clear')}
               </button>

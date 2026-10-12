@@ -201,7 +201,7 @@ export function LogoUploader({
             onDragLeave={() => setDragging(false)}
             onDrop={onDrop}
             className={`rounded-ui-md border border-dashed p-3 text-center text-[13px] transition-colors motion-reduce:transition-none ${
-              dragging ? 'border-solid border-brand-ink bg-brand-tint' : 'border-border-strong hover:bg-surface-2'
+              dragging ? 'border-solid border-brand-ink bg-brand-tint' : 'border-border-strong hover:bg-surface-hover'
             }`}
           >
             <div className="flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-text-2">

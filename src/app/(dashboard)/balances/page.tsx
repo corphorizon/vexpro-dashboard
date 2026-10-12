@@ -73,11 +73,11 @@ const todayISO = todayUtcISO;
 // puntero grueso suben a 40 (área táctil). Clases locales hasta que `Button`
 // migre (fase 4/5): el legado pinta `text-white` y `rounded-lg`.
 const BTN =
-  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover disabled:opacity-50 [@media(pointer:coarse)]:h-10';
 const ICON_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-hover disabled:opacity-50 [@media(pointer:coarse)]:size-10';
 const ROW_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground [@media(pointer:coarse)]:size-10';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Page

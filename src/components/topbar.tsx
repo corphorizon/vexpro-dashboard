@@ -134,7 +134,7 @@ function PeriodStepper() {
 
   const arrow = cn(
     'flex h-full w-8 items-center justify-center text-text-2 transition-colors motion-reduce:transition-none',
-    'hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-40 pointer-coarse:w-10',
+    'hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40 pointer-coarse:w-10',
   );
 
   return (
@@ -157,7 +157,7 @@ function PeriodStepper() {
           aria-expanded={open}
           aria-controls={open ? panelId : undefined}
           title={t('shell.choosePeriod')}
-          className="flex max-w-44 items-center gap-1.5 border-x border-border px-2.5 text-[13px] font-semibold tabular-nums transition-colors hover:bg-surface-2 motion-reduce:transition-none"
+          className="flex max-w-44 items-center gap-1.5 border-x border-border px-2.5 text-[13px] font-semibold tabular-nums transition-colors hover:bg-surface-hover motion-reduce:transition-none"
         >
           <span className="truncate">{label}</span>
           {mode === 'single' && current?.is_closed && (
@@ -218,7 +218,7 @@ export function Topbar({ onMenuToggle, menuOpen, sidebarId }: TopbarProps) {
 
   const iconButton = cn(
     'flex h-10 w-10 shrink-0 items-center justify-center rounded-ui-md text-text-2 transition-colors motion-reduce:transition-none',
-    'hover:bg-surface-2 hover:text-foreground',
+    'hover:bg-surface-hover hover:text-foreground',
   );
 
   return (

@@ -481,7 +481,7 @@ export function AdminHome() {
               type="button"
               onClick={() => setShowAllAlerts((v) => !v)}
               aria-expanded={showAllAlerts}
-              className="inline-flex h-8 items-center rounded-ui-md px-2 text-[13px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground"
+              className="inline-flex h-8 items-center rounded-ui-md px-2 text-[13px] font-medium text-text-2 hover:bg-surface-hover hover:text-foreground"
             >
               {showAllAlerts ? t('home.alert.showLess') : t('home.alert.showAll', { n: String(alerts.length) })}
             </button>

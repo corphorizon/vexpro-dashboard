@@ -61,7 +61,7 @@ export function UnitSharesEditor({ units, value, onChange }: Props) {
             <button
               type="button"
               onClick={splitEvenly}
-              className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-2 rounded-lg text-xs text-text-3 hover:bg-surface-2"
+              className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-2 rounded-lg text-xs text-text-3 hover:bg-surface-hover"
             >
               <Scale className="w-3.5 h-3.5" />
               {t('cash.splitEvenly')}

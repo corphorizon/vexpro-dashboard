@@ -98,13 +98,13 @@ import {
 
 /** Botón secundario (spec §5.1). */
 const BTN =
-  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-card [@media(pointer:coarse)]:h-10';
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-card [@media(pointer:coarse)]:h-10';
 /** Botón primario: uno por pantalla («Agregar socio»; «Guardar» en los modales). */
 const PRIMARY_BTN =
   'inline-flex h-8 items-center justify-center gap-1.5 rounded-ui-md border border-primary bg-primary px-3 text-[13px] font-medium text-brand-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-10';
 /** Acción de fila (editar / borrar). */
 const ROW_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground [@media(pointer:coarse)]:size-10';
 
 const pctFmt = new Intl.NumberFormat(MONEY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
@@ -1186,7 +1186,7 @@ export default function SociosPage() {
                 <button
                   type="button"
                   onClick={() => setShowReserveEdit(false)}
-                  className="inline-flex h-8 w-full items-center justify-center rounded-ui-md text-[13px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground"
+                  className="inline-flex h-8 w-full items-center justify-center rounded-ui-md text-[13px] font-medium text-text-2 hover:bg-surface-hover hover:text-foreground"
                 >
                   {t('partners.cancel')}
                 </button>

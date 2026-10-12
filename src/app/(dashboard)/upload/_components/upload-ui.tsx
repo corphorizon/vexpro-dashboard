@@ -50,8 +50,8 @@ const BTN_VARIANT: Record<UploadBtnVariant, string> = {
   // Primario: UNO por pantalla — «Guardar ahora» de la barra inferior.
   primary:
     'border border-primary bg-primary text-brand-on-primary hover:bg-[color-mix(in_srgb,var(--color-primary)_86%,black)]',
-  secondary: 'border border-border-strong bg-card text-foreground hover:bg-surface-2',
-  ghost: 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+  secondary: 'border border-border-strong bg-card text-foreground hover:bg-surface-hover',
+  ghost: 'text-text-2 hover:bg-surface-hover hover:text-foreground',
   danger: 'border border-neg/35 bg-neg-bg text-neg hover:border-neg',
 };
 
@@ -61,7 +61,7 @@ export function btnClass(variant: UploadBtnVariant = 'secondary', className?: st
 
 /** Botón-ícono de fila (32×32, 40 en táctil). Gris: el ícono y el aria-label dicen qué hace. */
 export const ROW_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-40 [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40 [@media(pointer:coarse)]:size-10';
 
 /** Borrar: el rojo aparece al apuntar (es destructivo), no en reposo. */
 export const ROW_BTN_DANGER = cn(ROW_BTN, 'hover:bg-neg-bg hover:text-neg');
@@ -85,7 +85,7 @@ export const TFOOT_TD =
 /** Lista de sugerencias de un autocompletado (concepto / categoría de egresos). */
 export const SUGGEST_LIST =
   'absolute left-0 right-0 top-full mt-1 overflow-auto rounded-ui-md border border-border bg-card shadow-2';
-export const SUGGEST_ITEM = 'w-full px-3 py-2 text-left text-[13px] text-foreground hover:bg-surface-2';
+export const SUGGEST_ITEM = 'w-full px-3 py-2 text-left text-[13px] text-foreground hover:bg-surface-hover';
 
 // ── Paginación ───────────────────────────────────────────────────────────
 

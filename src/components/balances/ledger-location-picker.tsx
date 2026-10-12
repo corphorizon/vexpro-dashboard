@@ -65,7 +65,7 @@ export function LedgerLocationPicker({ open, locations, onPick, onClose }: Props
                 key={loc.key}
                 type="button"
                 onClick={() => onPick(loc.key)}
-                className="flex items-center justify-between gap-3 min-h-11 w-full px-3 py-2 rounded-lg border border-border text-left text-base sm:text-sm hover:bg-surface-2/60 transition-colors"
+                className="flex items-center justify-between gap-3 min-h-11 w-full px-3 py-2 rounded-lg border border-border text-left text-base sm:text-sm hover:bg-surface-hover/60 transition-colors"
               >
                 <span className="flex items-center gap-2 min-w-0">
                   <Wallet className="w-4 h-4 text-text-3 shrink-0" aria-hidden />

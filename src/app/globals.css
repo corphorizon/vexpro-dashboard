@@ -111,6 +111,8 @@
 
   /* ── «Libro mayor» (rediseño 2026-10) — ver el bloque explicativo más abajo ── */
   --surface-2: #F0F2F5;
+  /* Hover de filas/botones: igual a surface-2 en claro. Antes era `muted`; el barrido T9 lo pasó a surface-2, que en oscuro oscurecía. */
+  --surface-hover: #F0F2F5;
   --surface-sunk: #EBEEF2;
   --border-strong: #C9D0DA;
   --control-border: #8A94A3;
@@ -167,6 +169,8 @@
 
   /* ── «Libro mayor» — oscuro ── */
   --surface-2: #172031;
+  /* Hover de filas/botones: más clara que card (#1E293B): en oscuro el hover aclara. Antes era `muted`; el barrido T9 lo pasó a surface-2, que en oscuro oscurecía. */
+  --surface-hover: #263548;
   --surface-sunk: #0D121C;
   --border-strong: #33405A;
   --control-border: #5E6B82;
@@ -268,6 +272,7 @@
   /* ── «Libro mayor» — utilidades (bg-surface-2, text-text-2, text-pos,
      bg-stale-bg, border-border-strong, shadow-2, rounded-ui-lg, h-row…) ── */
   --color-surface-2: var(--surface-2);
+  --color-surface-hover: var(--surface-hover);
   --color-surface-sunk: var(--surface-sunk);
   --color-border-strong: var(--border-strong);
   --color-control-border: var(--control-border);

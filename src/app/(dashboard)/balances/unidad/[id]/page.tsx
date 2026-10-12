@@ -405,7 +405,7 @@ export default function BusinessUnitLedgerPage() {
               <Link
                 key={loc.key}
                 href={`/balances/libro/${encodeURIComponent(loc.key)}`}
-                className="flex items-center justify-between gap-3 min-h-11 px-3 py-2 rounded-lg border border-border hover:bg-surface-2/60 transition-colors"
+                className="flex items-center justify-between gap-3 min-h-11 px-3 py-2 rounded-lg border border-border hover:bg-surface-hover/60 transition-colors"
               >
                 <span className="flex items-center gap-2 min-w-0">
                   <Wallet className="w-4 h-4 text-text-3 shrink-0" />
@@ -488,7 +488,7 @@ export default function BusinessUnitLedgerPage() {
                   // esa condición cambia, no para tapar un caso conocido.
                   const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                   return (
-                    <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-surface-2/40">
+                    <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-surface-hover/40">
                       <td className="px-4 py-3 whitespace-nowrap tabular-nums text-text-3">
                         {row.entry_date}
                       </td>

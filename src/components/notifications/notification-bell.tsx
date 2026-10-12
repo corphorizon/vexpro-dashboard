@@ -102,7 +102,7 @@ export function NotificationBell({
 
     const rowClass = cn(
       'w-full text-left block border-l-2 px-3 py-3 min-h-[44px] transition-colors',
-      'hover:bg-surface-2 focus-visible:bg-surface-2',
+      'hover:bg-surface-hover focus-visible:bg-surface-2',
       SEVERITY_BORDER[severity],
       !n.read_at && 'bg-surface-2/40',
     );
@@ -150,7 +150,7 @@ export function NotificationBell({
           // Sigue el tema (2026-10-12, Fase 4): la campana vive ahora en la
           // topbar, que es clara u oscura según el tema. Antes era slate fijo
           // porque estaba en el sidebar siempre oscuro.
-          'text-text-2 hover:bg-surface-2 hover:text-foreground',
+          'text-text-2 hover:bg-surface-hover hover:text-foreground',
           open && 'bg-surface-2 text-foreground',
           // ≥ 40 px de blanco táctil; en el rail el alto lo fija el sidebar.
           variant === 'topbar'
@@ -199,7 +199,7 @@ export function NotificationBell({
               <button
                 type="button"
                 onClick={() => markAllRead()}
-                className="shrink-0 rounded-lg px-2 py-2 min-h-[44px] text-xs font-medium text-text-3 hover:bg-surface-2 hover:text-foreground transition-colors"
+                className="shrink-0 rounded-lg px-2 py-2 min-h-[44px] text-xs font-medium text-text-3 hover:bg-surface-hover hover:text-foreground transition-colors"
               >
                 {t('notif.markAllRead')}
               </button>

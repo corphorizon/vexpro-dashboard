@@ -2761,7 +2761,7 @@ export default function ComisionesPage() {
                     type="button"
                     role="menuitem"
                     onClick={() => { handleExport(); setShowExportMenu(false); }}
-                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-surface-2"
+                    className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-surface-hover"
                   >
                     <FileSpreadsheet aria-hidden className="size-4 text-text-2" />
                     {t('audit.exportCsv')}
@@ -2771,7 +2771,7 @@ export default function ComisionesPage() {
                       type="button"
                       role="menuitem"
                       onClick={() => { handleExportPDF(); setShowExportMenu(false); }}
-                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-surface-2"
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] hover:bg-surface-hover"
                     >
                       <FileText aria-hidden className="size-4 text-text-2" />
                       {t('comm.exportPdfDetailed')}

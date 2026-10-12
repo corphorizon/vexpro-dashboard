@@ -193,7 +193,7 @@ export function LogoCropper({ file, aspect, onCancel, onConfirm, onUseOriginal, 
             type="button"
             onClick={onCancel}
             aria-label="Cerrar"
-            className="-mr-2 flex size-10 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground"
+            className="-mr-2 flex size-10 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground"
           >
             <X className="w-4 h-4" />
           </button>

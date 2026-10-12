@@ -48,7 +48,7 @@ export function WalletAddress({ address, className }: { address: string | null |
         }}
         aria-label={copied ? t('riskLm.walletCopied') : t('riskLm.walletCopy')}
         title={copied ? t('riskLm.walletCopied') : t('riskLm.walletCopy')}
-        className="inline-flex size-6 shrink-0 items-center justify-center rounded-ui-sm text-text-3 hover:bg-surface-2 hover:text-foreground [@media(pointer:coarse)]:size-8"
+        className="inline-flex size-6 shrink-0 items-center justify-center rounded-ui-sm text-text-3 hover:bg-surface-hover hover:text-foreground [@media(pointer:coarse)]:size-8"
       >
         {copied ? <Check aria-hidden className="size-3.5 text-pos" /> : <Copy aria-hidden className="size-3.5" />}
       </button>

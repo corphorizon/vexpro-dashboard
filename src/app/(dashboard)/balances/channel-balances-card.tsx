@@ -169,10 +169,10 @@ const SOURCE_LABEL_KEY: Record<ChannelSourceKind, string> = {
 
 /** Botón-ícono de acción de fila (spec §5.1): 32×32, 40 en táctil. */
 const ROW_BTN =
-  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground disabled:opacity-40 [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground disabled:opacity-40 [@media(pointer:coarse)]:size-10';
 /** Botón secundario (spec §5.1). */
 const BTN =
-  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover disabled:opacity-50 [@media(pointer:coarse)]:h-10';
 
 export function ChannelBalancesCard({
   channels,

@@ -116,7 +116,7 @@ export function RolesPanel() {
             </thead>
             <tbody>
               {roles.map((r) => (
-                <tr key={r.id} className="border-b border-border/50 hover:bg-surface-2/30">
+                <tr key={r.id} className="border-b border-border/50 hover:bg-surface-hover/30">
                   <td className="py-3 px-3">
                     <div className="font-medium">{r.name}</div>
                     {r.description && <div className="text-xs text-text-3 mt-0.5">{r.description}</div>}
@@ -142,7 +142,7 @@ export function RolesPanel() {
                     <div className="flex items-center justify-end gap-1">
                       <button
                         onClick={() => { setEditing(r); setShowForm(true); }}
-                        className="p-1.5 rounded hover:bg-surface-2"
+                        className="p-1.5 rounded hover:bg-surface-hover"
                         title="Editar"
                       >
                         <Pencil className="w-3.5 h-3.5 text-text-3" />
@@ -213,7 +213,7 @@ function RoleForm({ editing, onClose, onSaved }: {
     <Card className="mb-4 bg-surface-2/30">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold">{editing ? 'Editar rol' : 'Nuevo rol'}</h3>
-        <button onClick={onClose} className="p-1 hover:bg-surface-2 rounded" aria-label="Cerrar">
+        <button onClick={onClose} className="p-1 hover:bg-surface-hover rounded" aria-label="Cerrar">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -270,7 +270,7 @@ function RoleForm({ editing, onClose, onSaved }: {
                 className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
                   modules.includes(m)
                     ? 'bg-primary text-brand-on-primary border-primary'
-                    : 'border-border hover:bg-surface-2'
+                    : 'border-border hover:bg-surface-hover'
                 }`}
               >
                 {MODULE_LABELS[m]}
@@ -297,7 +297,7 @@ function RoleForm({ editing, onClose, onSaved }: {
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-surface-2"
+            className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-surface-hover"
           >
             Cancelar
           </button>

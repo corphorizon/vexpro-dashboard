@@ -39,9 +39,9 @@ const VARIANT: Record<Variant, string> = {
   primary:
     'bg-primary text-brand-on-primary hover:bg-[color-mix(in_srgb,var(--color-primary)_88%,#000)] active:bg-[color-mix(in_srgb,var(--color-primary)_78%,#000)]',
   secondary:
-    'border border-border-strong bg-card text-foreground hover:bg-surface-2 active:bg-surface-2/70',
+    'border border-border-strong bg-card text-foreground hover:bg-surface-hover active:bg-surface-2/70',
   ghost:
-    'text-text-2 hover:bg-surface-2 hover:text-foreground active:bg-surface-2/70',
+    'text-text-2 hover:bg-surface-hover hover:text-foreground active:bg-surface-2/70',
   destructive:
     'border border-neg/35 bg-neg-bg text-neg hover:border-neg',
 };

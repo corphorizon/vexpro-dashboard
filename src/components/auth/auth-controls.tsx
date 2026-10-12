@@ -45,7 +45,7 @@ export const AUTH_PRIMARY_CLASS = `${AUTH_PRIMARY_BASE_CLASS} w-full`;
 
 /** Secundario: borde `border-strong`, superficie, hover `surface-2`. */
 export const AUTH_SECONDARY_CLASS =
-  'inline-flex h-10 items-center justify-center gap-2 rounded-ui-md border border-border-strong bg-card px-4 text-[13px] font-medium text-foreground transition-colors hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none';
+  'inline-flex h-10 items-center justify-center gap-2 rounded-ui-md border border-border-strong bg-card px-4 text-[13px] font-medium text-foreground transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none';
 
 /** Acción de texto («¿Olvidaste tu contraseña?», «Volver»): 40 px de alto táctil. */
 export const AUTH_LINK_CLASS =

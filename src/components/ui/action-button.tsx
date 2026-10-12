@@ -51,8 +51,8 @@ const BASE =
 const VARIANT: Record<ActionVariant, string> = {
   primary:
     'border border-primary bg-primary text-brand-on-primary hover:bg-[color-mix(in_srgb,var(--color-primary)_86%,black)]',
-  secondary: 'border border-border-strong bg-card text-foreground hover:bg-surface-2',
-  ghost: 'text-text-2 hover:bg-surface-2 hover:text-foreground',
+  secondary: 'border border-border-strong bg-card text-foreground hover:bg-surface-hover',
+  ghost: 'text-text-2 hover:bg-surface-hover hover:text-foreground',
   danger: 'border border-neg/35 bg-neg-bg text-neg hover:border-neg',
 };
 
@@ -63,7 +63,7 @@ export function actionButtonClass(variant: ActionVariant = 'secondary', classNam
 
 /** Botón-ícono de fila / de lista (32×32, 40 en táctil). Siempre con aria-label. */
 export const ROW_ACTION_CLASS =
-  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground disabled:pointer-events-none disabled:opacity-40 [@media(pointer:coarse)]:size-10';
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover hover:text-foreground disabled:pointer-events-none disabled:opacity-40 [@media(pointer:coarse)]:size-10';
 
 export interface ActionButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ActionVariant;

@@ -191,7 +191,7 @@ function Gallery({ idPrefix }: { idPrefix: string }) {
             <button
               type="button"
               aria-label="Descargar"
-              className="inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-2 [@media(pointer:coarse)]:size-10"
+              className="inline-flex size-8 items-center justify-center rounded-ui-md border border-border-strong bg-card text-text-2 hover:bg-surface-hover [@media(pointer:coarse)]:size-10"
             >
               <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
             </button>
@@ -211,7 +211,7 @@ function Gallery({ idPrefix }: { idPrefix: string }) {
             <button
               type="button"
               aria-label={`Acciones de ${c.name}`}
-              className="inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 [@media(pointer:coarse)]:size-10"
+              className="inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-hover [@media(pointer:coarse)]:size-10"
             >
               <MoreHorizontal aria-hidden className="size-4" />
             </button>

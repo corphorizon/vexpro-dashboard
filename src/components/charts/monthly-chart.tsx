@@ -194,7 +194,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
             onClick={() => setStartIndex(Math.max(0, startIndex - maxVisible))}
             disabled={!canGoBack}
             aria-label="Períodos anteriores"
-            className="p-1 rounded-md border border-border hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded-md border border-border hover:bg-surface-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -202,7 +202,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
             onClick={() => setStartIndex(Math.min(allPeriods.length - maxVisible, startIndex + maxVisible))}
             disabled={!canGoForward}
             aria-label="Períodos siguientes"
-            className="p-1 rounded-md border border-border hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded-md border border-border hover:bg-surface-hover disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronRight className="w-4 h-4" />
           </button>

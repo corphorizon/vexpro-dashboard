@@ -91,7 +91,7 @@ export default function GlobalError({ error, reset, unstable_retry }: GlobalErro
             {/* eslint-disable-next-line @next/next/no-html-link-for-pages */}
             <a
               href="/"
-              className="inline-flex h-10 items-center justify-center rounded-ui-md border border-border-strong bg-card px-4 text-[13px] font-medium text-foreground hover:bg-surface-2"
+              className="inline-flex h-10 items-center justify-center rounded-ui-md border border-border-strong bg-card px-4 text-[13px] font-medium text-foreground hover:bg-surface-hover"
             >
               Ir al inicio · Home
             </a>

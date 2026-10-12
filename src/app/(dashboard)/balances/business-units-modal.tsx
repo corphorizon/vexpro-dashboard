@@ -166,7 +166,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
           </div>
           <button
             onClick={onClose}
-            className="min-h-11 min-w-11 flex items-center justify-center rounded-lg hover:bg-surface-2"
+            className="min-h-11 min-w-11 flex items-center justify-center rounded-lg hover:bg-surface-hover"
             aria-label={t('common.close')}
           >
             <X className="w-4 h-4" />
@@ -208,7 +208,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
                     />
                     <button
                       onClick={() => setDraft(u, { counts_to_fund: !draft.counts_to_fund })}
-                      className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-text-3 hover:bg-surface-2 transition-colors"
+                      className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-text-3 hover:bg-surface-hover transition-colors"
                       title={t('cash.countsToFundHint')}
                     >
                       {draft.counts_to_fund ? (
@@ -223,7 +223,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
                           se llega, sin tener que volver a la tarjeta. */}
                       <Link
                         href={`/balances/unidad/${encodeURIComponent(u.id)}`}
-                        className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border hover:bg-surface-2 transition-colors whitespace-nowrap"
+                        className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border hover:bg-surface-hover transition-colors whitespace-nowrap"
                         title={t('unitLedger.openBook')}
                       >
                         <ArrowRightLeft className="w-3.5 h-3.5" />
@@ -268,7 +268,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
               />
               <button
                 onClick={() => setNewCountsToFund((v) => !v)}
-                className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-text-3 hover:bg-surface-2 transition-colors"
+                className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-text-3 hover:bg-surface-hover transition-colors"
                 title={t('cash.countsToFundHint')}
               >
                 {newCountsToFund ? (

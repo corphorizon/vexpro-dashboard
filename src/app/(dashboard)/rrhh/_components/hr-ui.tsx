@@ -52,7 +52,7 @@ export const ROW_DANGER_CLASS = ROW_ACTION_CLASS.replace('hover:text-foreground'
 
 /** Colapsar/expandir dentro de una fila: 24 px (36 táctil), sin pelear con ROW_ACTION_CLASS. */
 export const TOGGLE_CLASS =
-  'inline-flex size-6 shrink-0 items-center justify-center rounded-ui-sm text-text-2 hover:bg-surface-2 hover:text-foreground [@media(pointer:coarse)]:size-9';
+  'inline-flex size-6 shrink-0 items-center justify-center rounded-ui-sm text-text-2 hover:bg-surface-hover hover:text-foreground [@media(pointer:coarse)]:size-9';
 
 export function HrModal({
   title,
@@ -186,7 +186,7 @@ export function FilePick({
   return (
     <div className="flex items-center gap-2">
       <label className="min-w-0 flex-1 cursor-pointer">
-        <span className="flex h-9 items-center gap-2 rounded-ui-md border border-dashed border-border-strong bg-card px-2.5 text-[13px] text-text-2 hover:bg-surface-2">
+        <span className="flex h-9 items-center gap-2 rounded-ui-md border border-dashed border-border-strong bg-card px-2.5 text-[13px] text-text-2 hover:bg-surface-hover">
           <Upload aria-hidden className="size-4 shrink-0 text-text-3" />
           <span className="truncate">{file ? file.name : placeholder}</span>
         </span>

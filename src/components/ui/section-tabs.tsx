@@ -60,7 +60,7 @@ export function SectionTabs<T extends string>({
               'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
               activa
                 ? 'border-primary bg-primary text-brand-on-primary'
-                : 'border-border hover:bg-surface-2',
+                : 'border-border hover:bg-surface-hover',
             )}
           >
             {tab.label}

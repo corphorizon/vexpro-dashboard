@@ -90,8 +90,8 @@ export function PeriodSelector() {
                 isActive
                   ? 'bg-primary text-brand-on-primary border-primary'
                   : period.is_closed
-                    ? 'border-border hover:bg-surface-2 opacity-70'
-                    : 'border-border hover:bg-surface-2'
+                    ? 'border-border hover:bg-surface-hover opacity-70'
+                    : 'border-border hover:bg-surface-hover'
               }`}
             >
               <span className="flex items-center gap-1">
@@ -125,7 +125,7 @@ export function PeriodSelector() {
         className={`p-2 rounded-lg border transition-colors ${
           mode === 'consolidated'
             ? 'bg-primary text-brand-on-primary border-primary'
-            : 'border-border bg-card hover:bg-surface-2'
+            : 'border-border bg-card hover:bg-surface-hover'
         }`}
         title={t('periods.consolidated')}
         aria-label={t('periods.consolidated')}
@@ -147,7 +147,7 @@ export function PeriodSelector() {
                   setConsolidated(preset.ids, preset.label);
                   setShowPanel(false);
                 }}
-                className="px-2.5 py-1 text-xs font-medium rounded-md border border-border hover:bg-surface-2 transition-colors"
+                className="px-2.5 py-1 text-xs font-medium rounded-md border border-border hover:bg-surface-hover transition-colors"
               >
                 {preset.label}
               </button>
@@ -164,7 +164,7 @@ export function PeriodSelector() {
                   className={`px-2 py-1.5 text-xs rounded-md border transition-colors ${
                     customSelection.includes(period.id)
                       ? 'bg-primary text-brand-on-primary border-primary'
-                      : 'border-border hover:bg-surface-2'
+                      : 'border-border hover:bg-surface-hover'
                   }`}
                 >
                   {period.label}
@@ -184,7 +184,7 @@ export function PeriodSelector() {
             {mode === 'consolidated' && (
               <button
                 onClick={() => { setSingleMode(); setShowPanel(false); }}
-                className="px-3 py-1.5 text-xs font-medium border border-border rounded-md hover:bg-surface-2"
+                className="px-3 py-1.5 text-xs font-medium border border-border rounded-md hover:bg-surface-hover"
               >
                 {t('periods.clear')}
               </button>

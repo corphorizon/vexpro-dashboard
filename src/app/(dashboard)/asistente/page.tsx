@@ -396,7 +396,7 @@ export default function AsistentePage() {
                         'h-8 min-w-0 flex-1 truncate rounded-ui-md px-2.5 text-left text-[13px] [@media(pointer:coarse)]:h-10',
                         activo
                           ? 'bg-brand-tint font-semibold text-brand-ink shadow-[inset_3px_0_0_0_var(--brand-ink)]'
-                          : 'font-medium text-text-2 hover:bg-surface-2 hover:text-foreground',
+                          : 'font-medium text-text-2 hover:bg-surface-hover hover:text-foreground',
                       )}
                       title={c.title ?? ''}
                     >
@@ -455,7 +455,7 @@ export default function AsistentePage() {
                       <button
                         type="button"
                         onClick={() => setEntrada(s)}
-                        className="w-full rounded-ui-md border border-border-strong bg-card px-3 py-2 text-left text-[13px] text-text-2 hover:bg-surface-2 hover:text-foreground"
+                        className="w-full rounded-ui-md border border-border-strong bg-card px-3 py-2 text-left text-[13px] text-text-2 hover:bg-surface-hover hover:text-foreground"
                       >
                         {s}
                       </button>

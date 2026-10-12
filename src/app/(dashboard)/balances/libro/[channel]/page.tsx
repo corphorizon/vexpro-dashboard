@@ -335,7 +335,7 @@ export default function ChannelLedgerPage() {
                 // que no cuadra» a un movimiento real invita a corregirlo.
                 const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                 return (
-                  <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-surface-2/40">
+                  <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-surface-hover/40">
                     <td className="px-4 py-3 whitespace-nowrap tabular-nums text-text-3">
                       {row.entry_date}
                     </td>

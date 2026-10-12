@@ -63,7 +63,7 @@ export function OnchainWalletsEditor({ value, onChange, disabled }: Props) {
           type="button"
           onClick={add}
           disabled={disabled}
-          className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border bg-card hover:bg-surface-2 disabled:opacity-50 shrink-0"
+          className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border bg-card hover:bg-surface-hover disabled:opacity-50 shrink-0"
         >
           <Plus className="w-3.5 h-3.5" />
           {t('onchain.addAddress')}

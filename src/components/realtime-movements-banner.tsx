@@ -665,7 +665,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                   'inline-flex h-8 items-center gap-1.5 rounded-ui-md border px-2.5 text-[13px] font-medium disabled:opacity-50',
                   selectedPin
                     ? 'border-brand-ink bg-brand-tint text-brand-ink'
-                    : 'border-border-strong bg-card text-text-2 hover:bg-surface-2 hover:text-foreground',
+                    : 'border-border-strong bg-card text-text-2 hover:bg-surface-hover hover:text-foreground',
                 )}
                 title={selectedPin ? t('movements.rt.unpinTitle') : t('movements.rt.pinTitle')}
               >
@@ -720,7 +720,7 @@ export function RealTimeMovementsBanner({ walletId: walletIdProp, onWalletChange
                 <button
                   type="button"
                   onClick={loadFromCache}
-                  className="inline-flex h-8 items-center rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2"
+                  className="inline-flex h-8 items-center rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-hover"
                 >
                   {t('movements.notice.retry')}
                 </button>

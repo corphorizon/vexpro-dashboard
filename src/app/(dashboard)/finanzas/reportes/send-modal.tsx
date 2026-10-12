@@ -227,7 +227,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
           <h2 className="text-[15px] font-semibold tracking-[-0.005em]">Enviar Reporte</h2>
           <button
             onClick={onClose}
-            className="p-1 rounded-md hover:bg-surface-2"
+            className="p-1 rounded-md hover:bg-surface-hover"
             aria-label="Cerrar"
           >
             <X className="w-4 h-4" />
@@ -254,7 +254,7 @@ export function SendReportModal({ open, onClose, currentRange }: Props) {
                   className={`px-3 py-2 rounded-md border transition-colors ${
                     cadence === k
                       ? 'border-brand-ink bg-brand-tint font-semibold text-brand-ink'
-                      : 'border-border-strong hover:bg-surface-2'
+                      : 'border-border-strong hover:bg-surface-hover'
                   }`}
                 >
                   {label}

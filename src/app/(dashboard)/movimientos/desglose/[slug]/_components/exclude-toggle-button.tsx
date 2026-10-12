@@ -109,7 +109,7 @@ export function ExcludeToggleButton({
   // con emoji. Ahora son botones ghost de fila (FinTable los muestra al hover
   // y siempre en táctil): la acción se lee por el texto, no por el color.
   const cls =
-    'inline-flex h-7 items-center rounded-ui-md border border-border-strong bg-card px-2 text-[12.5px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground disabled:opacity-50';
+    'inline-flex h-7 items-center rounded-ui-md border border-border-strong bg-card px-2 text-[12.5px] font-medium text-text-2 hover:bg-surface-hover hover:text-foreground disabled:opacity-50';
 
   if (tx.excluded) {
     return (
