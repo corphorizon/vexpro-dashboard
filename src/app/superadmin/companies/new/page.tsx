@@ -6,7 +6,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { actionButtonClass } from '@/components/ui/action-button';
 import { DEFAULT_ACTIVE_MODULES } from '@/lib/modules';
 // El default del alta sale del registro, no de un literal: cuando se agregó un
 // tercer modelo este archivo era el único lugar donde 'broker' estaba escrito a

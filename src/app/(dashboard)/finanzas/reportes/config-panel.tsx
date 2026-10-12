@@ -25,7 +25,7 @@ import {
   type ReportSections,
 } from '@/lib/reports/sections';
 import { ChevronDown, Save, Settings2 } from 'lucide-react';
-import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { actionButtonClass } from '@/components/ui/action-button';
 
 // Las secciones y sus etiquetas salen del registro único
 // (src/lib/reports/sections.ts): esta pantalla tenía interfaz, etiquetas y

@@ -88,7 +88,7 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      className="fixed inset-0 bg-scrim flex items-center justify-center z-50"
       onClick={busy ? undefined : onClose}
       role="dialog"
       aria-modal="true"
@@ -104,7 +104,7 @@ export function ConfirmDialog({
         <h3 id="confirm-dialog-title" className="text-lg font-semibold mb-2">
           {title}
         </h3>
-        <p className="text-sm text-muted-foreground mb-6 whitespace-pre-line">
+        <p className="text-sm text-text-3 mb-6 whitespace-pre-line">
           {message}
         </p>
         <div className="flex gap-3 justify-end">

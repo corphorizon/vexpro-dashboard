@@ -9,7 +9,7 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { Segmented } from '@/components/ui/segmented';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import {
   USER_AUDIT_PREVIEW,
   atLimit,
@@ -224,7 +224,7 @@ export function ManageUserPanel({ user, companyActiveModules, onClose, onUpdated
       <button
         aria-label="Cerrar"
         onClick={onClose}
-        className="flex-1 bg-black/45"
+        className="flex-1 bg-scrim"
       />
 
       {/* Panel */}

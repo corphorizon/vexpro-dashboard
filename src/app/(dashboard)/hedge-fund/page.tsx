@@ -65,7 +65,7 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { InfoTip } from '@/components/ui/info-tip';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';

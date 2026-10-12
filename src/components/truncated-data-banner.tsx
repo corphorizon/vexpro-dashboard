@@ -48,9 +48,9 @@ export function TruncatedDataBanner() {
   return (
     <div
       role="alert"
-      className="mx-4 mt-4 sm:mx-6 lg:mx-8 flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-800 dark:text-amber-200"
+      className="mx-4 mt-4 sm:mx-6 lg:mx-8 flex items-start gap-2 rounded-lg border border-pend/35 bg-pend-bg p-3 text-xs text-foreground"
     >
-      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-pend" />
       <span>
         <strong className="font-semibold">Datos incompletos.</strong> Se alcanzó el
         máximo de filas que se pueden cargar de una vez en: {names}. Todo lo que se

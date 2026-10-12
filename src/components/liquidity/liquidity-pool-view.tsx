@@ -64,7 +64,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Segmented } from '@/components/ui/segmented';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton, actionButtonClass, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { mesLabel } from './ui';
 import { ResumenMensual } from './resumen-mensual';
 import {
@@ -683,7 +683,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/45 p-4 sm:p-8">
+    <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-scrim p-4 sm:p-8">
       <div role="dialog" aria-modal="true" aria-label={title} className="w-full max-w-2xl rounded-ui-xl border border-border bg-card shadow-3">
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <h2 className="text-[15px] font-semibold tracking-[-0.005em]">{title}</h2>

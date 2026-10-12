@@ -38,7 +38,7 @@ export function LedgerLocationPicker({ open, locations, onPick, onClose }: Props
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
       <div
         role="dialog"
         aria-modal="true"
@@ -53,7 +53,7 @@ export function LedgerLocationPicker({ open, locations, onPick, onClose }: Props
         </div>
 
         <div className="px-5 py-4">
-          <p className="text-base sm:text-sm text-muted-foreground">
+          <p className="text-base sm:text-sm text-text-3">
             {t('unitLedger.pickLocationHint')}
           </p>
 
@@ -65,10 +65,10 @@ export function LedgerLocationPicker({ open, locations, onPick, onClose }: Props
                 key={loc.key}
                 type="button"
                 onClick={() => onPick(loc.key)}
-                className="flex items-center justify-between gap-3 min-h-11 w-full px-3 py-2 rounded-lg border border-border text-left text-base sm:text-sm hover:bg-muted/60 transition-colors"
+                className="flex items-center justify-between gap-3 min-h-11 w-full px-3 py-2 rounded-lg border border-border text-left text-base sm:text-sm hover:bg-surface-2/60 transition-colors"
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <Wallet className="w-4 h-4 text-muted-foreground shrink-0" aria-hidden />
+                  <Wallet className="w-4 h-4 text-text-3 shrink-0" aria-hidden />
                   <span className="truncate">{loc.label}</span>
                 </span>
                 <span className="font-semibold tabular-nums shrink-0">

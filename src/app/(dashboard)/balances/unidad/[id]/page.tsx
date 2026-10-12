@@ -301,7 +301,7 @@ export default function BusinessUnitLedgerPage() {
       <div className="space-y-6">
         <PageHeader title={t('unitLedger.title')} icon={Building2} />
         <Card className="p-6">
-          <p className="text-sm text-muted-foreground">{t('unitLedger.notFound')}</p>
+          <p className="text-sm text-text-3">{t('unitLedger.notFound')}</p>
           <Link
             href="/balances"
             className="mt-4 inline-flex items-center gap-1.5 min-h-11 text-sm text-accent hover:underline"
@@ -325,7 +325,7 @@ export default function BusinessUnitLedgerPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/balances"
-              className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 text-sm text-text-3 hover:text-foreground transition-colors"
             >
               <ArrowLeft className="w-4 h-4" /> {t('unitLedger.backToBalances')}
             </Link>
@@ -341,16 +341,16 @@ export default function BusinessUnitLedgerPage() {
         }
       />
 
-      <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4">
-        <Lock className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
-        <p className="text-sm text-muted-foreground">{t('unitLedger.readOnlyNotice')}</p>
+      <div className="flex gap-3 rounded-lg border border-border bg-surface-2/40 p-4">
+        <Lock className="w-4 h-4 mt-0.5 shrink-0 text-text-3" aria-hidden />
+        <p className="text-sm text-text-3">{t('unitLedger.readOnlyNotice')}</p>
       </div>
 
       {/* Aviso explícito: el botón existe pero no hay dónde asentar todavía. */}
       {canWrite && manualLocations.length === 0 && (
-        <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4">
-          <Wallet className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
-          <p className="text-sm text-muted-foreground">
+        <div className="flex gap-3 rounded-lg border border-border bg-surface-2/40 p-4">
+          <Wallet className="w-4 h-4 mt-0.5 shrink-0 text-text-3" aria-hidden />
+          <p className="text-sm text-text-3">
             {t('unitLedger.noManualLocationNotice')}{' '}
             <Link href="/balances" className="text-accent hover:underline">
               {t('unitLedger.goToCashLocations')}
@@ -363,7 +363,7 @@ export default function BusinessUnitLedgerPage() {
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-4">
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('unitLedger.from')}</span>
+            <span className="text-xs text-text-3">{t('unitLedger.from')}</span>
             <input
               type="date"
               value={range.from}
@@ -372,7 +372,7 @@ export default function BusinessUnitLedgerPage() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('unitLedger.to')}</span>
+            <span className="text-xs text-text-3">{t('unitLedger.to')}</span>
             <input
               type="date"
               value={range.to}
@@ -394,25 +394,25 @@ export default function BusinessUnitLedgerPage() {
 
       {/* Desglose por ubicación */}
       <Card className="p-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-text-3 mb-3">
           {t('unitLedger.byLocation')}
         </h2>
         {perLocation.length === 0 ? (
-          <p className="text-sm text-muted-foreground">{t('unitLedger.noLocations')}</p>
+          <p className="text-sm text-text-3">{t('unitLedger.noLocations')}</p>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
             {perLocation.map((loc) => (
               <Link
                 key={loc.key}
                 href={`/balances/libro/${encodeURIComponent(loc.key)}`}
-                className="flex items-center justify-between gap-3 min-h-11 px-3 py-2 rounded-lg border border-border hover:bg-muted/60 transition-colors"
+                className="flex items-center justify-between gap-3 min-h-11 px-3 py-2 rounded-lg border border-border hover:bg-surface-2/60 transition-colors"
               >
                 <span className="flex items-center gap-2 min-w-0">
-                  <Wallet className="w-4 h-4 text-muted-foreground shrink-0" />
+                  <Wallet className="w-4 h-4 text-text-3 shrink-0" />
                   <span className="min-w-0">
                     <span className="block truncate">{loc.label}</span>
                     {loc.share < 1 && (
-                      <span className="block text-xs text-muted-foreground">
+                      <span className="block text-xs text-text-3">
                         {t('unitLedger.sharedOf', {
                           pct: sharePct(loc.share),
                           total: formatCurrency(loc.fullBalance),
@@ -430,9 +430,9 @@ export default function BusinessUnitLedgerPage() {
 
       {/* Ubicaciones compartidas: el resumen va prorrateado, los asientos no. */}
       {hasSharedLocations && (
-        <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4">
-          <Wallet className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
-          <p className="text-sm text-muted-foreground">{t('unitLedger.sharedNotice')}</p>
+        <div className="flex gap-3 rounded-lg border border-border bg-surface-2/40 p-4">
+          <Wallet className="w-4 h-4 mt-0.5 shrink-0 text-text-3" aria-hidden />
+          <p className="text-sm text-text-3">{t('unitLedger.sharedNotice')}</p>
         </div>
       )}
 
@@ -441,7 +441,7 @@ export default function BusinessUnitLedgerPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-text-3">
                 <th className="px-4 py-3 font-medium">{t('unitLedger.date')}</th>
                 <th className="px-4 py-3 font-medium">{t('unitLedger.location')}</th>
                 <th className="px-4 py-3 font-medium">{t('unitLedger.concept')}</th>
@@ -454,7 +454,7 @@ export default function BusinessUnitLedgerPage() {
             <tbody>
               {loading && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">
+                  <td colSpan={7} className="px-4 py-8 text-center text-text-3">
                     …
                   </td>
                 </tr>
@@ -488,8 +488,8 @@ export default function BusinessUnitLedgerPage() {
                   // esa condición cambia, no para tapar un caso conocido.
                   const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                   return (
-                    <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
-                      <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
+                    <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-surface-2/40">
+                      <td className="px-4 py-3 whitespace-nowrap tabular-nums text-text-3">
                         {row.entry_date}
                       </td>
                       <td className="px-4 py-3">
@@ -503,7 +503,7 @@ export default function BusinessUnitLedgerPage() {
                             la parte de esta unidad: el badge evita leerlo como
                             si el 100% le correspondiera. */}
                         {shareOf(row.channel_key) < 1 && (
-                          <div className="text-xs text-muted-foreground mt-0.5">
+                          <div className="text-xs text-text-3 mt-0.5">
                             {t('unitLedger.sharedBadge', { pct: sharePct(shareOf(row.channel_key)) })}
                           </div>
                         )}
@@ -511,7 +511,7 @@ export default function BusinessUnitLedgerPage() {
                       <td className="px-4 py-3">
                         <div className="font-medium">{autoLabel ?? row.concept}</div>
                         {(isAdjustment || isInternal || isBalanceDelta) && (
-                          <div className="text-xs text-muted-foreground mt-0.5 max-w-md">
+                          <div className="text-xs text-text-3 mt-0.5 max-w-md">
                             {isBalanceDelta
                               ? t('ledger.balanceDeltaHint')
                               : isAdjustment
@@ -522,13 +522,13 @@ export default function BusinessUnitLedgerPage() {
                       </td>
                       {/* break-all: los hashes y las URLs no tienen espacios y
                           desbordan la celda si se los deja romper por palabra. */}
-                      <td className="px-4 py-3 max-w-[220px] break-all text-muted-foreground">
+                      <td className="px-4 py-3 max-w-[220px] break-all text-text-3">
                         {row.reference ?? '—'}
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-positive">
+                      <td className="px-4 py-3 text-right tabular-nums text-pos">
                         {row.kind !== 'out' ? formatCurrency(row.amount) : ''}
                       </td>
-                      <td className="px-4 py-3 text-right tabular-nums text-negative">
+                      <td className="px-4 py-3 text-right tabular-nums text-neg">
                         {row.kind === 'out' ? formatCurrency(row.amount) : ''}
                       </td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium">

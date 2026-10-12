@@ -49,7 +49,7 @@ import { Field, Input, Select } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass } from '@/components/ui/action-button';
 import { cn } from '@/lib/utils';
 import { formatMoney } from '@/lib/money';
 import { splitCheck, type SplitCheck } from '../liquidity-view';

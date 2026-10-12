@@ -207,25 +207,25 @@ export const PROVIDER_META: Record<ProviderSlug, ProviderMeta> = {
   'coinsbuy-withdrawals': {
     provider: 'Coinsbuy',
     cardLabel: 'Coinsbuy · Retiros',
-    accent: 'text-negative',
+    accent: 'text-neg',
     direction: 'out',
   },
   fairpay: {
     provider: 'FairPay',
     cardLabel: 'FairPay · Depósitos',
-    accent: 'text-positive',
+    accent: 'text-pos',
     direction: 'in',
   },
   unipayment: {
     provider: 'UniPayment',
     cardLabel: 'Unipayment · Depósitos',
-    accent: 'text-violet-600 dark:text-violet-400',
+    accent: 'text-pos', // era violeta crudo + dark: (barrido 2026-10-12): entrada = pos
     direction: 'in',
   },
   paypros: {
     provider: 'Pay-Pros',
     cardLabel: 'Pay-Pros · Depósitos',
-    accent: 'text-amber-600 dark:text-amber-400',
+    accent: 'text-pos', // era ámbar crudo + dark: — ámbar es «pendiente», no «depósito»
     direction: 'in',
   },
 };

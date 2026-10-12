@@ -31,7 +31,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Download, ExternalLink, Trash2, X } from 'lucide-react';
-import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass } from '@/components/ui/action-button';
 import { formatFileSize } from '@/lib/payment-orders/file-index';
 
 /** Tamaño legible. Vivía copiado en el detalle y en el formulario; ahora vive

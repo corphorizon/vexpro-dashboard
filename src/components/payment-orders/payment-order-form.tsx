@@ -48,7 +48,7 @@ import { Segmented } from '@/components/ui/segmented';
 import { Notice } from '@/components/ui/notice';
 import { Money, NUM_CLASS } from '@/components/ui/money';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { cn } from '@/lib/utils';

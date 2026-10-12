@@ -42,7 +42,7 @@ import { Panel } from '@/components/ui/panel';
 import { Notice } from '@/components/ui/notice';
 import { Textarea } from '@/components/ui/field';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { useConfirm } from '@/lib/use-confirm';
 import { useI18n } from '@/lib/i18n';
 import { useModuleAccess } from '@/lib/use-module-access';

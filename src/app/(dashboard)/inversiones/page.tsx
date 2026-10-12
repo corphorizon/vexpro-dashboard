@@ -41,7 +41,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Chip } from '@/components/ui/chip';
 import { Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page-header';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { computeInvestmentTotals, movementTypeLabel, inferMovementType } from '@/lib/investment-types';
 import { useData } from '@/lib/data-context';
 import { formatDate } from '@/lib/dates';

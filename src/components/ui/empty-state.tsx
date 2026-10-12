@@ -33,12 +33,12 @@ export function EmptyState({ icon: Icon = Inbox, title, description, action, com
         className,
       )}
     >
-      <div className={cn('rounded-full bg-muted flex items-center justify-center', compact ? 'w-9 h-9 mb-2.5' : 'w-12 h-12 mb-3')}>
-        <Icon className={cn('text-muted-foreground', compact ? 'w-4.5 h-4.5' : 'w-6 h-6')} />
+      <div className={cn('rounded-full bg-surface-2 flex items-center justify-center', compact ? 'w-9 h-9 mb-2.5' : 'w-12 h-12 mb-3')}>
+        <Icon className={cn('text-text-3', compact ? 'w-4.5 h-4.5' : 'w-6 h-6')} />
       </div>
       <p className={cn('font-medium text-foreground', compact ? 'text-sm' : 'text-base')}>{title}</p>
       {description && (
-        <p className={cn('text-muted-foreground mt-1 max-w-sm', compact ? 'text-xs' : 'text-sm')}>{description}</p>
+        <p className={cn('text-text-3 mt-1 max-w-sm', compact ? 'text-xs' : 'text-sm')}>{description}</p>
       )}
       {action && <div className="mt-4">{action}</div>}
     </div>

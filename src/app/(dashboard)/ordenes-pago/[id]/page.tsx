@@ -65,7 +65,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToasts } from '@/components/ui/toast';
 import { StatusBadge } from '@/components/payment-orders/status-badge';
-import { ActionButton, actionButtonClass, type ActionVariant } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass, type ActionVariant } from '@/components/ui/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { paymentOrderTransitionNeedsFinance, roleCanPreparePaymentOrder, roleCanWriteFinance } from '@/lib/roles';

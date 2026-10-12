@@ -113,31 +113,31 @@ export function FixedExpenseTemplatesPanel({
     <div className="mt-6 pt-4 border-t border-border">
       <button
         onClick={() => setOpen((o) => !o)}
-        className="w-full flex items-center justify-between text-left p-2 -mx-2 rounded hover:bg-muted/50 transition-colors"
+        className="w-full flex items-center justify-between text-left p-2 -mx-2 rounded hover:bg-surface-2/50 transition-colors"
       >
         <div className="flex items-center gap-2">
-          <Repeat className="w-4 h-4 text-violet-500" />
+          <Repeat className="w-4 h-4 text-brand-ink" />
           <span className="text-sm font-semibold">{t('expenses.fixedTemplates')}</span>
-          <span className="text-xs text-muted-foreground">({expenseTemplates.length})</span>
+          <span className="text-xs text-text-3">({expenseTemplates.length})</span>
         </div>
         {open ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
       </button>
 
       {open && (
         <div className="mt-3">
-          <p className="text-xs text-muted-foreground mb-3">
+          <p className="text-xs text-text-3 mb-3">
             Ocultar/mostrar aplica solo a <strong>{selectedPeriodLabel || 'este mes'}</strong>.
             Eliminar quita la plantilla de todos los meses.
           </p>
 
           {errMsg && (
-            <div className="p-2 mb-2 rounded bg-red-50 dark:bg-red-950/30 border border-negative/30 text-red-700 dark:text-red-300 text-xs">
+            <div className="p-2 mb-2 rounded bg-neg-bg border border-neg/30 text-neg text-xs">
               {errMsg}
             </div>
           )}
 
           {expenseTemplates.length === 0 ? (
-            <p className="text-sm text-muted-foreground italic py-4 text-center">
+            <p className="text-sm text-text-3 italic py-4 text-center">
               No hay plantillas. Marca un egreso como &quot;Fijo&quot; al guardarlo para crear una.
             </p>
           ) : (
@@ -145,12 +145,12 @@ export function FixedExpenseTemplatesPanel({
               <table className="w-full text-sm min-w-[440px]">
                 <thead>
                   <tr className="border-b border-border text-xs">
-                    <th className="text-left py-2 px-2 text-muted-foreground font-medium">Concepto</th>
-                    <th className="text-right py-2 px-2 text-muted-foreground font-medium">Monto</th>
-                    <th className="text-center py-2 px-2 text-muted-foreground font-medium">
+                    <th className="text-left py-2 px-2 text-text-3 font-medium">Concepto</th>
+                    <th className="text-right py-2 px-2 text-text-3 font-medium">Monto</th>
+                    <th className="text-center py-2 px-2 text-text-3 font-medium">
                       En {selectedPeriodLabel || 'el mes'}
                     </th>
-                    <th className="text-center py-2 px-2 text-muted-foreground font-medium">Acciones</th>
+                    <th className="text-center py-2 px-2 text-text-3 font-medium">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -165,7 +165,7 @@ export function FixedExpenseTemplatesPanel({
                         <td className="py-2 px-2 font-medium">
                           {tpl.concept}
                           {effLabel && (
-                            <span className="block text-[10px] text-muted-foreground font-normal">
+                            <span className="block text-xs text-text-3 font-normal">
                               {effLabel}
                             </span>
                           )}
@@ -173,10 +173,10 @@ export function FixedExpenseTemplatesPanel({
                         <td className="py-2 px-2 text-right">{formatCurrency(tpl.amount)}</td>
                         <td className="py-2 px-2 text-center">
                           <span
-                            className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${
+                            className={`px-2 py-0.5 rounded-full text-[11.5px] font-medium ${
                               isHidden
-                                ? 'bg-gray-100 dark:bg-gray-900/50 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-800'
-                                : 'bg-positive/10 text-positive border border-positive/30'
+                                ? 'bg-surface-2 text-text-2 border border-border-strong'
+                                : 'bg-pos-bg text-pos border border-pos/30'
                             }`}
                           >
                             {isHidden ? 'Oculta' : 'Visible'}
@@ -188,7 +188,7 @@ export function FixedExpenseTemplatesPanel({
                               <button
                                 onClick={() => handleToggleHidden(tpl.id, isHidden)}
                                 disabled={busy === tpl.id || !selectedPeriodId}
-                                className="p-1 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-950/50 rounded disabled:opacity-50"
+                                className="p-1 text-text-2 hover:bg-surface-2 hover:text-foreground rounded disabled:opacity-50"
                                 title={isHidden ? `Mostrar en ${selectedPeriodLabel}` : `Ocultar en ${selectedPeriodLabel}`}
                                 aria-label={isHidden ? 'Mostrar este mes' : 'Ocultar este mes'}
                               >
@@ -199,7 +199,7 @@ export function FixedExpenseTemplatesPanel({
                               <button
                                 onClick={() => handleDelete(tpl.id)}
                                 disabled={busy === tpl.id}
-                                className="p-1 text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 rounded disabled:opacity-50"
+                                className="p-1 text-neg hover:bg-neg-bg rounded disabled:opacity-50"
                                 title="Eliminar (todos los meses)"
                                 aria-label="Eliminar"
                               >

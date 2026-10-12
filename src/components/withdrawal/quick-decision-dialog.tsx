@@ -106,7 +106,7 @@ export function QuickDecisionDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget && !busy) onClose();
       }}
@@ -121,14 +121,14 @@ export function QuickDecisionDialog({
         <h2 className="text-base font-semibold">
           {rechazo ? labels.rejectTitle : labels.approveTitle}
         </h2>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-sm text-text-3">
           {target.who} · <span className="font-medium">{target.amount}</span>
         </p>
 
         <label className="mt-4 block text-sm">
           <span className="mb-1 block font-medium">
             {labels.reason}{' '}
-            <span className="font-normal text-muted-foreground">
+            <span className="font-normal text-text-3">
               {rechazo ? labels.reasonRequired : labels.reasonOptional}
             </span>
           </span>
@@ -142,7 +142,7 @@ export function QuickDecisionDialog({
           />
         </label>
 
-        <p className="mt-3 rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
+        <p className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-xs text-text-3">
           {labels.notExecuted}
         </p>
 

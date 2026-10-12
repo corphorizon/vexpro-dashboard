@@ -27,6 +27,11 @@
 //   · Agregar los dominios de RRHH a STATUS_DOMAINS (status-kind.ts): la tanda
 //     tiene `src/components/ui/**` vedado, y los estados de RRHH sólo se pintan
 //     acá. Si otra pantalla los necesita, se mueven allá tal cual (mismo tipo).
+//     [2026-10-12, barrido final] Se revisó al mudar los de Riesgo y se
+//     dejó: acá cada estado es `{ kind, labelKey }` en UN registro; mudar el
+//     kind a STATUS_DOMAINS partiría cada estado en dos listas (color allá,
+//     etiqueta acá) — justo lo que la regla §1.1 prohíbe. Riesgo sí se mudó
+//     porque sus mapas eran sólo `estado → kind`.
 //   · Pintar el rol (HEAD, BDM…) de color: un rol no es pos/neg/pend/info/stale
 //     (spec §2.1 «si no significa una de estas cinco cosas, va en gris»). El
 //     `badge` de ROLE_SPECS (hr/domain.ts) queda para /comisiones, que no es de

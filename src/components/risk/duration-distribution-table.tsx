@@ -6,7 +6,7 @@ import type { Trade } from '@/lib/risk/types';
 import type { DurationBucket } from '@/lib/risk/duration-distribution';
 import { FinTable, type FinColumn } from '@/components/ui/fin-table';
 import { NUM_CLASS } from '@/components/ui/money';
-import { ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { cn, formatNumber } from '@/lib/utils';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -161,7 +161,7 @@ function DurationBucketModal({ bucket, onClose }: { bucket: DurationBucket; onCl
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex items-center justify-center bg-black/45 p-4"
+      className="fixed inset-0 z-[60] flex items-center justify-center bg-scrim p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div

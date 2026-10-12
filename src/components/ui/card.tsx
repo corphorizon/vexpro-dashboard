@@ -10,7 +10,7 @@ export function Card({ className, children, ...props }: React.HTMLAttributes<HTM
 
 export function CardTitle({ className, children, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
-    <h3 className={cn('text-sm font-medium text-muted-foreground', className)} {...props}>
+    <h3 className={cn('text-sm font-medium text-text-3', className)} {...props}>
       {children}
     </h3>
   );
@@ -21,8 +21,8 @@ export function CardValue({ className, children, positive, negative, ...props }:
     <div
       className={cn(
         'text-2xl font-bold',
-        positive && 'text-positive',
-        negative && 'text-negative',
+        positive && 'text-pos',
+        negative && 'text-neg',
         !positive && !negative && 'text-card-foreground',
         className
       )}

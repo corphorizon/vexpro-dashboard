@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { Panel } from '@/components/ui/panel';
 import { FinTable, type FinColumn } from '@/components/ui/fin-table';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';

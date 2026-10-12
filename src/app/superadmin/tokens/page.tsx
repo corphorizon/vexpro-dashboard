@@ -41,7 +41,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Chip } from '@/components/ui/chip';
 import { Field, Input, Select } from '@/components/ui/field';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { formatCount, plural } from '@/components/superadmin/superadmin-model';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';

@@ -137,8 +137,8 @@ export function MovimientosPeriodSelector() {
                 onClick={() => toggleMonth(period.id)}
                 className={`inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border transition-colors ${
                   isActive
-                    ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                    : 'border-border bg-card hover:bg-muted'
+                    ? 'bg-primary text-brand-on-primary border-primary'
+                    : 'border-border bg-card hover:bg-surface-2'
                 }`}
               >
                 {isActive && <Check className="w-3 h-3" />}
@@ -153,7 +153,7 @@ export function MovimientosPeriodSelector() {
           <button
             type="button"
             onClick={selectAllYear}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-muted transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-surface-2 transition-colors"
             title={`Seleccionar todos los meses de ${selectedYear}`}
           >
             <CheckSquare className="w-3.5 h-3.5" />
@@ -162,7 +162,7 @@ export function MovimientosPeriodSelector() {
           <button
             type="button"
             onClick={clearAll}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-muted transition-colors"
+            className="inline-flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md border border-border bg-card hover:bg-surface-2 transition-colors"
             title="Volver al mes más reciente"
           >
             <Square className="w-3.5 h-3.5" />
@@ -172,7 +172,7 @@ export function MovimientosPeriodSelector() {
       </div>
 
       {/* Selection summary */}
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-text-3">
         <span className="font-medium text-foreground">{selectionLabel}</span>
         {mode === 'consolidated' && ' · totales consolidados'}
       </p>

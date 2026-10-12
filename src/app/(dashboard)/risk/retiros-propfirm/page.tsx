@@ -40,7 +40,7 @@ import { StatusBadge, type StatusKind } from '@/components/ui/status-badge';
 import { Notice } from '@/components/ui/notice';
 import { Segmented } from '@/components/ui/segmented';
 import { Field, Select, CONTROL_CLASS } from '@/components/ui/field';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';

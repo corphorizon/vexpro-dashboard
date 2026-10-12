@@ -50,34 +50,48 @@ type RoleSpec = {
   label: Record<HrLocale, string>;
   /** Tiene equipo colgando: puede ser `head_id` de otros perfiles. */
   leader: boolean;
-  /** Clases del badge de la pantalla. Va acá para no abrir una quinta lista. */
+  /**
+   * Clases del badge de la pantalla. Va acá para no abrir una quinta lista.
+   * Tokens desde el barrido final «Libro mayor» (2026-10-12): un rol NO es
+   * pos/neg/pend/info/stale (spec §2.1), así que no lleva color de
+   * significado — antes Sales Manager iba en «pendiente» (ámbar), HEAD en
+   * violeta crudo con `dark:` y los BDM en «info». Es estructura (quién
+   * cuelga de quién): los líderes llevan el tinte de la marca (§10.1), el
+   * resto el gris neutro del badge (§5.5). Medido: hoy ninguna pantalla lo
+   * pinta (sólo lo usa domain.test.ts); queda listo para /comisiones.
+   */
   badge: string;
 };
+
+const LEADER_BADGE = 'bg-brand-tint text-brand-ink';
+const MEMBER_BADGE = 'bg-surface-2 text-text-2';
 
 const ROLE_SPECS: Record<HrCommercialRole, RoleSpec> = {
   sales_manager: {
     label: { es: 'Sales Manager', en: 'Sales Manager' },
     leader: true,
-    badge: 'bg-warning/10 text-warning',
+    badge: LEADER_BADGE,
   },
   head: {
     label: { es: 'HEAD', en: 'HEAD' },
     leader: true,
-    badge: 'bg-violet-50 dark:bg-violet-950/50 text-violet-700 dark:text-violet-400',
+    badge: LEADER_BADGE,
   },
   bdm: {
     label: { es: 'BDM', en: 'BDM' },
     leader: false,
-    badge: 'bg-info/10 text-info',
+    badge: MEMBER_BADGE,
   },
   bdm_global: {
     label: { es: 'BDM GLOBAL', en: 'BDM GLOBAL' },
     leader: false,
-    badge: 'bg-info/10 text-info',
+    badge: MEMBER_BADGE,
   },
 };
 
-const DEFAULT_BADGE = 'bg-gray-50 dark:bg-gray-900/50 text-gray-700 dark:text-gray-400';
+/** Rol libre (sin CHECK desde la migr. 011): contorneado, para que se note
+ *  que no es uno de los cuatro conocidos sin inventarle un significado. */
+const DEFAULT_BADGE = 'border border-border-strong text-text-3';
 
 function isKnownRole(role: string): role is HrCommercialRole {
   return (HR_COMMERCIAL_ROLES as readonly string[]).includes(role);

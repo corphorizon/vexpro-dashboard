@@ -23,7 +23,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 // significado (§2.1 — un total de una columna de positivos no se pinta).
 //
 // Acá vive UNA vez lo que comparten las pestañas: botones (misma receta que
-// `payment-orders/action-button.tsx` y los `BTN` de Balances, en strings
+// `ui/action-button.tsx` (antes `payment-orders/action-button.tsx`) y los `BTN` de Balances, en strings
 // locales para no importar de otro módulo), el input de celda y la paginación.
 //
 // `max-sm:text-base` en los inputs: el `Input` de la primitiva mide 13 px, y

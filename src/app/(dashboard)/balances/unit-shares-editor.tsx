@@ -55,13 +55,13 @@ export function UnitSharesEditor({ units, value, onChange }: Props) {
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-xs text-muted-foreground">{t('cash.ownerUnits')}</span>
+        <span className="text-xs text-text-3">{t('cash.ownerUnits')}</span>
         <div className="flex items-center gap-1">
           {value.length > 1 && (
             <button
               type="button"
               onClick={splitEvenly}
-              className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-2 rounded-lg text-xs text-muted-foreground hover:bg-muted"
+              className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-2 rounded-lg text-xs text-text-3 hover:bg-surface-2"
             >
               <Scale className="w-3.5 h-3.5" />
               {t('cash.splitEvenly')}
@@ -80,7 +80,7 @@ export function UnitSharesEditor({ units, value, onChange }: Props) {
       </div>
 
       {value.length === 0 ? (
-        <p className="text-xs text-muted-foreground">{t('cash.noOwnerUnits')}</p>
+        <p className="text-xs text-text-3">{t('cash.noOwnerUnits')}</p>
       ) : (
         <div className="flex flex-col gap-2">
           {value.map((row, index) => (
@@ -122,11 +122,11 @@ export function UnitSharesEditor({ units, value, onChange }: Props) {
                   className={`${INPUT} w-20 text-right`}
                   aria-label={t('cash.sharePercent')}
                 />
-                <span className="text-xs text-muted-foreground">%</span>
+                <span className="text-xs text-text-3">%</span>
                 <button
                   type="button"
                   onClick={() => onChange(value.filter((_, i) => i !== index))}
-                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-negative hover:bg-negative/10"
+                  className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-neg hover:bg-neg-bg"
                   aria-label={t('cash.removeOwnerUnit')}
                 >
                   <Trash2 className="w-4 h-4" />
@@ -138,7 +138,7 @@ export function UnitSharesEditor({ units, value, onChange }: Props) {
       )}
 
       {offBy100 && (
-        <p className="flex items-start gap-1.5 text-xs text-warning">
+        <p className="flex items-start gap-1.5 text-xs text-pend">
           <AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
           <span>{t('cash.sharesNot100', { total: (total * 100).toFixed(2) })}</span>
         </p>

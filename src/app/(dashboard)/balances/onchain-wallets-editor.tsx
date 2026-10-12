@@ -57,13 +57,13 @@ export function OnchainWalletsEditor({ value, onChange, disabled }: Props) {
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <p className="text-xs font-medium">{t('onchain.title')}</p>
-          <p className="text-[11px] text-muted-foreground">{t('onchain.hint')}</p>
+          <p className="text-xs text-text-3">{t('onchain.hint')}</p>
         </div>
         <button
           type="button"
           onClick={add}
           disabled={disabled}
-          className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border bg-card hover:bg-muted disabled:opacity-50 shrink-0"
+          className="inline-flex items-center gap-1 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border bg-card hover:bg-surface-2 disabled:opacity-50 shrink-0"
         >
           <Plus className="w-3.5 h-3.5" />
           {t('onchain.addAddress')}
@@ -98,14 +98,14 @@ export function OnchainWalletsEditor({ value, onChange, disabled }: Props) {
               aria-label={t('onchain.address')}
               aria-invalid={invalid}
               className={`${INPUT} flex-1 min-w-0 font-mono text-xs ${
-                invalid ? 'border-negative' : ''
+                invalid ? 'border-neg' : ''
               }`}
             />
             <button
               type="button"
               onClick={() => onChange(value.filter((_, i) => i !== index))}
               disabled={disabled}
-              className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-negative hover:bg-negative/10 disabled:opacity-50 shrink-0"
+              className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-neg hover:bg-neg-bg disabled:opacity-50 shrink-0"
               title={t('onchain.removeAddress')}
               aria-label={t('onchain.removeAddress')}
             >
@@ -116,9 +116,9 @@ export function OnchainWalletsEditor({ value, onChange, disabled }: Props) {
       })}
 
       {value.some((w) => w.address.trim() && !isValidOnchainAddress(w.network, w.address)) && (
-        <p className="text-[11px] text-negative">{t('onchain.invalidAddress')}</p>
+        <p className="text-xs text-neg">{t('onchain.invalidAddress')}</p>
       )}
-      {value.length > 0 && <p className="text-[11px] text-muted-foreground">{t('onchain.autoNote')}</p>}
+      {value.length > 0 && <p className="text-xs text-text-3">{t('onchain.autoNote')}</p>}
     </div>
   );
 }

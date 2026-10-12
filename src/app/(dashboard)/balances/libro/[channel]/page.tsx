@@ -190,7 +190,7 @@ export default function ChannelLedgerPage() {
       <div className="space-y-6">
         <PageHeader title={t('ledger.title')} icon={BookOpen} />
         <Card className="p-6">
-          <p className="text-sm text-muted-foreground">{t('ledger.noLedgerNotice')}</p>
+          <p className="text-sm text-text-3">{t('ledger.noLedgerNotice')}</p>
           <Button className="mt-4" onClick={() => router.push('/balances')}>
             <ArrowLeft className="w-4 h-4" /> {t('ledger.backToBalances')}
           </Button>
@@ -226,7 +226,7 @@ export default function ChannelLedgerPage() {
           <div className="flex flex-wrap items-center gap-2">
             <Link
               href="/balances"
-              className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+              className="inline-flex items-center gap-1.5 text-sm text-text-3 hover:text-foreground transition-colors"
             >
               <ArrowLeft className="w-4 h-4" /> {t('ledger.backToBalances')}
             </Link>
@@ -247,9 +247,9 @@ export default function ChannelLedgerPage() {
       />
 
       {isAuto && (
-        <div className="flex gap-3 rounded-lg border border-border bg-muted/40 p-4">
-          <Lock className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
-          <p className="text-sm text-muted-foreground">{t('ledger.autoNotice')}</p>
+        <div className="flex gap-3 rounded-lg border border-border bg-surface-2/40 p-4">
+          <Lock className="w-4 h-4 mt-0.5 shrink-0 text-text-3" aria-hidden />
+          <p className="text-sm text-text-3">{t('ledger.autoNotice')}</p>
         </div>
       )}
 
@@ -257,7 +257,7 @@ export default function ChannelLedgerPage() {
       <Card className="p-4">
         <div className="flex flex-wrap items-end gap-4">
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('ledger.from')}</span>
+            <span className="text-xs text-text-3">{t('ledger.from')}</span>
             <input
               type="date"
               value={range.from}
@@ -266,7 +266,7 @@ export default function ChannelLedgerPage() {
             />
           </label>
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('ledger.to')}</span>
+            <span className="text-xs text-text-3">{t('ledger.to')}</span>
             <input
               type="date"
               value={range.to}
@@ -298,7 +298,7 @@ export default function ChannelLedgerPage() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-muted-foreground">
+              <tr className="border-b border-border text-left text-xs uppercase tracking-wider text-text-3">
                 <th className="px-4 py-3 font-medium">{t('ledger.date')}</th>
                 <th className="px-4 py-3 font-medium">{t('ledger.concept')}</th>
                 <th className="px-4 py-3 font-medium">{t('ledger.reference')}</th>
@@ -310,7 +310,7 @@ export default function ChannelLedgerPage() {
             </thead>
             <tbody>
               {loading && (
-                <tr><td colSpan={7} className="px-4 py-8 text-center text-muted-foreground">…</td></tr>
+                <tr><td colSpan={7} className="px-4 py-8 text-center text-text-3">…</td></tr>
               )}
 
               {!loading && rows.length === 0 && (
@@ -335,14 +335,14 @@ export default function ChannelLedgerPage() {
                 // que no cuadra» a un movimiento real invita a corregirlo.
                 const isBalanceDelta = row.category === AUTO_CATEGORIES.balanceDelta;
                 return (
-                  <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-muted/40">
-                    <td className="px-4 py-3 whitespace-nowrap tabular-nums text-muted-foreground">
+                  <tr key={row.id} className="border-b border-border/60 last:border-0 hover:bg-surface-2/40">
+                    <td className="px-4 py-3 whitespace-nowrap tabular-nums text-text-3">
                       {row.entry_date}
                     </td>
                     <td className="px-4 py-3">
                       <div className="font-medium">{autoLabel ?? row.concept}</div>
                       {(isAdjustment || isInternal || isBalanceDelta) && (
-                        <div className="text-xs text-muted-foreground mt-0.5 max-w-md">
+                        <div className="text-xs text-text-3 mt-0.5 max-w-md">
                           {isBalanceDelta
                             ? t('ledger.balanceDeltaHint')
                             : isAdjustment
@@ -351,18 +351,18 @@ export default function ChannelLedgerPage() {
                         </div>
                       )}
                       {!autoLabel && row.category && (
-                        <div className="text-xs text-muted-foreground mt-0.5">{row.category}</div>
+                        <div className="text-xs text-text-3 mt-0.5">{row.category}</div>
                       )}
                     </td>
                     {/* break-all: los hashes y las URLs no tienen espacios y
                         desbordan la celda si se los deja romper por palabra. */}
-                    <td className="px-4 py-3 max-w-[220px] break-all text-muted-foreground">
+                    <td className="px-4 py-3 max-w-[220px] break-all text-text-3">
                       {row.reference ?? '—'}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-positive">
+                    <td className="px-4 py-3 text-right tabular-nums text-pos">
                       {row.kind !== 'out' ? formatCurrency(row.amount) : ''}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-negative">
+                    <td className="px-4 py-3 text-right tabular-nums text-neg">
                       {row.kind === 'out' ? formatCurrency(row.amount) : ''}
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums font-medium">

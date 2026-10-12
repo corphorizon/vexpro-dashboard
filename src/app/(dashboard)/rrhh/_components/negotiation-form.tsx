@@ -6,7 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { Notice } from '@/components/ui/notice';
 import { Segmented } from '@/components/ui/segmented';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { hrRoleLabel } from '@/lib/hr/domain';
 import type { CommercialProfile, Negotiation, NegotiationStatus } from '@/lib/types';
 import { FilePick, HrModal } from './hr-ui';

@@ -6,7 +6,7 @@ import { useI18n } from '@/lib/i18n';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { Notice } from '@/components/ui/notice';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useData } from '@/lib/data-context';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { apiFetch, withActiveCompany } from '@/lib/api-fetch';

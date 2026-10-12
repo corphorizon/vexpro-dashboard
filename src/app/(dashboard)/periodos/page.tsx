@@ -48,7 +48,7 @@ import { FinTable, type FinColumn } from '@/components/ui/fin-table';
 import { NUM_CLASS } from '@/components/ui/money';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
@@ -109,7 +109,7 @@ function Dialog({
     return () => document.removeEventListener('keydown', onKey);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
       <div
         role="dialog"
         aria-modal="true"

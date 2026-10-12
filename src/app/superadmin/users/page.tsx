@@ -15,7 +15,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Field, Input, Select } from '@/components/ui/field';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import {
   USERS_LIST_LIMIT,
   companySummary,
@@ -438,7 +438,7 @@ function InviteModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
       onClick={onClose}
     >
       <form

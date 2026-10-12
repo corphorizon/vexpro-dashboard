@@ -50,7 +50,7 @@ import { Money } from '@/components/ui/money';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Chip } from '@/components/ui/chip';
 import { Input } from '@/components/ui/field';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';

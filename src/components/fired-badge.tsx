@@ -36,8 +36,8 @@ export function FiredBadge({ profile, className }: { profile: CommercialProfile;
     <span
       title={tooltip}
       className={cn(
-        'inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-medium',
-        'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400',
+        'inline-flex items-center px-1.5 py-0.5 rounded-full text-[11.5px] font-medium',
+        'bg-surface-2 text-text-2', // badge neutro de la spec §5.5 (era slate + dark:, 10 px)
         'cursor-help align-middle ml-1.5',
         className,
       )}

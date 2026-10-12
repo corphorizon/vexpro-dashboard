@@ -50,6 +50,9 @@ import type {
   PayprosTxStatus,
   UnipaymentDepositTx,
 } from '@/lib/api-integrations/types';
+import type { RiskBand, FactorImpact } from '@/lib/withdrawal-risk/score';
+import type { AccountRisk, SignalStatus } from '@/lib/risk/account-review';
+import type { NivelToxico } from '@/lib/risk/broker-toxicity';
 
 export type StatusKind = 'ok' | 'pend' | 'bad' | 'info' | 'stale' | 'neutral';
 
@@ -112,12 +115,96 @@ const FETCH: Record<FetchStatus, StatusKind> = {
   error: 'bad',
 };
 
+// ── Riesgo ──────────────────────────────────────────────────────────────────
+// MUDADOS el 2026-10-12 (barrido final «Libro mayor») desde
+// components/risk/risk-kinds.ts, que los escribió con esta misma forma
+// «para mudarlos tal cual cuando se pueda» (su tanda tenía `ui/**` vedado).
+// Los valores son los mismos, uno por uno: risk-kinds.test.ts los fija y
+// además compara cada mapa entero contra la tabla vieja. risk-kinds.ts sigue
+// exportando bandKind/withdrawalStatusKind/… y ahora delega acá. El porqué
+// de cada valor está en la cabecera de risk-kinds.ts.
+
+/** Banda de RIESGO del score (alta banda = score bajo). */
+const RISK_BAND: Record<RiskBand, StatusKind> = {
+  low: 'ok',
+  medium: 'pend',
+  high: 'bad',
+};
+
+/** `crm_withdrawals.status_norm` (CHECK de la migración 088). `approved` es
+ *  COMPLETED: la plata salió. */
+type WithdrawalNorm = 'approved' | 'rejected' | 'cancelled' | 'pending' | 'unknown';
+const WITHDRAWAL_NORM: Record<WithdrawalNorm, StatusKind> = {
+  approved: 'ok',
+  rejected: 'bad',
+  cancelled: 'neutral', // lo canceló el cliente: no movió plata ni pide acción
+  pending: 'pend', // ON_HOLD / REQUESTED / IN_PROCESS: todavía se mueve
+  unknown: 'neutral',
+};
+
+/** `crm_deposits.status_norm` (CHECK de la migración 088). */
+type DepositNorm = 'completed' | 'cancelled' | 'pending' | 'in_review' | 'unknown';
+const DEPOSIT_NORM: Record<DepositNorm, StatusKind> = {
+  completed: 'ok',
+  cancelled: 'neutral',
+  pending: 'pend',
+  in_review: 'info',
+  unknown: 'neutral',
+};
+
+/** Decisión registrada por el equipo (withdrawal_reviews.decision). */
+type ReviewDecision = 'approve' | 'reject' | 'escalate' | 'pending';
+const REVIEW_DECISION: Record<ReviewDecision, StatusKind> = {
+  approve: 'ok',
+  reject: 'bad',
+  escalate: 'pend', // soporte lo subió: finanzas tiene que decidir
+  pending: 'neutral',
+};
+
+/** Severidad de un factor del score: 'down' empuja a rechazar. */
+const RISK_FACTOR: Record<FactorImpact, StatusKind> = {
+  down: 'bad',
+  up: 'ok',
+  neutral: 'neutral',
+};
+
+/** Riesgo operativo de una cuenta (account-review) y toxicidad para el bróker. */
+const RISK_LEVEL: Record<AccountRisk | NivelToxico, StatusKind> = {
+  ok: 'ok',
+  medio: 'pend',
+  alto: 'bad',
+};
+
+/** Estado de una regla/señal. «Sin comprobar» NO es cumplida: `pend`. */
+const RISK_CHECK: Record<SignalStatus, StatusKind> = {
+  pass: 'ok',
+  fail: 'bad',
+  unverifiable: 'pend',
+};
+
+/** Veredicto del REGLAMENTO de prop firm (no una decisión de nadie). */
+export type PropfirmOutcome = 'ok' | 'denied_new_period' | 'denied_no_new_period' | 'cannot_review';
+const PROPFIRM_OUTCOME: Record<PropfirmOutcome, StatusKind> = {
+  ok: 'ok',
+  denied_new_period: 'pend',
+  denied_no_new_period: 'bad',
+  cannot_review: 'neutral',
+};
+
 export const STATUS_DOMAINS = {
   paymentOrder: PAYMENT_ORDER,
   expense: EXPENSE,
   paypros: PAYPROS,
   apiTx: API_TX,
   fetch: FETCH,
+  riskBand: RISK_BAND,
+  withdrawalNorm: WITHDRAWAL_NORM,
+  depositNorm: DEPOSIT_NORM,
+  reviewDecision: REVIEW_DECISION,
+  riskFactor: RISK_FACTOR,
+  riskLevel: RISK_LEVEL,
+  riskCheck: RISK_CHECK,
+  propfirmOutcome: PROPFIRM_OUTCOME,
 } as const;
 
 export type StatusDomain = keyof typeof STATUS_DOMAINS;

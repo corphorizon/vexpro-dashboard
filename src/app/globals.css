@@ -133,6 +133,10 @@
   --r-lg: 10px;
   --r-xl: 14px;
   --row-h: 36px;
+  /* Velo de modales y del drawer móvil (spec §6.1: scrim rgb(0 0 0/.45)).
+     Igual en los dos temas. Antes eran 24 `bg-black/40…60` sueltos con
+     cuatro opacidades distintas (barrido 2026-10-12, design-guard.ts). */
+  --scrim: rgb(0 0 0 / 0.45);
 }
 
 .dark {
@@ -295,6 +299,7 @@
   --color-row-hover: var(--row-hover);
   --color-row-selected: var(--row-selected);
   --color-group-row: var(--group-row);
+  --color-scrim: var(--scrim);
   /* Mismo patrón que --color-primary: la declaración de la capa `theme` se
      auto-referencia, pero la de :root/.dark (sin capa) gana la cascada. */
   --shadow-1: var(--shadow-1);

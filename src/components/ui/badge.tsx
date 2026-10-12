@@ -9,10 +9,10 @@ interface BadgeProps {
 /* Variantes via tokens semánticos — dark mode automático (los tokens flipan
    en .dark), un solo verde/rojo/ámbar en toda la app. */
 const variants = {
-  success: 'bg-positive/12 text-positive',
-  warning: 'bg-warning/12 text-warning',
-  danger: 'bg-negative/12 text-negative',
-  neutral: 'bg-muted text-muted-foreground',
+  success: 'bg-pos-bg text-pos',
+  warning: 'bg-pend-bg text-pend',
+  danger: 'bg-neg-bg text-neg',
+  neutral: 'bg-surface-2 text-text-3',
 };
 
 export function Badge({ variant, children, className }: BadgeProps) {

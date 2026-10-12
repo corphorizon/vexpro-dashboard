@@ -12,7 +12,7 @@ import { Money } from '@/components/ui/money';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Field, Input, Select } from '@/components/ui/field';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { hrRoleLabel } from '@/lib/hr/domain';
 import { WARNING_MOTIVES, type WarningMotive } from '@/lib/hr/net-deposit';
 import type { HrWarningsSlice } from '@/lib/hr/overview';

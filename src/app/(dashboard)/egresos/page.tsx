@@ -57,7 +57,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ConsolidatedBadge } from '@/components/ui/consolidated-badge';
 import { ExpenseConcept } from '@/components/ui/expense-concept';
-import { ROW_ACTION_CLASS, actionButtonClass } from '@/components/payment-orders/action-button';
+import { ROW_ACTION_CLASS, actionButtonClass } from '@/components/ui/action-button';
 import { PeriodSelector } from '@/components/period-selector';
 import { NoPeriodsState } from '@/components/no-periods-state';
 import { useExport2FA } from '@/components/verify-2fa-modal';

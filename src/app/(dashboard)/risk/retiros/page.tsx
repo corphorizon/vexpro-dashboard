@@ -67,7 +67,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToasts } from '@/components/ui/toast';
 import { useTablePage, TableSearch, TablePager, TableCsvButton } from '@/components/ui/table-toolbar';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import {
   QuickDecisionDialog,
   type QuickDecisionTarget,

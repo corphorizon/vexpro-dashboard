@@ -77,7 +77,7 @@ export function FixedForwardDialog({ concept, onChoose, onClose }: FixedForwardD
 
   return (
     <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50"
+      className="fixed inset-0 bg-scrim flex items-center justify-center z-50"
       onClick={busy ? undefined : onClose}
       role="dialog"
       aria-modal="true"
@@ -91,10 +91,10 @@ export function FixedForwardDialog({ concept, onChoose, onClose }: FixedForwardD
         <h3 id="fixed-forward-title" className="text-lg font-semibold mb-2">
           {t('expenses.forwardTitle')}
         </h3>
-        <p className="text-sm text-muted-foreground mb-2">
+        <p className="text-sm text-text-3 mb-2">
           {t('expenses.forwardQuestion', { concept })}
         </p>
-        <p className="text-xs text-muted-foreground mb-6">{t('expenses.forwardHint')}</p>
+        <p className="text-xs text-text-3 mb-6">{t('expenses.forwardHint')}</p>
         <div className="flex flex-col-reverse sm:flex-row gap-3 sm:justify-end">
           <Button onClick={onClose} variant="ghost" disabled={busy !== null}>
             {t('common.cancel')}

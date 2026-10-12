@@ -13,7 +13,7 @@ import { Money, NUM_CLASS, moneyText } from '@/components/ui/money';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import {
   IB_DEAL_TYPES,
   toNumber,

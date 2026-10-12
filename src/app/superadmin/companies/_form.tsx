@@ -36,7 +36,7 @@ import {
 import { Panel } from '@/components/ui/panel';
 import { Notice } from '@/components/ui/notice';
 import { Field, Input, Select } from '@/components/ui/field';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { BrandPreviewCard } from '@/components/superadmin/brand-preview-card';
 import {
   DEFAULT_PRIMARY,

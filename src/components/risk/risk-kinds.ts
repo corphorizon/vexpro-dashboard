@@ -31,123 +31,67 @@
 //     tocar `ui/**` (otros agentes en paralelo). Los mapas están escritos con
 //     la misma forma (`Record<Estado, StatusKind>`) para mudarlos tal cual
 //     cuando se pueda — queda anotado en el reporte.
+//     [2026-10-12, barrido final] HECHO: los mapas viven ahora en
+//     STATUS_DOMAINS (riskBand, withdrawalNorm, depositNorm, reviewDecision,
+//     riskFactor, riskLevel, riskCheck, propfirmOutcome) y las funciones de
+//     acá delegan en `statusKind`. Mismos valores: risk-kinds.test.ts compara
+//     cada dominio entero contra la tabla de antes de la mudanza.
 //   · Pintar la banda por el score (número): la banda la decide `score.ts`
 //     con la calibración vigente; recalcular el corte acá sería una segunda
 //     definición de la misma regla.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { StatusKind } from '@/components/ui/status-kind';
+import { statusKind, type StatusKind, type PropfirmOutcome } from '@/components/ui/status-kind';
 import type { RiskBand, FactorImpact } from '@/lib/withdrawal-risk/score';
-import type { AccountRisk, SignalStatus } from '@/lib/risk/account-review';
+import type { AccountRisk } from '@/lib/risk/account-review';
 import type { NivelToxico } from '@/lib/risk/broker-toxicity';
 
-/** Banda de RIESGO del score (alta banda = score bajo). */
-const BAND: Record<RiskBand, StatusKind> = {
-  low: 'ok',
-  medium: 'pend',
-  high: 'bad',
-};
+export type { PropfirmOutcome };
 
+/** Banda de RIESGO del score (alta banda = score bajo). */
 export function bandKind(band: RiskBand | null | undefined): StatusKind {
-  return band && band in BAND ? BAND[band] : 'neutral';
+  return statusKind('riskBand', band);
 }
 
 /**
  * `crm_withdrawals.status_norm` (CHECK de la migración 088). `approved` es
  * COMPLETED: la plata salió.
  */
-type WithdrawalNorm = 'approved' | 'rejected' | 'cancelled' | 'pending' | 'unknown';
-const WITHDRAWAL_NORM: Record<WithdrawalNorm, StatusKind> = {
-  approved: 'ok',
-  rejected: 'bad',
-  cancelled: 'neutral', // lo canceló el cliente: no movió plata ni pide acción
-  pending: 'pend', // ON_HOLD / REQUESTED / IN_PROCESS: todavía se mueve
-  unknown: 'neutral',
-};
+export function withdrawalStatusKind(norm: string | null | undefined): StatusKind {
+  return statusKind('withdrawalNorm', norm);
+}
 
 /** `crm_deposits.status_norm` (CHECK de la migración 088). */
-type DepositNorm = 'completed' | 'cancelled' | 'pending' | 'in_review' | 'unknown';
-const DEPOSIT_NORM: Record<DepositNorm, StatusKind> = {
-  completed: 'ok',
-  cancelled: 'neutral',
-  pending: 'pend',
-  in_review: 'info',
-  unknown: 'neutral',
-};
-
-function lookup<K extends string>(map: Record<K, StatusKind>, v: string | null | undefined): StatusKind {
-  if (!v || !Object.prototype.hasOwnProperty.call(map, v)) return 'neutral';
-  return map[v as K];
-}
-
-export function withdrawalStatusKind(norm: string | null | undefined): StatusKind {
-  return lookup(WITHDRAWAL_NORM, norm);
-}
-
 export function depositStatusKind(norm: string | null | undefined): StatusKind {
-  return lookup(DEPOSIT_NORM, norm);
+  return statusKind('depositNorm', norm);
 }
 
 /** Decisión registrada por el equipo (withdrawal_reviews.decision). */
-type ReviewDecision = 'approve' | 'reject' | 'escalate' | 'pending';
-const DECISION: Record<ReviewDecision, StatusKind> = {
-  approve: 'ok',
-  reject: 'bad',
-  escalate: 'pend', // soporte lo subió: finanzas tiene que decidir
-  pending: 'neutral',
-};
-
 export function decisionKind(decision: string | null | undefined): StatusKind {
-  return lookup(DECISION, decision);
+  return statusKind('reviewDecision', decision);
 }
 
 /** Severidad de un factor del score: 'down' empuja a rechazar. */
-const FACTOR: Record<FactorImpact, StatusKind> = {
-  down: 'bad',
-  up: 'ok',
-  neutral: 'neutral',
-};
-
 export function factorKind(impact: FactorImpact): StatusKind {
-  return FACTOR[impact] ?? 'neutral';
+  return statusKind('riskFactor', impact);
 }
 
 /** Riesgo operativo de una cuenta (account-review) y toxicidad para el bróker. */
-const LEVEL: Record<AccountRisk | NivelToxico, StatusKind> = {
-  ok: 'ok',
-  medio: 'pend',
-  alto: 'bad',
-};
-
 export function levelKind(level: AccountRisk | NivelToxico | null | undefined): StatusKind {
-  return lookup(LEVEL, level);
+  return statusKind('riskLevel', level);
 }
 
 /**
  * Estado de una regla/señal. «Sin comprobar» NO es cumplida: va en `pend`
  * (alguien tiene que mirarla), nunca en verde.
  */
-const CHECK: Record<SignalStatus, StatusKind> = {
-  pass: 'ok',
-  fail: 'bad',
-  unverifiable: 'pend',
-};
-
 export function checkKind(status: string | null | undefined): StatusKind {
-  return lookup(CHECK, status);
+  return statusKind('riskCheck', status);
 }
 
 /** Veredicto del REGLAMENTO de prop firm (no una decisión de nadie). */
-export type PropfirmOutcome = 'ok' | 'denied_new_period' | 'denied_no_new_period' | 'cannot_review';
-const OUTCOME: Record<PropfirmOutcome, StatusKind> = {
-  ok: 'ok',
-  denied_new_period: 'pend',
-  denied_no_new_period: 'bad',
-  cannot_review: 'neutral',
-};
-
 export function outcomeKind(outcome: string | null | undefined): StatusKind {
-  return lookup(OUTCOME, outcome);
+  return statusKind('propfirmOutcome', outcome);
 }
 
 /**

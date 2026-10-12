@@ -59,7 +59,7 @@ export function DataTable<T>({
                 key={i}
                 className={cn(
                   cellPad,
-                  'font-medium text-muted-foreground whitespace-nowrap',
+                  'font-medium text-text-3 whitespace-nowrap',
                   col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left',
                   col.className
                 )}
@@ -79,8 +79,8 @@ export function DataTable<T>({
               <tr
                 key={rowIdx}
                 className={cn(
-                  'border-b border-border/50 hover:bg-muted/50 transition-colors',
-                  zebra && rowIdx % 2 === 1 && 'bg-muted/30'
+                  'border-b border-border/50 hover:bg-surface-2/50 transition-colors',
+                  zebra && rowIdx % 2 === 1 && 'bg-surface-2/30'
                 )}
               >
                 {columns.map((col, colIdx) => {
