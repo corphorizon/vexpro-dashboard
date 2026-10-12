@@ -258,11 +258,16 @@ body {
 
 /* ── Foco de teclado visible en TODA la app (WCAG 2.4.7) ──
    Una sola regla cubre los ~387 botones + links + selects sin tocarlos.
-   Solo :focus-visible (teclado), no :focus (click), así el mouse no ve anillos. */
+   Solo :focus-visible (teclado), no :focus (click), así el mouse no ve anillos.
+   Sin `border-radius` (2026-10-12, «Libro mayor»): la regla fijaba 4px y, al
+   enfocar, PISABA el radio del propio elemento — un chip `rounded-full` o un
+   segmentado `rounded-ui-sm` cambiaban de forma con el teclado. El `outline`
+   ya sigue el radio del elemento en todos los navegadores actuales (Chrome
+   94+, Firefox 88+, Safari 16.4+). Descartado: `border-radius: inherit` —
+   copia el del padre, no el propio. */
 :where(button, [role="button"], a, select, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: 4px;
 }
 :where(input, textarea):focus-visible {
   outline: 2px solid var(--accent);

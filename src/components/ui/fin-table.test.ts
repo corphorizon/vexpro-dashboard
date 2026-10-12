@@ -1,7 +1,7 @@
 // FinTable: subtotales que no inventan, recorte contado, tarjeta móvil.
 import { describe, it, expect } from 'vitest';
 import { createElement } from 'react';
-import { FinTable, type FinColumn } from './fin-table';
+import { FinTable, hasNodeContent, type FinColumn } from './fin-table';
 import { cardLayout, groupRows, isTruncated, subtotal } from './fin-table-model';
 import { html, text } from '@/test/render';
 
@@ -176,6 +176,34 @@ describe('<FinTable>', () => {
     expect(out).toContain('min-[720px]:opacity-0 min-[720px]:group-hover/row:opacity-100');
     expect(out).toContain('group-focus-within/row:opacity-100');
     expect(out).toContain('<span class="sr-only">Acciones</span>');
+  });
+
+  it('acciones en tarjeta: misma fila que el monto (3.ª columna), y sin celda si la fila no tiene', () => {
+    const out = html(
+      createElement(FinTable<Row>, {
+        columns: COLS,
+        rows: ROWS,
+        rowKey: (r) => r.id,
+        rowActions: (r) => (r.id === '2' ? null : createElement('button', { 'aria-label': `Ver ${r.name}` }, '·')),
+      }),
+    );
+    expect(out).toContain('max-[720px]:grid-cols-[minmax(0,1fr)_auto_auto]');
+    // Fila 1, columna 3: al lado del monto (que es columna 2, fila 1).
+    expect(out.match(/grid-column:3;grid-row:1/g)).toHaveLength(ROWS.length);
+    // FairPay no tiene acciones: su celda no ocupa lugar en la tarjeta.
+    expect(out.match(/w-px whitespace-nowrap text-right max-\[720px\]:hidden/g)).toHaveLength(1);
+    // Sin rowActions la tarjeta sigue en 2 columnas.
+    expect(html(createElement(FinTable<Row>, { columns: COLS, rows: ROWS, rowKey: (r) => r.id }))).not.toContain(
+      '_auto_auto',
+    );
+  });
+
+  it('hasNodeContent: null/false/vacío no son acciones', () => {
+    expect(hasNodeContent(null)).toBe(false);
+    expect(hasNodeContent(false)).toBe(false);
+    expect(hasNodeContent('')).toBe(false);
+    expect(hasNodeContent([null, false])).toBe(false);
+    expect(hasNodeContent([null, createElement('a')])).toBe(true);
   });
 
   it('vacía: mensaje, no una tabla muda', () => {
