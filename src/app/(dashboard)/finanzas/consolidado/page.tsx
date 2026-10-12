@@ -53,7 +53,7 @@ import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
 import { FinTable, type FinColumn } from '@/components/ui/fin-table';
 import { Money, type MoneyTone } from '@/components/ui/money';
 import { Chip } from '@/components/ui/chip';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useData } from '@/lib/data-context';
 import { useAuth } from '@/lib/auth-context';
 import { blockedConsolidatedColumns } from '@/lib/business-model';

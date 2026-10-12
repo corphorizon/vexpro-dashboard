@@ -20,6 +20,16 @@ import { cn } from '@/lib/utils';
 //
 // Estados: hover / active (press) / focus-visible (regla global en
 // globals.css) / disabled / loading (spinner + disabled automático).
+//
+// Colores a tokens (2026-10-12, barrido final «Libro mayor»): el primario era
+// `text-white` fijo sobre `--color-primary` (ilegible con una marca clara) y
+// el destructivo `bg-negative text-white` (en oscuro, blanco sobre #F87171 =
+// 2,8:1). Ahora usan las MISMAS recetas que `ui/action-button.tsx`: primario
+// con `text-brand-on-primary`, destructivo `neg` sobre `neg-bg`. Se queda
+// con sus medidas (36 px, `rounded-lg`): lo usan 8 pantallas y reemplazarlo
+// por ActionButton (32 px, otra API de tamaños) movería su layout.
+// Descartado: re-exportar ActionButton con este nombre — `destructive` vs
+// `danger` y `size` no existen allá; sería romper 8 llamadas por un rename.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'destructive';
@@ -27,13 +37,13 @@ type Size = 'sm' | 'md' | 'icon';
 
 const VARIANT: Record<Variant, string> = {
   primary:
-    'bg-[var(--color-primary)] text-white hover:bg-[color-mix(in_srgb,var(--color-primary)_88%,#000)] active:bg-[color-mix(in_srgb,var(--color-primary)_78%,#000)]',
+    'bg-primary text-brand-on-primary hover:bg-[color-mix(in_srgb,var(--color-primary)_88%,#000)] active:bg-[color-mix(in_srgb,var(--color-primary)_78%,#000)]',
   secondary:
-    'border border-border bg-card text-foreground hover:bg-muted active:bg-muted/70',
+    'border border-border-strong bg-card text-foreground hover:bg-surface-2 active:bg-surface-2/70',
   ghost:
-    'text-muted-foreground hover:bg-muted hover:text-foreground active:bg-muted/70',
+    'text-text-2 hover:bg-surface-2 hover:text-foreground active:bg-surface-2/70',
   destructive:
-    'bg-negative text-white hover:bg-[color-mix(in_srgb,var(--negative)_88%,#000)] active:bg-[color-mix(in_srgb,var(--negative)_78%,#000)]',
+    'border border-neg/35 bg-neg-bg text-neg hover:border-neg',
 };
 
 const SIZE: Record<Size, string> = {

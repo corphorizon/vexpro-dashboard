@@ -8,7 +8,7 @@ import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
 import { moduleLabel } from '@/lib/modules';
 import { ALWAYS_ALLOWED, resolveModule } from '@/lib/route-modules';
-import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { actionButtonClass } from '@/components/ui/action-button';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ModuleRouteGuard

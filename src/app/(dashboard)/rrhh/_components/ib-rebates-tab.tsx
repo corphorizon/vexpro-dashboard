@@ -9,7 +9,7 @@ import { NUM_CLASS } from '@/components/ui/money';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Segmented } from '@/components/ui/segmented';
 import { Field, Input, Select, Textarea } from '@/components/ui/field';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { cn } from '@/lib/utils';
 import {
   Plus, Edit2, Trash2, ChevronUp, ChevronDown,

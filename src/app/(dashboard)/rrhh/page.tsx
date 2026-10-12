@@ -6,7 +6,7 @@ import { Panel } from '@/components/ui/panel';
 import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
 import { Segmented, type SegmentedOption } from '@/components/ui/segmented';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useData } from '@/lib/data-context';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';

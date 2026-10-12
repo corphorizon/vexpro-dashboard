@@ -5,7 +5,7 @@ import { X } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
 import { Panel } from '@/components/ui/panel';
 import { Field, Input, Select } from '@/components/ui/field';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import type { Employee } from '@/lib/types';
 import { ROW_ACTION_CLASS } from './hr-ui';
 import { EMPLOYEE_STATUS_VIEW } from './hr-view';

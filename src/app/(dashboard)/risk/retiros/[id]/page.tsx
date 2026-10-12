@@ -59,7 +59,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { useToasts } from '@/components/ui/toast';
-import { ActionButton, actionButtonClass, type ActionVariant } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass, type ActionVariant } from '@/components/ui/action-button';
 import { WalletAddress } from '@/components/risk/wallet-address';
 import {
   bandKind,

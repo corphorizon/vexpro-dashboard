@@ -45,7 +45,7 @@ import { Notice } from '@/components/ui/notice';
 import { Segmented } from '@/components/ui/segmented';
 import { Chip } from '@/components/ui/chip';
 import { EmptyState } from '@/components/ui/empty-state';
-import { ActionButton, ROW_ACTION_CLASS, actionButtonClass } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS, actionButtonClass } from '@/components/ui/action-button';
 import { MONEY_LOCALE, formatMoney } from '@/lib/money';
 import { cn, formatNumber } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dates';

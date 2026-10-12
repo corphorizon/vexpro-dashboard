@@ -7,7 +7,7 @@ import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/field';
 import { Money, type MoneyTone } from '@/components/ui/money';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import type { NetDepositSource } from '@/lib/hr/net-deposit-input';
 import { NET_SOURCE_VIEW } from './hr-view';
 

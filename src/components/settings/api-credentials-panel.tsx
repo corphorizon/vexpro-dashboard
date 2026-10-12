@@ -9,7 +9,7 @@ import { Notice } from '@/components/ui/notice';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Field, Input, Select } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { createClient } from '@/lib/supabase/client';
 
 // ─────────────────────────────────────────────────────────────────────────────

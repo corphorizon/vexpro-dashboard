@@ -151,7 +151,7 @@ function SuperadminSidebar({
   return (
     <>
       {mobileOpen && (
-        <div className="fixed inset-0 z-40 bg-black/45 min-[960px]:hidden" onClick={onClose} aria-hidden="true" />
+        <div className="fixed inset-0 z-40 bg-scrim min-[960px]:hidden" onClick={onClose} aria-hidden="true" />
       )}
       <aside
         id={SIDEBAR_ID}

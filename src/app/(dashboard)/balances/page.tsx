@@ -876,7 +876,7 @@ export default function BalancesPage() {
   if (accessDenied) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">{t('common.noAccess')}</p>
+        <p className="text-text-3">{t('common.noAccess')}</p>
       </div>
     );
   }
@@ -1224,7 +1224,7 @@ export default function BalancesPage() {
           wallets get summed into the Balances por Canal total. */}
       {isAdmin && showCoinsbuyModal && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
           onClick={() => setShowCoinsbuyModal(false)}
         >
           <div

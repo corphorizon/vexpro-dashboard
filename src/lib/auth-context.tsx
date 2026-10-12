@@ -865,20 +865,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       {children}
       {/* Inactivity warning modal */}
       {showInactivityWarning && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-          <div className="bg-white dark:bg-slate-800 border border-amber-300 dark:border-amber-700 rounded-xl p-6 shadow-xl w-full max-w-sm mx-4 text-center">
-            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-amber-100 dark:bg-amber-900/50 mb-4">
-              <svg className="w-7 h-7 text-warning" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-scrim backdrop-blur-sm">
+          <div className="bg-card border border-pend/35 rounded-xl p-6 shadow-xl w-full max-w-sm mx-4 text-center">
+            <div className="inline-flex items-center justify-center w-14 h-14 rounded-full bg-pend-bg mb-4">
+              <svg className="w-7 h-7 text-pend" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
               </svg>
             </div>
-            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-2">Sesion a punto de expirar</h3>
-            <p className="text-sm text-slate-600 dark:text-slate-300 mb-5">
+            <h3 className="text-lg font-semibold text-foreground mb-2">Sesion a punto de expirar</h3>
+            <p className="text-sm text-text-2 mb-5">
               Tu sesion se cerrara en 1 minuto por inactividad. Mueve el mouse o presiona una tecla para continuar.
             </p>
             <button
               onClick={handleContinueSession}
-              className="w-full py-2.5 rounded-lg bg-[var(--color-primary)] text-white font-medium text-sm hover:opacity-90 transition-opacity"
+              className="w-full py-2.5 rounded-lg bg-primary text-brand-on-primary font-medium text-sm hover:opacity-90 transition-opacity"
             >
               Continuar sesion
             </button>

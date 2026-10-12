@@ -50,7 +50,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToasts } from '@/components/ui/toast';
 import { StatusBadge, useStatusLabel } from '@/components/payment-orders/status-badge';
-import { ROW_ACTION_CLASS, actionButtonClass } from '@/components/payment-orders/action-button';
+import { ROW_ACTION_CLASS, actionButtonClass } from '@/components/ui/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { roleCanPreparePaymentOrder, roleCanWriteFinance } from '@/lib/roles';

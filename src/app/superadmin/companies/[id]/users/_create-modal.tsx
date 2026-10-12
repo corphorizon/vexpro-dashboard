@@ -21,7 +21,7 @@ import { X, UserPlus } from 'lucide-react';
 import { PASSWORD_MIN_LENGTH } from '@/lib/auth-form';
 import { Notice } from '@/components/ui/notice';
 import { Field, Input, Select } from '@/components/ui/field';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { ROLE_DEFAULT_MODULES } from '@/lib/auth-context';
 import { BUILT_IN_ROLES, BUILT_IN_ROLE_LABELS } from '@/lib/roles';
 import { ALL_MODULES } from '../../_form';
@@ -121,7 +121,7 @@ export function CreateUserModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
       onClick={onClose}
     >
       <div

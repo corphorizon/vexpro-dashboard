@@ -70,7 +70,7 @@ export function ExpenseReference({
   };
 
   if (!reference && !hasAttachment) {
-    return <span className="text-xs text-muted-foreground">—</span>;
+    return <span className="text-xs text-text-3">—</span>;
   }
 
   return (
@@ -82,13 +82,13 @@ export function ExpenseReference({
             target="_blank"
             rel="noopener noreferrer"
             title={reference}
-            className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline break-all"
+            className="inline-flex items-center gap-1 text-xs text-brand-ink hover:underline break-all"
           >
             {shorten(reference, max)}
             <ExternalLink className="w-3 h-3 shrink-0" aria-hidden />
           </a>
         ) : (
-          <span title={reference} className="text-xs text-muted-foreground break-all font-mono">
+          <span title={reference} className="text-xs text-text-3 break-all font-mono">
             {shorten(reference, max)}
           </span>
         )
@@ -100,7 +100,7 @@ export function ExpenseReference({
           onClick={openAttachment}
           disabled={loading}
           title={attachmentName ?? 'Ver comprobante'}
-          className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline disabled:opacity-50 w-fit"
+          className="inline-flex items-center gap-1 text-xs text-brand-ink hover:underline disabled:opacity-50 w-fit"
         >
           {loading
             ? <Loader2 className="w-3 h-3 animate-spin shrink-0" aria-hidden />

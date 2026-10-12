@@ -86,12 +86,12 @@ export function PeriodSelector() {
               key={period.id}
               onClick={() => handleMonthClick(period.id)}
               title={period.is_closed ? t('periods.closed') : t('periods.open')}
-              className={`relative px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[10px] sm:text-xs font-medium rounded-md border transition-colors flex-shrink-0 ${
+              className={`relative px-1.5 sm:px-2.5 py-1 sm:py-1.5 text-[11.5px] sm:text-xs font-medium rounded-md border transition-colors flex-shrink-0 ${
                 isActive
-                  ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
+                  ? 'bg-primary text-brand-on-primary border-primary'
                   : period.is_closed
-                    ? 'border-border hover:bg-muted opacity-70'
-                    : 'border-border hover:bg-muted'
+                    ? 'border-border hover:bg-surface-2 opacity-70'
+                    : 'border-border hover:bg-surface-2'
               }`}
             >
               <span className="flex items-center gap-1">
@@ -107,7 +107,7 @@ export function PeriodSelector() {
 
       {/* Consolidated mode indicator */}
       {mode === 'consolidated' && (
-        <span className="px-2 py-1 text-xs font-medium bg-[var(--color-primary)]/10 text-primary dark:text-accent rounded-md">
+        <span className="px-2 py-1 text-xs font-medium bg-brand-tint text-brand-ink rounded-md">
           {consolidationLabel}
         </span>
       )}
@@ -124,8 +124,8 @@ export function PeriodSelector() {
         }}
         className={`p-2 rounded-lg border transition-colors ${
           mode === 'consolidated'
-            ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-            : 'border-border bg-card hover:bg-muted'
+            ? 'bg-primary text-brand-on-primary border-primary'
+            : 'border-border bg-card hover:bg-surface-2'
         }`}
         title={t('periods.consolidated')}
         aria-label={t('periods.consolidated')}
@@ -147,7 +147,7 @@ export function PeriodSelector() {
                   setConsolidated(preset.ids, preset.label);
                   setShowPanel(false);
                 }}
-                className="px-2.5 py-1 text-xs font-medium rounded-md border border-border hover:bg-muted transition-colors"
+                className="px-2.5 py-1 text-xs font-medium rounded-md border border-border hover:bg-surface-2 transition-colors"
               >
                 {preset.label}
               </button>
@@ -155,7 +155,7 @@ export function PeriodSelector() {
           </div>
 
           <div className="border-t border-border pt-3 mb-3">
-            <p className="text-xs text-muted-foreground mb-2">{t('periods.selectMonths')}</p>
+            <p className="text-xs text-text-3 mb-2">{t('periods.selectMonths')}</p>
             <div className="grid grid-cols-3 gap-1.5">
               {periods.map((period) => (
                 <button
@@ -163,8 +163,8 @@ export function PeriodSelector() {
                   onClick={() => toggleCustom(period.id)}
                   className={`px-2 py-1.5 text-xs rounded-md border transition-colors ${
                     customSelection.includes(period.id)
-                      ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                      : 'border-border hover:bg-muted'
+                      ? 'bg-primary text-brand-on-primary border-primary'
+                      : 'border-border hover:bg-surface-2'
                   }`}
                 >
                   {period.label}
@@ -177,14 +177,14 @@ export function PeriodSelector() {
             <button
               onClick={applyCustom}
               disabled={customSelection.length === 0}
-              className="flex-1 px-3 py-1.5 text-xs font-medium bg-[var(--color-primary)] text-white rounded-md disabled:opacity-50"
+              className="flex-1 px-3 py-1.5 text-xs font-medium bg-primary text-brand-on-primary rounded-md disabled:opacity-50"
             >
               {t('periods.apply')} ({customSelection.length})
             </button>
             {mode === 'consolidated' && (
               <button
                 onClick={() => { setSingleMode(); setShowPanel(false); }}
-                className="px-3 py-1.5 text-xs font-medium border border-border rounded-md hover:bg-muted"
+                className="px-3 py-1.5 text-xs font-medium border border-border rounded-md hover:bg-surface-2"
               >
                 {t('periods.clear')}
               </button>

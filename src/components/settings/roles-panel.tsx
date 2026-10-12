@@ -75,13 +75,13 @@ export function RolesPanel() {
       <div className="flex items-center justify-between mb-4">
         <div>
           <h2 className="text-lg font-semibold">Roles personalizados</h2>
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="text-xs text-text-3 mt-1">
             Define plantillas de rol con módulos predeterminados. Cada rol tiene un &quot;rol base&quot; que hereda capacidades (ver, editar, eliminar).
           </p>
         </div>
         <button
           onClick={() => { setEditing(null); setShowForm(true); }}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary text-brand-on-primary text-sm font-medium hover:opacity-90"
         >
           <Plus className="w-4 h-4" /> Nuevo rol
         </button>
@@ -96,11 +96,11 @@ export function RolesPanel() {
       )}
 
       {loading ? (
-        <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-muted-foreground" /></div>
+        <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-text-3" /></div>
       ) : error ? (
-        <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 text-sm">{error}</div>
+        <div className="p-3 rounded-lg bg-neg-bg border border-neg/30 text-neg text-sm">{error}</div>
       ) : roles.length === 0 ? (
-        <p className="text-sm text-muted-foreground text-center py-8">
+        <p className="text-sm text-text-3 text-center py-8">
           No hay roles personalizados. Los 6 roles del sistema siguen disponibles.
         </p>
       ) : (
@@ -108,18 +108,18 @@ export function RolesPanel() {
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Nombre</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Rol base</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">Módulos</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Acciones</th>
+                <th className="text-left py-2.5 px-3 text-text-3 font-medium">Nombre</th>
+                <th className="text-left py-2.5 px-3 text-text-3 font-medium">Rol base</th>
+                <th className="text-left py-2.5 px-3 text-text-3 font-medium">Módulos</th>
+                <th className="text-right py-2.5 px-3 text-text-3 font-medium">Acciones</th>
               </tr>
             </thead>
             <tbody>
               {roles.map((r) => (
-                <tr key={r.id} className="border-b border-border/50 hover:bg-muted/30">
+                <tr key={r.id} className="border-b border-border/50 hover:bg-surface-2/30">
                   <td className="py-3 px-3">
                     <div className="font-medium">{r.name}</div>
-                    {r.description && <div className="text-xs text-muted-foreground mt-0.5">{r.description}</div>}
+                    {r.description && <div className="text-xs text-text-3 mt-0.5">{r.description}</div>}
                   </td>
                   <td className="py-3 px-3">
                     <Badge variant="neutral">{ROLE_LABELS[r.base_role] || r.base_role}</Badge>
@@ -127,12 +127,12 @@ export function RolesPanel() {
                   <td className="py-3 px-3">
                     <div className="flex flex-wrap gap-1">
                       {r.default_modules.slice(0, 4).map((m) => (
-                        <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                        <span key={m} className="text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-3">
                           {MODULE_LABELS[m] || m}
                         </span>
                       ))}
                       {r.default_modules.length > 4 && (
-                        <span className="text-xs px-1.5 py-0.5 rounded bg-muted text-muted-foreground">
+                        <span className="text-xs px-1.5 py-0.5 rounded bg-surface-2 text-text-3">
                           +{r.default_modules.length - 4}
                         </span>
                       )}
@@ -142,17 +142,17 @@ export function RolesPanel() {
                     <div className="flex items-center justify-end gap-1">
                       <button
                         onClick={() => { setEditing(r); setShowForm(true); }}
-                        className="p-1.5 rounded hover:bg-muted"
+                        className="p-1.5 rounded hover:bg-surface-2"
                         title="Editar"
                       >
-                        <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                        <Pencil className="w-3.5 h-3.5 text-text-3" />
                       </button>
                       <button
                         onClick={() => handleDelete(r.id)}
-                        className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-950/50"
+                        className="p-1.5 rounded hover:bg-neg-bg"
                         title="Eliminar"
                       >
-                        <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                        <Trash2 className="w-3.5 h-3.5 text-neg" />
                       </button>
                     </div>
                   </td>
@@ -210,10 +210,10 @@ function RoleForm({ editing, onClose, onSaved }: {
   };
 
   return (
-    <Card className="mb-4 bg-muted/30">
+    <Card className="mb-4 bg-surface-2/30">
       <div className="flex items-center justify-between mb-4">
         <h3 className="font-semibold">{editing ? 'Editar rol' : 'Nuevo rol'}</h3>
-        <button onClick={onClose} className="p-1 hover:bg-muted rounded" aria-label="Cerrar">
+        <button onClick={onClose} className="p-1 hover:bg-surface-2 rounded" aria-label="Cerrar">
           <X className="w-4 h-4" />
         </button>
       </div>
@@ -242,7 +242,7 @@ function RoleForm({ editing, onClose, onSaved }: {
                 <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>
               ))}
             </select>
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="text-xs text-text-3 mt-1">
               Determina si puede editar, agregar o eliminar.
             </p>
           </div>
@@ -269,8 +269,8 @@ function RoleForm({ editing, onClose, onSaved }: {
                 onClick={() => toggleModule(m)}
                 className={`px-3 py-1.5 rounded-md text-xs font-medium border transition-colors ${
                   modules.includes(m)
-                    ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                    : 'border-border hover:bg-muted'
+                    ? 'bg-primary text-brand-on-primary border-primary'
+                    : 'border-border hover:bg-surface-2'
                 }`}
               >
                 {MODULE_LABELS[m]}
@@ -280,7 +280,7 @@ function RoleForm({ editing, onClose, onSaved }: {
         </div>
 
         {error && (
-          <div className="p-3 rounded-lg bg-negative/10 border border-negative/30 text-red-700 text-sm">
+          <div className="p-3 rounded-lg bg-neg-bg border border-neg/30 text-neg text-sm">
             {error}
           </div>
         )}
@@ -289,7 +289,7 @@ function RoleForm({ editing, onClose, onSaved }: {
           <button
             type="submit"
             disabled={saving || !name.trim()}
-            className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
+            className="px-4 py-2 rounded-lg bg-primary text-brand-on-primary text-sm font-medium hover:opacity-90 disabled:opacity-50 flex items-center gap-2"
           >
             {saving && <Loader2 className="w-4 h-4 animate-spin" />}
             {editing ? 'Guardar cambios' : 'Crear rol'}
@@ -297,7 +297,7 @@ function RoleForm({ editing, onClose, onSaved }: {
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted"
+            className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-surface-2"
           >
             Cancelar
           </button>

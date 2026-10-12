@@ -10,7 +10,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Panel } from '@/components/ui/panel';
-import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { actionButtonClass } from '@/components/ui/action-button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PaymentOrderForm } from '@/components/payment-orders/payment-order-form';

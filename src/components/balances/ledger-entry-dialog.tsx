@@ -99,7 +99,7 @@ export function LedgerEntryDialog({ open, channelKey, entry, onClose, onSaved }:
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
       <div
         role="dialog"
         aria-modal="true"
@@ -116,7 +116,7 @@ export function LedgerEntryDialog({ open, channelKey, entry, onClose, onSaved }:
         <div className="space-y-4 px-5 py-4">
           <div className="grid grid-cols-2 gap-4">
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{t('ledger.date')}</span>
+              <span className="text-xs text-text-3">{t('ledger.date')}</span>
               <input type="date" className={INPUT} value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
             </label>
 
@@ -124,7 +124,7 @@ export function LedgerEntryDialog({ open, channelKey, entry, onClose, onSaved }:
                 al canal sin punto de partida. */}
             {!isOpening && (
               <label className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">{t('ledger.movementType')}</span>
+                <span className="text-xs text-text-3">{t('ledger.movementType')}</span>
                 <select className={INPUT} value={kind} onChange={(e) => setKind(e.target.value as 'in' | 'out')}>
                   <option value="in">{t('ledger.inflow')}</option>
                   <option value="out">{t('ledger.outflow')}</option>
@@ -134,31 +134,31 @@ export function LedgerEntryDialog({ open, channelKey, entry, onClose, onSaved }:
           </div>
 
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('ledger.concept')}</span>
+            <span className="text-xs text-text-3">{t('ledger.concept')}</span>
             <input className={INPUT} value={concept} onChange={(e) => setConcept(e.target.value)} />
           </label>
 
           <div className="grid grid-cols-2 gap-4">
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{t('ledger.amount')}</span>
+              <span className="text-xs text-text-3">{t('ledger.amount')}</span>
               <input
                 type="number" min="0" step="0.01" inputMode="decimal"
                 className={INPUT} value={amount} onChange={(e) => setAmount(e.target.value)}
               />
             </label>
             <label className="flex flex-col gap-1">
-              <span className="text-xs text-muted-foreground">{t('ledger.category')}</span>
+              <span className="text-xs text-text-3">{t('ledger.category')}</span>
               <input className={INPUT} value={category} onChange={(e) => setCategory(e.target.value)} />
             </label>
           </div>
 
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('ledger.reference')}</span>
+            <span className="text-xs text-text-3">{t('ledger.reference')}</span>
             <input className={INPUT} value={reference} onChange={(e) => setReference(e.target.value)} />
           </label>
 
           <label className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground">{t('ledger.notes')}</span>
+            <span className="text-xs text-text-3">{t('ledger.notes')}</span>
             <textarea
               rows={2}
               className="w-full rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
@@ -167,7 +167,7 @@ export function LedgerEntryDialog({ open, channelKey, entry, onClose, onSaved }:
             />
           </label>
 
-          {error && <p className="text-sm text-negative">{error}</p>}
+          {error && <p className="text-sm text-neg">{error}</p>}
         </div>
 
         <div className="flex justify-end gap-2 border-t border-border px-5 py-4">

@@ -94,14 +94,14 @@ export function ExpenseAttachmentInput({ value, onChange, readOnly, className }:
     return (
       <div className={className}>
         <div className="flex items-center gap-1 min-w-0">
-          <Paperclip className="w-3 h-3 shrink-0 text-muted-foreground" aria-hidden />
+          <Paperclip className="w-3 h-3 shrink-0 text-text-3" aria-hidden />
           <span className="text-xs truncate" title={value.name}>{value.name}</span>
           {!readOnly && (
             <button
               type="button"
               onClick={remove}
               aria-label={`Quitar ${value.name}`}
-              className="p-0.5 rounded text-muted-foreground hover:text-negative shrink-0"
+              className="p-0.5 rounded text-text-3 hover:text-neg shrink-0"
             >
               <X className="w-3 h-3" />
             </button>
@@ -111,7 +111,7 @@ export function ExpenseAttachmentInput({ value, onChange, readOnly, className }:
     );
   }
 
-  if (readOnly) return <span className="text-xs text-muted-foreground">—</span>;
+  if (readOnly) return <span className="text-xs text-text-3">—</span>;
 
   return (
     <div className={className}>
@@ -129,14 +129,14 @@ export function ExpenseAttachmentInput({ value, onChange, readOnly, className }:
         type="button"
         onClick={() => inputRef.current?.click()}
         disabled={busy}
-        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline disabled:opacity-50"
+        className="inline-flex items-center gap-1 text-xs text-brand-ink hover:underline disabled:opacity-50"
       >
         {busy
           ? <Loader2 className="w-3 h-3 animate-spin" aria-hidden />
           : <Paperclip className="w-3 h-3" aria-hidden />}
         {busy ? 'Subiendo…' : 'Adjuntar'}
       </button>
-      {error && <p className="text-[11px] text-negative mt-0.5">{error}</p>}
+      {error && <p className="text-xs text-neg mt-0.5">{error}</p>}
     </div>
   );
 }

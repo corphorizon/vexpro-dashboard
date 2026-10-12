@@ -3091,7 +3091,7 @@ export default function UploadPage() {
           por fila → confirmar. Las filas entran por persistExpenses, el mismo
           camino que el alta manual. */}
       {importOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
           <div
             role="dialog"
             aria-modal="true"

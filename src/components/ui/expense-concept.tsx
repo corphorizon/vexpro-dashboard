@@ -42,7 +42,7 @@ export function ExpenseConcept({
     description ? (
       <span className="flex flex-col min-w-0">
         {principal}
-        <span className="text-xs text-muted-foreground break-words">{description}</span>
+        <span className="text-xs text-text-3 break-words">{description}</span>
       </span>
     ) : (
       principal

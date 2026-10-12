@@ -13,7 +13,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Chip } from '@/components/ui/chip';
 import { Input } from '@/components/ui/field';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { SourceTag } from '@/app/(dashboard)/movimientos/source-tag';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';

@@ -43,7 +43,7 @@ import { Notice } from '@/components/ui/notice';
 import { Chip } from '@/components/ui/chip';
 import { Select } from '@/components/ui/field';
 import { PageHeader } from '@/components/ui/page-header';
-import { ActionButton, actionButtonClass, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { useData } from '@/lib/data-context';
 import { formatDate } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';

@@ -13,7 +13,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Segmented } from '@/components/ui/segmented';
 import { Notice } from '@/components/ui/notice';
 import { Skeleton } from '@/components/ui/skeleton';
-import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { actionButtonClass } from '@/components/ui/action-button';
 
 type Tab = 'settings' | 'apis' | 'audit';
 const TABS: readonly Tab[] = ['settings', 'apis', 'audit'];

@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, X, ZoomIn } from 'lucide-react';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // LogoCropper — recorte previo a la subida, con canvas y sin dependencias.
@@ -179,7 +179,7 @@ export function LogoCropper({ file, aspect, onCancel, onConfirm, onUseOriginal, 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
       role="dialog"
       aria-modal="true"
       aria-label="Recortar imagen"

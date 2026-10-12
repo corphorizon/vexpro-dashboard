@@ -25,7 +25,7 @@ export function InfoTip({ text, className = '', size = 12 }: InfoTipProps) {
       role="img"
       aria-label={text}
       title={text}
-      className={`inline-flex items-center justify-center text-muted-foreground hover:text-foreground cursor-help transition-colors ${className}`}
+      className={`inline-flex items-center justify-center text-text-3 hover:text-foreground cursor-help transition-colors ${className}`}
     >
       <Info style={{ width: size, height: size }} />
     </span>

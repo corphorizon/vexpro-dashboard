@@ -59,8 +59,8 @@ export function SectionTabs<T extends string>({
             className={cn(
               'rounded-md border px-3 py-1.5 text-xs font-medium transition-colors',
               activa
-                ? 'border-[var(--color-primary)] bg-[var(--color-primary)] text-white'
-                : 'border-border hover:bg-muted',
+                ? 'border-primary bg-primary text-brand-on-primary'
+                : 'border-border hover:bg-surface-2',
             )}
           >
             {tab.label}
@@ -71,9 +71,9 @@ export function SectionTabs<T extends string>({
                   activa
                     ? 'opacity-70'
                     : tab.tone === 'negative'
-                      ? 'text-negative'
+                      ? 'text-neg'
                       : tab.tone === 'warning'
-                        ? 'text-warning'
+                        ? 'text-pend'
                         : 'opacity-70',
                 )}
               >

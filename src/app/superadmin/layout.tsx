@@ -8,7 +8,7 @@ import { isDev2faBypassEnabled } from '@/lib/auth/dev-2fa-bypass';
 import { LoadingScreen } from '@/components/loading-screen';
 import { SystemScreen } from '@/components/system-screen';
 import { SuperadminShell } from '@/components/superadmin/superadmin-shell';
-import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { actionButtonClass } from '@/components/ui/action-button';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // /superadmin — Horizon Consulting platform panel.

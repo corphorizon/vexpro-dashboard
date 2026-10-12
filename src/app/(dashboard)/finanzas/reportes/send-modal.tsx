@@ -31,7 +31,7 @@ import {
   type ReportSections,
 } from '@/lib/reports/sections';
 import { Send, X } from 'lucide-react';
-import { actionButtonClass } from '@/components/payment-orders/action-button';
+import { actionButtonClass } from '@/components/ui/action-button';
 import { CONTROL_CLASS } from '@/components/ui/field';
 
 export type Cadence = 'current' | 'daily' | 'weekly' | 'monthly';

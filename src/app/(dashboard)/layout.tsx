@@ -178,7 +178,7 @@ export default function DashboardLayout({
           alt="Smart Dashboard"
           className="h-20 w-auto object-contain animate-pulse hidden dark:block"
         />
-        <div className="text-muted-foreground text-sm">{t('common.loading')}</div>
+        <div className="text-text-3 text-sm">{t('common.loading')}</div>
       </div>
     );
   }
@@ -186,7 +186,7 @@ export default function DashboardLayout({
   if (!user) {
     return (
       <div className="flex h-full items-center justify-center">
-        <div className="text-muted-foreground">{t('setup2fa.redirecting')}</div>
+        <div className="text-text-3">{t('setup2fa.redirecting')}</div>
       </div>
     );
   }

@@ -187,14 +187,14 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
       {/* Navigation controls */}
       {allPeriods.length > maxVisible && (
         <div className="flex items-center justify-end gap-2 mb-3">
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-text-3">
             {visiblePeriods[0]?.label} — {visiblePeriods[visiblePeriods.length - 1]?.label}
           </span>
           <button
             onClick={() => setStartIndex(Math.max(0, startIndex - maxVisible))}
             disabled={!canGoBack}
             aria-label="Períodos anteriores"
-            className="p-1 rounded-md border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded-md border border-border hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronLeft className="w-4 h-4" />
           </button>
@@ -202,7 +202,7 @@ export const MonthlyChart = React.memo(function MonthlyChart() {
             onClick={() => setStartIndex(Math.min(allPeriods.length - maxVisible, startIndex + maxVisible))}
             disabled={!canGoForward}
             aria-label="Períodos siguientes"
-            className="p-1 rounded-md border border-border hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+            className="p-1 rounded-md border border-border hover:bg-surface-2 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             <ChevronRight className="w-4 h-4" />
           </button>

@@ -44,7 +44,7 @@ import { Notice } from '@/components/ui/notice';
 import { Field, Input, Select } from '@/components/ui/field';
 import { FinTable, type FinColumn } from '@/components/ui/fin-table';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { ModuleForbidden } from '@/components/module-route-guard';
 import { SuccessNote } from '@/components/success-note';
 // Single source of truth for the module catalog — same list and order the
@@ -97,7 +97,7 @@ function Dialog({
 }) {
   const id = 'usr-dialog-title';
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
       <div
         role="dialog"
         aria-modal="true"

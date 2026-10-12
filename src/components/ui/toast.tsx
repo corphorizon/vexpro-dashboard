@@ -143,12 +143,16 @@ function Toast({ item, onDismiss }: { item: ToastItem; onDismiss: () => void }) 
 
   const base =
     'flex items-start gap-2 px-4 py-3 rounded-lg shadow-[var(--elevation-2)] text-sm font-medium cursor-pointer animate-in slide-in-from-right-4';
-  // En dark los tokens semánticos se aclaran (#34D399/#F87171) — texto oscuro
-  // encima, no blanco, para mantener AA. En light quedan en escala 600 + blanco.
+  // Receta del banner de la spec §5.5 (barrido final «Libro mayor»,
+  // 2026-10-12): fondo `*-bg`, borde del color al 35 %, texto `foreground` e
+  // ícono del color. Antes era relleno sólido con `text-white` y un
+  // `dark:text-slate-950` para salvar el AA en oscuro, y el info en
+  // `bg-slate-800` crudo. Los `*-bg` llevan texto ≥ 4,5:1 en los dos temas
+  // (design-tokens.test.ts), así que no hace falta ninguna variante `dark:`.
   const byKind: Record<ToastKind, string> = {
-    success: 'bg-positive text-white dark:text-slate-950',
-    error: 'bg-negative text-white dark:text-slate-950',
-    info: 'bg-slate-800 text-white border border-slate-700',
+    success: 'bg-pos-bg text-foreground border border-pos/35 [&>svg:first-child]:text-pos',
+    error: 'bg-neg-bg text-foreground border border-neg/35 [&>svg:first-child]:text-neg',
+    info: 'bg-info-bg text-foreground border border-info/35',
   };
   const Icon = item.kind === 'error' ? AlertTriangle : item.kind === 'success' ? Check : null;
   return (

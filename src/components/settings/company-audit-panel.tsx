@@ -10,7 +10,7 @@ import { StatusBadge } from '@/components/ui/status-badge';
 import { Select } from '@/components/ui/field';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import {
   AUDIT_PAGE_LIMIT,
   atLimit,

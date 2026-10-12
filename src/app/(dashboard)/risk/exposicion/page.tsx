@@ -63,7 +63,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useToasts } from '@/components/ui/toast';
 import { useTablePage, TableSearch, TablePager, TableCsvButton } from '@/components/ui/table-toolbar';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { UnitAmount } from '@/components/risk/unit-amount';
 import { marginKind } from '@/components/risk/risk-kinds';
 import { snapshotFreshness, unitOfCategory, SNAPSHOT_STALE_MIN } from '@/components/risk/risk-format';

@@ -21,7 +21,7 @@ import { useState } from 'react';
 import { Loader2, Paperclip } from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
-import { ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ROW_ACTION_CLASS } from '@/components/ui/action-button';
 
 export function AttachmentButton({
   expenseId,

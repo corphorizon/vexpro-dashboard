@@ -43,7 +43,7 @@ import { Notice } from '@/components/ui/notice';
 import { Field, Input, Select } from '@/components/ui/field';
 import { FinTable, type FinColumn } from '@/components/ui/fin-table';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { ModuleForbidden } from '@/components/module-route-guard';
 import {
   EXPORT_BATCH,

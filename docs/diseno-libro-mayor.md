@@ -89,6 +89,7 @@ tarjeta legada `#1E293B` sobre la que caen hoy. AA texto = 4,5:1; componentes
 | `shadow-3` | `0 12px 32px -8px rgb(13 21 36/.28)` | `0 16px 40px -8px rgb(0 0 0/.7)` | — | modales, drawer móvil |
 | `r-sm/md/lg/xl` (`rounded-ui-sm…xl`) | 4 / 6 / 10 / 14 px | igual | — | sm: tags · md: botones, inputs · lg: paneles · xl: modales |
 | `row-h` (`h-row`, `min-h-row`) | 36 px; 44 px con `pointer: coarse` | igual | — | alto de fila de tabla |
+| `scrim` (`bg-scrim`) | `rgb(0 0 0 / .45)` | igual | — | velo de modales y del drawer móvil (§6.1). Desde el barrido final (2026-10-12); antes 24 `bg-black/40…60` sueltos |
 
 Superficies y texto principales de la maqueta (todavía **no** aplicados; ver
 fase 3): `bg #F5F6F8 / #0A0E15`, `surface #FFFFFF / #111723`, `border #E2E6EC /
@@ -135,6 +136,12 @@ fase 3): `bg #F5F6F8 / #0A0E15`, `surface #FFFFFF / #111723`, `border #E2E6EC /
 | `text-info`, `bg-info/10` | `text-info`, `bg-info-bg` |
 | `shadow-card` / `raised` / `overlay` | `shadow-1` / `2` / `3` |
 | `rounded-lg` en paneles | `rounded-ui-lg` |
+| `bg-[var(--color-primary)] text-white` | `bg-primary text-brand-on-primary` |
+| `text-primary`, `text-[var(--color-primary)]`, `text-primary dark:text-accent` | `text-brand-ink` |
+| `bg-primary/10` (chip/cuadro de ícono) | `bg-brand-tint` |
+| `bg-black/40…60` (velo) | `bg-scrim` |
+| relleno sólido `bg-negative text-white` (botón/toast) | `border border-neg/35 bg-neg-bg text-neg` (receta `danger` de `ui/action-button.tsx`) |
+| `text-[10px]` / `text-[11px]` | `text-[11.5px]` (badge, cabecera) o `text-xs` (metadato, hint) |
 
 ---
 
@@ -402,7 +409,7 @@ Reglas:
 | 3 | Superficies y neutros: `background/card/foreground/border/muted-foreground` a los valores de la maqueta; `negative` → `neg`; legados como alias de los nuevos; anillo de foco a `--focus`. (`brand-tint` derivado y sidebar: hechos en §10, el sidebar NO sigue el tema) | Pendiente |
 | 4 | Componentes base en `src/components/ui/`: `Button`, `Panel`, `KpiStrip`, `Badge`, `Banner`, `FinTable` (con modo tarjeta), `DistBar`, `Seg`, `Chip` | Pendiente |
 | 5 | Pantallas, de a una: **Balances** y **Movimientos** primero (las maquetas), después Socios, Comisiones, Órdenes de pago | Pendiente |
-| 6 | Lint (§9) en modo error; borrar los tokens legados sin uso | Pendiente |
+| 6 | Lint (§9) en modo error; borrar los tokens legados sin uso | **Guardia hecha** (2026-10-12, `design-guard.test.ts` + eslint): 1-2 de §9.3 y legados; quedan 4-5 y borrar los tokens legados |
 
 Cada fase deja `tsc`, `eslint`, `vitest` y `build` en verde, y no cambia el
 aspecto de lo que no le toca.
@@ -413,7 +420,7 @@ aspecto de lo que no le toca.
   la fase 3 (`neg`). Fijado en `design-tokens.test.ts` como brecha conocida.
 - **Paleta cruda junto a tokens**: varios avisos tienen `bg-negative/10` con
   `text-red-700 dark:text-red-300` (los mismos 20 lugares de la fase 0 y
-  muchos más). Fase 3/5.
+  muchos más). Fase 3/5. **Resuelto** en el barrido final (2026-10-12, §9.1).
 - **Formateadores de dinero fuera de `toLocaleString`**: `src/lib/risk/rules.ts`
   (`$${x.toFixed(2)}` en el detalle de violaciones) y
   `src/lib/payment-orders/delete.ts` (`USD 1234.00` en el audit). Fase 5/6.
@@ -422,10 +429,77 @@ aspecto de lo que no le toca.
 
 ---
 
-## 9. Lint que viene (fase 6)
+## 9. Guardia (hecha el 2026-10-12) y lint
 
-Reglas a implementar (ESLint `no-restricted-syntax` / plugin propio + el test
-de tokens):
+### 9.1 La guardia: `src/lib/design-guard.test.ts`
+
+Después de migrar todas las pantallas, el barrido final encontró igual **443
+ocurrencias en 59 archivos** que se habían colado pantalla por pantalla. Sin
+una guardia, cada PR nuevo vuelve a meter un `text-emerald-600 dark:…` y el
+sistema se degrada en silencio. Por eso el test es obligatorio y corre con
+`npx vitest run`.
+
+**Cómo funciona** (`src/lib/design-guard.ts`):
+
+- Recorre `src/app`, `src/components` y `src/lib` (`.ts`/`.tsx`), salvo los
+  `*.test.ts(x)` y la propia guardia.
+- Parsea cada archivo con el compilador de TypeScript y mira **sólo los
+  literales** de string y de template: ahí viven las clases. Los comentarios y
+  el texto de JSX quedan afuera sin heurísticas (un `//` de URL o un
+  apóstrofe no lo confunden).
+- Cuatro categorías:
+  - **a) paleta cruda**: `(bg|text|border|ring|fill|stroke|from|via|to|divide|outline|decoration|placeholder|shadow|accent|caret)-(red|…|stone)-NN`, `bg-/border-…-white|black` y hex arbitrario (`bg-[#…]`).
+  - **b) `dark:` que fija color**: `dark:(hover:)*<prefijo de color>-…`. (`dark:hidden` / `dark:block` para el logo claro/oscuro no es color y pasa.)
+  - **c) `text-[10px]` / `text-[11px]`**.
+  - **d) legados**: `*-muted-foreground`, `bg-muted`, `text-white`/`text-black`, `[var(--color-primary)]`, `text-primary`, `(text|bg|border[-lado]|ring|…)-(positive|negative|warning)`.
+- Falla con `archivo:línea [categoría] clase` + la línea.
+- **Allowlist** (`DESIGN_GUARD_ALLOWLIST`): archivo + clase + cantidad +
+  porqué (≥ 40 caracteres). El test también falla si una entrada **ya no
+  matchea** (o matchea otra cantidad): no se acumulan excepciones muertas.
+
+**Allowlist vigente:**
+
+| Archivo | Clase | Por qué |
+|---|---|---|
+| `src/app/(dashboard)/perfil/page.tsx` | `bg-white` | Placa del QR de 2FA: el lector necesita módulos oscuros sobre blanco puro, también en oscuro. |
+| `src/components/company-logo.tsx` | `bg-white` | Placa del logo a color de una empresa cualquiera (superadmin). Mismo criterio que `--sidebar-plate`. |
+
+El velo de modales (`bg-black/45` de la spec) **no** está en la allowlist:
+pasó a ser el token `bg-scrim` (§2.2).
+
+**Antes → después del barrido** (ocurrencias; una línea puede contar en dos
+categorías, p. ej. `dark:bg-red-950` es a y b):
+
+| Categoría | Antes | Después |
+|---|---|---|
+| a) paleta cruda | 109 | 2 (allowlist) |
+| b) `dark:` de color | 38 | 0 |
+| c) 10/11 px | 13 | 0 |
+| d) legados | 283 | 0 |
+| **Total** | **443** (59 archivos) | **2** |
+
+Lo que se hizo con lo legado: `text-muted-foreground` → `text-text-3` (alias
+exacto, no cambia el aspecto), `bg-muted` → `bg-surface-2`,
+`positive/negative/warning` → `pos/neg/pend` (con `/10` → `*-bg`), y el resto
+según la tabla de §2.4. `ui/button.tsx` (8 pantallas) quedó con tokens y sus
+medidas; `ActionButton` se mudó a `src/components/ui/action-button.tsx` (la
+ruta vieja `payment-orders/action-button` re-exporta). Los mapas de estado de
+Riesgo (`risk-kinds.ts`) se mudaron a `STATUS_DOMAINS` en
+`ui/status-kind.ts` con un test que compara cada mapa entero contra el de
+antes; los de RRHH (`hr-view.ts`) se quedan porque cada estado es
+`{ kind, labelKey }` y mudar el kind partiría el registro en dos.
+
+### 9.2 Lint (refuerzo en el editor)
+
+`eslint.config.mjs` tiene `no-restricted-syntax` (error) sobre `Literal` y
+`TemplateElement` para a), b) y c). Avisa mientras se escribe; **la guardia es
+el test** (cubre d), la allowlist y da el inventario). Los tests y
+`design-guard.ts` están excluidos porque fijan clases a propósito.
+
+### 9.3 Reglas que todavía no están automatizadas
+
+Pendientes de la lista original (ESLint `no-restricted-syntax` / plugin propio
++ el test de tokens):
 
 1. **Sin paleta cruda de color** en `className`: `(text|bg|border|ring|fill|stroke)-(red|rose|emerald|green|amber|yellow|orange|blue|sky|indigo|violet|purple|slate|gray|zinc|neutral)-\d{2,3}`.
 2. **Sin `dark:` de color** (`dark:(text|bg|border)-…`): los tokens flipan solos.

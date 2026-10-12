@@ -148,7 +148,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4"
       onClick={onClose}
       role="presentation"
     >
@@ -162,11 +162,11 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
         <div className="flex items-center justify-between gap-3 p-5 border-b border-border">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold">{t('cash.manageUnits')}</h2>
-            <p className="text-xs text-muted-foreground">{t('cash.manageUnitsHint')}</p>
+            <p className="text-xs text-text-3">{t('cash.manageUnitsHint')}</p>
           </div>
           <button
             onClick={onClose}
-            className="min-h-11 min-w-11 flex items-center justify-center rounded-lg hover:bg-muted"
+            className="min-h-11 min-w-11 flex items-center justify-center rounded-lg hover:bg-surface-2"
             aria-label={t('common.close')}
           >
             <X className="w-4 h-4" />
@@ -178,8 +178,8 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
             <div
               className={`p-3 rounded-lg text-sm border ${
                 status.kind === 'ok'
-                  ? 'bg-positive/10 border-positive/30 text-positive'
-                  : 'bg-negative/10 border-negative/30 text-negative'
+                  ? 'bg-pos-bg border-pos/30 text-pos'
+                  : 'bg-neg-bg border-neg/30 text-neg'
               }`}
             >
               {status.msg}
@@ -187,9 +187,9 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
           )}
 
           {loading ? (
-            <p className="text-center text-muted-foreground py-8">{t('common.loading')}</p>
+            <p className="text-center text-text-3 py-8">{t('common.loading')}</p>
           ) : units.length === 0 ? (
-            <p className="text-center text-muted-foreground py-6">{t('cash.noUnits')}</p>
+            <p className="text-center text-text-3 py-6">{t('cash.noUnits')}</p>
           ) : (
             <div className="space-y-2">
               {units.map((u) => {
@@ -208,11 +208,11 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
                     />
                     <button
                       onClick={() => setDraft(u, { counts_to_fund: !draft.counts_to_fund })}
-                      className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-muted-foreground hover:bg-muted transition-colors"
+                      className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-text-3 hover:bg-surface-2 transition-colors"
                       title={t('cash.countsToFundHint')}
                     >
                       {draft.counts_to_fund ? (
-                        <ToggleRight className="w-6 h-6 text-positive" />
+                        <ToggleRight className="w-6 h-6 text-pos" />
                       ) : (
                         <ToggleLeft className="w-6 h-6" />
                       )}
@@ -223,7 +223,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
                           se llega, sin tener que volver a la tarjeta. */}
                       <Link
                         href={`/balances/unidad/${encodeURIComponent(u.id)}`}
-                        className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border hover:bg-muted transition-colors whitespace-nowrap"
+                        className="inline-flex items-center gap-1.5 min-h-11 sm:min-h-9 px-3 text-xs rounded-lg border border-border hover:bg-surface-2 transition-colors whitespace-nowrap"
                         title={t('unitLedger.openBook')}
                       >
                         <ArrowRightLeft className="w-3.5 h-3.5" />
@@ -232,7 +232,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
                       <button
                         onClick={() => save(u)}
                         disabled={!dirty || savingId === u.id}
-                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-positive hover:bg-positive/10 disabled:opacity-40"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-pos hover:bg-pos-bg disabled:opacity-40"
                         aria-label={t('common.save')}
                       >
                         {savingId === u.id ? (
@@ -244,7 +244,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
                       <button
                         onClick={() => remove(u)}
                         disabled={savingId === u.id}
-                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-negative hover:bg-negative/10 disabled:opacity-40"
+                        className="min-h-11 min-w-11 sm:min-h-9 sm:min-w-9 flex items-center justify-center rounded-lg text-neg hover:bg-neg-bg disabled:opacity-40"
                         aria-label={t('common.delete')}
                       >
                         <Trash2 className="w-4 h-4" />
@@ -268,11 +268,11 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
               />
               <button
                 onClick={() => setNewCountsToFund((v) => !v)}
-                className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-muted-foreground hover:bg-muted transition-colors"
+                className="inline-flex items-center gap-2 min-h-11 sm:min-h-9 px-2 rounded-lg text-sm text-text-3 hover:bg-surface-2 transition-colors"
                 title={t('cash.countsToFundHint')}
               >
                 {newCountsToFund ? (
-                  <ToggleRight className="w-6 h-6 text-positive" />
+                  <ToggleRight className="w-6 h-6 text-pos" />
                 ) : (
                   <ToggleLeft className="w-6 h-6" />
                 )}
@@ -281,7 +281,7 @@ export function BusinessUnitsModal({ open, onClose, onChanged }: Props) {
               <button
                 onClick={create}
                 disabled={!newName.trim() || creating}
-                className="inline-flex items-center justify-center gap-1.5 min-h-11 sm:min-h-9 px-4 rounded-lg bg-primary text-white text-sm font-medium hover:opacity-90 disabled:opacity-40"
+                className="inline-flex items-center justify-center gap-1.5 min-h-11 sm:min-h-9 px-4 rounded-lg bg-primary text-brand-on-primary text-sm font-medium hover:opacity-90 disabled:opacity-40"
               >
                 {creating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                 {t('cash.addUnit')}

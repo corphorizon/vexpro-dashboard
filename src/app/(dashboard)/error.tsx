@@ -21,7 +21,7 @@ import Link from 'next/link';
 import { useEffect } from 'react';
 import { AlertTriangle, RotateCcw } from 'lucide-react';
 import { useI18n } from '@/lib/i18n';
-import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass } from '@/components/ui/action-button';
 
 export default function DashboardError({
   error,

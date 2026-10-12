@@ -14,7 +14,7 @@ import { Notice } from '@/components/ui/notice';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { Skeleton } from '@/components/ui/skeleton';
-import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
+import { ActionButton, actionButtonClass } from '@/components/ui/action-button';
 import {
   companyStatusKind,
   companySummary,

@@ -19,7 +19,7 @@ export function ConsolidatedBadge({ count, className = '' }: ConsolidatedBadgePr
   if (count < 2) return null;
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-100 dark:bg-blue-950/50 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-900 ${className}`}
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11.5px] font-semibold bg-info-bg text-info border border-info/35 ${className}`}
     >
       <Layers className="w-3 h-3" />
       Consolidado · {count} meses

@@ -6,7 +6,7 @@ import { FinTable, type FinColumn } from '@/components/ui/fin-table';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Segmented } from '@/components/ui/segmented';
 import { Select } from '@/components/ui/field';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { apiFetch } from '@/lib/api-fetch';

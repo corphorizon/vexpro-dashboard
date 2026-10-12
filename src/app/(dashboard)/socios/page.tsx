@@ -1045,7 +1045,7 @@ export default function SociosPage() {
 
       {/* ─── Alta / edición de socio ─── */}
       {showPartnerForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
           <div
             role="dialog"
             aria-modal="true"
@@ -1128,7 +1128,7 @@ export default function SociosPage() {
 
       {/* ─── % de reserva ─── */}
       {showReserveEdit && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
           <div
             role="dialog"
             aria-modal="true"

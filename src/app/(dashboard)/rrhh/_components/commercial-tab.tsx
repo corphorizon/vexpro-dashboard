@@ -8,7 +8,7 @@ import { Money, moneyText } from '@/components/ui/money';
 import { StatusBadge } from '@/components/ui/status-badge';
 import { Segmented } from '@/components/ui/segmented';
 import { Chip } from '@/components/ui/chip';
-import { ActionButton } from '@/components/payment-orders/action-button';
+import { ActionButton } from '@/components/ui/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { cn } from '@/lib/utils';

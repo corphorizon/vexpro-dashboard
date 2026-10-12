@@ -21,14 +21,14 @@ interface NotificationBellProps {
 }
 
 const SEVERITY_DOT: Record<string, string> = {
-  critical: 'bg-negative',
-  high: 'bg-warning',
-  normal: 'bg-muted-foreground/50',
+  critical: 'bg-neg',
+  high: 'bg-pend',
+  normal: 'bg-text-3/50',
 };
 
 const SEVERITY_BORDER: Record<string, string> = {
-  critical: 'border-l-negative',
-  high: 'border-l-warning',
+  critical: 'border-l-neg',
+  high: 'border-l-pend',
   normal: 'border-l-border',
 };
 
@@ -91,9 +91,9 @@ export function NotificationBell({
             {title}
           </span>
           {body && (
-            <span className="block text-xs text-muted-foreground mt-0.5 leading-snug">{body}</span>
+            <span className="block text-xs text-text-3 mt-0.5 leading-snug">{body}</span>
           )}
-          <span className="block text-[11px] text-muted-foreground/80 mt-1">
+          <span className="block text-xs text-text-3/80 mt-1">
             {formatDateTime(n.created_at)}
           </span>
         </span>
@@ -102,9 +102,9 @@ export function NotificationBell({
 
     const rowClass = cn(
       'w-full text-left block border-l-2 px-3 py-3 min-h-[44px] transition-colors',
-      'hover:bg-muted focus-visible:bg-muted',
+      'hover:bg-surface-2 focus-visible:bg-surface-2',
       SEVERITY_BORDER[severity],
-      !n.read_at && 'bg-muted/40',
+      !n.read_at && 'bg-surface-2/40',
     );
 
     if (n.link) {
@@ -190,7 +190,7 @@ export function NotificationBell({
             <div className="min-w-0">
               <p className="text-sm font-semibold truncate">{t('notif.title')}</p>
               {unread > 0 && (
-                <p className="text-[11px] text-muted-foreground">
+                <p className="text-xs text-text-3">
                   {t('notif.unread', { count: String(unread) })}
                 </p>
               )}
@@ -199,7 +199,7 @@ export function NotificationBell({
               <button
                 type="button"
                 onClick={() => markAllRead()}
-                className="shrink-0 rounded-lg px-2 py-2 min-h-[44px] text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                className="shrink-0 rounded-lg px-2 py-2 min-h-[44px] text-xs font-medium text-text-3 hover:bg-surface-2 hover:text-foreground transition-colors"
               >
                 {t('notif.markAllRead')}
               </button>
@@ -208,17 +208,17 @@ export function NotificationBell({
 
           <div className="max-h-[60vh] overflow-y-auto custom-scrollbar divide-y divide-border">
             {loading && notifications.length === 0 && (
-              <p className="px-3 py-6 text-center text-xs text-muted-foreground">
+              <p className="px-3 py-6 text-center text-xs text-text-3">
                 {t('common.loading')}
               </p>
             )}
             {!loading && error && notifications.length === 0 && (
-              <p className="px-3 py-6 text-center text-xs text-negative">{t('notif.loadError')}</p>
+              <p className="px-3 py-6 text-center text-xs text-neg">{t('notif.loadError')}</p>
             )}
             {!loading && !error && notifications.length === 0 && (
               <div className="px-4 py-8 text-center">
                 <p className="text-sm font-medium">{t('notif.empty')}</p>
-                <p className="text-xs text-muted-foreground mt-1">{t('notif.emptyHint')}</p>
+                <p className="text-xs text-text-3 mt-1">{t('notif.emptyHint')}</p>
               </div>
             )}
             {notifications.map(renderItem)}

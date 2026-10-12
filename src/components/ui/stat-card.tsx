@@ -31,34 +31,34 @@ interface StatCardProps {
    normal; solo los tonos con significado colorean la cifra. */
 const TONE_STYLES: Record<Tone, { bg: string; icon: string; value: string }> = {
   neutral: {
-    bg: 'bg-muted',
-    icon: 'text-muted-foreground',
+    bg: 'bg-surface-2',
+    icon: 'text-text-3',
     value: 'text-foreground',
   },
   info: {
-    bg: 'bg-info/10',
+    bg: 'bg-info-bg',
     icon: 'text-info',
     value: 'text-info',
   },
   primary: {
-    bg: 'bg-primary/10',
-    icon: 'text-primary dark:text-accent',
-    value: 'text-primary dark:text-accent',
+    bg: 'bg-brand-tint',
+    icon: 'text-brand-ink',
+    value: 'text-brand-ink',
   },
   positive: {
-    bg: 'bg-positive/10',
-    icon: 'text-positive',
-    value: 'text-positive',
+    bg: 'bg-pos-bg',
+    icon: 'text-pos',
+    value: 'text-pos',
   },
   negative: {
-    bg: 'bg-negative/10',
-    icon: 'text-negative',
-    value: 'text-negative',
+    bg: 'bg-neg-bg',
+    icon: 'text-neg',
+    value: 'text-neg',
   },
   warning: {
-    bg: 'bg-warning/10',
-    icon: 'text-warning',
-    value: 'text-warning',
+    bg: 'bg-pend-bg',
+    icon: 'text-pend',
+    value: 'text-pend',
   },
 };
 
@@ -68,7 +68,7 @@ export function StatCard({ label, value, hint, icon: Icon, tone = 'neutral', emp
     <Card className={cn('relative overflow-hidden', className)}>
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground flex items-center gap-1.5">{label}</div>
+          <div className="text-xs font-medium uppercase tracking-wide text-text-3 flex items-center gap-1.5">{label}</div>
           {/* `truncate` evita que un número largo rompa la grilla, pero a
               text-4xl un saldo de seis cifras se cortaba ("$10,87…"). El
               tamaño de énfasis baja un escalón y crece recién en pantallas
@@ -84,7 +84,7 @@ export function StatCard({ label, value, hint, icon: Icon, tone = 'neutral', emp
             {value}
           </p>
           {hint && (
-            <p className="text-[11px] text-muted-foreground mt-1.5">{hint}</p>
+            <p className="text-xs text-text-3 mt-1.5">{hint}</p>
           )}
         </div>
         {Icon && (

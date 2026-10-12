@@ -116,7 +116,7 @@ function Verify2FADialog({ onVerified, onClose }: Omit<Verify2FAModalProps, 'ope
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 px-4">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-scrim px-4">
       <div
         ref={cardRef}
         role="dialog"

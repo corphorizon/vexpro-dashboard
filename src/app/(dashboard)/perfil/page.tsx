@@ -32,7 +32,7 @@ import { Panel } from '@/components/ui/panel';
 import { Notice } from '@/components/ui/notice';
 import { Field, Input } from '@/components/ui/field';
 import { StatusBadge } from '@/components/ui/status-badge';
-import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/ui/action-button';
 import { SuccessNote } from '@/components/success-note';
 import { useAuth, ROLE_LABELS } from '@/lib/auth-context';
 import { useI18n } from '@/lib/i18n';

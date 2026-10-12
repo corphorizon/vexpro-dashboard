@@ -240,7 +240,7 @@ export function DepartmentDonut({
               />
               <span className="truncate">{d.name}</span>
             </span>
-            <span className="tabular-nums text-muted-foreground shrink-0">
+            <span className="tabular-nums text-text-3 shrink-0">
               {d.count} · {((d.count / total) * 100).toFixed(0)}%
             </span>
           </li>

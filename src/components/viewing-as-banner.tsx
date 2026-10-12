@@ -39,10 +39,10 @@ export function ViewingAsBanner() {
       aria-live="polite"
       // Non-dismissable: only the Salir button removes it. Sits above every
       // dashboard content because the operator must see it at all times.
-      className="sticky top-0 z-40 flex items-center justify-between gap-3 px-4 py-2 text-sm font-semibold border-b-2 border-amber-400 bg-amber-100 text-amber-900 dark:bg-amber-950/80 dark:text-amber-100 dark:border-amber-700 shadow-sm"
+      className="sticky top-0 z-40 flex items-center justify-between gap-3 px-4 py-2 text-sm font-semibold border-b-2 border-pend bg-pend-bg text-foreground shadow-sm"
     >
       <div className="flex items-center gap-2 min-w-0">
-        <ShieldCheck className="w-4 h-4 shrink-0 text-amber-700 dark:text-amber-300" />
+        <ShieldCheck className="w-4 h-4 shrink-0 text-pend" />
         <span className="truncate">
           Viendo como Admin: <strong className="font-bold">{company.name}</strong>
         </span>
@@ -60,7 +60,7 @@ export function ViewingAsBanner() {
         </button>
         <button
           onClick={handleExit}
-          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md bg-amber-300 hover:bg-amber-400 dark:bg-amber-900 dark:hover:bg-amber-800 text-amber-900 dark:text-amber-100 text-xs font-bold"
+          className="inline-flex items-center gap-1 px-2.5 py-1 rounded-md border border-pend/50 bg-card hover:border-pend text-foreground text-xs font-bold"
         >
           <ArrowLeft className="w-3 h-3" />
           Salir

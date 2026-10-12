@@ -97,7 +97,7 @@ export function TableSearch({
   return (
     <div className="relative w-full sm:max-w-xs">
       <Search
-        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-3"
         aria-hidden
       />
       <input
@@ -140,7 +140,7 @@ export function TablePager({
   const hasta = page * TABLE_PAGE_SIZE + shown;
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border px-4 py-3 text-xs text-text-3">
       <span className="tabular-nums">
         {labels.range
           .replace('{from}', String(desde))
