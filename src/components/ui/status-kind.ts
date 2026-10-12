@@ -42,7 +42,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import type { PaymentOrderStatus } from '@/lib/payment-orders/types';
 import type { ExpenseStatus } from '@/lib/monthly-close-pdf-data';
-import type { FetchStatus, PayprosTxStatus } from '@/lib/api-integrations/types';
+import type {
+  CoinsbuyDepositTx,
+  CoinsbuyWithdrawalTx,
+  FairpayDepositTx,
+  FetchStatus,
+  PayprosTxStatus,
+  UnipaymentDepositTx,
+} from '@/lib/api-integrations/types';
 
 export type StatusKind = 'ok' | 'pend' | 'bad' | 'info' | 'stale' | 'neutral';
 
@@ -73,6 +80,29 @@ const PAYPROS: Record<PayprosTxStatus, StatusKind> = {
   payout_declined: 'bad',
 };
 
+// Estados de las transacciones de las pasarelas con status en inglés
+// (Coinsbuy, FairPay, Unipayment). Agregado 2026-10-12 para el libro de
+// movimientos de /movimientos/desglose: antes el desglose tenía su propio
+// `StatusBadge` local con una lista ['Confirmed','Approved','Completed','paid']
+// pintada de verde y TODO lo demás en gris — un «Rejected» se veía igual que
+// un «Pending». Tipado contra la unión de los tipos de cada proveedor: si un
+// proveedor suma un estado, `tsc` falla acá.
+type ApiTxStatus =
+  | CoinsbuyDepositTx['status']
+  | CoinsbuyWithdrawalTx['status']
+  | FairpayDepositTx['status']
+  | UnipaymentDepositTx['status'];
+
+const API_TX: Record<ApiTxStatus, StatusKind> = {
+  Confirmed: 'ok',
+  Approved: 'ok',
+  Completed: 'ok',
+  Pending: 'pend', // la plata todavía está en juego
+  Failed: 'bad',
+  Rejected: 'bad',
+  Expired: 'neutral', // terminal, no movió plata ni requiere acción
+};
+
 const FETCH: Record<FetchStatus, StatusKind> = {
   fresh: 'ok',
   stale: 'stale',
@@ -83,6 +113,7 @@ export const STATUS_DOMAINS = {
   paymentOrder: PAYMENT_ORDER,
   expense: EXPENSE,
   paypros: PAYPROS,
+  apiTx: API_TX,
   fetch: FETCH,
 } as const;
 

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { apiFetch } from '@/lib/api-fetch';
+import { useI18n } from '@/lib/i18n';
 
 interface Tx {
   id: string;
@@ -22,6 +23,7 @@ export function ExcludeToggleButton({
   provider: string; // hoy: 'coinsbuy-deposits'
   onChange: () => void;
 }) {
+  const { t } = useI18n();
   const { user } = useAuth();
   const [busy, setBusy] = useState(false);
   const role = user?.effective_role ?? user?.role ?? '';
@@ -103,27 +105,35 @@ export function ExcludeToggleButton({
     }
   };
 
+  // «Libro mayor» (2026-10-12): eran píldoras de 11 px en verde/ámbar crudos
+  // con emoji. Ahora son botones ghost de fila (FinTable los muestra al hover
+  // y siempre en táctil): la acción se lee por el texto, no por el color.
+  const cls =
+    'inline-flex h-7 items-center rounded-ui-md border border-border-strong bg-card px-2 text-[12.5px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground disabled:opacity-50';
+
   if (tx.excluded) {
     return (
       <button
+        type="button"
         onClick={handleRestore}
         disabled={busy}
-        className="px-2 py-0.5 rounded text-[11px] bg-emerald-100 text-emerald-700 border border-emerald-300 hover:bg-emerald-200 disabled:opacity-50"
+        className={cls}
         title={`Razón: ${tx.excludedReason ?? '?'}\nPor: ${tx.excludedByName ?? '?'}`}
       >
-        ✅ Restaurar
+        {t('movements.ledger.restore')}
       </button>
     );
   }
 
   return (
     <button
+      type="button"
       onClick={handleExclude}
       disabled={busy}
-      className="px-2 py-0.5 rounded text-[11px] bg-amber-50 text-amber-700 border border-amber-300 hover:bg-amber-100 disabled:opacity-50"
-      title="Marcar como externo (no se cuenta en totales)"
+      className={cls}
+      title={t('movements.ledger.excludeTitle')}
     >
-      🚫 Excluir
+      {t('movements.ledger.exclude')}
     </button>
   );
 }
