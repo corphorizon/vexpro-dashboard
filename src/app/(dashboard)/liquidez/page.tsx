@@ -1,67 +1,92 @@
 'use client';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// /liquidez — rediseño «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md)
+//
+// QUÉ CAMBIÓ (sólo presentación; el saldo corrido sigue saliendo de
+// `useRunningBalance`, la misma fórmula que /inversiones y /balances):
+//   · Tres StatCard → UNA franja de KPIs: Saldo actual (hero), Entradas,
+//     Salidas y Neto del filtro (color por signo: ahí el signo es la noticia).
+//     Antes «Ingreso» era azul y «Salida» roja de paleta cruda en cada fila.
+//   · Saldo por cuenta MT: de una grilla de tarjetas a una FinTable con el
+//     atribuido en el pie y el saldo total al lado. Lo no atribuido es un
+//     `Notice pend` con la cifra, no una línea ámbar de paleta cruda.
+//   · Historial en FinTable (montos con signo en tinta neutra, saldo corrido a
+//     la derecha, total del filtro en el pie con la doble raya).
+//
+// DOS BUGS QUE SE VEÍAN COMO NÚMEROS PLAUSIBLES (arreglados acá):
+//   1. «Faltan $X por atribuir» comparaba lo atribuido (saldo de SIEMPRE por
+//      cuenta) contra el saldo al cierre del MES filtrado. Con un mes elegido
+//      inventaba una diferencia. Ahora compara contra el saldo de todo el
+//      histórico (`attributionGap`, con test).
+//   2. Sin movimientos el saldo era $0.00. Ahora es «—» (`closingBalance`
+//      devuelve null): «no hay libro» no es «el libro está en cero» (§1.3).
+//   Y el mes de cada fila sale del texto `YYYY-MM-DD`, no de `new Date()`
+//   (en UTC-3 el día 1 caía en el mes anterior; ver ledger-month-filter.ts).
+//
+// DESCARTADO:
+//   · Mover el filtro al selector de período de la topbar: ése es el período
+//     CONTABLE de la empresa y Liquidez no lo usa (sus meses salen de los
+//     movimientos). Dos selectores que dicen cosas distintas serían peor.
+//   · Paginar con `totalCount` de FinTable: no es un recorte, es paginación;
+//     el pie de la tabla ya cuenta «a–b de N» y el total usa las N.
+// ─────────────────────────────────────────────────────────────────────────────
+
 import { useState, useMemo, useEffect } from 'react';
-import { Card } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
-import { EmptyState } from '@/components/ui/empty-state';
-import { StatCard } from '@/components/ui/stat-card';
+import Link from 'next/link';
+import { Droplets, Download, ChevronLeft, ChevronRight, Scale } from 'lucide-react';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, NUM_CLASS } from '@/components/ui/money';
+import { Notice } from '@/components/ui/notice';
+import { Chip } from '@/components/ui/chip';
+import { Select } from '@/components/ui/field';
+import { PageHeader } from '@/components/ui/page-header';
+import { ActionButton, actionButtonClass, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
 import { useData } from '@/lib/data-context';
-import { formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
-import { Droplets, Download, ChevronLeft, ChevronRight } from 'lucide-react';
-import { PageHeader } from '@/components/ui/page-header';
-import Link from 'next/link';
 import { apiFetch } from '@/lib/api-fetch';
-import { Scale, AlertTriangle } from 'lucide-react';
 import { useRunningBalance } from '@/lib/use-running-balance';
+import { ALL_MONTHS, closingBalance, filterByMonth, monthsByYear } from '@/lib/ledger-month-filter';
+import type { LiquidityMovement } from '@/lib/types';
+import { accountBalanceRows, attributionGap } from './liquidity-view';
 
 const MONTH_NAMES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
 const PAGE_SIZE = 50;
+
+// La primera columna es el concepto (la etiqueta del total del pie cae ahí:
+// en una columna «#» de 48 px no entraba). El número de fila se fue: el pie
+// ya dice «a–b de N».
+type MovRow = LiquidityMovement;
+interface AccountRow { id: string; mt_number: string; label: string | null; balance: number }
 
 export default function LiquidezPage() {
   const { t } = useI18n();
   const { user } = useAuth();
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const { getLiquidityData } = useData();
-  const [filter, setFilter] = useState('total');
+  const [filter, setFilter] = useState(ALL_MONTHS);
   // Read directly from the data-context on every render — previously the
   // page copied it into local state via `useEffect`, which created a
   // one-tick lag after a mutation and flashed stale rows.
   const liquidityData = useMemo(() => getLiquidityData(), [getLiquidityData]);
 
-  const dataByYear = useMemo(() => {
-    const map = new Map<number, Set<number>>();
-    liquidityData.forEach(m => {
-      const d = new Date(m.date);
-      const year = d.getFullYear();
-      if (!map.has(year)) map.set(year, new Set());
-      map.get(year)!.add(d.getMonth() + 1);
-    });
-    return map;
-  }, [liquidityData]);
-
+  const dataByYear = useMemo(() => monthsByYear(liquidityData), [liquidityData]);
   const availableYears = useMemo(() => Array.from(dataByYear.keys()).sort(), [dataByYear]);
 
-  const [selectedYear, setSelectedYear] = useState<number>(0);
+  // El año elegido; hasta que alguien elija, el más reciente con datos
+  // (derivado en el render: antes era un setState dentro de un effect, que
+  // pintaba un cuadro con el año 0 antes de corregirse).
+  const [pickedYear, setSelectedYear] = useState<number | null>(null);
+  const selectedYear = pickedYear ?? availableYears.at(-1) ?? 0;
 
-  useEffect(() => {
-    if (availableYears.length > 0 && selectedYear === 0) {
-      setSelectedYear(availableYears[availableYears.length - 1]);
-    }
-  }, [availableYears, selectedYear]);
-
-  const filtered = useMemo(() => {
-    if (filter === 'total') return liquidityData;
-    return liquidityData.filter(m => {
-      const d = new Date(m.date);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` === filter;
-    });
-  }, [filter, liquidityData]);
+  const filtered = useMemo(() => filterByMonth(liquidityData, filter), [filter, liquidityData]);
 
   // Running balance map — computed on-the-fly from ALL movements sorted by
   // date ascending. We don't trust the stored `balance` column because
@@ -69,23 +94,19 @@ export default function LiquidezPage() {
   // `useRunningBalance` keeps /liquidez, /inversiones, and /balances in sync.
   const balanceMap = useRunningBalance(liquidityData, m => m.deposit - m.withdrawal);
 
-  // Balance Actual = running total at the end of the filtered range.
-  // For filter='total' it's the final running balance.
-  // For filter='YYYY-MM' it's the balance at the end of that month
-  // (includes all prior months + this one).
-  const lastBalance = useMemo(() => {
-    if (filtered.length === 0) {
-      const sorted = [...liquidityData].sort((a, b) => a.date.localeCompare(b.date));
-      return sorted.length > 0 ? balanceMap.get(sorted.at(-1)!.id) ?? 0 : 0;
-    }
-    const sortedFiltered = [...filtered].sort((a, b) => a.date.localeCompare(b.date));
-    return balanceMap.get(sortedFiltered.at(-1)!.id) ?? 0;
-  }, [filtered, liquidityData, balanceMap]);
+  // Saldo al cierre del filtro (total = el saldo de hoy; un mes = el saldo al
+  // final de ese mes, con todo lo anterior). null = no hay movimientos.
+  const lastBalance = useMemo(
+    () => closingBalance(filtered.length > 0 ? filtered : liquidityData, balanceMap),
+    [filtered, liquidityData, balanceMap],
+  );
+  // El saldo de HOY, independiente del filtro: contra éste se compara el
+  // desglose por cuenta, que también es de todo el histórico.
+  const overallBalance = useMemo(() => closingBalance(liquidityData, balanceMap), [liquidityData, balanceMap]);
 
   const totalDeposits = filtered.reduce((s, m) => s + m.deposit, 0);
   const totalWithdrawals = filtered.reduce((s, m) => s + m.withdrawal, 0);
 
-  // Pagination — reset to page 0 whenever filter or data changes
   // ── Desglose por cuenta MT (migración 062) ────────────────────────────
   // Se reusa el endpoint de conciliación: ya devuelve el catálogo, el saldo
   // por cuenta y lo pendiente. Un endpoint aparte sería una segunda copia del
@@ -93,37 +114,44 @@ export default function LiquidezPage() {
   const [accounts, setAccounts] = useState<Array<{ id: string; mt_number: string; label: string | null }>>([]);
   const [balancesByAccount, setBalancesByAccount] = useState<Record<string, number>>({});
   const [pendingCount, setPendingCount] = useState(0);
+  // El desglose es un extra: si el endpoint falla, la página sigue — pero se
+  // DICE, porque una sección que desaparece se lee como «no hay cuentas».
+  const [breakdownFailed, setBreakdownFailed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     apiFetch('/api/admin/liquidity-reconcile')
       .then((r) => r.json())
       .then((json) => {
-        if (cancelled || !json.success) return;
+        if (cancelled) return;
+        if (!json.success) { setBreakdownFailed(true); return; }
         setAccounts(json.accounts ?? []);
         setBalancesByAccount(json.balancesByAccount ?? {});
         setPendingCount((json.pending ?? []).length);
       })
-      .catch(() => { /* el desglose es un extra: si falla, la página sigue */ });
+      .catch(() => { if (!cancelled) setBreakdownFailed(true); });
     return () => { cancelled = true; };
   }, []);
 
   // Solo las cuentas con movimientos: el catálogo tiene 23 y mostrar las
   // vacías llenaría la pantalla de ceros sin información.
-  const accountRows = useMemo(() => {
-    return accounts
-      .map((a) => ({ ...a, balance: balancesByAccount[a.id] ?? 0 }))
-      .filter((a) => Math.abs(a.balance) > 0.005)
-      .sort((a, b) => b.balance - a.balance);
-  }, [accounts, balancesByAccount]);
+  const accountRows: AccountRow[] = useMemo(
+    () => accountBalanceRows(accounts, balancesByAccount),
+    [accounts, balancesByAccount],
+  );
 
   const assignedTotal = useMemo(
     () => accountRows.reduce((s, a) => s + a.balance, 0),
     [accountRows],
   );
+  const gap = attributionGap(assignedTotal, overallBalance);
 
-  const [page, setPage] = useState(0);
-  useEffect(() => { setPage(0); }, [filter, liquidityData.length]);
+  // La página vuelve a 0 cuando cambia el filtro o la cantidad de filas: la
+  // página guardada sólo vale para la clave con la que se guardó.
+  const pageKey = `${filter}|${liquidityData.length}`;
+  const [pageState, setPageState] = useState({ key: pageKey, page: 0 });
+  const page = pageState.key === pageKey ? pageState.page : 0;
+  const setPage = (fn: (p: number) => number) => setPageState({ key: pageKey, page: fn(page) });
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   const pagedRows = useMemo(
@@ -131,239 +159,278 @@ export default function LiquidezPage() {
     [filtered, page],
   );
 
-  // Número de fila global (respeta la paginación) — DataTable no expone el
-  // índice en el accessor, así que se precalcula acá.
-  const tableRows = pagedRows.map((mov, i) => ({ ...mov, rowNum: page * PAGE_SIZE + i + 1 }));
+  const tableRows: MovRow[] = pagedRows;
+
+  const periodLabel = filter === ALL_MONTHS
+    ? t('liquidity.lm.allHistory')
+    : `${MONTH_NAMES[Number(filter.slice(5, 7)) - 1]} ${filter.slice(0, 4)}`;
+  const empty = liquidityData.length === 0;
+
+  const kpis: KpiItem[] = [
+    {
+      key: 'balance',
+      label: t('liquidity.currentBalance'),
+      value: lastBalance,
+      hero: true,
+      sub: empty ? t('liquidity.lm.noMovements') : filter === ALL_MONTHS ? t('liquidity.lm.balanceToday') : t('liquidity.lm.balanceAtEnd', { period: periodLabel }),
+      missingBadge: false,
+    },
+    {
+      key: 'in',
+      label: t('liquidity.lm.inflows'),
+      value: empty ? null : totalDeposits,
+      sub: t('liquidity.lm.movementsCount', { count: String(filtered.filter((m) => m.deposit > 0).length) }),
+      missingBadge: false,
+    },
+    {
+      key: 'out',
+      // «Salidas» cubre retiros reales y pérdidas (comisiones, transferencias
+      // fallidas, etc) en un solo término.
+      label: t('liquidity.lm.outflows'),
+      value: empty ? null : totalWithdrawals,
+      sub: t('liquidity.lm.movementsCount', { count: String(filtered.filter((m) => m.withdrawal > 0).length) }),
+      missingBadge: false,
+    },
+    {
+      key: 'net',
+      label: t('liquidity.lm.net'),
+      value: empty ? null : totalDeposits - totalWithdrawals,
+      tone: 'sign',
+      sub: periodLabel,
+      missingBadge: false,
+    },
+  ];
+
+  const accountColumns: FinColumn<AccountRow>[] = [
+    {
+      key: 'account',
+      header: t('liquidity.lm.colAccount'),
+      cell: (a) => <span className={NUM_CLASS}>{a.mt_number}</span>,
+      meta: (a) => a.label ?? undefined,
+    },
+    { key: 'balance', header: t('liquidity.lm.colBalance'), kind: 'money', value: (a) => a.balance },
+  ];
+
+  const movementColumns: FinColumn<MovRow>[] = [
+    {
+      key: 'concept',
+      header: t('liquidity.lm.colConcept'),
+      cell: (m) => <span className="block max-w-[260px] truncate" title={m.user_email ?? undefined}>{m.user_email || '—'}</span>,
+      meta: (m) => m.mt_account || undefined,
+      mobileMeta: (m) => <span className={NUM_CLASS}>{formatDate(m.date)}</span>,
+    },
+    {
+      key: 'date',
+      header: t('liquidity.lm.colDate'),
+      cell: (m) => <span className={cn(NUM_CLASS, 'text-text-2')}>{formatDate(m.date)}</span>,
+      hideSm: true,
+    },
+    {
+      // Una sola columna con signo (+ entrada / − salida) en vez de dos
+      // columnas con un guion en la mitad de las celdas; las entradas y las
+      // salidas del filtro van separadas en el pie.
+      key: 'net',
+      header: t('liquidity.lm.colMovement'),
+      kind: 'money',
+      value: (m) => m.deposit - m.withdrawal,
+      money: { signed: true, tone: 'neutral' },
+      subtotal: false,
+    },
+    {
+      key: 'balance',
+      header: t('liquidity.lm.colRunning'),
+      kind: 'money',
+      value: (m) => balanceMap.get(m.id) ?? null,
+      subtotal: false,
+    },
+  ];
+
+  const exportCsv = () => verify2FA(() => {
+    const headers = ['Fecha', 'Concepto', 'Descripción', '+', '-', 'Balance'];
+    const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, balanceMap.get(m.id) ?? ''] as (string | number)[]);
+    downloadCSV('liquidez.csv', headers, rows);
+  });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
       <PageHeader
         title={t('liquidity.title')}
         subtitle={t('liquidity.subtitle')}
         icon={Droplets}
         actions={
-          <div className="flex items-center gap-2">
-          {/* Conciliación: mientras haya movimientos sin cuenta MT, el saldo
-              por cuenta no es confiable. El acceso vive acá al lado. */}
-          <Link
-            href="/liquidez/conciliacion"
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-          >
-            <Scale className="w-4 h-4" />
-            <span className="hidden sm:inline">Conciliar</span>
-          </Link>
-          <button
-            onClick={() => verify2FA(() => {
-              const headers = ['Fecha', 'Concepto', 'Descripción', '+', '-', 'Balance'];
-              const rows = filtered.map(m => [m.date, m.user_email || '', m.mt_account || '', m.deposit, m.withdrawal, balanceMap.get(m.id) ?? 0] as (string | number)[]);
-              downloadCSV('liquidez.csv', headers, rows);
-            })}
-            className="inline-flex items-center gap-2 h-9 px-3 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-            title={t('common.csv')}
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('common.csv')}</span>
-          </button>
-          </div>
+          <>
+            {/* Conciliación: mientras haya movimientos sin cuenta MT, el saldo
+                por cuenta no es confiable. El acceso vive acá al lado. */}
+            <Link href="/liquidez/conciliacion" className={actionButtonClass('secondary')} aria-label={t('liquidity.lm.reconcile')}>
+              <Scale aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="hidden sm:inline">{t('liquidity.lm.reconcile')}</span>
+            </Link>
+            <ActionButton onClick={exportCsv} title={t('common.csv')} aria-label={t('common.csv')}>
+              <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="hidden sm:inline">{t('common.csv')}</span>
+            </ActionButton>
+          </>
         }
       />
+
+      {/* Filtro de meses: los que TIENEN movimientos (no el período contable). */}
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label={t('liquidity.lm.filterAria')}>
+        <Chip active={filter === ALL_MONTHS} onClick={() => setFilter(ALL_MONTHS)}>
+          {t('liquidity.total')}
+        </Chip>
+        <Select
+          aria-label={t('liquidity.lm.year')}
+          value={selectedYear}
+          onChange={e => {
+            setSelectedYear(parseInt(e.target.value));
+            setFilter(ALL_MONTHS);
+          }}
+          className="h-8 w-auto [@media(pointer:coarse)]:h-10"
+        >
+          {availableYears.map(yr => (
+            <option key={yr} value={yr}>{yr}</option>
+          ))}
+        </Select>
+        {Array.from({ length: 12 }, (_, i) => i + 1).map(month => {
+          if (!dataByYear.get(selectedYear)?.has(month)) return null;
+          const ym = `${selectedYear}-${String(month).padStart(2, '0')}`;
+          return (
+            <Chip key={month} active={filter === ym} onClick={() => setFilter(ym)}>
+              {MONTH_NAMES[month - 1]}
+            </Chip>
+          );
+        })}
+      </div>
+
+      <KpiStrip items={kpis} />
+
+      {/* ─── Avisos de estado del dato ─── */}
+      {pendingCount > 0 && (
+        <Notice
+          kind="pend"
+          title={t('liquidity.lm.pendingTitle', { count: String(pendingCount) })}
+          action={<Link href="/liquidez/conciliacion" className="text-[13px] font-medium text-foreground underline underline-offset-2">{t('liquidity.lm.reconcile')}</Link>}
+        >
+          {t('liquidity.lm.pendingBody')}
+        </Notice>
+      )}
+      {breakdownFailed && (
+        <Notice kind="pend" title={t('liquidity.lm.breakdownFailed')}>
+          {t('liquidity.lm.breakdownFailedBody')}
+        </Notice>
+      )}
 
       {/* Desglose por cuenta MT. Mientras queden movimientos sin atribuir, el
           desglose NO cuadra con el saldo total — decirlo es la diferencia
           entre una tabla útil y una que engaña. */}
       {(accountRows.length > 0 || pendingCount > 0) && (
-        <Card className="p-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
-            <h2 className="text-sm font-semibold">Saldo por cuenta MT</h2>
-            {pendingCount > 0 && (
-              <Link
-                href="/liquidez/conciliacion"
-                className="inline-flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-300 hover:underline"
-              >
-                <AlertTriangle className="w-3.5 h-3.5" />
-                {pendingCount} {pendingCount === 1 ? 'movimiento sin atribuir' : 'movimientos sin atribuir'} — conciliar
-              </Link>
-            )}
-          </div>
-
-          {accountRows.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              Todavía no hay movimientos atribuidos a una cuenta. Empezá por la conciliación.
-            </p>
-          ) : (
-            <>
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
-                {accountRows.map((a) => (
-                  <div key={a.id} className="rounded-lg border border-border p-3">
-                    <p className="text-xs text-muted-foreground truncate" title={a.label ?? undefined}>
-                      {a.mt_number}{a.label ? ` · ${a.label}` : ''}
-                    </p>
-                    <p className={cn('font-semibold tabular-nums mt-0.5',
-                      a.balance >= 0 ? '' : 'text-negative')}>
-                      {formatCurrency(a.balance)}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              <p className="text-xs text-muted-foreground mt-3 tabular-nums">
-                Atribuido: {formatCurrency(assignedTotal)} de {formatCurrency(lastBalance)} total
-                {Math.abs(assignedTotal - lastBalance) > 0.01 && (
-                  <> · <span className="text-amber-700 dark:text-amber-300">
-                    faltan {formatCurrency(lastBalance - assignedTotal)} por atribuir
-                  </span></>
-                )}
-              </p>
-            </>
-          )}
-        </Card>
+        <Panel
+          title={t('liquidity.lm.byAccount')}
+          hint={t('liquidity.lm.byAccountHint')}
+          flush
+          footer={
+            <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+              <span>
+                {t('liquidity.lm.bookBalance')}{' '}
+                <Money value={overallBalance} className="font-medium text-foreground" />
+              </span>
+              {gap.gap !== null && !gap.matches && (
+                <span>
+                  {gap.gap > 0 ? t('liquidity.lm.unattributed') : t('liquidity.lm.overAttributed')}{' '}
+                  <Money value={Math.abs(gap.gap)} tone="neg" className="font-medium" />
+                </span>
+              )}
+            </div>
+          }
+        >
+          <FinTable
+            caption={t('liquidity.lm.byAccount')}
+            columns={accountColumns}
+            rows={accountRows}
+            rowKey={(a) => a.id}
+            empty={t('liquidity.lm.noAttributed')}
+            footer={
+              accountRows.length > 0
+                ? {
+                    label: t('liquidity.lm.attributedTotal', { count: String(accountRows.length) }),
+                    values: { balance: assignedTotal },
+                  }
+                : undefined
+            }
+          />
+        </Panel>
       )}
 
-      {/* Filter */}
-      <div className="flex flex-wrap items-center gap-3">
-        <span className="text-sm font-medium text-muted-foreground">{t('liquidity.filter')}</span>
-        <button
-          onClick={() => setFilter('total')}
-          className={cn('px-3 py-1.5 text-xs font-medium rounded-md border transition-colors', filter === 'total' ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]' : 'border-border hover:bg-muted')}
-        >
-          {t('liquidity.total')}
-        </button>
-        <select
-          value={selectedYear}
-          onChange={e => {
-            const yr = parseInt(e.target.value);
-            setSelectedYear(yr);
-            setFilter('total');
-          }}
-          className="px-3 py-1.5 text-xs font-medium rounded-md border border-border bg-card"
-        >
-          {availableYears.map(yr => (
-            <option key={yr} value={yr}>{yr}</option>
-          ))}
-        </select>
-        {filter !== 'total' && (
-          <span className="text-xs text-muted-foreground">|</span>
-        )}
-        <div className="flex flex-wrap gap-1.5">
-          {Array.from({ length: 12 }, (_, i) => i + 1).map(month => {
-            const hasData = dataByYear.get(selectedYear)?.has(month);
-            if (!hasData) return null;
-            const ym = `${selectedYear}-${String(month).padStart(2, '0')}`;
-            return (
-              <button
-                key={month}
-                onClick={() => setFilter(ym)}
-                className={cn('px-3 py-1.5 text-xs font-medium rounded-md border transition-colors', filter === ym ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]' : 'border-border hover:bg-muted')}
-              >
-                {MONTH_NAMES[month - 1]}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <StatCard
-          label={t('liquidity.currentBalance')}
-          value={formatCurrency(lastBalance)}
-          icon={Droplets}
-          tone="info"
-        />
-        <StatCard
-          label="Ingreso"
-          value={formatCurrency(totalDeposits)}
-          tone="info"
-        />
-        {/* "Salida" cubre retiros reales y pérdidas (comisiones, transferencias
-            fallidas, etc) en un solo término. */}
-        <StatCard
-          label="Salida"
-          value={formatCurrency(totalWithdrawals)}
-          tone="negative"
-        />
-      </div>
-
-      <Card>
-        <h2 className="text-lg font-semibold mb-4">{t('liquidity.history')}</h2>
-        <DataTable
-          data={tableRows}
-          columns={[
-            {
-              header: '#',
-              className: 'w-12',
-              accessor: (mov) => (
-                <span className="text-muted-foreground tabular-nums">{mov.rowNum}</span>
-              ),
-            },
-            { header: 'Fecha', accessor: (mov) => formatDate(mov.date) },
-            {
-              header: 'Concepto',
-              accessor: (mov) => (
-                <span className="block text-xs max-w-[200px] truncate">{mov.user_email || '—'}</span>
-              ),
-            },
-            { header: 'Descripción', accessor: (mov) => mov.mt_account || '—' },
-            {
-              header: 'Ingreso',
-              align: 'right',
-              accessor: (mov) => (
-                <span className="font-medium text-blue-600">
-                  {mov.deposit > 0 ? formatCurrency(mov.deposit) : '—'}
-                </span>
-              ),
-            },
-            {
-              header: 'Salida',
-              align: 'right',
-              accessor: (mov) => (
-                <span className="font-medium text-red-600">
-                  {mov.withdrawal > 0 ? formatCurrency(mov.withdrawal) : '—'}
-                </span>
-              ),
-            },
-            {
-              header: 'Balance',
-              align: 'right',
-              accessor: (mov) => (
-                <span className="font-bold">{formatCurrency(balanceMap.get(mov.id) ?? 0)}</span>
-              ),
-            },
-          ]}
-          empty={<EmptyState compact title={t('common.noData')} />}
-        />
-        {filtered.length > 0 && (
-          <div className="flex items-center justify-between mt-4 text-sm flex-wrap gap-2">
-            <span className="text-muted-foreground">
-              Mostrando <strong className="text-foreground">{page * PAGE_SIZE + 1}</strong>
-              –<strong className="text-foreground">{Math.min((page + 1) * PAGE_SIZE, filtered.length)}</strong>
-              {' '}de <strong className="text-foreground">{filtered.length}</strong> items
-            </span>
-            {filtered.length > PAGE_SIZE && (
-            <div className="flex items-center gap-1">
-              <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0}
-                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-                aria-label="Página anterior"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="px-2 tabular-nums">
-                Página {page + 1} de {totalPages}
+      <Panel
+        title={t('liquidity.history')}
+        hint={periodLabel}
+        flush
+        footer={
+          filtered.length > 0 ? (
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className={NUM_CLASS}>
+                {t('liquidity.lm.showing', {
+                  from: String(page * PAGE_SIZE + 1),
+                  to: String(Math.min((page + 1) * PAGE_SIZE, filtered.length)),
+                  total: String(filtered.length),
+                })}
               </span>
-              <button
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1}
-                className="p-1.5 rounded border border-border hover:bg-muted disabled:opacity-40 disabled:pointer-events-none"
-                aria-label="Página siguiente"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
+              {filtered.length > PAGE_SIZE && (
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    disabled={page === 0}
+                    className={ROW_ACTION_CLASS}
+                    aria-label={t('liquidity.lm.prevPage')}
+                  >
+                    <ChevronLeft aria-hidden className="size-4" />
+                  </button>
+                  <span className={cn(NUM_CLASS, 'px-1 text-text-2')}>
+                    {t('liquidity.lm.pageOf', { page: String(page + 1), total: String(totalPages) })}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                    disabled={page >= totalPages - 1}
+                    className={ROW_ACTION_CLASS}
+                    aria-label={t('liquidity.lm.nextPage')}
+                  >
+                    <ChevronRight aria-hidden className="size-4" />
+                  </button>
+                </div>
+              )}
             </div>
-            )}
-          </div>
-        )}
-      </Card>
+          ) : undefined
+        }
+      >
+        <FinTable
+          caption={t('liquidity.history')}
+          columns={movementColumns}
+          rows={tableRows}
+          rowKey={(m) => m.id}
+          empty={t('common.noData')}
+          // Los totales son de TODO el filtro, no de la página visible.
+          footerRows={
+            filtered.length > 0
+              ? [
+                  { label: t('liquidity.lm.inflows'), values: { net: totalDeposits } },
+                  { label: t('liquidity.lm.outflows'), values: { net: -totalWithdrawals } },
+                ]
+              : undefined
+          }
+          footer={
+            filtered.length > 0
+              ? {
+                  label: t('liquidity.lm.filterTotal', { count: String(filtered.length) }),
+                  values: { net: totalDeposits - totalWithdrawals, balance: lastBalance },
+                }
+              : undefined
+          }
+        />
+      </Panel>
     </div>
   );
 }
+
