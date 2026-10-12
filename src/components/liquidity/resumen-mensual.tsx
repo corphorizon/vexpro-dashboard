@@ -213,6 +213,10 @@ export function ResumenMensual({ companyId, refrescoNonce = 0 }: { companyId: st
       label: sel ? `PnL de ${etiquetaMes}` : 'PnL del mes',
       value: mesActual?.total ?? null,
       hero: true,
+      // 'money' y no el compact por defecto (dueño, 2026-10-12): "-$1.2K"
+      // omite dato en una cifra que acá se lee para decidir — el valor exacto
+      // no puede vivir solo en el title.
+      format: 'money',
       tone: 'sign',
       sub: mesEnCurso ? 'Mes en curso' : undefined,
     },
@@ -239,6 +243,7 @@ export function ResumenMensual({ companyId, refrescoNonce = 0 }: { companyId: st
       key: 'acc',
       label: 'Acumulado del pool',
       value: totales.pnl,
+      format: 'money', // exacto, no "-$46.6K" (ver el KPI de PnL)
       tone: 'sign',
       sub: totales.ops === null ? undefined : `${totales.ops} operaciones en total`,
     },

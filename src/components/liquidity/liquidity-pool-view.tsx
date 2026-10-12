@@ -361,11 +361,15 @@ export function LiquidityPoolView({
       label: 'Equity a Liquidez (pool)',
       value: cuentas === null ? null : stats.pool,
       hero: true,
+      // 'money' y no el compact por defecto (dueño, 2026-10-12): el monto a
+      // reservar se lee exacto, no "$45.2K" con el dato real escondido en el
+      // title. Igual en los KPI del Resumen mensual.
+      format: 'money',
       // El del pool es el que manda; el de MT5 va al lado como referencia.
       sub: cuentas === null ? undefined : `Balance MT5: ${formatMoney(stats.mt5)}`,
       missingBadge: cuentas === null ? { kind: 'stale', label: 'Cargando…' } : false,
     },
-    { key: 'mt5', label: 'Balance MT5', value: cuentas === null ? null : stats.mt5, missingBadge: false },
+    { key: 'mt5', label: 'Balance MT5', value: cuentas === null ? null : stats.mt5, format: 'money', missingBadge: false },
     { key: 'total', label: 'Cuentas', value: cuentas === null ? null : stats.total, format: 'count', missingBadge: false },
     { key: 'active', label: 'Activas', value: cuentas === null ? null : stats.activas, format: 'count', missingBadge: false },
     { key: 'inactive', label: 'No activas', value: cuentas === null ? null : stats.inactivas, format: 'count', missingBadge: false },
