@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Card } from '@/components/ui/card';
 import { PageHeader } from '@/components/ui/page-header';
-import { Button } from '@/components/ui/button';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Segmented, type SegmentedOption } from '@/components/ui/segmented';
+import { useToasts } from '@/components/ui/toast';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { useData } from '@/lib/data-context';
-import { formatCurrency, cn } from '@/lib/utils';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
@@ -14,7 +16,7 @@ import { features } from '@/lib/business-model';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import {
   Users, Briefcase, Download, Handshake, UserX, Receipt,
-  ClipboardCheck, AlertTriangle, TrendingUp, CheckCircle, AlertCircle,
+  ClipboardCheck, AlertTriangle, TrendingUp,
 } from 'lucide-react';
 import type { Employee } from '@/lib/types';
 import { hrRoleLabel } from '@/lib/hr/domain';
@@ -33,7 +35,8 @@ import { OnboardingTab } from './_components/onboarding-tab';
 import { WarningsTab } from './_components/warnings-tab';
 import { NetDepositTab } from './_components/net-deposit-tab';
 import { IbNegotiationsTab } from './_components/ib-negotiations-tab';
-import { EmployeesTab, STATUS_LABEL_KEYS } from './_components/employees-tab';
+import { EmployeesTab } from './_components/employees-tab';
+import { STATUS_LABEL_KEYS } from './_components/hr-view';
 import { CommercialTab } from './_components/commercial-tab';
 import { NegotiationsTab } from './_components/negotiations-tab';
 import { HrPeriodProvider, useHrPeriod } from './_components/hr-period-context';
@@ -66,6 +69,19 @@ import { HrPeriodSelector } from './_components/period-selector';
 // dos, no una lista con un filtro escondido. Nadie se borra nunca.
 // `ib_negotiations` es OTRA COSA que `negotiations`: aquélla es de perfiles
 // comerciales y ésta de IBs del CRM (Kevin, «por aparte», 2026-08-27).
+//
+// ── «Libro mayor» (2026-10-12) ─────────────────────────────────────────────
+// Sólo presentación: tres StatCard con ícono de color → KpiStrip (una
+// superficie); las nueve pestañas → Segmented que ENVUELVE (`flex-wrap`, el
+// mismo criterio del 2026-08-31: una fila con scroll escondía las últimas);
+// el selector de período dentro de un Panel; los avisos de éxito/error van al
+// toast flotante (`useToasts`) en vez de un banner verde/rojo arriba de todo,
+// que quedaba fuera de vista al guardar desde el final de una tabla larga.
+// Medición (sin comentarios): antes 5 clases de paleta cruda, 1 `dark:`,
+// 1 `text-[11px]` y 15 tokens legados; después 0 en todo.
+// DESCARTADO: `SectionTabs` (ui/section-tabs.tsx) — pinta el activo con
+// `bg-[var(--color-primary)] text-white`, el relleno de marca que la spec
+// reserva para el único botón primario.
 // ─────────────────────────────────────────────────────────────────────────────
 
 type Tab = 'employees' | 'terminated' | 'commercial' | 'negotiations' | 'ib_negotiations' | 'ib_rebates' | 'onboarding' | 'warnings' | 'net_deposit';
@@ -113,7 +129,7 @@ function RRHHShell() {
 
   const { verify2FA, Modal2FA } = useExport2FA(user?.twofa_enabled);
   const [tab, setTab] = useState<Tab>(hasCommercialTeam ? 'commercial' : 'employees');
-  const [toast, setToast] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+  const { toast, ToastHost } = useToasts();
   const [searchQuery, setSearchQuery] = useState('');
   // Capa optimista sobre `dataEmployees`: la pestaña Empleados la actualiza al
   // crear/editar/borrar y el DataProvider la reemplaza en el próximo refresh.
@@ -121,8 +137,8 @@ function RRHHShell() {
   useEffect(() => { setEmployees(dataEmployees); }, [dataEmployees]);
 
   const flash = (t2: { type: 'success' | 'error'; msg: string }) => {
-    setToast(t2);
-    setTimeout(() => setToast(null), 4000);
+    if (t2.type === 'success') toast.success(t2.msg);
+    else toast.error(t2.msg);
   };
 
   // `company` puede llegar después del primer render: si la pestaña activa no
@@ -208,111 +224,98 @@ function RRHHShell() {
 
   if (!canAccess) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <p className="text-muted-foreground">{t('common.noAccess')}</p>
+      <div className="flex h-64 items-center justify-center">
+        <p className="text-text-2">{t('common.noAccess')}</p>
       </div>
     );
   }
 
-  const tabButton = (key: Tab, Icon: typeof Users, label: string, extra?: React.ReactNode) => (
-    <button
-      onClick={() => setTab(key)}
-      className={cn(
-        'px-3 sm:px-4 py-2 rounded-md text-xs sm:text-sm font-medium transition-colors whitespace-nowrap',
-        tab === key ? 'bg-card shadow-sm' : 'text-muted-foreground hover:text-foreground',
-      )}
-    >
-      <Icon className="w-4 h-4 inline mr-1 sm:mr-2" />
+  // Las pestañas, en el orden de siempre. Ícono + nombre; Despedidos lleva el
+  // conteo (sólo si hay: un «0» al lado no agrega nada y `null` no se dibuja).
+  const tabLabel = (Icon: typeof Users, label: string) => (
+    <>
+      <Icon aria-hidden className="size-[15px] shrink-0" strokeWidth={1.75} />
       {label}
-      {extra}
-    </button>
+    </>
   );
+  const tabOptions: SegmentedOption<Tab>[] = [
+    { value: 'employees', label: tabLabel(Users, t('hr.employees')) },
+    {
+      value: 'terminated',
+      label: tabLabel(UserX, t('hr.terminatedTab')),
+      count: despedidos.length > 0 ? despedidos.length : null,
+    },
+    ...(hasCommercialTeam
+      ? ([
+          { value: 'commercial', label: tabLabel(Briefcase, t('hr.commercialForce')) },
+          { value: 'negotiations', label: tabLabel(Handshake, t('hr.negotiations')) },
+          { value: 'ib_negotiations', label: tabLabel(Handshake, t('hr.ibNegotiationsTab')) },
+          ...(hasIbRebatesAccess ? [{ value: 'ib_rebates' as const, label: tabLabel(Receipt, t('hr.ibConfigTab')) }] : []),
+          { value: 'onboarding', label: tabLabel(ClipboardCheck, t('hr.onboardingTab')) },
+          { value: 'warnings', label: tabLabel(AlertTriangle, t('hr.warningsTab')) },
+          { value: 'net_deposit', label: tabLabel(TrendingUp, t('hr.netDepositTab')) },
+        ] satisfies SegmentedOption<Tab>[])
+      : []),
+  ];
+
+  const kpis: KpiItem[] = [
+    { key: 'employees', label: t('hr.employees'), value: employees.length, format: 'count' },
+    ...(hasCommercialTeam
+      ? ([
+          { key: 'force', label: t('hr.activeForce'), value: activeProfiles, format: 'count' },
+          {
+            key: 'commissions',
+            label: t('hr.totalCommissions'),
+            value: totalCommissionsFiltered,
+            hero: true,
+            // El total respeta el preset de la pestaña Comercial (hr/monthly-totals.ts).
+            sub: t('hrv.periodsInScope', { n: String(periodIds.length) }),
+          },
+        ] satisfies KpiItem[])
+      : []),
+  ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
-      {toast && (
-        <div className={cn('flex items-center gap-2 px-4 py-3 rounded-lg text-sm', toast.type === 'success' ? 'bg-positive/10 text-positive border border-positive/30' : 'bg-negative/10 text-negative border border-negative/30')}>
-          {toast.type === 'success' ? <CheckCircle className="w-4 h-4" /> : <AlertCircle className="w-4 h-4" />}
-          {toast.msg}
-        </div>
-      )}
+      {ToastHost}
 
       <PageHeader
         title={t('hr.title')}
         subtitle={t('hr.subtitle')}
-        icon={Users}
         actions={
-          <Button
+          <ActionButton
             onClick={tab === 'employees' || tab === 'terminated' ? handleExportEmployees : handleExportCommercial}
             title={t('common.csv')}
+            aria-label={t('common.csv')}
           >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('common.csv')}</span>
-          </Button>
+            <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+            <span className="max-sm:hidden">{t('common.csv')}</span>
+          </ActionButton>
         }
       />
 
-      {/* KPI Cards */}
-      <div className={cn('grid grid-cols-1 gap-4', hasCommercialTeam && 'md:grid-cols-3')}>
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-info/10"><Users className="w-5 h-5 text-blue-500" /></div>
-            <span className="text-sm text-muted-foreground">{t('hr.employees')}</span>
-          </div>
-          <p className="text-2xl font-bold">{employees.length}</p>
-        </Card>
-        {hasCommercialTeam && (
-        <>
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50"><Briefcase className="w-5 h-5 text-violet-500" /></div>
-            <span className="text-sm text-muted-foreground">{t('hr.activeForce')}</span>
-          </div>
-          <p className="text-2xl font-bold">{activeProfiles}</p>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-positive/10"><Briefcase className="w-5 h-5 text-emerald-500" /></div>
-            <span className="text-sm text-muted-foreground">{t('hr.totalCommissions')}</span>
-          </div>
-          <p className="text-2xl font-bold">{formatCurrency(totalCommissionsFiltered)}</p>
-        </Card>
-        </>
-        )}
-      </div>
+      <KpiStrip items={kpis} />
 
       {/* Tabs — flex-wrap y no overflow-x: con nueve pestañas la fila única
           escondía las últimas fuera de pantalla sin ningún indicador (Kevin,
           2026-08-31: «no lo veo»). En Mac el scrollbar ni se dibuja. */}
-      <div className="flex flex-wrap gap-1 bg-muted p-1 rounded-lg w-fit max-w-full">
-        {tabButton('employees', Users, t('hr.employees'))}
-        {tabButton('terminated', UserX, t('hr.terminatedTab'),
-          despedidos.length > 0 ? (
-            <span className="ml-1.5 text-[11px] text-muted-foreground">({despedidos.length})</span>
-          ) : null,
-        )}
-        {hasCommercialTeam && (
-          <>
-            {tabButton('commercial', Briefcase, t('hr.commercialForce'))}
-            {tabButton('negotiations', Handshake, t('hr.negotiations'))}
-            {tabButton('ib_negotiations', Handshake, t('hr.ibNegotiationsTab'))}
-            {hasIbRebatesAccess && tabButton('ib_rebates', Receipt, t('hr.ibConfigTab'))}
-            {tabButton('onboarding', ClipboardCheck, t('hr.onboardingTab'))}
-            {tabButton('warnings', AlertTriangle, t('hr.warningsTab'))}
-            {tabButton('net_deposit', TrendingUp, t('hr.netDepositTab'))}
-          </>
-        )}
-      </div>
+      <Segmented
+        options={tabOptions}
+        value={tab}
+        onChange={setTab}
+        aria-label={t('hr.title')}
+        className="max-w-full flex-wrap"
+      />
 
       {/* EL selector de período — uno solo para todo el módulo. Se esconde en
           las pestañas donde el tiempo no significa nada (una negociación
           abierta no es un dato de un mes): mostrarlo ahí sugeriría que filtra
           algo, que es peor que no mostrarlo. */}
       {!(TABS_SIN_PERIODO as readonly string[]).includes(tab) && (
-        <Card>
+        <Panel flush bodyClassName="px-4 py-3">
           <HrPeriodSelector showPresets={(TABS_CON_PRESETS as readonly string[]).includes(tab)} />
-        </Card>
+        </Panel>
       )}
 
       {tab === 'warnings' && hasCommercialTeam && <WarningsTab profiles={profiles} />}

@@ -2,9 +2,18 @@
 
 import { useState, useEffect, useCallback, useMemo } from 'react';
 import { EmptyState } from '@/components/ui/empty-state';
+import { Panel } from '@/components/ui/panel';
+import { Notice } from '@/components/ui/notice';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Segmented } from '@/components/ui/segmented';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { ActionButton } from '@/components/payment-orders/action-button';
+import { cn } from '@/lib/utils';
 import {
-  Search, Plus, Edit2, Trash2, ChevronUp, ChevronDown,
-  History, Settings, Upload, CheckCircle2, AlertCircle, AlertTriangle, X,
+  Plus, Edit2, Trash2, ChevronUp, ChevronDown,
+  History, Settings, Upload, CheckCircle2,
 } from 'lucide-react';
 import type {
   IbRebateConfig, IbRebateThresholds, AlertResult, IbRebateHistoryEntry,
@@ -13,6 +22,28 @@ import { DEFAULT_THRESHOLDS } from '@/lib/ib-rebates/types';
 import { computeAlert } from '@/lib/ib-rebates/alerts';
 import { apiFetch } from '@/lib/api-fetch';
 import { useI18n } from '@/lib/i18n';
+import { FilePick, HrModal, ROW_ACTION_CLASS, ROW_DANGER_CLASS, SearchField } from './hr-ui';
+import { IB_ALERT_KIND } from './hr-view';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Pestaña CONFIG. IB (rebates por IB y sus alertas de antigüedad).
+//
+// «Libro mayor» (2026-10-12) — sólo presentación; cargas, PATCH/POST/DELETE,
+// umbrales e importación no cambiaron:
+//   · Las alertas verde/amarillo/naranja/rojo eran paleta cruda con `dark:`
+//     (24 clases sólo en el badge). Ahora StatusBadge por significado
+//     (IB_ALERT_KIND en hr-view.ts: verde ok, amarillo y naranja pend, rojo
+//     bad); la etiqueta —que ya decía el nivel y los días— distingue
+//     amarillo de naranja. «Metas cumplidas» = ok.
+//   · Subió/bajó de nivel iban en azul/violeta: una dirección no es buena ni
+//     mala para la plata. Ahora gris con flecha.
+//   · El filtro de alerta pasó de <select> a Segmented con conteos; la tabla
+//     a FinTable; los cuatro modales a HrModal con Field/Input/Select.
+//   · El resumen de importación pintaba insertados/actualizados/salteados en
+//     verde/azul/amarillo: son conteos, no estados. Los errores, Notice `bad`.
+// Medición (sin comentarios): antes 63 clases de paleta cruda, 17 `dark:` de
+// color, 6 `text-[10/11px]` y 31 tokens legados; después 0 / 0 / 0 / 0.
+// ─────────────────────────────────────────────────────────────────────────────
 
 // ─── Tipos locales ────────────────────────────────────────────────────────
 
@@ -41,6 +72,7 @@ const EMPTY_FORM: FormShape = {
 };
 
 type FilterAlert = 'all' | 'green' | 'yellow' | 'orange' | 'red' | 'goals_met';
+const FILTERS: readonly FilterAlert[] = ['all', 'green', 'yellow', 'orange', 'red', 'goals_met'];
 type ChangeIntent = 'edit' | 'upgrade' | 'downgrade';
 
 // ─── Componente principal ─────────────────────────────────────────────────
@@ -95,6 +127,20 @@ export function IbRebatesTab() {
       return alert.level === filterAlert;
     });
   }, [configs, search, filterAlert, thresholds]);
+
+  // Conteo por filtro sobre la búsqueda: el Segmented dice cuántas filas suma
+  // cada opción antes de tocarla (un filtro olvidado se ve, reglas §1.2).
+  const filterCounts = useMemo(() => {
+    const counts: Record<FilterAlert, number> = { all: 0, green: 0, yellow: 0, orange: 0, red: 0, goals_met: 0 };
+    const q = search.toLowerCase();
+    for (const c of configs) {
+      if (search && !c.username.toLowerCase().includes(q)) continue;
+      counts.all += 1;
+      counts[computeAlert(c, thresholds).level] += 1;
+      if (c.goals_met) counts.goals_met += 1;
+    }
+    return counts;
+  }, [configs, search, thresholds]);
 
   // ─── Form: crear / editar / upgrade / downgrade ─────────────────────────
 
@@ -203,214 +249,178 @@ export function IbRebatesTab() {
 
   // ─── Render helpers ─────────────────────────────────────────────────────
 
-  const renderAlertBadge = (alert: AlertResult) => {
-    const colors: Record<string, string> = {
-      green: 'bg-emerald-100 text-emerald-800 border-emerald-300 dark:bg-emerald-900/30 dark:text-emerald-300',
-      yellow: 'bg-yellow-100 text-yellow-800 border-yellow-300 dark:bg-yellow-900/30 dark:text-yellow-300',
-      orange: 'bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-900/30 dark:text-orange-300',
-      red: 'bg-red-100 text-red-800 border-red-300 dark:bg-red-900/30 dark:text-red-300',
-    };
-    const Icon = alert.level === 'green' ? CheckCircle2
-               : alert.level === 'red' ? AlertCircle
-               : AlertTriangle;
-    return (
-      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium border ${colors[alert.level]}`}>
-        <Icon className="w-3.5 h-3.5" />
-        {t(`ibRebates.alert.${alert.mode}.${alert.level}`)} ({t('ibRebates.daysShort', { days: String(alert.daysSince) })})
-      </span>
-    );
-  };
+  const renderAlertBadge = (alert: AlertResult) => (
+    <StatusBadge
+      kind={IB_ALERT_KIND[alert.level]}
+      label={`${t(`ibRebates.alert.${alert.mode}.${alert.level}`)} (${t('ibRebates.daysShort', { days: String(alert.daysSince) })})`}
+    />
+  );
 
+  // Subió / bajó de nivel: es una dirección, no algo bueno o malo para el
+  // dinero (un downgrade puede ser lo correcto). Gris con flecha.
   const renderChangeTypeBadge = (type: IbRebateConfig['last_change_type']) => {
     if (type === 'upgrade') {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-blue-100 text-blue-800 border border-blue-300 dark:bg-blue-900/30 dark:text-blue-300">
-          <ChevronUp className="w-3 h-3" />{t('ibRebates.badgeUpgraded')}
+        <span className="inline-flex items-center gap-0.5 text-[12px] font-medium text-text-2">
+          <ChevronUp aria-hidden className="size-3.5" />{t('ibRebates.badgeUpgraded')}
         </span>
       );
     }
     if (type === 'downgrade') {
       return (
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-purple-100 text-purple-800 border border-purple-300 dark:bg-purple-900/30 dark:text-purple-300">
-          <ChevronDown className="w-3 h-3" />{t('ibRebates.badgeDowngraded')}
+        <span className="inline-flex items-center gap-0.5 text-[12px] font-medium text-text-2">
+          <ChevronDown aria-hidden className="size-3.5" />{t('ibRebates.badgeDowngraded')}
         </span>
       );
     }
     return null;
   };
 
+  const statusCell = (c: IbRebateConfig) => (
+    <span className="flex flex-col items-end gap-1 min-[720px]:items-start">
+      {renderAlertBadge(computeAlert(c, thresholds))}
+      {renderChangeTypeBadge(c.last_change_type)}
+      {c.goals_met && <StatusBadge kind="ok" label={t('ibRebates.goalsMet')} />}
+    </span>
+  );
+
+  const LEVEL_COLS = ['stp', 'ecn', 'cent', 'pro', 'vip', 'elite'] as const;
+
+  const columns: FinColumn<IbRebateConfig>[] = [
+    {
+      key: 'username',
+      header: t('ibRebates.colUsername'),
+      cell: (c) => c.username,
+      meta: (c) =>
+        `${new Date(c.last_update_date).toLocaleDateString()}${
+          c.last_update_date !== c.original_config_date ? ` · ${t('ibRebates.modified')}` : ''
+        }`,
+    },
+    {
+      key: 'original',
+      header: t('ibRebates.colOriginalDate'),
+      hideSm: true,
+      cell: (c) => <span className="tabular-nums text-text-2">{new Date(c.original_config_date).toLocaleDateString()}</span>,
+    },
+    ...LEVEL_COLS.map((k): FinColumn<IbRebateConfig> => ({
+      key: k,
+      header: k.toUpperCase(),
+      align: 'center',
+      hideSm: true,
+      cell: (c) => <span className={NUM_CLASS}>{c[k]}</span>,
+    })),
+    {
+      key: 'synthetic',
+      header: t('ibRebates.colSynthetic'),
+      align: 'center',
+      hideSm: true,
+      cell: (c) => <span className={NUM_CLASS}>{c.syntheticos_level}</span>,
+    },
+    {
+      key: 'propfirm',
+      header: 'PropFirm',
+      align: 'center',
+      hideSm: true,
+      cell: (c) => <span className={NUM_CLASS}>{c.propfirm_level}</span>,
+    },
+    { key: 'status', header: t('common.status'), cardSide: 'right', cell: statusCell },
+  ];
+
+  const rowActions = (c: IbRebateConfig) => (
+    <>
+      <button type="button" onClick={() => openEdit(c, 'edit')} title={t('common.edit')} aria-label={t('common.edit')} className={ROW_ACTION_CLASS}>
+        <Edit2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      </button>
+      <button type="button" onClick={() => openEdit(c, 'upgrade')} title={t('ibRebates.upgradeTitle')} aria-label={t('ibRebates.upgradeTitle')} className={ROW_ACTION_CLASS}>
+        <ChevronUp aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      </button>
+      <button type="button" onClick={() => openEdit(c, 'downgrade')} title={t('ibRebates.downgradeTitle')} aria-label={t('ibRebates.downgradeTitle')} className={ROW_ACTION_CLASS}>
+        <ChevronDown aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        onClick={() => handleToggleGoals(c)}
+        title={c.goals_met ? t('ibRebates.unsetGoals') : t('ibRebates.setGoals')}
+        aria-label={c.goals_met ? t('ibRebates.unsetGoals') : t('ibRebates.setGoals')}
+        aria-pressed={c.goals_met}
+        className={ROW_ACTION_CLASS}
+      >
+        <CheckCircle2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      </button>
+      <button type="button" onClick={() => handleViewHistory(c.id)} title={t('ibRebates.viewHistory')} aria-label={t('ibRebates.viewHistory')} className={ROW_ACTION_CLASS}>
+        <History aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      </button>
+      <button
+        type="button"
+        onClick={() => handleDelete(c)}
+        title={t('common.delete')}
+        aria-label={t('common.delete')}
+        className={ROW_DANGER_CLASS}
+      >
+        <Trash2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      </button>
+    </>
+  );
+
   if (loading) {
-    return <div className="p-8 text-center text-muted-foreground">{t('ibRebates.loading')}</div>;
+    return <p className="p-8 text-center text-[13px] text-text-3">{t('ibRebates.loading')}</p>;
   }
+
+  const filterLabels: Record<FilterAlert, string> = {
+    all: t('ibRebates.filterAll'),
+    green: t('ibRebates.filterGreen'),
+    yellow: t('ibRebates.filterYellow'),
+    orange: t('ibRebates.filterOrange'),
+    red: t('ibRebates.filterRed'),
+    goals_met: t('ibRebates.filterGoalsMet'),
+  };
 
   // ─── Render ─────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-4">
-      {/* Header con búsqueda + filtros + acciones */}
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative flex-1 min-w-[200px]">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <input
-            type="text"
-            placeholder={t('ibRebates.searchPlaceholder')}
+      <Panel
+        title={t('hr.ibConfigTab')}
+        hint={t('hrv.rowsShowing', { shown: String(filtered.length), total: String(configs.length) })}
+        actions={
+          <>
+            <ActionButton onClick={() => setShowImport(true)}>
+              <Upload aria-hidden className="size-[15px]" strokeWidth={1.75} /> {t('ibRebates.importExcel')}
+            </ActionButton>
+            <ActionButton onClick={() => setShowThresholds(true)}>
+              <Settings aria-hidden className="size-[15px]" strokeWidth={1.75} /> {t('ibRebates.thresholds')}
+            </ActionButton>
+            <ActionButton variant="primary" onClick={openCreate}>
+              <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} /> {t('ibRebates.newConfig')}
+            </ActionButton>
+          </>
+        }
+        flush
+      >
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          <SearchField
             value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-card text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
+            onChange={setSearch}
+            placeholder={t('ibRebates.searchPlaceholder')}
+            className="max-w-[320px] flex-1"
+          />
+          <Segmented
+            options={FILTERS.map((f) => ({ value: f, label: filterLabels[f], count: filterCounts[f] }))}
+            value={filterAlert}
+            onChange={setFilterAlert}
+            aria-label={t('common.status')}
+            className="max-w-full flex-wrap"
           />
         </div>
-        <select
-          value={filterAlert}
-          onChange={(e) => setFilterAlert(e.target.value as FilterAlert)}
-          className="px-3 py-2 rounded-lg border border-border bg-card text-sm"
-        >
-          <option value="all">{t('ibRebates.filterAll')}</option>
-          <option value="green">{t('ibRebates.filterGreen')}</option>
-          <option value="yellow">{t('ibRebates.filterYellow')}</option>
-          <option value="orange">{t('ibRebates.filterOrange')}</option>
-          <option value="red">{t('ibRebates.filterRed')}</option>
-          <option value="goals_met">{t('ibRebates.filterGoalsMet')}</option>
-        </select>
-        <button
-          onClick={() => setShowImport(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted"
-        >
-          <Upload className="w-4 h-4" /> {t('ibRebates.importExcel')}
-        </button>
-        <button
-          onClick={() => setShowThresholds(true)}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg border border-border bg-card text-sm hover:bg-muted"
-        >
-          <Settings className="w-4 h-4" /> {t('ibRebates.thresholds')}
-        </button>
-        <button
-          onClick={openCreate}
-          className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-        >
-          <Plus className="w-4 h-4" /> {t('ibRebates.newConfig')}
-        </button>
-      </div>
-
-      {/* Tabla */}
-      <div className="rounded-xl border border-border bg-card overflow-x-auto">
-        <table className="w-full text-sm min-w-[1100px]">
-          <thead className="bg-muted/50 text-xs text-muted-foreground">
-            <tr className="border-b border-border">
-              <th className="text-left py-2.5 px-3 font-medium">{t('ibRebates.colUsername')}</th>
-              <th className="text-left py-2.5 px-3 font-medium">{t('ibRebates.colOriginalDate')}</th>
-              <th className="text-left py-2.5 px-3 font-medium">{t('ibRebates.colLastUpdate')}</th>
-              <th className="text-center py-2.5 px-3 font-medium">STP</th>
-              <th className="text-center py-2.5 px-3 font-medium">ECN</th>
-              <th className="text-center py-2.5 px-3 font-medium">CENT</th>
-              <th className="text-center py-2.5 px-3 font-medium">PRO</th>
-              <th className="text-center py-2.5 px-3 font-medium">VIP</th>
-              <th className="text-center py-2.5 px-3 font-medium">ELITE</th>
-              <th className="text-center py-2.5 px-3 font-medium">{t('ibRebates.colSynthetic')}</th>
-              <th className="text-center py-2.5 px-3 font-medium">PropFirm</th>
-              <th className="text-left py-2.5 px-3 font-medium">{t('common.status')}</th>
-              <th className="text-right py-2.5 px-3 font-medium">{t('common.actions')}</th>
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={13}>
-                  <EmptyState
-                    compact
-                    title={t('ibRebates.emptyTitle')}
-                    description={t('ibRebates.emptyDesc')}
-                  />
-                </td>
-              </tr>
-            ) : filtered.map((c) => {
-              const alert = computeAlert(c, thresholds);
-              return (
-                <tr key={c.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                  <td className="p-3 font-medium">{c.username}</td>
-                  <td className="p-3 text-xs text-muted-foreground whitespace-nowrap">
-                    {new Date(c.original_config_date).toLocaleDateString()}
-                  </td>
-                  <td className="p-3 text-xs whitespace-nowrap">
-                    <div className="flex flex-col">
-                      <span className="font-medium">
-                        {new Date(c.last_update_date).toLocaleDateString()}
-                      </span>
-                      {c.last_update_date !== c.original_config_date && (
-                        <span className="text-[10px] text-muted-foreground">{t('ibRebates.modified')}</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="p-3 text-center">{c.stp}</td>
-                  <td className="p-3 text-center">{c.ecn}</td>
-                  <td className="p-3 text-center">{c.cent}</td>
-                  <td className="p-3 text-center">{c.pro}</td>
-                  <td className="p-3 text-center">{c.vip}</td>
-                  <td className="p-3 text-center">{c.elite}</td>
-                  <td className="p-3 text-center">{c.syntheticos_level}</td>
-                  <td className="p-3 text-center">{c.propfirm_level}</td>
-                  <td className="p-3">
-                    <div className="flex flex-col gap-1 items-start">
-                      {renderAlertBadge(alert)}
-                      {renderChangeTypeBadge(c.last_change_type)}
-                      {c.goals_met && (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-sky-100 text-sky-800 border border-sky-300 dark:bg-sky-900/30 dark:text-sky-300">
-                          <CheckCircle2 className="w-3 h-3" /> {t('ibRebates.goalsMet')}
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="p-3 text-right">
-                    <div className="inline-flex items-center gap-1">
-                      <button
-                        onClick={() => openEdit(c, 'edit')}
-                        title={t('common.edit')}
-                        className="p-1.5 rounded hover:bg-muted"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => openEdit(c, 'upgrade')}
-                        title={t('ibRebates.upgradeTitle')}
-                        className="p-1.5 rounded hover:bg-blue-50 dark:hover:bg-blue-950/40 text-blue-600"
-                      >
-                        <ChevronUp className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => openEdit(c, 'downgrade')}
-                        title={t('ibRebates.downgradeTitle')}
-                        className="p-1.5 rounded hover:bg-purple-50 dark:hover:bg-purple-950/40 text-purple-600"
-                      >
-                        <ChevronDown className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleToggleGoals(c)}
-                        title={c.goals_met ? t('ibRebates.unsetGoals') : t('ibRebates.setGoals')}
-                        className="p-1.5 rounded hover:bg-muted"
-                      >
-                        <CheckCircle2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleViewHistory(c.id)}
-                        title={t('ibRebates.viewHistory')}
-                        className="p-1.5 rounded hover:bg-muted"
-                      >
-                        <History className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDelete(c)}
-                        title={t('common.delete')}
-                        className="p-1.5 rounded hover:bg-red-50 text-red-600 dark:hover:bg-red-950/40"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+        <FinTable
+          columns={columns}
+          rows={filtered}
+          rowKey={(c) => c.id}
+          caption={t('hr.ibConfigTab')}
+          empty={<EmptyState compact title={t('ibRebates.emptyTitle')} description={t('ibRebates.emptyDesc')} />}
+          rowActions={rowActions}
+        />
+      </Panel>
 
       {showForm && (
         <FormModal
@@ -469,121 +479,80 @@ function FormModal({
   const heading = !editingId ? t('ibRebates.newConfig') : titleByIntent[intent];
 
   return (
-    <div
-      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
-      onClick={onClose}
-    >
-      <form
-        onSubmit={onSubmit}
-        onClick={(e) => e.stopPropagation()}
-        className="bg-card rounded-xl shadow-xl p-6 max-w-2xl w-full space-y-3 max-h-[90vh] overflow-y-auto"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">{heading}</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        {editingId && (
-          <p className="text-xs text-muted-foreground">
-            {t('ibRebates.formEditHintPre')}{' '}
-            <strong>{intent}</strong> {t('ibRebates.formEditHintPost')}
-          </p>
-        )}
-        <div className="grid grid-cols-2 gap-3">
-          <label className="block">
-            <span className="text-xs font-medium block mb-1">{t('ibRebates.colUsername')}</span>
-            <input
-              required
-              value={form.username}
-              onChange={(e) => setForm({ ...form, username: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldFile')}</span>
-            <input
-              value={form.archivo}
-              onChange={(e) => setForm({ ...form, archivo: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium block mb-1">
-              {editingId ? t('ibRebates.fieldDateLocked') : t('ibRebates.fieldDate')}
-            </span>
-            <input
-              type="date"
-              required
-              disabled={!!editingId}
-              value={form.config_date}
-              onChange={(e) => setForm({ ...form, config_date: e.target.value })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-            />
-            {editingId && (
-              <p className="text-[10px] text-muted-foreground mt-1">
-                {t('ibRebates.fieldDateHint')}
-              </p>
-            )}
-          </label>
-          <div />
-          {(['stp', 'ecn', 'cent', 'pro', 'vip', 'elite'] as const).map((k) => (
-            <label key={k} className="block">
-              <span className="text-xs font-medium block mb-1 uppercase">{k}</span>
-              <input
-                type="number"
-                step="0.01"
-                value={form[k]}
-                onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-              />
-            </label>
-          ))}
-          <label className="block">
-            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldSyntheticLevel')}</span>
-            <input
-              type="number"
-              value={form.syntheticos_level}
-              onChange={(e) => setForm({ ...form, syntheticos_level: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldPropfirmLevel')}</span>
-            <input
-              type="number"
-              value={form.propfirm_level}
-              onChange={(e) => setForm({ ...form, propfirm_level: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block col-span-2">
-            <span className="text-xs font-medium block mb-1">{t('ibRebates.fieldNotes')}</span>
-            <textarea
-              value={form.notes}
-              onChange={(e) => setForm({ ...form, notes: e.target.value })}
-              rows={2}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-        </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="submit"
-            className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-          >
+    <HrModal
+      title={heading}
+      hint={
+        editingId ? (
+          <>
+            {t('ibRebates.formEditHintPre')} <strong className="font-semibold text-text-2">{intent}</strong>{' '}
+            {t('ibRebates.formEditHintPost')}
+          </>
+        ) : undefined
+      }
+      onClose={onClose}
+      onSubmit={onSubmit}
+      size="lg"
+      footer={
+        <>
+          <ActionButton variant="ghost" onClick={onClose}>{t('common.cancel')}</ActionButton>
+          <ActionButton variant="primary" type="submit">
             {editingId ? t('common.save') : t('ibRebates.create')}
-          </button>
-        </div>
-      </form>
-    </div>
+          </ActionButton>
+        </>
+      }
+    >
+      <div className="grid grid-cols-2 gap-3">
+        <Field label={t('ibRebates.colUsername')} required>
+          <Input value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} />
+        </Field>
+        <Field label={t('ibRebates.fieldFile')}>
+          <Input value={form.archivo} onChange={(e) => setForm({ ...form, archivo: e.target.value })} />
+        </Field>
+        <Field
+          label={editingId ? t('ibRebates.fieldDateLocked') : t('ibRebates.fieldDate')}
+          hint={editingId ? t('ibRebates.fieldDateHint') : undefined}
+          required
+        >
+          <Input
+            type="date"
+            disabled={!!editingId}
+            value={form.config_date}
+            onChange={(e) => setForm({ ...form, config_date: e.target.value })}
+          />
+        </Field>
+        <div />
+        {(['stp', 'ecn', 'cent', 'pro', 'vip', 'elite'] as const).map((k) => (
+          <Field key={k} label={k.toUpperCase()}>
+            <Input
+              type="number"
+              step="0.01"
+              value={form[k]}
+              onChange={(e) => setForm({ ...form, [k]: Number(e.target.value) })}
+              className="text-right tabular-nums"
+            />
+          </Field>
+        ))}
+        <Field label={t('ibRebates.fieldSyntheticLevel')}>
+          <Input
+            type="number"
+            value={form.syntheticos_level}
+            onChange={(e) => setForm({ ...form, syntheticos_level: Number(e.target.value) })}
+            className="text-right tabular-nums"
+          />
+        </Field>
+        <Field label={t('ibRebates.fieldPropfirmLevel')}>
+          <Input
+            type="number"
+            value={form.propfirm_level}
+            onChange={(e) => setForm({ ...form, propfirm_level: Number(e.target.value) })}
+            className="text-right tabular-nums"
+          />
+        </Field>
+        <Field label={t('ibRebates.fieldNotes')} className="col-span-2">
+          <Textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} rows={2} />
+        </Field>
+      </div>
+    </HrModal>
   );
 }
 
@@ -621,89 +590,43 @@ function ThresholdsModal({
     }
   };
 
+  const dayField = (key: keyof typeof form, labelKey: string) => (
+    <Field label={t(labelKey)}>
+      <Input
+        type="number"
+        value={form[key]}
+        onChange={(e) => setForm({ ...form, [key]: Number(e.target.value) })}
+        className="text-right tabular-nums"
+      />
+    </Field>
+  );
+
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <form
-        onSubmit={submit}
-        onClick={(e) => e.stopPropagation()}
-        className="bg-card rounded-xl shadow-xl p-6 max-w-md w-full space-y-3"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">{t('ibRebates.thresholdsTitle')}</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <p className="text-xs text-muted-foreground">
-          {t('ibRebates.thresholdsHint')}
-        </p>
-        <div className="space-y-3">
-          <p className="text-sm font-medium">{t('ibRebates.modeInitial')}</p>
-          <label className="block">
-            <span className="text-xs">{t('ibRebates.daysYellowInitial')}</span>
-            <input
-              type="number"
-              value={form.initial_yellow_days}
-              onChange={(e) => setForm({ ...form, initial_yellow_days: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs">{t('ibRebates.daysRedInitial')}</span>
-            <input
-              type="number"
-              value={form.initial_red_days}
-              onChange={(e) => setForm({ ...form, initial_red_days: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <p className="text-sm font-medium pt-2">{t('ibRebates.modeRecurring')}</p>
-          <label className="block">
-            <span className="text-xs">{t('ibRebates.daysYellow')}</span>
-            <input
-              type="number"
-              value={form.recurring_yellow_days}
-              onChange={(e) => setForm({ ...form, recurring_yellow_days: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs">{t('ibRebates.daysOrange')}</span>
-            <input
-              type="number"
-              value={form.recurring_orange_days}
-              onChange={(e) => setForm({ ...form, recurring_orange_days: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs">{t('ibRebates.daysRed')}</span>
-            <input
-              type="number"
-              value={form.recurring_red_days}
-              onChange={(e) => setForm({ ...form, recurring_red_days: Number(e.target.value) })}
-              className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-            />
-          </label>
-        </div>
-        <div className="flex justify-end gap-2 pt-2">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted"
-          >
-            {t('common.cancel')}
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-          >
+    <HrModal
+      title={t('ibRebates.thresholdsTitle')}
+      hint={t('ibRebates.thresholdsHint')}
+      onClose={onClose}
+      onSubmit={submit}
+      size="sm"
+      footer={
+        <>
+          <ActionButton variant="ghost" onClick={onClose}>{t('common.cancel')}</ActionButton>
+          <ActionButton variant="primary" type="submit" loading={saving}>
             {saving ? t('common.saving') : t('common.save')}
-          </button>
-        </div>
-      </form>
-    </div>
+          </ActionButton>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <p className="text-[13px] font-semibold text-foreground">{t('ibRebates.modeInitial')}</p>
+        {dayField('initial_yellow_days', 'ibRebates.daysYellowInitial')}
+        {dayField('initial_red_days', 'ibRebates.daysRedInitial')}
+        <p className="pt-2 text-[13px] font-semibold text-foreground">{t('ibRebates.modeRecurring')}</p>
+        {dayField('recurring_yellow_days', 'ibRebates.daysYellow')}
+        {dayField('recurring_orange_days', 'ibRebates.daysOrange')}
+        {dayField('recurring_red_days', 'ibRebates.daysRed')}
+      </div>
+    </HrModal>
   );
 }
 
@@ -742,77 +665,66 @@ function ImportModal({
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div onClick={(e) => e.stopPropagation()} className="bg-card rounded-xl shadow-xl p-6 max-w-md w-full space-y-3">
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">{t('ibRebates.importTitle')}</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        {result ? (
-          <div className="space-y-2 text-sm">
-            <p>{t('ibRebates.importTotal')} <strong>{result.total}</strong></p>
-            <p>{t('ibRebates.importInserted')} <strong className="text-emerald-600">{result.inserted}</strong></p>
-            <p>{t('ibRebates.importUpdated')} <strong className="text-blue-600">{result.updated}</strong></p>
-            <p>{t('ibRebates.importSkipped')} <strong className="text-yellow-600">{result.skipped}</strong></p>
-            {result.errors.length > 0 && (
-              <div className="rounded p-2 bg-red-50 border border-red-200 text-xs max-h-32 overflow-y-auto dark:bg-red-950/40 dark:border-red-900">
-                <p className="font-medium text-red-800 dark:text-red-300 mb-1">{t('ibRebates.importErrors')}</p>
-                {result.errors.map((er, i) => <p key={i}>{er}</p>)}
-              </div>
-            )}
-            <button
-              onClick={onImported}
-              className="w-full mt-3 px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-            >
-              {t('common.close')}
-            </button>
-          </div>
-        ) : (
-          <form onSubmit={submit} className="space-y-3">
-            <p className="text-xs text-muted-foreground">
-              {t('ibRebates.importColumns')}
-            </p>
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-              required
-              className="w-full text-sm"
-            />
-            <label className="block">
-              <span className="text-xs font-medium block mb-1">{t('ibRebates.importModeLabel')}</span>
-              <select
-                value={mode}
-                onChange={(e) => setMode(e.target.value as 'skip' | 'update')}
-                className="w-full px-3 py-2 rounded-lg border border-border bg-background text-sm"
-              >
-                <option value="skip">{t('ibRebates.importModeSkip')}</option>
-                <option value="update">{t('ibRebates.importModeUpdate')}</option>
-              </select>
-            </label>
-            <div className="flex justify-end gap-2 pt-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="px-3 py-2 rounded-lg border border-border text-sm hover:bg-muted"
-              >
-                {t('common.cancel')}
-              </button>
-              <button
-                type="submit"
-                disabled={uploading || !file}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50"
-              >
-                {uploading ? t('ibRebates.importing') : t('ibRebates.importAction')}
-              </button>
+  if (result) {
+    // El resultado es un recuento: los números van en el color de su
+    // significado sólo donde lo tienen (errores = neg); el resto, tabular.
+    return (
+      <HrModal
+        title={t('ibRebates.importTitle')}
+        onClose={onImported}
+        size="sm"
+        footer={<ActionButton variant="primary" onClick={onImported}>{t('common.close')}</ActionButton>}
+      >
+        <dl className="space-y-1.5 text-[13px]">
+          {([
+            ['ibRebates.importTotal', result.total],
+            ['ibRebates.importInserted', result.inserted],
+            ['ibRebates.importUpdated', result.updated],
+            ['ibRebates.importSkipped', result.skipped],
+          ] as const).map(([k, n]) => (
+            <div key={k} className="flex justify-between gap-3">
+              <dt className="text-text-2">{t(k)}</dt>
+              <dd className={cn(NUM_CLASS, 'font-semibold text-foreground')}>{n}</dd>
             </div>
-          </form>
+          ))}
+        </dl>
+        {result.errors.length > 0 && (
+          <Notice kind="bad" title={`${t('ibRebates.importErrors')} ${result.errors.length}`} className="mt-3">
+            <div className="max-h-32 overflow-y-auto text-[12px]">
+              {result.errors.map((er, i) => <p key={i}>{er}</p>)}
+            </div>
+          </Notice>
         )}
+      </HrModal>
+    );
+  }
+
+  return (
+    <HrModal
+      title={t('ibRebates.importTitle')}
+      hint={t('ibRebates.importColumns')}
+      onClose={onClose}
+      onSubmit={submit}
+      size="sm"
+      footer={
+        <>
+          <ActionButton variant="ghost" onClick={onClose}>{t('common.cancel')}</ActionButton>
+          <ActionButton variant="primary" type="submit" disabled={!file} loading={uploading}>
+            {uploading ? t('ibRebates.importing') : t('ibRebates.importAction')}
+          </ActionButton>
+        </>
+      }
+    >
+      <div className="space-y-3">
+        <FilePick file={file} onFile={setFile} placeholder={t('ibRebates.importExcel')} accept=".xlsx,.xls" />
+        <Field label={t('ibRebates.importModeLabel')}>
+          <Select value={mode} onChange={(e) => setMode(e.target.value as 'skip' | 'update')}>
+            <option value="skip">{t('ibRebates.importModeSkip')}</option>
+            <option value="update">{t('ibRebates.importModeUpdate')}</option>
+          </Select>
+        </Field>
       </div>
-    </div>
+    </HrModal>
   );
 }
 
@@ -824,46 +736,30 @@ function HistoryModal({
 }) {
   const { t } = useI18n();
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="bg-card rounded-xl shadow-xl p-6 max-w-2xl w-full space-y-3 max-h-[90vh] overflow-y-auto"
-      >
-        <div className="flex items-center justify-between">
-          <h3 className="text-lg font-semibold">{t('ibRebates.historyTitle')}</h3>
-          <button type="button" onClick={onClose} className="p-1 rounded hover:bg-muted" aria-label={t('common.close')}>
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        {entries.length === 0 ? (
-          <EmptyState compact title={t('ibRebates.historyEmptyTitle')} description={t('ibRebates.historyEmptyDesc')} />
-        ) : (
-          <div className="space-y-2">
-            {entries.map((e) => (
-              <div key={e.id} className="rounded-lg border border-border p-3 text-sm">
-                <div className="flex justify-between mb-1">
-                  <span className="font-medium capitalize">{t(`ibRebates.changeType.${e.change_type}`)}</span>
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(e.created_at).toLocaleString()}
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  {t('ibRebates.historyBy', { name: e.changed_by_name || t('ibRebates.unknownUser') })}
-                </p>
-                {e.notes && <p className="text-xs mt-1">{e.notes}</p>}
+    <HrModal
+      title={t('ibRebates.historyTitle')}
+      onClose={onClose}
+      size="lg"
+      footer={<ActionButton onClick={onClose}>{t('common.close')}</ActionButton>}
+    >
+      {entries.length === 0 ? (
+        <EmptyState compact title={t('ibRebates.historyEmptyTitle')} description={t('ibRebates.historyEmptyDesc')} />
+      ) : (
+        <ol className="divide-y divide-border rounded-ui-md border border-border">
+          {entries.map((e) => (
+            <li key={e.id} className="px-3 py-2.5 text-[13px]">
+              <div className="flex justify-between gap-3">
+                <span className="font-medium capitalize text-foreground">{t(`ibRebates.changeType.${e.change_type}`)}</span>
+                <span className="text-[12px] tabular-nums text-text-3">{new Date(e.created_at).toLocaleString()}</span>
               </div>
-            ))}
-          </div>
-        )}
-        <div className="flex justify-end pt-2">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-          >
-            {t('common.close')}
-          </button>
-        </div>
-      </div>
-    </div>
+              <p className="text-[12px] text-text-3">
+                {t('ibRebates.historyBy', { name: e.changed_by_name || t('ibRebates.unknownUser') })}
+              </p>
+              {e.notes && <p className="mt-1 text-[12.5px] text-text-2">{e.notes}</p>}
+            </li>
+          ))}
+        </ol>
+      )}
+    </HrModal>
   );
 }

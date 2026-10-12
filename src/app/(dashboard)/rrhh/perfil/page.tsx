@@ -3,19 +3,64 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { Card, CardTitle, CardValue } from '@/components/ui/card';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Money } from '@/components/ui/money';
+import { Field, Input, Select } from '@/components/ui/field';
+import { useToasts } from '@/components/ui/toast';
+import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
 import { HR_COMMERCIAL_ROLES, hrRoleLabel, possibleHeads } from '@/lib/hr/domain';
 import { useData } from '@/lib/data-context';
-import { formatCurrency } from '@/lib/utils';
 import { formatDate } from '@/lib/dates';
 import { downloadCSV } from '@/lib/csv-export';
 import { useAuth } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
 import { useI18n } from '@/lib/i18n';
+import { cn } from '@/lib/utils';
 import { updateCommercialProfile } from '@/lib/supabase/mutations';
 import { apiFetch, withActiveCompany } from '@/lib/api-fetch';
-import type { CommercialProfile, CommercialMonthlyResult, Negotiation, NegotiationStatus } from '@/lib/types';
-import { ArrowLeft, Download, Mail, DollarSign, TrendingUp, UserCircle, Users, Calendar, Gift, Plus, Check, Pencil, X, FileText, Upload, ExternalLink, Handshake, Trash2, Calculator } from 'lucide-react';
+import type { CommercialProfile, CommercialMonthlyResult, Negotiation } from '@/lib/types';
+import {
+  ArrowLeft, Download, Calendar, Gift, Check, Pencil, X, FileText, ExternalLink, Trash2, Calculator, UserCircle,
+} from 'lucide-react';
+import { FilePick, ROW_ACTION_CLASS, ROW_DANGER_CLASS } from '../_components/hr-ui';
+import { negStatusView, pctText, profileStatusView } from '../_components/hr-view';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// /rrhh/perfil?id=… — la ficha de un perfil comercial.
+//
+// «Libro mayor» (2026-10-12) — sólo presentación; los guardados (PATCH del
+// perfil, subida del contrato, borrado de negociación) son los mismos:
+//   · Cabecera con los datos clave en una línea (rol, email, estado con
+//     StatusBadge, supervisor, alta, cumpleaños) y el CSV a la derecha.
+//   · Cuatro StatCard con ícono de color → KpiStrip. «Total ganado» con CERO
+//     resultados guardados mostraba $0.00; ahora «—» + «sin resultados» (un
+//     perfil al que nunca se le calculó un mes no ganó cero, reglas §1.3).
+//     Salario fijo «N/A» → «—» + «sin salario fijo».
+//   · Pestañas (Segmented): Datos · Resultados · Negociaciones · Equipo. La
+//     ficha era una sola columna de seis tarjetas; el historial quedaba abajo
+//     de todo.
+//   · Formulario de edición con Field/Input/Select (antes `<label>` sueltos).
+//   · Contrato en su Panel con StatusBadge `ok` «En archivo» (antes franja
+//     verde + botón `bg-emerald-600 text-white`). Los textos del contrato y
+//     del aviso de /comisiones estaban en castellano fijo: ahora en i18n.
+//   · Resultados mensuales, negociaciones y equipo en FinTable; resultados
+//     con pie de total (doble raya). El estado de una negociación sale de
+//     NEG_STATUS_VIEW (hr-view.ts) — acá había un TERCER mapa de colores
+//     (ternario inline), con «cerrada» en rojo.
+//   · El aviso «Contrato subido» se guardaba en un estado que no se dibujaba
+//     en ningún lado: ahora es un toast.
+// Medición (sin comentarios): antes 20 clases de paleta cruda, 7 `dark:` de
+// color, 2 `text-[10px]` y 90 tokens legados; después 0 / 0 / 0 / 0.
+//
+// DESCARTADO: borrar los `formX` del formulario «Agregar resultado mensual»
+// que se quitó el 2026-08-06 — eran estado muerto y se fueron con esta tanda
+// (ninguno llegaba a un guardado).
+// ─────────────────────────────────────────────────────────────────────────────
 
 // Small adapter so callsites that used to render the raw `hire_date` string
 // when formatter returned null keep that behaviour. formatDate returns ''
@@ -27,6 +72,10 @@ function formatDateDMY(dateStr: string | null): string | null {
   return formatted || dateStr;
 }
 
+type Section = 'details' | 'results' | 'negotiations' | 'team';
+
+const positiveOrNull = (v: number) => (v > 0 ? v : null);
+
 export default function PerfilPage() {
   const { t } = useI18n();
   const { user } = useAuth();
@@ -34,6 +83,7 @@ export default function PerfilPage() {
   const { getProfileById, getMonthlyResults, getProfilesByHead, getTotalCommissions, commercialProfiles, periods, refresh } = useData();
   const searchParams = useSearchParams();
   const profileId = searchParams.get('id');
+  const { toast, ToastHost } = useToasts();
 
   // Resolve profile + results before hooks so initial values are available.
   // May be null if profileId is missing or invalid — handled after hooks.
@@ -41,9 +91,8 @@ export default function PerfilPage() {
   const initialResults = profileId ? getMonthlyResults(profileId) : [];
 
   // ALL hooks must be called unconditionally (React rules of hooks).
-  const [results, setResults] = useState<CommercialMonthlyResult[]>(initialResults);
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [successMsg, setSuccessMsg] = useState('');
+  const [results] = useState<CommercialMonthlyResult[]>(initialResults);
+  const [section, setSection] = useState<Section>('details');
   const [profileData, setProfileData] = useState<CommercialProfile | null>(profile ?? null);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
   const [editName, setEditName] = useState(profile?.name ?? '');
@@ -60,16 +109,6 @@ export default function PerfilPage() {
   const [editBirthday, setEditBirthday] = useState(profile?.birthday ?? '');
   const [editStatus, setEditStatus] = useState(profile?.status ?? 'active');
   const [saving, setSaving] = useState(false);
-  const [formPeriod, setFormPeriod] = useState(periods[periods.length - 1]?.id || '');
-  const [formNetDepCurrent, setFormNetDepCurrent] = useState(0);
-  const [formNetDepAccum, setFormNetDepAccum] = useState(0);
-  const [formNetDepTotal, setFormNetDepTotal] = useState(0);
-  const [formPnlCurrent, setFormPnlCurrent] = useState(0);
-  const [formPnlAccum, setFormPnlAccum] = useState(0);
-  const [formPnlTotal, setFormPnlTotal] = useState(0);
-  const [formCommissions, setFormCommissions] = useState(0);
-  const [formBonus, setFormBonus] = useState(0);
-  const [formSalary, setFormSalary] = useState(0);
 
   const [contractFile, setContractFile] = useState<File | null>(null);
   const [uploadingContract, setUploadingContract] = useState(false);
@@ -95,20 +134,13 @@ export default function PerfilPage() {
   const heads = possibleHeads(commercialProfiles, { excludeId: profileId ?? undefined });
 
   // Early returns AFTER all hooks
-  if (!profileId) {
+  if (!profileId || !profile || !profileData) {
     return (
-      <div className="text-center py-12 text-muted-foreground">
-        <p>{t('hr.noProfileSpecified')}</p>
-        <Link href="/rrhh" className="text-primary dark:text-accent hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
-      </div>
-    );
-  }
-
-  if (!profile || !profileData) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        <p>{t('hr.profileNotFound')}</p>
-        <Link href="/rrhh" className="text-primary dark:text-accent hover:underline mt-2 inline-block">{t('hr.backToHr')}</Link>
+      <div className="py-12 text-center">
+        <p className="text-[13.5px] text-text-2">{!profileId ? t('hr.noProfileSpecified') : t('hr.profileNotFound')}</p>
+        <Link href="/rrhh" className="mt-2 inline-block text-[13px] font-medium text-brand-ink hover:underline">
+          {t('hr.backToHr')}
+        </Link>
       </div>
     );
   }
@@ -137,10 +169,9 @@ export default function PerfilPage() {
       if (!res.ok || data.error) throw new Error(data.error);
       setProfileData({ ...profileData!, contract_url: data.url });
       setContractFile(null);
-      setSuccessMsg('Contrato subido correctamente');
-      setTimeout(() => setSuccessMsg(''), 3000);
+      toast.success(t('hrv.contractUploadedOk'));
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Error subiendo contrato');
+      alert(err instanceof Error ? err.message : t('hrv.contractUploadError'));
     }
     setUploadingContract(false);
   };
@@ -192,8 +223,6 @@ export default function PerfilPage() {
     setIsEditingProfile(false);
   };
 
-  const formTotalEarned = formCommissions + formBonus + formSalary;
-
   const subordinates = getProfilesByHead(profileId);
   const totalEarned = results.reduce((s, r) => s + r.total_earned, 0);
   const totalCommissions = results.reduce((s, r) => s + r.commissions_earned, 0);
@@ -201,6 +230,7 @@ export default function PerfilPage() {
   const totalBonus = results.reduce((s, r) => s + r.bonus, 0);
   const totalSalary = results.reduce((s, r) => s + r.salary_paid, 0);
   const totalNetDeposit = results.reduce((s, r) => s + r.net_deposit_current, 0);
+  const hasResults = results.length > 0;
 
   const getPeriodLabel = (periodId: string) => {
     const p = periods.find(pp => pp.id === periodId);
@@ -218,456 +248,400 @@ export default function PerfilPage() {
     downloadCSV(`resultados_${profileData.name.replace(/\s/g, '_')}.csv`, headers, rows);
   });
 
+  const status = profileStatusView(profileData);
+  const supervisor = profileData.head_id
+    ? commercialProfiles.find((h) => h.id === profileData.head_id) ?? null
+    : null;
+  const fixedSalary = profileData.fixed_salary && profileData.salary != null ? profileData.salary : null;
+
+  // ── Columnas ────────────────────────────────────────────────────────────
+  const resultColumns: FinColumn<CommercialMonthlyResult>[] = [
+    { key: 'period', header: t('hr.period'), cell: (r) => getPeriodLabel(r.period_id) },
+    { key: 'ndCurrent', header: t('hr.netDepActual'), kind: 'money', value: (r) => r.net_deposit_current },
+    { key: 'ndAcc', header: t('hrv.ndAccumulated'), kind: 'money', hideSm: true, value: (r) => r.net_deposit_accumulated, subtotal: false },
+    { key: 'ndTotal', header: t('hrv.ndTotal'), kind: 'money', hideSm: true, value: (r) => r.net_deposit_total, subtotal: false },
+    { key: 'pnlCurrent', header: t('hr.pnlCurrent'), kind: 'money', hideSm: true, value: (r) => positiveOrNull(r.pnl_current) },
+    { key: 'pnlAcc', header: t('hr.pnlAccumulated'), kind: 'money', hideSm: true, value: (r) => positiveOrNull(r.pnl_accumulated), subtotal: false },
+    { key: 'pnlTotal', header: t('hr.pnlTotal'), kind: 'money', hideSm: true, value: (r) => positiveOrNull(r.pnl_total), subtotal: false },
+    { key: 'commissions', header: t('hr.commissions'), kind: 'money', hideSm: true, value: (r) => r.commissions_earned },
+    { key: 'bonus', header: t('hr.bonus'), kind: 'money', hideSm: true, value: (r) => positiveOrNull(r.bonus) },
+    { key: 'salary', header: t('hr.salaryCol'), kind: 'money', hideSm: true, value: (r) => positiveOrNull(r.salary_paid) },
+    { key: 'totalEarned', header: t('hr.totalEarned'), kind: 'money', value: (r) => r.total_earned },
+  ];
+
+  const negColumns: FinColumn<Negotiation>[] = [
+    {
+      key: 'title',
+      header: t('hr.negotiationTitle'),
+      cell: (n) => n.title,
+      meta: (n) => n.description || undefined,
+      mobileMeta: (n) => {
+        const v = negStatusView(n.status);
+        return <StatusBadge kind={v.kind} label={t(v.labelKey)} />;
+      },
+    },
+    {
+      key: 'status',
+      header: t('hr.negotiationStatus'),
+      hideSm: true,
+      cell: (n) => {
+        const v = negStatusView(n.status);
+        return <StatusBadge kind={v.kind} label={t(v.labelKey)} />;
+      },
+    },
+    {
+      key: 'updated',
+      header: t('hr.negotiationUpdated'),
+      align: 'right',
+      cardSide: 'right',
+      cell: (n) => <span className="tabular-nums text-text-2">{formatDate(n.updated_at)}</span>,
+    },
+  ];
+
+  const teamColumns: FinColumn<CommercialProfile>[] = [
+    {
+      key: 'name',
+      header: t('common.name'),
+      cell: (sub) => (
+        <Link href={`/rrhh/perfil?id=${sub.id}`} className="hover:underline">
+          {sub.name}
+        </Link>
+      ),
+      meta: (sub) => `${hrRoleLabel(sub.role)} · ${sub.email}`,
+    },
+    {
+      key: 'ndPct',
+      header: t('hr.netDepPct'),
+      align: 'right',
+      hideSm: true,
+      cell: (sub) => <span className="tabular-nums">{pctText(sub.net_deposit_pct) ?? '—'}</span>,
+    },
+    { key: 'total', header: t('hr.totalEarned'), kind: 'money', value: (sub) => getTotalCommissions(sub.id), subtotal: false },
+  ];
+
+  const sections = [
+    { value: 'details' as const, label: t('hr.profileDetails') },
+    { value: 'results' as const, label: t('hr.monthlyResults'), count: results.length },
+    { value: 'negotiations' as const, label: t('hr.negotiations'), count: negLoading ? null : negotiations.length },
+    ...(subordinates.length > 0 ? [{ value: 'team' as const, label: t('hr.team'), count: subordinates.length }] : []),
+  ];
+
+  /** Un dato del perfil en modo lectura: etiqueta 12.5 `text-2` + valor. */
+  const detail = (label: string, value: React.ReactNode) => (
+    <div className="flex flex-col gap-0.5">
+      <dt className="text-[12.5px] text-text-2">{label}</dt>
+      <dd className="text-[13.5px] font-medium text-foreground">{value ?? <span className="text-text-3">—</span>}</dd>
+    </div>
+  );
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <Link href="/rrhh" className="p-2 rounded-lg hover:bg-muted transition-colors">
-            <ArrowLeft className="w-5 h-5" />
+      {ToastHost}
+
+      {/* ── Cabecera con los datos clave ─────────────────────────────────── */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <Link href="/rrhh" className={cn(ROW_ACTION_CLASS, 'mt-0.5')} aria-label={t('hr.backToHr')} title={t('hr.backToHr')}>
+            <ArrowLeft aria-hidden className="size-4" />
           </Link>
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center">
-              <UserCircle className="w-7 h-7 text-violet-600" />
-            </div>
-            <div>
-              <h1 className="text-2xl font-bold">{profileData.name}</h1>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span className="px-2 py-0.5 rounded-full bg-violet-50 dark:bg-violet-950/50 text-violet-700 text-xs font-medium">
-                  {hrRoleLabel(profileData.role)}
+          <span aria-hidden className="mt-0.5 hidden size-10 shrink-0 items-center justify-center rounded-full bg-surface-2 text-text-2 sm:flex">
+            <UserCircle className="size-6" strokeWidth={1.5} />
+          </span>
+          <div className="min-w-0">
+            <h1 className="text-[20px] font-[650] leading-7 tracking-[-0.015em] text-foreground sm:text-[22px]">
+              {profileData.name}
+            </h1>
+            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13.5px] text-text-2">
+              <span>{hrRoleLabel(profileData.role)}</span>
+              <span aria-hidden className="text-text-3">·</span>
+              <span className="break-all">{profileData.email}</span>
+              <StatusBadge kind={status.kind} label={t(status.labelKey)} />
+            </p>
+            <p className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-text-3">
+              {supervisor && (
+                <span>
+                  {t('hr.supervisor')}:{' '}
+                  <Link href={`/rrhh/perfil?id=${supervisor.id}`} className="text-text-2 hover:underline">
+                    {supervisor.name}
+                  </Link>
                 </span>
-                <Mail className="w-3 h-3" />
-                <span>{profileData.email}</span>
-              </div>
-              {(profileData.hire_date || profileData.birthday) && (
-                <div className="flex items-center gap-4 text-xs text-muted-foreground mt-1">
-                  {profileData.hire_date && (
-                    <span className="flex items-center gap-1">
-                      <Calendar className="w-3 h-3" />
-                      {t('hr.hireDate')}: {formatDateDMY(profileData.hire_date)}
-                    </span>
-                  )}
-                  {profileData.birthday && (
-                    <span className="flex items-center gap-1">
-                      <Gift className="w-3 h-3" />
-                      {t('hr.birthday')}: {formatDateDMY(profileData.birthday)}
-                    </span>
-                  )}
-                </div>
               )}
-            </div>
-          </div>
-        </div>
-        <button
-          onClick={handleExport}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors"
-          title={t('hr.downloadCsv')}
-        >
-          <Download className="w-4 h-4" />
-          CSV
-        </button>
-      </div>
-
-      {/* Profile Info Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-info/10"><TrendingUp className="w-5 h-5 text-blue-500" /></div>
-            <CardTitle>{t('hr.netDepPct')}</CardTitle>
-          </div>
-          <CardValue>{profileData.net_deposit_pct != null ? `${profileData.net_deposit_pct}%` : 'N/A'}</CardValue>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-positive/10"><TrendingUp className="w-5 h-5 text-emerald-500" /></div>
-            <CardTitle>{t('hr.pnlPct')}</CardTitle>
-          </div>
-          <CardValue>{profileData.pnl_pct != null ? `${profileData.pnl_pct}%` : 'N/A'}</CardValue>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-warning/10"><DollarSign className="w-5 h-5 text-amber-500" /></div>
-            <CardTitle>{t('hr.fixedSalary')}</CardTitle>
-          </div>
-          <CardValue>{profileData.fixed_salary && profileData.salary != null ? formatCurrency(profileData.salary) : 'N/A'}</CardValue>
-        </Card>
-        <Card>
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 rounded-lg bg-violet-50 dark:bg-violet-950/50"><DollarSign className="w-5 h-5 text-violet-500" /></div>
-            <CardTitle>{t('hr.totalEarned')}</CardTitle>
-          </div>
-          <CardValue>{formatCurrency(totalEarned)}</CardValue>
-        </Card>
-      </div>
-
-      {/* Profile Details */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">{t('hr.profileDetails')}</h2>
-          {!isEditingProfile ? (
-            <button
-              onClick={() => setIsEditingProfile(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              {t('hr.editProfile')}
-            </button>
-          ) : (
-            <div className="flex items-center gap-2">
-              <button onClick={handleCancelEdit} className="px-3 py-1.5 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors">
-                <X className="w-4 h-4" />
-              </button>
-              <button onClick={handleSaveProfile} className="px-4 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90">
-                {t('common.save')}
-              </button>
-            </div>
-          )}
-        </div>
-
-        {isEditingProfile ? (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('common.name')}</label>
-              <input aria-label={t('common.name')} value={editName} onChange={e => setEditName(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('common.email')}</label>
-              <input aria-label={t('common.email')} value={editEmail} onChange={e => setEditEmail(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.role')}</label>
-              <select aria-label={t('hr.role')} value={editRole} onChange={e => setEditRole(e.target.value as CommercialProfile['role'])} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-                {/* Las opciones salen del registro de roles comerciales. */}
-                {HR_COMMERCIAL_ROLES.map((r) => (
-                  <option key={r} value={r}>{hrRoleLabel(r)}</option>
-                ))}
-              </select>
-            </div>
-            {editRole === 'bdm' && (
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-muted-foreground">{t('hr.supervisor')}</label>
-                <select aria-label={t('hr.supervisor')} value={editHeadId} onChange={e => setEditHeadId(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-                  <option value="">{t('hr.noSupervisor')}</option>
-                  {heads.map(h => (
-                    <option key={h.id} value={h.id}>{h.name} ({hrRoleLabel(h.role)})</option>
-                  ))}
-                </select>
-              </div>
-            )}
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.netDepPct')}</label>
-              <input aria-label={t('hr.ndPctPlaceholder')} type="number" value={editNdPct} onChange={e => setEditNdPct(e.target.value)} placeholder={t('hr.ndPctPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.pnlPct')}</label>
-              <input aria-label={t('hr.pnlPctPlaceholder')} type="number" value={editPnlPct} onChange={e => setEditPnlPct(e.target.value)} placeholder={t('hr.pnlPctPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.commissionPerLot')}</label>
-              <input aria-label={t('hr.commLotPlaceholder')} type="number" value={editCommLot} onChange={e => setEditCommLot(e.target.value)} placeholder={t('hr.commLotPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.fixedSalary')}</label>
-              <input aria-label={t('hr.salaryUsdPlaceholder')} type="number" value={editSalary} onChange={e => setEditSalary(e.target.value)} placeholder={t('hr.salaryUsdPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.benefits')}</label>
-              <input aria-label={t('hr.benefitsPlaceholder')} value={editBenefits} onChange={e => setEditBenefits(e.target.value)} placeholder={t('hr.benefitsPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.comments')}</label>
-              <input aria-label={t('hr.commentsPlaceholder')} value={editComments} onChange={e => setEditComments(e.target.value)} placeholder={t('hr.commentsPlaceholder')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.hireDate')}</label>
-              <input aria-label={t('hr.hireDate')} type="date" value={editHireDate} onChange={e => setEditHireDate(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.birthday')}</label>
-              <input aria-label={t('hr.birthday')} type="date" value={editBirthday} onChange={e => setEditBirthday(e.target.value)} className="px-3 py-2 rounded-lg border border-border bg-card text-sm" />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-muted-foreground">{t('hr.status')}</label>
-              <select aria-label={t('hr.status')} value={editStatus} onChange={e => setEditStatus(e.target.value as 'active' | 'inactive')} className="px-3 py-2 rounded-lg border border-border bg-card text-sm">
-                <option value="active">{t('hr.statusActive')}</option>
-                <option value="inactive">{t('hr.statusInactive')}</option>
-              </select>
-            </div>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-3 text-sm">
-            <div>
-              <span className="text-muted-foreground">{t('common.name')}:</span>{' '}
-              <span className="font-medium">{profileData.name}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('common.email')}:</span>{' '}
-              <span className="font-medium">{profileData.email}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('hr.role')}:</span>{' '}
-              <span className="font-medium">{hrRoleLabel(profileData.role)}</span>
-            </div>
-            {profileData.role === 'bdm' && profileData.head_id && (
-              <div>
-                <span className="text-muted-foreground">{t('hr.supervisor')}:</span>{' '}
-                <span className="font-medium">{heads.find((h) => h.id === profileData.head_id)?.name || '-'}</span>
-              </div>
-            )}
-            <div>
-              <span className="text-muted-foreground">{t('hr.netDepPct')}:</span>{' '}
-              <span className="font-medium">{profileData.net_deposit_pct != null ? `${profileData.net_deposit_pct}%` : 'N/A'}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('hr.pnlPct')}:</span>{' '}
-              <span className="font-medium">{profileData.pnl_pct != null ? `${profileData.pnl_pct}%` : 'N/A'}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('hr.commissionPerLot')}:</span>{' '}
-              <span className="font-medium">{profileData.commission_per_lot != null ? `$${profileData.commission_per_lot}` : 'N/A'}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('hr.fixedSalary')}:</span>{' '}
-              <span className="font-medium">{profileData.fixed_salary && profileData.salary != null ? formatCurrency(profileData.salary) : 'N/A'}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('hr.benefits')}:</span>{' '}
-              <span className="font-medium">{profileData.benefits || '-'}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('hr.comments')}:</span>{' '}
-              <span className="font-medium">{profileData.comments || '-'}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Calendar className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-muted-foreground">{t('hr.hireDate')}:</span>{' '}
-              <span className="font-medium">{profileData.hire_date ? formatDateDMY(profileData.hire_date) : '-'}</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <Gift className="w-3.5 h-3.5 text-muted-foreground" />
-              <span className="text-muted-foreground">{t('hr.birthday')}:</span>{' '}
-              <span className="font-medium">{profileData.birthday ? formatDateDMY(profileData.birthday) : '-'}</span>
-            </div>
-            <div>
-              <span className="text-muted-foreground">{t('hr.status')}:</span>{' '}
-              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${profileData.status === 'active' ? 'bg-positive/10 text-positive' : 'bg-negative/10 text-negative'}`}>
-                {profileData.status === 'active' ? t('hr.statusActive') : t('hr.statusInactive')}
-              </span>
-            </div>
-          </div>
-        )}
-      </Card>
-
-      {/* Contract */}
-      <Card>
-        <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-2">
-            <FileText className="w-5 h-5 text-muted-foreground" />
-            <h2 className="text-lg font-semibold">Contrato</h2>
-          </div>
-        </div>
-        {profileData.contract_url ? (
-          <div className="flex items-center gap-3 p-3 bg-positive/10 rounded-lg">
-            <FileText className="w-5 h-5 text-emerald-600" />
-            <span className="text-sm font-medium text-positive flex-1">Contrato cargado</span>
-            <a href={withActiveCompany(`/api/admin/contract-url/${profileData.id}`)} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium hover:bg-emerald-700 transition-colors">
-              <ExternalLink className="w-3.5 h-3.5" /> Ver contrato
-            </a>
-          </div>
-        ) : (
-          <p className="text-sm text-muted-foreground mb-3">No se ha subido contrato aún.</p>
-        )}
-        <div className="mt-3 flex items-center gap-2">
-          <label className="flex-1 cursor-pointer">
-            <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-border hover:border-[var(--color-secondary)] hover:bg-muted/50 transition-colors">
-              <Upload className="w-4 h-4 text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">
-                {contractFile ? contractFile.name : (profileData.contract_url ? 'Cambiar contrato...' : 'Subir contrato (PDF, máx 10 MB)')}
-              </span>
-            </div>
-            <input type="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg" className="hidden" onChange={(e) => setContractFile(e.target.files?.[0] || null)} />
-          </label>
-          {contractFile && (
-            <>
-              <button onClick={() => setContractFile(null)} className="p-2 rounded-lg border border-border hover:bg-muted">
-                <X className="w-4 h-4" />
-              </button>
-              <button onClick={handleContractUpload} disabled={uploadingContract} className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50">
-                {uploadingContract ? 'Subiendo...' : 'Subir'}
-              </button>
-            </>
-          )}
-        </div>
-      </Card>
-
-      {/* Subordinates */}
-      {subordinates.length > 0 && (
-        <Card>
-          <div className="flex items-center gap-2 mb-4">
-            <Users className="w-5 h-5 text-muted-foreground" />
-            <h2 className="text-lg font-semibold">{t('hr.team')} ({subordinates.length} BDMs)</h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.email')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netDepPct')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.totalEarned')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {subordinates.map(sub => (
-                  <tr key={sub.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className="py-2.5 px-3">
-                      <Link href={`/rrhh/perfil?id=${sub.id}`} className="font-medium hover:text-primary dark:text-accent transition-colors">
-                        {sub.name}
-                      </Link>
-                    </td>
-                    <td className="py-2.5 px-3 text-muted-foreground text-xs">{sub.email}</td>
-                    <td className="py-2.5 px-3 text-right">{sub.net_deposit_pct != null ? `${sub.net_deposit_pct}%` : 'N/A'}</td>
-                    <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(getTotalCommissions(sub.id))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
-      {/* El formulario "Agregar resultado mensual" se quitó (auditoría
-          2026-08-06): mostraba "Guardado" sin persistir NADA — solo hacía
-          setResults local y el dato desaparecía al recargar. Además dejaba
-          editar `bonus`, que en realidad guarda la deuda arrastrada del
-          cálculo de comisiones. Los resultados se generan y guardan en
-          /comisiones, donde el cálculo es el real. */}
-      <Card>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="text-lg font-semibold">{t('hr.addMonthlyResult')}</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              Los resultados mensuales se calculan y guardan desde el módulo de
-              Comisiones — así lo guardado siempre coincide con la fórmula.
+              {profileData.hire_date && (
+                <span className="inline-flex items-center gap-1">
+                  <Calendar aria-hidden className="size-3" />
+                  {t('hr.hireDate')}: {formatDateDMY(profileData.hire_date)}
+                </span>
+              )}
+              {profileData.birthday && (
+                <span className="inline-flex items-center gap-1">
+                  <Gift aria-hidden className="size-3" />
+                  {t('hr.birthday')}: {formatDateDMY(profileData.birthday)}
+                </span>
+              )}
             </p>
           </div>
-          <Link
-            href="/comisiones"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
+        </div>
+        <ActionButton onClick={handleExport} title={t('hr.downloadCsv')} aria-label={t('hr.downloadCsv')}>
+          <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+          <span className="max-sm:hidden">CSV</span>
+        </ActionButton>
+      </div>
+
+      <KpiStrip
+        items={[
+          { key: 'ndPct', label: t('hr.netDepPct'), value: profileData.net_deposit_pct, format: 'percent', missingBadge: false, sub: profileData.net_deposit_pct == null ? t('hrv.notApplicable') : undefined },
+          { key: 'pnlPct', label: t('hr.pnlPct'), value: profileData.pnl_pct, format: 'percent', missingBadge: false, sub: profileData.pnl_pct == null ? t('hrv.notApplicable') : undefined },
+          { key: 'salary', label: t('hr.fixedSalary'), value: fixedSalary, format: 'money', missingBadge: false, sub: fixedSalary == null ? t('hrv.noFixedSalary') : undefined },
+          {
+            key: 'earned',
+            label: t('hr.totalEarned'),
+            value: hasResults ? totalEarned : null,
+            hero: true,
+            missingBadge: false,
+            sub: hasResults ? t('hrv.periodsCount', { n: String(results.length) }) : t('hrv.noSavedResults'),
+          },
+        ]}
+      />
+
+      <Segmented
+        options={sections}
+        value={section}
+        onChange={setSection}
+        aria-label={profileData.name}
+        className="max-w-full flex-wrap"
+      />
+
+      {section === 'details' && (
+        <>
+          {/* ── Datos del perfil ──────────────────────────────────────────── */}
+          <Panel
+            title={t('hr.profileDetails')}
+            actions={
+              !isEditingProfile ? (
+                <ActionButton onClick={() => setIsEditingProfile(true)}>
+                  <Pencil aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                  {t('hr.editProfile')}
+                </ActionButton>
+              ) : (
+                <>
+                  <ActionButton variant="ghost" onClick={handleCancelEdit} aria-label={t('common.cancel')}>
+                    <X aria-hidden className="size-4" />
+                  </ActionButton>
+                  <ActionButton variant="primary" onClick={handleSaveProfile} loading={saving}>
+                    <Check aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                    {t('common.save')}
+                  </ActionButton>
+                </>
+              )
+            }
           >
-            <Calculator className="w-4 h-4" />
-            Ir a Comisiones
-          </Link>
-        </div>
-      </Card>
-
-      {/* Monthly Results */}
-      <Card>
-        <h2 className="text-lg font-semibold mb-4">{t('hr.monthlyResults')}</h2>
-        {results.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.period')}</th>
-                  <th className="text-center py-2.5 px-3 text-muted-foreground font-medium border-b border-border" colSpan={3}>{t('hr.netDeposit')}</th>
-                  <th className="text-center py-2.5 px-3 text-muted-foreground font-medium border-b border-border" colSpan={3}>PNL</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.commissions')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.bonus')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" rowSpan={2}>{t('hr.salaryCol')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium font-bold" rowSpan={2}>{t('hr.totalEarned')}</th>
-                </tr>
-                <tr className="border-b border-border">
-                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.netDepActual')}</th>
-                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.accumulated')}</th>
-                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.total')}</th>
-                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.pnlCurrent')}</th>
-                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.pnlAccumulated')}</th>
-                  <th className="text-right py-1 px-3 text-muted-foreground font-medium text-xs">{t('hr.pnlTotal')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {results.map(r => (
-                  <tr key={r.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className="py-2.5 px-3 font-medium">{getPeriodLabel(r.period_id)}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.net_deposit_current)}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.net_deposit_accumulated)}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.net_deposit_total)}</td>
-                    <td className="py-2.5 px-3 text-right">{r.pnl_current > 0 ? formatCurrency(r.pnl_current) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right">{r.pnl_accumulated > 0 ? formatCurrency(r.pnl_accumulated) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right">{r.pnl_total > 0 ? formatCurrency(r.pnl_total) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right">{formatCurrency(r.commissions_earned)}</td>
-                    <td className="py-2.5 px-3 text-right">{r.bonus > 0 ? formatCurrency(r.bonus) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right">{r.salary_paid > 0 ? formatCurrency(r.salary_paid) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(r.total_earned)}</td>
-                  </tr>
-                ))}
-              </tbody>
-              <tfoot>
-                <tr className="font-bold border-t-2 border-border">
-                  <td className="py-3 px-3">TOTAL</td>
-                  <td className="py-3 px-3 text-right">{formatCurrency(totalNetDeposit)}</td>
-                  <td className="py-3 px-3 text-right">-</td>
-                  <td className="py-3 px-3 text-right">-</td>
-                  <td className="py-3 px-3 text-right">{totalPnlCurrent > 0 ? formatCurrency(totalPnlCurrent) : '-'}</td>
-                  <td className="py-3 px-3 text-right">-</td>
-                  <td className="py-3 px-3 text-right">-</td>
-                  <td className="py-3 px-3 text-right">{formatCurrency(totalCommissions)}</td>
-                  <td className="py-3 px-3 text-right">{totalBonus > 0 ? formatCurrency(totalBonus) : '-'}</td>
-                  <td className="py-3 px-3 text-right">{totalSalary > 0 ? formatCurrency(totalSalary) : '-'}</td>
-                  <td className="py-3 px-3 text-right text-primary dark:text-accent">{formatCurrency(totalEarned)}</td>
-                </tr>
-              </tfoot>
-            </table>
-          </div>
-        ) : (
-          <p className="text-center text-muted-foreground py-8">{t('hr.noResults')}</p>
-        )}
-      </Card>
-
-      {/* Negotiations */}
-      <Card>
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <Handshake className="w-5 h-5 text-muted-foreground" />
-            <h2 className="text-lg font-semibold">{t('hr.negotiations')}</h2>
-          </div>
-        </div>
-        {negLoading ? (
-          <div className="flex items-center justify-center py-8">
-            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-[var(--color-primary)]" />
-          </div>
-        ) : negotiations.length === 0 ? (
-          <p className="text-center text-muted-foreground py-6 text-sm">{t('hr.noNegotiations')}</p>
-        ) : (
-          <div className="space-y-3">
-            {negotiations.map(neg => (
-              <div key={neg.id} className="border border-border rounded-lg p-3 hover:bg-muted/30 transition-colors">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="font-medium text-sm">{neg.title}</span>
-                      <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
-                        neg.status === 'active' ? 'bg-positive/10 text-positive' :
-                        neg.status === 'pending' ? 'bg-warning/10 text-warning' :
-                        'bg-negative/10 text-negative'
-                      }`}>
-                        {neg.status === 'active' ? t('hr.negStatusActive') : neg.status === 'pending' ? t('hr.negStatusPending') : t('hr.negStatusClosed')}
-                      </span>
-                    </div>
-                    {neg.description && <p className="text-xs text-muted-foreground">{neg.description}</p>}
-                    <p className="text-[10px] text-muted-foreground mt-1">{formatDate(neg.updated_at)}</p>
-                  </div>
-                  <button onClick={() => handleDeleteNegotiation(neg.id)} className="text-muted-foreground hover:text-red-500 shrink-0">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
+            {isEditingProfile ? (
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+                <Field label={t('common.name')}>
+                  <Input value={editName} onChange={e => setEditName(e.target.value)} />
+                </Field>
+                <Field label={t('common.email')}>
+                  <Input type="email" value={editEmail} onChange={e => setEditEmail(e.target.value)} />
+                </Field>
+                <Field label={t('hr.role')}>
+                  <Select value={editRole} onChange={e => setEditRole(e.target.value as CommercialProfile['role'])}>
+                    {/* Las opciones salen del registro de roles comerciales. */}
+                    {HR_COMMERCIAL_ROLES.map((r) => (
+                      <option key={r} value={r}>{hrRoleLabel(r)}</option>
+                    ))}
+                  </Select>
+                </Field>
+                {editRole === 'bdm' && (
+                  <Field label={t('hr.supervisor')}>
+                    <Select value={editHeadId} onChange={e => setEditHeadId(e.target.value)}>
+                      <option value="">{t('hr.noSupervisor')}</option>
+                      {heads.map(h => (
+                        <option key={h.id} value={h.id}>{h.name} ({hrRoleLabel(h.role)})</option>
+                      ))}
+                    </Select>
+                  </Field>
+                )}
+                <Field label={t('hr.netDepPct')}>
+                  <Input type="number" value={editNdPct} onChange={e => setEditNdPct(e.target.value)} placeholder={t('hr.ndPctPlaceholder')} className="text-right tabular-nums" />
+                </Field>
+                <Field label={t('hr.pnlPct')}>
+                  <Input type="number" value={editPnlPct} onChange={e => setEditPnlPct(e.target.value)} placeholder={t('hr.pnlPctPlaceholder')} className="text-right tabular-nums" />
+                </Field>
+                <Field label={t('hr.commissionPerLot')}>
+                  <Input type="number" value={editCommLot} onChange={e => setEditCommLot(e.target.value)} placeholder={t('hr.commLotPlaceholder')} className="text-right tabular-nums" />
+                </Field>
+                <Field label={t('hr.fixedSalary')}>
+                  <Input type="number" value={editSalary} onChange={e => setEditSalary(e.target.value)} placeholder={t('hr.salaryUsdPlaceholder')} className="text-right tabular-nums" />
+                </Field>
+                <Field label={t('hr.benefits')}>
+                  <Input value={editBenefits} onChange={e => setEditBenefits(e.target.value)} placeholder={t('hr.benefitsPlaceholder')} />
+                </Field>
+                <Field label={t('hr.comments')}>
+                  <Input value={editComments} onChange={e => setEditComments(e.target.value)} placeholder={t('hr.commentsPlaceholder')} />
+                </Field>
+                <Field label={t('hr.hireDate')}>
+                  <Input type="date" value={editHireDate} onChange={e => setEditHireDate(e.target.value)} />
+                </Field>
+                <Field label={t('hr.birthday')}>
+                  <Input type="date" value={editBirthday} onChange={e => setEditBirthday(e.target.value)} />
+                </Field>
+                <Field label={t('hr.status')}>
+                  <Select value={editStatus} onChange={e => setEditStatus(e.target.value as 'active' | 'inactive')}>
+                    <option value="active">{t('hr.statusActive')}</option>
+                    <option value="inactive">{t('hr.statusInactive')}</option>
+                  </Select>
+                </Field>
               </div>
-            ))}
-          </div>
-        )}
-      </Card>
+            ) : (
+              <dl className="grid grid-cols-1 gap-x-8 gap-y-3 md:grid-cols-2 lg:grid-cols-3">
+                {detail(t('common.name'), profileData.name)}
+                {detail(t('common.email'), <span className="break-all">{profileData.email}</span>)}
+                {detail(t('hr.role'), hrRoleLabel(profileData.role))}
+                {profileData.role === 'bdm' && profileData.head_id &&
+                  detail(t('hr.supervisor'), heads.find((h) => h.id === profileData.head_id)?.name ?? null)}
+                {detail(t('hr.netDepPct'), pctText(profileData.net_deposit_pct))}
+                {detail(t('hr.pnlPct'), pctText(profileData.pnl_pct))}
+                {/* Comisión por lote: antes un template «$» + número armado a
+                    mano (spec §4: el dinero sale sólo de formatMoney). */}
+                {detail(t('hr.commissionPerLot'), profileData.commission_per_lot != null ? <Money value={profileData.commission_per_lot} /> : null)}
+                {detail(t('hr.fixedSalary'), fixedSalary != null ? <Money value={fixedSalary} /> : null)}
+                {detail(t('hr.benefits'), profileData.benefits || null)}
+                {detail(t('hr.comments'), profileData.comments || null)}
+                {detail(t('hr.hireDate'), profileData.hire_date ? formatDateDMY(profileData.hire_date) : null)}
+                {detail(t('hr.birthday'), profileData.birthday ? formatDateDMY(profileData.birthday) : null)}
+                {detail(t('hr.status'), <StatusBadge kind={status.kind} label={t(status.labelKey)} />)}
+              </dl>
+            )}
+          </Panel>
+
+          {/* ── Contrato ──────────────────────────────────────────────────── */}
+          <Panel
+            title={t('hrv.contract')}
+            actions={
+              profileData.contract_url ? <StatusBadge kind="ok" label={t('hrv.onFile')} /> : <StatusBadge kind="pend" label={t('hrv.missing')} />
+            }
+          >
+            <div className="space-y-3">
+              {profileData.contract_url ? (
+                <div className="flex flex-wrap items-center gap-3 rounded-ui-md border border-border bg-surface-2 px-3 py-2">
+                  <FileText aria-hidden className="size-4 shrink-0 text-text-3" />
+                  <span className="flex-1 text-[13px] text-foreground">{t('hr.contractUploaded')}</span>
+                  <a
+                    href={withActiveCompany(`/api/admin/contract-url/${profileData.id}`)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={actionButtonClass('secondary')}
+                  >
+                    <ExternalLink aria-hidden className="size-3.5" /> {t('hr.viewContract')}
+                  </a>
+                </div>
+              ) : (
+                <p className="text-[13px] text-text-3">{t('hrv.noContractYet')}</p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="min-w-0 flex-1">
+                  <FilePick
+                    file={contractFile}
+                    onFile={setContractFile}
+                    placeholder={profileData.contract_url ? t('hr.changeContract') : t('hrv.uploadContractHint')}
+                  />
+                </div>
+                {contractFile && (
+                  <ActionButton onClick={handleContractUpload} loading={uploadingContract}>
+                    {uploadingContract ? t('hr.uploadingContract') : t('hrv.upload')}
+                  </ActionButton>
+                )}
+              </div>
+            </div>
+          </Panel>
+
+          {/* El formulario "Agregar resultado mensual" se quitó (auditoría
+              2026-08-06): mostraba "Guardado" sin persistir NADA — solo hacía
+              setResults local y el dato desaparecía al recargar. Además dejaba
+              editar `bonus`, que en realidad guarda la deuda arrastrada del
+              cálculo de comisiones. Los resultados se generan y guardan en
+              /comisiones, donde el cálculo es el real. */}
+          <Notice
+            kind="info"
+            title={t('hr.addMonthlyResult')}
+            action={
+              <Link href="/comisiones" className={actionButtonClass('secondary')}>
+                <Calculator aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                {t('hrv.goToCommissions')}
+              </Link>
+            }
+          >
+            {t('hrv.resultsFromCommissions')}
+          </Notice>
+        </>
+      )}
+
+      {/* ── Resultados mensuales ───────────────────────────────────────────── */}
+      {section === 'results' && (
+        <Panel title={t('hr.monthlyResults')} hint={t('hrv.periodsCount', { n: String(results.length) })} flush>
+          <FinTable
+            columns={resultColumns}
+            rows={results}
+            rowKey={(r) => r.id}
+            caption={t('hr.monthlyResults')}
+            empty={t('hr.noResults')}
+            footer={
+              hasResults
+                ? {
+                    label: t('hr.total'),
+                    // Los acumulados y totales de ND/PnL no se suman entre
+                    // meses (cada uno ya arrastra el anterior): quedan vacíos,
+                    // igual que en el CSV.
+                    values: {
+                      ndCurrent: totalNetDeposit,
+                      pnlCurrent: positiveOrNull(totalPnlCurrent),
+                      commissions: totalCommissions,
+                      bonus: positiveOrNull(totalBonus),
+                      salary: positiveOrNull(totalSalary),
+                      totalEarned,
+                    },
+                  }
+                : undefined
+            }
+          />
+        </Panel>
+      )}
+
+      {/* ── Negociaciones ──────────────────────────────────────────────────── */}
+      {section === 'negotiations' && (
+        <Panel title={t('hr.negotiations')} flush>
+          {negLoading ? (
+            <p className="px-4 py-8 text-center text-[13px] text-text-3">{t('common.loading')}</p>
+          ) : (
+            <FinTable
+              columns={negColumns}
+              rows={negotiations}
+              rowKey={(n) => n.id}
+              caption={t('hr.negotiations')}
+              empty={t('hr.noNegotiations')}
+              rowActions={(n) => (
+                <button
+                  type="button"
+                  onClick={() => handleDeleteNegotiation(n.id)}
+                  className={ROW_DANGER_CLASS}
+                  aria-label={t('common.delete')}
+                  title={t('common.delete')}
+                >
+                  <Trash2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                </button>
+              )}
+            />
+          )}
+        </Panel>
+      )}
+
+      {/* ── Equipo ─────────────────────────────────────────────────────────── */}
+      {section === 'team' && subordinates.length > 0 && (
+        <Panel title={t('hr.team')} hint={t('hrv.membersCount', { n: String(subordinates.length) })} flush>
+          <FinTable columns={teamColumns} rows={subordinates} rowKey={(s) => s.id} caption={t('hr.team')} />
+        </Panel>
+      )}
     </div>
   );
 }

@@ -2,11 +2,14 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { Card } from '@/components/ui/card';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useAuth, isCompanyAdmin } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
-import { formatCurrency, cn } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import {
   updateCommercialProfile,
   deleteEmployee,
@@ -14,11 +17,13 @@ import {
   updateEmployee,
 } from '@/lib/supabase/mutations';
 import { FireModal } from '@/components/fire-modal';
-import { Search, Plus, Pencil, Trash2, UserX, UserCheck, UserRound } from 'lucide-react';
+import { Plus, Pencil, Trash2, UserX, UserCheck, UserRound } from 'lucide-react';
 import type { Employee, CommercialProfile } from '@/lib/types';
 import type { UnifiedEmployee } from '@/lib/hr/employees-list';
 import { EmployeeForm } from './employee-form';
 import { ProfileForm } from './profile-form';
+import { ROW_ACTION_CLASS, ROW_DANGER_CLASS, SearchField } from './hr-ui';
+import { EMPLOYEE_STATUS_VIEW } from './hr-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestañas EMPLEADOS y DESPEDIDOS — una sola tabla para las dos.
@@ -36,22 +41,17 @@ import { ProfileForm } from './profile-form';
 //    `commercial_monthly_results` por FK, y el calculador de comisiones necesita
 //    poder postear net deposits negativos post-despido vía `profile_id`.
 //  · Reincorporar es admin-only en el cliente Y en el servidor.
+//
+// «Libro mayor» (2026-10-12) — sólo presentación: Panel + FinTable (en
+// < 720 px cada persona es una tarjeta con su estado); el estado sale de
+// EMPLOYEE_STATUS_VIEW (hr-view.ts, el mismo mapa que usa el CSV — antes
+// `STATUS_BADGE_CLASSES` + `STATUS_LABEL_KEYS` acá: «inactivo» en ROJO, que
+// es una licencia, no un error; «despedido» en slate crudo con `dark:`); el
+// tipo (comercial / administrativo) en gris porque no es un estado; los
+// botones de confirmación en línea (borrar, reincorporar) son ActionButton.
+// Medición (sin comentarios): antes 18 clases de paleta cruda, 4 `dark:` de
+// color y 31 tokens legados; después 0.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const STATUS_BADGE_CLASSES: Record<string, string> = {
-  active: 'bg-positive/10 text-positive',
-  inactive: 'bg-negative/10 text-negative',
-  probation: 'bg-warning/10 text-warning',
-  fired: 'bg-slate-200 dark:bg-slate-800 text-slate-600 dark:text-slate-400',
-};
-
-/** Registro único de las etiquetas de estado; el CSV usa el MISMO mapa. */
-export const STATUS_LABEL_KEYS: Record<string, string> = {
-  active: 'hr.statusActive',
-  inactive: 'hr.statusInactive',
-  probation: 'hr.statusProbation',
-  fired: 'hr.statusFired',
-};
 
 export function EmployeesTab({
   tab,
@@ -169,34 +169,172 @@ export function EmployeesTab({
     }
   };
 
-  return (
-    <Card>
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-4">
-        <h2 className="text-lg font-semibold">
-          {tab === 'terminated' ? t('hr.terminatedTab') : t('hr.employees')}
-        </h2>
-        <div className="flex items-center gap-2">
-          <div className="relative flex-1 sm:w-64">
-            <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-            <input
-              aria-label={t('hr.searchEmployees')}
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={t('hr.searchEmployees')}
-              className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-            />
-          </div>
-          {tab === 'employees' && (
-            <button
-              onClick={() => { setEditingEmp(undefined); setShowEmpForm(true); }}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 whitespace-nowrap"
+  const statusBadge = (emp: UnifiedEmployee) => {
+    const v = EMPLOYEE_STATUS_VIEW[emp.status];
+    return <StatusBadge kind={v.kind} label={t(v.labelKey)} />;
+  };
+
+  const columns: FinColumn<UnifiedEmployee>[] = [
+    {
+      key: 'name',
+      header: t('common.name'),
+      cell: (emp) => <span className={cn(emp.status === 'fired' && 'text-text-3')}>{emp.name}</span>,
+      meta: (emp) => emp.email,
+      mobileMeta: statusBadge,
+    },
+    {
+      key: 'position',
+      header: t('hr.position'),
+      hideSm: true,
+      cell: (emp) => emp.position || '—',
+    },
+    {
+      key: 'department',
+      header: t('hr.department'),
+      hideSm: true,
+      cell: (emp) => <span className="text-text-2">{emp.department || '—'}</span>,
+    },
+    {
+      key: 'type',
+      header: t('hr.type'),
+      hideSm: true,
+      cell: (emp) => (
+        <span className="text-text-2">
+          {emp.source === 'commercial' ? t('hr.typeCommercial') : t('hr.typeAdmin')}
+        </span>
+      ),
+    },
+    {
+      key: 'hireDate',
+      header: t('hr.hireDate'),
+      hideSm: true,
+      cell: (emp) => <span className="tabular-nums text-text-2">{emp.start_date || '—'}</span>,
+    },
+    {
+      key: 'terminationDate',
+      header: t('hr.terminationDate'),
+      hideSm: true,
+      cell: (emp) => <span className="tabular-nums text-text-2">{emp.termination_date || '—'}</span>,
+    },
+    // Sueldo no cargado = «—» (antes «N/A»), nunca $0.
+    { key: 'salary', header: t('hr.salary'), kind: 'money', value: (emp) => emp.salary, subtotal: false },
+    { key: 'status', header: t('hr.status'), hideSm: true, cell: statusBadge },
+  ];
+
+  const rowActions = (emp: UnifiedEmployee) => (
+    <>
+      {/* Ver perfil: comerciales → /rrhh/perfil?id=…, administrativos → abren
+          el EmployeeForm en modo edición (no hay página de perfil para
+          `employees` todavía). */}
+      {emp.source === 'commercial' && emp.originalProfile ? (
+        <Link
+          href={`/rrhh/perfil?id=${emp.originalProfile.id}`}
+          className={ROW_ACTION_CLASS}
+          aria-label={t('hr.viewProfile')}
+          title={t('hr.viewProfile')}
+        >
+          <UserRound aria-hidden className="size-[15px]" strokeWidth={1.75} />
+        </Link>
+      ) : emp.source === 'employee' && emp.originalEmployee ? (
+        <button
+          type="button"
+          onClick={() => { setEditingEmp(emp.originalEmployee!); setShowEmpForm(true); }}
+          className={ROW_ACTION_CLASS}
+          aria-label={t('hr.viewProfile')}
+          title={t('hr.viewProfile')}
+        >
+          <UserRound aria-hidden className="size-[15px]" strokeWidth={1.75} />
+        </button>
+      ) : null}
+
+      {emp.source === 'commercial' && emp.originalProfile && emp.status === 'active' && (
+        <button
+          type="button"
+          onClick={() => setFiringProfile(emp.originalProfile!)}
+          className={ROW_DANGER_CLASS}
+          aria-label={t('hr.fire')}
+          title={t('hr.fire')}
+        >
+          <UserX aria-hidden className="size-[15px]" strokeWidth={1.75} />
+        </button>
+      )}
+
+      {emp.source === 'commercial' && emp.originalProfile && emp.status === 'fired' && isCompanyAdmin(user) && (
+        reinstatingProfile?.id === emp.originalProfile.id ? (
+          <span className="inline-flex items-center gap-1">
+            <ActionButton
+             
+              onClick={() => handleReinstate(emp.originalProfile!)}
+              loading={reinstating}
             >
-              <Plus className="w-4 h-4" /> {t('hr.addEmployee')}
-            </button>
-          )}
-        </div>
-      </div>
+              {t('hr.reinstate')}
+            </ActionButton>
+            <ActionButton
+              variant="ghost"
+             
+              onClick={() => setReinstatingProfile(null)}
+              disabled={reinstating}
+            >
+              {t('common.no')}
+            </ActionButton>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setReinstatingProfile(emp.originalProfile!)}
+            className={ROW_ACTION_CLASS}
+            aria-label={t('hr.reinstate')}
+            title={t('hr.reinstate')}
+          >
+            <UserCheck aria-hidden className="size-[15px]" strokeWidth={1.75} />
+          </button>
+        )
+      )}
+
+      <button
+        type="button"
+        onClick={() => {
+          if (emp.source === 'employee' && emp.originalEmployee) {
+            setEditingEmp(emp.originalEmployee);
+            setShowEmpForm(true);
+          } else if (emp.source === 'commercial' && emp.originalProfile) {
+            setEditingProfile(emp.originalProfile);
+            setShowProfileForm(true);
+          }
+        }}
+        className={ROW_ACTION_CLASS}
+        aria-label={t('common.edit')}
+        title={t('common.edit')}
+      >
+        <Pencil aria-hidden className="size-[15px]" strokeWidth={1.75} />
+      </button>
+      {emp.source === 'employee' && (
+        deletingId === emp.id ? (
+          <span className="inline-flex items-center gap-1">
+            <ActionButton variant="danger" onClick={() => handleDeleteEmployee(emp.id)}>
+              {t('common.delete')}
+            </ActionButton>
+            <ActionButton variant="ghost" onClick={() => setDeletingId(null)}>
+              {t('common.no')}
+            </ActionButton>
+          </span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setDeletingId(emp.id)}
+            className={ROW_DANGER_CLASS}
+            aria-label={t('common.delete')}
+            title={t('common.delete')}
+          >
+            <Trash2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+          </button>
+        )
+      )}
+    </>
+  );
+
+  return (
+    <div className="space-y-4">
       {showEmpForm && company && (
         <EmployeeForm
           editing={editingEmp}
@@ -215,155 +353,40 @@ export function EmployeesTab({
           companyId={company?.id || ''}
         />
       )}
-      <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-        <table className="w-full text-sm min-w-[800px]">
-          <thead>
-            <tr className="border-b border-border">
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('hr.position')}</th>
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.department')}</th>
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden md:table-cell">{t('hr.type')}</th>
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.hireDate')}</th>
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden lg:table-cell">{t('hr.terminationDate')}</th>
-              <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.salary')}</th>
-              <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('hr.status')}</th>
-              <th className="text-right py-2.5 px-3 text-muted-foreground font-medium"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.map(emp => {
-              const isFired = emp.status === 'fired';
-              return (
-                <tr key={`${emp.source}-${emp.id}`} className={cn('border-b border-border/50 hover:bg-muted/50 transition-colors', isFired && 'opacity-60')}>
-                  <td className="py-2.5 px-3 font-medium">{emp.name}</td>
-                  <td className="py-2.5 px-3 text-muted-foreground hidden sm:table-cell">{emp.email}</td>
-                  <td className="py-2.5 px-3">{emp.position}</td>
-                  <td className="py-2.5 px-3 hidden sm:table-cell">{emp.department}</td>
-                  <td className="py-2.5 px-3 hidden md:table-cell">
-                    <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium',
-                      emp.source === 'commercial'
-                        ? 'bg-info/10 text-info'
-                        : 'bg-slate-50 dark:bg-slate-900/50 text-slate-700 dark:text-slate-400')}>
-                      {emp.source === 'commercial' ? t('hr.typeCommercial') : t('hr.typeAdmin')}
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 hidden sm:table-cell">{emp.start_date || '-'}</td>
-                  <td className="py-2.5 px-3 hidden lg:table-cell text-muted-foreground">{emp.termination_date || '-'}</td>
-                  <td className="py-2.5 px-3 text-right">{emp.salary != null ? formatCurrency(emp.salary) : 'N/A'}</td>
-                  <td className="py-2.5 px-3">
-                    <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', STATUS_BADGE_CLASSES[emp.status])}>
-                      {t(STATUS_LABEL_KEYS[emp.status])}
-                    </span>
-                  </td>
-                  <td className="py-2.5 px-3 text-right">
-                    <div className="flex items-center justify-end gap-1">
-                      {/* Ver perfil: comerciales → /rrhh/perfil?id=…,
-                          administrativos → abren el EmployeeForm en modo edición
-                          (no hay página de perfil para `employees` todavía). */}
-                      {emp.source === 'commercial' && emp.originalProfile ? (
-                        <Link
-                          href={`/rrhh/perfil?id=${emp.originalProfile.id}`}
-                          className="text-muted-foreground hover:text-foreground"
-                          aria-label={t('hr.viewProfile')}
-                          title={t('hr.viewProfile')}
-                        >
-                          <UserRound className="w-3.5 h-3.5" />
-                        </Link>
-                      ) : emp.source === 'employee' && emp.originalEmployee ? (
-                        <button
-                          onClick={() => { setEditingEmp(emp.originalEmployee!); setShowEmpForm(true); }}
-                          className="text-muted-foreground hover:text-foreground"
-                          aria-label={t('hr.viewProfile')}
-                          title={t('hr.viewProfile')}
-                        >
-                          <UserRound className="w-3.5 h-3.5" />
-                        </button>
-                      ) : null}
 
-                      {emp.source === 'commercial' && emp.originalProfile && emp.status === 'active' && (
-                        <button
-                          onClick={() => setFiringProfile(emp.originalProfile!)}
-                          className="text-muted-foreground hover:text-red-600"
-                          aria-label={t('hr.fire')}
-                          title={t('hr.fire')}
-                        >
-                          <UserX className="w-3.5 h-3.5" />
-                        </button>
-                      )}
-
-                      {emp.source === 'commercial' && emp.originalProfile && emp.status === 'fired' && isCompanyAdmin(user) && (
-                        reinstatingProfile?.id === emp.originalProfile.id ? (
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => handleReinstate(emp.originalProfile!)}
-                              disabled={reinstating}
-                              className="px-2 py-0.5 text-xs rounded bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
-                            >
-                              {reinstating ? '…' : 'OK'}
-                            </button>
-                            <button
-                              onClick={() => setReinstatingProfile(null)}
-                              disabled={reinstating}
-                              className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted"
-                            >
-                              No
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => setReinstatingProfile(emp.originalProfile!)}
-                            className="text-muted-foreground hover:text-emerald-600"
-                            aria-label={t('hr.reinstate')}
-                            title={t('hr.reinstate')}
-                          >
-                            <UserCheck className="w-3.5 h-3.5" />
-                          </button>
-                        )
-                      )}
-
-                      <button
-                        onClick={() => {
-                          if (emp.source === 'employee' && emp.originalEmployee) {
-                            setEditingEmp(emp.originalEmployee);
-                            setShowEmpForm(true);
-                          } else if (emp.source === 'commercial' && emp.originalProfile) {
-                            setEditingProfile(emp.originalProfile);
-                            setShowProfileForm(true);
-                          }
-                        }}
-                        className="text-muted-foreground hover:text-foreground"
-                        aria-label={t('common.edit')}
-                      >
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      {emp.source === 'employee' && (
-                        deletingId === emp.id ? (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => handleDeleteEmployee(emp.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
-                            <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">{t('common.no')}</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => setDeletingId(emp.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      {list.length === 0 && (
-        <p className="text-center text-muted-foreground py-8">
-          {searchQuery
-            ? t('hr.noSearchResults')
-            : tab === 'terminated' ? t('hr.noTerminated') : t('hr.noEmployees')}
-        </p>
-      )}
+      <Panel
+        title={tab === 'terminated' ? t('hr.terminatedTab') : t('hr.employees')}
+        hint={t('hrv.peopleCount', { n: String(list.length) })}
+        actions={
+          <>
+            <SearchField
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder={t('hr.searchEmployees')}
+              className="w-64"
+            />
+            {tab === 'employees' && (
+              <ActionButton variant="primary" onClick={() => { setEditingEmp(undefined); setShowEmpForm(true); }}>
+                <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} /> {t('hr.addEmployee')}
+              </ActionButton>
+            )}
+          </>
+        }
+        flush
+      >
+        <FinTable
+          columns={columns}
+          rows={list}
+          rowKey={(emp) => `${emp.source}-${emp.id}`}
+          caption={tab === 'terminated' ? t('hr.terminatedTab') : t('hr.employees')}
+          empty={
+            searchQuery
+              ? t('hr.noSearchResults')
+              : tab === 'terminated' ? t('hr.noTerminated') : t('hr.noEmployees')
+          }
+          rowActions={rowActions}
+        />
+      </Panel>
 
       {/* FireModal montado acá dentro: en la página vieja colgaba de la raíz
           para que el overlay cubriera todo. Sigue siendo `fixed inset-0`, así
@@ -375,6 +398,6 @@ export function EmployeesTab({
           onSuccess={handleFireSuccess}
         />
       )}
-    </Card>
+    </div>
   );
 }

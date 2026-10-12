@@ -2,28 +2,30 @@
 
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Card } from '@/components/ui/card';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Money, moneyText } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Segmented } from '@/components/ui/segmented';
+import { Chip } from '@/components/ui/chip';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
-import { formatCurrency, cn } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { deleteCommercialProfile, updateCommercialProfile } from '@/lib/supabase/mutations';
 import { FiredBadge, firedNameClass } from '@/components/fired-badge';
-import {
-  ChevronDown, ChevronRight, Pencil, Plus, Search, Trash2, UserCircle, UserRound,
-} from 'lucide-react';
+import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, UserRound } from 'lucide-react';
 import type { CommercialProfile } from '@/lib/types';
 import {
   esBdm,
   esBdmGlobal,
   esLider,
-  hrRoleBadgeClass,
   hrRoleLabel,
   sinSalario,
 } from '@/lib/hr/domain';
 import {
   indexarNetDelCrm,
   resolveNetDepositInput,
-  type NetDepositSource,
   type ResolvedNetDeposit,
 } from '@/lib/hr/net-deposit-input';
 import { comisionIndividualDeBdm, type ComisionDelMes } from '@/lib/hr/commission-preview';
@@ -37,6 +39,15 @@ import {
 } from '@/lib/hr/monthly-totals';
 import { ProfileForm } from './profile-form';
 import { useHrPeriod } from './hr-period-context';
+import { NetWithSource, ROW_ACTION_CLASS, ROW_DANGER_CLASS, SearchField, TOGGLE_CLASS } from './hr-ui';
+import {
+  PROFILE_STATUS_FILTERS,
+  matchesStatusFilter,
+  pctText,
+  profileStatusView,
+  supervisorChain,
+  type ProfileStatusFilter,
+} from './hr-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña FUERZA COMERCIAL — las tarjetas de equipo, los BDM independientes y
@@ -76,6 +87,32 @@ import { useHrPeriod } from './hr-period-context';
 // Los totales de las columnas de dinero salen de src/lib/hr/monthly-totals.ts,
 // que es el mismo camino que usa el CSV — antes eran cinco `reduce` inline en la
 // tabla y otros cinco en el export.
+//
+// ── «Libro mayor» (2026-10-12) — sólo presentación ─────────────────────────
+// · Cada equipo es un Panel (cabecera = el líder con su Net CRM y su total;
+//   acciones a la derecha, colapsar incluido) y sus miembros, una FinTable al
+//   ras: nombre con la JERARQUÍA como metadato («HEAD Hugo › BDM Ana» — antes
+//   el Master IB sólo se distinguía por una sangría), rol, estado con
+//   StatusBadge, Net CRM del mes con su rótulo de procedencia, comisión del
+//   motor y acciones de fila. En < 720 px cada miembro es una tarjeta.
+// · Filtros: buscador + Segmented de estado (todos / activos / inactivos, con
+//   conteos) + Chip «sin salario». El de estado es nuevo: con 126 perfiles y
+//   los despedidos mezclados, la pregunta «¿quién está trabajando?» no tenía
+//   respuesta en esta pestaña. Los filtros ahora recortan también las FILAS
+//   de cada equipo (antes «sin salario» elegía equipos pero mostraba a todos
+//   sus miembros, con salario o sin él), y el pie del panel cuenta el recorte
+//   («Mostrando 3 de 8 miembros»): reglas §1.2.
+// · El rol dejó de tener color (antes violeta/ámbar/azul por rol, y GLOBAL /
+//   Master IB en `bg-purple-100` / `bg-amber-100` crudos): un rol no es un
+//   estado (spec §2.1). Los dos marcadores quedan como StatusBadge neutro.
+// · El Net CRM del líder se pintaba verde/rojo por signo y el de los miembros
+//   no: mismo dato, dos criterios. Ahora los dos `tone="sign"` (el signo del
+//   net ES la noticia: plata que entró o se fue).
+// · «Resultados por período» en FinTable con el pie de total (doble raya).
+// Medición (sin comentarios): antes 24 clases de paleta cruda, 4 `dark:` de
+// color, 6 `text-[10px]` y 66 tokens legados; después 0 / 0 / 0 / 0.
+// DESCARTADO: una sola FinTable agrupada por líder (`groupBy`) — FinTable no
+// colapsa grupos, y colapsar equipos es un pedido existente (collapseAll).
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function CommercialTab({
@@ -96,6 +133,7 @@ export function CommercialTab({
   // 2026-08-28: el salario es opcional, pero las metas por net deposit muestran
   // vacío sin él; ~103/126 perfiles no lo tenían).
   const [soloSinSalario, setSoloSinSalario] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<ProfileStatusFilter>('all');
 
   const totales = useMemo(
     () => totalesPorPerfil(monthlyResults as unknown as MonthlyResultRow[], periodIds),
@@ -190,29 +228,6 @@ export function CommercialTab({
     return out;
   }, [overview, periods, monthlyResults, profiles, insumo]);
 
-  /** El rótulo de procedencia, para que nunca se confunda un CRM con un manual. */
-  const sourceTag = (source: NetDepositSource) => {
-    const label = t(
-      source === 'crm' ? 'hr.srcCrm'
-        : source === 'manual' ? 'hr.srcManual'
-          : source === 'frozen' ? 'hr.srcFrozen'
-            : 'hr.srcNone',
-    );
-    return (
-      <span className={cn('ml-1 text-[10px] uppercase tracking-wide', source === 'crm' ? 'text-positive/80' : 'text-muted-foreground')}>
-        {label}
-      </span>
-    );
-  };
-
-  /** Una celda de dinero del mes: «—» cuando no lo sabemos, NUNCA $0. */
-  const celdaDelMes = (value: number | null | undefined, source: NetDepositSource) =>
-    value === null || value === undefined ? (
-      <span className="text-muted-foreground">—{sourceTag(source)}</span>
-    ) : (
-      <span>{formatCurrency(value)}{sourceTag(source)}</span>
-    );
-
   const toggleTeamCollapsed = (leaderId: string) => {
     setCollapsedTeams((prev) => {
       const next = new Set(prev);
@@ -228,7 +243,17 @@ export function CommercialTab({
     p.email.toLowerCase().includes(q) ||
     hrRoleLabel(p.role).toLowerCase().includes(q);
   const pasaFiltroSalario = (p: CommercialProfile) => !soloSinSalario || sinSalario(p);
+  const pasaFiltros = (p: CommercialProfile) => pasaFiltroSalario(p) && matchesStatusFilter(p, statusFilter);
   const totalSinSalario = profiles.filter(sinSalario).length;
+  const statusCounts = useMemo(() => {
+    const counts: Record<ProfileStatusFilter, number> = { all: 0, active: 0, inactive: 0 };
+    for (const p of profiles) {
+      for (const f of PROFILE_STATUS_FILTERS) if (matchesStatusFilter(p, f)) counts[f] += 1;
+    }
+    return counts;
+  }, [profiles]);
+
+  const byId = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
 
   // Registro único: quién lidera y quién es BDM lo decide hr/domain.ts.
   const lideres = profiles.filter((p) => esLider(p.role));
@@ -253,16 +278,17 @@ export function CommercialTab({
   // Un equipo se muestra si matchea el líder O algún BDM bajo su estructura
   // (masters de esos BDM incluidos).
   const teamHasMatch = (leader: CommercialProfile) =>
-    (matchesCommercial(leader, commercialQ) && pasaFiltroSalario(leader)) ||
+    (matchesCommercial(leader, commercialQ) && pasaFiltros(leader)) ||
     conSusMasters(profiles.filter((p) => p.head_id === leader.id))
-      .some((p) => matchesCommercial(p, commercialQ) && pasaFiltroSalario(p));
+      .some((p) => matchesCommercial(p, commercialQ) && pasaFiltros(p));
   const visibleSalesManagers = salesManagers.filter(teamHasMatch);
   const visibleHeads = heads.filter(teamHasMatch);
   // También acá van los masters: un Master IB colgado de un BDM SIN head no
   // cae en ninguna tarjeta de líder, así que se lista a continuación de su BDM.
   const visibleIndependentBdms = conSusMasters(independentBdms).filter(
-    (b) => matchesCommercial(b, commercialQ) && pasaFiltroSalario(b),
+    (b) => matchesCommercial(b, commercialQ) && pasaFiltros(b),
   );
+  const filtering = Boolean(commercialQ) || soloSinSalario || statusFilter !== 'all';
 
   const handleDeleteProfile = async (id: string) => {
     try {
@@ -336,7 +362,7 @@ export function CommercialTab({
     const value = pctLineaDisplay(p);
     const cargado = value.trim() !== '' && value.trim() !== '-';
     return (
-      <span className="inline-flex items-center gap-0.5">
+      <span className="inline-flex items-center gap-1">
         <input
           type="number"
           step="0.01"
@@ -355,214 +381,348 @@ export function CommercialTab({
           // dispara el blur y el guardado sale por el mismo único camino.
           onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
           className={cn(
-            'w-16 px-1 py-0.5 text-right rounded border border-border bg-background text-base sm:text-xs focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)] disabled:opacity-60',
-            cargado && 'border-warning text-warning font-semibold',
+            'h-8 w-16 rounded-ui-md border bg-card px-1.5 text-right text-[13px] tabular-nums placeholder:text-text-3 disabled:opacity-60 [@media(pointer:coarse)]:h-10',
+            // Un % cargado es una excepción a la regla de siempre: se marca
+            // (info: «esto no es el automático»), no se alarma. Antes
+            // `border-warning text-warning`, color de «pendiente» sin pendiente.
+            cargado ? 'border-info font-semibold text-info' : 'border-control-border text-foreground',
           )}
         />
-        <span className="text-[10px] text-muted-foreground">%</span>
+        <span className="text-[12px] text-text-3">%</span>
       </span>
     );
-  };
-
-  const netCrmCell = (profileId: string) => {
-    const r = insumo.get(profileId);
-    return celdaDelMes(r?.value ?? null, r?.source ?? 'none');
   };
 
   /** La comisión del mes según el motor. «—» si el perfil no cobra por net deposit. */
   const comisionCell = (profileId: string) => {
     const c = comisiones.get(profileId);
-    if (!c) return <span className="text-muted-foreground">—</span>;
-    if (c.nd === null) return <span className="text-muted-foreground">—{sourceTag(c.source)}</span>;
+    if (!c) return <Money value={null} nullLabel={t('ui.noData')} />;
+    if (c.nd === null) return <NetWithSource value={null} source={c.source} />;
     return (
-      <span title={t('hr.commissionBreakdown', {
-        net: formatCurrency(c.nd),
-        division: formatCurrency(c.division),
-        acc: formatCurrency(c.accumulatedIn),
-        pct: String(c.commissionPct),
-      })}>
-        {formatCurrency(c.commission)}{sourceTag(c.source)}
-      </span>
+      <NetWithSource
+        value={c.commission}
+        source={c.source}
+        title={t('hr.commissionBreakdown', {
+          net: moneyText(c.nd),
+          division: moneyText(c.division),
+          acc: moneyText(c.accumulatedIn),
+          pct: String(c.commissionPct),
+        })}
+      />
     );
   };
+
+  const openEdit = (p: CommercialProfile) => {
+    setEditingProfile(p);
+    setShowProfileForm(true);
+  };
+
+  /** Editar + borrar (con confirmación en línea) + ver perfil. */
+  const rowActions = (p: CommercialProfile, canDelete = true) =>
+    deletingId === p.id ? (
+      <span className="inline-flex items-center gap-1">
+        <ActionButton variant="danger" onClick={() => handleDeleteProfile(p.id)}>
+          {t('common.delete')}
+        </ActionButton>
+        <ActionButton variant="ghost" onClick={() => setDeletingId(null)}>
+          {t('common.no')}
+        </ActionButton>
+      </span>
+    ) : (
+      <>
+        <button
+          type="button"
+          onClick={() => openEdit(p)}
+          className={ROW_ACTION_CLASS}
+          aria-label={t('common.edit')}
+          title={t('common.edit')}
+        >
+          <Pencil aria-hidden className="size-[15px]" strokeWidth={1.75} />
+        </button>
+        {canDelete && (
+          <button
+            type="button"
+            onClick={() => setDeletingId(p.id)}
+            className={ROW_DANGER_CLASS}
+            aria-label={t('common.delete')}
+            title={t('common.delete')}
+          >
+            <Trash2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+          </button>
+        )}
+        <Link
+          href={`/rrhh/perfil?id=${p.id}`}
+          className={ROW_ACTION_CLASS}
+          aria-label={t('hr.viewProfile')}
+          title={t('hr.viewProfile')}
+        >
+          <UserRound aria-hidden className="size-[15px]" strokeWidth={1.75} />
+        </Link>
+      </>
+    );
+
+  /** Nombre + marcadores (GLOBAL, Master IB, despedido). Sin color: no son estados. */
+  const nameCell = (p: CommercialProfile) => (
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <Link href={`/rrhh/perfil?id=${p.id}`} className={cn('truncate hover:underline', firedNameClass(p))}>
+        {p.name}
+      </Link>
+      {esBdmGlobal(p.role) && <StatusBadge kind="neutral" label="GLOBAL" />}
+      {p.is_master_ib && <StatusBadge kind="neutral" label={t('hr.masterIb')} />}
+      <FiredBadge profile={p} />
+    </span>
+  );
+
+  /** La jerarquía como metadato: «HEAD Hugo › BDM Ana» (o el email, si no cuelga de nadie). */
+  const hierarchyMeta = (p: CommercialProfile) => {
+    const chain = supervisorChain(p, byId);
+    if (chain.length === 0) return p.email;
+    return chain.map((s) => `${hrRoleLabel(s.role)} ${s.name}`).join(' › ');
+  };
+
+  const statusCell = (p: CommercialProfile) => {
+    const v = profileStatusView(p);
+    return <StatusBadge kind={v.kind} label={t(v.labelKey)} />;
+  };
+
+  const positiveOrNull = (v: number) => (v > 0 ? v : null);
+
+  /** Columnas de una tabla de miembros. `withPnlPct` para los BDM independientes. */
+  const memberColumns = (withPnlPct: boolean): FinColumn<CommercialProfile>[] => [
+    {
+      key: 'name',
+      header: t('common.name'),
+      cell: nameCell,
+      meta: hierarchyMeta,
+      mobileMeta: statusCell,
+    },
+    {
+      key: 'role',
+      header: t('hr.role'),
+      cell: (p) => <span className="text-text-2">{hrRoleLabel(p.role)}</span>,
+      hideSm: true,
+    },
+    { key: 'status', header: t('hr.status'), cell: statusCell, hideSm: true },
+    {
+      key: 'netCrm',
+      header: t('hr.netCrmCol'),
+      align: 'right',
+      cardSide: 'right',
+      cell: (p) => {
+        const r = insumo.get(p.id);
+        return <NetWithSource value={r?.value ?? null} source={r?.source ?? 'none'} tone="sign" />;
+      },
+    },
+    {
+      key: 'ndPct',
+      header: t('hr.netDepPct'),
+      align: 'right',
+      hideSm: true,
+      cell: (p) => <span className="tabular-nums">{pctText(p.net_deposit_pct) ?? '—'}</span>,
+    },
+    // El % que cobra el LÍDER por esta línea (migración 130). Al lado del Net
+    // Dep % porque es la comparación que el dueño hace al mirar la tarjeta.
+    {
+      key: 'pctLinea',
+      header: <span title={t('hr.pctLineaHint')}>{t('hr.pctLineaCol')}</span>,
+      align: 'right',
+      hideSm: true,
+      cell: pctLineaCell,
+    },
+    ...(withPnlPct
+      ? [
+          {
+            key: 'pnlPct',
+            header: t('hr.pnlPct'),
+            align: 'right' as const,
+            hideSm: true,
+            cell: (p: CommercialProfile) => <span className="tabular-nums">{pctText(p.pnl_pct) ?? '—'}</span>,
+          },
+        ]
+      : []),
+    {
+      key: 'salary',
+      header: t('hr.salaryCol'),
+      kind: 'money',
+      hideSm: true,
+      value: (p) => (p.fixed_salary && p.salary != null ? p.salary : null),
+      subtotal: false,
+    },
+    {
+      key: 'pnl',
+      header: t('hr.pnl'),
+      kind: 'money',
+      hideSm: true,
+      // Igual que antes: un PnL de 0 se muestra como raya, no como $0.00.
+      value: (p) => positiveOrNull(totalesDe(totales, p.id).pnl),
+      subtotal: false,
+    },
+    {
+      key: 'commission',
+      header: t('hr.commissionsMonth'),
+      align: 'right',
+      cardSide: 'right',
+      cell: (p) => comisionCell(p.id),
+    },
+    {
+      key: 'bonus',
+      header: t('hr.bonus'),
+      kind: 'money',
+      hideSm: true,
+      value: (p) => positiveOrNull(totalesDe(totales, p.id).bonus),
+      subtotal: false,
+    },
+    {
+      key: 'total',
+      header: t('hr.total'),
+      kind: 'money',
+      hideSm: true,
+      value: (p) => totalesDe(totales, p.id).total,
+      subtotal: false,
+    },
+  ];
 
   const renderTeamCard = (leader: CommercialProfile) => {
     // Miembros directos + los Master IB colgados de ellos (ver mastersDe).
-    const allBdms = conSusMasters(profiles.filter(p => p.head_id === leader.id));
-    const leaderMatches = matchesCommercial(leader, commercialQ);
-    // Al buscar: si el líder NO matchea, mostrar sólo los BDM que matchean.
-    const bdms = (!commercialQ || leaderMatches) ? allBdms : allBdms.filter(b => matchesCommercial(b, commercialQ));
+    const allBdms = conSusMasters(profiles.filter((p) => p.head_id === leader.id));
+    const leaderMatchesQ = matchesCommercial(leader, commercialQ);
+    // Al buscar: si el líder NO matchea, sólo los miembros que matchean. Los
+    // filtros de estado y salario recortan siempre (ver cabecera).
+    const bdms = allBdms.filter(
+      (b) => pasaFiltros(b) && (!commercialQ || leaderMatchesQ || matchesCommercial(b, commercialQ)),
+    );
     // Colapsar se ignora mientras hay búsqueda activa (siempre expandido).
     const isCollapsed = !commercialQ && collapsedTeams.has(leader.id);
     const leaderTotal = totalesDe(totales, leader.id).total;
+    const r = insumo.get(leader.id);
+    const shownNote =
+      !isCollapsed && bdms.length < allBdms.length
+        ? t('hrv.membersShowing', { shown: String(bdms.length), total: String(allBdms.length) })
+        : undefined;
 
     return (
-      <Card key={leader.id}>
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-          <div className="flex items-center gap-3">
+      <Panel
+        key={leader.id}
+        flush
+        title={
+          <span className="inline-flex flex-wrap items-center gap-1.5">
             <button
+              type="button"
               onClick={() => toggleTeamCollapsed(leader.id)}
-              className="text-muted-foreground hover:text-foreground shrink-0"
+              className={TOGGLE_CLASS}
               aria-label={isCollapsed ? t('hr.expandTeam') : t('hr.collapseTeam')}
+              aria-expanded={!isCollapsed}
               title={isCollapsed ? t('hr.expandTeam') : t('hr.collapseTeam')}
             >
-              {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+              {isCollapsed ? <ChevronRight aria-hidden className="size-4" /> : <ChevronDown aria-hidden className="size-4" />}
             </button>
-            <div className="w-10 h-10 rounded-full bg-violet-100 dark:bg-violet-950/50 flex items-center justify-center shrink-0">
-              <UserCircle className="w-6 h-6 text-violet-600" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <Link
-                  href={`/rrhh/perfil?id=${leader.id}`}
-                  className={cn(
-                    'text-base sm:text-lg font-semibold hover:text-primary dark:text-accent transition-colors',
-                    firedNameClass(leader),
-                  )}
-                >
-                  {leader.name}
-                </Link>
-                <FiredBadge profile={leader} />
-                <button onClick={() => { setEditingProfile(leader); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
-                  <Pencil className="w-3.5 h-3.5" />
-                </button>
-                {deletingId === leader.id ? (
-                  <div className="flex items-center gap-1">
-                    <button onClick={() => handleDeleteProfile(leader.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
-                    <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">{t('common.no')}</button>
-                  </div>
-                ) : (
-                  <button onClick={() => setDeletingId(leader.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', hrRoleBadgeClass(leader.role))}>
-                  {hrRoleLabel(leader.role)}
-                </span>
-                <span className="hidden sm:inline">{leader.email}</span>
-              </div>
-            </div>
-          </div>
-          <div className="text-left sm:text-right ml-13 sm:ml-0">
-            <p className="text-sm text-muted-foreground">{t('hr.netDeposit')}: {leader.net_deposit_pct != null ? `${leader.net_deposit_pct}%` : 'N/A'}</p>
-            <p className="font-semibold">{formatCurrency(leaderTotal)}</p>
-            <p className="text-xs mt-0.5">
-              <span className="text-muted-foreground">{t('hr.netCrmMonth')}: </span>
-              {(() => {
-                const r = insumo.get(leader.id);
-                if (!r || r.value === null) {
-                  return <span className="text-muted-foreground">—{sourceTag(r?.source ?? 'none')}</span>;
-                }
-                return (
-                  <span className={cn('font-semibold', r.value >= 0 ? 'text-positive' : 'text-negative')}>
-                    {formatCurrency(r.value)}
-                    {sourceTag(r.source)}
-                  </span>
-                );
-              })()}
-            </p>
-          </div>
-        </div>
-
+            <Link href={`/rrhh/perfil?id=${leader.id}`} className={cn('hover:underline', firedNameClass(leader))}>
+              {leader.name}
+            </Link>
+            <FiredBadge profile={leader} />
+          </span>
+        }
+        hint={
+          <>
+            {hrRoleLabel(leader.role)}
+            {' · '}
+            {t('hrv.membersCount', { n: String(allBdms.length) })}
+            {' · '}
+            {t('hr.netDepPct')} {pctText(leader.net_deposit_pct) ?? '—'}
+          </>
+        }
+        actions={
+          <>
+            <span className="inline-flex flex-col items-end text-[12px] leading-4 text-text-3">
+              <span>{t('hr.netCrmMonth')}</span>
+              <NetWithSource value={r?.value ?? null} source={r?.source ?? 'none'} tone="sign" />
+            </span>
+            <span className="inline-flex flex-col items-end text-[12px] leading-4 text-text-3">
+              <span>{t('hr.total')}</span>
+              <Money value={leaderTotal} className="text-[13px] font-semibold text-foreground" />
+            </span>
+            <span className="inline-flex items-center">{rowActions(leader)}</span>
+          </>
+        }
+        footer={shownNote}
+      >
         {!isCollapsed && bdms.length > 0 && (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[500px]">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">BDM</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netCrmCol')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.netDepPct')}</th>
-                  {/* El % que cobra el LÍDER por esta línea (migración 130).
-                      Al lado del Net Dep % porque es la comparación que el
-                      dueño hace al mirar la tarjeta. */}
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell" title={t('hr.pctLineaHint')}>{t('hr.pctLineaCol')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.salaryCol')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.pnl')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissionsMonth')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.bonus')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.total')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {bdms.map(bdm => {
-                  const tot = totalesDe(totales, bdm.id);
-                  return (
-                  <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm), bdm.is_master_ib && 'pl-7')}>
-                      {bdm.name}
-                      {esBdmGlobal(bdm.role) && (
-                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
-                      )}
-                      {bdm.is_master_ib && (
-                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
-                      )}
-                      <FiredBadge profile={bdm} />
-                    </td>
-                    <td className="py-2.5 px-3 text-muted-foreground text-xs hidden sm:table-cell">{bdm.email}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">{netCrmCell(bdm.id)}</td>
-                    <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
-                    <td className="py-2.5 px-3 text-right hidden sm:table-cell">{pctLineaCell(bdm)}</td>
-                    <td className="py-2.5 px-3 text-right hidden sm:table-cell">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
-                    <td className="py-2.5 px-3 text-right hidden sm:table-cell">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">{comisionCell(bdm.id)}</td>
-                    <td className="py-2.5 px-3 text-right hidden sm:table-cell">{tot.bonus > 0 ? formatCurrency(tot.bonus) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(tot.total)}</td>
-                    <td className="py-2.5 px-3 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
-                          <Pencil className="w-3.5 h-3.5" />
-                        </button>
-                        {deletingId === bdm.id ? (
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => handleDeleteProfile(bdm.id)} className="px-2 py-0.5 text-xs rounded bg-red-500 text-white hover:bg-red-600">OK</button>
-                            <button onClick={() => setDeletingId(null)} className="px-2 py-0.5 text-xs rounded border border-border hover:bg-muted">{t('common.no')}</button>
-                          </div>
-                        ) : (
-                          <button onClick={() => setDeletingId(bdm.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        )}
-                        <Link
-                          href={`/rrhh/perfil?id=${bdm.id}`}
-                          className="text-muted-foreground hover:text-foreground"
-                          aria-label={t('hr.viewProfile')}
-                          title={t('hr.viewProfile')}
-                        >
-                          <UserRound className="w-4 h-4" />
-                        </Link>
-                      </div>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <FinTable
+            columns={memberColumns(false)}
+            rows={bdms}
+            rowKey={(b) => b.id}
+            caption={t('hrv.teamOf', { name: leader.name })}
+            rowActions={(b) => rowActions(b)}
+          />
         )}
-      </Card>
+        {!isCollapsed && bdms.length === 0 && (
+          <p className="px-4 py-3 text-[13px] text-text-3">{t('hrv.noMembers')}</p>
+        )}
+      </Panel>
     );
   };
 
-  return (
-    <div className="space-y-6">
-      {/* El selector de período NO vive acá: es uno solo del módulo y está
-          arriba de las pestañas (ver rrhh/page.tsx). Acá queda sólo el alta. */}
-      <Card>
-        <div className="flex items-center justify-between">
-          <h3 className="text-sm font-semibold">{t('hr.commercialForce')}</h3>
-          <button
-            onClick={() => { setEditingProfile(undefined); setShowProfileForm(true); }}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90"
-          >
-            <Plus className="w-4 h-4" /> {t('hr.addProfile')}
-          </button>
-        </div>
-      </Card>
+  const statusLabels: Record<ProfileStatusFilter, string> = {
+    all: t('hrv.filterAll'),
+    active: t('hrv.filterActive'),
+    inactive: t('hrv.filterInactive'),
+  };
 
+  // ─── Resultados por período (todos los perfiles) ───
+  // Mismo criterio que antes: se listan los que movieron algo en el período
+  // (ganaron o trajeron net deposit).
+  const resultRows = profiles
+    .filter((p) => {
+      const tot = totales.get(p.id);
+      return !!tot && (tot.total > 0 || tot.netDepositCurrent > 0);
+    })
+    .sort((a, b) => totalesDe(totales, b.id).total - totalesDe(totales, a.id).total);
+
+  const resultColumns: FinColumn<CommercialProfile>[] = [
+    {
+      key: 'name',
+      header: t('common.name'),
+      cell: (p) => (
+        <Link href={`/rrhh/perfil?id=${p.id}`} className="hover:underline">
+          {p.name}
+        </Link>
+      ),
+      meta: (p) => hrRoleLabel(p.role),
+    },
+    { key: 'nd', header: t('hr.netDeposit'), kind: 'money', value: (p) => totalesDe(totales, p.id).netDepositTotal },
+    {
+      key: 'pnl',
+      header: t('hr.pnl'),
+      kind: 'money',
+      hideSm: true,
+      value: (p) => positiveOrNull(totalesDe(totales, p.id).pnl),
+    },
+    {
+      key: 'commissions',
+      header: t('hr.commissions'),
+      kind: 'money',
+      hideSm: true,
+      value: (p) => totalesDe(totales, p.id).commissions,
+    },
+    {
+      key: 'bonus',
+      header: t('hr.bonus'),
+      kind: 'money',
+      hideSm: true,
+      value: (p) => positiveOrNull(totalesDe(totales, p.id).bonus),
+    },
+    {
+      key: 'salary',
+      header: t('hr.salaryCol'),
+      kind: 'money',
+      hideSm: true,
+      value: (p) => positiveOrNull(totalesDe(totales, p.id).salary),
+    },
+    { key: 'total', header: t('hr.total'), kind: 'money', value: (p) => totalesDe(totales, p.id).total },
+  ];
+
+  return (
+    <div className="space-y-4">
       {showProfileForm && (
         <ProfileForm
           editing={editingProfile}
@@ -571,202 +731,116 @@ export function CommercialTab({
         />
       )}
 
-      {/* Buscador (por encargado HEAD/SM o por BDM) + colapsar/expandir todo */}
-      <Card>
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="relative flex items-center flex-1 min-w-[220px]">
-            <Search className="w-4 h-4 absolute left-2.5 text-muted-foreground pointer-events-none" />
-            <input
-              type="text"
-              value={commercialSearch}
-              onChange={(e) => setCommercialSearch(e.target.value)}
-              placeholder={t('hr.searchCommercialPlaceholder')}
-              className="pl-8 pr-8 py-1.5 text-base sm:text-sm border border-border rounded-md bg-background w-full focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-            />
-            {commercialSearch && (
-              <button onClick={() => setCommercialSearch('')} className="absolute right-2 text-muted-foreground hover:text-foreground" aria-label={t('comm.clearSearch')}>✕</button>
-            )}
-          </div>
-          <button
-            onClick={() => setSoloSinSalario((v) => !v)}
-            aria-pressed={soloSinSalario}
-            className={`px-2.5 py-1.5 rounded-lg border text-xs font-medium transition-colors ${
-              soloSinSalario
-                ? 'bg-primary text-brand-on-primary border-primary'
-                : 'border-border hover:bg-muted'
-            }`}
-          >
+      {/* Filtros (por encargado HEAD/SM o por BDM) + colapsar/expandir todo.
+          El selector de período NO vive acá: es uno solo del módulo y está
+          arriba de las pestañas (ver rrhh/page.tsx). */}
+      <Panel
+        title={t('hr.commercialForce')}
+        hint={t('hrv.profilesCount', { n: String(profiles.length) })}
+        actions={
+          <ActionButton variant="primary" onClick={() => { setEditingProfile(undefined); setShowProfileForm(true); }}>
+            <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} /> {t('hr.addProfile')}
+          </ActionButton>
+        }
+        footer={
+          filtering ? (
+            <>
+              {t('hr.showingTeams', { teams: String(visibleSalesManagers.length + visibleHeads.length) })}
+              {visibleIndependentBdms.length > 0 ? t('hr.showingBdms', { count: String(visibleIndependentBdms.length) }) : ''}
+              {commercialQ ? t('hr.forQuery', { query: commercialSearch }) : '.'}
+            </>
+          ) : undefined
+        }
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <SearchField
+            value={commercialSearch}
+            onChange={setCommercialSearch}
+            placeholder={t('hr.searchCommercialPlaceholder')}
+            className="max-w-[320px] flex-1"
+          />
+          <Segmented
+            options={PROFILE_STATUS_FILTERS.map((f) => ({ value: f, label: statusLabels[f], count: statusCounts[f] }))}
+            value={statusFilter}
+            onChange={setStatusFilter}
+            aria-label={t('hr.status')}
+          />
+          <Chip active={soloSinSalario} onClick={() => setSoloSinSalario((v) => !v)}>
             {t('hr.noSalaryFilter', { count: String(totalSinSalario) })}
-          </button>
+          </Chip>
           {!commercialQ && (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => setCollapsedTeams(new Set(lideres.map((l) => l.id)))}
-                className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted"
-              >
+            <span className="inline-flex items-center gap-1 sm:ml-auto">
+              <ActionButton variant="ghost" onClick={() => setCollapsedTeams(new Set(lideres.map((l) => l.id)))}>
                 {t('hr.collapseAll')}
-              </button>
-              <button
-                onClick={() => setCollapsedTeams(new Set())}
-                className="px-2.5 py-1.5 rounded-lg border border-border text-xs font-medium hover:bg-muted"
-              >
+              </ActionButton>
+              <ActionButton variant="ghost" onClick={() => setCollapsedTeams(new Set())}>
                 {t('hr.expandAll')}
-              </button>
-            </div>
+              </ActionButton>
+            </span>
           )}
         </div>
-        {commercialQ && (
-          <p className="text-xs text-muted-foreground mt-2">
-            {t('hr.showingTeams', { teams: String(visibleSalesManagers.length + visibleHeads.length) })}
-            {visibleIndependentBdms.length > 0 ? t('hr.showingBdms', { count: String(visibleIndependentBdms.length) }) : ''}
-            {t('hr.forQuery', { query: commercialSearch })}
-          </p>
-        )}
-      </Card>
+      </Panel>
 
       {/* Sales Managers */}
-      {visibleSalesManagers.map(sm => renderTeamCard(sm))}
+      {visibleSalesManagers.map((sm) => renderTeamCard(sm))}
 
       {/* HEADs */}
-      {visibleHeads.map(head => renderTeamCard(head))}
+      {visibleHeads.map((head) => renderTeamCard(head))}
 
-      {/* Sin resultados de búsqueda */}
-      {commercialQ && visibleSalesManagers.length === 0 && visibleHeads.length === 0 && visibleIndependentBdms.length === 0 && (
-        <Card><p className="text-center text-muted-foreground py-8">{t('hr.noResultsFor', { query: commercialSearch })}</p></Card>
-      )}
+      {/* Sin resultados */}
+      {filtering &&
+        visibleSalesManagers.length === 0 &&
+        visibleHeads.length === 0 &&
+        visibleIndependentBdms.length === 0 && (
+          <Panel>
+            <p className="py-6 text-center text-[13px] text-text-3">
+              {commercialQ ? t('hr.noResultsFor', { query: commercialSearch }) : t('ui.table.empty')}
+            </p>
+          </Panel>
+        )}
 
       {/* Independent BDMs */}
       {visibleIndependentBdms.length > 0 && (
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('hr.independentBdms')}</h2>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.email')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netDepPct')}</th>
-                  {/* Los Master IB de un BDM sin líder caen en esta tabla: su
-                      línea también la cobra alguien (su BDM), así que el campo
-                      tiene que estar acá también. */}
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium" title={t('hr.pctLineaHint')}>{t('hr.pctLineaCol')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnlPct')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.salaryCol')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnl')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissionsMonth')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.bonus')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.total')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleIndependentBdms.map(bdm => {
-                  const tot = totalesDe(totales, bdm.id);
-                  return (
-                  <tr key={bdm.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className={cn('py-2.5 px-3 font-medium', firedNameClass(bdm), bdm.is_master_ib && 'pl-7')}>
-                      {bdm.name}
-                      {esBdmGlobal(bdm.role) && (
-                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-purple-100 text-purple-800 border border-purple-300">GLOBAL</span>
-                      )}
-                      {bdm.is_master_ib && (
-                        <span className="inline-block ml-2 px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-100 text-amber-800 border border-amber-300">{t('hr.masterIb')}</span>
-                      )}
-                      <FiredBadge profile={bdm} />
-                    </td>
-                    <td className="py-2.5 px-3 text-muted-foreground text-xs">{bdm.email}</td>
-                    <td className="py-2.5 px-3 text-right">{bdm.net_deposit_pct != null ? `${bdm.net_deposit_pct}%` : 'N/A'}</td>
-                    <td className="py-2.5 px-3 text-right">{pctLineaCell(bdm)}</td>
-                    <td className="py-2.5 px-3 text-right">{bdm.pnl_pct != null ? `${bdm.pnl_pct}%` : 'N/A'}</td>
-                    <td className="py-2.5 px-3 text-right">{bdm.fixed_salary && bdm.salary != null ? formatCurrency(bdm.salary) : 'N/A'}</td>
-                    <td className="py-2.5 px-3 text-right">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right tabular-nums">{comisionCell(bdm.id)}</td>
-                    <td className="py-2.5 px-3 text-right">{tot.bonus > 0 ? formatCurrency(tot.bonus) : '-'}</td>
-                    <td className="py-2.5 px-3 text-right font-medium">{formatCurrency(tot.total)}</td>
-                    <td className="py-2.5 px-3 text-right flex items-center justify-end gap-1">
-                      <button onClick={() => { setEditingProfile(bdm); setShowProfileForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
-                        <Pencil className="w-3.5 h-3.5" />
-                      </button>
-                      <Link
-                        href={`/rrhh/perfil?id=${bdm.id}`}
-                        className="text-muted-foreground hover:text-foreground"
-                        aria-label={t('hr.viewProfile')}
-                        title={t('hr.viewProfile')}
-                      >
-                        <UserRound className="w-4 h-4" />
-                      </Link>
-                    </td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </Card>
+        <Panel
+          title={t('hr.independentBdms')}
+          hint={t('hrv.membersCount', { n: String(visibleIndependentBdms.length) })}
+          flush
+        >
+          {/* Los Master IB de un BDM sin líder caen en esta tabla: su línea
+              también la cobra alguien (su BDM), así que el % por línea tiene
+              que estar acá también. Sin botón de borrar, igual que antes. */}
+          <FinTable
+            columns={memberColumns(true)}
+            rows={visibleIndependentBdms}
+            rowKey={(b) => b.id}
+            caption={t('hr.independentBdms')}
+            rowActions={(b) => rowActions(b, false)}
+          />
+        </Panel>
       )}
 
       {/* ─── Resultados por período (todos los perfiles) ─── */}
-      <Card>
-        <h2 className="text-lg font-semibold mb-4">{t('hr.resultsByPeriod')}</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('common.name')}</th>
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('hr.role')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.netDeposit')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.pnl')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.commissions')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.bonus')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('hr.salaryCol')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium font-bold">{t('hr.total')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {profiles
-                // Mismo criterio que antes: se listan los que movieron algo en
-                // el período (ganaron o trajeron net deposit).
-                .filter(p => {
-                  const tot = totales.get(p.id);
-                  return !!tot && (tot.total > 0 || tot.netDepositCurrent > 0);
-                })
-                .sort((a, b) => totalesDe(totales, b.id).total - totalesDe(totales, a.id).total)
-                .map(p => {
-                  const tot = totalesDe(totales, p.id);
-                  return (
-                    <tr key={p.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                      <td className="py-2.5 px-3 font-medium">
-                        <Link href={`/rrhh/perfil?id=${p.id}`} className="hover:text-primary dark:text-accent">{p.name}</Link>
-                      </td>
-                      <td className="py-2.5 px-3">
-                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', hrRoleBadgeClass(p.role))}>
-                          {hrRoleLabel(p.role)}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-right">{formatCurrency(tot.netDepositTotal)}</td>
-                      <td className="py-2.5 px-3 text-right">{tot.pnl > 0 ? formatCurrency(tot.pnl) : '-'}</td>
-                      <td className="py-2.5 px-3 text-right">{formatCurrency(tot.commissions)}</td>
-                      <td className="py-2.5 px-3 text-right">{tot.bonus > 0 ? formatCurrency(tot.bonus) : '-'}</td>
-                      <td className="py-2.5 px-3 text-right">{tot.salary > 0 ? formatCurrency(tot.salary) : '-'}</td>
-                      <td className="py-2.5 px-3 text-right font-bold">{formatCurrency(tot.total)}</td>
-                    </tr>
-                  );
-                })}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold border-t-2 border-border">
-                <td className="py-3 px-3" colSpan={2}>TOTAL</td>
-                <td className="py-3 px-3 text-right">{formatCurrency(totalGeneral.netDepositTotal)}</td>
-                <td className="py-3 px-3 text-right">{totalGeneral.pnl > 0 ? formatCurrency(totalGeneral.pnl) : '-'}</td>
-                <td className="py-3 px-3 text-right">{formatCurrency(totalGeneral.commissions)}</td>
-                <td className="py-3 px-3 text-right">{totalGeneral.bonus > 0 ? formatCurrency(totalGeneral.bonus) : '-'}</td>
-                <td className="py-3 px-3 text-right">{totalGeneral.salary > 0 ? formatCurrency(totalGeneral.salary) : '-'}</td>
-                <td className="py-3 px-3 text-right text-primary dark:text-accent">{formatCurrency(totalGeneral.total)}</td>
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-      </Card>
+      <Panel title={t('hr.resultsByPeriod')} hint={t('hrv.periodsInScope', { n: String(periodIds.length) })} flush>
+        <FinTable
+          columns={resultColumns}
+          rows={resultRows}
+          rowKey={(p) => p.id}
+          caption={t('hr.resultsByPeriod')}
+          footer={{
+            label: t('hr.total'),
+            // Sobre TODOS los perfiles (totalesGenerales), el mismo camino que
+            // el CSV — no la suma de las filas visibles.
+            values: {
+              nd: totalGeneral.netDepositTotal,
+              pnl: positiveOrNull(totalGeneral.pnl),
+              commissions: totalGeneral.commissions,
+              bonus: positiveOrNull(totalGeneral.bonus),
+              salary: positiveOrNull(totalGeneral.salary),
+              total: totalGeneral.total,
+            },
+          }}
+        />
+      </Panel>
     </div>
   );
 }

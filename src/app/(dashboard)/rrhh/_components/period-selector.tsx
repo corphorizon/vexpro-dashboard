@@ -3,7 +3,9 @@
 import { useState } from 'react';
 import { useData } from '@/lib/data-context';
 import { useI18n } from '@/lib/i18n';
-import { cn } from '@/lib/utils';
+import { Input } from '@/components/ui/field';
+import { Segmented } from '@/components/ui/segmented';
+import { Chip } from '@/components/ui/chip';
 import { HR_PERIOD_PRESETS, type HrPeriodPreset } from '@/lib/hr/period-filter';
 import { useHrPeriod } from './hr-period-context';
 
@@ -23,6 +25,10 @@ import { useHrPeriod } from './hr-period-context';
 // pestaña Comercial). Lo que sale del CRM es por mes y siempre usa el ancla:
 // un "trimestre" del rollup del CRM no existe hoy y fingirlo sumando tres meses
 // sería inventar un número que nadie cuadró.
+//
+// «Libro mayor» (2026-10-12): los presets son un Segmented y los períodos a
+// medida, Chips (spec §5.6) — antes los dos en `bg-[var(--color-primary)]
+// text-white`, seis rellenos de marca compitiendo con el botón primario.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function HrPeriodSelector({ showPresets }: { showPresets: boolean }) {
@@ -41,49 +47,45 @@ export function HrPeriodSelector({ showPresets }: { showPresets: boolean }) {
   };
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <div className="flex items-center gap-2">
-        <label className="text-sm text-muted-foreground" htmlFor="hr-month">
+        <label className="text-[12.5px] font-medium text-text-2" htmlFor="hr-month">
           {t('hr.warningMonth')}
         </label>
-        <input
-          id="hr-month"
-          type="month"
-          value={month}
-          onChange={(e) => {
-            // Un mes vacío (el usuario borra el campo) dejaría a todas las
-            // pestañas pidiendo `month=`: se ignora y queda el anterior.
-            if (e.target.value) setMonth(e.target.value);
-          }}
-          className="px-3 py-1.5 rounded-lg border border-border bg-card text-base sm:text-sm"
-        />
+        {/* Ancho en el contenedor: `cn` no fusiona y un `w-auto` pelearía
+            con el `w-full` del control por orden de CSS. */}
+        <div className="w-44">
+          <Input
+            id="hr-month"
+            type="month"
+            value={month}
+            onChange={(e) => {
+              // Un mes vacío (el usuario borra el campo) dejaría a todas las
+              // pestañas pidiendo `month=`: se ignora y queda el anterior.
+              if (e.target.value) setMonth(e.target.value);
+            }}
+          />
+        </div>
       </div>
 
       {showPresets && (
         <>
-          <span className="hidden sm:inline text-border">|</span>
-          {HR_PERIOD_PRESETS.map((p) => (
-            <button
-              key={p}
-              onClick={() => {
-                setPreset(p);
-                setShowCustom(p === 'custom');
-              }}
-              className={cn(
-                'px-3 py-1.5 text-xs font-medium rounded-md border transition-colors',
-                preset === p
-                  ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                  : 'border-border hover:bg-muted',
-              )}
-            >
-              {filterLabels[p]}
-            </button>
-          ))}
+          <Segmented
+            options={HR_PERIOD_PRESETS.map((p) => ({ value: p, label: filterLabels[p] }))}
+            value={preset}
+            onChange={(p) => {
+              setPreset(p);
+              setShowCustom(p === 'custom');
+            }}
+            aria-label={t('hrv.periodPreset')}
+            className="max-w-full flex-wrap"
+          />
           {showCustom && preset === 'custom' && (
-            <div className="flex flex-wrap gap-1">
+            <div className="flex flex-wrap gap-1.5" role="group" aria-label={t('hr.filterCustom')}>
               {periods.map((p) => (
-                <button
+                <Chip
                   key={p.id}
+                  active={customIds.includes(p.id)}
                   onClick={() =>
                     setCustomIds(
                       customIds.includes(p.id)
@@ -91,15 +93,9 @@ export function HrPeriodSelector({ showPresets }: { showPresets: boolean }) {
                         : [...customIds, p.id],
                     )
                   }
-                  className={cn(
-                    'px-2 py-1 text-xs rounded-md border transition-colors',
-                    customIds.includes(p.id)
-                      ? 'bg-[var(--color-primary)] text-white border-[var(--color-primary)]'
-                      : 'border-border hover:bg-muted',
-                  )}
                 >
                   {p.label}
-                </button>
+                </Chip>
               ))}
             </div>
           )}

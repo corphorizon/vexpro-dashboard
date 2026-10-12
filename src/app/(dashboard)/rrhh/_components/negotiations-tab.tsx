@@ -1,16 +1,22 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
-import { Card } from '@/components/ui/card';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Panel } from '@/components/ui/panel';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Segmented } from '@/components/ui/segmented';
+import { Select } from '@/components/ui/field';
+import { ActionButton } from '@/components/payment-orders/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
 import { apiFetch } from '@/lib/api-fetch';
 import { formatDate } from '@/lib/dates';
-import { cn } from '@/lib/utils';
-import { Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import { Pencil, Plus, Trash2 } from 'lucide-react';
 import type { Negotiation, NegotiationStatus } from '@/lib/types';
-import { hrRoleBadgeClass, hrRoleLabel } from '@/lib/hr/domain';
+import { hrRoleLabel } from '@/lib/hr/domain';
 import { NegotiationForm, type NegFormData } from './negotiation-form';
+import { ROW_ACTION_CLASS, ROW_DANGER_CLASS, SearchField } from './hr-ui';
+import { NEG_STATUSES, negStatusView } from './hr-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Pestaña NEGOCIACIONES (de perfiles comerciales).
@@ -21,19 +27,18 @@ import { NegotiationForm, type NegFormData } from './negotiation-form';
 // overview la ataría al selector y la haría desaparecer al cambiar de mes.
 //
 // `negotiations` ≠ `ib_negotiations`; ver la cabecera de negotiation-form.tsx.
+//
+// «Libro mayor» (2026-10-12) — sólo presentación: FinTable con el perfil y su
+// rol como metadato, estado con StatusBadge desde NEG_STATUS_VIEW (hr-view.ts;
+// antes `NEG_STATUS_BADGE` local, con «cerrada» en ROJO — cerrar un trato no
+// es un error; spec §5.5 «Cerrado» = neutro); el filtro de estado pasó de
+// <select> a Segmented con conteos; el pie cuenta el recorte del filtro
+// («Mostrando 4 de 19»), que antes no se veía. Medición (sin comentarios):
+// antes 2 clases de paleta cruda, 1 `text-[10px]` y 23 tokens legados;
+// después 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const NEG_STATUS_BADGE: Record<string, string> = {
-  active: 'bg-positive/10 text-positive',
-  pending: 'bg-warning/10 text-warning',
-  closed: 'bg-negative/10 text-negative',
-};
-
-const NEG_STATUS_LABELS: Record<string, string> = {
-  active: 'hr.negStatusActive',
-  pending: 'hr.negStatusPending',
-  closed: 'hr.negStatusClosed',
-};
+type StatusFilter = '' | NegotiationStatus;
 
 export function NegotiationsTab({
   onToast,
@@ -49,7 +54,7 @@ export function NegotiationsTab({
   const [editingNeg, setEditingNeg] = useState<Negotiation | undefined>();
   const [negSearch, setNegSearch] = useState('');
   const [negFilterProfile, setNegFilterProfile] = useState('');
-  const [negFilterStatus, setNegFilterStatus] = useState<'' | NegotiationStatus>('');
+  const [negFilterStatus, setNegFilterStatus] = useState<StatusFilter>('');
   const [savingNeg, setSavingNeg] = useState(false);
   const [negError, setNegError] = useState('');
 
@@ -161,65 +166,72 @@ export function NegotiationsTab({
     }
   };
 
-  const filteredNegotiations = negotiations.filter(n => {
+  const profileById = useMemo(() => new Map(profiles.map((p) => [p.id, p])), [profiles]);
+
+  // Búsqueda + perfil primero; el estado después, para que los conteos del
+  // Segmented digan cuántas filas suma cada estado con lo demás aplicado.
+  const searched = negotiations.filter((n) => {
     if (negFilterProfile && n.profile_id !== negFilterProfile) return false;
-    if (negFilterStatus && n.status !== negFilterStatus) return false;
     if (negSearch) {
       const s = negSearch.toLowerCase();
-      const profile = profiles.find(p => p.id === n.profile_id);
+      const profile = profileById.get(n.profile_id);
       return n.title.toLowerCase().includes(s) || (n.description || '').toLowerCase().includes(s) || (profile?.name || '').toLowerCase().includes(s) || (profile?.email || '').toLowerCase().includes(s);
     }
     return true;
   });
+  const filteredNegotiations = negFilterStatus ? searched.filter((n) => n.status === negFilterStatus) : searched;
+  const countOf = (st: NegotiationStatus) => searched.filter((n) => n.status === st).length;
+
+  const columns: FinColumn<Negotiation>[] = [
+    {
+      key: 'title',
+      header: t('hr.negotiationTitle'),
+      cell: (neg) => neg.title,
+      meta: (neg) => {
+        const profile = profileById.get(neg.profile_id);
+        return profile ? `${profile.name} · ${hrRoleLabel(profile.role)}` : '—';
+      },
+      mobileMeta: (neg) => {
+        const v = negStatusView(neg.status);
+        return <StatusBadge kind={v.kind} label={t(v.labelKey)} />;
+      },
+    },
+    {
+      key: 'email',
+      header: t('common.email'),
+      hideSm: true,
+      cell: (neg) => <span className="text-text-2">{profileById.get(neg.profile_id)?.email || '—'}</span>,
+    },
+    {
+      key: 'description',
+      header: t('hr.negotiationDesc'),
+      hideSm: true,
+      cell: (neg) => (
+        <span className="block max-w-[260px] truncate text-text-2" title={neg.description || undefined}>
+          {neg.description || '—'}
+        </span>
+      ),
+    },
+    {
+      key: 'status',
+      header: t('hr.negotiationStatus'),
+      hideSm: true,
+      cell: (neg) => {
+        const v = negStatusView(neg.status);
+        return <StatusBadge kind={v.kind} label={t(v.labelKey)} />;
+      },
+    },
+    {
+      key: 'updated',
+      header: t('hr.negotiationUpdated'),
+      align: 'right',
+      cardSide: 'right',
+      cell: (neg) => <span className="tabular-nums text-text-2">{formatDate(neg.updated_at)}</span>,
+    },
+  ];
 
   return (
     <div className="space-y-4">
-      {/* Toolbar */}
-      <Card>
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex flex-col sm:flex-row gap-2 flex-1 w-full sm:w-auto">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-              <input
-                aria-label={t('hr.searchNegotiations')}
-                value={negSearch}
-                onChange={e => setNegSearch(e.target.value)}
-                placeholder={t('hr.searchNegotiations')}
-                className="w-full pl-9 pr-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-[var(--color-secondary)]"
-              />
-            </div>
-            <select
-              aria-label={t('hr.allProfiles')}
-              value={negFilterProfile}
-              onChange={e => setNegFilterProfile(e.target.value)}
-              className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
-            >
-              <option value="">{t('hr.allProfiles')}</option>
-              {profiles.filter(p => p.status === 'active').map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <select
-              aria-label={t('hr.allStatuses')}
-              value={negFilterStatus}
-              onChange={e => setNegFilterStatus(e.target.value as '' | NegotiationStatus)}
-              className="px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm"
-            >
-              <option value="">{t('hr.allStatuses')}</option>
-              <option value="active">{t('hr.negStatusActive')}</option>
-              <option value="pending">{t('hr.negStatusPending')}</option>
-              <option value="closed">{t('hr.negStatusClosed')}</option>
-            </select>
-          </div>
-          <button
-            onClick={() => { setEditingNeg(undefined); setNegError(''); setShowNegForm(true); }}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 shrink-0"
-          >
-            <Plus className="w-4 h-4" /> {t('hr.addNegotiation')}
-          </button>
-        </div>
-      </Card>
-
       {showNegForm && (
         <NegotiationForm
           editing={editingNeg}
@@ -231,71 +243,88 @@ export function NegotiationsTab({
         />
       )}
 
-      <Card>
+      <Panel
+        title={t('hr.negotiations')}
+        actions={
+          <ActionButton
+            variant="primary"
+            onClick={() => { setEditingNeg(undefined); setNegError(''); setShowNegForm(true); }}
+          >
+            <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} /> {t('hr.addNegotiation')}
+          </ActionButton>
+        }
+        flush
+        footer={
+          !negLoading && filteredNegotiations.length < negotiations.length
+            ? t('hrv.rowsShowing', { shown: String(filteredNegotiations.length), total: String(negotiations.length) })
+            : undefined
+        }
+      >
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          <SearchField
+            value={negSearch}
+            onChange={setNegSearch}
+            placeholder={t('hr.searchNegotiations')}
+            className="max-w-[320px] flex-1"
+          />
+          <div className="w-56 max-sm:w-full">
+            <Select
+              aria-label={t('hr.allProfiles')}
+              value={negFilterProfile}
+              onChange={(e) => setNegFilterProfile(e.target.value)}
+            >
+              <option value="">{t('hr.allProfiles')}</option>
+              {profiles.filter(p => p.status === 'active').map(p => (
+                <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </Select>
+          </div>
+          <Segmented<StatusFilter>
+            options={[
+              { value: '', label: t('hr.allStatuses'), count: searched.length },
+              ...NEG_STATUSES.map((st) => ({ value: st, label: t(negStatusView(st).labelKey), count: countOf(st) })),
+            ]}
+            value={negFilterStatus}
+            onChange={setNegFilterStatus}
+            aria-label={t('hr.negotiationStatus')}
+            className="max-w-full flex-wrap"
+          />
+        </div>
+
         {negLoading ? (
-          <div className="flex items-center justify-center py-12">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[var(--color-primary)]" />
-          </div>
-        ) : filteredNegotiations.length === 0 ? (
-          <p className="text-center text-muted-foreground py-8">{t('hr.noNegotiations')}</p>
+          <p className="px-4 py-8 text-center text-[13px] text-text-3">{t('common.loading')}</p>
         ) : (
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-            <table className="w-full text-sm min-w-[700px]">
-              <thead>
-                <tr className="border-b border-border">
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('hr.negotiationTitle')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('common.name')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('common.email')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden md:table-cell">{t('hr.negotiationDesc')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('hr.negotiationStatus')}</th>
-                  <th className="text-left py-2.5 px-3 text-muted-foreground font-medium hidden sm:table-cell">{t('hr.negotiationUpdated')}</th>
-                  <th className="text-right py-2.5 px-3 text-muted-foreground font-medium"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredNegotiations.map(neg => {
-                  const profile = profiles.find(p => p.id === neg.profile_id);
-                  return (
-                    <tr key={neg.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                      <td className="py-2.5 px-3 font-medium">{neg.title}</td>
-                      <td className="py-2.5 px-3 hidden sm:table-cell">
-                        <div>
-                          <span className="font-medium">{profile?.name || '-'}</span>
-                          {profile && (
-                            <span className={cn('ml-2 px-1.5 py-0.5 rounded-full text-[10px] font-medium', hrRoleBadgeClass(profile.role))}>
-                              {hrRoleLabel(profile.role)}
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                      <td className="py-2.5 px-3 text-muted-foreground text-xs hidden sm:table-cell">{profile?.email || '-'}</td>
-                      <td className="py-2.5 px-3 text-muted-foreground text-xs max-w-[200px] truncate hidden md:table-cell">{neg.description || '-'}</td>
-                      <td className="py-2.5 px-3">
-                        <span className={cn('px-2 py-0.5 rounded-full text-xs font-medium', NEG_STATUS_BADGE[neg.status])}>
-                          {t(NEG_STATUS_LABELS[neg.status])}
-                        </span>
-                      </td>
-                      <td className="py-2.5 px-3 text-muted-foreground text-xs hidden sm:table-cell">
-                        {formatDate(neg.updated_at)}
-                      </td>
-                      <td className="py-2.5 px-3 text-right">
-                        <div className="flex items-center justify-end gap-1">
-                          <button onClick={() => { setEditingNeg(neg); setShowNegForm(true); }} className="text-muted-foreground hover:text-foreground" aria-label={t('common.edit')}>
-                            <Pencil className="w-3.5 h-3.5" />
-                          </button>
-                          <button onClick={() => handleDeleteNegotiation(neg.id)} className="text-muted-foreground hover:text-red-500" aria-label={t('common.delete')}>
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <FinTable
+            columns={columns}
+            rows={filteredNegotiations}
+            rowKey={(neg) => neg.id}
+            caption={t('hr.negotiations')}
+            empty={t('hr.noNegotiations')}
+            rowActions={(neg) => (
+              <>
+                <button
+                  type="button"
+                  onClick={() => { setEditingNeg(neg); setShowNegForm(true); }}
+                  className={ROW_ACTION_CLASS}
+                  aria-label={t('common.edit')}
+                  title={t('common.edit')}
+                >
+                  <Pencil aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteNegotiation(neg.id)}
+                  className={ROW_DANGER_CLASS}
+                  aria-label={t('common.delete')}
+                  title={t('common.delete')}
+                >
+                  <Trash2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                </button>
+              </>
+            )}
+          />
         )}
-      </Card>
+      </Panel>
     </div>
   );
 }

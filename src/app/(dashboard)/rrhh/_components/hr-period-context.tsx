@@ -116,14 +116,35 @@ type HrPeriodValue = {
 
 const HrPeriodContext = createContext<HrPeriodValue | null>(null);
 
-export function HrPeriodProvider({ children }: { children: React.ReactNode }) {
+export function HrPeriodProvider({
+  children,
+  month: controlledMonth,
+}: {
+  children: React.ReactNode;
+  /**
+   * Mes fijado desde afuera. Lo usa el dashboard de RRHH (2026-10-12, «Libro
+   * mayor»): ahí el reloj es el selector de período global de la app y el
+   * overview del mes tiene que ser el de ESE período, no el mes anterior por
+   * defecto. Reusar el provider —y su caché por empresa y mes— evita una
+   * segunda carga de /api/admin/hr-overview escrita aparte. Con el prop,
+   * `setMonth` no hace nada: hay un solo dueño del mes.
+   */
+  month?: MesAncla;
+}) {
   const { company, periods } = useData();
   const companyId = company?.id ?? '';
 
   // Default: el mes ANTERIOR. Es el que RRHH revisa (el corriente todavía corre)
   // y era el default de Net Deposit y Warnings. La pestaña Comercial arranca en
   // preset 'total', que ignora el ancla: sus números al entrar no cambian.
-  const [month, setMonth] = useState<MesAncla>(() => mesAnterior());
+  const [ownMonth, setOwnMonth] = useState<MesAncla>(() => mesAnterior());
+  const month = controlledMonth ?? ownMonth;
+  const setMonth = useCallback(
+    (m: MesAncla) => {
+      if (controlledMonth === undefined) setOwnMonth(m);
+    },
+    [controlledMonth],
+  );
   const [preset, setPreset] = useState<HrPeriodPreset>('total');
   const [customIds, setCustomIds] = useState<string[]>([]);
 
@@ -179,7 +200,7 @@ export function HrPeriodProvider({ children }: { children: React.ReactNode }) {
       error: entrada?.error ?? false,
       refetch,
     }),
-    [month, preset, customIds, periodIds, entrada, companyId, refetch],
+    [month, setMonth, preset, customIds, periodIds, entrada, companyId, refetch],
   );
 
   return <HrPeriodContext.Provider value={value}>{children}</HrPeriodContext.Provider>;
