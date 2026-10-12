@@ -1,58 +1,85 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { StatCard } from '@/components/ui/stat-card';
+import Link from 'next/link';
 import { useAuth, hasModuleAccess } from '@/lib/auth-context';
-import { pendingValueLabel } from '@/lib/distribution-inputs';
+import { incompleteNotice } from '@/lib/distribution-inputs';
+import { seriesState, type SeriesState } from '@/lib/chain-view';
 import { useData } from '@/lib/data-context';
 import { features } from '@/lib/business-model';
 import { useApiCoexistence } from '@/lib/use-api-coexistence';
 import { manualDepositsByChannel } from '@/lib/deposit-channels';
-import { formatCurrency } from '@/lib/utils';
+import { withdrawalChannelLabel } from '@/lib/withdrawal-channels';
 import { apiFetch } from '@/lib/api-fetch';
+import { useI18n } from '@/lib/i18n';
+import { PageHeader } from '@/components/ui/page-header';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { Skeleton } from '@/components/ui/skeleton';
 import { QuickAccess } from './quick-access';
 import {
-  ArrowDownCircle, ArrowUpCircle, Wallet, Receipt, TrendingUp,
-  TrendingDown, Briefcase, Droplets, Layers, Loader2,
-} from 'lucide-react';
+  homeAlerts,
+  pctChange,
+  runningBalance,
+  visibleAlerts,
+  type AlertText,
+  type ChecklistItemLike,
+  type LoadState,
+} from './home-view';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// AdminHome — full dashboard for company admins (and superadmin when
-// entering a company via /superadmin/viewing/[id]).
+// AdminHome — panel del admin de la empresa (y del superadmin viendo una).
 //
-// Two rows of stat cards + quick access:
-//   Row 1 (financial flow): Net Deposit · Depósitos · Egresos · Retiros
-//   Row 2 (position):       Balance Disponible · Socios · Inversiones · Liquidez
+// «Libro mayor» (2026-10-12): cabecera → franjas de KPIs → avisos → accesos.
+//   · Franja 1, posición y resultado: Total consolidado (hero) · PNL del mes
+//     (CRM) · Ingresos · Egresos · Neto del mes.
+//   · Franja 2 (sólo bróker), flujo de clientes del mes: Depósito neto ·
+//     Depósitos · Retiros · Inversiones · Liquidez.
+//   · Avisos: estado del dato + checklist de cierre del mes abierto, por
+//     severidad, 3 visibles y «ver todas (N)» (home-view.ts).
 //
-// Cada tarjeta se gatea por SU módulo: 'movements' para el flujo de clientes,
+// Cada KPI se gatea por SU módulo: 'movements' para el flujo de clientes,
 // 'income'/'expenses' para el resultado del mes, 'balances' para el total
-// consolidado. Antes toda la fila 1 y el Total Consolidado colgaban de
+// consolidado. Antes toda la fila de flujo y el Total Consolidado colgaban de
 // has('movements') — y 'movements' es uno de los módulos que
 // blockedModules('company') apaga, así que en una empresa modo `company` la
-// fila NUNCA se renderizaba: el skeleton dibujaba tres tarjetas que después se
-// evaporaban y la home quedaba vacía (Horizon).
+// fila NUNCA se renderizaba y la home quedaba vacía (Horizon).
+//
+// Lo que cambió en los números (todo «no lo sabemos ≠ cero», reglas §1.3):
+//   · Total consolidado: el `catch` del fetch ponía 0 → «$0.00» con la red
+//     caída. Ahora queda «—» y un aviso `bad`.
+//   · Ingresos / Neto con la serie del CRM en vuelo: «—» + badge `stale`
+//     «Cargando datos del CRM…» (antes, el texto suelto ocupando el valor).
+//   · Flujo de clientes con /persisted-movements fallado: «—», no la suma
+//     de lo manual con cara de total.
+//   · Inversiones / Liquidez sin movimientos: «—» «Sin movimientos».
+//
+// DESCARTADO: mantener «Ingresos» y «Neto» sólo para `company` (como antes).
+// Un bróker también tiene un resultado del mes y es el número que más se
+// pregunta; ocultarlo obligaba a ir a /socios para verlo.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function AdminHome() {
+  const { t } = useI18n();
   const { user } = useAuth();
   const {
     company,
     periods,
     getPeriodSummary,
     computeSaldoChain,
+    getSnapshotDrifts,
+    getInvestmentsData,
+    getLiquidityData,
     partners,
     loading,
     autoSeriesStatus,
+    truncatedSlices,
   } = useData();
 
-  // ── Current period resolution ─────────────────────────────────────────
-  // The UI period selector lives elsewhere; here we pick the most recent
-  // non-closed period (or the newest one).
+  // ── Período en curso: el último no cerrado (o el más nuevo) ───────────
   const currentPeriod = useMemo(() => {
     if (!periods.length) return null;
-    const open = [...periods]
-      .reverse()
-      .find((p) => !p.is_closed);
+    const open = [...periods].reverse().find((p) => !p.is_closed);
     return open ?? periods[periods.length - 1];
   }, [periods]);
 
@@ -65,94 +92,76 @@ export function AdminHome() {
   const currentSummary = currentPeriod ? getPeriodSummary(currentPeriod.id) : null;
   const prevSummary = prevPeriod ? getPeriodSummary(prevPeriod.id) : null;
 
-  // ── API + manual consolidation ────────────────────────────────────────
-  // Mirrors /resumen-general and /movimientos so the home matches what
-  // the user sees on those pages. Without this, post Apr-2026 periods
-  // showed only the manual subset (often $0) and looked broken.
-  // BUG-05: totales scopeados al SET de wallets pinneadas ('' → modo 'pinned'),
-  // igual que /movimientos, /resumen-general y /balances. El pinning es la
-  // selección curada de "qué wallets cuentan para este dashboard" — reemplaza
-  // al viejo default_wallet_id único (Vex Pro tiene varias Coinsbuy de otras
-  // sub-unidades; se pinnean solo las que pertenecen a este flujo).
+  // ── API + manual — misma consolidación que /resumen-general y /movimientos.
+  // BUG-05: totales scopeados al SET de wallets pinneadas ('' → modo 'pinned').
   const currentCoexist = useApiCoexistence(currentPeriod ? [currentPeriod] : [], '');
   const prevCoexist = useApiCoexistence(prevPeriod ? [prevPeriod] : [], '');
 
-  const consolidate = (
-    summary: typeof currentSummary,
-    coexist: typeof currentCoexist,
-  ) => {
-    if (!summary) return { deposits: 0, withdrawals: 0, netDeposit: 0 };
-    const useDerivedBroker = coexist.useDerivedBroker;
-
-    // Manual por canal desde el registro único (src/lib/deposit-channels.ts).
+  /**
+   * Retiros — Kevin (2026-06-06, decisión final): API + manual Broker.
+   * Comisiones IB / Prop Firm / Otros son informativos y NO entran. Misma
+   * lógica en /movimientos y /resumen-general.
+   * null = no lo sabemos (sin resumen, o la API del período derivado falló /
+   * todavía no respondió).
+   */
+  const consolidate = (summary: typeof currentSummary, coexist: typeof currentCoexist) => {
+    if (!summary) return null;
+    if (coexist.useDerivedBroker && coexist.apiFetchState !== 'ok') return null;
     const manualByChannel = manualDepositsByChannel(summary.deposits);
-    const storedOther = manualByChannel.other;
-    const deposits = useDerivedBroker
-      ? coexist.apiDepositsTotal(manualByChannel) + storedOther
+    const deposits = coexist.useDerivedBroker
+      ? coexist.apiDepositsTotal(manualByChannel) + manualByChannel.other
       : summary.totalDeposits;
-
     const storedBroker = summary.withdrawals.find((w) => w.category === 'broker')?.amount ?? 0;
-    // Withdrawals — Kevin (2026-06-06, decisión final): los retiros reales
-    // son los datos de Coinsbuy = API + manual Broker (suplemento Coinsbuy
-    // cuando la API no alcanza a reportar). Comisiones IB / Prop Firm /
-    // Otros son meramente informativos y NO entran al total.
-    // Misma lógica en /movimientos y /resumen-general para que las tres
-    // vistas coincidan.
-    const withdrawals = useDerivedBroker
+    const withdrawals = coexist.useDerivedBroker
       ? coexist.apiWithdrawalsTotal + storedBroker
       : summary.totalWithdrawals;
-
-    const netDeposit = deposits - withdrawals;
-
-    return { deposits, withdrawals, netDeposit };
+    return { deposits, withdrawals, netDeposit: deposits - withdrawals };
   };
+  const cur = consolidate(currentSummary, currentCoexist);
+  const prv = consolidate(prevSummary, prevCoexist);
+  const flowState: LoadState = !currentSummary
+    ? 'loading'
+    : currentCoexist.useDerivedBroker && currentCoexist.apiFetchState !== 'ok'
+      ? currentCoexist.apiFetchState === 'loading' ? 'loading' : 'failed'
+      : 'ready';
 
-  const cur = useMemo(() => consolidate(currentSummary, currentCoexist), [currentSummary, currentCoexist]);
-  const prv = useMemo(() => consolidate(prevSummary, prevCoexist), [prevSummary, prevCoexist]);
-
-  // ── Resultado del mes — CADENA CANÓNICA ───────────────────────────────
-  // Ingresos / Egresos / Neto salen de computeSaldoChain(), que arma sus
-  // insumos con buildDistributionInputs + applySnapshotOverrides: los mismos
-  // números que ve /socios. Antes se recalculaban acá a mano desde las tablas
-  // vivas (broker_pnl + other + propFirm + inversiones − egresos), lo que
-  // (a) duplicaba la fórmula, (b) mostraba lo de HOY en un mes CERRADO
-  // mientras /socios mostraba lo congelado, y (c) no aplicaba la
-  // neutralización por modelo de negocio (una 'company' seguía sumando
-  // broker_pnl y prop firm heredados).
+  // ── Resultado del mes — CADENA CANÓNICA (computeSaldoChain: mismos
+  // insumos y fórmula que /socios; congelado en los meses cerrados).
   const saldoChain = useMemo(() => computeSaldoChain(), [computeSaldoChain]);
   const curChain = currentPeriod ? saldoChain.get(currentPeriod.id) ?? null : null;
   const prvChain = prevPeriod ? saldoChain.get(prevPeriod.id) ?? null : null;
+  // Serie del CRM todavía en vuelo o fallada (incidente 2026-10-05): el número
+  // de la cadena es el fallback, no el dato.
+  const ownSeries = seriesState(curChain, autoSeriesStatus, 'own');
+  const chainSeries = seriesState(curChain, autoSeriesStatus, 'chain');
 
-  const pct = (now: number, prev: number) => {
-    if (!prev) return null;
-    return ((now - prev) / Math.abs(prev)) * 100;
-  };
-
-  const netDepositDelta = pct(cur.netDeposit, prv.netDeposit);
-  const expensesDelta = curChain && prvChain
-    ? pct(curChain.egresosNetos, prvChain.egresosNetos)
-    : null;
-  const withdrawalsDelta = pct(cur.withdrawals, prv.withdrawals);
-
-  // ── Total Consolidado (suma de todos los canales) ─────────────────────
-  // Pulls from /api/balances/total-consolidado, which calls Coinsbuy +
-  // UniPayment APIs LIVE and, para el resto, recorre las ubicaciones VISIBLES
-  // de channel_configs tomando el saldo del LIBRO (snapshot solo de respaldo)
-  // — incluidas las custom_*, que la lista fija anterior nunca sumaba. Más
-  // liquidez + inversiones. Así el número coincide con el pie de /balances
-  // incluso antes de que el cron diario capture el snapshot de hoy.
-  // Auto-refresh every 5 min while the tab is visible.
-  const [totalConsolidado, setTotalConsolidado] = useState<number | null>(null);
-  // Deuda con terceros (lugares `debt`, 2026-10-05). El `total` de la ruta ya
-  // viene NETO (sale de `tallyCash`, la misma fórmula que /balances); esto es
-  // solo para que el subtítulo no diga «suma de todos los balances» cuando en
-  // realidad se restó un préstamo recibido.
-  const [owedConsolidado, setOwedConsolidado] = useState(0);
-  // ── PNL del mes (Kevin, 2026-08-31: «en vez de socios pon el dato del PNL
-  // del mes») — la serie diaria del CRM (crm_daily_pnl). El signo se invierte
-  // UNA sola vez en daily-pnl-query.ts (totals.brokerPnl); esta tarjeta lo
-  // consume tal cual. null = sin datos, nunca $0.
-  const [pnlMes, setPnlMes] = useState<{ value: number | null; dias: number }>({ value: null, dias: 0 });
+  // ── Total consolidado (/api/balances/total-consolidado) ───────────────
+  // Coinsbuy + UniPayment EN VIVO y, para el resto, el saldo del LIBRO de las
+  // ubicaciones visibles de channel_configs (incluidas las custom_*), más
+  // liquidez + inversiones: coincide con el pie de /balances. El `total` ya
+  // viene NETO de deuda (`tallyCash`); `owed` es sólo para decirlo.
+  // Se refresca cada 5 min con la pestaña visible.
+  const [total, setTotal] = useState<{ state: LoadState; value: number | null; owed: number }>({
+    state: 'loading',
+    value: null,
+    owed: 0,
+  });
+  // PNL del mes (Kevin, 2026-08-31) — serie diaria del CRM. El signo se
+  // invierte UNA sola vez en daily-pnl-query.ts (totals.brokerPnl).
+  const [pnlMes, setPnlMes] = useState<{ state: LoadState; value: number | null; dias: number }>({
+    state: 'loading',
+    value: null,
+    dias: 0,
+  });
+  // Checklist de cierre del mes abierto (registro único: period-close-checklist.ts).
+  // Se guarda con el período al que pertenece: si el período cambia, lo
+  // viejo no se muestra (y no hace falta un setState síncrono en el efecto).
+  const [checklistRes, setChecklistRes] = useState<{
+    periodId: string;
+    state: LoadState;
+    items: ChecklistItemLike[];
+  } | null>(null);
+  const [showAllAlerts, setShowAllAlerts] = useState(false);
 
   useEffect(() => {
     let cancel = false;
@@ -162,16 +171,23 @@ export function AdminHome() {
         const y = hoy.getUTCFullYear();
         const m = String(hoy.getUTCMonth() + 1).padStart(2, '0');
         const res = await apiFetch(`/api/admin/crm-daily-pnl?from=${y}-${m}-01&to=${y}-${m}-31`);
-        if (!res.ok || cancel) return;
+        if (cancel) return;
+        if (!res.ok) {
+          setPnlMes({ state: 'failed', value: null, dias: 0 });
+          return;
+        }
         const json = await res.json();
-        // `totals.brokerPnl` YA viene con el signo del bróker invertido una
-        // sola vez en daily-pnl-query.ts — no se re-invierte acá (registro
-        // único del signo, la trampa que el repo persigue).
-        const t = json.totals as { brokerPnl: number | null; daysWithData: number } | undefined;
-        if (!cancel && t) setPnlMes({ value: t.brokerPnl, dias: t.daysWithData });
-      } catch { /* sin datos: la tarjeta muestra — */ }
+        const tot = json.totals as { brokerPnl: number | null; daysWithData: number } | undefined;
+        if (!cancel) {
+          setPnlMes(tot ? { state: 'ready', value: tot.brokerPnl, dias: tot.daysWithData } : { state: 'failed', value: null, dias: 0 });
+        }
+      } catch {
+        if (!cancel) setPnlMes({ state: 'failed', value: null, dias: 0 });
+      }
     })();
-    return () => { cancel = true; };
+    return () => {
+      cancel = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -181,12 +197,16 @@ export function AdminHome() {
       try {
         const res = await apiFetch('/api/balances/total-consolidado');
         const json = await res.json();
-        if (!cancelled && json.success) {
-          setTotalConsolidado(Number(json.total));
-          setOwedConsolidado(Number(json.owed) || 0);
+        if (cancelled) return;
+        if (json.success) {
+          setTotal({ state: 'ready', value: Number(json.total), owed: Number(json.owed) || 0 });
+        } else {
+          // Antes: el valor quedaba en «—» para siempre sin decir por qué.
+          setTotal((prev) => ({ ...prev, state: 'failed', value: null }));
         }
       } catch {
-        if (!cancelled) setTotalConsolidado(0);
+        // Antes: setTotalConsolidado(0) — «$0.00» con la red caída.
+        if (!cancelled) setTotal((prev) => ({ ...prev, state: 'failed', value: null }));
       }
     };
     load();
@@ -208,198 +228,279 @@ export function AdminHome() {
     };
   }, [company?.id]);
 
-  // ── Module availability shortcuts ──────────────────────────────────────
+  const checklistPeriodId = currentPeriod && !currentPeriod.is_closed ? currentPeriod.id : null;
+  useEffect(() => {
+    if (!checklistPeriodId) return;
+    let cancel = false;
+    apiFetch(`/api/admin/period-close-checklist?period_id=${checklistPeriodId}`)
+      .then((r) => r.json())
+      .then((json) => {
+        if (cancel) return;
+        setChecklistRes(
+          json?.success
+            ? { periodId: checklistPeriodId, state: 'ready', items: json.items ?? [] }
+            : { periodId: checklistPeriodId, state: 'failed', items: [] },
+        );
+      })
+      .catch(() => {
+        if (!cancel) setChecklistRes({ periodId: checklistPeriodId, state: 'failed', items: [] });
+      });
+    return () => {
+      cancel = true;
+    };
+  }, [checklistPeriodId]);
+  const checklist = !checklistPeriodId
+    ? null
+    : checklistRes?.periodId === checklistPeriodId
+      ? { state: checklistRes.state, items: checklistRes.items }
+      : { state: 'loading' as const, items: [] };
+
+  // ── Módulos ────────────────────────────────────────────────────────────
   const has = (m: string) => hasModuleAccess(user, m, company?.active_modules, company?.business_model);
-  // Una consultora no tiene depósitos de clientes: la fila 1 queda solo con
-  // Ingresos / Egresos / Neto y el grid se ajusta para no dejar celdas vacías.
+  // Una consultora no tiene depósitos de clientes: sin franja de flujo.
   const showNetDeposit = features(company?.business_model).netDeposit;
+  const showFlow = showNetDeposit && has('movements');
+  const showIncome = has('income');
+  // En bróker los egresos siguen colgando de 'movements' (lo de siempre); en
+  // 'company' (donde 'movements' está bloqueado) manda el módulo real.
+  const showExpenses = showNetDeposit ? has('movements') : has('expenses');
+  const showNet = showIncome && showExpenses;
+  const showTotal = has('balances');
+  const showPnl = has('partners');
 
-  // Gate POR TARJETA, no por fila: 'movements' está bloqueado en modo
-  // 'company' (ver blockedModules) y colgar toda la fila de él dejaba la home
-  // de una consultora vacía.
-  const showFlowCards = showNetDeposit && has('movements');
-  const showIncomeCard = !showNetDeposit && has('income');
-  // En broker la fila entera sigue colgando de 'movements' — exactamente lo
-  // que se ve hoy. En 'company' (donde 'movements' está bloqueado) manda el
-  // módulo real de cada tarjeta.
-  const showExpensesCard = showNetDeposit ? has('movements') : has('expenses');
-  const showNetCard = showIncomeCard && showExpensesCard;
-  const row1Count =
-    (showFlowCards ? 3 : 0) + (showIncomeCard ? 1 : 0) + (showExpensesCard ? 1 : 0) + (showNetCard ? 1 : 0);
+  const investments = getInvestmentsData();
+  const liquidity = getLiquidityData();
 
-  // Ingresos / Egresos / Neto del mes: SIEMPRE de la cadena canónica.
-  const operatingIncomeMonth = curChain?.ingresosNetos ?? 0;
-  const expensesMonth = curChain?.egresosNetos ?? 0;
-  const netMonth = curChain?.saldoAFavor ?? 0;
-  // Serie del CRM todavía en vuelo o fallada (incidente 2026-10-05): el
-  // número de la cadena es el fallback, no el dato — se muestra el estado.
-  const monthPendingLabel =
-    curChain && curChain.incompleto.length > 0 ? pendingValueLabel(curChain, autoSeriesStatus) : null;
+  // ── KPIs ───────────────────────────────────────────────────────────────
+  const prevMonthRef = t('home.prevMonth');
+  const seriesBadge = (s: SeriesState | null) => (s ? { kind: s.badge, label: s.label } : undefined);
+
+  const totalSub =
+    total.state === 'failed'
+      ? t('home.kpi.totalFailed')
+      : total.owed !== 0
+        ? t('home.kpi.totalNet')
+        : t('home.kpi.totalSum');
+
+  const positionKpis: KpiItem[] = [];
+  if (showTotal) {
+    positionKpis.push({
+      key: 'total',
+      label: t('home.kpi.total'),
+      value: total.value,
+      hero: true,
+      sub: totalSub,
+      missingBadge:
+        total.state === 'loading'
+          ? { kind: 'stale', label: t('home.kpi.loading') }
+          : { kind: 'bad', label: t('home.kpi.readFailed') },
+    });
+  }
+  if (showPnl) {
+    positionKpis.push({
+      key: 'pnl',
+      label: t('home.kpi.pnl'),
+      value: pnlMes.value,
+      tone: 'sign',
+      sub:
+        pnlMes.state === 'ready' && pnlMes.value !== null
+          ? t('home.kpi.pnlDays', { n: String(pnlMes.dias) })
+          : pnlMes.state === 'failed'
+            ? t('home.kpi.readFailed')
+            : undefined,
+      missingBadge:
+        pnlMes.state === 'loading'
+          ? { kind: 'stale', label: t('home.kpi.loading') }
+          : pnlMes.state === 'failed'
+            ? false
+            : undefined,
+    });
+  }
+  if (showIncome) {
+    positionKpis.push({
+      key: 'income',
+      label: t('home.kpi.income'),
+      value: curChain && !ownSeries ? curChain.ingresosNetos : null,
+      missingBadge: seriesBadge(ownSeries),
+      sub: currentPeriod?.label ?? undefined,
+    });
+  }
+  if (showExpenses) {
+    positionKpis.push({
+      key: 'expenses',
+      label: t('home.kpi.expenses'),
+      value: curChain ? curChain.egresosNetos : null,
+      delta: deltaOf(curChain?.egresosNetos ?? null, prvChain?.egresosNetos ?? null, 'down', prevMonthRef),
+    });
+  }
+  if (showNet) {
+    positionKpis.push({
+      key: 'net',
+      label: t('home.kpi.net'),
+      value: curChain && !ownSeries ? curChain.saldoAFavor : null,
+      tone: 'sign',
+      missingBadge: seriesBadge(ownSeries),
+      sub: t('home.kpi.netSub'),
+    });
+  }
+
+  const missingWithdrawals = currentCoexist.withdrawalChannelsWithoutData.map((c) => withdrawalChannelLabel(c, t));
+  const flowBadge =
+    flowState === 'loading'
+      ? { kind: 'stale' as const, label: t('home.kpi.loading') }
+      : flowState === 'failed'
+        ? { kind: 'bad' as const, label: t('home.kpi.readFailed') }
+        : undefined;
+
+  const flowKpis: KpiItem[] = [];
+  if (showFlow) {
+    flowKpis.push(
+      {
+        key: 'netDeposit',
+        label: t('home.kpi.netDeposit'),
+        value: cur?.netDeposit ?? null,
+        tone: 'sign',
+        missingBadge: flowBadge,
+        delta: deltaOf(cur?.netDeposit ?? null, prv?.netDeposit ?? null, 'up', prevMonthRef),
+      },
+      {
+        key: 'deposits',
+        label: t('home.kpi.deposits'),
+        value: cur?.deposits ?? null,
+        missingBadge: flowBadge,
+      },
+      {
+        key: 'withdrawals',
+        label: t('home.kpi.withdrawals'),
+        value: cur?.withdrawals ?? null,
+        missingBadge: flowBadge,
+        // Un canal de retiro que no se pudo leer NO está en el total: se dice
+        // (reglas §1.2), igual que en /movimientos y /resumen-general.
+        sub:
+          missingWithdrawals.length > 0
+            ? t('movements.withdrawalsMissingChannels', { channels: missingWithdrawals.join(', ') })
+            : undefined,
+        delta: deltaOf(cur?.withdrawals ?? null, prv?.withdrawals ?? null, 'down', prevMonthRef),
+      },
+    );
+  }
+  if (has('investments')) {
+    flowKpis.push({
+      key: 'investments',
+      label: t('home.kpi.investments'),
+      value: runningBalance(investments),
+      missingBadge: false,
+      sub: investments.length ? t('home.kpi.movements', { n: String(investments.length) }) : t('home.kpi.noMovements'),
+    });
+  }
+  if (has('liquidity')) {
+    flowKpis.push({
+      key: 'liquidity',
+      label: t('home.kpi.liquidity'),
+      value: runningBalance(liquidity),
+      missingBadge: false,
+      sub: liquidity.length ? t('home.kpi.movements', { n: String(liquidity.length) }) : t('home.kpi.noMovements'),
+    });
+  }
+
+  // ── Avisos ─────────────────────────────────────────────────────────────
+  const drifts = useMemo(() => getSnapshotDrifts(), [getSnapshotDrifts]);
+  const totalPct = partners.reduce((s, p) => s + p.percentage, 0);
+  const alerts = homeAlerts({
+    totalState: showTotal ? total.state : null,
+    monthSeries: chainSeries,
+    monthNotice: incompleteNotice(curChain),
+    withdrawalChannelsWithoutData: showFlow && flowState === 'ready' ? missingWithdrawals : [],
+    truncatedSlices,
+    driftPeriods: Array.from(new Set(drifts.map((d) => d.periodLabel))),
+    checklist,
+    periodLabel: currentPeriod?.label ?? null,
+  });
+  if (has('partners') && partners.length > 0 && Math.abs(totalPct - 1) > 0.001) {
+    alerts.push({
+      id: 'partners-pct',
+      kind: 'pend',
+      title: { key: 'partners.percentageWarning', params: { pct: (totalPct * 100).toFixed(1) } },
+      href: '/socios',
+    });
+  }
+  const { shown: shownAlerts, hidden: hiddenAlerts } = visibleAlerts(alerts, showAllAlerts);
+  const textOf = (x: AlertText) => ('text' in x ? x.text : t(x.key, x.params));
+
+  const loadingFirst = loading && !currentSummary;
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-bold">Hola, {user?.name?.split(' ')[0] ?? ''}</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          {company?.name
-            ? `Panel de ${company.name}${currentPeriod ? ` · ${currentPeriod.label}` : ''}`
-            : 'Panel'}
-        </p>
-      </header>
+    <div className="space-y-4">
+      <PageHeader
+        title={t('home.greeting', { name: user?.name?.split(' ')[0] ?? '' })}
+        subtitle={
+          company?.name
+            ? t('home.subtitle', { company: company.name }) + (currentPeriod ? ` · ${currentPeriod.label}` : '')
+            : t('home.subtitleNoCompany')
+        }
+      />
 
-      {/* Row 1 — Flow of the month
-            Order: Net Deposit · Depósitos · Retiros · Egresos
-            (depositos and retiros sit together so net deposit "story" reads
-             left-to-right). All values consolidate API + manual. */}
-      {loading && !currentSummary ? (
-        row1Count > 0 ? <SkeletonRow n={row1Count} /> : null
-      ) : row1Count > 0 ? (
-        <section className={row1Count >= 4
-          ? 'grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4'
-          : 'grid grid-cols-1 sm:grid-cols-3 gap-4'}
-        >
-          {showFlowCards && (
-            <>
-              <StatCard
-                label="Depósito Neto · mes"
-                value={formatCurrency(cur.netDeposit)}
-                icon={Wallet}
-                tone={cur.netDeposit >= 0 ? 'positive' : 'negative'}
-                hint={deltaHint(netDepositDelta)}
-              />
-              <StatCard
-                label="Depósitos · mes"
-                value={formatCurrency(cur.deposits)}
-                icon={ArrowDownCircle}
-                tone="info"
-              />
-              <StatCard
-                label="Retiros · mes"
-                value={formatCurrency(cur.withdrawals)}
-                icon={ArrowUpCircle}
-                tone="warning"
-                hint={deltaHint(withdrawalsDelta, /* invertColor */ true)}
-              />
-            </>
-          )}
-          {showIncomeCard && (
-            <StatCard
-              label="Ingresos · mes"
-              value={monthPendingLabel ?? formatCurrency(operatingIncomeMonth)}
-              icon={TrendingUp}
-              tone="positive"
-            />
-          )}
-          {showExpensesCard && (
-            <StatCard
-              label="Egresos · mes"
-              value={formatCurrency(expensesMonth)}
-              icon={Receipt}
-              tone="warning"
-              hint={deltaHint(expensesDelta, /* invertColor */ true)}
-            />
-          )}
-          {showNetCard && (
-            <StatCard
-              label="Neto · mes"
-              value={monthPendingLabel ?? formatCurrency(netMonth)}
-              icon={Wallet}
-              tone={monthPendingLabel ? 'neutral' : netMonth >= 0 ? 'positive' : 'negative'}
-            />
-          )}
+      {loadingFirst ? (
+        <Skeleton className="h-[92px]" />
+      ) : positionKpis.length > 0 ? (
+        <section aria-label={t('home.positionAria')}>
+          <KpiStrip items={positionKpis} />
         </section>
       ) : null}
 
-      {/* Row 2 — Position snapshot
-            Order: Total Consolidado · Inversiones · Liquidez · Socios
-            (money figures grouped left, headcount card last) */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* 'balances' y no 'movements': la tarjeta es la suma de TODOS los
-            balances (la misma de /balances) y en modo 'company' el módulo
-            'movements' está bloqueado — con el gate viejo la consultora
-            tampoco veía este número. */}
-        {has('balances') && (
-          <StatCard
-            label="Total Consolidado"
-            value={totalConsolidado === null ? '—' : formatCurrency(totalConsolidado)}
-            icon={Layers}
-            tone={(totalConsolidado ?? 0) >= 0 ? 'positive' : 'negative'}
-            hint={
-              owedConsolidado !== 0
-                ? `Neto: disponible + prestado − deuda (${formatCurrency(owedConsolidado)})`
-                : 'Suma de todos los balances'
-            }
-          />
-        )}
-        {has('investments') && (
-          <ModuleMoneyCard label="Inversiones · balance" kind="investments" />
-        )}
-        {has('liquidity') && (
-          <ModuleMoneyCard label="Liquidez · balance" kind="liquidity" />
-        )}
-        {has('partners') && (
-          <StatCard
-            label="PNL del mes (CRM)"
-            value={pnlMes.value === null ? '—' : formatCurrency(pnlMes.value)}
-            icon={Briefcase}
-            tone={(pnlMes.value ?? 0) >= 0 ? 'positive' : 'negative'}
-            hint={pnlMes.value === null ? 'sin datos' : `${pnlMes.dias} días con dato · bróker`}
-          />
-        )}
-      </section>
+      {flowKpis.length > 0 &&
+        (loadingFirst ? (
+          <Skeleton className="h-[92px]" />
+        ) : (
+          <section aria-label={t('home.flowAria')}>
+            <KpiStrip items={flowKpis} />
+          </section>
+        ))}
 
-      <QuickAccess />
+      {alerts.length > 0 && (
+        <section aria-label={t('home.alertsAria')} className="space-y-2">
+          {shownAlerts.map((a) => (
+            <Notice
+              key={a.id}
+              kind={a.kind}
+              title={a.count != null ? `${a.count} · ${textOf(a.title)}` : textOf(a.title)}
+              action={
+                a.href ? (
+                  <Link href={a.href} className="text-[13px] font-medium text-brand-ink underline-offset-2 hover:underline">
+                    {t('home.alert.review')}
+                  </Link>
+                ) : undefined
+              }
+            >
+              {a.detail ? <span className="break-words text-[12px]">{textOf(a.detail)}</span> : null}
+            </Notice>
+          ))}
+          {(hiddenAlerts > 0 || showAllAlerts) && alerts.length > 3 && (
+            <button
+              type="button"
+              onClick={() => setShowAllAlerts((v) => !v)}
+              aria-expanded={showAllAlerts}
+              className="inline-flex h-8 items-center rounded-ui-md px-2 text-[13px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground"
+            >
+              {showAllAlerts ? t('home.alert.showLess') : t('home.alert.showAll', { n: String(alerts.length) })}
+            </button>
+          )}
+        </section>
+      )}
+
+      <QuickAccess heading={t('home.quickAccess')} />
     </div>
   );
 }
 
-function deltaHint(pct: number | null, invertColor = false): React.ReactNode {
-  if (pct === null || !isFinite(pct)) return 'vs mes anterior: sin datos';
-  const rounded = Math.round(pct * 10) / 10;
-  const Arrow = rounded >= 0 ? TrendingUp : TrendingDown;
-  const isPositive = invertColor ? rounded < 0 : rounded >= 0;
-  const cls = isPositive ? 'text-emerald-600' : 'text-red-600';
-  return (
-    <span className={`inline-flex items-center gap-1 ${cls}`}>
-      <Arrow className="w-3 h-3" />
-      {rounded > 0 ? '+' : ''}{rounded}% vs mes anterior
-    </span>
-  );
+/** Delta % vs. el mes anterior para el KPI, o nada si no hay base. */
+function deltaOf(
+  now: number | null,
+  prev: number | null,
+  goodWhen: 'up' | 'down',
+  ref: string,
+): KpiItem['delta'] {
+  const pct = pctChange(now, prev);
+  return pct === null ? undefined : { pct, goodWhen, ref };
 }
-
-function ModuleMoneyCard({ label, kind }: { label: string; kind: 'investments' | 'liquidity' }) {
-  const { getLiquidityData, getInvestmentsData } = useData();
-  const items = kind === 'investments' ? getInvestmentsData() : getLiquidityData();
-  const running = useMemo(() => {
-    const sorted = [...items].sort((a, b) => a.date.localeCompare(b.date));
-    let bal = 0;
-    for (const m of sorted) {
-      const delta = (m.deposit ?? 0) - (m.withdrawal ?? 0) + (('profit' in m) ? (m as { profit: number }).profit ?? 0 : 0);
-      bal += delta;
-    }
-    return bal;
-  }, [items]);
-  return (
-    <StatCard
-      label={label}
-      value={formatCurrency(running)}
-      icon={kind === 'investments' ? TrendingUp : Droplets}
-      tone={running >= 0 ? 'positive' : 'negative'}
-      hint={items.length ? `${items.length} mov.` : 'Sin movimientos'}
-    />
-  );
-}
-
-function SkeletonRow({ n, height = 'h-28' }: { n: number; height?: string }) {
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 animate-pulse">
-      {Array.from({ length: n }).map((_, i) => (
-        <div key={i} className={`${height} rounded-xl bg-muted/60`} />
-      ))}
-    </div>
-  );
-}
-
-// Small export to make the Loader2 usage explicit (keeps import tree obvious).
-export const _AdminLoader = Loader2;

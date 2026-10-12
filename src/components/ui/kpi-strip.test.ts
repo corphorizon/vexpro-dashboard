@@ -75,6 +75,28 @@ describe('<KpiStrip>', () => {
     expect(out).not.toContain('$0');
   });
 
+  it('missingBadge reemplaza al «Sin dato» (un dato en vuelo no es «sin dato»); false lo saca', () => {
+    const loading = text(
+      createElement(KpiStrip, {
+        items: [{ key: 'x', label: 'Ingresos', value: null, missingBadge: { kind: 'stale', label: 'Cargando datos del CRM…' } }],
+        now: NOW,
+      }),
+    );
+    expect(loading).toContain('Cargando datos del CRM…');
+    expect(loading).not.toContain('Sin dato');
+    expect(loading).toContain('—');
+    const out = html(
+      createElement(KpiStrip, { items: [{ key: 'x', label: 'Inversiones', value: null, missingBadge: false, sub: 'Sin movimientos' }], now: NOW }),
+    );
+    expect(out).not.toContain('data-kind=');
+    expect(out).toContain('Sin movimientos');
+    // Con valor, el badge no aparece aunque esté configurado.
+    const withValue = text(
+      createElement(KpiStrip, { items: [{ key: 'x', label: 'I', value: 5, missingBadge: { kind: 'stale', label: 'Cargando' } }], now: NOW }),
+    );
+    expect(withValue).not.toContain('Cargando');
+  });
+
   it('stale: «hace 26 h» y valor marcado', () => {
     const out = html(createElement(KpiStrip, { items, now: NOW }));
     expect(out).toContain('hace 26 h');

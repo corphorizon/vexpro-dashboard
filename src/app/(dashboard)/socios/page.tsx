@@ -1,9 +1,17 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Card } from '@/components/ui/card';
-import { StatCard } from '@/components/ui/stat-card';
+import {
+  Users, Download, Plus, Pencil, Trash2, X, Check, ChevronDown, FileText, FileBarChart,
+} from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { Notice } from '@/components/ui/notice';
+import { NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { Field, Input } from '@/components/ui/field';
 import { InfoTip } from '@/components/ui/info-tip';
 import { GLOSSARY } from '@/lib/glossary';
 import { WITHDRAWAL_LABELS } from '@/lib/types';
@@ -12,13 +20,15 @@ import { usePeriod } from '@/lib/period-context';
 import { useData } from '@/lib/data-context';
 import { useAuth, canEdit } from '@/lib/auth-context';
 import { useExport2FA } from '@/components/verify-2fa-modal';
-import { formatCurrency, formatPercent, round2 } from '@/lib/utils';
+import { cn, round2 } from '@/lib/utils';
+import { formatMoney, MONEY_LOCALE } from '@/lib/money';
 import {
   anyAutoSeriesLoading,
   computeCheckedChain,
   incompleteNotice,
   pendingValueLabel,
 } from '@/lib/distribution-inputs';
+import { seriesState, sumChain } from '@/lib/chain-view';
 import { downloadCSV } from '@/lib/csv-export';
 import { useI18n } from '@/lib/i18n';
 import { useConfirm } from '@/lib/use-confirm';
@@ -30,10 +40,6 @@ import {
   updatePeriodReservePct,
   updateAllPeriodsReservePct,
 } from '@/lib/supabase/mutations';
-import {
-  Users, Download, AlertTriangle, TrendingDown, Wallet, Shield,
-  PiggyBank, Plus, Pencil, Trash2, X, Check, Settings, ChevronDown, FileText, FileBarChart,
-} from 'lucide-react';
 import { apiFetch } from '@/lib/api-fetch';
 import { monthRange } from '@/lib/api-integrations/totals';
 import type { ProviderDataset } from '@/lib/api-integrations/types';
@@ -52,8 +58,54 @@ import { cardsFromLines, UNASSIGNED_CLIENT_KEY } from '@/lib/clients';
 import { buildBilling } from '@/lib/reports/company-report';
 import type { IncomeLine } from '@/lib/income-lines';
 import type { PdfMonthlyCloseBilling } from '@/lib/pdf-export';
+import {
+  partnerHistory,
+  partnerShareTable,
+  type HistoryRow,
+  type PartnerShareTableRow,
+} from './partner-rows';
 
-const COLORS = ['#3B82F6', '#10B981', '#8B5CF6', '#F59E0B', '#EF4444', '#06B6D4'];
+// ─────────────────────────────────────────────────────────────────────────────
+// /socios — «Libro mayor» (2026-10-12, T3).
+//
+// Orden: cabecera → KPIs → avisos (cadena del CRM, deriva de meses cerrados,
+// % que no suman 100) → reparto → historial.
+//
+// QUÉ CAMBIÓ Y POR QUÉ
+//   · KPIs desde `sumChain` (chain-view.ts). Antes las tarjetas leían
+//     `currentChain?.x ?? 0`, y `currentChain` es null en CONSOLIDADO: con
+//     cualquier rango de meses la pantalla decía «Ingresos $0.00 · Monto a
+//     distribuir $0.00» — el número plausible y falso (reglas §1.2/§1.3).
+//     Ahora consolidado suma los meses y es «—» si alguno no es definitivo.
+//   · Banner de la cadena: `Notice stale` mientras la serie del CRM viaja,
+//     `bad` si falló (el informe queda incompleto). Antes `info`/`warning` a
+//     mano, y en consolidado no había banner.
+//   · Reparto: UNA tabla (socio, participación con barra proporcional, monto,
+//     pie con el % real y el total), como `pdfPartnerTable` del cierre, con
+//     los montos de `partnerShareRows` (partner-rows.ts). Se fue la tarjeta
+//     de barras aparte y los seis hex de `COLORS` (color sin significado).
+//     En consolidado con un mes pendiente los montos son «—» (antes sumaban
+//     el fallback de ese mes).
+//   · Historial: `FinTable` densa; un mes pendiente o ausente es «—» y el
+//     pie dice cuántos meses suma («Total (5 de 6 meses)»).
+//   · Formularios con `Field`/`Input` (label atado, borde 3:1).
+//
+// LO QUE NO CAMBIÓ: la fórmula (cadena canónica), el CSV, los tres PDF y sus
+// insumos, y el bloqueo de «PDF mes» / «Cierre mensual» / PDF del historial
+// mientras las series del CRM cargan (`seriesLoading`, incidente 2026-10-05).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Botón secundario (spec §5.1). */
+const BTN =
+  'inline-flex h-8 items-center gap-1.5 rounded-ui-md border border-border-strong bg-card px-3 text-[13px] font-medium text-foreground hover:bg-surface-2 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-card [@media(pointer:coarse)]:h-10';
+/** Botón primario: uno por pantalla («Agregar socio»; «Guardar» en los modales). */
+const PRIMARY_BTN =
+  'inline-flex h-8 items-center justify-center gap-1.5 rounded-ui-md border border-primary bg-primary px-3 text-[13px] font-medium text-brand-on-primary hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-10';
+/** Acción de fila (editar / borrar). */
+const ROW_BTN =
+  'inline-flex size-8 items-center justify-center rounded-ui-md text-text-2 hover:bg-surface-2 hover:text-foreground [@media(pointer:coarse)]:size-10';
+
+const pctFmt = new Intl.NumberFormat(MONEY_LOCALE, { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 
 export default function SociosPage() {
   const { t } = useI18n();
@@ -124,25 +176,28 @@ export default function SociosPage() {
   const carryDebt = currentChain?.deudaArrastradaEntrada ?? 0;
   const totalToDistribute = currentChain?.montoDistribuir ?? 0;
 
-  // Ingresos / Egresos / Saldo a Favor de las StatCards: salen de la MISMA
-  // cadena que el reparto, no de las tablas vivas (auditoría 2026-08, B2).
-  // Leerlos de getPeriodSummary hacía que en un mes CERRADO las tarjetas
-  // mostraran los números de hoy mientras la reserva, la deuda y el monto a
-  // distribuir de la misma pantalla seguían mostrando los congelados: la
-  // resta de las dos primeras tarjetas no daba la tercera.
+  // Ingresos / Egresos / Saldo a Favor: salen de la MISMA cadena que el
+  // reparto, no de las tablas vivas (auditoría 2026-08, B2). Leerlos de
+  // getPeriodSummary hacía que en un mes CERRADO las tarjetas mostraran los
+  // números de hoy mientras la reserva, la deuda y el monto a distribuir de la
+  // misma pantalla seguían mostrando los congelados.
+  //
+  // CONFESIÓN (2026-10-12): estos `?? 0` también pintaban los KPIs, y
+  // `currentChain` es null en CONSOLIDADO → «$0.00» para cualquier rango. Los
+  // KPIs ya salen de `sumChain` (más abajo, null = «—»); estos valores quedan
+  // para los PDF (que cortan con `if (!currentChain) return`) y para los
+  // textos de un período único con la cadena definitiva.
   const ingresosNetos = currentChain?.ingresosNetos ?? 0;
   const egresosNetos = currentChain?.egresosNetos ?? 0;
   const saldoAFavor = currentChain?.saldoAFavor ?? 0;
 
   // ─── Series del CRM que todavía no llegaron (incidente 2026-10-05) ───
-  // `ownPending`: los ingresos y el resultado de ESTE mes no son definitivos.
-  // `chainPending`: además, la reserva y el monto a distribuir (puede venir de
-  // un mes anterior incompleto por el arrastre). En vez del número se muestra
-  // el texto — «Cargando datos del CRM…» / «Sin datos del CRM».
+  // `chainPending`: la reserva y el monto a distribuir de ESTE mes no son
+  // definitivos (serie propia o arrastre de un mes anterior incompleto). Los
+  // KPIs ya no leen esto (salen de `sumChain`, abajo); queda para el aviso de
+  // % sin asignar. `seriesLoading` bloquea los PDF mientras las series viajan.
   const seriesLoading = anyAutoSeriesLoading(autoSeriesStatus);
-  const ownPending = (currentChain?.incompleto.length ?? 0) > 0;
   const chainPending = currentChain?.pendiente ?? false;
-  const pendingLabel = pendingValueLabel(currentChain, autoSeriesStatus) ?? '—';
   const crmNotice = mode === 'single' ? incompleteNotice(currentChain) : null;
   const pdfDisabledTitle = 'Esperando datos del CRM…';
   // Historial: los meses `pendiente` NO suman a los totales (sumarlos con el
@@ -347,822 +402,790 @@ export default function SociosPage() {
     }
   };
 
+
+  // ─── Exportes (cuerpos sin cambios; sólo se sacaron del JSX) ────────────
+  const handleCsv = () => verify2FA(() => {
+    const headers = ['Socio', 'Porcentaje', 'Monto'];
+    const rows = effectiveDistributions.map(d => {
+      const partner = partners.find(p => p.id === d.partner_id);
+      return [partner?.name || '', `${(d.percentage * 100).toFixed(1)}%`, d.amount] as (string | number)[];
+    });
+    rows.push(['Total', '100%', totalDistributed]);
+    downloadCSV('socios.csv', headers, rows);
+  });
+
+  const handlePdfMes = () => verify2FA(async () => {
+    if (!currentPeriod || !currentChain) return;
+    const { generatePartnerPeriodPDF } = await import('@/lib/pdf-export');
+    // Mismo desglose y misma completitud que el Cierre mensual:
+    // con una serie del CRM faltante el PDF imprime el aviso
+    // arriba y «sin datos» en vez de ceros.
+    await generatePartnerPeriodPDF({
+      companyName: company?.name ?? '',
+      companyLogoUrl: company?.logo_url ?? null,
+      periodLabel: longPeriodLabel(currentPeriod),
+      // El archivo conserva el nombre de siempre (label corto).
+      fileLabel: currentPeriod.label ?? longPeriodLabel(currentPeriod),
+      desglose: currentChain.desglose,
+      ingresosNetos,
+      egresosNetos,
+      saldo: saldoAFavor,
+      reservaMes: reserveThisPeriod,
+      reservePct: currentPeriod.reserve_pct ?? 0.1,
+      deudaEntrada: carryDebt,
+      montoDistribuir: totalToDistribute,
+      completeness: currentChain,
+      partners: partners.map((p) => {
+        const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
+        return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
+      }),
+    });
+  });
+
+  const handleCierreMensual = () => verify2FA(async () => {
+    const sum = getPeriodSummary(selectedPeriodId);
+    if (!sum || !currentPeriod) return;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const { from, to } = monthRange(`${currentPeriod.year}-${pad(currentPeriod.month)}`);
+
+    // Flujo de clientes — MISMA fuente y filtros que /movimientos y
+    // /balances: persisted-movements en modo 'pinned' (walletId
+    // vacío). Los canales salen de los REGISTROS
+    // (API_DEPOSIT_CHANNELS / API_WITHDRAWAL_CHANNELS) dentro de
+    // `buildClientFlow`, no de una lista de slugs escrita acá: la
+    // que había preguntaba por coinsbuy/fairpay/unipayment y dejaba
+    // afuera Pay-Pros — 93.968,69 de depósitos y 10.302,17 de
+    // retiros de Vex Pro en sep-2026 (Kevin, 2026-10-05).
+    //
+    // Solo para un broker: sin depósitos ni retiros de clientes,
+    // esta llamada devolvería ceros y el PDF imprimiría una página
+    // de "Depósitos por canal: $0,00" al socio de una consultora.
+    let clientFlow: ClientFlow | null = null;
+    if (model.movements) {
+      let datasets: ProviderDataset[] = [];
+      let hiddenChannels: string[] = [];
+      let truncatedSlugs: string[] = [];
+      let fetchFailed = false;
+      const derived = allPeriodsUseDerivedBroker([currentPeriod]);
+      if (derived) {
+        try {
+          const res = await apiFetch(`/api/integrations/persisted-movements?from=${from}&to=${to}`);
+          const json = await res.json();
+          if (!res.ok || json?.success === false) throw new Error('persisted-movements');
+          datasets = json.datasets ?? [];
+          hiddenChannels = json.hiddenChannels ?? [];
+          truncatedSlugs = json.truncatedSlugs ?? [];
+        } catch {
+          // Sin conexión a movimientos: el informe sale con los
+          // manuales y LO DICE (buildClientFlow agrega el aviso).
+          fetchFailed = true;
+        }
+      }
+      clientFlow = buildClientFlow({
+        derived,
+        datasets,
+        hiddenChannels,
+        truncatedSlugs,
+        fetchFailed,
+        manualDeposits: model.deposits ? sum.deposits : [],
+        // WITHDRAWAL_LABELS, no un mapa propio (2026-08-31,
+        // auditoría de finanzas): el mapa local tenía 'ib' y 'p2p'
+        // —que no son categorías válidas— y le faltaba
+        // `ib_commissions`, que salía impresa cruda en el PDF.
+        manualWithdrawals: model.withdrawals ? sum.withdrawals : [],
+        depositLabel: (ch) => depositChannelLabel(ch, t),
+        withdrawalLabel: (ch) => withdrawalChannelLabel(ch, t),
+        withdrawalCategoryLabel: (cat) => WITHDRAWAL_LABELS[cat] ?? cat,
+      });
+    }
+
+    // Empresa de servicios: en lugar del flujo de clientes va la
+    // facturación del mes. NO se calcula acá — sale de buildBilling
+    // sobre las mismas líneas de ingreso que alimentan el reporte
+    // de /finanzas/reportes y su CSV. Dos fórmulas distintas para
+    // "cobrado" es exactamente lo que este repo no puede tener.
+    let billing: PdfMonthlyCloseBilling | null = null;
+    if (!model.movements) {
+      let lines: IncomeLine[] = [];
+      try {
+        const res = await apiFetch('/api/admin/income-lines');
+        const json = await res.json();
+        lines = json?.success ? (json.lines ?? []) : [];
+      } catch {
+        // Sin facturación disponible: el informe sale con el
+        // resultado y la distribución, sin el detalle por cliente.
+      }
+      const order = currentPeriod.year * 12 + currentPeriod.month;
+      const label = currentPeriod.label ?? `${currentPeriod.year}-${pad(currentPeriod.month)}`;
+      const b = buildBilling(
+        cardsFromLines(
+          lines
+            .filter((l) => l.period_id === selectedPeriodId)
+            .map((l) => ({ ...l, periodLabel: label, periodOrder: order })),
+        ),
+      );
+      billing = {
+        billed: b.billed,
+        collected: b.collected,
+        pending: b.pending,
+        clients: b.clients.map((c) => ({
+          name: c.key === UNASSIGNED_CLIENT_KEY ? 'Sin cliente' : c.name,
+          billed: c.billed,
+          collected: c.collected,
+          pending: c.pending,
+        })),
+      };
+    }
+
+    // Datos del CRM (informativo): la serie ya está en memoria
+    // (data-context la lee UNA vez para la cadena); acá solo se
+    // filtra el mes y las métricas que NO suman al resultado.
+    const crmInfo = buildCrmInfoRows(
+      crmMonthlyTotals.rows,
+      CRM_MONTHLY_OUTSIDE_RESULT_METRICS,
+      currentPeriod.year,
+      currentPeriod.month,
+    );
+
+    // Los cuatro sumandos de los ingresos salen de la MISMA cadena
+    // que calcula `ingresosNetos` (currentChain.desglose). Antes
+    // venían de las tablas manuales (operating_income.broker_pnl,
+    // propFirmNetIncome), vacías desde ago-2026 porque esos
+    // renglones pasaron a automático: el PDF imprimía Broker P&L y
+    // Prop Firm en $0,00 con 263.469,99 de ingresos netos.
+    //
+    // 2026-10-05 ~22:10: los dos automáticos vienen `null` si su
+    // serie del CRM no llegó; el PDF los imprime «sin datos» y pone
+    // el aviso arriba (`completeness`). Sin cadena, no hay informe.
+    if (!currentChain) return;
+    const desglose = currentChain.desglose;
+
+    const { generateMonthlyClosePDF } = await import('@/lib/pdf-export');
+    await generateMonthlyClosePDF({
+      companyName: company?.name ?? '',
+      companyLogoUrl: company?.logo_url ?? null,
+      periodLabel: longPeriodLabel(currentPeriod),
+      billing,
+      desglose,
+      ingresosNetos,
+      egresosNetos,
+      saldo: saldoAFavor,
+      reservaMes: reserveThisPeriod,
+      reservePct: currentPeriod.reserve_pct ?? 0.1,
+      reservaAcumulada: accumulatedReserve,
+      deudaEntrada: carryDebt,
+      montoDistribuir: totalToDistribute,
+      expenses: sum.expenses.map((e) => ({
+        concept: e.concept,
+        amount: e.amount,
+        paid: e.paid,
+        pending: e.pending,
+      })),
+      egresosPagados: sum.totalExpensesPaid,
+      egresosPendientes: sum.totalExpensesPending,
+      cashBasisExpenses: model.cashBasisExpenses,
+      clientFlow,
+      crmInfo,
+      crmInfoTruncated: crmInfo.length > 0 && crmMonthlyTotals.truncated,
+      completeness: currentChain,
+      partners: partners.map((p) => {
+        const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
+        return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
+      }),
+    });
+  });
+
+  const handleHistoryPdf = () => verify2FA(async () => {
+    const { generatePartnerHistoryPDF } = await import('@/lib/pdf-export');
+    const rows = periods.map((period) => {
+      const pChain = periodChain.get(period.id);
+      // Mes con serie del CRM faltante: «sin datos», no cuenta.
+      if (pChain?.pendiente) {
+        return { periodLabel: period.label ?? '', amounts: null, total: null };
+      }
+      const pDist = pChain?.montoDistribuir ?? 0;
+      const dists = partnerDistributions.filter((d) => d.period_id === period.id);
+      const amounts = partners.map((p) => {
+        const saved = dists.find((d) => d.partner_id === p.id);
+        const pct = saved?.percentage ?? p.percentage;
+        return pDist > 0 ? round2(pDist * pct) : 0;
+      });
+      return { periodLabel: period.label ?? '', amounts, total: round2(amounts.reduce((s, a) => s + a, 0)) };
+    });
+    const partnerTotals = partners.map((_, idx) =>
+      round2(rows.reduce((s, r) => s + (r.amounts ? r.amounts[idx] : 0), 0)),
+    );
+    await generatePartnerHistoryPDF({
+      companyName: company?.name ?? '',
+      companyLogoUrl: company?.logo_url ?? null,
+      partnerNames: partners.map((p) => p.name),
+      rows,
+      partnerTotals,
+      grandTotal: round2(partnerTotals.reduce((s, a) => s + a, 0)),
+      note: pendingHistoryNote,
+    });
+  });
+
+  // ─── Vista «Libro mayor» ───────────────────────────────────────────────
+  // KPIs: un período o la suma de los seleccionados, con la regla de la
+  // cadena (null si no es definitivo). Ver chain-view.ts.
+  const scopeIds = mode === 'consolidated' ? selectedPeriodIds : [selectedPeriodId];
+  const kpis = sumChain(scopeIds.map((id) => periodChain.get(id)), autoSeriesStatus);
+  const ownBadge = kpis.ownState ? { kind: kpis.ownState.badge, label: kpis.ownState.label } : undefined;
+  const chainBadge = kpis.chainState ? { kind: kpis.chainState.badge, label: kpis.chainState.label } : undefined;
+  // Banner de la cadena: en un período, el texto de siempre (incompleteNotice,
+  // el mismo que imprime el PDF); en consolidado, qué meses no son definitivos.
+  const chainNoticeState = mode === 'single' ? seriesState(currentChain, autoSeriesStatus) : kpis.chainState;
+  const pendingInScope = periods
+    .filter((p) => scopeIds.includes(p.id) && periodChain.get(p.id)?.pendiente)
+    .map((p) => p.label ?? '');
+  const chainNoticeTitle =
+    mode === 'single'
+      ? crmNotice
+      : kpis.chainState
+        ? t('partners.notice.rangeTitle', { label: kpis.chainState.label, months: pendingInScope.join(', ') })
+        : null;
+  const distribucionConocida = kpis.aDistribuir !== null;
+
+  const shareTable = partnerShareTable(
+    effectiveDistributions.map((d) => {
+      const partner = partners.find((p) => p.id === d.partner_id);
+      return { id: d.partner_id, name: partner?.name || '—', email: partner?.email ?? null, pct: d.percentage, amount: d.amount };
+    }),
+    distribucionConocida,
+  );
+
+  const history = partnerHistory({
+    periods: periods.map((p) => ({ id: p.id, label: p.label ?? null })),
+    partners,
+    saved: partnerDistributions,
+    chainOf: (id) => periodChain.get(id),
+  });
+
+  const desgloseSub = (() => {
+    if (mode !== 'single' || !currentChain) return mode === 'consolidated' ? t('partners.kpi.months', { n: String(scopeIds.length) }) : undefined;
+    const d = currentChain.desglose;
+    // `null` = la serie del CRM no llegó: «sin datos», nunca $0.
+    const parts = [
+      `${t('summary.brokerPnl')} ${d.brokerPnl === null ? t('brokerPnl.noData') : formatMoney(d.brokerPnl)}`,
+      d.other !== 0 ? `${t('summary.otherIncome')} ${formatMoney(d.other)}` : null,
+      d.propFirmNetIncome === null
+        ? `Prop Firm ${t('brokerPnl.noData')}`
+        : d.propFirmNetIncome !== 0
+          ? `Prop Firm ${formatMoney(d.propFirmNetIncome)}`
+          : null,
+      d.investmentProfits !== 0 ? `${t('partners.kpi.investments')} ${formatMoney(d.investmentProfits)}` : null,
+    ];
+    return parts.filter(Boolean).join(' + ');
+  })();
+
+  const reserveSub = (() => {
+    if (mode !== 'single') return t('partners.kpi.months', { n: String(scopeIds.length) });
+    if (kpis.reserva === null) return t('partners.kpi.dependsOnCrm');
+    const base =
+      reserveThisPeriod > 0
+        ? t('partners.kpi.reservePct', { pct: pctFmt.format(RESERVE_PCT * 100) })
+        : saldoAFavor <= 0
+          ? t('partners.kpi.negativeMonth')
+          : t('partners.kpi.coveringDebt');
+    return `${base} · ${t('partners.kpi.accumulated', { amount: formatMoney(accumulatedReserve) })}`;
+  })();
+
+  const distributeSub = (() => {
+    if (kpis.aDistribuir === null) return t('partners.kpi.whenCrmArrives');
+    if (mode !== 'single') return t('partners.kpi.months', { n: String(scopeIds.length) });
+    if (carryDebt > 0) return t('partners.kpi.debtFirst', { amount: formatMoney(carryDebt) });
+    return totalToDistribute > 0
+      ? t('partners.kpi.distributePct', { pct: pctFmt.format(100 - RESERVE_PCT * 100) })
+      : t('partners.noDistribution');
+  })();
+
+  const kpiItems: KpiItem[] = [
+    { key: 'income', label: t('partners.kpi.income'), value: kpis.ingresosNetos, missingBadge: ownBadge, sub: desgloseSub },
+    { key: 'expenses', label: t('partners.kpi.expenses'), value: kpis.egresosNetos },
+    {
+      key: 'result',
+      label: (
+        <span className="inline-flex items-center gap-1">
+          {t('partners.kpi.result')} <InfoTip text={GLOSSARY.netoOperativo} />
+        </span>
+      ),
+      value: kpis.resultado,
+      tone: 'sign',
+      missingBadge: ownBadge,
+      sub: t('partners.kpi.resultSub'),
+    },
+    {
+      key: 'reserve',
+      label: (
+        <span className="inline-flex items-center gap-1">
+          {t('partners.reserveThisPeriod')} <InfoTip text={GLOSSARY.reserve} />
+        </span>
+      ),
+      value: kpis.reserva,
+      missingBadge: chainBadge,
+      sub: (
+        <>
+          {reserveSub}
+          {isAdmin && mode === 'single' && (
+            <button
+              type="button"
+              onClick={handleOpenReserveEdit}
+              className="ml-1.5 font-medium text-brand-ink underline-offset-2 hover:underline"
+            >
+              {t('partners.editReserve')}
+            </button>
+          )}
+        </>
+      ),
+    },
+    {
+      key: 'distribute',
+      label: (
+        <span className="inline-flex items-center gap-1">
+          {t('partners.distributableAmount')} <InfoTip text={GLOSSARY.montoDistribuir} />
+        </span>
+      ),
+      value: kpis.aDistribuir,
+      hero: true,
+      missingBadge: chainBadge,
+      sub: distributeSub,
+    },
+  ];
+
+  const shareColumns: FinColumn<PartnerShareTableRow>[] = [
+    {
+      key: 'name',
+      header: t('partners.name'),
+      cell: (r) => r.name,
+      meta: (r) => r.email ?? null,
+    },
+    {
+      key: 'share',
+      header: t('partners.participation'),
+      kind: 'number',
+      width: '170px',
+      cardSide: 'left',
+      cell: (r) => (
+        <span className="inline-flex items-center gap-2 min-[720px]:justify-end">
+          <span aria-hidden className="block h-1.5 w-16 overflow-hidden rounded-full bg-surface-sunk">
+            <span className="block h-full rounded-full bg-brand-ink/75" style={{ width: `${r.barPct}%` }} />
+          </span>
+          <span className={cn(NUM_CLASS, 'w-12 text-right text-text-2')}>{pctFmt.format(r.sharePct)} %</span>
+        </span>
+      ),
+    },
+    {
+      key: 'amount',
+      header: t('partners.amount'),
+      kind: 'money',
+      value: (r) => r.amount,
+      width: '170px',
+    },
+  ];
+
+  const historyColumns: FinColumn<HistoryRow>[] = [
+    {
+      key: 'period',
+      header: t('partners.period'),
+      cell: (r) => r.label,
+      meta: (r) =>
+        r.pending || r.missing ? (
+          <StatusBadge kind="stale" label={pendingValueLabel(periodChain.get(r.periodId), autoSeriesStatus) ?? t('ui.noData')} />
+        ) : r.debtIn !== null && r.debtIn > 0 ? (
+          t('partners.history.debtIn', { amount: formatMoney(-r.debtIn) })
+        ) : null,
+    },
+    ...partners.map(
+      (p): FinColumn<HistoryRow> => ({
+        key: `p-${p.id}`,
+        header: p.name,
+        kind: 'money',
+        value: (r) => r.amounts[p.id] ?? null,
+        hideSm: true,
+      }),
+    ),
+    {
+      key: 'total',
+      header: t('partners.history.total'),
+      kind: 'money',
+      value: (r) => r.total,
+      money: { tone: 'auto' },
+    },
+  ];
+  const historyFooterValues: Record<string, number> = { total: history.grandTotal };
+  for (const p of partners) historyFooterValues[`p-${p.id}`] = history.partnerTotals[p.id];
+  const historyCounted = history.rows.length - history.excluded.length;
+
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {Modal2FA}
       <PageHeader
         title={t('partners.title')}
         subtitle={t('partners.subtitle')}
         icon={Users}
-        actions={<>
-          <button
-            onClick={() => verify2FA(() => {
-              const headers = ['Socio', 'Porcentaje', 'Monto'];
-              const rows = effectiveDistributions.map(d => {
-                const partner = partners.find(p => p.id === d.partner_id);
-                return [partner?.name || '', `${(d.percentage * 100).toFixed(1)}%`, d.amount] as (string | number)[];
-              });
-              rows.push(['Total', '100%', totalDistributed]);
-              downloadCSV('socios.csv', headers, rows);
-            })}
-            className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0"
-            title={t('common.csv')}
-          >
-            <Download className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('common.csv')}</span>
-          </button>
-          {mode === 'single' && (
-            <button
-              onClick={() => verify2FA(async () => {
-                if (!currentPeriod || !currentChain) return;
-                const { generatePartnerPeriodPDF } = await import('@/lib/pdf-export');
-                // Mismo desglose y misma completitud que el Cierre mensual:
-                // con una serie del CRM faltante el PDF imprime el aviso
-                // arriba y «sin datos» en vez de ceros.
-                await generatePartnerPeriodPDF({
-                  companyName: company?.name ?? '',
-                  companyLogoUrl: company?.logo_url ?? null,
-                  periodLabel: longPeriodLabel(currentPeriod),
-                  // El archivo conserva el nombre de siempre (label corto).
-                  fileLabel: currentPeriod.label ?? longPeriodLabel(currentPeriod),
-                  desglose: currentChain.desglose,
-                  ingresosNetos,
-                  egresosNetos,
-                  saldo: saldoAFavor,
-                  reservaMes: reserveThisPeriod,
-                  reservePct: currentPeriod.reserve_pct ?? 0.1,
-                  deudaEntrada: carryDebt,
-                  montoDistribuir: totalToDistribute,
-                  completeness: currentChain,
-                  partners: partners.map((p) => {
-                    const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
-                    return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
-                  }),
-                });
-              })}
-              disabled={seriesLoading}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-card"
-              title={seriesLoading ? pdfDisabledTitle : 'Descargar PDF del mes'}
-            >
-              <FileText className="w-4 h-4" />
-              <span className="hidden sm:inline">PDF mes</span>
+        actions={
+          <>
+            <button type="button" onClick={handleCsv} className={BTN} title={t('common.csv')} aria-label={t('common.csv')}>
+              <Download aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="hidden sm:inline">{t('common.csv')}</span>
             </button>
-          )}
-          {mode === 'single' && (
-            <button
-              onClick={() => verify2FA(async () => {
-                const sum = getPeriodSummary(selectedPeriodId);
-                if (!sum || !currentPeriod) return;
-                const pad = (n: number) => String(n).padStart(2, '0');
-                const { from, to } = monthRange(`${currentPeriod.year}-${pad(currentPeriod.month)}`);
-
-                // Flujo de clientes — MISMA fuente y filtros que /movimientos y
-                // /balances: persisted-movements en modo 'pinned' (walletId
-                // vacío). Los canales salen de los REGISTROS
-                // (API_DEPOSIT_CHANNELS / API_WITHDRAWAL_CHANNELS) dentro de
-                // `buildClientFlow`, no de una lista de slugs escrita acá: la
-                // que había preguntaba por coinsbuy/fairpay/unipayment y dejaba
-                // afuera Pay-Pros — 93.968,69 de depósitos y 10.302,17 de
-                // retiros de Vex Pro en sep-2026 (Kevin, 2026-10-05).
-                //
-                // Solo para un broker: sin depósitos ni retiros de clientes,
-                // esta llamada devolvería ceros y el PDF imprimiría una página
-                // de "Depósitos por canal: $0,00" al socio de una consultora.
-                let clientFlow: ClientFlow | null = null;
-                if (model.movements) {
-                  let datasets: ProviderDataset[] = [];
-                  let hiddenChannels: string[] = [];
-                  let truncatedSlugs: string[] = [];
-                  let fetchFailed = false;
-                  const derived = allPeriodsUseDerivedBroker([currentPeriod]);
-                  if (derived) {
-                    try {
-                      const res = await apiFetch(`/api/integrations/persisted-movements?from=${from}&to=${to}`);
-                      const json = await res.json();
-                      if (!res.ok || json?.success === false) throw new Error('persisted-movements');
-                      datasets = json.datasets ?? [];
-                      hiddenChannels = json.hiddenChannels ?? [];
-                      truncatedSlugs = json.truncatedSlugs ?? [];
-                    } catch {
-                      // Sin conexión a movimientos: el informe sale con los
-                      // manuales y LO DICE (buildClientFlow agrega el aviso).
-                      fetchFailed = true;
-                    }
-                  }
-                  clientFlow = buildClientFlow({
-                    derived,
-                    datasets,
-                    hiddenChannels,
-                    truncatedSlugs,
-                    fetchFailed,
-                    manualDeposits: model.deposits ? sum.deposits : [],
-                    // WITHDRAWAL_LABELS, no un mapa propio (2026-08-31,
-                    // auditoría de finanzas): el mapa local tenía 'ib' y 'p2p'
-                    // —que no son categorías válidas— y le faltaba
-                    // `ib_commissions`, que salía impresa cruda en el PDF.
-                    manualWithdrawals: model.withdrawals ? sum.withdrawals : [],
-                    depositLabel: (ch) => depositChannelLabel(ch, t),
-                    withdrawalLabel: (ch) => withdrawalChannelLabel(ch, t),
-                    withdrawalCategoryLabel: (cat) => WITHDRAWAL_LABELS[cat] ?? cat,
-                  });
-                }
-
-                // Empresa de servicios: en lugar del flujo de clientes va la
-                // facturación del mes. NO se calcula acá — sale de buildBilling
-                // sobre las mismas líneas de ingreso que alimentan el reporte
-                // de /finanzas/reportes y su CSV. Dos fórmulas distintas para
-                // "cobrado" es exactamente lo que este repo no puede tener.
-                let billing: PdfMonthlyCloseBilling | null = null;
-                if (!model.movements) {
-                  let lines: IncomeLine[] = [];
-                  try {
-                    const res = await apiFetch('/api/admin/income-lines');
-                    const json = await res.json();
-                    lines = json?.success ? (json.lines ?? []) : [];
-                  } catch {
-                    // Sin facturación disponible: el informe sale con el
-                    // resultado y la distribución, sin el detalle por cliente.
-                  }
-                  const order = currentPeriod.year * 12 + currentPeriod.month;
-                  const label = currentPeriod.label ?? `${currentPeriod.year}-${pad(currentPeriod.month)}`;
-                  const b = buildBilling(
-                    cardsFromLines(
-                      lines
-                        .filter((l) => l.period_id === selectedPeriodId)
-                        .map((l) => ({ ...l, periodLabel: label, periodOrder: order })),
-                    ),
-                  );
-                  billing = {
-                    billed: b.billed,
-                    collected: b.collected,
-                    pending: b.pending,
-                    clients: b.clients.map((c) => ({
-                      name: c.key === UNASSIGNED_CLIENT_KEY ? 'Sin cliente' : c.name,
-                      billed: c.billed,
-                      collected: c.collected,
-                      pending: c.pending,
-                    })),
-                  };
-                }
-
-                // Datos del CRM (informativo): la serie ya está en memoria
-                // (data-context la lee UNA vez para la cadena); acá solo se
-                // filtra el mes y las métricas que NO suman al resultado.
-                const crmInfo = buildCrmInfoRows(
-                  crmMonthlyTotals.rows,
-                  CRM_MONTHLY_OUTSIDE_RESULT_METRICS,
-                  currentPeriod.year,
-                  currentPeriod.month,
-                );
-
-                // Los cuatro sumandos de los ingresos salen de la MISMA cadena
-                // que calcula `ingresosNetos` (currentChain.desglose). Antes
-                // venían de las tablas manuales (operating_income.broker_pnl,
-                // propFirmNetIncome), vacías desde ago-2026 porque esos
-                // renglones pasaron a automático: el PDF imprimía Broker P&L y
-                // Prop Firm en $0,00 con 263.469,99 de ingresos netos.
-                //
-                // 2026-10-05 ~22:10: los dos automáticos vienen `null` si su
-                // serie del CRM no llegó; el PDF los imprime «sin datos» y pone
-                // el aviso arriba (`completeness`). Sin cadena, no hay informe.
-                if (!currentChain) return;
-                const desglose = currentChain.desglose;
-
-                const { generateMonthlyClosePDF } = await import('@/lib/pdf-export');
-                await generateMonthlyClosePDF({
-                  companyName: company?.name ?? '',
-                  companyLogoUrl: company?.logo_url ?? null,
-                  periodLabel: longPeriodLabel(currentPeriod),
-                  billing,
-                  desglose,
-                  ingresosNetos,
-                  egresosNetos,
-                  saldo: saldoAFavor,
-                  reservaMes: reserveThisPeriod,
-                  reservePct: currentPeriod.reserve_pct ?? 0.1,
-                  reservaAcumulada: accumulatedReserve,
-                  deudaEntrada: carryDebt,
-                  montoDistribuir: totalToDistribute,
-                  expenses: sum.expenses.map((e) => ({
-                    concept: e.concept,
-                    amount: e.amount,
-                    paid: e.paid,
-                    pending: e.pending,
-                  })),
-                  egresosPagados: sum.totalExpensesPaid,
-                  egresosPendientes: sum.totalExpensesPending,
-                  cashBasisExpenses: model.cashBasisExpenses,
-                  clientFlow,
-                  crmInfo,
-                  crmInfoTruncated: crmInfo.length > 0 && crmMonthlyTotals.truncated,
-                  completeness: currentChain,
-                  partners: partners.map((p) => {
-                    const d = effectiveDistributions.find((dd) => dd.partner_id === p.id);
-                    return { name: p.name, pct: d?.percentage ?? p.percentage, amount: d?.amount ?? 0 };
-                  }),
-                });
-              })}
-              disabled={seriesLoading}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg border border-border bg-card text-sm font-medium hover:bg-muted transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-card"
-              title={seriesLoading ? pdfDisabledTitle : 'Descargar informe de cierre mensual'}
-            >
-              <FileBarChart className="w-4 h-4" />
-              <span className="hidden sm:inline">Cierre mensual</span>
-            </button>
-          )}
-          <PeriodSelector />
-        </>}
+            {mode === 'single' && (
+              <button
+                type="button"
+                onClick={handlePdfMes}
+                disabled={seriesLoading}
+                className={BTN}
+                title={seriesLoading ? pdfDisabledTitle : 'Descargar PDF del mes'}
+                aria-label={t('partners.pdfMonth')}
+              >
+                <FileText aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                <span className="hidden sm:inline">{t('partners.pdfMonth')}</span>
+              </button>
+            )}
+            {mode === 'single' && (
+              <button
+                type="button"
+                onClick={handleCierreMensual}
+                disabled={seriesLoading}
+                className={BTN}
+                title={seriesLoading ? pdfDisabledTitle : 'Descargar informe de cierre mensual'}
+                aria-label={t('partners.monthlyClose')}
+              >
+                <FileBarChart aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                <span className="hidden sm:inline">{t('partners.monthlyClose')}</span>
+              </button>
+            )}
+            <PeriodSelector />
+          </>
+        }
       />
 
-      {/* Success / Error messages */}
+      {/* Mensajes de la última acción */}
       {successMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-positive/10 text-positive text-sm font-medium" aria-live="polite">
-          <Check className="w-4 h-4" />
+        <div
+          role="status"
+          aria-live="polite"
+          className="flex items-center gap-2 rounded-ui-md border border-pos/35 bg-pos-bg px-3.5 py-2.5 text-[13px] font-medium text-foreground"
+        >
+          <Check aria-hidden className="size-4 shrink-0 text-pos" strokeWidth={2} />
           {successMsg}
         </div>
       )}
-      {errorMsg && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-negative/10 text-negative text-sm font-medium" aria-live="polite">
-          <AlertTriangle className="w-4 h-4" />
-          {errorMsg}
-        </div>
-      )}
+      {errorMsg && <Notice kind="bad" title={errorMsg} />}
 
-      {/* Serie del CRM faltante para este período (incidente 2026-10-05): los
-          totales que dependen de ella no se muestran como número. */}
-      {crmNotice && (
-        <div
-          className={`flex items-center gap-2 px-4 py-3 rounded-lg border text-sm font-medium ${
-            currentChain?.incompletoEstado === 'loading' || (seriesLoading && !ownPending)
-              ? 'bg-info/10 border-info/30 text-info'
-              : 'bg-warning/10 border-warning/30 text-warning'
-          }`}
-          aria-live="polite"
-        >
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>{crmNotice}</span>
-        </div>
+      <KpiStrip items={kpiItems} />
+
+      {/* Serie del CRM faltante (incidente 2026-10-05): los totales que
+          dependen de ella no se muestran como número. */}
+      {chainNoticeState && chainNoticeTitle && (
+        <Notice kind={chainNoticeState.notice} title={chainNoticeTitle}>
+          {chainNoticeState.phase === 'loading' ? t('partners.notice.loadingBody') : t('partners.notice.failedBody')}
+        </Notice>
       )}
 
       {/* Deriva snapshot-vs-vivo: alguien editó datos de un mes CERRADO. El
-          número mostrado sigue siendo el congelado (estable), pero esto no
-          debe pasar desapercibido: o se reabre el período con motivo, o se
-          revierte la edición. */}
+          número mostrado sigue siendo el congelado (estable), pero no debe
+          pasar desapercibido: o se reabre el período con motivo, o se revierte. */}
       {snapshotDrifts.length > 0 && (
-        <div className="flex gap-3 rounded-lg border border-negative/30 bg-negative/5 p-4">
-          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0 text-negative" />
-          <div className="text-sm">
-            <p className="font-medium text-negative">
-              Hay datos editados en {new Set(snapshotDrifts.map((d) => d.periodLabel)).size}{' '}
-              {new Set(snapshotDrifts.map((d) => d.periodLabel)).size === 1 ? 'período cerrado' : 'períodos cerrados'} — los montos mostrados siguen siendo los congelados al cierre.
-            </p>
-            <ul className="mt-1 text-xs text-muted-foreground space-y-0.5">
-              {snapshotDrifts.slice(0, 6).map((d, i) => (
-                <li key={i}>
-                  {d.periodLabel} · {d.field}: congelado {formatCurrency(d.frozen)} vs actual {formatCurrency(d.live)}
-                </li>
-              ))}
-              {snapshotDrifts.length > 6 && <li>… y {snapshotDrifts.length - 6} más</li>}
-            </ul>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Para que el cambio cuente, reabrí el período en Períodos (queda registrado) y volvé a cerrarlo.
-            </p>
-          </div>
-        </div>
-      )}
-
-      {/* Percentage warning — con el MONTO que queda sin dueño, no solo el
-          %. Con 95% asignado, el 5% del monto a distribuir no va a nadie y
-          antes se evaporaba sin que ninguna cifra lo mostrara (auditoría
-          2026-08-06, QW8). */}
-      {percentageMismatch && (
-        <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-warning/10 border border-warning/30 text-warning text-sm font-medium">
-          <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-          <span>
-            {t('partners.percentageWarning', { pct: (totalPercentage * 100).toFixed(1) })}
-            {totalPercentage < 1 && !chainPending && totalToDistribute > 0 && (
-              <>
-                {' '}— <strong>{formatCurrency(round2(totalToDistribute * (1 - totalPercentage)))}</strong>{' '}
-                de este período quedan <strong>sin asignar a ningún socio</strong>.
-              </>
+        <Notice
+          kind="bad"
+          title={t('partners.notice.driftTitle', {
+            n: String(new Set(snapshotDrifts.map((d) => d.periodLabel)).size),
+          })}
+        >
+          <ul className="mt-1 space-y-0.5 text-[12px]">
+            {snapshotDrifts.slice(0, 6).map((d, i) => (
+              <li key={i}>
+                {d.periodLabel} · {d.field}:{' '}
+                {t('partners.notice.driftLine', { frozen: formatMoney(d.frozen), live: formatMoney(d.live) })}
+              </li>
+            ))}
+            {snapshotDrifts.length > 6 && (
+              <li>{t('partners.notice.driftMore', { n: String(snapshotDrifts.length - 6) })}</li>
             )}
-          </span>
-        </div>
+          </ul>
+          <p className="mt-1 text-[12px]">{t('partners.notice.driftHow')}</p>
+        </Notice>
       )}
 
-      {/* Summary cards */}
-      {/* Row 1: Ingresos, Egresos, Saldo a Favor */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
-        <StatCard
-          label={t('partners.netIncome')}
-          value={ownPending ? pendingLabel : formatCurrency(ingresosNetos)}
-          icon={Users}
-          tone={ownPending ? 'neutral' : ingresosNetos >= 0 ? 'positive' : 'negative'}
-          hint={
-            currentChain
-              ? [
-                  // `null` = la serie del CRM no llegó: «sin datos», nunca $0.
-                  `${t('summary.brokerPnl')} ${
-                    currentChain.desglose.brokerPnl === null
-                      ? t('brokerPnl.noData')
-                      : formatCurrency(currentChain.desglose.brokerPnl)
-                  }`,
-                  currentChain.desglose.other !== 0
-                    ? `${t('summary.otherIncome')} ${formatCurrency(currentChain.desglose.other)}`
-                    : null,
-                  currentChain.desglose.propFirmNetIncome === null
-                    ? `Prop Firm ${t('brokerPnl.noData')}`
-                    : currentChain.desglose.propFirmNetIncome !== 0
-                      ? `Prop Firm ${formatCurrency(currentChain.desglose.propFirmNetIncome)}`
-                      : null,
-                  currentChain.desglose.investmentProfits !== 0
-                    ? `Inversiones ${formatCurrency(currentChain.desglose.investmentProfits)}`
-                    : null,
-                ]
-                  .filter(Boolean)
-                  .join(' + ')
+      {/* % que no suman 100 — con el MONTO que queda sin dueño (auditoría
+          2026-08-06, QW8): con 95 % asignado, el 5 % no va a nadie. */}
+      {percentageMismatch && (
+        <Notice kind="pend" title={t('partners.percentageWarning', { pct: (totalPercentage * 100).toFixed(1) })}>
+          {totalPercentage < 1 && !chainPending && totalToDistribute > 0
+            ? t('partners.notice.unassigned', { amount: formatMoney(round2(totalToDistribute * (1 - totalPercentage))) })
+            : null}
+        </Notice>
+      )}
+
+      {/* ─── Reparto ─── */}
+      <Panel
+        title={t('partners.distribution')}
+        hint={mode === 'consolidated' ? t('partners.kpi.months', { n: String(scopeIds.length) }) : currentPeriod?.label ?? undefined}
+        flush
+        actions={
+          isAdmin ? (
+            <button type="button" onClick={handleAddPartner} className={PRIMARY_BTN}>
+              <Plus aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              {t('partners.addPartner')}
+            </button>
+          ) : undefined
+        }
+      >
+        <FinTable
+          caption={t('partners.distribution')}
+          columns={shareColumns}
+          rows={shareTable.rows}
+          rowKey={(r) => r.key}
+          empty={t('partners.empty')}
+          rowActions={
+            isAdmin
+              ? (r) => (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => handleEditPartner(r.partnerId)}
+                      className={ROW_BTN}
+                      title={t('partners.editPartner')}
+                      aria-label={`${t('partners.editPartner')}: ${r.name}`}
+                    >
+                      <Pencil aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        confirm(
+                          t('partners.deleteConfirm', { name: r.name }),
+                          () => handleDeletePartner(r.partnerId),
+                          { tone: 'danger', title: t('partners.deletePartner'), confirmLabel: t('partners.deletePartner') },
+                        )
+                      }
+                      className={cn(ROW_BTN, 'hover:text-neg')}
+                      title={t('partners.deletePartner')}
+                      aria-label={`${t('partners.deletePartner')}: ${r.name}`}
+                    >
+                      <Trash2 aria-hidden className="size-[15px]" strokeWidth={1.75} />
+                    </button>
+                  </>
+                )
+              : undefined
+          }
+          footer={
+            shareTable.rows.length > 0
+              ? {
+                  label: t('partners.shareTotal', { pct: pctFmt.format(shareTable.totalPct) }),
+                  values: { amount: shareTable.total },
+                }
               : undefined
           }
         />
-        <StatCard
-          label={t('partners.egresosNetos')}
-          value={formatCurrency(egresosNetos)}
-          icon={TrendingDown}
-          tone="negative"
-        />
-        <StatCard
-          label={<>{t('partners.saldoFavor')} <InfoTip text={GLOSSARY.netoOperativo} /></>}
-          value={ownPending ? pendingLabel : formatCurrency(saldoAFavor)}
-          icon={Wallet}
-          tone={ownPending ? 'neutral' : saldoAFavor >= 0 ? 'positive' : 'negative'}
-          hint="Ingresos Operativos − Egresos Operativos"
-        />
-      </div>
+      </Panel>
 
-      {/* Row 2: Reserva del Período, Reserva Acumulada, Deuda Arrastrada (if any) */}
-      <div className={`grid grid-cols-2 gap-3 sm:gap-4 ${carryDebt > 0 ? 'md:grid-cols-4' : 'md:grid-cols-3'}`}>
-        <Card>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-3">
-              <div className="p-2 rounded-lg bg-orange-50 dark:bg-orange-950/50">
-                <Shield className="w-5 h-5 text-orange-500" />
-              </div>
-              <p className="text-sm text-muted-foreground inline-flex items-center gap-1.5">
-                {t('partners.reserveThisPeriod')}
-                <InfoTip text={GLOSSARY.reserve} />
-              </p>
-            </div>
-            {isAdmin && mode === 'single' && (
-              <button
-                onClick={handleOpenReserveEdit}
-                className="p-2 sm:p-1.5 rounded-md hover:bg-muted transition-colors"
-                title={t('partners.editReserve')}
-              >
-                <Settings className="w-4 h-4 text-muted-foreground" />
-              </button>
-            )}
-          </div>
-          <p className={chainPending ? 'text-base font-semibold text-muted-foreground' : 'text-2xl font-bold text-orange-600'}>
-            {chainPending ? pendingLabel : formatCurrency(reserveThisPeriod)}
-          </p>
-          <p className="text-xs text-muted-foreground mt-1">
-            {chainPending ? 'Depende de los datos del CRM' : reserveThisPeriod > 0
-              ? `${(RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
-              : saldoAFavor <= 0 ? 'Mes negativo — sin reserva' : 'Cubriendo deuda arrastrada'}
-          </p>
-        </Card>
+      {/* ─── Historial ─── */}
+      <Panel
+        title={t('partners.history')}
+        hint={t('partners.history.hint', { n: String(history.rows.length) })}
+        flush
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={() => setShowHistory(!showHistory)}
+              aria-expanded={showHistory}
+              aria-controls="partners-history"
+              className={BTN}
+            >
+              <ChevronDown
+                aria-hidden
+                className={cn('size-[15px] transition-transform motion-reduce:transition-none', showHistory ? 'rotate-0' : '-rotate-90')}
+                strokeWidth={1.75}
+              />
+              {showHistory ? t('partners.history.hide') : t('partners.history.show')}
+            </button>
+            <button
+              type="button"
+              onClick={handleHistoryPdf}
+              disabled={seriesLoading}
+              className={BTN}
+              title={seriesLoading ? pdfDisabledTitle : 'Descargar historial en PDF'}
+              aria-label={t('partners.history.pdf')}
+            >
+              <FileText aria-hidden className="size-[15px]" strokeWidth={1.75} />
+              <span className="hidden sm:inline">PDF</span>
+            </button>
+          </>
+        }
+        footer={showHistory && pendingHistoryNote ? pendingHistoryNote : undefined}
+      >
+        <div id="partners-history">
+          {showHistory && (
+            <FinTable
+              caption={t('partners.history')}
+              columns={historyColumns}
+              rows={history.rows}
+              rowKey={(r) => r.periodId}
+              selectedKey={mode === 'single' ? selectedPeriodId : null}
+              footer={{
+                label:
+                  history.excluded.length > 0
+                    ? t('partners.history.totalOf', { n: String(historyCounted), m: String(history.rows.length) })
+                    : t('partners.history.total'),
+                values: historyFooterValues,
+              }}
+            />
+          )}
+        </div>
+      </Panel>
 
-        <StatCard
-          label={t('partners.reserveAccumulated')}
-          value={chainPending ? pendingLabel : formatCurrency(accumulatedReserve)}
-          icon={PiggyBank}
-          tone="warning"
-          hint="Fondo acumulado hasta este período"
-        />
-
-        {carryDebt > 0 && (
-          <StatCard
-            label={<>Deuda Arrastrada <InfoTip text={GLOSSARY.deudaArrastrada} /></>}
-            value={currentChain?.heredaIncompleto ? pendingLabel : formatCurrency(-carryDebt)}
-            icon={AlertTriangle}
-            tone="negative"
-            hint="Se descuenta antes de distribuir"
-          />
-        )}
-
-        <StatCard
-          label={<>{t('partners.distributableAmount')} <InfoTip text={GLOSSARY.montoDistribuir} /></>}
-          value={chainPending ? pendingLabel : formatCurrency(totalToDistribute)}
-          icon={Users}
-          tone={!chainPending && totalToDistribute > 0 ? 'positive' : 'neutral'}
-          hint={
-            chainPending
-              ? 'Se calcula cuando lleguen Broker P&L y Prop Firm'
-              : totalToDistribute > 0
-              ? `${(100 - RESERVE_PCT * 100).toFixed(1)}% del saldo disponible`
-              : 'Sin distribución este período'
-          }
-        />
-      </div>
-
-      {/* Distribution */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Table */}
-        <Card>
-          <div className="flex items-center justify-between mb-4 gap-2">
-            <h2 className="text-base sm:text-lg font-semibold">{t('partners.distribution')}</h2>
-            {isAdmin && (
-              <button
-                onClick={handleAddPartner}
-                className="flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 text-xs font-medium rounded-md bg-primary text-brand-on-primary hover:opacity-90 transition-opacity flex-shrink-0"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                {t('partners.addPartner')}
-              </button>
-            )}
-          </div>
-          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0">
-          <table className="w-full text-sm min-w-[360px]">
-            <thead>
-              <tr className="border-b border-border">
-                <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('partners.name')}</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">%</th>
-                <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">{t('partners.amount')}</th>
-                {isAdmin && <th className="text-center py-2.5 px-3 text-muted-foreground font-medium w-16 sm:w-20"></th>}
-              </tr>
-            </thead>
-            <tbody>
-              {effectiveDistributions.map((dist, i) => {
-                const partner = partners.find(p => p.id === dist.partner_id);
-                return (
-                  <tr key={dist.id} className="border-b border-border/50 hover:bg-muted/50 transition-colors">
-                    <td className="py-2.5 px-3">
-                      <div className="flex items-center gap-2">
-                        <div
-                          className="w-3 h-3 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: COLORS[i % COLORS.length] }}
-                        />
-                        <div className="min-w-0">
-                          <span className="font-medium truncate block">{partner?.name || '—'}</span>
-                          {partner?.email && (
-                            <span className="text-xs text-muted-foreground hidden sm:block truncate">{partner.email}</span>
-                          )}
-                        </div>
-                      </div>
-                    </td>
-                    <td className="py-2.5 px-3 text-right font-medium whitespace-nowrap">{formatPercent(dist.percentage)}</td>
-                    <td className={`py-2.5 px-3 text-right font-bold whitespace-nowrap ${chainPending ? 'text-muted-foreground font-normal' : dist.amount < 0 ? 'text-red-600' : ''}`}>
-                      {chainPending ? '—' : formatCurrency(dist.amount)}
-                    </td>
-                    {isAdmin && (
-                      <td className="py-2.5 px-3 text-center">
-                        <div className="flex justify-center gap-0.5 sm:gap-1">
-                          <button
-                            onClick={() => handleEditPartner(dist.partner_id)}
-                            className="p-2 sm:p-1 rounded hover:bg-muted transition-colors"
-                            title={t('partners.editPartner')}
-                          >
-                            <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
-                          </button>
-                          <button
-                            onClick={() => confirm(
-                              t('partners.deleteConfirm', { name: partner?.name || '' }),
-                              () => handleDeletePartner(dist.partner_id),
-                              { tone: 'danger', title: t('partners.deletePartner'), confirmLabel: t('partners.deletePartner') },
-                            )}
-                            className="p-2 sm:p-1 rounded hover:bg-red-50 dark:hover:bg-red-950/50 transition-colors"
-                            title={t('partners.deletePartner')}
-                          >
-                            <Trash2 className="w-3.5 h-3.5 text-red-500" />
-                          </button>
-                        </div>
-                      </td>
-                    )}
-                  </tr>
-                );
-              })}
-              {/* Fallback removido (2026-06-06): effectiveDistributions
-                  ahora siempre incluye una fila por cada partner, con
-                  el amount derivado de partner.percentage × monto a
-                  distribuir. Ya no necesitamos el render alterno con
-                  amount "—". */}
-            </tbody>
-            <tfoot>
-              <tr className="font-bold bg-muted/50">
-                <td className="py-3 px-2 sm:px-3">Total</td>
-                <td className="py-3 px-2 sm:px-3 text-right">100%</td>
-                <td className={`py-3 px-2 sm:px-3 text-right whitespace-nowrap ${chainPending ? 'text-muted-foreground font-normal' : totalDistributed < 0 ? 'text-red-600' : ''}`}>
-                  {chainPending ? pendingLabel : formatCurrency(totalDistributed)}
-                </td>
-                {isAdmin && <td />}
-              </tr>
-            </tfoot>
-          </table>
-          </div>
-        </Card>
-
-        {/* Visual bar chart */}
-        <Card>
-          <h2 className="text-lg font-semibold mb-4">{t('partners.participation')}</h2>
-          <div className="space-y-4">
-            {effectiveDistributions.map((dist, i) => {
-              const partner = partners.find(p => p.id === dist.partner_id);
-              return (
-                <div key={dist.id}>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="font-medium">{partner?.name}</span>
-                    <span className="text-muted-foreground">{formatPercent(dist.percentage)}</span>
-                  </div>
-                  <div className="w-full bg-muted rounded-full h-4">
-                    <div
-                      className="h-4 rounded-full transition-all duration-500"
-                      style={{
-                        width: `${dist.percentage * 100}%`,
-                        backgroundColor: COLORS[i % COLORS.length],
-                      }}
-                    />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {/* Historical summary — collapsible */}
-          <div className="mt-8">
-            <div className="flex items-center justify-between gap-2">
-              <button
-                onClick={() => setShowHistory(!showHistory)}
-                className="flex items-center gap-2 text-sm font-semibold text-muted-foreground hover:text-foreground transition-colors"
-              >
-                <ChevronDown className={`w-4 h-4 transition-transform ${showHistory ? 'rotate-0' : '-rotate-90'}`} />
-                {t('partners.history')}
-              </button>
-              <button
-                onClick={() => verify2FA(async () => {
-                  const { generatePartnerHistoryPDF } = await import('@/lib/pdf-export');
-                  const rows = periods.map((period) => {
-                    const pChain = periodChain.get(period.id);
-                    // Mes con serie del CRM faltante: «sin datos», no cuenta.
-                    if (pChain?.pendiente) {
-                      return { periodLabel: period.label ?? '', amounts: null, total: null };
-                    }
-                    const pDist = pChain?.montoDistribuir ?? 0;
-                    const dists = partnerDistributions.filter((d) => d.period_id === period.id);
-                    const amounts = partners.map((p) => {
-                      const saved = dists.find((d) => d.partner_id === p.id);
-                      const pct = saved?.percentage ?? p.percentage;
-                      return pDist > 0 ? round2(pDist * pct) : 0;
-                    });
-                    return { periodLabel: period.label ?? '', amounts, total: round2(amounts.reduce((s, a) => s + a, 0)) };
-                  });
-                  const partnerTotals = partners.map((_, idx) =>
-                    round2(rows.reduce((s, r) => s + (r.amounts ? r.amounts[idx] : 0), 0)),
-                  );
-                  await generatePartnerHistoryPDF({
-                    companyName: company?.name ?? '',
-                    companyLogoUrl: company?.logo_url ?? null,
-                    partnerNames: partners.map((p) => p.name),
-                    rows,
-                    partnerTotals,
-                    grandTotal: round2(partnerTotals.reduce((s, a) => s + a, 0)),
-                    note: pendingHistoryNote,
-                  });
-                })}
-                disabled={seriesLoading}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-border bg-card text-xs font-medium hover:bg-muted transition-colors flex-shrink-0 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-card"
-                title={seriesLoading ? pdfDisabledTitle : 'Descargar historial en PDF'}
-              >
-                <FileText className="w-3.5 h-3.5" />
-                <span className="hidden sm:inline">PDF</span>
-              </button>
-            </div>
-            {showHistory && (
-            <div className="overflow-x-auto mt-3">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b border-border">
-                    <th className="text-left py-2.5 px-3 text-muted-foreground font-medium">{t('partners.period')}</th>
-                    {partners.map(p => (
-                      <th key={p.id} className="text-right py-2.5 px-3 text-muted-foreground font-medium">{p.name}</th>
-                    ))}
-                    <th className="text-right py-2.5 px-3 text-muted-foreground font-medium">Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {periods.map((period) => {
-                    const dists = partnerDistributions.filter(d => d.period_id === period.id);
-                    const pChain = periodChain.get(period.id);
-                    const pDistributable = pChain?.montoDistribuir ?? 0;
-
-                    // Construir UNA fila por socio (no mapear sobre las filas
-                    // guardadas). Antes, los meses sin partner_distributions
-                    // guardadas (p.ej. recién calculados y aún sin "Guardar")
-                    // mostraban $0 aunque montoDistribuir fuera positivo. Ahora
-                    // se deriva de montoDistribuir × %, usando el % guardado si
-                    // existe o el % actual del socio como fallback.
-                    const effectiveDists = partners.map(p => {
-                      const saved = dists.find(d => d.partner_id === p.id);
-                      const pct = saved?.percentage ?? p.percentage;
-                      return {
-                        partner_id: p.id,
-                        percentage: pct,
-                        amount: pDistributable > 0 ? round2(pDistributable * pct) : 0,
-                      };
-                    });
-                    const total = round2(effectiveDists.reduce((s, d) => s + d.amount, 0));
-
-                    return (
-                      <tr key={period.id} className={`border-b border-border/50 transition-colors ${period.id === selectedPeriodId ? 'bg-info/10' : 'hover:bg-muted/50'}`}>
-                        <td className="py-2.5 px-3 font-medium">
-                          <div className="flex items-center gap-1">
-                            {period.label}
-                            {(pChain?.deudaArrastradaEntrada ?? 0) > 0 && (
-                              <span className="text-red-500" title={`Deuda: ${formatCurrency(-(pChain?.deudaArrastradaEntrada ?? 0))}`}>*</span>
-                            )}
-                          </div>
-                        </td>
-                        {partners.map(p => {
-                          const d = effectiveDists.find(dd => dd.partner_id === p.id);
-                          return (
-                            <td key={p.id} className={`py-2.5 px-3 text-right ${pChain?.pendiente ? 'text-muted-foreground' : ''}`}>
-                              {pChain?.pendiente ? '—' : formatCurrency(d?.amount || 0)}
-                            </td>
-                          );
-                        })}
-                        <td className={`py-2.5 px-3 text-right ${pChain?.pendiente ? 'text-muted-foreground font-normal' : 'font-bold'}`}>
-                          {pChain?.pendiente ? pendingValueLabel(pChain, autoSeriesStatus) : formatCurrency(total)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-                <tfoot>
-                  <tr className="border-t-2 border-border font-bold bg-muted/50">
-                    <td className="py-2 px-2">Total</td>
-                    {partners.map(p => {
-                      const partnerTotal = round2(periods.reduce((sum, period) => {
-                        const pChain = periodChain.get(period.id);
-                        if (pChain?.pendiente) return sum;
-                        const pDist = pChain?.montoDistribuir ?? 0;
-                        if (pDist <= 0) return sum;
-                        const saved = partnerDistributions.find(d => d.period_id === period.id && d.partner_id === p.id);
-                        const pct = saved?.percentage ?? p.percentage;
-                        return sum + round2(pDist * pct);
-                      }, 0));
-                      return (
-                        <td key={p.id} className="py-2 px-2 text-right">
-                          {formatCurrency(partnerTotal)}
-                        </td>
-                      );
-                    })}
-                    <td className="py-2 px-2 text-right">
-                      {formatCurrency(periods.reduce((sum, period) => {
-                        const pChain = periodChain.get(period.id);
-                        if (pChain?.pendiente) return sum;
-                        const md = pChain?.montoDistribuir ?? 0;
-                        return sum + (md > 0 ? md : 0);
-                      }, 0))}
-                    </td>
-                  </tr>
-                </tfoot>
-              </table>
-              {pendingHistoryNote && (
-                <p className="mt-2 text-xs text-warning">{pendingHistoryNote}</p>
-              )}
-            </div>
-            )}
-          </div>
-        </Card>
-      </div>
-
-      {/* ─── Partner Form Modal ─── */}
+      {/* ─── Alta / edición de socio ─── */}
       {showPartnerForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-xl shadow-xl p-6 max-w-md mx-4 w-full">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="partner-form-title"
+            className="w-full max-w-md rounded-ui-xl border border-border bg-card shadow-3"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+              <h2 id="partner-form-title" className="text-[15px] font-semibold text-foreground">
                 {editingPartner ? t('partners.editPartner') : t('partners.addPartner')}
-              </h3>
-              <button onClick={() => setShowPartnerForm(false)} className="p-2 sm:p-1 rounded hover:bg-muted">
-                <X className="w-5 h-5" />
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowPartnerForm(false)}
+                className={ROW_BTN}
+                aria-label={t('partners.cancel')}
+              >
+                <X aria-hidden className="size-4" strokeWidth={1.75} />
               </button>
             </div>
-
-            <div className="space-y-4">
-              <div>
-                <label className="block text-sm font-medium mb-1">{t('partners.name')}</label>
-                <input
+            <form
+              className="space-y-4 px-5 py-4"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleSavePartner();
+              }}
+            >
+              <Field label={t('partners.name')} required>
+                <Input
                   type="text"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
-                  placeholder="Nombre del socio"
+                  placeholder={t('partners.form.namePlaceholder')}
+                  autoFocus
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">{t('partners.email')}</label>
-                <input
+              </Field>
+              <Field label={t('partners.email')}>
+                <Input
                   type="email"
                   value={formEmail}
                   onChange={(e) => setFormEmail(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="email@ejemplo.com"
                 />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-1">
-                  {t('partners.percentage')} (%)
-                  <span className="text-muted-foreground font-normal ml-2">
-                    Max: {((editingPartner ? availableForEdit(editingPartner) : availableForNew) * 100).toFixed(1)}%
-                  </span>
-                </label>
-                <input
+              </Field>
+              <Field
+                label={`${t('partners.percentage')} (%)`}
+                required
+                hint={t('partners.form.max', {
+                  max: pctFmt.format((editingPartner ? availableForEdit(editingPartner) : availableForNew) * 100),
+                })}
+              >
+                <Input
                   type="number"
+                  inputMode="decimal"
                   value={formPercentage}
                   onChange={(e) => setFormPercentage(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   placeholder="25.0"
                   min="0.1"
-                  max={(((editingPartner ? availableForEdit(editingPartner) : availableForNew)) * 100).toFixed(1)}
+                  max={((editingPartner ? availableForEdit(editingPartner) : availableForNew) * 100).toFixed(1)}
                   step="0.1"
                 />
+              </Field>
+              <div className="flex justify-end gap-2 pt-2">
+                <button type="button" onClick={() => setShowPartnerForm(false)} className={BTN}>
+                  {t('partners.cancel')}
+                </button>
+                <button
+                  type="submit"
+                  disabled={saving || !formName.trim() || !formPercentage}
+                  className={PRIMARY_BTN}
+                >
+                  {saving ? t('partners.saving') : t('partners.save')}
+                </button>
               </div>
-            </div>
-
-            <div className="flex gap-3 justify-end mt-6">
-              <button
-                onClick={() => setShowPartnerForm(false)}
-                className="px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('partners.cancel')}
-              </button>
-              <button
-                onClick={handleSavePartner}
-                disabled={saving || !formName.trim() || !formPercentage}
-                className="px-4 py-2 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
-              >
-                {saving ? 'Guardando...' : t('partners.save')}
-              </button>
-            </div>
+            </form>
           </div>
         </div>
       )}
 
       {ConfirmModal}
 
-      {/* ─── Reserve Edit Modal ─── */}
+      {/* ─── % de reserva ─── */}
       {showReserveEdit && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-card rounded-xl shadow-xl p-6 max-w-sm mx-4 w-full">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">{t('partners.reserveTitle')}</h3>
-              <button onClick={() => setShowReserveEdit(false)} className="p-2 sm:p-1 rounded hover:bg-muted">
-                <X className="w-5 h-5" />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="reserve-form-title"
+            className="w-full max-w-sm rounded-ui-xl border border-border bg-card shadow-3"
+          >
+            <div className="flex items-center justify-between gap-3 border-b border-border px-5 py-4">
+              <h2 id="reserve-form-title" className="text-[15px] font-semibold text-foreground">
+                {t('partners.reserveTitle')}
+              </h2>
+              <button
+                type="button"
+                onClick={() => setShowReserveEdit(false)}
+                className={ROW_BTN}
+                aria-label={t('partners.cancel')}
+              >
+                <X aria-hidden className="size-4" strokeWidth={1.75} />
               </button>
             </div>
-
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-1">% Reserva</label>
-              <div className="flex items-center gap-2">
-                <input
+            <div className="space-y-4 px-5 py-4">
+              <Field
+                label={t('partners.form.reservePct')}
+                hint={t('partners.form.reserveCurrent', {
+                  period: currentPeriod?.label ?? '',
+                  pct: pctFmt.format(RESERVE_PCT * 100),
+                })}
+              >
+                <Input
                   type="number"
+                  inputMode="decimal"
                   value={reserveInput}
                   onChange={(e) => setReserveInput(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg border border-border bg-background text-base sm:text-sm focus:outline-none focus:ring-2 focus:ring-accent"
                   min="0"
                   max="100"
                   step="0.5"
                 />
-                <span className="text-sm font-medium text-muted-foreground">%</span>
+              </Field>
+              <div className="flex flex-col gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleSaveReserve(false)}
+                  disabled={saving}
+                  className={cn(PRIMARY_BTN, 'w-full')}
+                >
+                  {saving ? t('partners.saving') : t('partners.reserveApplyThis')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSaveReserve(true)}
+                  disabled={saving}
+                  className={cn(BTN, 'w-full justify-center')}
+                >
+                  {saving ? t('partners.saving') : t('partners.reserveApplyAll')}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowReserveEdit(false)}
+                  className="inline-flex h-8 w-full items-center justify-center rounded-ui-md text-[13px] font-medium text-text-2 hover:bg-surface-2 hover:text-foreground"
+                >
+                  {t('partners.cancel')}
+                </button>
               </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Periodo actual: <strong>{currentPeriod?.label}</strong> ({(RESERVE_PCT * 100).toFixed(1)}%)
-              </p>
-            </div>
-
-            <div className="flex flex-col gap-2">
-              <button
-                onClick={() => handleSaveReserve(false)}
-                disabled={saving}
-                className="w-full px-4 py-2.5 rounded-lg bg-[var(--color-primary)] text-white text-sm font-medium hover:opacity-90 disabled:opacity-50 transition-opacity"
-              >
-                {saving ? 'Guardando...' : t('partners.reserveApplyThis')}
-              </button>
-              <button
-                onClick={() => handleSaveReserve(true)}
-                disabled={saving}
-                className="w-full px-4 py-2.5 rounded-lg border border-[var(--color-primary)] text-primary dark:text-accent text-sm font-medium hover:bg-[var(--color-primary)]/10 disabled:opacity-50 transition-colors"
-              >
-                {saving ? 'Guardando...' : t('partners.reserveApplyAll')}
-              </button>
-              <button
-                onClick={() => setShowReserveEdit(false)}
-                className="w-full px-4 py-2 rounded-lg border border-border text-sm font-medium hover:bg-muted transition-colors"
-              >
-                {t('partners.cancel')}
-              </button>
             </div>
           </div>
         </div>

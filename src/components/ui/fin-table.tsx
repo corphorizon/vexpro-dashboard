@@ -110,6 +110,14 @@ export interface FinTableProps<R> {
   empty?: React.ReactNode;
   /** Alto máximo del contenedor (activa el sticky de cabecera y pie). */
   maxHeight?: number | string;
+  /**
+   * Fila de TOTAL intermedio dentro del cuerpo (cascada «= Ingresos netos»,
+   * «= Resultado»): fondo `group-row` y 600, sin hover. Agregado 2026-10-12
+   * para la cascada del resultado de /resumen-general: los subtotales de una
+   * cascada no son grupos (no agrupan filas de abajo: resumen las de arriba)
+   * y `groupBy` les inventaría un conteo; tampoco son el pie (hay tres).
+   */
+  rowVariant?: (row: R) => 'total' | undefined;
   className?: string;
 }
 
@@ -159,6 +167,7 @@ export function FinTable<R>({
   empty,
   maxHeight,
   className,
+  rowVariant,
 }: FinTableProps<R>) {
   const { t } = useI18n();
   const countFmt = new Intl.NumberFormat(MONEY_LOCALE, { maximumFractionDigits: 0 });
@@ -226,10 +235,12 @@ export function FinTable<R>({
     const clickable = Boolean(onRowClick);
     const actions = rowActions ? rowActions(row) : null;
     const hasActions = hasNodeContent(actions);
+    const isTotal = rowVariant?.(row) === 'total';
     return (
       <tr
         key={key}
         data-selected={selected || undefined}
+        data-variant={isTotal ? 'total' : undefined}
         aria-current={selected ? 'true' : undefined}
         tabIndex={clickable ? 0 : undefined}
         onClick={clickable ? () => onRowClick!(row) : undefined}
@@ -248,7 +259,7 @@ export function FinTable<R>({
           'group/row',
           bodyTr,
           clickable && 'cursor-pointer',
-          selected ? 'bg-row-selected' : 'hover:bg-row-hover',
+          isTotal ? 'bg-group-row font-semibold' : selected ? 'bg-row-selected' : 'hover:bg-row-hover',
           // Barra de selección: en tarjeta va en la fila entera.
           selected && 'max-[720px]:shadow-[inset_3px_0_0_0_var(--brand-ink)]',
         )}
