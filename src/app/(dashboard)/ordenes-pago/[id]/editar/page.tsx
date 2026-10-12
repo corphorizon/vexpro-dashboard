@@ -9,8 +9,8 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { ArrowLeft, FileText } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Panel } from '@/components/ui/panel';
+import { actionButtonClass } from '@/components/payment-orders/action-button';
 import { Skeleton } from '@/components/ui/skeleton';
 import { EmptyState } from '@/components/ui/empty-state';
 import { PaymentOrderForm } from '@/components/payment-orders/payment-order-form';
@@ -51,7 +51,7 @@ export default function EditarOrdenPagoPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <Skeleton className="h-4 w-32" />
         <Skeleton className="h-12 w-72" />
         <Skeleton className="h-96" />
@@ -61,28 +61,28 @@ export default function EditarOrdenPagoPage() {
 
   if (!order) {
     return (
-      <Card>
+      <Panel>
         <EmptyState
           icon={FileText}
           title={t('payOrders.notFoundTitle')}
           description={t('payOrders.notFoundDesc')}
           action={
-            <Link href="/ordenes-pago">
-              <Button variant="primary">{t('payOrders.backToList')}</Button>
+            <Link href="/ordenes-pago" className={actionButtonClass('primary')}>
+              {t('payOrders.backToList')}
             </Link>
           }
         />
-      </Card>
+      </Panel>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <Link
         href={`/ordenes-pago/${order.id}`}
-        className="inline-flex items-center gap-1.5 text-sm text-muted-foreground hover:text-foreground transition-colors"
+        className="inline-flex items-center gap-1.5 text-[13px] text-text-2 hover:text-foreground"
       >
-        <ArrowLeft className="w-4 h-4" />
+        <ArrowLeft aria-hidden className="size-4" />
         {t('payOrders.backToOrder')}
       </Link>
 

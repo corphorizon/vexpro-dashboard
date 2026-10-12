@@ -93,6 +93,11 @@ export interface FinTableProps<R> {
   /** Subtotales reales por grupo (si la lista está recortada, sin esto se muestra «—»). */
   groupTotals?: Record<string, Record<string, number | null | undefined>>;
   footer?: FinTableFooter;
+  /**
+   * Filas de pie ANTES del total (subtotal, comisiones…): 13/400 `text-2`, sin
+   * la doble raya ni sticky — la doble raya es sólo del total (`footer`).
+   */
+  footerRows?: FinTableFooter[];
   /** Total de filas que existen (M). Si es mayor que `rows.length`, se avisa. */
   totalCount?: number | null;
   density?: 'compact' | 'comfortable';
@@ -144,6 +149,7 @@ export function FinTable<R>({
   groupLabel,
   groupTotals,
   footer,
+  footerRows,
   totalCount,
   density = 'compact',
   selectedKey,
@@ -358,6 +364,55 @@ export function FinTable<R>({
     );
   }
 
+  // Pie: `total` lleva la «doble raya» del libro, 650 y sticky abajo; `sub`
+  // (subtotal, comisiones — agregado 2026-10-12 para el detalle de Órdenes de
+  // pago) va en 13/400 `text-2`, sin raya ni sticky: dos filas sticky con
+  // `bottom: 0` se encimarían.
+  function renderFooterRow(f: FinTableFooter, variant: 'sub' | 'total', key: string) {
+    const isTotal = variant === 'total';
+    return (
+      <tr key={key} data-foot={variant} className={cn(bodyTr, 'max-[720px]:bg-surface-2')}>
+        {layoutCols.map((col, i) => {
+          const c = col as FinColumn<R>;
+          const p = layout[c.key];
+          const hasValueCol = f.values != null && c.key in f.values;
+          const isLabel = i === 0;
+          return (
+            <td
+              key={c.key}
+              style={isLabel ? { gridColumn: 1, gridRow: 1 } : cardStyle(p)}
+              className={cn(
+                'text-[13px]',
+                isTotal ? 'font-[650] text-foreground' : 'text-text-2',
+                'min-[720px]:px-3 min-[720px]:first:pl-4 min-[720px]:last:pr-4',
+                isTotal
+                  ? 'min-[720px]:sticky min-[720px]:bottom-0 min-[720px]:h-[42px] min-[720px]:bg-card min-[720px]:shadow-[inset_0_1.5px_0_0_var(--foreground)]'
+                  : 'min-[720px]:h-8 min-[720px]:bg-card',
+                'max-[720px]:block',
+                isLabel ? 'text-left' : alignClass(c),
+                !isLabel && !hasValueCol && 'max-[720px]:hidden',
+                !isLabel && p?.side === 'hidden' && 'max-[720px]:hidden',
+                p?.side === 'right' && 'max-[720px]:text-right',
+              )}
+            >
+              {isLabel && f.label}
+              {hasValueCol && (
+                <Money
+                  value={f.values![c.key]}
+                  signed={c.money?.signed}
+                  currency={c.money?.currency}
+                  tone={c.money?.tone}
+                  nullLabel={t('ui.noData')}
+                  className={isTotal ? undefined : 'font-medium'}
+                />
+              )}
+            </td>
+          );
+        })}
+      </tr>
+    );
+  }
+
   const containerStyle: React.CSSProperties | undefined =
     maxHeight != null ? { maxHeight: typeof maxHeight === 'number' ? `${maxHeight}px` : maxHeight } : undefined;
 
@@ -407,43 +462,10 @@ export function FinTable<R>({
               rows.map(renderBodyRow)
             )}
           </tbody>
-          {footer && (
+          {(footer || (footerRows && footerRows.length > 0)) && (
             <tfoot className="max-[720px]:block">
-              <tr className={cn(bodyTr, 'max-[720px]:bg-surface-2')}>
-                {layoutCols.map((col, i) => {
-                  const c = col as FinColumn<R>;
-                  const p = layout[c.key];
-                  const hasValueCol = footer.values != null && c.key in footer.values;
-                  const isLabel = i === 0;
-                  return (
-                    <td
-                      key={c.key}
-                      style={isLabel ? { gridColumn: 1, gridRow: 1 } : cardStyle(p)}
-                      className={cn(
-                        'text-[13px] font-[650] text-foreground',
-                        'min-[720px]:sticky min-[720px]:bottom-0 min-[720px]:h-[42px] min-[720px]:bg-card min-[720px]:px-3 min-[720px]:first:pl-4 min-[720px]:last:pr-4',
-                        'min-[720px]:shadow-[inset_0_1.5px_0_0_var(--foreground)]',
-                        'max-[720px]:block',
-                        isLabel ? 'text-left' : alignClass(c),
-                        !isLabel && !hasValueCol && 'max-[720px]:hidden',
-                        !isLabel && p?.side === 'hidden' && 'max-[720px]:hidden',
-                        p?.side === 'right' && 'max-[720px]:text-right',
-                      )}
-                    >
-                      {isLabel && footer.label}
-                      {hasValueCol && (
-                        <Money
-                          value={footer.values![c.key]}
-                          signed={c.money?.signed}
-                          currency={c.money?.currency}
-                          tone={c.money?.tone}
-                          nullLabel={t('ui.noData')}
-                        />
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
+              {footerRows?.map((f, i) => renderFooterRow(f, 'sub', `sub-${i}`))}
+              {footer && renderFooterRow(footer, 'total', 'total')}
             </tfoot>
           )}
         </table>

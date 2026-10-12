@@ -21,10 +21,17 @@
 // habla de "comprobante" o de "documento de respaldo" y ese matiz es de quien
 // la usa, no de este componente. Confundir los dos nombres en pantalla es el
 // error que este módulo evita a propósito desde que existen los dos adjuntos.
+//
+// «Libro mayor» (2026-10-12): tokens nuevos (`text-text-3` para el metadato,
+// `hover:text-neg` para quitar) y los botones de ActionButton (32 px,
+// `border-strong`). Ver y Descargar son <a> con clase de botón: antes eran un
+// <button> DENTRO de un <a> — HTML inválido (contenido interactivo anidado)
+// que algunos lectores de pantalla anunciaban dos veces. Medición: antes 4
+// tokens legados; después 0.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { Download, ExternalLink, Trash2, X } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { ActionButton, actionButtonClass } from '@/components/payment-orders/action-button';
 import { formatFileSize } from '@/lib/payment-orders/file-index';
 
 /** Tamaño legible. Vivía copiado en el detalle y en el formulario; ahora vive
@@ -79,12 +86,12 @@ export function SavedFileList({
         return (
           <li
             key={f.id}
-            className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 py-3 first:pt-0 last:pb-0"
+            className="flex flex-col gap-2 py-2.5 first:pt-0 last:pb-0 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
           >
             <div className="min-w-0">
-              <p className="text-sm font-medium break-all">{name}</p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {formatFileSize(f.size)}
+              <p className="break-all text-[13px] font-medium text-foreground">{name}</p>
+              <p className="mt-0.5 text-[12px] text-text-3">
+                <span className="num tabular-nums">{formatFileSize(f.size)}</span>
                 {f.uploaded_at && (
                   <>
                     {' · '}
@@ -93,38 +100,39 @@ export function SavedFileList({
                 )}
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex shrink-0 items-center gap-2">
               <a
                 href={hrefFor(f)}
                 target="_blank"
                 rel="noopener noreferrer"
                 aria-label={texts.viewAria(name)}
+                className={actionButtonClass('secondary')}
               >
-                <Button type="button" variant="secondary">
-                  <ExternalLink className="w-4 h-4" />
-                  {texts.view}
-                </Button>
+                <ExternalLink aria-hidden className="size-4" />
+                {texts.view}
               </a>
               {/* La descarga usa su propia URL firmada (el servidor le pone
                   Content-Disposition: attachment): con el redirect
                   cross-origin, un <a download> no alcanza. */}
-              <a href={downloadHrefFor(f)} aria-label={texts.downloadAria(name)}>
-                <Button type="button" variant="secondary">
-                  <Download className="w-4 h-4" />
-                  {texts.download}
-                </Button>
+              <a
+                href={downloadHrefFor(f)}
+                aria-label={texts.downloadAria(name)}
+                className={actionButtonClass('secondary')}
+              >
+                <Download aria-hidden className="size-4" />
+                {texts.download}
               </a>
               {onRemove && (
-                <Button
-                  type="button"
+                <ActionButton
                   variant="ghost"
                   aria-label={texts.removeAria(name)}
                   disabled={disabled}
                   onClick={() => onRemove(f)}
+                  className="hover:text-neg"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 aria-hidden className="size-4" />
                   {texts.remove}
-                </Button>
+                </ActionButton>
               )}
             </div>
           </li>
@@ -158,23 +166,23 @@ export function PickedFileList({
       {files.map((f, i) => (
         <li
           key={`${f.name}-${f.size}-${i}`}
-          className="flex items-center justify-between gap-2 text-xs"
+          className="flex items-center justify-between gap-2 text-[12.5px] text-foreground"
         >
           <span className="min-w-0 truncate">
             {f.name}
-            <span className="text-muted-foreground">
+            <span className="text-text-3">
               {' · '}
-              {formatFileSize(f.size)}
+              <span className="num tabular-nums">{formatFileSize(f.size)}</span>
               {pendingNote ? ` · ${pendingNote}` : ''}
             </span>
           </span>
           <button
             type="button"
-            className="text-muted-foreground hover:text-negative shrink-0"
+            className="inline-flex size-7 shrink-0 items-center justify-center rounded-ui-sm text-text-3 hover:bg-surface-2 hover:text-neg [@media(pointer:coarse)]:size-10"
             aria-label={removeAria(f.name)}
             onClick={() => onRemove(i)}
           >
-            <X className="w-3.5 h-3.5" />
+            <X aria-hidden className="size-3.5" />
           </button>
         </li>
       ))}

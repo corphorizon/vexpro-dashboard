@@ -17,25 +17,41 @@
 //     pelear con el cursor ni con el "0" pegado adelante) y se convierten a
 //     number recién al calcular y al enviar.
 //   · La validación de cliente espeja la del endpoint — es UX, no seguridad.
+//
+// «Libro mayor» (2026-10-12, docs/diseno-libro-mayor.md §5.6):
+//   · Todos los campos son Field / Input / Select / Textarea de ui/field.tsx.
+//     Antes había una receta local `INPUT` (borde `border-border`, 1,2:1
+//     contra blanco: el control casi no se ve) copiada en 22 lugares de este
+//     archivo, más `INPUT_ERR`, un `Field` y un `Segmented` locales. Ahora el
+//     borde es `control-border` (3:1), el error lleva ícono + texto +
+//     `aria-invalid`, y el foco es el global — ninguna receta propia.
+//   · Líneas: grilla alineada con los tokens de FinTable (cabecera 11.5
+//     MAYÚSCULAS, montos a la derecha con <Money>, total con la doble raya).
+//   · Avisos (moneda que no es la de la empresa, wallet) con <Notice>; los
+//     textos de moneda pasaron de un `CURRENCY_COPY` local a i18n.
+//   · Adjuntos: contador «n / 10» en `text-3` en la cabecera del panel.
+//
+// Medición: antes 33 tokens legados, 3 `var(--…)` en className y 22 usos de
+// `INPUT`; después 0.
+//
+// DESCARTADO: FinTable editable para las líneas — FinTable dibuja valores
+// (<Money>, metadatos, tarjeta móvil); meterle controles adentro obligaría a
+// otra API. La grilla usa los mismos tokens y alinea igual.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  Plus,
-  Trash2,
-  Wallet,
-  Landmark,
-  AlertTriangle,
-  BookUser,
-  FileText,
-} from 'lucide-react';
-import { Card } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { AlertCircle, BookUser, FileText, Landmark, Plus, Trash2, Wallet } from 'lucide-react';
+import { Panel } from '@/components/ui/panel';
+import { Field, Input, Select, Textarea } from '@/components/ui/field';
+import { Segmented } from '@/components/ui/segmented';
+import { Notice } from '@/components/ui/notice';
+import { Money, NUM_CLASS } from '@/components/ui/money';
 import { useToasts } from '@/components/ui/toast';
+import { ActionButton, ROW_ACTION_CLASS } from '@/components/payment-orders/action-button';
 import { useI18n } from '@/lib/i18n';
 import { useData } from '@/lib/data-context';
-import { cn, formatCurrency } from '@/lib/utils';
+import { cn } from '@/lib/utils';
 import { todayUtcISO } from '@/lib/dates';
 import {
   CRYPTO_NETWORKS,
@@ -70,9 +86,10 @@ import {
   orderAttachmentUrl,
 } from '@/lib/payment-orders/api';
 
-const INPUT =
-  'w-full px-3 py-2 rounded-lg border border-border bg-card text-base sm:text-sm placeholder:text-muted-foreground';
-const INPUT_ERR = 'border-negative';
+/** Columnas de la grilla de líneas: concepto | unitario | cantidad | monto | quitar.
+ *  En móvil (< 640) dos columnas: el concepto ocupa la fila entera. */
+const LINE_GRID =
+  'grid grid-cols-2 items-center gap-x-3 px-4 sm:grid-cols-[minmax(0,1fr)_120px_88px_128px_32px]';
 
 const OTHER_NETWORK = '__other__';
 
@@ -101,25 +118,6 @@ function allowedCurrencies(companyCurrency: string | null | undefined): string[]
  *  servidor). El tope de CANTIDAD es MAX_PAYMENT_ATTACHMENTS. */
 const MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_SIZE;
 
-/**
- * Textos del bloque de moneda. Viven acá —y no en i18n.tsx— para que el
- * arreglo quede contenido en el formulario; moverlos al diccionario junto al
- * resto de `payOrders.*` es la limpieza pendiente.
- */
-const CURRENCY_COPY = {
-  es: {
-    hint: (list: string) =>
-      `Se emite en la moneda de la empresa (${list}). Los egresos se registran sin conversión.`,
-    mismatch: (orderCur: string, companyCur: string) =>
-      `Esta orden está en ${orderCur}, pero la contabilidad registra los egresos en ${companyCur} sin tipo de cambio: al marcarla pagada, el total entraría como ${companyCur}. Pasala a ${companyCur} con los importes convertidos antes de aprobarla.`,
-  },
-  en: {
-    hint: (list: string) =>
-      `Issued in the company currency (${list}). Expenses are recorded with no conversion.`,
-    mismatch: (orderCur: string, companyCur: string) =>
-      `This order is in ${orderCur}, but expenses are booked in ${companyCur} with no exchange rate: marking it paid would record the total as ${companyCur}. Switch it to ${companyCur} with converted amounts before approving it.`,
-  },
-} as const;
 
 // La fecha por defecto es el día UTC, no el local del navegador: la
 // OP-2026-0042 nació fechada mañana porque quien la creó estaba en un huso
@@ -204,7 +202,7 @@ interface Props {
 }
 
 export function PaymentOrderForm({ mode, order }: Props) {
-  const { t, locale } = useI18n();
+  const { t } = useI18n();
   const router = useRouter();
   const { company } = useData();
   const { toast, ToastHost } = useToasts();
@@ -316,7 +314,6 @@ export function PaymentOrderForm({ mode, order }: Props) {
   // ── Moneda de la empresa ───────────────────────────────────────────────────
   // Ver la nota de allowedCurrencies: el egreso que nace de una OP pagada no
   // lleva moneda ni conversión, así que la orden se emite en la de la empresa.
-  const currencyCopy = CURRENCY_COPY[locale === 'en' ? 'en' : 'es'];
   const companyCurrency = (company?.currency || 'USD').toUpperCase();
   const allowed = useMemo(() => allowedCurrencies(companyCurrency), [companyCurrency]);
   /** La moneda guardada de una OP vieja sigue en la lista: se avisa, no se reescribe sola. */
@@ -568,90 +565,82 @@ export function PaymentOrderForm({ mode, order }: Props) {
     }
   }
 
-  const money = (n: number) => formatCurrency(n, form.currency === 'USDT' ? 'USD' : form.currency);
+  /** Moneda para mostrar los montos (USDT se muestra como USD, igual que el resto). */
+  const displayCurrency = form.currency === 'USDT' ? 'USD' : form.currency;
 
   return (
     <>
       {ToastHost}
       <form
-        className="space-y-6 pb-4"
+        className="space-y-4 pb-4"
         onSubmit={(e) => {
           e.preventDefault();
           handleSave('submit');
         }}
       >
         {/* ── Datos de la orden ─────────────────────────────────────────── */}
-        <Card className="space-y-4">
-          <SectionTitle>{t('payOrders.sectionOrder')}</SectionTitle>
-
-          <div>
-            <Label>{t('payOrders.docLanguage')}</Label>
-            <Segmented
+        <Panel title={t('payOrders.sectionOrder')} bodyClassName="space-y-4">
+          <div className="space-y-1">
+            <span id="po-doc-language" className="block text-[12.5px] font-medium text-text-2">
+              {t('payOrders.docLanguage')}
+            </span>
+            <Segmented<PaymentOrderLocale>
+              aria-label={t('payOrders.docLanguage')}
               value={form.locale}
-              onChange={(v) => set('locale', v as PaymentOrderLocale)}
+              onChange={(v) => set('locale', v)}
               options={[
                 { value: 'es', label: 'Español' },
                 { value: 'en', label: 'English' },
               ]}
             />
-            <p className="text-xs text-muted-foreground mt-1.5">{t('payOrders.docLanguageHint')}</p>
+            <p className="text-[12px] leading-4 text-text-3">{t('payOrders.docLanguageHint')}</p>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <Field label={t('payOrders.issueDate')} required error={errors.issue_date}>
-              <input
-                type="date"
-                value={form.issue_date}
-                onChange={(e) => set('issue_date', e.target.value)}
-                className={cn(INPUT, errors.issue_date && INPUT_ERR)}
-              />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <Field label={t('payOrders.issueDate')} required error={errors.issue_date || undefined}>
+              <Input type="date" value={form.issue_date} onChange={(e) => set('issue_date', e.target.value)} />
             </Field>
             <Field label={t('payOrders.paymentDate')} hint={t('payOrders.optional')}>
-              <input
-                type="date"
-                value={form.payment_date}
-                onChange={(e) => set('payment_date', e.target.value)}
-                className={INPUT}
-              />
+              <Input type="date" value={form.payment_date} onChange={(e) => set('payment_date', e.target.value)} />
             </Field>
-            <Field label={t('payOrders.currency')}>
-              <select
+            <Field label={t('payOrders.currency')} hint={t('payOrders.currencyHint', { list: allowed.join(' / ') })}>
+              <Select
                 value={form.currency}
+                aria-invalid={currencyMismatch || undefined}
                 onChange={(e) => {
                   currencyTouched.current = true;
                   set('currency', e.target.value);
                 }}
-                className={cn(INPUT, currencyMismatch && INPUT_ERR)}
               >
                 {currencyOptions.map((c) => (
                   <option key={c} value={c}>
                     {c}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
-
-          <p className="text-xs text-muted-foreground">{currencyCopy.hint(allowed.join(' / '))}</p>
 
           {/* OP vieja en una moneda que la contabilidad no sabe convertir. Se
               avisa y se deja seguir: bloquear la edición de un borrador ya
               guardado sería peor que explicar el problema. */}
           {currencyMismatch && (
-            <p className="flex items-start gap-2 text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
-              <AlertTriangle className="w-4 h-4 shrink-0 mt-px" aria-hidden />
-              <span>{currencyCopy.mismatch(form.currency, companyCurrency)}</span>
-            </p>
+            <Notice kind="pend" title={t('payOrders.currency')}>
+              {t('payOrders.currencyMismatch', { order: form.currency, company: companyCurrency })}
+            </Notice>
           )}
-        </Card>
+        </Panel>
 
         {/* ── Beneficiario ──────────────────────────────────────────────── */}
-        <Card className="space-y-4">
-          <SectionTitle>{t('payOrders.sectionBeneficiary')}</SectionTitle>
-
+        <Panel title={t('payOrders.sectionBeneficiary')} bodyClassName="space-y-4">
           <div ref={benBoxRef} className="relative">
-            <Field label={t('payOrders.benName')} required error={errors.beneficiary_name}>
-              <input
+            <Field
+              label={t('payOrders.benName')}
+              required
+              error={errors.beneficiary_name || undefined}
+              hint={form.beneficiary_id ? t('payOrders.benLoaded') : undefined}
+            >
+              <Input
                 value={form.beneficiary_name}
                 onChange={(e) => {
                   // Tipear un nombre nuevo desvincula de la libreta: la orden
@@ -694,14 +683,13 @@ export function PaymentOrderForm({ mode, order }: Props) {
                 aria-expanded={benOpen && benMatches.length > 0}
                 aria-controls="po-beneficiary-listbox"
                 aria-autocomplete="list"
-                className={cn(INPUT, errors.beneficiary_name && INPUT_ERR)}
               />
             </Field>
             {benOpen && benMatches.length > 0 && (
               <ul
                 id="po-beneficiary-listbox"
                 role="listbox"
-                className="absolute z-30 mt-1 w-full max-h-64 overflow-y-auto rounded-lg border border-border bg-card shadow-[var(--elevation-2)]"
+                className="absolute top-[60px] z-30 max-h-64 w-full overflow-y-auto rounded-ui-md border border-border bg-card py-1 shadow-2"
               >
                 {benMatches.map((b, i) => (
                   <li key={b.id}>
@@ -712,14 +700,14 @@ export function PaymentOrderForm({ mode, order }: Props) {
                       onMouseEnter={() => setBenHighlight(i)}
                       onClick={() => pickBeneficiary(b)}
                       className={cn(
-                        'w-full text-left px-3 py-2 flex items-start gap-2',
-                        i === benHighlight ? 'bg-muted' : 'hover:bg-muted/60',
+                        'flex w-full items-start gap-2 px-3 py-2 text-left',
+                        i === benHighlight ? 'bg-row-selected' : 'hover:bg-row-hover',
                       )}
                     >
-                      <BookUser className="w-4 h-4 mt-0.5 shrink-0 text-muted-foreground" aria-hidden />
+                      <BookUser aria-hidden className="mt-0.5 size-4 shrink-0 text-text-3" />
                       <span className="min-w-0">
-                        <span className="block text-sm font-medium truncate">{b.name}</span>
-                        <span className="block text-xs text-muted-foreground truncate">
+                        <span className="block truncate text-[13px] font-medium text-foreground">{b.name}</span>
+                        <span className="block truncate text-[12px] text-text-3">
                           {[b.tax_id, b.country, b.default_payment_method === 'bank' ? b.bank_name : b.crypto_network]
                             .filter(Boolean)
                             .join(' · ') || t('payOrders.benNoData')}
@@ -730,64 +718,54 @@ export function PaymentOrderForm({ mode, order }: Props) {
                 ))}
               </ul>
             )}
-            {form.beneficiary_id && (
-              <p className="text-xs text-positive mt-1.5">{t('payOrders.benLoaded')}</p>
-            )}
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
             <Field label={t('payOrders.benTaxId')}>
-              <input
-                value={form.beneficiary_tax_id}
-                onChange={(e) => set('beneficiary_tax_id', e.target.value)}
-                className={INPUT}
-              />
+              <Input value={form.beneficiary_tax_id} onChange={(e) => set('beneficiary_tax_id', e.target.value)} />
             </Field>
             <Field label={t('payOrders.benEmail')}>
-              <input
+              <Input
                 type="email"
                 value={form.beneficiary_email}
                 onChange={(e) => set('beneficiary_email', e.target.value)}
-                className={INPUT}
               />
             </Field>
             <Field label={t('payOrders.benCountry')}>
-              <input
-                value={form.beneficiary_country}
-                onChange={(e) => set('beneficiary_country', e.target.value)}
-                className={INPUT}
-              />
+              <Input value={form.beneficiary_country} onChange={(e) => set('beneficiary_country', e.target.value)} />
             </Field>
           </div>
 
-          <label className="flex items-start gap-2.5 cursor-pointer">
+          <label className="flex cursor-pointer items-start gap-2.5">
             <input
               type="checkbox"
               checked={form.save_beneficiary}
               onChange={(e) => set('save_beneficiary', e.target.checked)}
-              className="mt-0.5 w-4 h-4 rounded border-border accent-[var(--color-primary)]"
+              className="mt-0.5 size-4 rounded-ui-sm border-control-border accent-primary"
             />
             <span>
-              <span className="block text-sm font-medium">{t('payOrders.benSave')}</span>
-              <span className="block text-xs text-muted-foreground">{t('payOrders.benSaveHint')}</span>
+              <span className="block text-[13px] font-medium text-foreground">{t('payOrders.benSave')}</span>
+              <span className="block text-[12px] text-text-3">{t('payOrders.benSaveHint')}</span>
             </span>
           </label>
-        </Card>
+        </Panel>
 
-        {/* ── Detalle del pago ──────────────────────────────────────────── */}
-        <Card className="space-y-4">
-          <SectionTitle>{t('payOrders.sectionLines')}</SectionTitle>
-
-          {/* Encabezados solo en desktop; en mobile cada línea es una tarjeta
-              con sus propias etiquetas. */}
-          <div className="hidden sm:grid grid-cols-12 gap-3 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            <div className="col-span-5">{t('payOrders.lineDescription')}</div>
-            <div className="col-span-2 text-right">{t('payOrders.lineUnitValue')}</div>
-            <div className="col-span-2 text-right">{t('payOrders.lineQuantity')}</div>
-            <div className="col-span-2 text-right">{t('payOrders.lineAmount')}</div>
-            <div className="col-span-1" />
-          </div>
-
+        {/* ── Detalle del pago (líneas) ─────────────────────────────────── */}
+        {/* Grilla alineada con los tokens de FinTable (cabecera 11.5 MAYÚSCULAS
+            `text-3` sobre `border-strong`, filas con borde `border`, montos a la
+            derecha y tabulares, pie con la doble raya en el total). No es la
+            FinTable porque cada celda es un control: FinTable dibuja valores. */}
+        <Panel
+          title={t('payOrders.sectionLines')}
+          hint={t('payOrders.linesHint', { n: String(lines.length) })}
+          flush
+          actions={
+            <ActionButton onClick={() => setLines((prev) => [...prev, emptyLine()])}>
+              <Plus aria-hidden className="size-4" />
+              {t('payOrders.addLine')}
+            </ActionButton>
+          }
+        >
           {/* Un solo datalist para todas las líneas: el navegador lo comparte por
               id y los conceptos sugeridos son los mismos en cada fila. */}
           <datalist id="payorder-line-suggestions">
@@ -796,160 +774,201 @@ export function PaymentOrderForm({ mode, order }: Props) {
             ))}
           </datalist>
 
-          <div className="space-y-3 sm:space-y-2">
+          <div role="table" aria-label={t('payOrders.sectionLines')} className="text-[13px]">
+            <div
+              role="row"
+              className={cn(
+                LINE_GRID,
+                'h-[34px] border-b border-border-strong text-[11.5px] font-semibold uppercase tracking-[.03em] text-text-3 max-sm:hidden',
+              )}
+            >
+              <span role="columnheader">{t('payOrders.lineDescription')}</span>
+              <span role="columnheader" className="text-right">
+                {t('payOrders.lineUnitValue')}
+              </span>
+              <span role="columnheader" className="text-right">
+                {t('payOrders.lineQuantity')}
+              </span>
+              <span role="columnheader" className="text-right">
+                {t('payOrders.lineAmount')}
+              </span>
+              <span role="columnheader" className="sr-only">
+                {t('ui.table.actions')}
+              </span>
+            </div>
+
             {lines.map((line, i) => {
               const amount = computeLineAmount({ unitValue: num(line.unitValue), quantity: num(line.quantity) });
               const descErr = errors[`line.${line.key}.description`];
               const amtErr = errors[`line.${line.key}.amount`];
+              const errId = descErr || amtErr ? `po-line-${line.key}-err` : undefined;
               return (
-                <div
-                  key={line.key}
-                  className="grid grid-cols-1 sm:grid-cols-12 gap-2 sm:gap-3 sm:items-center rounded-lg border border-border sm:border-0 p-3 sm:p-0"
-                >
-                  <div className="sm:col-span-5">
-                    <span className="sm:hidden block text-xs text-muted-foreground mb-1">
-                      {t('payOrders.lineDescription')}
-                    </span>
-                    <input
-                      value={line.description}
-                      list="payorder-line-suggestions"
-                      onChange={(e) => {
-                        const description = e.target.value;
-                        // Elegir un concepto ya usado trae su último importe,
-                        // pero SOLO si el campo está vacío: nunca pisa un
-                        // número que el usuario ya escribió.
-                        const hit = lineSuggestions.find(
-                          (sg) => sg.description.toLowerCase() === description.trim().toLowerCase(),
-                        );
-                        const patch: Partial<LineDraft> = { description };
-                        if (hit?.lastUnitValue != null && !line.unitValue.trim()) {
-                          patch.unitValue = String(hit.lastUnitValue);
-                        }
-                        updateLine(line.key, patch);
-                      }}
-                      placeholder={t('payOrders.linePlaceholder')}
-                      className={cn(INPUT, descErr && INPUT_ERR)}
-                      aria-label={`${t('payOrders.lineDescription')} ${i + 1}`}
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <span className="sm:hidden block text-xs text-muted-foreground mb-1">
-                      {t('payOrders.lineUnitValue')}
-                    </span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      inputMode="decimal"
-                      value={line.unitValue}
-                      onChange={(e) => updateLine(line.key, { unitValue: e.target.value })}
-                      placeholder="0.00"
-                      className={cn(INPUT, 'text-right tabular-nums', amtErr && INPUT_ERR)}
-                      aria-label={`${t('payOrders.lineUnitValue')} ${i + 1}`}
-                    />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <span className="sm:hidden block text-xs text-muted-foreground mb-1">
-                      {t('payOrders.lineQuantity')}
-                    </span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      inputMode="decimal"
-                      value={line.quantity}
-                      onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
-                      placeholder="1"
-                      className={cn(INPUT, 'text-right tabular-nums', amtErr && INPUT_ERR)}
-                      aria-label={`${t('payOrders.lineQuantity')} ${i + 1}`}
-                    />
-                  </div>
-                  <div className="sm:col-span-2 flex sm:block items-center justify-between">
-                    <span className="sm:hidden text-xs text-muted-foreground">{t('payOrders.lineAmount')}</span>
+                <div key={line.key} role="row" className="border-b border-border py-2 max-sm:py-3">
+                  <div className={cn(LINE_GRID, 'max-sm:gap-y-2')}>
+                    <div role="cell" className="max-sm:col-span-2">
+                      <Input
+                        value={line.description}
+                        list="payorder-line-suggestions"
+                        onChange={(e) => {
+                          const description = e.target.value;
+                          // Elegir un concepto ya usado trae su último importe,
+                          // pero SOLO si el campo está vacío: nunca pisa un
+                          // número que el usuario ya escribió.
+                          const hit = lineSuggestions.find(
+                            (sg) => sg.description.toLowerCase() === description.trim().toLowerCase(),
+                          );
+                          const patch: Partial<LineDraft> = { description };
+                          if (hit?.lastUnitValue != null && !line.unitValue.trim()) {
+                            patch.unitValue = String(hit.lastUnitValue);
+                          }
+                          updateLine(line.key, patch);
+                        }}
+                        placeholder={t('payOrders.linePlaceholder')}
+                        aria-label={`${t('payOrders.lineDescription')} ${i + 1}`}
+                        aria-invalid={descErr ? true : undefined}
+                        aria-describedby={errId}
+                        className={cn(descErr && 'border-neg')}
+                      />
+                    </div>
+                    <div role="cell">
+                      <span aria-hidden className="mb-1 block text-[12px] text-text-3 sm:hidden">
+                        {t('payOrders.lineUnitValue')}
+                      </span>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        inputMode="decimal"
+                        value={line.unitValue}
+                        onChange={(e) => updateLine(line.key, { unitValue: e.target.value })}
+                        placeholder="0.00"
+                        aria-label={`${t('payOrders.lineUnitValue')} ${i + 1}`}
+                        aria-invalid={amtErr ? true : undefined}
+                        aria-describedby={errId}
+                        className={cn('text-right tabular-nums', amtErr && 'border-neg')}
+                      />
+                    </div>
+                    <div role="cell">
+                      <span aria-hidden className="mb-1 block text-[12px] text-text-3 sm:hidden">
+                        {t('payOrders.lineQuantity')}
+                      </span>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        inputMode="decimal"
+                        value={line.quantity}
+                        onChange={(e) => updateLine(line.key, { quantity: e.target.value })}
+                        placeholder="1"
+                        aria-label={`${t('payOrders.lineQuantity')} ${i + 1}`}
+                        aria-invalid={amtErr ? true : undefined}
+                        aria-describedby={errId}
+                        className={cn('text-right tabular-nums', amtErr && 'border-neg')}
+                      />
+                    </div>
                     {/* Read-only: el monto es SIEMPRE derivado (computeLineAmount). */}
-                    <output className="block sm:text-right text-sm font-medium tabular-nums px-0 sm:px-3 py-2">
-                      {money(amount)}
+                    <output role="cell" className="self-center text-left sm:text-right">
+                      <span className="mr-2 text-[12px] text-text-3 sm:hidden">{t('payOrders.lineAmount')}</span>
+                      <Money value={amount} currency={displayCurrency} className="font-medium" />
                     </output>
-                  </div>
-                  <div className="sm:col-span-1 flex sm:justify-end">
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon"
-                      aria-label={t('payOrders.removeLine', { n: String(i + 1) })}
-                      disabled={lines.length === 1}
-                      onClick={() => setLines((prev) => prev.filter((l) => l.key !== line.key))}
-                    >
-                      <Trash2 className="w-4 h-4" />
-                    </Button>
+                    <div role="cell" className="flex justify-end self-center">
+                      <button
+                        type="button"
+                        className={cn(ROW_ACTION_CLASS, 'hover:text-neg')}
+                        aria-label={t('payOrders.removeLine', { n: String(i + 1) })}
+                        title={t('payOrders.removeLine', { n: String(i + 1) })}
+                        disabled={lines.length === 1}
+                        onClick={() => setLines((prev) => prev.filter((l) => l.key !== line.key))}
+                      >
+                        <Trash2 aria-hidden className="size-4" strokeWidth={1.75} />
+                      </button>
+                    </div>
                   </div>
                   {(descErr || amtErr) && (
-                    <p className="sm:col-span-12 text-xs text-negative">{descErr || amtErr}</p>
+                    <p id={errId} className="mt-1 flex items-start gap-1 text-[12px] leading-4 text-neg">
+                      <AlertCircle aria-hidden className="mt-px size-3.5 shrink-0" strokeWidth={2} />
+                      <span>{descErr || amtErr}</span>
+                    </p>
                   )}
                 </div>
               );
             })}
           </div>
 
-          {errors.lines && <p className="text-xs text-negative">{errors.lines}</p>}
-
-          <Button type="button" variant="secondary" size="sm" onClick={() => setLines((prev) => [...prev, emptyLine()])}>
-            <Plus className="w-4 h-4" />
-            {t('payOrders.addLine')}
-          </Button>
+          {errors.lines && (
+            <p className="flex items-start gap-1 px-4 pt-2 text-[12px] leading-4 text-neg">
+              <AlertCircle aria-hidden className="mt-px size-3.5 shrink-0" strokeWidth={2} />
+              <span>{errors.lines}</span>
+            </p>
+          )}
 
           {/* Totales — siempre derivados de computeTotals(). */}
-          <div className="border-t border-border pt-4 space-y-3">
-            <div className="flex items-center justify-between gap-4 sm:justify-end sm:gap-8">
-              <span className="text-sm text-muted-foreground">{t('payOrders.subtotal')}</span>
-              <span className="text-sm font-medium tabular-nums sm:w-40 sm:text-right">{money(totals.subtotal)}</span>
+          <dl className="text-[13px]">
+            <div className="flex h-9 items-center justify-end gap-6 px-4 text-text-2">
+              <dt>{t('payOrders.subtotal')}</dt>
+              <dd className="w-40 text-right">
+                <Money value={totals.subtotal} currency={displayCurrency} className="font-medium" />
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-4 sm:justify-end sm:gap-8">
-              <label htmlFor="po-fees" className="text-sm text-muted-foreground">
-                {t('payOrders.fees')}
-              </label>
-              <input
-                id="po-fees"
-                type="number"
-                step="0.01"
-                inputMode="decimal"
-                value={form.fees}
-                onChange={(e) => set('fees', e.target.value)}
-                placeholder="0.00"
-                className={cn(INPUT, 'text-right tabular-nums w-32 sm:w-40')}
-              />
+            <div className="flex min-h-11 items-center justify-end gap-6 px-4 text-text-2">
+              <dt>
+                <label htmlFor="po-fees">{t('payOrders.fees')}</label>
+              </dt>
+              <dd className="w-40">
+                <Input
+                  id="po-fees"
+                  type="number"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={form.fees}
+                  onChange={(e) => set('fees', e.target.value)}
+                  placeholder="0.00"
+                  className="text-right tabular-nums"
+                />
+              </dd>
             </div>
-            <div className="flex items-center justify-between gap-4 sm:justify-end sm:gap-8 border-t border-border pt-3">
-              <span className="text-sm font-semibold uppercase tracking-wide">{t('payOrders.total')}</span>
-              <span className="text-2xl sm:text-3xl font-bold tabular-nums sm:w-40 sm:text-right">
-                {money(totals.total)}
-              </span>
+            <div className="flex h-[42px] items-center justify-end gap-6 px-4 font-[650] text-foreground shadow-[inset_0_1.5px_0_0_var(--foreground)]">
+              <dt>{t('payOrders.total')}</dt>
+              <dd className="w-40 text-right">
+                <Money value={totals.total} currency={displayCurrency} className="text-[15px]" />
+              </dd>
             </div>
-          </div>
-        </Card>
+          </dl>
+        </Panel>
 
         {/* ── Medio de pago ─────────────────────────────────────────────── */}
-        <Card className="space-y-4">
-          <SectionTitle>{t('payOrders.sectionMethod')}</SectionTitle>
-
-          <Segmented
+        <Panel title={t('payOrders.sectionMethod')} bodyClassName="space-y-4">
+          <Segmented<PaymentMethod>
+            aria-label={t('payOrders.sectionMethod')}
             value={form.payment_method}
-            onChange={(v) => set('payment_method', v as PaymentMethod)}
+            onChange={(v) => set('payment_method', v)}
             options={[
-              { value: 'crypto', label: t('payOrders.methodCryptoFull'), icon: Wallet },
-              { value: 'bank', label: t('payOrders.methodBankFull'), icon: Landmark },
+              {
+                value: 'crypto',
+                label: (
+                  <>
+                    <Wallet aria-hidden className="size-3.5" />
+                    {t('payOrders.methodCryptoFull')}
+                  </>
+                ),
+              },
+              {
+                value: 'bank',
+                label: (
+                  <>
+                    <Landmark aria-hidden className="size-3.5" />
+                    {t('payOrders.methodBankFull')}
+                  </>
+                ),
+              },
             ]}
           />
 
           {form.payment_method === 'crypto' ? (
             <div className="space-y-4">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label={t('payOrders.network')} required error={errors.crypto_network}>
-                  <select
-                    value={form.crypto_network}
-                    onChange={(e) => set('crypto_network', e.target.value)}
-                    className={cn(INPUT, errors.crypto_network && INPUT_ERR)}
-                  >
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <Field label={t('payOrders.network')} required error={errors.crypto_network || undefined}>
+                  <Select value={form.crypto_network} onChange={(e) => set('crypto_network', e.target.value)}>
                     <option value="">{t('payOrders.networkSelect')}</option>
                     {CRYPTO_NETWORKS.map((n) => (
                       <option key={n} value={n}>
@@ -957,309 +976,214 @@ export function PaymentOrderForm({ mode, order }: Props) {
                       </option>
                     ))}
                     <option value={OTHER_NETWORK}>{t('payOrders.networkOther')}</option>
-                  </select>
+                  </Select>
                 </Field>
                 {form.crypto_network === OTHER_NETWORK && (
-                  <Field label={t('payOrders.networkOtherLabel')} required error={errors.crypto_network}>
-                    <input
+                  <Field label={t('payOrders.networkOtherLabel')} required error={errors.crypto_network || undefined}>
+                    <Input
                       value={form.crypto_network_other}
                       onChange={(e) => set('crypto_network_other', e.target.value)}
-                      className={INPUT}
                     />
                   </Field>
                 )}
               </div>
 
-              <Field label={t('payOrders.wallet')} required error={errors.crypto_wallet}>
-                <input
+              <Field label={t('payOrders.wallet')} required error={errors.crypto_wallet || undefined}>
+                <Input
                   value={form.crypto_wallet}
                   onChange={(e) => set('crypto_wallet', e.target.value)}
                   spellCheck={false}
                   autoComplete="off"
                   placeholder="T… / 0x…"
-                  className={cn(INPUT, 'font-mono', errors.crypto_wallet && INPUT_ERR)}
+                  className="font-mono"
                 />
               </Field>
 
               {/* Una wallet mal tipeada = fondos perdidos. El aviso va pegado
                   al campo, no en un tooltip que nadie abre. */}
-              <p className="flex items-start gap-2 text-xs text-warning bg-warning/10 rounded-lg px-3 py-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 mt-px" aria-hidden />
-                <span>{t('payOrders.walletWarning')}</span>
-              </p>
+              <Notice kind="pend" title={t('payOrders.walletWarningTitle')}>
+                {t('payOrders.walletWarning')}
+              </Notice>
 
               <Field label={t('payOrders.memo')} hint={t('payOrders.optional')}>
-                <input
+                <Input
                   value={form.crypto_memo}
                   onChange={(e) => set('crypto_memo', e.target.value)}
-                  className={cn(INPUT, 'font-mono')}
+                  className="font-mono"
                 />
               </Field>
             </div>
           ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label={t('payOrders.bankName')} required error={errors.bank_name}>
-                <input
-                  value={form.bank_name}
-                  onChange={(e) => set('bank_name', e.target.value)}
-                  className={cn(INPUT, errors.bank_name && INPUT_ERR)}
-                />
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <Field label={t('payOrders.bankName')} required error={errors.bank_name || undefined}>
+                <Input value={form.bank_name} onChange={(e) => set('bank_name', e.target.value)} />
               </Field>
-              <Field label={t('payOrders.accountHolder')} required error={errors.bank_account_holder}>
-                <input
+              <Field label={t('payOrders.accountHolder')} required error={errors.bank_account_holder || undefined}>
+                <Input
                   value={form.bank_account_holder}
                   onChange={(e) => set('bank_account_holder', e.target.value)}
-                  className={cn(INPUT, errors.bank_account_holder && INPUT_ERR)}
                 />
               </Field>
-              <Field label={t('payOrders.accountNumber')} required error={errors.bank_account_number}>
-                <input
+              <Field label={t('payOrders.accountNumber')} required error={errors.bank_account_number || undefined}>
+                <Input
                   value={form.bank_account_number}
                   onChange={(e) => set('bank_account_number', e.target.value)}
                   spellCheck={false}
                   autoComplete="off"
-                  className={cn(INPUT, 'font-mono', errors.bank_account_number && INPUT_ERR)}
+                  className="font-mono"
                 />
               </Field>
               <Field label={t('payOrders.swift')} hint={t('payOrders.optional')}>
-                <input
+                <Input
                   value={form.bank_swift}
                   onChange={(e) => set('bank_swift', e.target.value)}
                   spellCheck={false}
                   autoComplete="off"
-                  className={cn(INPUT, 'font-mono')}
+                  className="font-mono"
                 />
               </Field>
               <Field label={t('payOrders.accountType')} hint={t('payOrders.optional')}>
-                <select
-                  value={form.bank_account_type}
-                  onChange={(e) => set('bank_account_type', e.target.value)}
-                  className={INPUT}
-                >
+                <Select value={form.bank_account_type} onChange={(e) => set('bank_account_type', e.target.value)}>
                   <option value="">{t('payOrders.accountTypeSelect')}</option>
                   <option value="checking">{t('payOrders.accountTypeChecking')}</option>
                   <option value="savings">{t('payOrders.accountTypeSavings')}</option>
                   <option value="other">{t('payOrders.accountTypeOther')}</option>
-                </select>
+                </Select>
               </Field>
             </div>
           )}
-        </Card>
+        </Panel>
 
         {/* ── Concepto / Observaciones ──────────────────────────────────── */}
-        <Card className="space-y-4">
-          <SectionTitle>{t('payOrders.sectionNotes')}</SectionTitle>
-          <textarea
+        <Panel title={t('payOrders.sectionNotes')}>
+          <Textarea
             value={form.notes}
             onChange={(e) => set('notes', e.target.value)}
             rows={4}
             placeholder={t('payOrders.notesPlaceholder')}
-            className={cn(INPUT, 'resize-y')}
             aria-label={t('payOrders.sectionNotes')}
+            className="resize-y"
+          />
+        </Panel>
+
+        {/* ── Documentos de respaldo (opcionales, hasta 10) ────────────────
+            Van pegados al concepto porque son su respaldo documental: la
+            factura, el contrato o la cotización que justifica el pago. NO
+            confundir con el comprobante de pago, que se adjunta al marcar
+            la orden como pagada. */}
+        <Panel
+          title={t('payOrders.attachLabel')}
+          hint={
+            <span className={NUM_CLASS}>
+              {t('payOrders.fileCounter', { n: String(attachTotal), max: String(MAX_PAYMENT_ATTACHMENTS) })}
+            </span>
+          }
+          actions={
+            <ActionButton
+              aria-label={attachTotal === 0 ? t('payOrders.attachAttach') : t('payOrders.attachAddAria')}
+              disabled={attachLeft <= 0}
+              onClick={() => attachInputRef.current?.click()}
+            >
+              <FileText aria-hidden className="size-4" />
+              {attachTotal === 0 ? t('payOrders.attachAttach') : t('payOrders.attachAdd')}
+            </ActionButton>
+          }
+          footer={
+            attachError ? undefined : attachLeft <= 0
+              ? t('payOrders.attachMaxReached', { max: String(MAX_PAYMENT_ATTACHMENTS) })
+              : t('payOrders.attachHintMulti', { max: String(MAX_PAYMENT_ATTACHMENTS) })
+          }
+          bodyClassName="space-y-3"
+        >
+          {/* `multiple`: se pueden elegir varios de una. El input se limpia
+              siempre para poder volver a elegir el mismo archivo. */}
+          <input
+            ref={attachInputRef}
+            type="file"
+            multiple
+            accept={ATTACHMENT_ACCEPT}
+            className="sr-only"
+            tabIndex={-1}
+            aria-hidden
+            onChange={(e) => {
+              const picked = Array.from(e.target.files ?? []);
+              e.target.value = '';
+              onAttachPicked(picked);
+            }}
           />
 
-          {/* ── Documentos de respaldo (opcionales, hasta 10) ────────────
-              Van pegados al concepto porque son su respaldo documental: la
-              factura, el contrato o la cotización que justifica el pago. NO
-              confundir con el comprobante de pago, que se adjunta al marcar
-              la orden como pagada. */}
-          <div className="border-t border-border pt-4 space-y-2">
-            <div className="flex items-center justify-between gap-3">
-              <span className="block text-sm font-medium">{t('payOrders.attachLabel')}</span>
-              {attachTotal > 0 && (
-                <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                  {t('payOrders.attachCount', {
-                    n: String(attachTotal),
-                    max: String(MAX_PAYMENT_ATTACHMENTS),
-                  })}
-                </span>
-              )}
-            </div>
-
-            {/* `multiple`: se pueden elegir varios de una. El input se limpia
-                siempre para poder volver a elegir el mismo archivo. */}
-            <input
-              ref={attachInputRef}
-              type="file"
-              multiple
-              accept={ATTACHMENT_ACCEPT}
-              className="sr-only"
-              onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                e.target.value = '';
-                onAttachPicked(picked);
+          {/* Edición: los que YA están guardados. Se pueden abrir y marcar
+              para quitar; el borrado real ocurre al guardar la orden. */}
+          {savedAttachments.length > 0 && (
+            <SavedFileList
+              files={savedAttachments}
+              texts={{
+                fallbackName: t('payOrders.attachSection'),
+                uploadedAt: (date) => t('payOrders.attachUploaded', { date }),
+                view: t('payOrders.attachView'),
+                viewAria: (name) => t('payOrders.attachViewItemAria', { name }),
+                download: t('payOrders.attachDownload'),
+                downloadAria: (name) => t('payOrders.attachDownloadAria', { name }),
+                remove: t('payOrders.attachRemove'),
+                removeAria: (name) => t('payOrders.attachRemoveItemAria', { name }),
               }}
-            />
-
-            {/* Edición: los que YA están guardados. Se pueden abrir y marcar
-                para quitar; el borrado real ocurre al guardar la orden. */}
-            {savedAttachments.length > 0 && (
-              <SavedFileList
-                files={savedAttachments}
-                texts={{
-                  fallbackName: t('payOrders.attachSection'),
-                  uploadedAt: (date) => t('payOrders.attachUploaded', { date }),
-                  view: t('payOrders.attachView'),
-                  viewAria: (name) => t('payOrders.attachViewItemAria', { name }),
-                  download: t('payOrders.attachDownload'),
-                  downloadAria: (name) => t('payOrders.attachDownloadAria', { name }),
-                  remove: t('payOrders.attachRemove'),
-                  removeAria: (name) => t('payOrders.attachRemoveItemAria', { name }),
-                }}
-                hrefFor={(f) => orderAttachmentUrl(order!.id, f.id)}
-                downloadHrefFor={(f) => orderAttachmentUrl(order!.id, f.id, { download: true })}
-                onRemove={(f) => {
-                  setAttachRemovedIds((prev) => [...prev, f.id]);
-                  setAttachError('');
-                }}
-              />
-            )}
-
-            {/* Elegidos y todavía sin subir: se suben al guardar. */}
-            <PickedFileList
-              files={attachFiles}
-              onRemove={(i) => {
-                setAttachFiles((prev) => prev.filter((_, j) => j !== i));
+              hrefFor={(f) => orderAttachmentUrl(order!.id, f.id)}
+              downloadHrefFor={(f) => orderAttachmentUrl(order!.id, f.id, { download: true })}
+              onRemove={(f) => {
+                setAttachRemovedIds((prev) => [...prev, f.id]);
                 setAttachError('');
               }}
-              removeAria={(name) => t('payOrders.attachUnselectAria', { name })}
-              pendingNote={t('payOrders.attachPending')}
             />
+          )}
 
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
-              <Button
-                type="button"
-                variant="secondary"
-                aria-label={
-                  attachTotal === 0 ? t('payOrders.attachAttach') : t('payOrders.attachAddAria')
-                }
-                disabled={attachLeft <= 0}
-                onClick={() => attachInputRef.current?.click()}
-              >
-                <FileText className="w-4 h-4" />
-                {attachTotal === 0 ? t('payOrders.attachAttach') : t('payOrders.attachAdd')}
-              </Button>
-              {attachRemovedIds.length > 0 && (
-                <span className="text-xs text-warning">
-                  {attachRemovedIds.length === 1
-                    ? t('payOrders.attachPendingRemove')
-                    : t('payOrders.attachPendingRemoveMany', {
-                        count: String(attachRemovedIds.length),
-                      })}
-                </span>
-              )}
-            </div>
+          {/* Elegidos y todavía sin subir: se suben al guardar. */}
+          <PickedFileList
+            files={attachFiles}
+            onRemove={(i) => {
+              setAttachFiles((prev) => prev.filter((_, j) => j !== i));
+              setAttachError('');
+            }}
+            removeAria={(name) => t('payOrders.attachUnselectAria', { name })}
+            pendingNote={t('payOrders.attachPending')}
+          />
 
-            {attachError ? (
-              <p className="text-xs text-negative">{attachError}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                {attachLeft <= 0
-                  ? t('payOrders.attachMaxReached', { max: String(MAX_PAYMENT_ATTACHMENTS) })
-                  : t('payOrders.attachHintMulti', { max: String(MAX_PAYMENT_ATTACHMENTS) })}
-              </p>
-            )}
-          </div>
-        </Card>
+          {savedAttachments.length === 0 && attachFiles.length === 0 && (
+            <p className="text-[13px] text-text-3">{t('payOrders.attachNone')}</p>
+          )}
+
+          {attachRemovedIds.length > 0 && (
+            <Notice
+              kind="pend"
+              title={
+                attachRemovedIds.length === 1
+                  ? t('payOrders.attachPendingRemove')
+                  : t('payOrders.attachPendingRemoveMany', { count: String(attachRemovedIds.length) })
+              }
+            />
+          )}
+
+          {attachError && <Notice kind="bad" title={attachError} />}
+        </Panel>
 
         {/* ── Barra de acciones pegada abajo ────────────────────────────── */}
-        <div className="sticky bottom-0 z-20 -mx-4 sm:mx-0 px-4 sm:px-5 py-3 border-t sm:border border-border bg-card/95 backdrop-blur sm:rounded-xl shadow-[var(--elevation-2)] flex flex-col sm:flex-row sm:items-center gap-3">
+        <div className="sticky bottom-0 z-20 -mx-4 flex flex-col gap-3 border-t border-border bg-card px-4 py-3 shadow-2 sm:mx-0 sm:flex-row sm:items-center sm:rounded-ui-lg sm:border sm:px-4">
           <div className="flex items-baseline gap-2 sm:mr-auto">
-            <span className="text-xs uppercase tracking-wide text-muted-foreground">{t('payOrders.total')}</span>
-            <span className="text-lg font-bold tabular-nums">{money(totals.total)}</span>
+            <span className="text-[12px] font-medium text-text-2">{t('payOrders.total')}</span>
+            <Money value={totals.total} currency={displayCurrency} className="text-[18px] font-semibold" />
           </div>
-          <div className="flex items-center gap-2 justify-end">
-            <Button type="button" variant="ghost" onClick={() => router.back()} disabled={saving !== null}>
+          <div className="flex items-center justify-end gap-2">
+            <ActionButton variant="ghost" onClick={() => router.back()} disabled={saving !== null}>
               {t('payOrders.cancel')}
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => handleSave('draft')}
-              loading={saving === 'draft'}
-              disabled={saving !== null}
-            >
+            </ActionButton>
+            <ActionButton onClick={() => handleSave('draft')} loading={saving === 'draft'} disabled={saving !== null}>
               {mode === 'edit' ? t('payOrders.saveChanges') : t('payOrders.saveDraft')}
-            </Button>
-            <Button type="submit" variant="primary" loading={saving === 'submit'} disabled={saving !== null}>
+            </ActionButton>
+            <ActionButton type="submit" variant="primary" loading={saving === 'submit'} disabled={saving !== null}>
               {t('payOrders.saveAndSubmit')}
-            </Button>
+            </ActionButton>
           </div>
         </div>
       </form>
     </>
-  );
-}
-
-// ── Primitivas locales del formulario ───────────────────────────────────────
-
-function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h2 className="text-base font-semibold text-foreground">{children}</h2>;
-}
-
-function Label({ children }: { children: React.ReactNode }) {
-  return <span className="block text-sm font-medium mb-1.5">{children}</span>;
-}
-
-function Field({
-  label,
-  hint,
-  required,
-  error,
-  children,
-}: {
-  label: string;
-  hint?: string;
-  required?: boolean;
-  error?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="block text-sm font-medium mb-1.5">
-        {label}
-        {required && <span className="text-negative"> *</span>}
-        {hint && <span className="text-muted-foreground font-normal"> {hint}</span>}
-      </span>
-      {children}
-      {error && <span className="block text-xs text-negative mt-1">{error}</span>}
-    </label>
-  );
-}
-
-function Segmented({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string; icon?: React.ComponentType<{ className?: string }> }[];
-}) {
-  return (
-    <div role="tablist" className="inline-flex p-1 rounded-lg bg-muted gap-1">
-      {options.map((o) => {
-        const active = o.value === value;
-        const Icon = o.icon;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            role="tab"
-            aria-selected={active}
-            onClick={() => onChange(o.value)}
-            className={cn(
-              'inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-sm font-medium transition-colors',
-              active
-                ? 'bg-card text-foreground shadow-sm'
-                : 'text-muted-foreground hover:text-foreground',
-            )}
-          >
-            {Icon && <Icon className="w-4 h-4" />}
-            {o.label}
-          </button>
-        );
-      })}
-    </div>
   );
 }
