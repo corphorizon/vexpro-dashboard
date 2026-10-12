@@ -9,13 +9,13 @@
 // margen igual que un cliente, y nada en el dato de MT5 las delata. No entran
 // a NINGUNA cifra de acá — ni al PNL, ni a la exposición, ni al margen.
 //
-// ── POR QUÉ PESTAÑAS Y NO UNA COLUMNA LARGA ────────────────────────────────
-// Las cuatro preguntas que responde esta pantalla se hacen en momentos
-// distintos: "¿me estoy quedando corto de margen?" es una urgencia y "¿cómo
-// cerró la semana?" es una revisión. Apiladas, la urgente queda a tres
-// scrolls de la primera pantalla.
+// ── POR QUÉ SECCIONES Y NO UNA COLUMNA LARGA ───────────────────────────────
+// Las preguntas que responde esta pantalla se hacen en momentos distintos:
+// "¿me estoy quedando corto de margen?" es una urgencia y "¿cómo cerró la
+// semana?" es una revisión. Apiladas, la urgente queda a tres scrolls de la
+// primera pantalla.
 //
-// Los KPI quedan ARRIBA de las pestañas a propósito: son el resumen que hay
+// Los KPI quedan ARRIBA de las secciones a propósito: son el resumen que hay
 // que ver siempre, sin importar qué sección esté abierta.
 //
 // ── LO QUE ESTA PANTALLA NO HACE ───────────────────────────────────────────
@@ -27,36 +27,57 @@
 // El dato tiene hasta 15 minutos: se dice arriba, con la hora exacta. Una
 // pantalla de riesgo que no diga de cuándo es su dato invita a decidir sobre
 // algo viejo creyendo que es de ahora.
+//
+// ── «LIBRO MAYOR» (2026-10-12) ──────────────────────────────────────────────
+// Sólo presentación; ninguna consulta ni cifra cambió.
+//   · Frescura: badge «hace X min» junto a la hora exacta; con más de 30 min
+//     pasa a `stale` y aparece un aviso (risk-format.ts → snapshotFreshness).
+//     Antes la hora estaba escrita pero nada la marcaba vieja.
+//   · KpiStrip con conteos (no hay KPI de dinero: ver arriba).
+//   · Todas las tablas con FinTable; los importes con <UnitAmount> (cifra +
+//     unidad). P&L y flotante con tono `sign`; equity y margen sólo pintan
+//     negativos — antes TODO positivo iba en verde, también el margen usado.
+//   · Lotes netos sin color: el signo dice de qué lado está el cliente, no si
+//     es bueno o malo (spec §2.1). Antes verde/rojo.
+//   · Concentración con la columna de participación (% + barra 64×6), no con
+//     <DistributionBar>: ver exposure-view.ts.
+//   · El badge de nivel de margen sale de la LISTA del server (crítico /
+//     vigilancia), no de `(margin_level ?? 0) < 100` (un null era «0%» rojo).
+//   · jsPDF con `await import()`: el módulo de PDF ya no viaja en el bundle de
+//     la pantalla (antes import estático de `@/lib/pdf-export`).
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import {
-  Activity, AlertTriangle, Clock, Layers, RefreshCw, CalendarDays, FileText,
-} from 'lucide-react';
+import { Activity, CalendarDays, FileText, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card, CardTitle } from '@/components/ui/card';
-import { DataTable } from '@/components/ui/data-table';
+import { Panel } from '@/components/ui/panel';
+import { KpiStrip, type KpiItem } from '@/components/ui/kpi-strip';
+import { FinTable, type FinColumn } from '@/components/ui/fin-table';
+import { NUM_CLASS } from '@/components/ui/money';
+import { StatusBadge } from '@/components/ui/status-badge';
+import { Notice } from '@/components/ui/notice';
+import { Segmented } from '@/components/ui/segmented';
+import { Field, Input } from '@/components/ui/field';
 import { EmptyState } from '@/components/ui/empty-state';
-import { StatCard } from '@/components/ui/stat-card';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { useToasts } from '@/components/ui/toast';
-import { SectionTabs } from '@/components/ui/section-tabs';
-import {
-  useTablePage, TableSearch, TablePager, TableCsvButton,
-} from '@/components/ui/table-toolbar';
+import { useTablePage, TableSearch, TablePager, TableCsvButton } from '@/components/ui/table-toolbar';
+import { ActionButton } from '@/components/payment-orders/action-button';
+import { UnitAmount } from '@/components/risk/unit-amount';
+import { marginKind } from '@/components/risk/risk-kinds';
+import { snapshotFreshness, unitOfCategory, SNAPSHOT_STALE_MIN } from '@/components/risk/risk-format';
 import { useI18n } from '@/lib/i18n';
 import { useAuth } from '@/lib/auth-context';
 import { useData } from '@/lib/data-context';
 import { useModuleAccess } from '@/lib/use-module-access';
 import { apiFetch } from '@/lib/api-fetch';
+import { MONEY_LOCALE } from '@/lib/money';
 import { cn, formatNumber } from '@/lib/utils';
 import { formatDateTime } from '@/lib/dates';
-import { generateExposurePDF } from '@/lib/pdf-export';
-import type { RiskSnapshot, MarginRow, ExposureRow, PnlRow } from '@/lib/mt5-sync/risk-query';
+import type { RiskSnapshot, ExposureRow, PnlRow, SymbolConcentration } from '@/lib/mt5-sync/risk-query';
 import type { CrmDailyPnlRow } from '@/lib/crm-sync/daily-pnl-query';
+import { marginLevelText, marginRows, shareWidth, type TaggedMarginRow } from './exposure-view';
 
 interface PnlBlock {
   snapshotAt: string | null;
@@ -67,7 +88,7 @@ interface PnlBlock {
 type Payload = RiskSnapshot & { pnl?: PnlBlock };
 
 /**
- * ── LA PESTAÑA "CIERRE DIARIO (CRM)" ────────────────────────────────────────
+ * ── LA SECCIÓN "CIERRE DIARIO (CRM)" ────────────────────────────────────────
  * Vive acá y no en una pantalla aparte a propósito: es EL MISMO número que el
  * histórico de al lado, contado por otra fuente. Kevin (2026-08-31) pidió ver
  * "cómo aparece en el CRM y cómo aparece en Smart Dashboard"; separarlos en
@@ -100,25 +121,10 @@ type CrmSeries = {
 
 type Seccion = 'pnl' | 'crm' | 'margen' | 'concentracion' | 'detalle' | 'historico';
 
-/**
- * Un importe SIEMPRE con su unidad. Nunca se pinta un número de dinero solo:
- * en centavos y en dólares se ven igual y no lo son.
- */
-function Money({ value, unit }: { value: number | null; unit: string }) {
-  if (value === null) return <span className="text-muted-foreground">—</span>;
-  const cents = unit === 'cents';
-  return (
-    <span className="tabular-nums">
-      <span className={cn(value < 0 ? 'text-negative' : value > 0 ? 'text-positive' : '')}>
-        {formatNumber(value)}
-      </span>
-      <span className="ml-1 text-xs text-muted-foreground">{cents ? '¢' : 'USD'}</span>
-    </span>
-  );
-}
-
-/** La categoría dice la unidad: sólo CENT está denominada en centavos. */
-const unitOfCategory = (c: string) => (c === 'CENT' ? 'cents' : 'account_currency');
+const countFmt = new Intl.NumberFormat(MONEY_LOCALE, { maximumFractionDigits: 0 });
+const lotsFmt = new Intl.NumberFormat(MONEY_LOCALE, { maximumFractionDigits: 2 });
+const lotsText = (n: number | null | undefined) =>
+  typeof n === 'number' && Number.isFinite(n) ? lotsFmt.format(n) : '—';
 
 /** Para el CSV: el importe y su unidad, porque un CSV se abre sin contexto. */
 const csvMoney = (n: number | null, unit: string) =>
@@ -138,8 +144,11 @@ export default function ExposicionPage() {
   const [range, setRange] = useState<{ from: string; to: string } | null>(null);
   const [seccion, setSeccion] = useState<Seccion>('pnl');
   const [pdfBusy, setPdfBusy] = useState(false);
+  // «Ahora» para la antigüedad de la foto: se toma al cargar/actualizar, no en
+  // cada render (un reloj que corre solo re-renderizaría la pantalla).
+  const [loadedAt, setLoadedAt] = useState(() => Date.now());
 
-  // El cierre del CRM se pide aparte y sólo cuando se abre su pestaña: es otra
+  // El cierre del CRM se pide aparte y sólo cuando se abre su sección: es otra
   // tabla y otro rango, y cargarla siempre haría más lenta una pantalla de
   // riesgo que se abre para mirar el margen.
   const [crm, setCrm] = useState<CrmSeries | null>(null);
@@ -162,6 +171,7 @@ export default function ExposicionPage() {
         const body = await res.json();
         if (!res.ok || body?.success === false) throw new Error(body?.error ?? t('exposure.loadError'));
         setData(body);
+        setLoadedAt(Date.now());
         if (body?.pnl?.range) setRange(body.pnl.range);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : t('exposure.loadError'));
@@ -202,22 +212,16 @@ export default function ExposicionPage() {
     if (seccion === 'crm' && crm === null && !crmLoading) void loadCrm();
   }, [seccion, crm, crmLoading, loadCrm]);
 
-  const enRiesgo = [...(data?.critical ?? []), ...(data?.watch ?? [])];
+  const enRiesgo = useMemo(() => marginRows(data?.critical, data?.watch), [data]);
 
   // Los hooks van SIEMPRE antes de cualquier return condicional: llamarlos
   // después haría que React vea distinto número de hooks entre renders.
-  const margen = useTablePage<MarginRow>(
+  const margen = useTablePage<TaggedMarginRow>(
     enRiesgo,
     (m) => `${m.login} ${m.email ?? ''} ${m.family} ${m.group_name ?? ''}`,
   );
-  const detalle = useTablePage<ExposureRow>(
-    data?.exposure ?? [],
-    (r) => `${r.symbol} ${r.family}`,
-  );
-  const historia = useTablePage<PnlRow>(
-    data?.pnl?.history ?? [],
-    (r) => `${r.utc_day} ${r.category}`,
-  );
+  const detalle = useTablePage<ExposureRow>(data?.exposure ?? [], (r) => `${r.symbol} ${r.family}`);
+  const historia = useTablePage<PnlRow>(data?.pnl?.history ?? [], (r) => `${r.utc_day} ${r.category}`);
   const cierreCrm = useTablePage<CrmDailyPnlRow>(crm?.rows ?? [], (r) => r.utc_day);
 
   const pagerLabels = {
@@ -231,13 +235,9 @@ export default function ExposicionPage() {
 
   if (loading) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         <Skeleton className="h-12 w-64" />
-        <div className="grid gap-4 sm:grid-cols-3">
-          <Skeleton className="h-28" />
-          <Skeleton className="h-28" />
-          <Skeleton className="h-28" />
-        </div>
+        <Skeleton className="h-[92px]" />
         <Skeleton className="h-80" />
       </div>
     );
@@ -245,14 +245,10 @@ export default function ExposicionPage() {
 
   if (!data || !data.snapshotAt) {
     return (
-      <div className="space-y-6">
+      <div className="space-y-4">
         {ToastHost}
         <PageHeader icon={Activity} title={t('exposure.title')} subtitle={t('exposure.subtitle')} />
-        <EmptyState
-          icon={Activity}
-          title={t('exposure.noSnapshot')}
-          description={t('exposure.noSnapshotHint')}
-        />
+        <EmptyState icon={Activity} title={t('exposure.noSnapshot')} description={t('exposure.noSnapshotHint')} />
       </div>
     );
   }
@@ -260,10 +256,21 @@ export default function ExposicionPage() {
   const hoy = new Date().toISOString().slice(0, 10);
   const pnlRows = data.pnl?.rows ?? [];
   const fueraDelCrm = pnlRows.reduce((s, r) => s + (r.accounts_outside_crm ?? 0), 0);
+  const fresh = snapshotFreshness(data.snapshotAt, loadedAt);
+  const ageLabel = fresh
+    ? fresh.minutes < 1
+      ? t('ui.ago.now')
+      : fresh.minutes < 60
+        ? t('ui.ago.min', { n: String(fresh.minutes) })
+        : t('ui.ago.h', { n: String(Math.floor(fresh.minutes / 60)) })
+    : t('ui.noData');
+  const staleAt = fresh?.stale ? data.snapshotAt : undefined;
 
   const descargarPdf = async () => {
     setPdfBusy(true);
     try {
+      // On-demand: jsPDF (~400 KB) sólo baja cuando alguien pide el informe.
+      const { generateExposurePDF } = await import('@/lib/pdf-export');
       await generateExposurePDF({
         company: { name: company?.name ?? 'Dashboard', logoUrl: company?.logo_url ?? null },
         range: range ?? { from: hoy, to: hoy },
@@ -280,22 +287,291 @@ export default function ExposicionPage() {
     }
   };
 
-  const tabs = [
-    { value: 'pnl' as const, label: t('exposure.tabPnl'), count: pnlRows.length },
-    { value: 'crm' as const, label: t('crmPnl.tab'), count: crm?.rows.length },
+  const kpis: KpiItem[] = [
     {
-      value: 'margen' as const,
-      label: t('exposure.tabMargin'),
-      count: enRiesgo.length,
-      tone: data.critical.length > 0 ? ('negative' as const) : ('default' as const),
+      key: 'positions',
+      label: t('exposure.kpiPositions'),
+      value: data.totalPositions,
+      format: 'count',
+      hero: true,
+      sub: t('exposure.kpiPositionsHint'),
+      staleAt,
     },
+    {
+      key: 'critical',
+      label: t('exposure.kpiCritical'),
+      value: data.critical.length,
+      format: 'count',
+      sub: t('exposure.kpiCriticalHint'),
+      staleAt,
+    },
+    {
+      key: 'watch',
+      label: t('exposure.kpiWatch'),
+      value: data.watch.length,
+      format: 'count',
+      sub: t('exposure.kpiWatchHint', { total: countFmt.format(data.accountsWithMargin) }),
+      staleAt,
+    },
+    {
+      key: 'symbols',
+      label: t('riskLm.kpiSymbols'),
+      value: data.concentration.length,
+      format: 'count',
+      sub: t('riskLm.kpiSymbolsHint', { n: countFmt.format(data.exposure.length) }),
+    },
+  ];
+
+  const sectionOptions = [
+    { value: 'pnl' as const, label: t('exposure.tabPnl'), count: pnlRows.length },
+    // null hasta abrirla: no se sabe, no es 0.
+    { value: 'crm' as const, label: t('crmPnl.tab'), count: crm ? crm.rows.length : null },
+    { value: 'margen' as const, label: t('exposure.tabMargin'), count: enRiesgo.length },
     { value: 'concentracion' as const, label: t('exposure.tabConcentration'), count: data.concentration.length },
     { value: 'detalle' as const, label: t('exposure.tabDetail'), count: data.exposure.length },
-    { value: 'historico' as const, label: t('exposure.tabHistory'), count: data.pnl?.history.length ?? 0 },
+    { value: 'historico' as const, label: t('exposure.tabHistory'), count: data.pnl?.history.length ?? null },
+  ];
+
+  // ── Columnas ──────────────────────────────────────────────────────────────
+  const pnlCols: FinColumn<PnlRow>[] = [
+    {
+      key: 'category',
+      header: t('exposure.colCategory'),
+      cell: (r) => r.category,
+      meta: (r) =>
+        r.accounts_outside_crm > 0
+          ? t('exposure.pnlOutside', { n: String(r.accounts_outside_crm) })
+          : t('riskLm.unitLabel', { unit: unitOfCategory(r.category) === 'cents' ? '¢' : 'USD' }),
+    },
+    {
+      key: 'open',
+      header: t('exposure.pnlOpen'),
+      kind: 'money',
+      value: (r) => r.open_pnl,
+      cell: (r) => <UnitAmount value={r.open_pnl} unit={unitOfCategory(r.category)} tone="sign" className="font-medium" />,
+    },
+    {
+      key: 'openPos',
+      header: t('exposure.colPositions'),
+      kind: 'number',
+      hideSm: true,
+      value: (r) => r.open_positions,
+      cell: (r) => (
+        <span className={NUM_CLASS}>
+          {countFmt.format(r.open_positions)}
+          <span className="ml-1 text-[12px] text-text-3">
+            {t('riskLm.inAccounts', { n: countFmt.format(r.open_accounts) })}
+          </span>
+        </span>
+      ),
+    },
+    {
+      key: 'closed',
+      header: t('exposure.pnlClosed'),
+      kind: 'money',
+      value: (r) => r.closed_pnl,
+      cell: (r) => <UnitAmount value={r.closed_pnl} unit={unitOfCategory(r.category)} tone="sign" className="font-medium" />,
+    },
+    {
+      key: 'deals',
+      header: t('exposure.colDeals'),
+      kind: 'number',
+      hideSm: true,
+      value: (r) => r.closed_deals,
+      cell: (r) => (
+        <span className={NUM_CLASS}>
+          {countFmt.format(r.closed_deals)}
+          <span className="ml-1 text-[12px] text-text-3">
+            {t('riskLm.inAccounts', { n: countFmt.format(r.closed_accounts) })}
+          </span>
+        </span>
+      ),
+    },
+  ];
+
+  const crmCols: FinColumn<CrmDailyPnlRow>[] = [
+    {
+      key: 'day',
+      header: t('exposure.colDay'),
+      cell: (r) => <span className={NUM_CLASS}>{r.utc_day}</span>,
+      meta: (r) => (r.utc_day === hoy ? t('exposure.inProgress') : null),
+    },
+    {
+      key: 'broker',
+      header: t('crmPnl.colBrokerPnl'),
+      kind: 'money',
+      value: (r) => (r.pnl_usd === null ? null : -r.pnl_usd),
+      cell: (r) => <UnitAmount value={r.pnl_usd === null ? null : -r.pnl_usd} unit="usd" tone="sign" className="font-medium" />,
+    },
+    {
+      key: 'clients',
+      header: t('crmPnl.colClientsPnl'),
+      kind: 'money',
+      hideSm: true,
+      value: (r) => r.pnl_usd,
+      cell: (r) => <UnitAmount value={r.pnl_usd} unit="usd" tone="sign" />,
+    },
+    {
+      key: 'volume',
+      header: t('crmPnl.colVolume'),
+      kind: 'number',
+      hideSm: true,
+      value: (r) => r.volume_lots,
+      cell: (r) => <span className={NUM_CLASS}>{lotsText(r.volume_lots)}</span>,
+    },
+    { key: 'deals', header: t('crmPnl.colDeals'), kind: 'number', hideSm: true, value: (r) => r.deals_count },
+    { key: 'accounts', header: t('crmPnl.colAccounts'), kind: 'number', hideSm: true, value: (r) => r.accounts_count },
+  ];
+
+  const marginCols: FinColumn<TaggedMarginRow>[] = [
+    {
+      key: 'level',
+      header: t('exposure.colLevel'),
+      cell: (m) => <StatusBadge kind={marginKind(m.list)} label={marginLevelText(m.margin_level)} />,
+      width: '120px',
+    },
+    {
+      key: 'account',
+      header: t('exposure.colAccount'),
+      cell: (m) => <span className="font-mono text-[12px]">{m.login}</span>,
+      meta: (m) => m.email ?? t('exposure.noEmail'),
+    },
+    {
+      key: 'family',
+      header: t('exposure.colFamily'),
+      hideSm: true,
+      cell: (m) => <FamilyText family={m.family} virtual={m.is_virtual} />,
+    },
+    {
+      key: 'equity',
+      header: t('exposure.colEquity'),
+      kind: 'money',
+      value: (m) => m.equity,
+      cell: (m) => <UnitAmount value={m.equity} unit={m.unit} className="font-medium" />,
+    },
+    {
+      key: 'margin',
+      header: t('exposure.colMargin'),
+      kind: 'money',
+      hideSm: true,
+      value: (m) => m.margin,
+      cell: (m) => <UnitAmount value={m.margin} unit={m.unit} tone="neutral" />,
+    },
+    {
+      key: 'floating',
+      header: t('exposure.colFloating'),
+      kind: 'money',
+      hideSm: true,
+      value: (m) => m.floating,
+      cell: (m) => <UnitAmount value={m.floating} unit={m.unit} tone="sign" />,
+    },
+  ];
+
+  const concentrationCols: FinColumn<SymbolConcentration>[] = [
+    { key: 'symbol', header: t('exposure.colSymbol'), cell: (c) => <span className="font-medium">{c.symbol}</span> },
+    { key: 'positions', header: t('exposure.colPositions'), kind: 'number', value: (c) => c.positions },
+    {
+      key: 'share',
+      header: t('exposure.colShare'),
+      align: 'right',
+      cell: (c) => <ShareCell share={c.share} />,
+      width: '140px',
+    },
+    {
+      key: 'netLots',
+      header: t('exposure.colNetLots'),
+      kind: 'number',
+      hideSm: true,
+      value: (c) => c.netLots,
+      cell: (c) => <span className={NUM_CLASS}>{lotsText(c.netLots)}</span>,
+    },
+    {
+      key: 'floating',
+      header: t('riskLm.colFloatingByFamily'),
+      hideSm: true,
+      // El flotante va por familia dentro de UNA celda: sumarlo mezclaría
+      // centavos con dólares.
+      cell: (c) => (
+        <div className="flex flex-col items-end gap-0.5 py-1.5 text-right">
+          {c.byFamily.map((f) => (
+            <span key={f.family} className="text-[12.5px]">
+              <span className="mr-1.5 text-text-3">
+                {f.family}
+                {f.isVirtual ? ` ${t('exposure.virtual')}` : ''}
+              </span>
+              <UnitAmount value={f.floating} unit={f.unit} tone="sign" />
+            </span>
+          ))}
+        </div>
+      ),
+      align: 'right',
+    },
+  ];
+
+  const detailCols: FinColumn<ExposureRow>[] = [
+    {
+      key: 'symbol',
+      header: t('exposure.colSymbol'),
+      cell: (r) => <span className="font-medium">{r.symbol}</span>,
+      meta: (r) => `${r.family}${r.is_virtual ? ` ${t('exposure.virtual')}` : ''}`,
+    },
+    { key: 'positions', header: t('exposure.colPositions'), kind: 'number', hideSm: true, value: (r) => r.positions },
+    {
+      key: 'netLots',
+      header: t('exposure.colNetLots'),
+      kind: 'number',
+      hideSm: true,
+      value: (r) => r.net_lots,
+      // Sin color: el signo dice de qué lado está el cliente, no si es bueno.
+      cell: (r) => <span className={NUM_CLASS}>{lotsText(r.net_lots)}</span>,
+    },
+    {
+      key: 'floating',
+      header: t('exposure.colFloating'),
+      kind: 'money',
+      value: (r) => r.floating,
+      cell: (r) => <UnitAmount value={r.floating} unit={r.unit} tone="sign" className="font-medium" />,
+    },
+    {
+      key: 'swap',
+      header: t('exposure.colSwap'),
+      kind: 'money',
+      hideSm: true,
+      value: (r) => r.storage,
+      cell: (r) => <UnitAmount value={r.storage} unit={r.unit} />,
+    },
+  ];
+
+  const historyCols: FinColumn<PnlRow>[] = [
+    {
+      key: 'day',
+      header: t('exposure.colDay'),
+      cell: (r) => <span className={NUM_CLASS}>{r.utc_day}</span>,
+      // El día en curso no es un cierre y compararlo con días enteros sin
+      // saberlo lleva a conclusiones falsas.
+      meta: (r) => (r.utc_day === hoy ? `${r.category} · ${t('exposure.inProgress')}` : r.category),
+    },
+    {
+      key: 'closed',
+      header: t('exposure.colClosedPnl'),
+      kind: 'money',
+      value: (r) => r.closed_pnl,
+      cell: (r) => <UnitAmount value={r.closed_pnl} unit={unitOfCategory(r.category)} tone="sign" className="font-medium" />,
+    },
+    { key: 'deals', header: t('exposure.colDeals'), kind: 'number', hideSm: true, value: (r) => r.closed_deals },
+    {
+      key: 'open',
+      header: t('exposure.colOpenPnl'),
+      kind: 'money',
+      hideSm: true,
+      value: (r) => r.open_pnl,
+      cell: (r) => <UnitAmount value={r.open_pnl} unit={unitOfCategory(r.category)} tone="sign" />,
+    },
+    { key: 'positions', header: t('exposure.colPositions'), kind: 'number', hideSm: true, value: (r) => r.open_positions },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {ToastHost}
 
       <PageHeader
@@ -303,62 +579,55 @@ export default function ExposicionPage() {
         title={t('exposure.title')}
         subtitle={t('exposure.subtitle')}
         actions={
-          <Button variant="secondary" size="sm" loading={refreshing} onClick={() => void load(true, range ?? undefined)}>
-            <RefreshCw className="h-4 w-4" aria-hidden />
+          <ActionButton loading={refreshing} onClick={() => void load(true, range ?? undefined)}>
+            {!refreshing && <RefreshCw className="size-4" aria-hidden />}
             {t('exposure.refresh')}
-          </Button>
+          </ActionButton>
         }
       />
 
       {/* Una pantalla de riesgo tiene que decir de cuándo es su dato y a qué
           cuentas se refiere. Las dos cosas cambian lo que significan las cifras. */}
-      <div className="flex items-start gap-2 rounded-lg border border-border bg-muted px-4 py-3 text-sm">
-        <Clock className="h-4 w-4 shrink-0 mt-0.5 text-muted-foreground" aria-hidden />
-        <p className="text-muted-foreground">
-          {t('exposure.asOf', { when: formatDateTime(data.snapshotAt) })} · {t('exposure.scopeNotice')}
-          {fueraDelCrm > 0 && ` · ${t('exposure.pnlOutside', { n: String(fueraDelCrm) })}`}
-        </p>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[12.5px] text-text-2">
+        <StatusBadge kind={fresh?.stale ? 'stale' : 'ok'} label={ageLabel} />
+        <span className={NUM_CLASS}>{t('exposure.asOf', { when: formatDateTime(data.snapshotAt) })}</span>
+        <span className="text-text-3">{t('exposure.scopeNotice')}</span>
+        {fueraDelCrm > 0 && (
+          <span className="text-text-3">{t('exposure.pnlOutside', { n: String(fueraDelCrm) })}</span>
+        )}
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-3">
-        <StatCard
-          icon={Layers}
-          label={t('exposure.kpiPositions')}
-          value={formatNumber(data.totalPositions)}
-          hint={t('exposure.kpiPositionsHint')}
-          emphasis
-        />
-        <StatCard
-          icon={AlertTriangle}
-          tone={data.critical.length > 0 ? 'negative' : 'neutral'}
-          label={t('exposure.kpiCritical')}
-          value={String(data.critical.length)}
-          hint={t('exposure.kpiCriticalHint')}
-        />
-        <StatCard
-          icon={Activity}
-          tone={data.watch.length > 0 ? 'warning' : 'neutral'}
-          label={t('exposure.kpiWatch')}
-          value={String(data.watch.length)}
-          hint={t('exposure.kpiWatchHint', { total: String(data.accountsWithMargin) })}
-        />
-      </div>
+      {fresh?.stale && (
+        <Notice
+          kind="stale"
+          title={t('riskLm.staleTitle', { age: ageLabel })}
+          action={
+            <ActionButton variant="ghost" onClick={() => void load(true, range ?? undefined)} loading={refreshing}>
+              {t('exposure.refresh')}
+            </ActionButton>
+          }
+        >
+          {t('riskLm.staleBody', { min: String(SNAPSHOT_STALE_MIN) })}
+        </Notice>
+      )}
 
-      <SectionTabs<Seccion>
+      <KpiStrip items={kpis} />
+
+      <Segmented<Seccion>
+        aria-label={t('exposure.sectionsLabel')}
         value={seccion}
         onChange={setSeccion}
-        tabs={tabs}
-        label={t('exposure.sectionsLabel')}
+        options={sectionOptions}
+        className="max-w-full overflow-x-auto"
       />
 
       {/* ── PNL en vivo ──────────────────────────────────────────────────── */}
       {seccion === 'pnl' && (
-        <Card>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>{t('exposure.pnlTitle')}</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">{t('exposure.pnlHint')}</p>
-            </div>
+        <Panel
+          title={t('exposure.pnlTitle')}
+          hint={t('exposure.pnlHint')}
+          flush
+          actions={
             <TableCsvButton<PnlRow>
               rows={pnlRows}
               filename="PNL_por_categoria"
@@ -377,189 +646,105 @@ export default function ExposicionPage() {
                 r.closed_deals, r.accounts_outside_crm,
               ]}
             />
-          </div>
-
-          {pnlRows.length === 0 ? (
-            <div className="mt-4">
-              <EmptyState compact title={t('exposure.pnlEmpty')} description={t('exposure.pnlEmptyHint')} />
-            </div>
-          ) : (
-            <div className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {pnlRows.map((r) => {
-                const unit = unitOfCategory(r.category);
-                return (
-                  <div key={r.category} className="rounded-lg border border-border p-4">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium">{r.category}</span>
-                      <Badge variant="neutral">{unit === 'cents' ? '¢' : 'USD'}</Badge>
-                    </div>
-
-                    <dl className="mt-3 space-y-3">
-                      <div>
-                        <dt className="text-xs text-muted-foreground">{t('exposure.pnlOpen')}</dt>
-                        <dd className="text-lg font-semibold">
-                          <Money value={r.open_pnl} unit={unit} />
-                        </dd>
-                        <dd className="text-xs text-muted-foreground">
-                          {t('exposure.pnlPositions', {
-                            positions: formatNumber(r.open_positions),
-                            accounts: formatNumber(r.open_accounts),
-                          })}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-xs text-muted-foreground">{t('exposure.pnlClosed')}</dt>
-                        <dd className="text-lg font-semibold">
-                          <Money value={r.closed_pnl} unit={unit} />
-                        </dd>
-                        <dd className="text-xs text-muted-foreground">
-                          {t('exposure.pnlDeals', {
-                            deals: formatNumber(r.closed_deals),
-                            accounts: formatNumber(r.closed_accounts),
-                          })}
-                        </dd>
-                      </div>
-                    </dl>
-
-                    {r.accounts_outside_crm > 0 && (
-                      <p className="mt-3 border-t border-border pt-2 text-xs text-muted-foreground">
-                        {t('exposure.pnlOutside', { n: String(r.accounts_outside_crm) })}
-                      </p>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </Card>
+          }
+        >
+          <FinTable<PnlRow>
+            caption={t('exposure.pnlTitle')}
+            columns={pnlCols}
+            rows={pnlRows}
+            rowKey={(r) => r.category}
+            empty={<EmptyState compact title={t('exposure.pnlEmpty')} description={t('exposure.pnlEmptyHint')} />}
+          />
+        </Panel>
       )}
 
       {/* ── Cierre diario del CRM: el número real, guardado día a día ────── */}
       {seccion === 'crm' && (
-        <Card className="p-0 overflow-hidden">
-          <div className="px-4 pt-4">
-            <CardTitle>{t('crmPnl.title')}</CardTitle>
-            <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('crmPnl.hint')}</p>
-
-            <div className="mb-3 flex flex-wrap items-end gap-3">
-              <label className="text-xs text-muted-foreground">
-                <span className="mb-1 block">{t('exposure.historyFrom')}</span>
-                <input
-                  type="date"
-                  value={crmRange?.from ?? ''}
-                  max={crmRange?.to ?? hoy}
-                  onChange={(e) => {
-                    const next = { from: e.target.value, to: crmRange?.to ?? hoy };
-                    setCrmRange(next);
-                    if (e.target.value) void loadCrm(next);
-                  }}
-                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
-                />
-              </label>
-              <label className="text-xs text-muted-foreground">
-                <span className="mb-1 block">{t('exposure.historyTo')}</span>
-                <input
-                  type="date"
-                  value={crmRange?.to ?? ''}
-                  min={crmRange?.from ?? ''}
-                  max={hoy}
-                  onChange={(e) => {
-                    const next = { from: crmRange?.from ?? hoy, to: e.target.value };
-                    setCrmRange(next);
-                    if (e.target.value) void loadCrm(next);
-                  }}
-                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
-                />
-              </label>
-              <TableCsvButton<CrmDailyPnlRow>
-                rows={cierreCrm.filtered}
-                filename="Cierre_diario_PNL_CRM"
-                label={t('table.csv')}
-                headers={[
-                  t('exposure.colDay'), t('crmPnl.colClientsPnl'), t('crmPnl.colBrokerPnl'),
-                  t('crmPnl.colVolume'), t('crmPnl.colDeals'), t('crmPnl.colAccounts'),
-                  t('crmPnl.colExcluded'),
-                ]}
-                toRow={(r) => [
-                  r.utc_day === hoy ? `${r.utc_day} (${t('exposure.inProgress')})` : r.utc_day,
-                  // Un CSV se abre sin contexto: el hueco viaja como texto y
-                  // NUNCA como 0, que en una hoja de cálculo se suma solo.
-                  r.pnl_usd === null ? t('crmPnl.noData') : r.pnl_usd,
-                  r.pnl_usd === null ? t('crmPnl.noData') : -r.pnl_usd,
-                  r.volume_lots, r.deals_count, r.accounts_count, r.unmatched_accounts,
-                ]}
+        <Panel
+          title={t('crmPnl.title')}
+          hint={t('crmPnl.hint')}
+          flush
+          actions={
+            <TableCsvButton<CrmDailyPnlRow>
+              rows={cierreCrm.filtered}
+              filename="Cierre_diario_PNL_CRM"
+              label={t('table.csv')}
+              headers={[
+                t('exposure.colDay'), t('crmPnl.colClientsPnl'), t('crmPnl.colBrokerPnl'),
+                t('crmPnl.colVolume'), t('crmPnl.colDeals'), t('crmPnl.colAccounts'),
+                t('crmPnl.colExcluded'),
+              ]}
+              toRow={(r) => [
+                r.utc_day === hoy ? `${r.utc_day} (${t('exposure.inProgress')})` : r.utc_day,
+                // Un CSV se abre sin contexto: el hueco viaja como texto y
+                // NUNCA como 0, que en una hoja de cálculo se suma solo.
+                r.pnl_usd === null ? t('crmPnl.noData') : r.pnl_usd,
+                r.pnl_usd === null ? t('crmPnl.noData') : -r.pnl_usd,
+                r.volume_lots, r.deals_count, r.accounts_count, r.unmatched_accounts,
+              ]}
+            />
+          }
+        >
+          <div className="space-y-3 px-4 py-3">
+            <div className="flex flex-wrap items-end gap-2">
+              <DateRange
+                today={hoy}
+                value={crmRange}
+                onChange={(next, changed) => {
+                  setCrmRange(next);
+                  if (changed) void loadCrm(next);
+                }}
               />
             </div>
 
             {crmLoading && !crm ? (
-              <div className="pb-4">
-                <Skeleton className="h-40" />
-              </div>
+              <Skeleton className="h-[92px]" />
             ) : (
               <>
-                <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                  <StatCard
-                    icon={Activity}
-                    emphasis
-                    tone={
-                      crm?.totals.brokerPnl === null || crm?.totals.brokerPnl === undefined
-                        ? 'neutral'
-                        : crm.totals.brokerPnl >= 0
-                          ? 'positive'
-                          : 'negative'
-                    }
-                    label={t('crmPnl.kpiBrokerRange')}
-                    value={
-                      crm?.totals.brokerPnl === null || crm?.totals.brokerPnl === undefined
-                        ? '—'
-                        : formatNumber(crm.totals.brokerPnl)
-                    }
-                    hint={t('crmPnl.kpiBrokerRangeHint', {
-                      days: String(crm?.totals.daysWithData ?? 0),
-                    })}
-                  />
-                  <StatCard
-                    icon={CalendarDays}
-                    label={t('crmPnl.kpiLastClose')}
-                    value={
-                      crm?.last == null || crm.last.pnl_usd === null
-                        ? '—'
-                        : formatNumber(-crm.last.pnl_usd)
-                    }
-                    hint={
-                      crm?.last
-                        ? t('crmPnl.kpiLastCloseHint', { day: crm.last.utc_day })
-                        : t('crmPnl.noData')
-                    }
-                  />
-                  <StatCard
-                    icon={Layers}
-                    label={t('crmPnl.kpiVolume')}
-                    value={crm ? formatNumber(crm.totals.volumeLots) : '—'}
-                    hint={t('crmPnl.kpiVolumeHint')}
-                  />
-                  <StatCard
-                    icon={Activity}
-                    label={t('crmPnl.kpiDeals')}
-                    value={crm ? formatNumber(crm.totals.dealsCount) : '—'}
-                    hint={t('crmPnl.kpiDealsHint')}
-                  />
-                </div>
+                <KpiStrip
+                  items={[
+                    {
+                      key: 'broker',
+                      label: t('crmPnl.kpiBrokerRange'),
+                      value: crm?.totals.brokerPnl ?? null,
+                      format: 'money',
+                      tone: 'sign',
+                      hero: true,
+                      sub: t('crmPnl.kpiBrokerRangeHint', { days: String(crm?.totals.daysWithData ?? 0) }),
+                    },
+                    {
+                      key: 'last',
+                      label: t('crmPnl.kpiLastClose'),
+                      value: crm?.last == null || crm.last.pnl_usd === null ? null : -crm.last.pnl_usd,
+                      format: 'money',
+                      tone: 'sign',
+                      sub: crm?.last ? t('crmPnl.kpiLastCloseHint', { day: crm.last.utc_day }) : t('crmPnl.noData'),
+                    },
+                    {
+                      key: 'deals',
+                      label: t('crmPnl.kpiDeals'),
+                      value: crm ? crm.totals.dealsCount : null,
+                      format: 'count',
+                      sub: crm
+                        ? t('riskLm.lotsSub', { lots: lotsText(crm.totals.volumeLots) })
+                        : t('crmPnl.kpiDealsHint'),
+                    },
+                  ]}
+                />
 
                 {/* Un hueco NO puede ser invisible: un acumulado de treinta
                     días construido con veinticinco es un número más chico y
                     perfectamente creíble. */}
                 {crm && crm.daysMissing.length > 0 && (
-                  <p className="mb-3 flex items-start gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-                    <AlertTriangle className="h-4 w-4 shrink-0 text-warning" aria-hidden />
+                  <Notice kind="pend" title={t('riskLm.missingDaysTitle', { n: String(crm.daysMissing.length) })}>
                     {t('crmPnl.missingDays', {
                       n: String(crm.daysMissing.length),
                       days: crm.daysMissing.slice(0, 8).join(', '),
                     })}
-                  </p>
+                  </Notice>
                 )}
                 {crm && crm.totals.unmatchedAccounts > 0 && (
-                  <p className="mb-3 text-xs text-muted-foreground">
+                  <p className="text-[12.5px] text-text-3">
                     {t('crmPnl.excludedNotice', { n: String(crm.totals.unmatchedAccounts) })}
                   </p>
                 )}
@@ -567,59 +752,15 @@ export default function ExposicionPage() {
             )}
           </div>
 
-          <DataTable<CrmDailyPnlRow>
-            stickyHeader
-            zebra
-            density="compact"
-            data={cierreCrm.pageRows}
+          <FinTable<CrmDailyPnlRow>
+            caption={t('crmPnl.title')}
+            columns={crmCols}
+            rows={cierreCrm.pageRows}
+            rowKey={(r) => r.utc_day}
+            maxHeight="60vh"
             empty={
-              <EmptyState
-                compact
-                icon={CalendarDays}
-                title={t('crmPnl.empty')}
-                description={t('crmPnl.emptyHint')}
-              />
+              <EmptyState compact icon={CalendarDays} title={t('crmPnl.empty')} description={t('crmPnl.emptyHint')} />
             }
-            columns={[
-              {
-                header: t('exposure.colDay'),
-                accessor: (r) => (
-                  <span className="tabular-nums">
-                    {r.utc_day}
-                    {r.utc_day === hoy && (
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {t('exposure.inProgress')}
-                      </span>
-                    )}
-                  </span>
-                ),
-              },
-              {
-                header: t('crmPnl.colBrokerPnl'),
-                align: 'right',
-                accessor: (r) => <Money value={r.pnl_usd === null ? null : -r.pnl_usd} unit="usd" />,
-              },
-              {
-                header: t('crmPnl.colClientsPnl'),
-                align: 'right',
-                accessor: (r) => <Money value={r.pnl_usd} unit="usd" />,
-              },
-              {
-                header: t('crmPnl.colVolume'),
-                align: 'right',
-                accessor: (r) => <span className="tabular-nums">{formatNumber(r.volume_lots)}</span>,
-              },
-              {
-                header: t('crmPnl.colDeals'),
-                align: 'right',
-                accessor: (r) => <span className="tabular-nums">{formatNumber(r.deals_count)}</span>,
-              },
-              {
-                header: t('crmPnl.colAccounts'),
-                align: 'right',
-                accessor: (r) => <span className="tabular-nums">{formatNumber(r.accounts_count)}</span>,
-              },
-            ]}
           />
           <TablePager
             page={cierreCrm.page}
@@ -630,22 +771,19 @@ export default function ExposicionPage() {
             onPage={cierreCrm.setPage}
             labels={pagerLabels}
           />
-        </Card>
+        </Panel>
       )}
 
       {/* ── Margen: cuentas que pueden liquidarse ────────────────────────── */}
       {seccion === 'margen' && (
-        <Card className="p-0 overflow-hidden">
-          <div className="px-4 pt-4">
-            <CardTitle>{t('exposure.marginTitle')}</CardTitle>
-            <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('exposure.marginHint')}</p>
-            <div className="mb-3 flex flex-wrap items-center gap-3">
-              <TableSearch
-                value={margen.query}
-                onChange={margen.setQuery}
-                placeholder={t('exposure.searchMargin')}
-              />
-              <TableCsvButton<MarginRow>
+        <Panel
+          title={t('exposure.marginTitle')}
+          hint={t('exposure.marginHint')}
+          flush
+          actions={
+            <>
+              <TableSearch value={margen.query} onChange={margen.setQuery} placeholder={t('exposure.searchMargin')} />
+              <TableCsvButton<TaggedMarginRow>
                 rows={margen.filtered}
                 filename="Cuentas_en_riesgo_de_margen"
                 label={t('table.csv')}
@@ -661,12 +799,15 @@ export default function ExposicionPage() {
                   csvMoney(m.floating, m.unit),
                 ]}
               />
-            </div>
-          </div>
-          <DataTable<MarginRow>
-            zebra
-            density="compact"
-            data={margen.pageRows}
+            </>
+          }
+        >
+          <FinTable<TaggedMarginRow>
+            caption={t('exposure.marginTitle')}
+            columns={marginCols}
+            rows={margen.pageRows}
+            rowKey={(m) => String(m.login)}
+            maxHeight="60vh"
             empty={
               <EmptyState
                 compact
@@ -674,48 +815,6 @@ export default function ExposicionPage() {
                 description={t('exposure.marginEmptyHint', { total: String(data.accountsWithMargin) })}
               />
             }
-            columns={[
-              {
-                header: t('exposure.colLevel'),
-                align: 'right',
-                accessor: (m) => (
-                  <Badge variant={(m.margin_level ?? 0) < 100 ? 'danger' : 'warning'}>
-                    {formatNumber(m.margin_level ?? 0)}%
-                  </Badge>
-                ),
-              },
-              { header: t('exposure.colAccount'), accessor: (m) => String(m.login) },
-              {
-                header: t('exposure.colClient'),
-                accessor: (m) => <span className="text-xs">{m.email ?? t('exposure.noEmail')}</span>,
-              },
-              {
-                header: t('exposure.colFamily'),
-                accessor: (m) => (
-                  <span className="text-xs">
-                    {m.family}
-                    {m.is_virtual && (
-                      <span className="ml-1 text-muted-foreground">{t('exposure.virtual')}</span>
-                    )}
-                  </span>
-                ),
-              },
-              {
-                header: t('exposure.colEquity'),
-                align: 'right',
-                accessor: (m) => <Money value={m.equity} unit={m.unit} />,
-              },
-              {
-                header: t('exposure.colMargin'),
-                align: 'right',
-                accessor: (m) => <Money value={m.margin} unit={m.unit} />,
-              },
-              {
-                header: t('exposure.colFloating'),
-                align: 'right',
-                accessor: (m) => <Money value={m.floating} unit={m.unit} />,
-              },
-            ]}
           />
           <TablePager
             page={margen.page}
@@ -726,17 +825,16 @@ export default function ExposicionPage() {
             onPage={margen.setPage}
             labels={pagerLabels}
           />
-        </Card>
+        </Panel>
       )}
 
       {/* ── Concentración ────────────────────────────────────────────────── */}
       {seccion === 'concentracion' && (
-        <Card>
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <CardTitle>{t('exposure.concentrationTitle')}</CardTitle>
-              <p className="mt-1 text-xs text-muted-foreground">{t('exposure.concentrationHint')}</p>
-            </div>
+        <Panel
+          title={t('exposure.concentrationTitle')}
+          hint={t('exposure.concentrationHint')}
+          flush
+          actions={
             <TableCsvButton
               rows={data.concentration}
               filename="Concentracion_por_simbolo"
@@ -755,54 +853,28 @@ export default function ExposicionPage() {
                   .join(' | '),
               ]}
             />
-          </div>
-          <ul className="mt-4 space-y-3">
-            {data.concentration.map((c) => (
-              <li key={c.symbol}>
-                <div className="flex flex-wrap items-baseline justify-between gap-2">
-                  <span className="font-medium">{c.symbol}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {t('exposure.concentrationRow', {
-                      positions: formatNumber(c.positions),
-                      share: String(c.share),
-                      lots: formatNumber(c.netLots),
-                    })}
-                  </span>
-                </div>
-                {/* La barra usa el PESO en posiciones, que sí es comparable. */}
-                <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary"
-                    style={{ width: `${Math.min(100, c.share)}%` }}
-                  />
-                </div>
-                <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                  {c.byFamily.map((f) => (
-                    <span key={f.family}>
-                      {f.family}
-                      {f.isVirtual ? ` ${t('exposure.virtual')}` : ''}:{' '}
-                      <Money value={f.floating} unit={f.unit} />
-                    </span>
-                  ))}
-                </div>
-              </li>
-            ))}
-          </ul>
-        </Card>
+          }
+          footer={t('riskLm.concentrationFoot', { n: countFmt.format(data.concentration.length) })}
+        >
+          <FinTable<SymbolConcentration>
+            caption={t('exposure.concentrationTitle')}
+            columns={concentrationCols}
+            rows={data.concentration}
+            rowKey={(c) => c.symbol}
+            empty={<EmptyState compact title={t('exposure.detailEmpty')} />}
+          />
+        </Panel>
       )}
 
       {/* ── El detalle ───────────────────────────────────────────────────── */}
       {seccion === 'detalle' && (
-        <Card className="p-0 overflow-hidden">
-          <div className="px-4 pt-4">
-            <CardTitle>{t('exposure.detailTitle')}</CardTitle>
-            <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('exposure.detailHint')}</p>
-            <div className="mb-3 flex flex-wrap items-center gap-3">
-              <TableSearch
-                value={detalle.query}
-                onChange={detalle.setQuery}
-                placeholder={t('exposure.searchDetail')}
-              />
+        <Panel
+          title={t('exposure.detailTitle')}
+          hint={t('exposure.detailHint')}
+          flush
+          actions={
+            <>
+              <TableSearch value={detalle.query} onChange={detalle.setQuery} placeholder={t('exposure.searchDetail')} />
               <TableCsvButton<ExposureRow>
                 rows={detalle.filtered}
                 filename="Exposicion_por_familia_y_simbolo"
@@ -817,57 +889,16 @@ export default function ExposicionPage() {
                   csvMoney(r.floating, r.unit), csvMoney(r.storage, r.unit),
                 ]}
               />
-            </div>
-          </div>
-          <DataTable<ExposureRow>
-            stickyHeader
-            zebra
-            density="compact"
-            data={detalle.pageRows}
+            </>
+          }
+        >
+          <FinTable<ExposureRow>
+            caption={t('exposure.detailTitle')}
+            columns={detailCols}
+            rows={detalle.pageRows}
+            rowKey={(r) => `${r.family}|${r.symbol}|${r.is_virtual ? 'v' : 'r'}`}
+            maxHeight="60vh"
             empty={<EmptyState compact title={t('exposure.detailEmpty')} />}
-            columns={[
-              {
-                header: t('exposure.colFamily'),
-                accessor: (r) => (
-                  <span className="text-xs">
-                    {r.family}
-                    {r.is_virtual && (
-                      <span className="ml-1 text-muted-foreground">{t('exposure.virtual')}</span>
-                    )}
-                  </span>
-                ),
-              },
-              { header: t('exposure.colSymbol'), accessor: (r) => r.symbol },
-              {
-                header: t('exposure.colPositions'),
-                align: 'right',
-                accessor: (r) => <span className="tabular-nums">{formatNumber(r.positions)}</span>,
-              },
-              {
-                header: t('exposure.colNetLots'),
-                align: 'right',
-                accessor: (r) => (
-                  <span
-                    className={cn(
-                      'tabular-nums',
-                      (r.net_lots ?? 0) > 0 ? 'text-positive' : (r.net_lots ?? 0) < 0 ? 'text-negative' : '',
-                    )}
-                  >
-                    {formatNumber(r.net_lots ?? 0)}
-                  </span>
-                ),
-              },
-              {
-                header: t('exposure.colFloating'),
-                align: 'right',
-                accessor: (r) => <Money value={r.floating} unit={r.unit} />,
-              },
-              {
-                header: t('exposure.colSwap'),
-                align: 'right',
-                accessor: (r) => <Money value={r.storage} unit={r.unit} />,
-              },
-            ]}
           />
           <TablePager
             page={detalle.page}
@@ -878,51 +909,17 @@ export default function ExposicionPage() {
             onPage={detalle.setPage}
             labels={pagerLabels}
           />
-        </Card>
+        </Panel>
       )}
 
       {/* ── Histórico de cierres: la sección con filtro de fechas ────────── */}
       {seccion === 'historico' && (
-        <Card className="p-0 overflow-hidden">
-          <div className="px-4 pt-4">
-            <CardTitle>{t('exposure.historyTitle')}</CardTitle>
-            <p className="mt-1 mb-3 text-xs text-muted-foreground">{t('exposure.historyHint')}</p>
-
-            <div className="mb-3 flex flex-wrap items-end gap-3">
-              <label className="text-xs text-muted-foreground">
-                <span className="mb-1 block">{t('exposure.historyFrom')}</span>
-                <input
-                  type="date"
-                  value={range?.from ?? ''}
-                  max={range?.to ?? hoy}
-                  onChange={(e) => {
-                    const next = { from: e.target.value, to: range?.to ?? hoy };
-                    setRange(next);
-                    if (e.target.value) void load(true, next);
-                  }}
-                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
-                />
-              </label>
-              <label className="text-xs text-muted-foreground">
-                <span className="mb-1 block">{t('exposure.historyTo')}</span>
-                <input
-                  type="date"
-                  value={range?.to ?? ''}
-                  min={range?.from ?? ''}
-                  max={hoy}
-                  onChange={(e) => {
-                    const next = { from: range?.from ?? hoy, to: e.target.value };
-                    setRange(next);
-                    if (e.target.value) void load(true, next);
-                  }}
-                  className="rounded-lg border border-border bg-card px-3 py-2 text-base sm:text-sm"
-                />
-              </label>
-              <TableSearch
-                value={historia.query}
-                onChange={historia.setQuery}
-                placeholder={t('exposure.searchHistory')}
-              />
+        <Panel
+          title={t('exposure.historyTitle')}
+          hint={t('exposure.historyHint')}
+          flush
+          actions={
+            <>
               <TableCsvButton<PnlRow>
                 rows={historia.filtered}
                 filename="Cierres_diarios_PNL"
@@ -943,63 +940,35 @@ export default function ExposicionPage() {
                   r.open_positions, r.accounts_outside_crm,
                 ]}
               />
-              <Button
-                variant="secondary"
-                size="sm"
+              <ActionButton
                 loading={pdfBusy}
                 disabled={historia.filtered.length === 0}
                 onClick={() => void descargarPdf()}
               >
-                <FileText className="h-4 w-4" aria-hidden />
+                {!pdfBusy && <FileText className="size-4" aria-hidden />}
                 {t('exposure.pdf')}
-              </Button>
-            </div>
+              </ActionButton>
+            </>
+          }
+        >
+          <div className="flex flex-wrap items-end gap-2 px-4 py-3">
+            <DateRange
+              today={hoy}
+              value={range}
+              onChange={(next, changed) => {
+                setRange(next);
+                if (changed) void load(true, next);
+              }}
+            />
+            <TableSearch value={historia.query} onChange={historia.setQuery} placeholder={t('exposure.searchHistory')} />
           </div>
-
-          <DataTable<PnlRow>
-            stickyHeader
-            zebra
-            density="compact"
-            data={historia.pageRows}
+          <FinTable<PnlRow>
+            caption={t('exposure.historyTitle')}
+            columns={historyCols}
+            rows={historia.pageRows}
+            rowKey={(r) => `${r.utc_day}|${r.category}`}
+            maxHeight="60vh"
             empty={<EmptyState compact icon={CalendarDays} title={t('exposure.pnlEmpty')} />}
-            columns={[
-              {
-                header: t('exposure.colDay'),
-                accessor: (r) => (
-                  <span className="tabular-nums">
-                    {r.utc_day}
-                    {/* El día en curso no es un cierre y compararlo con días
-                        enteros sin saberlo lleva a conclusiones falsas. */}
-                    {r.utc_day === hoy && (
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {t('exposure.inProgress')}
-                      </span>
-                    )}
-                  </span>
-                ),
-              },
-              { header: t('exposure.colCategory'), accessor: (r) => r.category },
-              {
-                header: t('exposure.colClosedPnl'),
-                align: 'right',
-                accessor: (r) => <Money value={r.closed_pnl} unit={unitOfCategory(r.category)} />,
-              },
-              {
-                header: t('exposure.colDeals'),
-                align: 'right',
-                accessor: (r) => <span className="tabular-nums">{formatNumber(r.closed_deals)}</span>,
-              },
-              {
-                header: t('exposure.colOpenPnl'),
-                align: 'right',
-                accessor: (r) => <Money value={r.open_pnl} unit={unitOfCategory(r.category)} />,
-              },
-              {
-                header: t('exposure.colPositions'),
-                align: 'right',
-                accessor: (r) => <span className="tabular-nums">{formatNumber(r.open_positions)}</span>,
-              },
-            ]}
           />
           <TablePager
             page={historia.page}
@@ -1010,8 +979,75 @@ export default function ExposicionPage() {
             onPage={historia.setPage}
             labels={pagerLabels}
           />
-        </Card>
+        </Panel>
       )}
     </div>
+  );
+}
+
+/**
+ * Desde / Hasta. Componente de módulo (no definido dentro del render: se
+ * remontaría en cada render y el input perdería el foco).
+ */
+function DateRange({
+  today,
+  value,
+  onChange,
+}: {
+  today: string;
+  value: { from: string; to: string } | null;
+  onChange: (next: { from: string; to: string }, changed: string) => void;
+}) {
+  const { t } = useI18n();
+  return (
+    <>
+      <Field label={t('exposure.historyFrom')}>
+        <Input
+          type="date"
+          value={value?.from ?? ''}
+          max={value?.to ?? today}
+          onChange={(e) => onChange({ from: e.target.value, to: value?.to ?? today }, e.target.value)}
+          className="w-[150px]"
+        />
+      </Field>
+      <Field label={t('exposure.historyTo')}>
+        <Input
+          type="date"
+          value={value?.to ?? ''}
+          min={value?.from ?? ''}
+          max={today}
+          onChange={(e) => onChange({ from: value?.from ?? today, to: e.target.value }, e.target.value)}
+          className="w-[150px]"
+        />
+      </Field>
+    </>
+  );
+}
+
+/** Familia + «(virtual)» en `text-3`: el capital virtual no es dinero de nadie. */
+function FamilyText({ family, virtual }: { family: string; virtual: boolean }) {
+  const { t } = useI18n();
+  return (
+    <span className="text-[12.5px] text-text-2">
+      {family}
+      {virtual && <span className="ml-1 text-text-3">{t('exposure.virtual')}</span>}
+    </span>
+  );
+}
+
+/**
+ * Columna de participación (spec §5.3): % tabular + barra 64×6 sobre
+ * `surface-sunk` con relleno `brand-ink` al 75 %. El peso es en POSICIONES,
+ * que sí son comparables entre familias.
+ */
+function ShareCell({ share }: { share: number }) {
+  const w = shareWidth(share);
+  return (
+    <span className="inline-flex items-center justify-end gap-2">
+      <span className={cn(NUM_CLASS, 'text-[13px]')}>{w === null ? '—' : `${formatNumber(share)} %`}</span>
+      <span aria-hidden className="block h-1.5 w-16 overflow-hidden rounded-full bg-surface-sunk">
+        {w !== null && <span className="block h-full rounded-full bg-brand-ink/75" style={{ width: `${w}%` }} />}
+      </span>
+    </span>
   );
 }
