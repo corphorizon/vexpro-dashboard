@@ -29,11 +29,11 @@ const EMAIL_STRINGS: Record<EmailLocale, StringTable> = {
   // ───────────────────────────── ENGLISH ─────────────────────────────
   en: {
     'common.hi': 'Hi',
-    'common.signature': '— Horizon Consulting',
-    'common.copyright': '© Horizon Consulting — Smart Dashboard',
+    'common.signature': '— Exura Global',
+    'common.copyright': '© Exura Global — Smart Dashboard',
 
     // 1. Welcome
-    'welcome.subject': 'Welcome to Smart Dashboard — Horizon Consulting',
+    'welcome.subject': 'Welcome to Smart Dashboard — Exura Global',
     'welcome.title': 'Welcome to Smart Dashboard',
     'welcome.body':
       'Your account has been created successfully. You can now access the Smart Dashboard to view financial reports, manage operations, and collaborate with your team.',
@@ -74,7 +74,7 @@ const EMAIL_STRINGS: Record<EmailLocale, StringTable> = {
     'notif.subject': 'Smart Dashboard Alert: {title}',
 
     // 6. Login notification
-    'login.subject': 'New sign-in to your Horizon Consulting account',
+    'login.subject': 'New sign-in to your Exura Global account',
     'login.intro': 'We detected a new sign-in to your Smart Dashboard account. Here are the details:',
     'login.date': 'Date',
     'login.time': 'Time',
@@ -118,11 +118,11 @@ const EMAIL_STRINGS: Record<EmailLocale, StringTable> = {
   // ───────────────────────────── ESPAÑOL ─────────────────────────────
   es: {
     'common.hi': 'Hola',
-    'common.signature': '— Horizon Consulting',
-    'common.copyright': '© Horizon Consulting — Smart Dashboard',
+    'common.signature': '— Exura Global',
+    'common.copyright': '© Exura Global — Smart Dashboard',
 
     // 1. Bienvenida
-    'welcome.subject': 'Bienvenido a Smart Dashboard — Horizon Consulting',
+    'welcome.subject': 'Bienvenido a Smart Dashboard — Exura Global',
     'welcome.title': 'Bienvenido a Smart Dashboard',
     'welcome.body':
       'Tu cuenta se ha creado correctamente. Ya puedes acceder a Smart Dashboard para ver reportes financieros, gestionar operaciones y colaborar con tu equipo.',
@@ -164,7 +164,7 @@ const EMAIL_STRINGS: Record<EmailLocale, StringTable> = {
     'notif.subject': 'Alerta de Smart Dashboard: {title}',
 
     // 6. Notificación de inicio de sesión
-    'login.subject': 'Nuevo inicio de sesión en tu cuenta de Horizon Consulting',
+    'login.subject': 'Nuevo inicio de sesión en tu cuenta de Exura Global',
     'login.intro':
       'Detectamos un nuevo inicio de sesión en tu cuenta de Smart Dashboard. Estos son los detalles:',
     'login.date': 'Fecha',

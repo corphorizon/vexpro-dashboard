@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { appUrl } from '@/lib/app-domain';
+import { appUrl, PLATFORM_ORG } from '@/lib/app-domain';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // invite-user
@@ -163,7 +163,7 @@ export async function resolveInviterName(admin: SupabaseClient, authUserId: stri
     .maybeSingle();
   if (cu?.name) return cu.name;
 
-  return 'El equipo de Horizon Consulting';
+  return `El equipo de ${PLATFORM_ORG}`;
 }
 
 /** Builds the public origin URL from a NextRequest. */

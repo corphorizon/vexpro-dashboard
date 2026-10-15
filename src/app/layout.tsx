@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
-import { appUrl } from '@/lib/app-domain';
+import { appUrl, PLATFORM_ORG } from '@/lib/app-domain';
 
 // Tipografía de marca (rediseño UX 2026-07): Inter variable, self-hosted por
 // next/font (cero requests externos, cero layout shift). Expuesta como
@@ -27,7 +27,7 @@ export const metadata: Metadata = {
   },
   description: SITE_DESCRIPTION,
   applicationName: SITE_NAME,
-  authors: [{ name: "Horizon Consulting" }],
+  authors: [{ name: PLATFORM_ORG }],
   alternates: {
     canonical: SITE_URL,
   },

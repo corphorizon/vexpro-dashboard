@@ -3,6 +3,7 @@ import type { SendEmailResponse, LoginNotificationData } from '@/lib/types';
 import { createAdminClient } from '@/lib/supabase/admin';
 import { decryptSecret } from '@/lib/crypto';
 import { et, type EmailLocale } from '@/lib/email-i18n';
+import { DEFAULT_FROM_EMAIL, PLATFORM_ORG } from '@/lib/app-domain';
 
 // ---------------------------------------------------------------------------
 // HTML escaping to prevent XSS in email templates
@@ -58,8 +59,8 @@ async function getSendGridConfig(companyId?: string): Promise<SendGridConfig | n
         const extra = (data.extra_config || {}) as Record<string, unknown>;
         return {
           apiKey,
-          fromEmail: (extra.from_email as string) || process.env.SENDGRID_FROM_EMAIL || 'noreply@horizonconsulting.com',
-          fromName: (extra.from_name as string) || process.env.SENDGRID_FROM_NAME || 'Horizon Consulting',
+          fromEmail: (extra.from_email as string) || process.env.SENDGRID_FROM_EMAIL || DEFAULT_FROM_EMAIL,
+          fromName: (extra.from_name as string) || process.env.SENDGRID_FROM_NAME || PLATFORM_ORG,
           source: 'db',
         };
       }
@@ -74,8 +75,8 @@ async function getSendGridConfig(companyId?: string): Promise<SendGridConfig | n
   if (!envKey || envKey === 'your_sendgrid_api_key_here') return null;
   return {
     apiKey: envKey,
-    fromEmail: process.env.SENDGRID_FROM_EMAIL || 'noreply@horizonconsulting.com',
-    fromName: process.env.SENDGRID_FROM_NAME || 'Horizon Consulting',
+    fromEmail: process.env.SENDGRID_FROM_EMAIL || DEFAULT_FROM_EMAIL,
+    fromName: process.env.SENDGRID_FROM_NAME || PLATFORM_ORG,
     source: 'env',
   };
 }
@@ -274,7 +275,7 @@ export async function sendLoginNotificationEmail(
       <!-- Header -->
       <div style="background-color: #1a1a2e; padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
         <h1 style="color: #ffffff; margin: 0; font-size: 20px;">Smart Dashboard</h1>
-        <p style="color: #a0aec0; margin: 4px 0 0; font-size: 13px;">Horizon Consulting</p>
+        <p style="color: #a0aec0; margin: 4px 0 0; font-size: 13px;">${PLATFORM_ORG}</p>
       </div>
 
       <!-- Body -->
@@ -328,7 +329,7 @@ export async function sendLoginNotificationEmail(
 
       <!-- Footer -->
       <p style="color: #a0aec0; font-size: 11px; text-align: center; margin-top: 16px;">
-        &copy; Horizon Consulting — Smart Dashboard
+        &copy; ${PLATFORM_ORG} — Smart Dashboard
       </p>
     </div>
   `;
@@ -378,7 +379,7 @@ export async function sendInviteEmail(
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; background-color: #f9fafb; padding: 20px;">
       <div style="background-color: #1a1a2e; padding: 24px; border-radius: 8px 8px 0 0; text-align: center;">
         <h1 style="color: #ffffff; margin: 0; font-size: 22px;">${et(locale, 'invite.headerTitle', { company: safeCompany })}</h1>
-        <p style="color: #a0aec0; margin: 6px 0 0; font-size: 13px;">Smart Dashboard · Horizon Consulting</p>
+        <p style="color: #a0aec0; margin: 6px 0 0; font-size: 13px;">Smart Dashboard · ${PLATFORM_ORG}</p>
       </div>
 
       <div style="background-color: #ffffff; padding: 32px 24px; border-radius: 0 0 8px 8px;">
@@ -411,7 +412,7 @@ export async function sendInviteEmail(
       </div>
 
       <p style="color: #a0aec0; font-size: 11px; text-align: center; margin-top: 16px;">
-        &copy; Horizon Consulting — Smart Dashboard
+        &copy; ${PLATFORM_ORG} — Smart Dashboard
       </p>
     </div>
   `;

@@ -11,7 +11,7 @@ import { SuperadminShell } from '@/components/superadmin/superadmin-shell';
 import { actionButtonClass } from '@/components/ui/action-button';
 
 // ─────────────────────────────────────────────────────────────────────────────
-// /superadmin — Horizon Consulting platform panel.
+// /superadmin — panel de la plataforma (Exura Global).
 //
 // Layout guard: only users with `is_superadmin = true` can render anything
 // under this route. Everyone else (unauthenticated OR authenticated but not

@@ -23,6 +23,14 @@
 // al pasar al dominio nuevo cada usuario inicia sesión una vez más.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Empresa que opera la plataforma (firma de correos, metadatos). Antes
+ *  «Horizon Consulting», copiado en 15 lugares. */
+export const PLATFORM_ORG = 'Exura Global';
+
+/** Remitente por defecto si SENDGRID_FROM_EMAIL no está definida. El dominio
+ *  tiene que estar autenticado en SendGrid (registros em6718 / s1 / s2). */
+export const DEFAULT_FROM_EMAIL = 'noreply@exuraglobal.com';
+
 /** URL pública del panel cuando NEXT_PUBLIC_APP_URL no está definida. */
 export const DEFAULT_APP_URL = 'https://dashboard.exuraglobal.com';
 
