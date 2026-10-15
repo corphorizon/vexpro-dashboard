@@ -36,9 +36,10 @@ import {
   UNCATEGORIZED,
   type CompanyResultReport,
 } from './company-report';
+import { appUrl } from '@/lib/app-domain';
 
 const DASHBOARD_URL =
-  process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.horizonconsulting.ai';
+  appUrl();
 
 export type ReportCadence = 'daily' | 'weekly' | 'monthly';
 

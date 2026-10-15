@@ -5,6 +5,7 @@ import { sendPasswordResetEmail } from '@/services/emailService';
 import { resolveUserLocale } from '@/lib/email-i18n';
 import { checkRateLimit, recordFailure } from '@/lib/rate-limit';
 import { apiError } from '@/lib/api-error';
+import { appUrl } from '@/lib/app-domain';
 
 // ---------------------------------------------------------------------------
 // POST /api/auth/forgot-password
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
       request.headers.get('origin') ||
       request.headers.get('host')
         ? `${request.headers.get('x-forwarded-proto') || 'https'}://${request.headers.get('host')}`
-        : (process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.horizonconsulting.ai');
+        : appUrl();
     const resetUrl = `${origin}/reset-password?token=${encodeURIComponent(rawToken)}`;
 
     // Fire-and-forget email send — uses the company's own SendGrid creds if

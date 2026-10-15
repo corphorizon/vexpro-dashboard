@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'crypto';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { appUrl } from '@/lib/app-domain';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // invite-user
@@ -172,7 +173,7 @@ export function originFromRequest(request: Request): string {
     headers.get('origin') ||
     (headers.get('host')
       ? `${headers.get('x-forwarded-proto') || 'https'}://${headers.get('host')}`
-      : (process.env.NEXT_PUBLIC_APP_URL || 'https://dashboard.horizonconsulting.ai'))
+      : appUrl())
   );
 }
 

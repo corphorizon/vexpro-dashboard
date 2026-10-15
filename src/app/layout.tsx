@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Providers } from "./providers";
+import { appUrl } from '@/lib/app-domain';
 
 // Tipografía de marca (rediseño UX 2026-07): Inter variable, self-hosted por
 // next/font (cero requests externos, cero layout shift). Expuesta como
@@ -14,7 +15,7 @@ const inter = Inter({
 
 // Production URL used for every canonical link, Open Graph URL, and
 // metadataBase. Override in dev/preview via NEXT_PUBLIC_APP_URL.
-const SITE_URL = process.env.NEXT_PUBLIC_APP_URL || "https://dashboard.horizonconsulting.ai";
+const SITE_URL = appUrl();
 const SITE_NAME = "Smart Dashboard";
 const SITE_DESCRIPTION = "The all-in-one financial and operations dashboard";
 

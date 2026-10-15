@@ -27,6 +27,7 @@
 import { resolvePayprosCredentials } from '../credentials';
 import { proxiedFetch } from '../proxy';
 import { withRetry } from '../retry';
+import { DEFAULT_APP_URL } from '@/lib/app-domain';
 
 const LOG = '[paypros-balance]';
 
@@ -34,7 +35,7 @@ const LOG = '[paypros-balance]';
 const TIMEOUT_MS = 10_000;
 
 /** Pay-Pros exige User-Agent; mandamos uno identificable. */
-const USER_AGENT = 'SmartDashboard/1.0 (+https://dashboard.horizonconsulting.ai)';
+const USER_AGENT = `SmartDashboard/1.0 (+${DEFAULT_APP_URL})`;
 
 /** Código de éxito del sobre común de la API. */
 const OK_STATUS = 'E00';

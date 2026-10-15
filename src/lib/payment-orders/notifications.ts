@@ -20,6 +20,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { notify } from '@/lib/notifications/notify';
 import { formatMoney } from '@/lib/money';
 import type { PaymentOrder, PaymentOrderStatus } from './types';
+import { appUrl } from '@/lib/app-domain';
 
 const T = {
   es: {
@@ -48,7 +49,7 @@ const T = {
   },
 } as const;
 
-const DASHBOARD_URL = process.env.NEXT_PUBLIC_APP_URL ?? 'https://dashboard.horizonconsulting.ai';
+const DASHBOARD_URL = appUrl();
 
 function wrap(body: string, orderId: string, cta: string): string {
   return `

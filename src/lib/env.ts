@@ -21,6 +21,7 @@
  */
 
 import { z } from 'zod';
+import { DEFAULT_APP_URL } from '@/lib/app-domain';
 
 // ─── Server-only schema ──────────────────────────────────────────────────────
 //
@@ -43,7 +44,7 @@ const serverSchema = z.object({
     .string()
     .url('NEXT_PUBLIC_APP_URL debe ser URL completa con https://')
     .optional()
-    .default('https://dashboard.horizonconsulting.ai'),
+    .default(DEFAULT_APP_URL),
 
   // SendGrid (transactional email)
   SENDGRID_API_KEY: z

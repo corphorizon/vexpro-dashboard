@@ -58,7 +58,7 @@ jobs:
           NEXT_PUBLIC_SUPABASE_ANON_KEY: anonkey_placeholder_for_ci_only_must_be_long_enough
           SUPABASE_SERVICE_ROLE_KEY: servicerole_placeholder_for_ci_only_must_be_long_enough
           API_CREDENTIALS_MASTER_KEY: '0000000000000000000000000000000000000000000000000000000000000000'
-          NEXT_PUBLIC_APP_URL: https://dashboard.horizonconsulting.ai
+          NEXT_PUBLIC_APP_URL: https://dashboard.exuraglobal.com
         run: npm run build
 ```
 
