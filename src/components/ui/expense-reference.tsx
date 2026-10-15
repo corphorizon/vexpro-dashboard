@@ -38,8 +38,13 @@ function isUrl(value: string): boolean {
   }
 }
 
-/** Recorta por el medio: el principio y el final de un hash son lo que se compara. */
-function shorten(value: string, max: number): string {
+/**
+ * Recorta por el medio: el principio y el final de un hash son lo que se
+ * compara. Exportado (2026-10-15): la tabla de Egresos rediseñada pinta la
+ * referencia como metadato bajo el concepto, y sin este recorte una URL de
+ * Tronscan empujaba las columnas de montos fuera de la pantalla.
+ */
+export function shorten(value: string, max: number): string {
   if (value.length <= max) return value;
   const head = Math.ceil((max - 1) / 2);
   const tail = Math.floor((max - 1) / 2);

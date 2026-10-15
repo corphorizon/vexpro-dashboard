@@ -72,6 +72,7 @@ import { cn } from '@/lib/utils';
 import type { ExpenseStatus } from '@/lib/monthly-close-pdf-data';
 import type { Expense, PreoperativeExpense } from '@/lib/types';
 import { AttachmentButton } from './attachment-button';
+import { shorten } from '@/components/ui/expense-reference';
 import {
   EXPENSE_FILTERS,
   UNCATEGORIZED,
@@ -248,18 +249,24 @@ export default function EgresosPage() {
       label: mode === 'consolidated' ? t('expenses.kpiTotalRange') : t('expenses.kpiTotal'),
       value: summary.totalExpenses,
       hero: true,
+      // 'money' y no el compact por defecto (dueño, 2026-10-12 en el pool y
+      // 2026-10-15 acá): "$79.8K" omite dato en cifras que se leen para
+      // decidir — el valor exacto no puede vivir solo en el title.
+      format: 'money',
       sub: t('expenses.kpiCount', { count: n(periodCounts.all) }),
     },
     {
       key: 'paid',
       label: t('expenses.kpiPaid'),
       value: summary.totalExpensesPaid,
+      format: 'money',
       sub: t('expenses.kpiPaidHint', { count: n(periodCounts.pagado) }),
     },
     {
       key: 'pending',
       label: t('expenses.kpiPending'),
       value: summary.totalExpensesPending,
+      format: 'money',
       sub:
         periodCounts.parcial > 0
           ? t('expenses.kpiPendingHintPartial', {
@@ -272,6 +279,7 @@ export default function EgresosPage() {
       key: 'fixed',
       label: t('expenses.kpiFixed'),
       value: fixed.sum,
+      format: 'money',
       sub: fixed.sum === null ? t('expenses.kpiFixedUnknown') : t('expenses.kpiFixedHint', { count: n(fixed.count) }),
       missingBadge: false,
     },
@@ -294,6 +302,10 @@ export default function EgresosPage() {
         {e.is_fixed && (desc || ref) && ' · '}
         {desc}
         {desc && ref && ' · '}
+        {/* RECORTADA (dueño, 2026-10-15: "no se ve el monto, se debe correr
+            para la derecha"): la URL/hash completa desbordaba la columna del
+            concepto y empujaba los montos fuera de pantalla. El valor entero
+            queda en el title, como siempre hizo ExpenseReference. */}
         {ref &&
           (isUrl(ref) ? (
             <a
@@ -304,11 +316,11 @@ export default function EgresosPage() {
               onClick={(ev) => ev.stopPropagation()}
               className="text-info hover:underline"
             >
-              {ref}
+              {shorten(ref, 28)}
             </a>
           ) : (
             <span title={ref} className="font-mono">
-              {ref}
+              {shorten(ref, 28)}
             </span>
           ))}
       </>
