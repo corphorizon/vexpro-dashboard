@@ -53,7 +53,7 @@
 | `operating_income`, `income_lines`, `expenses` (fijos, huella, referencias, adjuntos), `expense_templates`, `investments` | 🔧 `Transaction` + `FinanceCategory` + `FinanceRecurring` (los fijos de SD son recurrentes de Atlas) | 🆕 modelo `IncomeLine` (facturado/cobrado/pendiente por cliente, modelo `company`); 🆕 huella del período (409 ante concurrencia); 🆕 adjuntos múltiples (hoy Atlas tiene uno). Devengado vs caja por modelo de negocio. |
 | `channel_configs`, `business_units`, `location_business_units`, `channel_ledger_entries`, `channel_balances`, `pinned_coinsbuy_wallets`, `api_transactions`, `excluded_transactions` | 🔧 `FinancialAccount` → gana `channelType` (gateway/wallet/bank/cash/trading/loan/debt), `provider`, `visible`, `holder`, `onchainWallets`; 🆕 `BusinessUnit`, `AccountUnitShare`, `ChannelLedgerEntry`, `ChannelBalanceSnapshot`, `PinnedWallet`, `ExternalTransaction`, `ExcludedTransaction` | ↪ `cash-locations.ts`, `channel-ledger.ts`, `channel-balance-source.ts`, `movements-ledger.ts`, `broker-logic.ts` (Net Deposit). Cron de snapshot 00:00 («gana la primera escritura del día»), cron de pasarelas 4×/día. |
 | `payment_orders`, `payment_beneficiaries`, proofs, attachments | 🆕 `PaymentOrder`, `PaymentBeneficiary` (datos bancarios **cifrados**, no en claro como SD), `PaymentOrderFile` | ↪ `payment-orders/*` (estados, preparar vs decidir, PDF). Al pagar crea la `Transaction` en el período de la fecha de pago. Integra con la aprobación con control dual de Atlas. |
-| Comisiones y RRHH: `commercial_profiles`, `commercial_monthly_results`, negociaciones, IB, warnings, metas, onboarding | 🔧 HR de Atlas (`SalaryRecord`, rangos comerciales, `IntroducingBroker`) | ↪ `commission-calculator.ts` (344 tests), `net-deposit-input.ts`, `hr/*`. 🆕 `CommercialProfile`, `CommissionResult`, `IbNegotiation`, `HrWarning`, `HrGoal`. La RPC `hr_net_deposit_by_profile` (árbol de 4 capas) se reescribe como SQL de Prisma con tests de paridad. El motor de comisiones del call center de Atlas (sin uso) se retira o se unifica. |
+| Comisiones y RRHH: `commercial_profiles`, `commercial_monthly_results`, negociaciones, IB, warnings, metas, onboarding | 🔧 HR de Atlas (`Employee`, `EmploymentContract`, `Leave`, `EmployeeDocument`, `SalaryRecord`, `Department`, `IntroducingBroker`; motor de comisiones de call center sin uso) | ↪ `commission-calculator.ts` (344 tests), `net-deposit-input.ts`, `hr/*`. 🆕 `CommercialProfile`, `CommissionResult`, `IbNegotiation`, `HrWarning`, `HrGoal`. La RPC `hr_net_deposit_by_profile` (árbol de 4 capas) se reescribe como SQL de Prisma con tests de paridad. El motor de comisiones del call center de Atlas (sin uso) se retira o se unifica. |
 | Riesgo: `withdrawal_reviews`, eventos, `mt5_exposure_snapshots`, `mt5_account_review`, prop firm | 🆕 módulo RISK | ↪ `withdrawal-risk/*` (score calibrado, bandas), `risk/*` (programas prop firm, veredicto, copia), `exposure.ts` (nunca sumar entre familias). Eventos solo-inserción (trigger). Segregación: soporte escala, finanzas decide; `executedInCrm:false`. |
 | Hedge fund `crm_hf_*` (9 tablas) | 🆕 módulo HEDGE_FUND | ↪ `hedge-fund/*`. Barrido completo, `unseen` contado, vigilante de configuración de comisiones (AP 0/0/0). Rótulo por org (Vex Capital). |
 | Pool de liquidez `platform_liquidity_*`, `liquidity_*` | 🆕 módulo LIQUIDITY_POOL (org Exura Liquidez con selector de empresa) | ↪ `liquidity/*` con reglas L1–L7 (L1: el equity a liquidez nunca se recalcula). |
@@ -66,6 +66,17 @@
 | Diseño «Libro mayor» (tokens, primitivas, sidebar oscuro de marca) | Atlas tiene su propio sistema | Se lleva como **spec de pantallas** (`docs/diseno-libro-mayor.md`), no como código: color = significado, null ≠ 0, recortes contados, estados stale. |
 
 ---
+
+### 3.1 RRHH: un solo módulo con dos partes
+
+Atlas ya tiene RRHH **administrativo** (`/dashboard/hr`, 13 endpoints): legajo de empleados importado desde usuarios, contratos con firma electrónica, licencias con aprobación, documentos sensibles, historial salarial y departamentos. No genera egresos en Finanzas ni calcula comisiones. Además tiene un **motor de comisiones de call center** (`src/lib/callcenter/comisiones/`, 1.324 líneas con tests: por ventas y FTD, bonos por umbral, todo en centavos) que **ninguna pantalla usa**; su contrato dice que SD lo consumiría para nómina y nunca se conectó.
+
+Smart Dashboard tiene la parte **comercial**: perfiles HEAD/BDM, comisiones por net deposit con tramos y acumulados, diferencial del jefe, negociaciones con IBs, amonestaciones y metas, producción IB, onboarding.
+
+Propuesta (fase 3):
+- **Personal** = lo de Atlas, sin cambios. `Employee` es el registro único de la persona.
+- **Compensación** = `CommercialProfile` colgado de `Employee`; la **nómina del mes** junta salario fijo (`SalaryRecord`), comisiones comerciales (motor de SD, 344 tests) y, si aplica, comisiones de call center (motor de Atlas), y genera los egresos en Finanzas con la regla de Codench «pagar o solo marcar» y detección de duplicados.
+- **Decisión pendiente (D11):** si el call center cobra comisiones hoy, su motor se conecta a esa nómina; si no, se retira para no dejar una segunda fórmula viva.
 
 ## 4. Las reglas que no se pueden perder
 
@@ -144,6 +155,7 @@ Las estimaciones son horas de agente (Opus/Sonnet) con revisión de Fable, por P
 5. **Fecha** de solo lectura de SD por empresa (propuesta: tras el cierre de Oct-26, empezando por Horizon y Exura Liquidez).
 6. **Codench**: ¿las 7 ideas, o un subconjunto? ¿Manuel participa en la especificación de conciliación y multi-moneda?
 7. **Equipo**: quién aplica migraciones y despliega en Atlas (regla 0 de Atlas: no los agentes).
+8. **D11 (RRHH)**: ¿el call center cobra comisiones por ventas/FTD hoy? Decide si el motor de Atlas se conecta a la nómina o se retira.
 
 ---
 
