@@ -125,7 +125,7 @@ Las estimaciones son horas de agente (Opus/Sonnet) con revisión de Fable, por P
 | **2. Núcleo financiero broker** | Períodos con snapshot y checklist; cadena de distribución; Broker P&L automático; canales/unidades/libro/snapshots; pasarelas (Coinsbuy, UniPayment, FairPay, Pay-Pros saldo, on-chain); Net Deposit; movimientos; egresos/ingresos/inversiones; órdenes de pago; carga xlsx con cola de revisión; PDFs. Pantallas según spec «Libro mayor». | Para Vex Pro, con los mismos datos: `/socios`, `/balances`, `/resumen-general` y el PDF de cierre dan los mismos números que SD en Ago-26 y Sep-26 (los del snapshot). | 140–180 |
 | **3. RRHH y comisiones** | Perfiles comerciales, net deposit por perfil (árbol de 4 capas), calculadora de comisiones con sus 344 tests, negociaciones, IB, warnings, metas, nómina unificada con `SalaryRecord`. | Liquidación de Sep-26 de Vex y AP idéntica a la guardada en SD (`commercial_monthly_results`). | 70–90 |
 | **4. Riesgo, hedge fund y pool** | Score de retiros + cola + decisiones; prop firm (programas, veredicto, copia, noticias); exposición; revisión de cuentas; hedge fund con vigilante; pool de liquidez L1–L7. | Las decisiones históricas de `withdrawal_reviews` migradas; score recalculado coincide con el guardado (`factors` congelados). | 70–90 |
-| **5. Migración de datos y corte por empresa** | ETL `company_id → orgId`: períodos + snapshots **tal cual**, egresos/ingresos/inversiones, canales y libro, órdenes de pago y archivos (Supabase Storage → `UploadedFile`), perfiles y resultados de comisiones, decisiones de riesgo, auditoría. Espejos: re-sync, no migración. Re-cifrado de credenciales. Orden: Horizon y Exura Liquidez (chicas) → AP Markets → Vex Pro. SD en solo lectura desde el corte de cada empresa. | Por empresa: reporte de paridad (totales por tabla y por período) firmado antes de habilitar la org en Atlas. | 50–70 |
+| **5. Migración de datos y corte por empresa** | ETL `company_id → orgId`: períodos + snapshots **tal cual**, egresos/ingresos/inversiones, canales y libro, órdenes de pago y archivos (Supabase Storage → `UploadedFile`), perfiles y resultados de comisiones, decisiones de riesgo, auditoría. Espejos: re-sync, no migración. Re-cifrado de credenciales. Se ensaya en staging empresa por empresa (Horizon y Exura Liquidez primero, Vex Pro al final) y se ejecuta en producción en **un solo corte** cuando la paridad de todas da exacta. | Por empresa: reporte de paridad (totales por tabla y por período) firmado antes de habilitar la org en Atlas. | 50–70 |
 | **6. Apagado** | Redirección 308 de `dashboard.horizonconsulting.ai` → `atlas.exuraglobal.com`; apagar crons de SD; apagar `/api/partner/v1` (si nadie externo lo usa); archivar repo; rotar Fixie y claves; dar de baja el proyecto Supabase de SD tras 90 días de respaldo. | Cero tráfico al dominio viejo durante 30 días; respaldo verificado. | 12–20 |
 | | | **Total** | **420–550 h** |
 
@@ -146,18 +146,18 @@ Las estimaciones son horas de agente (Opus/Sonnet) con revisión de Fable, por P
 
 ---
 
-## 8. Decisiones que necesita tomar Kevin
+## 8. Decisiones tomadas (Kevin, 2026-10-16)
 
-1. **D1**: ¿una org de Atlas por empresa? (recomendado) ¿O Exura Global como org única con «empresas» adentro?
-2. **D7**: ¿alguien usa hoy el módulo Finanzas de Atlas en producción? Si nadie, se puede reemplazar sin coexistencia.
-3. **D4**: ¿algún tercero externo consume `/api/partner/v1` de SD además de Atlas? Si no, no se reconstruye.
-4. **D10**: confirmar que se frena la mudanza a `dashboard.exuraglobal.com` y que no se cargan esos registros en Hostinger.
-5. **Fecha** de solo lectura de SD por empresa (propuesta: tras el cierre de Oct-26, empezando por Horizon y Exura Liquidez).
-6. **Codench**: ¿las 7 ideas, o un subconjunto? ¿Manuel participa en la especificación de conciliación y multi-moneda?
-7. **Equipo**: quién aplica migraciones y despliega en Atlas (regla 0 de Atlas: no los agentes).
-8. **D11 (RRHH)**: ¿el call center cobra comisiones por ventas/FTD hoy? Decide si el motor de Atlas se conecta a la nómina o se retira.
-
----
+| # | Decisión |
+|---|---|
+| D1 | **Una organización de Atlas por empresa.** Cada una puede vivir en `atlas.exuraglobal.com` o en su propio subdominio de marca blanca (`Organization.appDomain`). |
+| D7 | **Nadie usa hoy el módulo Finanzas de Atlas en producción.** Se reemplaza sin coexistencia: los modelos de contabilidad de Atlas se rediseñan directamente sobre el modelo de SD (la facturación con Stripe se conserva y se enriquece con las ideas de Codench). |
+| D4 | **Ningún tercero consume `/api/partner/v1` de SD.** No se reconstruye; se apaga con SD. |
+| D10 | **Confirmado:** se frena la mudanza a `dashboard.exuraglobal.com`; no se cargan esos registros en Hostinger. El panel es `atlas.exuraglobal.com`. |
+| Corte | **Smart Dashboard desaparece entero.** No hay convivencia por empresa: SD sigue operando sin cambios hasta que Atlas tenga todo y la paridad dé exacta; ese día se migra todo, se redirige el dominio viejo a Atlas y SD queda solo como respaldo de lectura 90 días antes de apagarlo. La fase 5 se lee así: un único corte, después de verificar la paridad empresa por empresa. |
+| D8 | **Codench: se integra todo lo valioso**, con énfasis en el envío de facturas (link público tokenizado y revocable con conteo de vistas, plantillas bilingües, recordatorios con dedupe, PDF). Se suma a la facturación de Atlas; el código Python no se migra. |
+| D9 | **Claude construye en local en el repo de Atlas y despliega.** Esto contradice la regla 0 de `AGENTS.md` de Atlas (ningún agente despliega ni aplica migraciones). Decisión del dueño: se trabaja igual que en SD —ramas, PR, merge a `main`, despliegue por el webhook de Vercel— y las migraciones Prisma se aplican con el mismo rito de SD (ensayo en `BEGIN/ROLLBACK`, luego aplicar, luego desplegar). Staging de Atlas se usa para la paridad. El brief para esa sesión está en `06-brief-para-atlas.md`. |
+| D11 | **Pendiente:** ¿el call center cobra comisiones por ventas/FTD hoy? Define si el motor de Atlas se conecta a la nómina o se retira. |
 
 ## 9. Qué recibe Atlas (contenido de `docs/traspaso-atlas/`)
 
@@ -169,5 +169,6 @@ Las estimaciones son horas de agente (Opus/Sonnet) con revisión de Fable, por P
 | `03-atlas-plataforma.md` | Tenancy, auth, roles, RLS, i18n, 25 crons, integraciones, auditoría, uploads, tests, CI, migraciones. |
 | `04-atlas-orion-mt5.md` | Cómo Atlas consume hoy Orion y MT5 desde Smart Dashboard (lo que la fase 1 reemplaza). |
 | `05-codench-finance-socio.md` | Inventario, reglas con archivo:línea, madurez, ideas a integrar y errores a no copiar. |
+| `06-brief-para-atlas.md` | El texto que Kevin le envía a la sesión de Claude que construye en el repo de Atlas: contexto, decisiones, reglas de trabajo, fase 1 y criterios de aceptación. |
 
 Fuentes de código que acompañan al traspaso (en el repo de SD): `docs/reglas-del-proyecto.md`, `docs/diseno-libro-mayor.md`, `src/lib/distribution*.ts`, `src/lib/broker-pnl.ts`, `src/lib/close-auto-inputs.ts`, `src/lib/commission-calculator.ts`, `src/lib/cash-locations.ts`, `src/lib/withdrawal-risk/`, `src/lib/risk/`, `src/lib/crm-sync/`, `src/lib/mt5-sync/`, `supabase/migration-061-period-close.sql`, `migration-111`, `migration-131`.
