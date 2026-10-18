@@ -22,6 +22,12 @@
 //       Medido: Horizon, Ago-26, devengado 21.928,23 contra caja 16.563,23 →
 //       −5.365,00.
 //
+//     · Comisiones sin guardar (2026-10-18): septiembre-2026 de Vex Pro se
+//       cerró con 11 grupos de /comisiones con líneas sin fila en
+//       `commercial_monthly_results`. Mes cerrado = manda lo guardado
+//       (hr/net-deposit-input.ts), así que el hueco quedó congelado sin un
+//       solo error. Ver la sección b4.
+//
 //  c) El ORDEN CRONOLÓGICO: la cadena de distribución es SECUENCIAL (§2.2 —
 //     hay que procesar todos los períodos en orden o el arrastre de
 //     deuda/reserva diverge). Cerrar Ago antes que Jul congela un mes contra
@@ -34,6 +40,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { features } from './business-model';
+import { estaActivo, estaDespedido } from './hr/domain';
 
 /**
  * `warning` = cerrar igual es legítimo (una orden aprobada que se paga el mes
@@ -75,6 +82,7 @@ export const CHECKLIST_LABEL_KEYS = {
   earlier_periods_open: 'periodClose.earlierPeriodsOpen',
   fairpay_adjustment_missing: 'periodClose.fairpayAdjustmentMissing',
   fairpay_adjustment_no_data: 'periodClose.fairpayAdjustmentNoData',
+  commissions_unsaved: 'periodClose.commissionsUnsaved',
 } as const;
 
 export type ChecklistKey = keyof typeof CHECKLIST_LABEL_KEYS;
@@ -243,6 +251,215 @@ export function checkFairpayAdjustment(params: {
   return params.expenseLoaded
     ? { state: 'covered', amount: params.crmAdjustment }
     : { state: 'missing', amount: params.crmAdjustment };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// b4) Comisiones sin guardar
+//
+// ── El incidente (medido el 2026-10-18) ────────────────────────────────────
+// Septiembre-2026 de Vex Pro se CERRÓ con 11 grupos de /comisiones que tenían
+// líneas sin fila en `commercial_monthly_results`. El grupo de Luis Diaz cerró
+// sin la fila del propio head —la pantalla congelada muestra «sin datos» y
+// comisión $0—; el de Nicolas Skwarok, con 7 líneas sin guardar. Mes cerrado =
+// manda lo guardado (semántica DELIBERADA de hr/net-deposit-input.ts), así que
+// cerrar con huecos congela el hueco en silencio: el fallo-sin-error del §1.2.
+//
+// ── La regla ───────────────────────────────────────────────────────────────
+// Un GRUPO es un perfil con al menos un miembro visible colgando
+// (`head_id` = su id). Sus LÍNEAS son el líder más esos miembros. Una línea
+// está GUARDADA si existe una fila del período con `profile_id` = la línea y
+// un `head_id` aceptado (ver `headIdsAceptados`). Sólo se mira la EXISTENCIA.
+//
+// ── Lo que se descartó ─────────────────────────────────────────────────────
+//   · Mirar `net_deposit_current`: su semántica difiere entre la línea del
+//     head (total de la estructura) y la de un miembro, y la fila propia del
+//     head histórico puede traer su ND en `net_deposit_accumulated`. Pedir un
+//     valor ≠ 0 daría falsos positivos; además un ND en 0 legítimo existe
+//     (§2.1 regla 2). Un 0 guardado es un dato; la fila que falta, no.
+//   · Llamar `hr_net_deposit_by_profile` / `hr_padres_resueltos` para armar
+//     la estructura «como la ve el CRM»: el checklist corre DENTRO del request
+//     de cierre y esas RPC pueden pasar el statement timeout. Alcanza con
+//     `commercial_profiles` + `commercial_monthly_results`, dos selects chicos.
+//   · Contar a todos los que tienen `head_id` = líder, sin filtro de estado:
+//     /comisiones (tab Equipos, `teamProfiles`) arma el grupo con
+//     `appearsInCommissions` = activo o despedido. Un inactivo SIN fecha de
+//     baja (licencia) no aparece en la pantalla, así que nadie puede guardarle
+//     una fila: contarlo sería un falso positivo permanente. Se usan los
+//     predicados del registro único de RRHH (hr/domain.ts), no una copia.
+//   · Bloquear el cierre: el checklist avisa, la persona decide (puede haber
+//     un grupo que legítimamente no cobra ese mes). Mismo trato que el resto.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Lo mínimo de `commercial_profiles` para armar los grupos. */
+export interface CommissionProfileRow {
+  id: string;
+  name: string | null;
+  head_id: string | null;
+  status: string;
+  termination_date?: string | null;
+}
+
+/** Lo mínimo de `commercial_monthly_results` para saber si la línea existe. */
+export interface CommissionSavedRow {
+  profile_id: string;
+  head_id: string | null;
+}
+
+export interface UnsavedCommissionGroup {
+  headId: string;
+  headName: string;
+  /** Líneas del grupo (líder incluido). */
+  lines: number;
+  /** Líneas sin fila guardada. */
+  missing: number;
+}
+
+export interface UnsavedCommissions {
+  /** Líneas sin guardar, sumadas sobre todos los grupos. Es el `count`. */
+  totalMissing: number;
+  /** Grupos con equipo que se revisaron (completos o no). */
+  totalGroups: number;
+  /** Líneas revisadas en total. */
+  totalLines: number;
+  /** SÓLO los grupos con huecos, de más a menos líneas faltantes. */
+  groups: UnsavedCommissionGroup[];
+}
+
+/** Cuántos grupos nombra el detalle antes de recortar (y avisar). */
+export const COMMISSIONS_UNSAVED_MAX_GROUPS = 6;
+
+/**
+ * Qué `head_id` cuentan como «la fila de esta línea en este grupo».
+ *
+ *   · La línea del LÍDER: `head_id` = líder o `null`. La fila propia del head
+ *     histórico se guardó con `null` o igual a sí mismo — medido contra
+ *     sep-2026 en producción: con esas claves los grupos completos no dan
+ *     falso positivo.
+ *   · Un MIEMBRO común: `head_id` = líder, `null` (fila vieja sin clave de
+ *     grupo) o el propio miembro (bucket propio de los perfiles PnL,
+ *     hr/pnl-buckets.ts).
+ *   · Un miembro que ES LÍDER de otro grupo (sub-head): SÓLO `head_id` =
+ *     líder. Su fila con `null` o consigo mismo es la de SU grupo, no la de
+ *     éste; aceptarla haría que guardar el grupo de abajo tapara el hueco en
+ *     el de arriba — un falso negativo, que es el fallo que este ítem existe
+ *     para atrapar. Es lo mismo que hace la pantalla al guardar: busca la fila
+ *     con `head_id` = el grupo seleccionado. Esta restricción NO se midió
+ *     contra producción: si algún sub-head guardó su línea de arriba con
+ *     `null`, va a aparecer acá. Es un falso positivo VISIBLE, que se mira y
+ *     se entiende; el negativo silencioso no se ve nunca. MEDIDO contra
+ *     jul-26 y ago-26 en producción (2026-10-18): los 22 sub-heads de Vex Pro
+ *     guardaron su línea de arriba con `head_id` = líder (nunca `null` ni el
+ *     propio), así que la restricción no genera falsos positivos hoy.
+ */
+function headIdsAceptados(
+  lineId: string,
+  leaderId: string,
+  lineLeadsAGroup: boolean,
+): Array<string | null> {
+  if (lineId === leaderId) return [leaderId, null];
+  if (lineLeadsAGroup) return [leaderId];
+  return [leaderId, null, lineId];
+}
+
+/**
+ * Líneas de /comisiones sin fila guardada en el período.
+ *
+ * Devuelve `null` cuando el modelo de negocio no tiene fuerza comercial
+ * (`features().commercialTeam`, hoy sólo `broker`): el chequeo no corresponde,
+ * que NO es lo mismo que «0 líneas sin guardar» (§1.3).
+ */
+export function computeUnsavedCommissions(params: {
+  businessModel: string | null | undefined;
+  profiles: readonly CommissionProfileRow[];
+  saved: readonly CommissionSavedRow[];
+}): UnsavedCommissions | null {
+  if (!features(params.businessModel).commercialTeam) return null;
+
+  // Miembros visibles por líder. Un perfil que se apunta a sí mismo no es su
+  // propio equipo.
+  const membersByLeader = new Map<string, CommissionProfileRow[]>();
+  for (const p of params.profiles) {
+    if (!p.head_id || p.head_id === p.id) continue;
+    if (!(estaActivo(p) || estaDespedido(p))) continue;
+    const list = membersByLeader.get(p.head_id) ?? [];
+    list.push(p);
+    membersByLeader.set(p.head_id, list);
+  }
+
+  const savedKeys = new Set(
+    params.saved.map((r) => `${r.profile_id}|${r.head_id ?? ''}`),
+  );
+  const isSaved = (lineId: string, headId: string | null) =>
+    savedKeys.has(`${lineId}|${headId ?? ''}`);
+
+  const groups: UnsavedCommissionGroup[] = [];
+  let totalGroups = 0;
+  let totalLines = 0;
+  let totalMissing = 0;
+
+  // Se itera sobre los perfiles (no sobre el mapa) para que un `head_id` que
+  // apunta a un perfil inexistente o de otra empresa no invente un grupo.
+  for (const leader of params.profiles) {
+    const members = membersByLeader.get(leader.id);
+    if (!members || members.length === 0) continue;
+    totalGroups += 1;
+
+    const lines = [leader, ...members];
+    let missing = 0;
+    for (const line of lines) {
+      const leadsAGroup = (membersByLeader.get(line.id)?.length ?? 0) > 0;
+      const ok = headIdsAceptados(line.id, leader.id, leadsAGroup).some((h) => isSaved(line.id, h));
+      if (!ok) missing += 1;
+    }
+    totalLines += lines.length;
+    totalMissing += missing;
+    if (missing > 0) {
+      groups.push({
+        headId: leader.id,
+        headName: leader.name?.trim() || '(sin nombre)',
+        lines: lines.length,
+        missing,
+      });
+    }
+  }
+
+  groups.sort((a, b) => b.missing - a.missing || a.headName.localeCompare(b.headName));
+  return { totalMissing, totalGroups, totalLines, groups };
+}
+
+/**
+ * El detalle legible del ítem: «N líneas sin guardar en M grupos: Luka
+ * Angeles (7), Nicolas Skwarok (7), Luis Diaz (1)». Vive acá (y no en la capa
+ * de datos) para poder testear el recorte: pasado `max` grupos dice «y K
+ * más» — un recorte silencioso es indistinguible de «no hay más» (§1.2).
+ *
+ * Con todo guardado también devuelve texto, para que el cero sea VISIBLE
+ * («se miró y está completo») y no se confunda con «no se miró».
+ */
+export function formatUnsavedCommissionsDetail(
+  r: UnsavedCommissions,
+  max: number = COMMISSIONS_UNSAVED_MAX_GROUPS,
+): string {
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  if (r.totalGroups === 0) return 'La empresa no tiene grupos con equipo: nada que verificar.';
+  if (r.totalMissing === 0) {
+    return `Todas las líneas guardadas (${plural(r.totalLines, 'línea', 'líneas')} en ${plural(
+      r.totalGroups,
+      'grupo',
+      'grupos',
+    )}).`;
+  }
+  const shown = r.groups.slice(0, Math.max(0, max));
+  const rest = r.groups.length - shown.length;
+  return (
+    `${plural(r.totalMissing, 'línea sin guardar', 'líneas sin guardar')} en ${plural(
+      r.groups.length,
+      'grupo',
+      'grupos',
+    )}: ` +
+    shown.map((g) => `${g.headName} (${g.missing})`).join(', ') +
+    (rest > 0 ? ` y ${rest} más` : '')
+  );
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

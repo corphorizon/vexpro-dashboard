@@ -13,12 +13,18 @@ import {
   CHECKLIST_LABEL_KEYS,
   CRM_DRIFT_METRICS,
   FAIRPAY_ADJUSTMENT_METRIC,
+  COMMISSIONS_UNSAVED_MAX_GROUPS,
   checkFairpayAdjustment,
   computeAccrualCashGap,
   computeCrmDrift,
+  computeUnsavedCommissions,
   earlierOpenPeriods,
+  formatUnsavedCommissionsDetail,
+  type CommissionProfileRow,
+  type CommissionSavedRow,
 } from './period-close-checklist';
 import { CRM_MONTHLY_METRIC_KEYS } from './crm-monthly';
+import { BUSINESS_MODELS, features } from './business-model';
 
 describe('deriva contra el CRM', () => {
   it('Feb-26: los $2.373,37 de retiros prop firm que no se cargaron', () => {
@@ -217,6 +223,161 @@ describe('egreso «Ajuste FairPay» del mes', () => {
     // Un typo acá dejaría el chequeo diciendo «sin dato» para siempre, con la
     // serie calculada al lado.
     expect(CRM_MONTHLY_METRIC_KEYS).toContain(FAIRPAY_ADJUSTMENT_METRIC);
+  });
+});
+
+describe('comisiones sin guardar (incidente sep-2026, medido el 2026-10-18)', () => {
+  const perfil = (
+    id: string,
+    head_id: string | null,
+    extra: Partial<CommissionProfileRow> = {},
+  ): CommissionProfileRow => ({ id, name: id.toUpperCase(), head_id, status: 'active', ...extra });
+  const fila = (profile_id: string, head_id: string | null): CommissionSavedRow => ({ profile_id, head_id });
+  const calcular = (
+    profiles: CommissionProfileRow[],
+    saved: CommissionSavedRow[],
+    businessModel: string | null = 'broker',
+  ) => computeUnsavedCommissions({ businessModel, profiles, saved });
+
+  // El grupo de Luis Diaz: head + dos BDM.
+  const luis = [perfil('luis', null), perfil('b1', 'luis'), perfil('b2', 'luis')];
+
+  it('grupo completo → 0', () => {
+    const r = calcular(luis, [fila('luis', 'luis'), fila('b1', 'luis'), fila('b2', 'luis')]);
+    expect(r).toEqual({ totalMissing: 0, totalGroups: 1, totalLines: 3, groups: [] });
+  });
+
+  it('Luis Diaz: el head sin su fila propia → 1 línea sin guardar', () => {
+    const r = calcular(luis, [fila('b1', 'luis'), fila('b2', 'luis')]);
+    expect(r?.totalMissing).toBe(1);
+    expect(r?.groups).toEqual([{ headId: 'luis', headName: 'LUIS', lines: 3, missing: 1 }]);
+  });
+
+  // La fila propia del head histórico se guardó con head_id null o igual a sí
+  // mismo. Las dos cuentan como guardada; una fila bajo OTRO grupo, no.
+  it.each([
+    ['head_id = el head', 'luis', 0],
+    ['head_id = null (fila histórica)', null, 0],
+    ['head_id = otro grupo', 'otro', 1],
+  ] as const)('la fila propia del head con %s', (_caso, headId, esperado) => {
+    const r = calcular(luis, [fila('luis', headId), fila('b1', 'luis'), fila('b2', 'luis')]);
+    expect(r?.totalMissing).toBe(esperado);
+  });
+
+  it('un miembro común acepta las tres variantes: head, null y bucket propio (PnL)', () => {
+    for (const h of ['luis', null, 'b1']) {
+      const r = calcular(luis, [fila('luis', 'luis'), fila('b1', h), fila('b2', 'luis')]);
+      expect(r?.totalMissing).toBe(0);
+    }
+    // Pero no la de otro grupo.
+    expect(calcular(luis, [fila('luis', 'luis'), fila('b1', 'otro'), fila('b2', 'luis')])?.totalMissing).toBe(1);
+  });
+
+  it('Nicolas Skwarok: grupo entero sin guardar → todas sus líneas', () => {
+    const nico = [perfil('nico', null), ...[1, 2, 3, 4, 5, 6].map((i) => perfil(`n${i}`, 'nico'))];
+    const r = calcular(nico, []);
+    expect(r?.totalMissing).toBe(7);
+    expect(r?.groups[0]).toMatchObject({ headId: 'nico', lines: 7, missing: 7 });
+  });
+
+  it('la fila de un sub-head en SU grupo no tapa el hueco en el grupo de arriba', () => {
+    // sm → head → bdm. El head guardó su grupo (fila propia con su id), pero
+    // nadie guardó su línea bajo el sales manager.
+    const profiles = [perfil('sm', null), perfil('head', 'sm'), perfil('bdm', 'head')];
+    const r = calcular(profiles, [fila('sm', 'sm'), fila('head', 'head'), fila('bdm', 'head')]);
+    expect(r?.totalMissing).toBe(1);
+    expect(r?.groups).toEqual([{ headId: 'sm', headName: 'SM', lines: 2, missing: 1 }]);
+    // Con su línea bajo el sales manager, los dos grupos quedan completos.
+    expect(
+      calcular(profiles, [fila('sm', 'sm'), fila('head', 'sm'), fila('head', 'head'), fila('bdm', 'head')])
+        ?.totalMissing,
+    ).toBe(0);
+  });
+
+  it('empresa sin grupos → 0 (y lo dice)', () => {
+    const r = calcular([perfil('solo', null), perfil('otro', null)], []);
+    expect(r).toEqual({ totalMissing: 0, totalGroups: 0, totalLines: 0, groups: [] });
+    expect(formatUnsavedCommissionsDetail(r!)).toMatch(/no tiene grupos/);
+  });
+
+  it('un inactivo SIN fecha de baja (licencia) no es línea: la pantalla no lo muestra', () => {
+    const profiles = [...luis, perfil('licencia', 'luis', { status: 'inactive', termination_date: null })];
+    const r = calcular(profiles, [fila('luis', 'luis'), fila('b1', 'luis'), fila('b2', 'luis')]);
+    expect(r?.totalMissing).toBe(0);
+    expect(r?.totalLines).toBe(3);
+  });
+
+  it('un DESPEDIDO sí es línea: se le siguen cargando ND post-despido', () => {
+    const profiles = [...luis, perfil('baja', 'luis', { status: 'inactive', termination_date: '2026-09-20' })];
+    expect(
+      calcular(profiles, [fila('luis', 'luis'), fila('b1', 'luis'), fila('b2', 'luis')])?.totalMissing,
+    ).toBe(1);
+  });
+
+  it('un head que sólo tiene miembros en licencia no forma grupo', () => {
+    const profiles = [perfil('h', null), perfil('x', 'h', { status: 'inactive' })];
+    expect(calcular(profiles, [])?.totalGroups).toBe(0);
+  });
+
+  it('un head_id que apunta a un perfil inexistente no inventa un grupo', () => {
+    expect(calcular([perfil('b1', 'fantasma')], [])?.totalGroups).toBe(0);
+  });
+
+  it('las filas de otro perfil no cuentan para la línea', () => {
+    expect(calcular(luis, [fila('b1', 'luis'), fila('b2', 'luis'), fila('b2', null)])?.totalMissing).toBe(1);
+  });
+
+  // Iterar sobre el registro: un modelo nuevo con fuerza comercial entra solo.
+  for (const model of BUSINESS_MODELS) {
+    it(`modelo ${model}: ${features(model).commercialTeam ? 'aplica' : 'no aplica (null, no 0)'}`, () => {
+      const r = calcular(luis, [], model);
+      if (features(model).commercialTeam) expect(r?.totalMissing).toBe(3);
+      else expect(r).toBeNull();
+    });
+  }
+
+  it('hoy sólo el broker tiene fuerza comercial', () => {
+    expect(BUSINESS_MODELS.filter((m) => features(m).commercialTeam)).toEqual(['broker']);
+  });
+
+  describe('detalle', () => {
+    const muchos = (n: number) => {
+      const profiles: CommissionProfileRow[] = [];
+      for (let g = 0; g < n; g++) {
+        profiles.push(perfil(`h${g}`, null, { name: `Head ${g}` }));
+        for (let m = 0; m <= g; m++) profiles.push(perfil(`h${g}m${m}`, `h${g}`));
+      }
+      return calcular(profiles, [])!;
+    };
+
+    it('ordena de más a menos líneas faltantes', () => {
+      expect(formatUnsavedCommissionsDetail(muchos(3))).toBe(
+        '9 líneas sin guardar en 3 grupos: Head 2 (4), Head 1 (3), Head 0 (2)',
+      );
+    });
+
+    it('el recorte AVISA: pasado el máximo dice «y K más»', () => {
+      const r = muchos(COMMISSIONS_UNSAVED_MAX_GROUPS + 3);
+      const detail = formatUnsavedCommissionsDetail(r);
+      expect(detail).toMatch(/ y 3 más$/);
+      expect(detail.split('), ').length).toBe(COMMISSIONS_UNSAVED_MAX_GROUPS);
+      // El total sigue siendo el de TODOS los grupos, no el de los mostrados.
+      expect(detail.startsWith(`${r.totalMissing} líneas sin guardar en ${r.groups.length} grupos:`)).toBe(true);
+    });
+
+    it('justo en el máximo no hay «y K más»', () => {
+      expect(formatUnsavedCommissionsDetail(muchos(COMMISSIONS_UNSAVED_MAX_GROUPS))).not.toMatch(/más$/);
+    });
+
+    it('singular: 1 línea en 1 grupo', () => {
+      const r = calcular(luis, [fila('b1', 'luis'), fila('b2', 'luis')])!;
+      expect(formatUnsavedCommissionsDetail(r)).toBe('1 línea sin guardar en 1 grupo: LUIS (1)');
+    });
+
+    it('todo guardado también se informa: el cero se ve', () => {
+      const r = calcular(luis, [fila('luis', null), fila('b1', 'luis'), fila('b2', 'luis')])!;
+      expect(formatUnsavedCommissionsDetail(r)).toBe('Todas las líneas guardadas (3 líneas en 1 grupo).');
+    });
   });
 });
 

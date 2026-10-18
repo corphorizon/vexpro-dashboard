@@ -25,9 +25,13 @@ import {
   checkFairpayAdjustment,
   computeAccrualCashGap,
   computeCrmDrift,
+  computeUnsavedCommissions,
   earlierOpenPeriods,
+  formatUnsavedCommissionsDetail,
   type ChecklistItem,
   type ChecklistKey,
+  type CommissionProfileRow,
+  type CommissionSavedRow,
   type PeriodOrderRow,
 } from '@/lib/period-close-checklist';
 
@@ -47,7 +51,84 @@ const FALLBACK_LABEL: Record<ChecklistKey, string> = {
   earlier_periods_open: 'Hay meses anteriores sin cerrar',
   fairpay_adjustment_missing: 'Falta cargar el egreso Ajuste FairPay del mes',
   fairpay_adjustment_no_data: 'Ajuste FairPay: sin dato del CRM',
+  commissions_unsaved: 'Comisiones sin guardar',
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comisiones sin guardar — la lectura.
+//
+// Dos selects chicos y nada más (la regla y sus descartes están en la sección
+// b4 de period-close-checklist.ts). En particular NO se llama a
+// `hr_net_deposit_by_profile` ni a `hr_padres_resueltos`: esto corre dentro del
+// request de cierre y esas RPC pueden pasar el statement timeout.
+//
+// Se pagina en vez de confiar en el tope de PostgREST (1.000 filas): una fila
+// guardada que no llega por un recorte se vería como «sin guardar», y un perfil
+// que no llega haría desaparecer su grupo — las dos cosas sin error (§1.2).
+// ─────────────────────────────────────────────────────────────────────────────
+
+const PAGE = 1000;
+
+type PageResult = PromiseLike<{ data: unknown[] | null; error: unknown }>;
+
+/** Lee todas las páginas. Devuelve `null` si alguna falla: no se inventa un
+ *  resultado parcial que parezca completo. */
+async function leerTodo<T>(page: (from: number, to: number) => PageResult): Promise<T[] | null> {
+  const out: T[] = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await page(from, from + PAGE - 1);
+    if (error) {
+      console.error('[period-close-checklist] comisiones sin guardar:', error);
+      return null;
+    }
+    out.push(...((data ?? []) as T[]));
+    if (!data || data.length < PAGE) return out;
+  }
+}
+
+type CommissionsCheck =
+  | { state: 'skipped' }
+  | { state: 'error' }
+  | { state: 'ok'; profiles: CommissionProfileRow[]; saved: CommissionSavedRow[] };
+
+async function leerComisionesDelPeriodo(
+  admin: SupabaseClient,
+  companyId: string,
+  periodId: string,
+): Promise<CommissionsCheck> {
+  try {
+    const profiles = await leerTodo<CommissionProfileRow>((from, to) =>
+      admin
+        .from('commercial_profiles')
+        .select('id, name, head_id, status, termination_date')
+        .eq('company_id', companyId)
+        .order('id', { ascending: true })
+        .range(from, to),
+    );
+    if (!profiles) return { state: 'error' };
+
+    // Sin ningún líder con equipo no hay nada que verificar: no se toca la
+    // tabla de resultados.
+    const ids = new Set(profiles.map((p) => p.id));
+    const hayGrupos = profiles.some((p) => p.head_id && p.head_id !== p.id && ids.has(p.head_id));
+    if (!hayGrupos) return { state: 'ok', profiles, saved: [] };
+
+    const saved = await leerTodo<CommissionSavedRow>((from, to) =>
+      admin
+        .from('commercial_monthly_results')
+        .select('profile_id, head_id')
+        .eq('company_id', companyId)
+        .eq('period_id', periodId)
+        .order('id', { ascending: true })
+        .range(from, to),
+    );
+    if (!saved) return { state: 'error' };
+    return { state: 'ok', profiles, saved };
+  } catch (err) {
+    console.error('[period-close-checklist] comisiones sin guardar lanzó:', err);
+    return { state: 'error' };
+  }
+}
 
 /** Nombre de la métrica dentro del texto del detalle (que es una sola cadena;
  *  la traducción por ítem va por `labelKey`). */
@@ -131,6 +212,7 @@ export async function buildPeriodCloseChecklist(
     propFirmWithdrawals,
     fairpayPayments,
     fairpayExpense,
+    commissions,
   ] = await Promise.all([
     // Egresos del período sin referencia NI comprobante — lo primero que
     // pide cualquier contador al revisar el mes.
@@ -222,6 +304,12 @@ export async function buildPeriodCloseChecklist(
       .eq('period_id', periodId)
       .ilike('concept', `${FAIRPAY_EXPENSE_PREFIX}%`)
       .limit(5),
+    // Líneas de /comisiones sin fila guardada (chequeo nuevo, 2026-10-18).
+    // Sólo donde hay fuerza comercial: el mismo gating que el resto, por el
+    // registro (`commercialTeam`), no por un `=== 'broker'` suelto.
+    f.commercialTeam
+      ? leerComisionesDelPeriodo(admin, companyId, periodId)
+      : Promise.resolve<CommissionsCheck>({ state: 'skipped' }),
   ]);
 
   const pendingLines = (incomePending.data ?? []) as Array<{
@@ -359,6 +447,28 @@ export async function buildPeriodCloseChecklist(
               cargado.reduce((s, e) => s + (Number(e.amount) || 0), 0),
             )} en ${cargado.length} egreso(s).`,
     );
+  }
+
+  // ── Comisiones sin guardar (chequeo nuevo, 2026-10-18) ──────────────────
+  // Sep-26 de Vex Pro cerró con 11 grupos con huecos y nadie lo vio: mes
+  // cerrado = manda lo guardado. Las reglas están en period-close-checklist.ts.
+  if (commissions.state === 'error') {
+    // No se pudo leer: NO es «todo guardado» (§1.3). Cuenta 1 para que el
+    // checklist no salga limpio — mismo criterio que «Ajuste FairPay: sin dato».
+    push(
+      'commissions_unsaved',
+      1,
+      'No se pudo leer comisiones/perfiles para verificar. NO es cero: falta el dato — revisá /comisiones antes de cerrar.',
+    );
+  } else if (commissions.state === 'ok') {
+    const unsaved = computeUnsavedCommissions({
+      businessModel,
+      profiles: commissions.profiles,
+      saved: commissions.saved,
+    });
+    if (unsaved) {
+      push('commissions_unsaved', unsaved.totalMissing, formatUnsavedCommissionsDetail(unsaved));
+    }
   }
 
   // ── Salto devengado/caja de los egresos (chequeo nuevo) ─────────────────
